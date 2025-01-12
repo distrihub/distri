@@ -21,6 +21,7 @@ async fn main() -> std::io::Result<()> {
             .app_data(web::Data::new(pool.clone()))
             .service(handlers::agent::list_agents)
             .service(handlers::agent::create_agent)
+            .service(handlers::mcp::mcp_stream)
     })
     .bind(bind_address)?
     .run()

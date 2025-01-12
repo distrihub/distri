@@ -5,6 +5,7 @@ use crate::{
 };
 use actix_web::{get, post, web, HttpResponse, Result};
 use diesel::prelude::*;
+use rand::seq::SliceRandom;
 
 #[get("/agents")]
 pub async fn list_agents(pool: web::Data<DbPool>) -> Result<HttpResponse> {
@@ -25,11 +26,23 @@ pub async fn list_agents(pool: web::Data<DbPool>) -> Result<HttpResponse> {
 pub async fn create_agent(
     pool: web::Data<DbPool>,
     agent_data: web::Json<CreateAgentRequest>,
-    // user: web::ReqData<User>,
 ) -> Result<HttpResponse> {
     use crate::schema::agents::dsl::*;
+    use crate::schema::users::dsl as users_dsl;
 
     let mut conn = pool.get().expect("Failed to get DB connection");
+
+    // TODO: Temporary
+    // Get random user from the two fake users
+    let fake_user_ids: Vec<i32> = users_dsl::users
+        .select(users_dsl::id)
+        .load::<i32>(&mut conn)
+        .expect("Error loading users");
+
+    let random_user_id = fake_user_ids
+        .choose(&mut rand::thread_rng())
+        .expect("No users found")
+        .clone();
 
     let new_agent = web::block(move || {
         diesel::insert_into(agents)
@@ -42,8 +55,7 @@ pub async fn create_agent(
                 provider_name.eq(&agent_data.provider_name),
                 prompt.eq(&agent_data.prompt),
                 avatar.eq(&agent_data.avatar),
-                // user_id.eq(user.id),
-                user_id.eq(Some(1)),
+                user_id.eq(random_user_id),
                 tags.eq(&agent_data.tags),
             ))
             .get_result::<Agent>(&mut conn)
