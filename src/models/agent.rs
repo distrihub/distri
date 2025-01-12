@@ -17,6 +17,8 @@ pub struct Agent {
     pub avatar: Option<String>,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
+    pub user_id: Option<i32>,
+    pub tags: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -29,4 +31,5 @@ pub struct CreateAgentRequest {
     pub provider_name: String,
     pub prompt: Option<String>,
     pub avatar: Option<String>,
+    pub tags: Option<Vec<String>>,
 }

@@ -1,6 +1,7 @@
 use crate::{
     db::DbPool,
     models::agent::{Agent, CreateAgentRequest},
+    models::user::User,
 };
 use actix_web::{get, post, web, HttpResponse, Result};
 use diesel::prelude::*;
@@ -24,6 +25,7 @@ pub async fn list_agents(pool: web::Data<DbPool>) -> Result<HttpResponse> {
 pub async fn create_agent(
     pool: web::Data<DbPool>,
     agent_data: web::Json<CreateAgentRequest>,
+    // user: web::ReqData<User>,
 ) -> Result<HttpResponse> {
     use crate::schema::agents::dsl::*;
 
@@ -40,6 +42,9 @@ pub async fn create_agent(
                 provider_name.eq(&agent_data.provider_name),
                 prompt.eq(&agent_data.prompt),
                 avatar.eq(&agent_data.avatar),
+                // user_id.eq(user.id),
+                user_id.eq(Some(1)),
+                tags.eq(&agent_data.tags),
             ))
             .get_result::<Agent>(&mut conn)
     })
