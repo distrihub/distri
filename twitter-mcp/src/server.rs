@@ -3,12 +3,14 @@ use anyhow::Result;
 use mcp_sdk::server::{Server, ServerBuilder};
 use mcp_sdk::transport::Transport;
 use mcp_sdk::types::{
-    CallToolRequest, CallToolResponse, ServerCapabilities, Tool, ToolResponseContent,
+    CallToolRequest, CallToolResponse, ListRequest, PromptsListResponse, Resource,
+    ResourcesListResponse, ServerCapabilities, Tool, ToolResponseContent,
 };
 use serde_json::json;
 use std::collections::HashMap;
 use std::future::Future;
 use tracing::info;
+use url::Url;
 
 // Helper function to run async blocks in sync context
 fn run_async<F, T>(future: F) -> Result<T>
@@ -67,16 +69,43 @@ async fn get_session(args: &HashMap<String, serde_json::Value>) -> Result<Scrape
 }
 
 pub fn build<T: Transport>(t: T) -> Result<Server<T>> {
-    let mut server = Server::builder(t).capabilities(ServerCapabilities {
-        tools: Some(json!({})),
-        ..Default::default()
-    });
+    let mut server = Server::builder(t)
+        .capabilities(ServerCapabilities {
+            tools: Some(json!({})),
+            ..Default::default()
+        })
+        .request_handler("resources/list", |_req: ListRequest| Ok(list_resources()))
+        .request_handler("prompts/list", |_req: ListRequest| {
+            Ok(PromptsListResponse {
+                prompts: vec![],
+                next_cursor: None,
+                meta: None,
+            })
+        });
 
     register_tools(&mut server)?;
 
     let server = server.build();
 
     Ok(server)
+}
+
+fn list_resources() -> ResourcesListResponse {
+    let base = Url::parse("https://distr.ai/").unwrap();
+    let resources = ["timeline", "messages"]
+        .iter()
+        .map(|r| Resource {
+            uri: base.join(r).unwrap(),
+            name: r.to_string(),
+            description: None,
+            mime_type: Some("plain/text".to_string()),
+        })
+        .collect();
+    ResourcesListResponse {
+        resources,
+        next_cursor: None,
+        meta: None,
+    }
 }
 
 fn register_tools<T: Transport>(server: &mut ServerBuilder<T>) -> Result<()> {
@@ -133,7 +162,7 @@ fn register_tools<T: Transport>(server: &mut ServerBuilder<T>) -> Result<()> {
             "type": "object",
             "properties": {
                 "session_string": {"type": "string"},
-                "count": {"type": "integer", "default": 10}
+                "count": {"type": "integer", "default": 5}
             },
             "required": ["session_string"],
             "additionalProperties": false
@@ -202,9 +231,13 @@ fn register_tools<T: Transport>(server: &mut ServerBuilder<T>) -> Result<()> {
         let scraper = get_session(&args).await?;
         let count = args.get("count").and_then(|v| v.as_u64()).unwrap_or(10) as i32;
 
+        info!("Getting timeline with count: {count}");
         let timeline = scraper.get_home_timeline(count, vec![]).await?;
+        let timeline = json!({
+            "count": timeline.len(),
+            "first": timeline[0..1]
+        });
         let text = serde_json::to_string(&timeline)?;
-
         Ok(CallToolResponse {
             content: vec![ToolResponseContent::Text { text }],
             is_error: None,

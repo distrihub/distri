@@ -1865,7 +1865,7 @@ checksum = "0e7465ac9959cc2b1404e8e2367b43684a6d13790fe23056cc8c6c5a6b7bcb94"
 [[package]]
 name = "mcp-sdk"
 version = "0.0.2"
-source = "git+https://github.com/distriai/mcp-sdk.git?rev=fd38b0063beb3138ce384851cc17971ef321fd10#fd38b0063beb3138ce384851cc17971ef321fd10"
+source = "git+https://github.com/distriai/mcp-sdk.git?rev=481f2f56e2b0f37a4f0363f0fd4993f860e7d83b#481f2f56e2b0f37a4f0363f0fd4993f860e7d83b"
 dependencies = [
  "actix-lab",
  "actix-web",
@@ -3229,6 +3229,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "url",
 ]
 
 [[package]]
@@ -3455,7 +3456,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
