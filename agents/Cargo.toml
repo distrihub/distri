@@ -11,4 +11,4 @@ tokio = { version = "1.0", features = ["full"] }
 thiserror = "1.0"
 async-openai = "0.17"
 reqwest = { version = "0.12", features = ["json"] }
-mcp-sdk = { git = "https://github.com/distriai/mcp-sdk.git" }
+mcp-sdk = { git = "https://github.com/distriai/mcp-sdk.git", rev = "fd38b0063beb3138ce384851cc17971ef321fd10" }
