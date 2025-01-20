@@ -309,6 +309,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "twitter-mcp",
 ]
 
 [[package]]
@@ -1878,7 +1879,7 @@ checksum = "0e7465ac9959cc2b1404e8e2367b43684a6d13790fe23056cc8c6c5a6b7bcb94"
 [[package]]
 name = "mcp-sdk"
 version = "0.0.2"
-source = "git+https://github.com/distriai/mcp-sdk.git?rev=0737fe5ee6ce331414ddbe06d3c88a05bbe354a3#0737fe5ee6ce331414ddbe06d3c88a05bbe354a3"
+source = "git+https://github.com/distriai/mcp-sdk.git?rev=5e649435b658c1cdae739cb90bb8601f9f690ea8#5e649435b658c1cdae739cb90bb8601f9f690ea8"
 dependencies = [
  "actix-lab",
  "actix-web",

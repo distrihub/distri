@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::{collections::HashMap, time::Duration};
 
 use anyhow::Result;
+use mcp_sdk::transport::{ClientAsyncTransport, ServerAsyncTransport};
 use mcp_sdk::{
     client::{Client, ClientBuilder},
     protocol::RequestOptions,
@@ -18,12 +19,28 @@ use crate::{
     Session,
 };
 
+async fn async_server(tool_def: ToolDefinition, transport: ServerAsyncTransport) -> Result<()> {
+    let name = tool_def.tool.name.to_string();
+    if name == "get_timeline".to_string() {
+        let server = twitter_mcp::build(transport.clone())?;
+        server.listen().await?;
+    } else {
+        return Err(anyhow::anyhow!(format!("Tool: {name} is not found")));
+    }
+    Ok(())
+}
+
 macro_rules! with_transport {
     ($tool_def:expr, $body:expr) => {
         match &$tool_def.mcp_transport {
-            TransportType::Channel => {
-                let (_, transport) = mcp_sdk::transport::ServerChannelTransport::new_pair();
-                Box::pin(async move { $body(transport).await })
+            TransportType::Async => {
+                let tool_def = $tool_def.clone();
+                let client_transport = ClientAsyncTransport::new(move |t| {
+                    let tool_def = tool_def.clone();
+                    tokio::spawn(async move { async_server(tool_def.clone(), t).await.unwrap() })
+                });
+                client_transport.open().await?;
+                Box::pin(async move { $body(client_transport).await })
                     as Pin<Box<dyn Future<Output = _> + Send>>
             }
             TransportType::Stdio { command, args } => {

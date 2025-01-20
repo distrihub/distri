@@ -41,7 +41,7 @@ pub enum AuthType {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum TransportType {
-    Channel,
+    Async,
     SSE { server_url: String },
     Stdio { command: String, args: Vec<String> },
 }
