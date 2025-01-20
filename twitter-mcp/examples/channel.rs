@@ -13,7 +13,6 @@ use twitter_mcp::build;
 #[tokio::main]
 async fn main() -> Result<()> {
     let r = run().await;
-    println!("I AM HERE");
     r
 }
 
@@ -27,7 +26,7 @@ async fn run() -> Result<()> {
     let (server_transport, client_transport) = ServerChannelTransport::new_pair();
 
     // Open both transports
-    server_transport.open().await?;
+
     client_transport.open().await?;
 
     // Start server in background first
@@ -41,9 +40,6 @@ async fn run() -> Result<()> {
     let client = mcp_sdk::client::ClientBuilder::new(client_transport.clone()).build();
     let client_clone = client.clone();
     let client_handle = tokio::spawn(async move { client_clone.start().await });
-
-    // Give client time to connect
-    tokio::time::sleep(Duration::from_millis(100)).await;
 
     // Make a request
     let response = client

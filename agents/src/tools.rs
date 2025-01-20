@@ -15,7 +15,7 @@ use serde_json::Value;
 use crate::SessionStore;
 use crate::{
     types::{ToolCall, ToolDefinition, TransportType},
-    AgentDefinition, Session,
+    Session,
 };
 
 macro_rules! with_transport {
@@ -41,7 +41,7 @@ macro_rules! with_transport {
 
 pub async fn execute_tool(
     tool_call: &ToolCall,
-    agent_def: AgentDefinition,
+    tool_def: &ToolDefinition,
     session_store: Option<Arc<Box<dyn SessionStore>>>,
 ) -> Result<String> {
     tracing::info!(
@@ -49,15 +49,6 @@ pub async fn execute_tool(
         tool_call.tool_name,
         tool_call.tool_id
     );
-
-    let tool_def = agent_def
-        .tools
-        .iter()
-        .find(|t| t.tool.name == tool_call.tool_name)
-        .ok_or_else(|| {
-            tracing::error!("Tool not found: {}", tool_call.tool_name);
-            anyhow::anyhow!("Tool not found: {}", tool_call.tool_name)
-        })?;
 
     tracing::debug!("Using transport type: {:?}", tool_def.mcp_transport);
 
@@ -90,7 +81,19 @@ impl<T: Transport + Clone> ToolExecutor<T> {
         tracing::info!("Executing tool: {name}");
 
         tracing::debug!("Parsing tool arguments: {}", tool_call.input);
-        let args: HashMap<String, Value> = serde_json::from_str(&tool_call.input)?;
+        let mut args: HashMap<String, Value> =
+            serde_json::from_str(&tool_call.input).unwrap_or_default();
+
+        // Insert session into arguments if available
+        if let Some(store) = session_store {
+            tracing::debug!("Attempting to retrieve session for tool: {}", name);
+            if let Some(session) = store.get_session(&name).await? {
+                if let Some(session_key) = &tool_def.auth_session_key {
+                    tracing::debug!("Injecting session data for tool: {}", name);
+                    args.insert(session_key.clone(), Value::String(session.token.clone()));
+                }
+            }
+        }
 
         let request = CallToolRequest {
             name: name.clone(),
@@ -98,21 +101,14 @@ impl<T: Transport + Clone> ToolExecutor<T> {
             meta: None,
         };
 
-        let mut params = serde_json::to_value(request)?;
-
-        if let Some(store) = session_store {
-            tracing::debug!("Attempting to retrieve session for tool: {}", name);
-            if let Some(session) = store.get_session(&name).await? {
-                tracing::debug!("Injecting session data for tool: {}", name);
-                tool_def.inject_session(&mut params, &session);
-            }
-        }
+        let params = serde_json::to_value(request)?;
 
         tracing::debug!("Starting tool client");
         let client_clone = self.client.clone();
         let client_handle = tokio::spawn(async move { client_clone.start().await });
 
         tracing::debug!("Sending tool request");
+        tracing::debug!("{}", params);
         let response = self
             .client
             .request(
@@ -125,6 +121,7 @@ impl<T: Transport + Clone> ToolExecutor<T> {
         let response: CallToolResponse = serde_json::from_value(response)?;
 
         tracing::debug!("Processing tool response");
+        tracing::debug!("{:?}", response);
         let text = response
             .content
             .first()
@@ -147,28 +144,6 @@ impl<T: Transport + Clone> ToolExecutor<T> {
 
 // Helper functions for transport creation
 impl ToolDefinition {
-    pub fn create_transport(&self) -> anyhow::Result<Box<dyn Transport>> {
-        match &self.mcp_transport {
-            TransportType::Channel => {
-                let (server_transport, client_transport) =
-                    mcp_sdk::transport::ServerChannelTransport::new_pair();
-                Ok(Box::new(client_transport))
-            }
-            TransportType::SSE { server_url: _ } => {
-                unimplemented!("SSE transport not implemented yet")
-            }
-            TransportType::Stdio { command, args } => {
-                Ok(Box::new(mcp_sdk::transport::ClientStdioTransport::new(
-                    command,
-                    args.iter()
-                        .map(|arg| arg.as_str())
-                        .collect::<Vec<_>>()
-                        .as_ref(),
-                )?))
-            }
-        }
-    }
-
     pub async fn inject_session(
         &self,
         params: &mut serde_json::Value,

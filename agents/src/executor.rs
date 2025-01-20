@@ -55,6 +55,7 @@ impl AgentExecutor {
         CreateChatCompletionRequest {
             model: settings.model.clone(),
             messages,
+            tools: Some(self.agent_def.tools.iter().map(|t| t.into()).collect()),
             ..Default::default()
         }
     }
@@ -111,9 +112,19 @@ impl AgentExecutor {
                 tracing::trace!("Calling tool ({id}) {function:?}");
 
                 let tool_call = Self::map_tool_call(tool_call);
-                let result = execute_tool(&tool_call, agent_def.clone(), session_store).await;
+                let tool_def = agent_def
+                    .tools
+                    .iter()
+                    .find(|t| t.tool.name == tool_call.tool_name);
 
-                let content = result.unwrap_or_else(|err| err.to_string());
+                let content = match tool_def {
+                    Some(tool_def) => execute_tool(&tool_call, tool_def, session_store)
+                        .await
+                        .unwrap_or_else(|err| format!("Error: {}", err.to_string())),
+                    None => format!("Tool not found {}", tool_call.tool_name),
+                };
+
+                tracing::debug!("Tool Response ({id}) ({content})");
                 ChatCompletionRequestMessage::Tool(ChatCompletionRequestToolMessage {
                     content: Some(content),
                     role: async_openai::types::Role::Tool,
@@ -127,6 +138,10 @@ impl AgentExecutor {
         tracing::info!("Starting agent execution with {} messages", messages.len());
         let messages = self.map_messages(messages);
         let request = self.build_request(messages);
+        tracing::debug!(
+            "Request: {:?} ",
+            serde_json::to_string_pretty(&request).unwrap()
+        );
         let mut token_usage = 0;
         let mut calls = vec![request];
 

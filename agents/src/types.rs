@@ -1,3 +1,4 @@
+use async_openai::types::{ChatCompletionFunctions, ChatCompletionTool};
 use mcp_sdk::types::Tool;
 use serde::{Deserialize, Serialize};
 use std::time::SystemTime;
@@ -71,6 +72,19 @@ pub struct ToolDefinition {
     pub auth_type: AuthType,
     pub auth_session_key: Option<String>,
     pub mcp_transport: TransportType,
+}
+
+impl From<&ToolDefinition> for ChatCompletionTool {
+    fn from(tool_def: &ToolDefinition) -> Self {
+        ChatCompletionTool {
+            r#type: async_openai::types::ChatCompletionToolType::Function,
+            function: ChatCompletionFunctions {
+                name: tool_def.tool.name.clone(),
+                description: tool_def.tool.description.clone(),
+                parameters: tool_def.tool.input_schema.clone(),
+            },
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
