@@ -12,3 +12,6 @@ thiserror = "1.0"
 async-openai = "0.17"
 reqwest = { version = "0.12", features = ["json"] }
 mcp-sdk = { workspace = true }
+tracing-subscriber = "0.3"
+tracing = "0.1"
+anyhow = { workspace = true }

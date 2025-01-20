@@ -3,4 +3,5 @@ resolver = "2"
 members = ["core", "agents"]
 
 [workspace.dependencies]
-mcp-sdk = { git = "https://github.com/distriai/mcp-sdk.git", rev = "481f2f56e2b0f37a4f0363f0fd4993f860e7d83b" }
+mcp-sdk = { git = "https://github.com/distriai/mcp-sdk.git", rev = "0737fe5ee6ce331414ddbe06d3c88a05bbe354a3" }
+anyhow = "1.0"

@@ -8,7 +8,7 @@ mcp-sdk = { workspace = true }
 tokio = { version = "1.0", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-anyhow = "1.0"
+anyhow = { workspace = true }
 agent-twitter-client = "0.1.1"
 async-trait = "0.1"
 tracing-subscriber = "0.3"
@@ -18,3 +18,11 @@ url = "2.5.4"
 [[bin]]
 name = "twitter"
 path = "src/main.rs"
+
+[[example]]
+name = "client"
+path = "examples/client.rs"
+
+[[example]]
+name = "channel"
+path = "examples/channel.rs"

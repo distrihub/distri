@@ -1,5 +1,5 @@
 pub mod error;
-pub mod mcp;
-pub mod openai;
+pub mod llm;
+pub mod tools;
 
 pub use error::AgentError;

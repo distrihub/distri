@@ -297,6 +297,7 @@ dependencies = [
 name = "agents"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "async-openai",
  "async-trait",
  "mcp-sdk",
@@ -305,6 +306,8 @@ dependencies = [
  "serde_json",
  "thiserror 1.0.69",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -1865,7 +1868,7 @@ checksum = "0e7465ac9959cc2b1404e8e2367b43684a6d13790fe23056cc8c6c5a6b7bcb94"
 [[package]]
 name = "mcp-sdk"
 version = "0.0.2"
-source = "git+https://github.com/distriai/mcp-sdk.git?rev=481f2f56e2b0f37a4f0363f0fd4993f860e7d83b#481f2f56e2b0f37a4f0363f0fd4993f860e7d83b"
+source = "git+https://github.com/distriai/mcp-sdk.git?rev=0737fe5ee6ce331414ddbe06d3c88a05bbe354a3#0737fe5ee6ce331414ddbe06d3c88a05bbe354a3"
 dependencies = [
  "actix-lab",
  "actix-web",
