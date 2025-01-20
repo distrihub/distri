@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use async_openai::types::{ChatCompletionRequestMessage, ChatCompletionRequestUserMessage, Role};
 use serde_json::json;
 
 use crate::{

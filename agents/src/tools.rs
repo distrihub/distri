@@ -4,7 +4,6 @@ use std::sync::Arc;
 use std::{collections::HashMap, time::Duration};
 
 use anyhow::Result;
-use async_openai::types::ChatCompletionMessageToolCall;
 use mcp_sdk::{
     client::{Client, ClientBuilder},
     protocol::RequestOptions,
@@ -12,7 +11,6 @@ use mcp_sdk::{
     types::{CallToolRequest, CallToolResponse, ToolResponseContent},
 };
 use serde_json::Value;
-use tracing::info;
 
 use crate::SessionStore;
 use crate::{

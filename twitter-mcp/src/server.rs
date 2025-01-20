@@ -64,7 +64,7 @@ async fn get_session(args: &HashMap<String, serde_json::Value>) -> Result<Scrape
 
     let session  = "guest_id_ads=v1%3A173719111551730639; kdt=T60Y7Gq1uM5JVTHqobkNQuxyAU2BOKlO8b3Gjzew; att=1-hS68dcUEf9FBYnfPFJKyG8UD1EWI0lHjsAYkU3xp; auth_token=c9d46f0b963dcaf2a2477e5b762c1abdcddabd95; personalization_id=v1_aUq4PsJLBR1VW/Rvsyi4ig==; guest_id_marketing=v1%3A173719111551730639; guest_id=v1%3A173719111551730639; twid=u=1497801936669913089; ct0=08ca694202f67ea16ac905516c64bf91838c6fe9e3f5680e66f1eac6c9d99f81aea56b1bd77964325d63a97dd86bce122b47d779d36221de420ea869fdd5f50fc5b33105373be8e45b695f991e01b3bb";
     let mut scraper = Scraper::new().await?;
-    scraper.set_from_cookie_string(&session).await?;
+    scraper.set_from_cookie_string(session).await?;
     Ok(scraper)
 }
 
@@ -176,12 +176,12 @@ fn register_tools<T: Transport>(server: &mut ServerBuilder<T>) -> Result<()> {
         let password = args["password"].as_str().unwrap().to_string();
 
         let mut scraper = Scraper::new().await?;
-        let session = scraper.login(username, password, None, None).await?;
+        scraper.login(username, password, None, None).await?;
 
         Ok(CallToolResponse {
             content: vec![ToolResponseContent::Text {
                 text: serde_json::to_string(&json!({
-                    "session_string": session
+                    "session_string": ()
                 }))?,
             }],
             is_error: None,

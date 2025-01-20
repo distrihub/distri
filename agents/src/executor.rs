@@ -130,7 +130,7 @@ impl AgentExecutor {
         let mut token_usage = 0;
         let mut calls = vec![request];
 
-        let max_tokens = self.agent_def.model_settings.max_tokens.clone();
+        let max_tokens = self.agent_def.model_settings.max_tokens;
         tracing::debug!("Max tokens limit set to: {}", max_tokens);
 
         while let Some(req) = calls.pop() {
@@ -148,8 +148,7 @@ impl AgentExecutor {
                 AgentError::LLMError(e.to_string())
             })?;
 
-            token_usage =
-                token_usage + response.usage.as_ref().map(|a| a.total_tokens).unwrap_or(0);
+            token_usage += response.usage.as_ref().map(|a| a.total_tokens).unwrap_or(0);
             tracing::debug!("Current token usage: {}", token_usage);
 
             let choice = &response.choices[0];

@@ -14,6 +14,12 @@ pub struct InMemorySessionStore {
     sessions: tokio::sync::RwLock<std::collections::HashMap<String, Session>>,
 }
 
+impl Default for InMemorySessionStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl InMemorySessionStore {
     pub fn new() -> Self {
         Self {

@@ -1,5 +1,4 @@
-use async_trait::async_trait;
-use mcp_sdk::{transport::Transport, types::Tool};
+use mcp_sdk::types::Tool;
 use serde::{Deserialize, Serialize};
 use std::time::SystemTime;
 

@@ -1,7 +1,6 @@
 use crate::{
     db::DbPool,
     models::agent::{Agent, CreateAgentRequest},
-    models::user::User,
 };
 use actix_web::{get, post, web, HttpResponse, Result};
 use diesel::prelude::*;
@@ -39,10 +38,9 @@ pub async fn create_agent(
         .load::<i32>(&mut conn)
         .expect("Error loading users");
 
-    let random_user_id = fake_user_ids
+    let random_user_id = *fake_user_ids
         .choose(&mut rand::thread_rng())
-        .expect("No users found")
-        .clone();
+        .expect("No users found");
 
     let new_agent = web::block(move || {
         diesel::insert_into(agents)
