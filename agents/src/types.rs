@@ -72,6 +72,7 @@ pub struct ToolDefinition {
     pub auth_type: AuthType,
     pub auth_session_key: Option<String>,
     pub mcp_transport: TransportType,
+    pub mcp_server: String,
 }
 
 impl From<&ToolDefinition> for ChatCompletionTool {

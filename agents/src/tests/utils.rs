@@ -52,5 +52,6 @@ pub fn get_twitter_tool() -> ToolDefinition {
         auth_type: AuthType::None,
         auth_session_key: Some("session_string".to_string()),
         mcp_transport: TransportType::Async,
+        mcp_server: "twitter".to_string(),
     }
 }

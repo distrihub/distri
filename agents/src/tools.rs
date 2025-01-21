@@ -20,12 +20,15 @@ use crate::{
 };
 
 async fn async_server(tool_def: ToolDefinition, transport: ServerAsyncTransport) -> Result<()> {
-    let name = tool_def.tool.name.to_string();
-    if name == "get_timeline".to_string() {
-        let server = twitter_mcp::build(transport.clone())?;
+    let mcp_server = tool_def.mcp_server.to_string();
+    if mcp_server == "twitter".to_string() {
+        let server: mcp_sdk::server::Server<ServerAsyncTransport> =
+            twitter_mcp::build(transport.clone())?;
         server.listen().await?;
     } else {
-        return Err(anyhow::anyhow!(format!("Tool: {name} is not found")));
+        return Err(anyhow::anyhow!(format!(
+            "MCP Server: {mcp_server} is not found"
+        )));
     }
     Ok(())
 }
