@@ -371,6 +371,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "34ac096ce696dc2fcabef30516bb13c0a68a11d30131d3df6f04711467681b04"
 
 [[package]]
+name = "app"
+version = "0.1.0"
+dependencies = [
+ "actix-web",
+ "actix-web-lab",
+ "agents",
+ "chrono",
+ "diesel",
+ "dotenv",
+ "env_logger",
+ "firebase-auth",
+ "futures",
+ "r2d2",
+ "rand",
+ "redis",
+ "reqwest 0.12.12",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "twitter-mcp",
+]
+
+[[package]]
 name = "arc-swap"
 version = "1.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -708,30 +732,6 @@ dependencies = [
  "serde_json",
  "time",
  "url",
-]
-
-[[package]]
-name = "core"
-version = "0.1.0"
-dependencies = [
- "actix-web",
- "actix-web-lab",
- "agents",
- "chrono",
- "diesel",
- "dotenv",
- "env_logger",
- "firebase-auth",
- "futures",
- "r2d2",
- "rand",
- "redis",
- "reqwest 0.12.12",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
- "tokio",
- "twitter-mcp",
 ]
 
 [[package]]
