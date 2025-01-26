@@ -1,3 +1,4 @@
+mod agents;
 mod db;
 mod handlers;
 mod logging;

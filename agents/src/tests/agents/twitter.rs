@@ -1,7 +1,7 @@
 use crate::{
     executor::AgentExecutor,
     init_logging,
-    tests::utils::{get_session_store, get_twitter_tool},
+    tests::utils::{get_registry, get_session_store, get_twitter_tool},
     tools::get_tools,
     types::{AgentDefinition, ModelSettings, UserMessage},
 };
@@ -22,6 +22,7 @@ async fn test_twitter_summary() {
     init_logging("debug");
 
     let tool_defs = vec![get_twitter_tool()];
+    let registry = get_registry();
     // Create agent definition with Twitter tool
     let agent_def = AgentDefinition {
         name: "Twitter Agent".to_string(),
@@ -30,9 +31,9 @@ async fn test_twitter_summary() {
         model_settings: ModelSettings::default(),
         tools: tool_defs.clone(),
     };
-    let server_tools = get_tools(tool_defs).await.unwrap();
+    let server_tools = get_tools(tool_defs, registry.clone()).await.unwrap();
 
-    let executor = AgentExecutor::new(agent_def, get_session_store(), server_tools);
+    let executor = AgentExecutor::new(agent_def, registry, get_session_store(), server_tools);
 
     let messages = vec![UserMessage {
         message: "Get my latest tweets and summarize them".to_string(),

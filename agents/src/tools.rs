@@ -14,6 +14,7 @@ use mcp_sdk::{
 };
 use serde_json::{json, Value};
 
+use crate::servers::registry::ServerRegistry;
 use crate::types::{ActionsFilter, ServerTools};
 use crate::SessionStore;
 use crate::{
@@ -21,28 +22,24 @@ use crate::{
     Session,
 };
 
-async fn async_server(tool_def: ToolDefinition, transport: ServerAsyncTransport) -> Result<()> {
-    let mcp_server = tool_def.mcp_server.to_string();
-    if mcp_server == "twitter".to_string() {
-        let server: mcp_sdk::server::Server<ServerAsyncTransport> =
-            twitter_mcp::build(transport.clone())?;
-        server.listen().await?;
-    } else {
-        return Err(anyhow::anyhow!(format!(
-            "MCP Server: {mcp_server} is not found"
-        )));
-    }
-    Ok(())
+async fn async_server(
+    tool_def: ToolDefinition,
+    registry: Arc<ServerRegistry>,
+    transport: ServerAsyncTransport,
+) -> Result<()> {
+    registry.run(tool_def, transport).await
 }
 
 macro_rules! with_transport {
-    ($tool_def:expr, $body:expr) => {
+    ($tool_def:expr,$registry:expr, $body:expr) => {
         match &$tool_def.mcp_transport {
             TransportType::Async => {
                 let tool_def = $tool_def.clone();
+                let registry = $registry.clone();
                 let client_transport = ClientAsyncTransport::new(move |t| {
                     let tool_def = tool_def.clone();
-                    tokio::spawn(async move { async_server(tool_def.clone(), t).await.unwrap() })
+                    let registry = registry.clone();
+                    tokio::spawn(async move { async_server(tool_def, registry, t).await.unwrap() })
                 });
                 client_transport.open().await?;
                 Box::pin(async move { $body(client_transport).await })
@@ -60,48 +57,53 @@ macro_rules! with_transport {
         }
     };
 }
-pub async fn get_tools(definitions: Vec<ToolDefinition>) -> Result<Vec<ServerTools>> {
+pub async fn get_tools(
+    definitions: Vec<ToolDefinition>,
+    registry: Arc<ServerRegistry>,
+) -> Result<Vec<ServerTools>> {
     let mut all_tools = Vec::new();
 
     for tool_def in definitions {
         let name = tool_def.mcp_server.clone();
         let definition = tool_def.clone();
-        let tools: Result<Vec<Tool>> = with_transport!(&tool_def, |transport| async move {
-            let client = ClientBuilder::new(transport).build();
+        let registry = registry.clone();
+        let tools: Result<Vec<Tool>> =
+            with_transport!(&tool_def, registry, |transport| async move {
+                let client = ClientBuilder::new(transport).build();
 
-            // Start the client
-            let client_clone = client.clone();
-            let _client_handle = tokio::spawn(async move { client_clone.start().await });
+                // Start the client
+                let client_clone = client.clone();
+                let _client_handle = tokio::spawn(async move { client_clone.start().await });
 
-            // Get available tools
-            let response = client
-                .request(
-                    "tools/list",
-                    Some(json!({})),
-                    RequestOptions::default().timeout(Duration::from_secs(10)),
-                )
-                .await?;
-            // Parse response into Vec<Tool>
-            let response: ToolsListResponse = serde_json::from_value(response)?;
-            let mut tools = response.tools;
+                // Get available tools
+                let response = client
+                    .request(
+                        "tools/list",
+                        Some(json!({})),
+                        RequestOptions::default().timeout(Duration::from_secs(10)),
+                    )
+                    .await?;
+                // Parse response into Vec<Tool>
+                let response: ToolsListResponse = serde_json::from_value(response)?;
+                let mut tools = response.tools;
 
-            // Filter tools based on actions_filter if specified
-            match &tool_def.actions_filter {
-                ActionsFilter::All => (),
-                ActionsFilter::Selected(selected) => {
-                    tools.retain_mut(|tool| {
-                        let found = selected.iter().find(|(name, _)| *name == tool.name);
-                        if let Some((_, Some(description))) = found.as_ref() {
-                            tool.description = Some(description.clone());
-                        }
-                        found.is_some()
-                    });
+                // Filter tools based on actions_filter if specified
+                match &tool_def.actions_filter {
+                    ActionsFilter::All => (),
+                    ActionsFilter::Selected(selected) => {
+                        tools.retain_mut(|tool| {
+                            let found = selected.iter().find(|(name, _)| *name == tool.name);
+                            if let Some((_, Some(description))) = found.as_ref() {
+                                tool.description = Some(description.clone());
+                            }
+                            found.is_some()
+                        });
+                    }
                 }
-            }
 
-            Ok(tools)
-        })
-        .await;
+                Ok(tools)
+            })
+            .await;
 
         if let Ok(tools) = tools {
             all_tools.push(ServerTools { tools, definition });
@@ -116,6 +118,7 @@ pub async fn get_tools(definitions: Vec<ToolDefinition>) -> Result<Vec<ServerToo
 pub async fn execute_tool(
     tool_call: &ToolCall,
     tool_def: &ToolDefinition,
+    registry: Arc<ServerRegistry>,
     session_store: Option<Arc<Box<dyn SessionStore>>>,
 ) -> Result<String> {
     tracing::info!(
@@ -126,7 +129,7 @@ pub async fn execute_tool(
 
     tracing::debug!("Using transport type: {:?}", tool_def.mcp_transport);
 
-    with_transport!(tool_def, |transport| async move {
+    with_transport!(tool_def, registry, |transport| async move {
         let executor = ToolExecutor::new(transport);
         executor.execute(tool_call, tool_def, session_store).await
     })

@@ -16,7 +16,8 @@ async fn execute_tool_test() {
         tool_name: "get_timeline".to_string(),
         input: "".to_string(),
     };
-    let result = execute_tool(&tool_call, &tool_def, get_session_store())
+    let registry = crate::tests::utils::get_registry();
+    let result = execute_tool(&tool_call, &tool_def, registry, get_session_store())
         .await
         .unwrap();
 
@@ -28,8 +29,8 @@ async fn execute_tool_test() {
 async fn get_tools_test() {
     init_logging("debug");
     let tool_def = get_twitter_tool();
-
-    let server_tools = get_tools(vec![tool_def])
+    let registry = crate::tests::utils::get_registry();
+    let server_tools = get_tools(vec![tool_def], registry)
         .await
         .expect("failed to fetch tools");
 

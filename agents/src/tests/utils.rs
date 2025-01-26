@@ -1,9 +1,12 @@
 use std::sync::Arc;
 
 use crate::{
+    servers::registry::ServerRegistry,
     types::{AuthType, TransportType},
     Session, SessionStore, ToolDefinition,
 };
+
+use mcp_sdk::transport::ServerAsyncTransport;
 
 pub fn get_session_store() -> Option<Arc<Box<dyn SessionStore>>> {
     dotenv::dotenv().ok();
@@ -48,22 +51,8 @@ pub fn get_twitter_tool() -> ToolDefinition {
     }
 }
 
-// pub fn get_twitter_tool() -> ToolDefinition {
-//     ToolDefinition {
-//         tools: vec![mcp_sdk::types::Tool {
-//             name: "get_timeline".to_string(),
-//             description: Some("Get user's home timeline".to_string()),
-//             input_schema: serde_json::json!({
-//                 "type": "object",
-//                 "properties": {
-//                     "count": {"type": "integer", "default": 5}
-//                 },
-//                 "required": []
-//             }),
-//         }],
-//         auth_type: AuthType::None,
-//         auth_session_key: Some("session_string".to_string()),
-//         mcp_transport: TransportType::Async,
-//         mcp_server: "twitter".to_string(),
-//     }
-// }
+pub fn get_registry() -> Arc<ServerRegistry> {
+    let mut registry = ServerRegistry::new();
+    registry.register::<ServerAsyncTransport, _>("twitter".to_string(), twitter_mcp::build);
+    Arc::new(registry)
+}

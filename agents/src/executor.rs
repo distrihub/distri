@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use crate::{
     error::AgentError,
+    servers::registry::ServerRegistry,
     tools::execute_tool,
     types::{ServerTools, ToolCall, UserMessage},
     AgentDefinition, SessionStore,
@@ -20,6 +21,7 @@ use async_openai::{
 pub struct AgentExecutor {
     client: Client<OpenAIConfig>,
     agent_def: AgentDefinition,
+    registry: Arc<ServerRegistry>,
     session_store: Option<Arc<Box<dyn SessionStore>>>,
     server_tools: Vec<ServerTools>,
 }
@@ -33,6 +35,7 @@ fn llm_err(e: impl ToString) -> AgentError {
 impl AgentExecutor {
     pub fn new(
         agent_def: AgentDefinition,
+        registry: Arc<ServerRegistry>,
         session_store: Option<Arc<Box<dyn SessionStore>>>,
         server_tools: Vec<ServerTools>,
     ) -> Self {
@@ -40,6 +43,7 @@ impl AgentExecutor {
         let client = Client::new();
         Self {
             client,
+            registry,
             agent_def,
             session_store,
             server_tools,
@@ -117,12 +121,14 @@ impl AgentExecutor {
 
     async fn handle_tool_calls(
         function_calls: impl Iterator<Item = &ChatCompletionMessageToolCall>,
+        registry: Arc<ServerRegistry>,
         session_store: Option<Arc<Box<dyn SessionStore>>>,
         server_tools: Vec<ServerTools>,
     ) -> Vec<ChatCompletionRequestMessage> {
         futures::future::join_all(function_calls.map(|tool_call| {
             let server_tools = server_tools.clone();
             let session_store = session_store.clone();
+            let registry = registry.clone();
             async move {
                 let id = tool_call.id.clone();
                 let function = tool_call.function.clone();
@@ -138,7 +144,7 @@ impl AgentExecutor {
 
                 let content = match tool_def {
                     Some(server_tool) => {
-                        execute_tool(&tool_call, &server_tool.definition, session_store)
+                        execute_tool(&tool_call, &server_tool.definition, registry, session_store)
                             .await
                             .unwrap_or_else(|err| format!("Error: {}", err.to_string()))
                     }
@@ -209,6 +215,7 @@ impl AgentExecutor {
                         )];
                     let tool_responses = Self::handle_tool_calls(
                         tool_calls.iter(),
+                        self.registry.clone(),
                         self.session_store.clone(),
                         self.server_tools.clone(),
                     )
