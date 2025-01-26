@@ -1,7 +1,8 @@
 [workspace]
 resolver = "2"
 members = ["app", "agents"]
-
+default-members = ["app"]
 [workspace.dependencies]
-mcp-sdk = { git = "https://github.com/distriai/mcp-sdk.git", rev = "22747eeed174f80f6f6c3abc16310071d43dc10c" }
+mcp-sdk = { git = "https://github.com/distriai/mcp-sdk.git", rev = "a36c51fa6f3d40989e5c269c8e5a09efb02303a7" }
 anyhow = "1.0"
+agent-twitter-client = { git = "https://github.com/distriai/agent-twitter-client.git" }

@@ -1,4 +1,3 @@
-use async_openai::types::{ChatCompletionFunctions, ChatCompletionTool};
 use mcp_sdk::types::Tool;
 use serde::{Deserialize, Serialize};
 use std::time::SystemTime;
@@ -67,25 +66,24 @@ pub struct Session {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ActionsFilter {
+    All,
+    Selected(Vec<(String, Option<String>)>),
+}
+
+// This structure is used
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolDefinition {
-    pub tool: Tool,
     pub auth_type: AuthType,
+    pub actions_filter: ActionsFilter,
     pub auth_session_key: Option<String>,
     pub mcp_transport: TransportType,
     pub mcp_server: String,
 }
-
-impl From<&ToolDefinition> for ChatCompletionTool {
-    fn from(tool_def: &ToolDefinition) -> Self {
-        ChatCompletionTool {
-            r#type: async_openai::types::ChatCompletionToolType::Function,
-            function: ChatCompletionFunctions {
-                name: tool_def.tool.name.clone(),
-                description: tool_def.tool.description.clone(),
-                parameters: tool_def.tool.input_schema.clone(),
-            },
-        }
-    }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServerTools {
+    pub definition: ToolDefinition,
+    pub tools: Vec<Tool>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

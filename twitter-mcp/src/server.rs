@@ -8,63 +8,19 @@ use mcp_sdk::types::{
 };
 use serde_json::json;
 use std::collections::HashMap;
-use std::future::Future;
 use tracing::info;
 use url::Url;
 
-// Helper function to run async blocks in sync context
-fn run_async<F, T>(future: F) -> Result<T>
-where
-    F: Future<Output = Result<T>> + Send + 'static,
-    T: Send + 'static,
-{
-    std::thread::spawn(move || {
-        let rt = tokio::runtime::Runtime::new()?;
-        rt.block_on(future)
-    })
-    .join()
-    .map_err(|e| anyhow::anyhow!("Thread panic: {:?}", e))?
-}
-
-// Helper to register tool with async handler
-fn register_async_tool<F, Fut, T>(server: &mut ServerBuilder<T>, tool: Tool, handler: F)
-where
-    F: Fn(CallToolRequest) -> Fut + Send + Sync + Clone + 'static,
-    Fut: Future<Output = Result<CallToolResponse>> + Send + 'static,
-    T: Transport,
-{
-    server.register_tool(tool, move |req: CallToolRequest| {
-        let handler = handler.clone();
-        run_async(async move {
-            let result = handler(req).await;
-            match result {
-                Ok(response) => Ok(response),
-                Err(e) => {
-                    info!("Error handling request: {:#?}", e);
-                    Ok(CallToolResponse {
-                        content: vec![ToolResponseContent::Text {
-                            text: format!("{}", e),
-                        }],
-                        is_error: Some(true),
-                        meta: None,
-                    })
-                }
-            }
-        })
-    })
-}
-
 // Helper to extract session string from arguments
 async fn get_session(args: &HashMap<String, serde_json::Value>) -> Result<Scraper> {
-    let _session = args
+    let session = args
         .get("session_string")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
         .ok_or_else(|| anyhow::anyhow!("Missing or invalid session_string"))?;
 
-    let session  = "guest_id_ads=v1%3A173719111551730639; kdt=T60Y7Gq1uM5JVTHqobkNQuxyAU2BOKlO8b3Gjzew; att=1-hS68dcUEf9FBYnfPFJKyG8UD1EWI0lHjsAYkU3xp; auth_token=c9d46f0b963dcaf2a2477e5b762c1abdcddabd95; personalization_id=v1_aUq4PsJLBR1VW/Rvsyi4ig==; guest_id_marketing=v1%3A173719111551730639; guest_id=v1%3A173719111551730639; twid=u=1497801936669913089; ct0=08ca694202f67ea16ac905516c64bf91838c6fe9e3f5680e66f1eac6c9d99f81aea56b1bd77964325d63a97dd86bce122b47d779d36221de420ea869fdd5f50fc5b33105373be8e45b695f991e01b3bb";
     let mut scraper = Scraper::new().await?;
-    scraper.set_from_cookie_string(session).await?;
+    scraper.set_from_cookie_string(&session).await?;
     Ok(scraper)
 }
 
@@ -74,12 +30,16 @@ pub fn build<T: Transport>(t: T) -> Result<Server<T>> {
             tools: Some(json!({})),
             ..Default::default()
         })
-        .request_handler("resources/list", |_req: ListRequest| Ok(list_resources()))
+        .request_handler("resources/list", |_req: ListRequest| {
+            Box::pin(async move { Ok(list_resources()) })
+        })
         .request_handler("prompts/list", |_req: ListRequest| {
-            Ok(PromptsListResponse {
-                prompts: vec![],
-                next_cursor: None,
-                meta: None,
+            Box::pin(async move {
+                Ok(PromptsListResponse {
+                    prompts: vec![],
+                    next_cursor: None,
+                    meta: None,
+                })
             })
         });
 
@@ -112,7 +72,14 @@ fn register_tools<T: Transport>(server: &mut ServerBuilder<T>) -> Result<()> {
     // Login Tool
     let login_tool = Tool {
         name: "login".to_string(),
-        description: Some("Login to Twitter and get a session string".to_string()),
+        description: Some(
+            r#"
+            Login to Twitter and get a session string; 
+            Only use it if specifically requested. 
+            Otherwise session_string is expected in other tools.
+        "#
+            .to_string(),
+        ),
         input_schema: json!({
             "type": "object",
             "properties": {
@@ -169,79 +136,159 @@ fn register_tools<T: Transport>(server: &mut ServerBuilder<T>) -> Result<()> {
         }),
     };
 
-    // Register login tool
-    register_async_tool(server, login_tool, |req: CallToolRequest| async move {
-        let args = req.arguments.unwrap_or_default();
-        let username = args["username"].as_str().unwrap().to_string();
-        let password = args["password"].as_str().unwrap().to_string();
+    // Register login tool - simplified without register_async_tool
+    server.register_tool(login_tool, |req: CallToolRequest| {
+        Box::pin(async move {
+            let args = req.arguments.unwrap_or_default();
+            let username = args["username"].as_str().unwrap().to_string();
+            let password = args["password"].as_str().unwrap().to_string();
 
-        let mut scraper = Scraper::new().await?;
-        scraper.login(username, password, None, None).await?;
+            let result: Result<CallToolResponse, anyhow::Error> = async {
+                let mut scraper = Scraper::new().await?;
+                scraper.login(username, password, None, None).await?;
 
-        Ok(CallToolResponse {
-            content: vec![ToolResponseContent::Text {
-                text: serde_json::to_string(&json!({
-                    "session_string": ()
-                }))?,
-            }],
-            is_error: None,
-            meta: None,
+                Ok(CallToolResponse {
+                    content: vec![ToolResponseContent::Text {
+                        text: serde_json::to_string(&json!({
+                            "session_string": ()
+                        }))?,
+                    }],
+                    is_error: None,
+                    meta: None,
+                })
+            }
+            .await;
+
+            match result {
+                Ok(response) => Ok(response),
+                Err(e) => {
+                    info!("Error handling request: {:#?}", e);
+                    Ok(CallToolResponse {
+                        content: vec![ToolResponseContent::Text {
+                            text: format!("{}", e),
+                        }],
+                        is_error: Some(true),
+                        meta: None,
+                    })
+                }
+            }
         })
     });
 
     // Register messages tool
-    register_async_tool(server, messages_tool, |req: CallToolRequest| async move {
-        let args = req.arguments.unwrap_or_default();
-        let scraper = get_session(&args).await?;
-        let username = args["username"].as_str().unwrap();
+    server.register_tool(messages_tool, |req: CallToolRequest| {
+        Box::pin(async move {
+            let args = req.arguments.unwrap_or_default();
 
-        let messages = scraper
-            .get_direct_message_conversations(username, None)
-            .await?;
+            let result: Result<CallToolResponse, anyhow::Error> = async {
+                let scraper = get_session(&args).await?;
+                let username = args["username"].as_str().unwrap();
 
-        Ok(CallToolResponse {
-            content: vec![ToolResponseContent::Text {
-                text: serde_json::to_string(&messages)?,
-            }],
-            is_error: None,
-            meta: None,
+                let messages = scraper
+                    .get_direct_message_conversations(username, None)
+                    .await?;
+
+                Ok(CallToolResponse {
+                    content: vec![ToolResponseContent::Text {
+                        text: serde_json::to_string(&messages)?,
+                    }],
+                    is_error: None,
+                    meta: None,
+                })
+            }
+            .await;
+
+            match result {
+                Ok(response) => Ok(response),
+                Err(e) => {
+                    info!("Error handling request: {:#?}", e);
+                    Ok(CallToolResponse {
+                        content: vec![ToolResponseContent::Text {
+                            text: format!("{}", e),
+                        }],
+                        is_error: Some(true),
+                        meta: None,
+                    })
+                }
+            }
         })
     });
 
     // Register profile tool
-    register_async_tool(server, profile_tool, |req: CallToolRequest| async move {
-        let args = req.arguments.unwrap_or_default();
-        let scraper = get_session(&args).await?;
-        let username = args["username"].as_str().unwrap();
+    server.register_tool(profile_tool, |req: CallToolRequest| {
+        Box::pin(async move {
+            let args = req.arguments.unwrap_or_default();
 
-        let profile = scraper.get_profile(username).await?;
+            let result: Result<CallToolResponse, anyhow::Error> = async {
+                let scraper = get_session(&args).await?;
+                let username = args["username"].as_str().unwrap();
 
-        Ok(CallToolResponse {
-            content: vec![ToolResponseContent::Text {
-                text: serde_json::to_string(&profile)?,
-            }],
-            is_error: None,
-            meta: None,
+                let profile = scraper.get_profile(username).await?;
+
+                Ok(CallToolResponse {
+                    content: vec![ToolResponseContent::Text {
+                        text: serde_json::to_string(&profile)?,
+                    }],
+                    is_error: None,
+                    meta: None,
+                })
+            }
+            .await;
+
+            match result {
+                Ok(response) => Ok(response),
+                Err(e) => {
+                    info!("Error handling request: {:#?}", e);
+                    Ok(CallToolResponse {
+                        content: vec![ToolResponseContent::Text {
+                            text: format!("{}", e),
+                        }],
+                        is_error: Some(true),
+                        meta: None,
+                    })
+                }
+            }
         })
     });
 
     // Register timeline tool
-    register_async_tool(server, timeline_tool, |req: CallToolRequest| async move {
-        let args = req.arguments.unwrap_or_default();
-        let scraper = get_session(&args).await?;
-        let count = args.get("count").and_then(|v| v.as_u64()).unwrap_or(10) as i32;
+    server.register_tool(timeline_tool, |req: CallToolRequest| {
+        Box::pin(async move {
+            let args = req.arguments.unwrap_or_default();
 
-        info!("Getting timeline with count: {count}");
-        let timeline = scraper.get_home_timeline(count, vec![]).await?;
-        let timeline = json!({
-            "count": timeline.len(),
-            "first": timeline[0..1]
-        });
-        let text = serde_json::to_string(&timeline)?;
-        Ok(CallToolResponse {
-            content: vec![ToolResponseContent::Text { text }],
-            is_error: None,
-            meta: None,
+            let result: Result<CallToolResponse, anyhow::Error> = async {
+                let scraper = get_session(&args).await?;
+                let count = args.get("count").and_then(|v| v.as_u64()).unwrap_or(10) as i32;
+
+                info!("Getting timeline with count: {count}");
+                let timeline = scraper.get_home_timeline(count, vec![]).await?;
+                let timeline = json!({
+                    "count": timeline.len(),
+                    "first": timeline[0..1]
+                });
+                let text = serde_json::to_string(&timeline)?;
+
+                Ok(CallToolResponse {
+                    content: vec![ToolResponseContent::Text { text }],
+                    is_error: None,
+                    meta: None,
+                })
+            }
+            .await;
+
+            match result {
+                Ok(response) => Ok(response),
+                Err(e) => {
+                    info!("Error handling request: {:#?}", e);
+                    Ok(CallToolResponse {
+                        content: vec![ToolResponseContent::Text {
+                            text: format!("{}", e),
+                        }],
+                        is_error: Some(true),
+                        meta: None,
+                    })
+                }
+            }
         })
     });
 

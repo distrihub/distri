@@ -9,11 +9,13 @@ tokio = { version = "1.0", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 anyhow = { workspace = true }
-agent-twitter-client = "0.1.1"
+agent-twitter-client = { workspace = true }
 async-trait = "0.1"
 tracing-subscriber = "0.3"
 tracing = "0.1"
 url = "2.5.4"
+[dev-dependencies]
+dotenv = "0.15"
 
 [[bin]]
 name = "twitter"

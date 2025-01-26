@@ -1,7 +1,9 @@
+use tracing::info;
+
 use crate::{
     init_logging,
     tests::utils::{get_session_store, get_twitter_tool},
-    tools::execute_tool,
+    tools::{execute_tool, get_tools},
     types::ToolCall,
 };
 
@@ -20,4 +22,22 @@ async fn execute_tool_test() {
 
     println!("{result}");
     assert!(!result.contains("Error"));
+}
+
+#[tokio::test]
+async fn get_tools_test() {
+    init_logging("debug");
+    let tool_def = get_twitter_tool();
+
+    let server_tools = get_tools(vec![tool_def])
+        .await
+        .expect("failed to fetch tools");
+
+    info!("{server_tools:?}");
+    assert!(!server_tools.is_empty(), "Tools list should not be empty");
+    let timeline_tool = server_tools[0]
+        .tools
+        .iter()
+        .find(|t| t.name == "get_timeline");
+    assert!(timeline_tool.is_some(), "get_timeline should be present");
 }

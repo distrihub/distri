@@ -3,16 +3,16 @@ use std::sync::Arc;
 use crate::{
     error::AgentError,
     tools::execute_tool,
-    types::{ToolCall, UserMessage},
+    types::{ServerTools, ToolCall, UserMessage},
     AgentDefinition, SessionStore,
 };
 use async_openai::{
     config::OpenAIConfig,
     types::{
-        ChatCompletionMessageToolCall, ChatCompletionRequestAssistantMessageArgs,
-        ChatCompletionRequestMessage, ChatCompletionRequestSystemMessageArgs,
-        ChatCompletionRequestToolMessage, ChatCompletionRequestUserMessageArgs,
-        CreateChatCompletionRequest,
+        ChatCompletionFunctions, ChatCompletionMessageToolCall,
+        ChatCompletionRequestAssistantMessageArgs, ChatCompletionRequestMessage,
+        ChatCompletionRequestSystemMessageArgs, ChatCompletionRequestToolMessage,
+        ChatCompletionRequestUserMessageArgs, ChatCompletionTool, CreateChatCompletionRequest,
     },
     Client,
 };
@@ -21,6 +21,7 @@ pub struct AgentExecutor {
     client: Client<OpenAIConfig>,
     agent_def: AgentDefinition,
     session_store: Option<Arc<Box<dyn SessionStore>>>,
+    server_tools: Vec<ServerTools>,
 }
 pub const MAX_RETRIES: i32 = 3;
 pub const DEFAULT_MODEL: &str = "gpt-4o-mini";
@@ -33,6 +34,7 @@ impl AgentExecutor {
     pub fn new(
         agent_def: AgentDefinition,
         session_store: Option<Arc<Box<dyn SessionStore>>>,
+        server_tools: Vec<ServerTools>,
     ) -> Self {
         tracing::debug!("Creating new AgentExecutor");
         let client = Client::new();
@@ -40,6 +42,7 @@ impl AgentExecutor {
             client,
             agent_def,
             session_store,
+            server_tools,
         }
     }
 
@@ -55,7 +58,21 @@ impl AgentExecutor {
         CreateChatCompletionRequest {
             model: settings.model.clone(),
             messages,
-            tools: Some(self.agent_def.tools.iter().map(|t| t.into()).collect()),
+            tools: Some(
+                self.server_tools
+                    .iter()
+                    .flat_map(|t| {
+                        t.tools.iter().map(|t| ChatCompletionTool {
+                            r#type: async_openai::types::ChatCompletionToolType::Function,
+                            function: ChatCompletionFunctions {
+                                name: t.name.clone(),
+                                description: t.description.clone(),
+                                parameters: t.input_schema.clone(),
+                            },
+                        })
+                    })
+                    .collect(),
+            ),
             ..Default::default()
         }
     }
@@ -100,11 +117,11 @@ impl AgentExecutor {
 
     async fn handle_tool_calls(
         function_calls: impl Iterator<Item = &ChatCompletionMessageToolCall>,
-        agent_def: &AgentDefinition,
         session_store: Option<Arc<Box<dyn SessionStore>>>,
+        server_tools: Vec<ServerTools>,
     ) -> Vec<ChatCompletionRequestMessage> {
         futures::future::join_all(function_calls.map(|tool_call| {
-            let agent_def = agent_def.clone();
+            let server_tools = server_tools.clone();
             let session_store = session_store.clone();
             async move {
                 let id = tool_call.id.clone();
@@ -112,15 +129,19 @@ impl AgentExecutor {
                 tracing::trace!("Calling tool ({id}) {function:?}");
 
                 let tool_call = Self::map_tool_call(tool_call);
-                let tool_def = agent_def
-                    .tools
-                    .iter()
-                    .find(|t| t.tool.name == tool_call.tool_name);
+                let tool_def = server_tools.iter().find(|t| {
+                    t.tools
+                        .iter()
+                        .find(|tool| tool.name == tool_call.tool_name.to_string())
+                        .is_some()
+                });
 
                 let content = match tool_def {
-                    Some(tool_def) => execute_tool(&tool_call, tool_def, session_store)
-                        .await
-                        .unwrap_or_else(|err| format!("Error: {}", err.to_string())),
+                    Some(server_tool) => {
+                        execute_tool(&tool_call, &server_tool.definition, session_store)
+                            .await
+                            .unwrap_or_else(|err| format!("Error: {}", err.to_string()))
+                    }
                     None => format!("Tool not found {}", tool_call.tool_name),
                 };
 
@@ -188,8 +209,8 @@ impl AgentExecutor {
                         )];
                     let tool_responses = Self::handle_tool_calls(
                         tool_calls.iter(),
-                        &self.agent_def,
                         self.session_store.clone(),
+                        self.server_tools.clone(),
                     )
                     .await;
 

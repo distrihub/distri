@@ -27,3 +27,5 @@ redis = { version = "0.27.2", features = ["connection-manager", "tokio-comp"] }
 firebase-auth = "0.4.3"
 actix-web-lab = "0.23.0"
 rand = "0.8"
+serde_yaml = "0.9"
+agent-twitter-client = { workspace = true }

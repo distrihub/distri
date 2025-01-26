@@ -11,7 +11,7 @@ pub async fn list_agents(pool: web::Data<DbPool>) -> Result<HttpResponse> {
     use crate::schema::agents::dsl::*;
 
     let mut conn = pool.get().expect("Failed to get DB connection");
-    let results = web::block(move || agents.load::<Agent>(&mut conn))
+    let results = web::block(move || agents.select(Agent::as_select()).load(&mut conn))
         .await?
         .map_err(|e| {
             eprintln!("Error loading agents: {}", e);
@@ -31,8 +31,7 @@ pub async fn create_agent(
 
     let mut conn = pool.get().expect("Failed to get DB connection");
 
-    // TODO: Temporary
-    // Get random user from the two fake users
+    // Get random user from the fake users (TODO: Replace with real auth)
     let fake_user_ids: Vec<i32> = users_dsl::users
         .select(users_dsl::id)
         .load::<i32>(&mut conn)
@@ -47,14 +46,8 @@ pub async fn create_agent(
             .values((
                 name.eq(&agent_data.name),
                 description.eq(&agent_data.description),
-                tools.eq(&agent_data.tools),
-                model.eq(&agent_data.model),
-                model_settings.eq(&agent_data.model_settings),
-                provider_name.eq(&agent_data.provider_name),
-                prompt.eq(&agent_data.prompt),
-                avatar.eq(&agent_data.avatar),
+                definition.eq(&agent_data.definition),
                 user_id.eq(random_user_id),
-                tags.eq(&agent_data.tags),
             ))
             .get_result::<Agent>(&mut conn)
     })

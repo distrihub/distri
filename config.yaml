@@ -1,0 +1,15 @@
+port: 3004
+servers:
+  # puppeteer:
+  #   type: stdio
+  #   command: npx
+  #   args:
+  #     - -y
+  #     - "@modelcontextprotocol/server-puppeteer"
+  filesystem:
+    type: stdio
+    command: npx
+    args:
+      - -y
+      - "@modelcontextprotocol/server-filesystem"
+      - .

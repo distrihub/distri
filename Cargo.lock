@@ -273,8 +273,7 @@ checksum = "512761e0bb2578dd7380c6baaa0f4ce03e84f95e960231d1dec8bf4d7d6e2627"
 [[package]]
 name = "agent-twitter-client"
 version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9eaafaf428beb79f140b73c7d71855a1d599bdd18c9ae971e4d01ec0493e8eca"
+source = "git+https://github.com/distriai/agent-twitter-client.git#ff047f875229edddb36e37bd7d43295196cfb5bd"
 dependencies = [
  "async-trait",
  "chrono",
@@ -300,6 +299,7 @@ dependencies = [
  "anyhow",
  "async-openai",
  "async-trait",
+ "dotenv",
  "futures",
  "mcp-sdk",
  "reqwest 0.12.12",
@@ -376,6 +376,7 @@ version = "0.1.0"
 dependencies = [
  "actix-web",
  "actix-web-lab",
+ "agent-twitter-client",
  "agents",
  "chrono",
  "diesel",
@@ -389,6 +390,7 @@ dependencies = [
  "reqwest 0.12.12",
  "serde",
  "serde_json",
+ "serde_yaml",
  "thiserror 1.0.69",
  "tokio",
  "twitter-mcp",
@@ -1899,7 +1901,7 @@ checksum = "0e7465ac9959cc2b1404e8e2367b43684a6d13790fe23056cc8c6c5a6b7bcb94"
 [[package]]
 name = "mcp-sdk"
 version = "0.0.2"
-source = "git+https://github.com/distriai/mcp-sdk.git?rev=22747eeed174f80f6f6c3abc16310071d43dc10c#22747eeed174f80f6f6c3abc16310071d43dc10c"
+source = "git+https://github.com/distriai/mcp-sdk.git?rev=a36c51fa6f3d40989e5c269c8e5a09efb02303a7#a36c51fa6f3d40989e5c269c8e5a09efb02303a7"
 dependencies = [
  "actix-lab",
  "actix-web",
@@ -1914,6 +1916,7 @@ dependencies = [
  "tokio-stream",
  "tracing",
  "url",
+ "uuid",
 ]
 
 [[package]]
@@ -2767,6 +2770,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_yaml"
+version = "0.9.34+deprecated"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6a8b1a1a2ebf674015cc02edccce75287f1a0130d394307b36743c2f5d504b47"
+dependencies = [
+ "indexmap",
+ "itoa",
+ "ryu",
+ "serde",
+ "unsafe-libyaml",
+]
+
+[[package]]
 name = "sha1"
 version = "0.10.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3309,6 +3325,7 @@ dependencies = [
  "agent-twitter-client",
  "anyhow",
  "async-trait",
+ "dotenv",
  "mcp-sdk",
  "serde",
  "serde_json",
@@ -3358,6 +3375,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ebc1c04c71510c7f702b52b7c350734c9ff1295c464a03335b00bb84fc54f853"
 
 [[package]]
+name = "unsafe-libyaml"
+version = "0.2.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "673aac59facbab8a9007c7f6108d11f63b603f7cabff99fabf650fea5c32b861"
+
+[[package]]
 name = "untrusted"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3398,6 +3421,15 @@ name = "utf8_iter"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6c140620e7ffbb22c2dee59cafe6084a59b5ffc27a8859a5f0d494b5d52b6be"
+
+[[package]]
+name = "uuid"
+version = "1.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b3758f5e68192bb96cc8f9b7e2c2cfdabb435499a28499a42f8f984092adad4b"
+dependencies = [
+ "getrandom",
+]
 
 [[package]]
 name = "valuable"
@@ -3548,7 +3580,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

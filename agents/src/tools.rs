@@ -5,14 +5,16 @@ use std::{collections::HashMap, time::Duration};
 
 use anyhow::Result;
 use mcp_sdk::transport::{ClientAsyncTransport, ServerAsyncTransport};
+use mcp_sdk::types::{Tool, ToolsListResponse};
 use mcp_sdk::{
     client::{Client, ClientBuilder},
     protocol::RequestOptions,
     transport::Transport,
     types::{CallToolRequest, CallToolResponse, ToolResponseContent},
 };
-use serde_json::Value;
+use serde_json::{json, Value};
 
+use crate::types::{ActionsFilter, ServerTools};
 use crate::SessionStore;
 use crate::{
     types::{ToolCall, ToolDefinition, TransportType},
@@ -57,6 +59,58 @@ macro_rules! with_transport {
             TransportType::SSE { .. } => unimplemented!("SSE transport not implemented"),
         }
     };
+}
+pub async fn get_tools(definitions: Vec<ToolDefinition>) -> Result<Vec<ServerTools>> {
+    let mut all_tools = Vec::new();
+
+    for tool_def in definitions {
+        let name = tool_def.mcp_server.clone();
+        let definition = tool_def.clone();
+        let tools: Result<Vec<Tool>> = with_transport!(&tool_def, |transport| async move {
+            let client = ClientBuilder::new(transport).build();
+
+            // Start the client
+            let client_clone = client.clone();
+            let _client_handle = tokio::spawn(async move { client_clone.start().await });
+
+            // Get available tools
+            let response = client
+                .request(
+                    "tools/list",
+                    Some(json!({})),
+                    RequestOptions::default().timeout(Duration::from_secs(10)),
+                )
+                .await?;
+            // Parse response into Vec<Tool>
+            let response: ToolsListResponse = serde_json::from_value(response)?;
+            let mut tools = response.tools;
+
+            // Filter tools based on actions_filter if specified
+            match &tool_def.actions_filter {
+                ActionsFilter::All => (),
+                ActionsFilter::Selected(selected) => {
+                    tools.retain_mut(|tool| {
+                        let found = selected.iter().find(|(name, _)| *name == tool.name);
+                        if let Some((_, Some(description))) = found.as_ref() {
+                            tool.description = Some(description.clone());
+                        }
+                        found.is_some()
+                    });
+                }
+            }
+
+            Ok(tools)
+        })
+        .await;
+
+        if let Ok(tools) = tools {
+            all_tools.push(ServerTools { tools, definition });
+        } else {
+            tracing::error!("Failed to get tools for mcp_server: {}", name);
+        }
+    }
+
+    Ok(all_tools)
 }
 
 pub async fn execute_tool(
