@@ -1,8 +1,40 @@
+# API Examples
+
+## Authentication
+
+First, login to get your access token:
 
 ```bash
-curl -X GET http://localhost:8080/agents
+# Login and get bearer token
+curl -X POST http://localhost:8080/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "user@example.com", 
+    "password": "your_password"
+  }'
 
-curl -X POST http://localhost:8080/agents \
+# Sample response:
+# {
+#   "token": "eyJhbGciOiJIUzI1NiIs..."
+# }
+```
+
+## Working with Agents 
+
+Use the bearer token in subsequent requests:
+
+```bash
+# Get profile
+curl -X GET http://localhost:8080/api/profile \
+  -H "Authorization: Bearer 24550843-675d-4b41-90a9-d89d4209d16e"
+
+# Get list of agents
+curl -X GET http://localhost:8080/api/agents \
+  -H "Authorization: Bearer 24550843-675d-4b41-90a9-d89d4209d16e"
+
+# Create a new agent
+curl -X POST http://localhost:8080/api/agents \
+  -H "Authorization: Bearer YOUR_TOKEN_HERE" \
   -H "Content-Type: application/json" \
   -d '{
     "name": "My Agent",
@@ -14,21 +46,23 @@ curl -X POST http://localhost:8080/agents \
     "prompt": "You are a helpful assistant"
   }'
 
+# Get a specific agent
+curl -X GET http://localhost:8080/agents/123 \
+  -H "Authorization: Bearer YOUR_TOKEN_HERE"
+```
 
-  cat << 'EOF' |  npx -y @modelcontextprotocol/server-filesystem .
+## File System Tools
+
+```bash
+cat << 'EOF' |  npx -y @modelcontextprotocol/server-filesystem .
 {"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "list_directory", "arguments": {"path": "."}}, "id": 1}
 EOF
-  ```
+```
 
-  ### Workflow
-
+### Workflow
 
 - Analyse Profile
-
-- Get Trends
-
-- question/answer
-
+- Get Trends 
+- Question/Answer
 - Activity
   - Frequency
-  

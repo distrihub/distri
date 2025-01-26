@@ -1,53 +1,99 @@
-use actix_web::dev::{Service, ServiceRequest, ServiceResponse, Transform};
-use actix_web::{Error, HttpMessage};
-use firebase_auth::FirebaseAuth;
-use futures::future::{ready, LocalBoxFuture, Ready};
-use std::rc::Rc;
+use actix_web::{
+    dev::{forward_ready, Service, ServiceRequest, ServiceResponse, Transform},
+    web, Error, HttpMessage,
+};
+use agent_twitter_client::models::Profile;
+use diesel::prelude::*;
+use futures_util::future::LocalBoxFuture;
+use std::{
+    future::{ready, Ready},
+    rc::Rc,
+};
 
-pub struct FirebaseAuthMiddleware {
-    auth: Rc<FirebaseAuth>,
+use crate::{db::DbPool, handlers::x::validate_session, models::session::Session};
+
+pub struct AuthMiddleware;
+
+#[derive(Clone)]
+pub struct AuthSession {
+    pub profile: Profile,
+    pub session: Session,
 }
 
-impl FirebaseAuthMiddleware {
-    pub fn new(auth: FirebaseAuth) -> Self {
-        Self {
-            auth: Rc::new(auth),
-        }
-    }
-}
-
-impl<S> Transform<S, ServiceRequest> for FirebaseAuthMiddleware
+impl<S, B> Transform<S, ServiceRequest> for AuthMiddleware
 where
-    S: Service<ServiceRequest, Response = ServiceResponse, Error = Error> + 'static,
+    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error> + 'static,
+    S::Future: 'static,
+    B: 'static,
 {
-    type Response = ServiceResponse;
+    type Response = ServiceResponse<B>;
     type Error = Error;
-    type Transform = FirebaseAuthMiddlewareService<S>;
     type InitError = ();
+    type Transform = AuthMiddlewareService<S>;
     type Future = Ready<Result<Self::Transform, Self::InitError>>;
 
     fn new_transform(&self, service: S) -> Self::Future {
-        ready(Ok(FirebaseAuthMiddlewareService {
-            service,
-            auth: self.auth.clone(),
+        ready(Ok(AuthMiddlewareService {
+            service: Rc::new(service),
         }))
     }
 }
 
-pub struct FirebaseAuthMiddlewareService<S> {
-    service: S,
-    auth: Rc<FirebaseAuth>,
+#[derive(Clone)]
+pub struct AuthMiddlewareService<S> {
+    service: Rc<S>,
 }
 
-impl<S> Service<ServiceRequest> for FirebaseAuthMiddlewareService<S>
+impl<S, B> Service<ServiceRequest> for AuthMiddlewareService<S>
 where
-    S: Service<ServiceRequest, Response = ServiceResponse, Error = Error> + 'static,
+    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error> + 'static,
+    S::Future: 'static,
+    B: 'static,
 {
-    type Response = ServiceResponse;
+    type Response = ServiceResponse<B>;
     type Error = Error;
     type Future = LocalBoxFuture<'static, Result<Self::Response, Self::Error>>;
 
+    forward_ready!(service);
+
     fn call(&self, req: ServiceRequest) -> Self::Future {
-        // ... implement token verification logic
+        let service = Rc::clone(&self.service);
+        Box::pin(async move {
+            let pool = req.app_data::<web::Data<DbPool>>().unwrap().clone();
+
+            // First try to get token from Authorization header, then from cookie
+            let token = req
+                .headers()
+                .get("Authorization")
+                .and_then(|h| h.to_str().ok())
+                .and_then(|s| s.strip_prefix("Bearer ").map(|s| s.to_string()))
+                .or_else(|| req.cookie("auth_token").map(|c| c.value().to_string()));
+
+            if let Some(token) = token {
+                let mut conn = pool.get().expect("couldn't get db connection from pool");
+
+                // Verify session token
+                use crate::schema::sessions::dsl::*;
+                match sessions
+                    .filter(session_token.eq(token))
+                    .filter(expires_at.gt(diesel::dsl::now))
+                    .select(Session::as_select())
+                    .first(&mut conn)
+                {
+                    Ok(session) => {
+                        let auth_session = validate_session(session).await.map_err(|e| {
+                            actix_web::error::ErrorInternalServerError(e.to_string())
+                        })?;
+                        req.extensions_mut().insert(auth_session);
+                        service.call(req).await
+                    }
+                    Err(_) => Err(actix_web::error::ErrorUnauthorized("Invalid session")),
+                }
+            } else {
+                Err(actix_web::error::ErrorUnauthorized(
+                    "No session token provided",
+                ))
+            }
+        })
     }
-} 
+}

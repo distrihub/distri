@@ -6,12 +6,12 @@ use serde::{Deserialize, Serialize};
 #[diesel(table_name = crate::schema::users)]
 pub struct User {
     pub id: i32,
-    pub firebase_id: String,
+    pub twitter_id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub location: Option<String>,
+    pub twitter_url: Option<String>,
+    pub profile_image_url: Option<String>,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CreateUserRequest {
-    pub firebase_id: String,
 }
