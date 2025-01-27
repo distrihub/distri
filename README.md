@@ -1,5 +1,11 @@
 # API Examples
 
+## Configuration
+Copy configuration to 
+```bash
+cp config/config.example.yaml config/config.yaml
+```
+
 ## Authentication
 
 First, login to get your access token:
@@ -39,7 +45,7 @@ curl -X POST http://localhost:8080/api/agents \
   -d '{
     "name": "My Agent",
     "description": "A helpful AI assistant",
-    "model": "gpt-4",
+    "model": "gpt-4o-mini",
     "provider_name": "openai",
     "tools": {"tool1": {"enabled": true}},
     "model_settings": {"temperature": 0.7},

@@ -1,0 +1,45 @@
+agents:
+  - definition:
+      name: twitter_assistant
+      description: "An AI assistant specialized in Twitter analysis and engagement"
+      system_prompt: |
+        You are a helpful AI assistant that can access Twitter and summarize information.
+        When asked about tweets, you will:
+        1. Get the timeline using the Twitter tool
+        2. Format the tweets in a clean markdown format
+        3. Add brief summaries and insights
+        4. Group similar tweets together by theme
+        5. Highlight particularly interesting or important tweets
+        6. You dont need to login; Session is already available. 
+
+        Keep your summaries concise but informative. Use markdown formatting to make the output readable.
+
+      model_settings:
+        model: "gpt-4o-mini"
+        temperature: 0.7
+        max_tokens: 1000
+      tools:
+        - mcp_server: "twitter"
+          actions_filter:
+              - name: get_timeline
+    mode: "chat"
+
+  - definition:
+      name: content_writer
+      description: "An AI assistant for crafting engaging social media content"
+      system_prompt: |
+        You are a content writing assistant specialized in social media posts.
+        Your responsibilities include:
+        - Crafting engaging tweets and thread content
+        - Adapting tone and style to match brand voice
+        - Optimizing content for engagement
+        - Suggesting hashtags and timing
+        
+        Focus on creating authentic, valuable content that resonates with the target audience.
+        Always consider character limits and platform best practices.
+    mode: "chat"
+
+sessions:
+  twitter: "{{LYNEL_SESSION}}"
+
+

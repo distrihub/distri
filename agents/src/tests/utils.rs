@@ -1,12 +1,10 @@
 use std::sync::Arc;
 
 use crate::{
-    servers::registry::ServerRegistry,
-    types::{AuthType, TransportType},
-    Session, SessionStore, ToolDefinition,
+    servers::registry::{ServerMetadata, ServerRegistry, ServerTrait},
+    types::TransportType,
+    McpSession, SessionStore, ToolDefinition,
 };
-
-use mcp_sdk::transport::ServerAsyncTransport;
 
 pub fn get_session_store() -> Option<Arc<Box<dyn SessionStore>>> {
     dotenv::dotenv().ok();
@@ -24,19 +22,11 @@ pub struct StaticSessionStore {
 
 #[async_trait::async_trait]
 impl SessionStore for StaticSessionStore {
-    async fn save_session(&self, _tool_name: &str, _session: Session) -> anyhow::Result<()> {
-        Ok(())
-    }
-
-    async fn get_session(&self, _tool_name: &str) -> anyhow::Result<Option<Session>> {
-        Ok(Some(Session {
+    async fn get_session(&self, _tool_name: &str) -> anyhow::Result<Option<McpSession>> {
+        Ok(Some(McpSession {
             token: self.session_key.clone(),
             expiry: None,
         }))
-    }
-
-    async fn delete_session(&self, _tool_name: &str) -> anyhow::Result<()> {
-        Ok(())
     }
 }
 
@@ -44,15 +34,22 @@ impl SessionStore for StaticSessionStore {
 pub fn get_twitter_tool() -> ToolDefinition {
     ToolDefinition {
         actions_filter: crate::types::ActionsFilter::All,
-        auth_type: AuthType::None,
-        auth_session_key: Some("session_string".to_string()),
-        mcp_transport: TransportType::Async,
         mcp_server: "twitter".to_string(),
     }
 }
 
 pub fn get_registry() -> Arc<ServerRegistry> {
     let mut registry = ServerRegistry::new();
-    registry.register::<ServerAsyncTransport, _>("twitter".to_string(), twitter_mcp::build);
+    registry.register(
+        "twitter".to_string(),
+        ServerMetadata {
+            auth_session_key: Some("session_string".to_string()),
+            mcp_transport: TransportType::Async,
+            builder: Arc::new(|transport| {
+                let server = twitter_mcp::build(transport)?;
+                Ok(Box::new(server) as Box<dyn ServerTrait>)
+            }),
+        },
+    );
     Arc::new(registry)
 }

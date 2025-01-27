@@ -10,6 +10,7 @@ pub fn init_logging(level: &str) {
         .unwrap_or_else(|_| EnvFilter::new(level))
         // Filter out noisy hyper logs
         .add_directive("hyper=off".parse().unwrap())
+        .add_directive("rustyline=off".parse().unwrap())
         .add_directive("h2=off".parse().unwrap())
         .add_directive("rustls=off".parse().unwrap());
 

@@ -14,32 +14,25 @@ use mcp_sdk::{
 };
 use serde_json::{json, Value};
 
-use crate::servers::registry::ServerRegistry;
+use crate::servers::registry::{ServerMetadata, ServerRegistry};
+use crate::types::TransportType;
 use crate::types::{ActionsFilter, ServerTools};
+use crate::types::{ToolCall, ToolDefinition};
 use crate::SessionStore;
-use crate::{
-    types::{ToolCall, ToolDefinition, TransportType},
-    Session,
-};
 
-async fn async_server(
-    tool_def: ToolDefinition,
-    registry: Arc<ServerRegistry>,
-    transport: ServerAsyncTransport,
-) -> Result<()> {
-    registry.run(tool_def, transport).await
+async fn async_server(metadata: ServerMetadata, transport: ServerAsyncTransport) -> Result<()> {
+    let server = (metadata.builder)(transport)?;
+    server.listen().await
 }
 
 macro_rules! with_transport {
-    ($tool_def:expr,$registry:expr, $body:expr) => {
-        match &$tool_def.mcp_transport {
+    ($metadata:expr, $body:expr) => {
+        match &$metadata.mcp_transport {
             TransportType::Async => {
-                let tool_def = $tool_def.clone();
-                let registry = $registry.clone();
+                let metadata = $metadata.clone();
                 let client_transport = ClientAsyncTransport::new(move |t| {
-                    let tool_def = tool_def.clone();
-                    let registry = registry.clone();
-                    tokio::spawn(async move { async_server(tool_def, registry, t).await.unwrap() })
+                    let metadata = metadata.clone();
+                    tokio::spawn(async move { async_server(metadata, t).await.unwrap() })
                 });
                 client_transport.open().await?;
                 Box::pin(async move { $body(client_transport).await })
@@ -64,54 +57,71 @@ pub async fn get_tools(
     let mut all_tools = Vec::new();
 
     for tool_def in definitions {
-        let name = tool_def.mcp_server.clone();
+        let mcp_server = tool_def.mcp_server.clone();
         let definition = tool_def.clone();
         let registry = registry.clone();
-        let tools: Result<Vec<Tool>> =
-            with_transport!(&tool_def, registry, |transport| async move {
-                let client = ClientBuilder::new(transport).build();
+        let metadata = registry
+            .servers
+            .get(&mcp_server)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("MCP Server: {} is not found", mcp_server))?;
+        let mcp_server_name = mcp_server.clone();
+        let tools: Result<Vec<Tool>> = with_transport!(metadata, |transport| async move {
+            let client = ClientBuilder::new(transport).build();
 
-                // Start the client
-                let client_clone = client.clone();
-                let _client_handle = tokio::spawn(async move { client_clone.start().await });
+            // Start the client
+            let client_clone = client.clone();
+            let _client_handle = tokio::spawn(async move { client_clone.start().await });
 
-                // Get available tools
-                let response = client
-                    .request(
-                        "tools/list",
-                        Some(json!({})),
-                        RequestOptions::default().timeout(Duration::from_secs(10)),
-                    )
-                    .await?;
-                // Parse response into Vec<Tool>
-                let response: ToolsListResponse = serde_json::from_value(response)?;
-                let mut tools = response.tools;
+            // Get available tools
+            let response = client
+                .request(
+                    "tools/list",
+                    Some(json!({})),
+                    RequestOptions::default().timeout(Duration::from_secs(10)),
+                )
+                .await?;
+            // Parse response into Vec<Tool>
+            let response: ToolsListResponse = serde_json::from_value(response)?;
+            let mut tools = response.tools;
 
-                // Filter tools based on actions_filter if specified
-                match &tool_def.actions_filter {
-                    ActionsFilter::All => (),
-                    ActionsFilter::Selected(selected) => {
-                        tools.retain_mut(|tool| {
-                            let found = selected.iter().find(|(name, _)| *name == tool.name);
-                            if let Some((_, Some(description))) = found.as_ref() {
-                                tool.description = Some(description.clone());
-                            }
-                            found.is_some()
-                        });
-                    }
+            let total_tools = tools.len();
+
+            // Filter tools based on actions_filter if specified
+            match &tool_def.actions_filter {
+                ActionsFilter::All => {
+                    tracing::info!("Loading all {} tools from {}", total_tools, mcp_server_name);
                 }
+                ActionsFilter::Selected(selected) => {
+                    let before_count = tools.len();
+                    tools.retain_mut(|tool| {
+                        let found = selected.iter().find(|t| *t.name == tool.name);
+                        if let Some(Some(d)) = found.as_ref().map(|t| t.description.as_ref()) {
+                            tool.description = Some(d.clone());
+                        }
+                        found.is_some()
+                    });
+                    tracing::info!(
+                        "Filtered tools for {}: {}/{} tools selected",
+                        mcp_server_name,
+                        tools.len(),
+                        before_count
+                    );
+                }
+            }
 
-                Ok(tools)
-            })
-            .await;
+            Ok(tools)
+        })
+        .await;
 
         if let Ok(tools) = tools {
             all_tools.push(ServerTools { tools, definition });
         } else {
-            tracing::error!("Failed to get tools for mcp_server: {}", name);
+            tracing::error!("Failed to get tools for mcp_server: {}", mcp_server);
         }
     }
 
+    tracing::info!("Loaded {} tool definitions in total", all_tools.len());
     Ok(all_tools)
 }
 
@@ -126,12 +136,19 @@ pub async fn execute_tool(
         tool_call.tool_name,
         tool_call.tool_id
     );
+    let mcp_server = &tool_def.mcp_server;
+    let metadata = registry
+        .servers
+        .get(&tool_def.mcp_server)
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("MCP Server: {} is not found", mcp_server))?;
+    tracing::debug!("Using transport type: {:?}", metadata.mcp_transport);
 
-    tracing::debug!("Using transport type: {:?}", tool_def.mcp_transport);
-
-    with_transport!(tool_def, registry, |transport| async move {
+    with_transport!(metadata, |transport| async move {
         let executor = ToolExecutor::new(transport);
-        executor.execute(tool_call, tool_def, session_store).await
+        executor
+            .execute(tool_call, mcp_server, &metadata, session_store)
+            .await
     })
     .await
 }
@@ -151,11 +168,12 @@ impl<T: Transport + Clone> ToolExecutor<T> {
     pub async fn execute(
         &self,
         tool_call: &ToolCall,
-        tool_def: &ToolDefinition,
+        mcp_server: &str,
+        metadata: &ServerMetadata,
         session_store: Option<Arc<Box<dyn SessionStore>>>,
     ) -> Result<String> {
         let name = tool_call.tool_name.clone();
-        tracing::info!("Executing tool: {name}");
+        tracing::info!("Executing tool: {name}, mcp_server: {mcp_server}");
 
         tracing::debug!("Parsing tool arguments: {}", tool_call.input);
         let mut args: HashMap<String, Value> =
@@ -163,12 +181,19 @@ impl<T: Transport + Clone> ToolExecutor<T> {
 
         // Insert session into arguments if available
         if let Some(store) = session_store {
-            tracing::debug!("Attempting to retrieve session for tool: {}", name);
-            if let Some(session) = store.get_session(&name).await? {
-                if let Some(session_key) = &tool_def.auth_session_key {
-                    tracing::debug!("Injecting session data for tool: {}", name);
+            tracing::debug!(
+                "Attempting to retrieve session for mcp_server: {}",
+                mcp_server
+            );
+            if let Some(session) = store.get_session(&mcp_server).await? {
+                if let Some(session_key) = &metadata.auth_session_key {
+                    tracing::debug!("Injecting session data for mcp_server: {}", mcp_server);
                     args.insert(session_key.clone(), Value::String(session.token.clone()));
+                } else {
+                    tracing::warn!("auth_session_key not provided: {}", mcp_server);
                 }
+            } else {
+                tracing::debug!("no session provided for tool: {}", mcp_server);
             }
         }
 
@@ -216,27 +241,5 @@ impl<T: Transport + Clone> ToolExecutor<T> {
 
         tracing::info!("Tool execution completed successfully");
         Ok(text)
-    }
-}
-
-// Helper functions for transport creation
-impl ToolDefinition {
-    pub async fn inject_session(
-        &self,
-        params: &mut serde_json::Value,
-        session: &Session,
-    ) -> anyhow::Result<()> {
-        match (self.auth_session_key.as_ref(), params) {
-            (Some(session_key), Value::Object(map)) => {
-                map.insert(
-                    session_key.to_string(),
-                    serde_json::Value::String(session.token.clone()),
-                );
-                Ok(())
-            }
-            _ => Err(anyhow::anyhow!(
-                "session_key is missing or its not a valid object"
-            )),
-        }
     }
 }

@@ -1,15 +1,40 @@
 use std::sync::Arc;
 
-use agents::servers::{registry::ServerRegistry, tavily};
-use mcp_sdk::transport::ServerAsyncTransport;
+use agents::{
+    servers::{
+        registry::{ServerMetadata, ServerRegistry, ServerTrait},
+        tavily,
+    },
+    types::TransportType,
+};
 
-pub fn init_registry() -> Arc<ServerRegistry> {
+pub fn _init_registry() -> Arc<ServerRegistry> {
     let server_registry = ServerRegistry::new();
     let mut registry = server_registry;
 
-    registry.register::<ServerAsyncTransport, _>("twitter".to_string(), twitter_mcp::build);
+    registry.register(
+        "twitter".to_string(),
+        ServerMetadata {
+            auth_session_key: Some("session_string".to_string()),
+            mcp_transport: TransportType::Async,
+            builder: Arc::new(|transport| {
+                let server = twitter_mcp::build(transport)?;
+                Ok(Box::new(server) as Box<dyn ServerTrait>)
+            }),
+        },
+    );
 
-    registry.register::<ServerAsyncTransport, _>("web_search".to_string(), tavily::build);
+    registry.register(
+        "web_search".to_string(),
+        ServerMetadata {
+            auth_session_key: Some("session_string".to_string()),
+            mcp_transport: TransportType::Async,
+            builder: Arc::new(|transport| {
+                let server = tavily::build(transport)?;
+                Ok(Box::new(server) as Box<dyn ServerTrait>)
+            }),
+        },
+    );
 
     Arc::new(registry)
 }
