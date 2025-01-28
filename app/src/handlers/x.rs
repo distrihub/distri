@@ -59,15 +59,15 @@ async fn login_create_user(
         e
     })?;
 
-    warn!("Using LYNEL_SESSION...Remove in actual usaae");
-    let cookie_string = std::env::var("LYNEL_SESSION").expect("LYNEL_SESSION must be set");
-    scraper.set_from_cookie_string(&cookie_string).await?;
-    // scraper
-    //     .login(req.username.clone(), req.password.clone(), None, None)
-    //     .await?;
+    // warn!("Using LYNEL_SESSION...Remove in actual usaae");
+    // let cookie_string = std::env::var("LYNEL_SESSION").expect("LYNEL_SESSION must be set");
+    // scraper.set_from_cookie_string(&cookie_string).await?;
+    scraper
+        .login(req.username.clone(), req.password.clone(), None, None)
+        .await?;
 
-    // let cookie_string = scraper.get_cookie_string().await?;
-    // info!("Successfully obtained cookie string");
+    let cookie_string = scraper.get_cookie_string().await?;
+    info!("Successfully obtained cookie string");
 
     let profile = scraper.me().await?;
     info!("Retrieved profile for user: {}", profile.name);
