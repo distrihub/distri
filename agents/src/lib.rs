@@ -1,10 +1,10 @@
 pub mod error;
 pub mod executor;
-pub mod session;
+pub mod store;
 pub mod tools;
 pub mod types;
 pub use error::AgentError;
-pub use session::{InMemorySessionStore, SessionStore};
+pub use store::{InMemorySessionStore, SessionStore};
 pub use types::{AgentDefinition, McpSession, ModelSettings, ToolDefinition};
 pub mod cli;
 mod logging;

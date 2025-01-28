@@ -1,26 +1,44 @@
 mod cli;
 mod run;
-use agents::{init_logging, servers::registry::init_registry, AgentDefinition};
+use agents::{
+    init_logging,
+    servers::{
+        memory::FileMemory,
+        registry::{init_registry, ServerMetadata},
+    },
+    AgentDefinition,
+};
 use anyhow::Result;
 use clap::Parser;
 use cli::{Cli, Commands};
 use dotenv::dotenv;
 use regex;
-use run::{chat, session::get_session_store};
-use std::collections::HashMap;
-use std::env;
+use run::{chat, event, session::get_session_store};
+use std::{collections::HashMap, fmt::Debug};
+use std::{env, sync::Arc};
+use tokio::sync::Mutex;
 use tracing::{debug, info};
 
 #[derive(Debug, serde::Deserialize)]
 pub struct AgentConfig {
     pub definition: AgentDefinition,
-    pub mode: cli::Mode,
+    pub workflow: cli::RunWorkflow,
 }
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(serde::Deserialize)]
 pub struct Configuration {
     pub agents: Vec<AgentConfig>,
     pub sessions: HashMap<String, String>,
+    #[serde(default)]
+    pub servers: Vec<ServerMetadata>,
+}
+impl Debug for Configuration {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Configuration")
+            .field("agents", &self.agents)
+            .field("sessions", &self.sessions)
+            .finish()
+    }
 }
 
 fn load_config(config_path: &str) -> Result<Configuration> {
@@ -62,6 +80,10 @@ async fn main() -> Result<()> {
     // Initialize logging
     init_logging("info");
 
+    // Create a .distri folder
+    let path = std::path::PathBuf::from(".distri");
+    std::fs::create_dir_all(&path).unwrap_or_default();
+
     let cli = Cli::parse();
 
     // Load configuration
@@ -70,9 +92,9 @@ async fn main() -> Result<()> {
     // Handle commands
     match cli.command {
         Commands::List => {
-            println!("Available agents:");
+            info!("Available agents:");
             for agent in &config.agents {
-                println!("- {} ({})", agent.definition.name, agent.mode);
+                info!("- {} ({})", agent.definition.name, agent.workflow);
             }
         }
         Commands::Run { agent } => {
@@ -85,13 +107,24 @@ async fn main() -> Result<()> {
 
             let sessions = config.sessions;
             let session_store = get_session_store(sessions);
-            let registry = init_registry();
-            match &agent_config.mode {
-                cli::Mode::Chat => chat(&agent_config.definition, registry, session_store).await,
-                cli::Mode::Schedule => todo!(),
+            let memory = init_memory(&agent).await?;
+            let registry = init_registry(memory).await;
+
+            match &agent_config.workflow {
+                cli::RunWorkflow::Chat => {
+                    chat::run(&agent_config.definition, registry, session_store).await
+                }
+                mode => event::run(&agent_config.definition, registry, session_store, mode).await,
             }?;
         }
     }
 
     Ok(())
+}
+
+pub async fn init_memory(agent: &str) -> Result<Arc<Mutex<FileMemory>>> {
+    let mut memory_path = std::path::PathBuf::from(".distri");
+    memory_path.push(format!("{agent}.memory"));
+    let memory = FileMemory::new(memory_path).await?;
+    Ok(Arc::new(Mutex::new(memory)))
 }

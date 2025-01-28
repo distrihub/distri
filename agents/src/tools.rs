@@ -21,7 +21,11 @@ use crate::types::{ToolCall, ToolDefinition};
 use crate::SessionStore;
 
 async fn async_server(metadata: ServerMetadata, transport: ServerAsyncTransport) -> Result<()> {
-    let server = (metadata.builder)(transport)?;
+    let builder = metadata
+        .builder
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("Server builder not found"))?;
+    let server = (builder)(&metadata, transport)?;
     server.listen().await
 }
 
@@ -222,7 +226,7 @@ impl<T: Transport + Clone> ToolExecutor<T> {
 
         let response: CallToolResponse = serde_json::from_value(response)?;
 
-        tracing::debug!("Processing tool response");
+        tracing::debug!("Tool {name}: Processing tool response");
         tracing::debug!("{:?}", response);
         let text = response
             .content
@@ -232,14 +236,11 @@ impl<T: Transport + Clone> ToolExecutor<T> {
                 _ => None,
             })
             .ok_or_else(|| {
-                tracing::error!("No text content in tool response");
-                anyhow::anyhow!("No text content in response")
+                tracing::error!("Tool {name}: No text content in tool response");
+                anyhow::anyhow!("Tool {name}: No text content in response")
             })?;
-
-        tracing::debug!("Cleaning up tool client");
         client_handle.abort();
-
-        tracing::info!("Tool execution completed successfully");
+        tracing::debug!("Tool {name}: execution completed successfully");
         Ok(text)
     }
 }

@@ -7,7 +7,7 @@ use agents::{
     types::UserMessage, AgentDefinition, SessionStore,
 };
 
-pub async fn chat(
+pub async fn run(
     agent: &AgentDefinition,
     registry: Arc<ServerRegistry>,
     session_store: Option<Arc<Box<dyn SessionStore>>>,
@@ -19,13 +19,12 @@ pub async fn chat(
     // Create readline editor with history
     let mut rl = DefaultEditor::new()?;
 
-    // Set up history file in user's home directory
-    let history_file = dirs::home_dir()
-        .map(|mut path| {
-            path.push(".distri_history");
-            path
-        })
-        .unwrap_or_else(|| PathBuf::from(".distri_history"));
+    // Set up history file in .distri folder in current directory
+    let history_file = {
+        let path = PathBuf::from(".distri");
+        std::fs::create_dir_all(&path).unwrap_or_default();
+        path.join("history")
+    };
 
     // Load history from file
     if history_file.exists() {

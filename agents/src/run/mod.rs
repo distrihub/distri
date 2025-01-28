@@ -1,3 +1,3 @@
-mod chat;
-pub use chat::chat;
+pub mod chat;
+pub mod event;
 pub mod session;

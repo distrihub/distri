@@ -171,9 +171,12 @@ impl AgentExecutor {
         );
         let mut token_usage = 0;
         let mut calls = vec![request];
+        let mut iterations = 0;
 
         let max_tokens = self.agent_def.model_settings.max_tokens;
+        let max_iterations = self.agent_def.model_settings.max_iterations;
         tracing::debug!("Max tokens limit set to: {}", max_tokens);
+        tracing::debug!("Max iterations per run set to: {}", max_iterations);
 
         while let Some(req) = calls.pop() {
             if token_usage > max_tokens {
@@ -182,6 +185,14 @@ impl AgentExecutor {
                     "Max tokens reached: {max_tokens}",
                 )));
             }
+
+            if iterations >= max_iterations {
+                tracing::warn!("Max iterations limit reached: {}", max_iterations);
+                return Err(AgentError::LLMError(format!(
+                    "Max iterations reached: {max_iterations}",
+                )));
+            }
+            iterations += 1;
 
             tracing::debug!("Sending chat completion request");
             let input_messages = req.messages.clone();

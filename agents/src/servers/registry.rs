@@ -1,17 +1,36 @@
 use crate::types::TransportType;
 use anyhow::Result;
 use mcp_sdk::{server::Server, transport::Transport};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
+use tokio::sync::Mutex;
 
 use crate::servers::tavily;
 use mcp_sdk::transport::ServerAsyncTransport;
 
-#[derive(Clone)]
+use super::memory::{self, FileMemory, Memory};
+
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ServerMetadata {
+    #[serde(default)]
     pub auth_session_key: Option<String>,
+    #[serde(default = "default_transport_type")]
     pub mcp_transport: TransportType,
-    pub builder: Arc<dyn Fn(ServerAsyncTransport) -> Result<Box<dyn ServerTrait>> + Send + Sync>,
+    #[serde(skip)]
+    pub memory: Option<Arc<Mutex<dyn Memory>>>,
+    #[serde(skip)]
+    pub builder: Option<
+        Arc<
+            dyn Fn(&ServerMetadata, ServerAsyncTransport) -> Result<Box<dyn ServerTrait>>
+                + Send
+                + Sync,
+        >,
+    >,
+}
+
+fn default_transport_type() -> TransportType {
+    TransportType::Async
 }
 
 // This registry is only really for local running agents using async methos
@@ -33,7 +52,10 @@ impl ServerRegistry {
     pub async fn run(&self, mcp_server: &str, transport: ServerAsyncTransport) -> Result<()> {
         match self.servers.get(mcp_server) {
             Some(metadata) => {
-                let server = (metadata.builder)(transport)?;
+                let builder = metadata.builder.as_ref().ok_or_else(|| {
+                    anyhow::anyhow!("Server builder not found for {}", mcp_server)
+                })?;
+                let server = builder(metadata, transport)?;
                 server.listen().await
             }
             None => Err(anyhow::anyhow!("MCP Server: {} is not found", mcp_server)),
@@ -53,7 +75,7 @@ impl<T: Transport> ServerTrait for Server<T> {
     }
 }
 
-pub fn init_registry() -> Arc<ServerRegistry> {
+pub async fn init_registry(memory: Arc<Mutex<FileMemory>>) -> Arc<ServerRegistry> {
     let server_registry = ServerRegistry::new();
     let mut registry = server_registry;
 
@@ -62,10 +84,24 @@ pub fn init_registry() -> Arc<ServerRegistry> {
         ServerMetadata {
             auth_session_key: Some("session_string".to_string()),
             mcp_transport: TransportType::Async,
-            builder: Arc::new(|transport| {
+            memory: None,
+            builder: Some(Arc::new(|_, transport| {
                 let server = twitter_mcp::build(transport)?;
                 Ok(Box::new(server) as Box<dyn ServerTrait>)
-            }),
+            })),
+        },
+    );
+
+    registry.register(
+        "file_memory".to_string(),
+        ServerMetadata {
+            auth_session_key: None,
+            mcp_transport: TransportType::Async,
+            memory: Some(memory),
+            builder: Some(Arc::new(|metadata, transport| {
+                let server = memory::build::build(metadata, transport)?;
+                Ok(Box::new(server) as Box<dyn ServerTrait>)
+            })),
         },
     );
 
@@ -74,10 +110,11 @@ pub fn init_registry() -> Arc<ServerRegistry> {
         ServerMetadata {
             auth_session_key: None,
             mcp_transport: TransportType::Async,
-            builder: Arc::new(|transport| {
+            memory: None,
+            builder: Some(Arc::new(|_, transport| {
                 let server = tavily::build(transport)?;
                 Ok(Box::new(server) as Box<dyn ServerTrait>)
-            }),
+            })),
         },
     );
 

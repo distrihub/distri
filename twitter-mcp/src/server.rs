@@ -1,4 +1,6 @@
 use agent_twitter_client::scraper::Scraper;
+use agent_twitter_client::search::SearchMode;
+use anyhow::Context;
 use anyhow::Result;
 use mcp_sdk::server::{Server, ServerBuilder};
 use mcp_sdk::transport::Transport;
@@ -69,28 +71,6 @@ fn list_resources() -> ResourcesListResponse {
 }
 
 fn register_tools<T: Transport>(server: &mut ServerBuilder<T>) -> Result<()> {
-    // Login Tool
-    let login_tool = Tool {
-        name: "login".to_string(),
-        description: Some(
-            r#"
-            Login to Twitter and get a session string; 
-            Only use it if specifically requested. 
-            Otherwise session_string is expected in other tools.
-        "#
-            .to_string(),
-        ),
-        input_schema: json!({
-            "type": "object",
-            "properties": {
-                "username": {"type": "string"},
-                "password": {"type": "string"}
-            },
-            "required": ["username", "password"],
-            "additionalProperties": false
-        }),
-    };
-
     // Messages Tool
     let messages_tool = Tool {
         name: "get_messages".to_string(),
@@ -98,10 +78,9 @@ fn register_tools<T: Transport>(server: &mut ServerBuilder<T>) -> Result<()> {
         input_schema: json!({
             "type": "object",
             "properties": {
-                "session_string": {"type": "string"},
                 "username": {"type": "string"}
             },
-            "required": ["session_string", "username"],
+            "required": ["username"],
             "additionalProperties": false
         }),
     };
@@ -113,10 +92,9 @@ fn register_tools<T: Transport>(server: &mut ServerBuilder<T>) -> Result<()> {
         input_schema: json!({
             "type": "object",
             "properties": {
-                "session_string": {"type": "string"},
                 "username": {"type": "string"}
             },
-            "required": ["session_string", "username"],
+            "required": ["username"],
             "additionalProperties": false
         }),
     };
@@ -128,52 +106,42 @@ fn register_tools<T: Transport>(server: &mut ServerBuilder<T>) -> Result<()> {
         input_schema: json!({
             "type": "object",
             "properties": {
-                "session_string": {"type": "string"},
                 "count": {"type": "integer", "default": 5}
             },
-            "required": ["session_string"],
+            "required": [],
             "additionalProperties": false
         }),
     };
 
-    // Register login tool - simplified without register_async_tool
-    server.register_tool(login_tool, |req: CallToolRequest| {
-        Box::pin(async move {
-            let args = req.arguments.unwrap_or_default();
-            let username = args["username"].as_str().unwrap().to_string();
-            let password = args["password"].as_str().unwrap().to_string();
+    // Trends Tool
+    let trends_tool = Tool {
+        name: "get_trends".to_string(),
+        description: Some("Get current Twitter trending topics".to_string()),
+        input_schema: json!({
+            "type": "object",
+            "properties": {
+                "count": {"type": "integer", "default": 20, "description": "Number of trends to return"}
+            },
+            "required": [],
+            "additionalProperties": false
+        }),
+    };
 
-            let result: Result<CallToolResponse, anyhow::Error> = async {
-                let mut scraper = Scraper::new().await?;
-                scraper.login(username, password, None, None).await?;
-
-                Ok(CallToolResponse {
-                    content: vec![ToolResponseContent::Text {
-                        text: serde_json::to_string(&json!({
-                            "session_string": ()
-                        }))?,
-                    }],
-                    is_error: None,
-                    meta: None,
-                })
-            }
-            .await;
-
-            match result {
-                Ok(response) => Ok(response),
-                Err(e) => {
-                    info!("Error handling request: {:#?}", e);
-                    Ok(CallToolResponse {
-                        content: vec![ToolResponseContent::Text {
-                            text: format!("{}", e),
-                        }],
-                        is_error: Some(true),
-                        meta: None,
-                    })
-                }
-            }
-        })
-    });
+    // Search Tool
+    let search_tool = Tool {
+        name: "search_tweets".to_string(),
+        description: Some("Search for tweets".to_string()),
+        input_schema: json!({
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search query"},
+                "max_tweets": {"type": "integer", "default": 10, "description": "Maximum number of tweets to return"},
+                "mode": {"type": "string", "enum": ["top", "latest", "photos", "videos", "users"], "default": "top"}
+            },
+            "required": ["query"],
+            "additionalProperties": false
+        }),
+    };
 
     // Register messages tool
     server.register_tool(messages_tool, |req: CallToolRequest| {
@@ -270,6 +238,99 @@ fn register_tools<T: Transport>(server: &mut ServerBuilder<T>) -> Result<()> {
 
                 Ok(CallToolResponse {
                     content: vec![ToolResponseContent::Text { text }],
+                    is_error: None,
+                    meta: None,
+                })
+            }
+            .await;
+
+            match result {
+                Ok(response) => Ok(response),
+                Err(e) => {
+                    info!("Error handling request: {:#?}", e);
+                    Ok(CallToolResponse {
+                        content: vec![ToolResponseContent::Text {
+                            text: format!("{}", e),
+                        }],
+                        is_error: Some(true),
+                        meta: None,
+                    })
+                }
+            }
+        })
+    });
+
+    // Register trends tool
+    server.register_tool(trends_tool, |req: CallToolRequest| {
+        Box::pin(async move {
+            let args = req.arguments.unwrap_or_default();
+
+            let result: Result<CallToolResponse, anyhow::Error> = async {
+                let scraper = get_session(&args).await?;
+                let count = args.get("count").and_then(|v| v.as_u64()).unwrap_or(20) as i16;
+
+                // First get explore timelines
+                let timelines = scraper.get_explore_timelines().await?;
+
+                // Find the trends timeline
+                let trends_timeline = timelines.first().context("expect first timeline")?;
+
+                // Get trends using the timeline ID
+                let trends = scraper.get_trends(&trends_timeline.id, count).await?;
+
+                Ok(CallToolResponse {
+                    content: vec![ToolResponseContent::Text {
+                        text: serde_json::to_string(&trends)?,
+                    }],
+                    is_error: None,
+                    meta: None,
+                })
+            }
+            .await;
+
+            match result {
+                Ok(response) => Ok(response),
+                Err(e) => {
+                    info!("Error handling request: {:#?}", e);
+                    Ok(CallToolResponse {
+                        content: vec![ToolResponseContent::Text {
+                            text: format!("{}", e),
+                        }],
+                        is_error: Some(true),
+                        meta: None,
+                    })
+                }
+            }
+        })
+    });
+
+    // Register search tool
+    server.register_tool(search_tool, |req: CallToolRequest| {
+        Box::pin(async move {
+            let args = req.arguments.unwrap_or_default();
+
+            let result: Result<CallToolResponse, anyhow::Error> = async {
+                let scraper = get_session(&args).await?;
+                let query = args["query"].as_str().unwrap();
+                let max_tweets = args
+                    .get("max_tweets")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(10) as i32;
+
+                let mode = match args.get("mode").and_then(|v| v.as_str()).unwrap_or("top") {
+                    "latest" => SearchMode::Latest,
+                    "photos" => SearchMode::Photos,
+                    "videos" => SearchMode::Videos,
+                    "users" => SearchMode::Users,
+                    _ => SearchMode::Top,
+                };
+
+                let search_results = scraper.search_tweets(query, max_tweets, mode, None).await?;
+
+                Ok(CallToolResponse {
+                    content: vec![ToolResponseContent::Text {
+                        text: serde_json::to_string(&search_results)?,
+                    }],
                     is_error: None,
                     meta: None,
                 })

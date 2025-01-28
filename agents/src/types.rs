@@ -98,7 +98,10 @@ pub struct ModelSettings {
     pub frequency_penalty: f32,
     #[serde(default = "default_presence_penalty")]
     pub presence_penalty: f32,
+    #[serde(default = "default_max_iterations")]
+    pub max_iterations: u32,
 }
+
 impl Default for ModelSettings {
     fn default() -> Self {
         Self {
@@ -108,6 +111,7 @@ impl Default for ModelSettings {
             top_p: 1.0,
             frequency_penalty: 0.0,
             presence_penalty: 0.0,
+            max_iterations: 10,
         }
     }
 }
@@ -135,4 +139,8 @@ fn default_frequency_penalty() -> f32 {
 
 fn default_presence_penalty() -> f32 {
     0.0
+}
+
+fn default_max_iterations() -> u32 {
+    10
 }

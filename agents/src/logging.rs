@@ -1,10 +1,6 @@
-use tracing_subscriber::{filter::FilterFn, prelude::*, EnvFilter};
+use tracing_subscriber::{filter::FilterFn, fmt::format::FmtSpan, prelude::*, EnvFilter};
 
 /// Initialize logging with sensible defaults for the agents library.
-/// This will:
-/// - Set up logging with the specified log level
-/// - Filter out noisy logs from dependencies like hyper
-/// - Format logs in a human-readable format
 pub fn init_logging(level: &str) {
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new(level))
@@ -19,8 +15,18 @@ pub fn init_logging(level: &str) {
         metadata.target().starts_with("agents") || metadata.level() <= &tracing::Level::ERROR
     });
 
+    let fmt_layer = tracing_subscriber::fmt::layer()
+        .with_target(false) // Don't show target
+        .with_thread_ids(false)
+        .with_thread_names(false)
+        .with_file(false)
+        .with_line_number(false)
+        .with_span_events(FmtSpan::NONE)
+        .compact() // Use compact format
+        .with_ansi(true) // Enable colors
+        .with_timer(tracing_subscriber::fmt::time::time());
+
     tracing_subscriber::registry()
-        .with(tracing_subscriber::fmt::layer().with_filter(filter))
-        // .with(filter)
+        .with(fmt_layer.with_filter(filter))
         .init();
 }
