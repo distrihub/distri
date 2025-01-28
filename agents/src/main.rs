@@ -12,7 +12,6 @@ use anyhow::Result;
 use clap::Parser;
 use cli::{Cli, Commands};
 use dotenv::dotenv;
-use regex;
 use run::{chat, event, session::get_session_store};
 use std::{collections::HashMap, fmt::Debug};
 use std::{env, sync::Arc};
@@ -103,7 +102,7 @@ async fn main() -> Result<()> {
                 .agents
                 .iter()
                 .find(|a| a.definition.name == agent)
-                .expect(&format!("Agent not found {agent}"));
+                .unwrap_or_else(|| panic!("Agent not found {agent}"));
 
             let sessions = config.sessions;
             let session_store = get_session_store(sessions);

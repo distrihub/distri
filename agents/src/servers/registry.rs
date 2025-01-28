@@ -10,7 +10,8 @@ use crate::servers::tavily;
 use mcp_sdk::transport::ServerAsyncTransport;
 
 use super::memory::{self, FileMemory, Memory};
-
+pub type BuilderFn =
+    dyn Fn(&ServerMetadata, ServerAsyncTransport) -> Result<Box<dyn ServerTrait>> + Send + Sync;
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ServerMetadata {
     #[serde(default)]
@@ -20,13 +21,7 @@ pub struct ServerMetadata {
     #[serde(skip)]
     pub memory: Option<Arc<Mutex<dyn Memory>>>,
     #[serde(skip)]
-    pub builder: Option<
-        Arc<
-            dyn Fn(&ServerMetadata, ServerAsyncTransport) -> Result<Box<dyn ServerTrait>>
-                + Send
-                + Sync,
-        >,
-    >,
+    pub builder: Option<Arc<BuilderFn>>,
 }
 
 fn default_transport_type() -> TransportType {
@@ -36,6 +31,12 @@ fn default_transport_type() -> TransportType {
 // This registry is only really for local running agents using async methos
 pub struct ServerRegistry {
     pub servers: HashMap<String, ServerMetadata>,
+}
+
+impl Default for ServerRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ServerRegistry {

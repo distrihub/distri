@@ -24,7 +24,7 @@ pub async fn create_memory(
 
     let session = &auth_session.session;
     let new_memory = NewUserMemory {
-        user_id: session.user_id.clone(),
+        user_id: session.user_id,
         memory: req.memory.clone(),
         valid_until: req.valid_until,
     };

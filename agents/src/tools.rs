@@ -189,7 +189,7 @@ impl<T: Transport + Clone> ToolExecutor<T> {
                 "Attempting to retrieve session for mcp_server: {}",
                 mcp_server
             );
-            if let Some(session) = store.get_session(&mcp_server).await? {
+            if let Some(session) = store.get_session(mcp_server).await? {
                 if let Some(session_key) = &metadata.auth_session_key {
                     tracing::debug!("Injecting session data for mcp_server: {}", mcp_server);
                     args.insert(session_key.clone(), Value::String(session.token.clone()));

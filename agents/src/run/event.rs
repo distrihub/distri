@@ -22,22 +22,18 @@ pub async fn run(
     info!("Running agent (Ctrl+C to stop)...");
 
     let mut count = 0;
-    loop {
-        match mode {
-            RunWorkflow::Event { times, every } => {
-                if let Some(every) = every {
-                    info!("Sleeping for {} seconds before next run", every);
-                    sleep(Duration::from_secs(*every)).await
-                } else {
-                    let times = times.unwrap_or(1);
-                    info!("times: {times} count: {count}");
-                    if count > times {
-                        break;
-                    }
-                }
+    while let RunWorkflow::Event { times, every } = mode {
+        if let Some(every) = every {
+            info!("Sleeping for {} seconds before next run", every);
+            sleep(Duration::from_secs(*every)).await
+        } else {
+            let times = times.unwrap_or(1);
+            info!("times: {times} count: {count}");
+            if count > times {
+                break;
             }
-            _ => break,
         }
+
         // Check for Ctrl+C
         tokio::select! {
             _ = signal::ctrl_c() => {
@@ -56,7 +52,7 @@ pub async fn run(
             } => {}
         }
 
-        count = count + 1;
+        count += 1;
     }
 
     Ok(())

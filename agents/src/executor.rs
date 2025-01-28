@@ -135,18 +135,15 @@ impl AgentExecutor {
                 tracing::trace!("Calling tool ({id}) {function:?}");
 
                 let tool_call = Self::map_tool_call(tool_call);
-                let tool_def = server_tools.iter().find(|t| {
-                    t.tools
-                        .iter()
-                        .find(|tool| tool.name == tool_call.tool_name.to_string())
-                        .is_some()
-                });
+                let tool_def = server_tools
+                    .iter()
+                    .find(|t| t.tools.iter().any(|tool| tool.name == tool_call.tool_name));
 
                 let content = match tool_def {
                     Some(server_tool) => {
                         execute_tool(&tool_call, &server_tool.definition, registry, session_store)
                             .await
-                            .unwrap_or_else(|err| format!("Error: {}", err.to_string()))
+                            .unwrap_or_else(|err| format!("Error: {}", err))
                     }
                     None => format!("Tool not found {}", tool_call.tool_name),
                 };

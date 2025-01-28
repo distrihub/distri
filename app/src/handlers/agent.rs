@@ -15,7 +15,7 @@ pub async fn list_agents(
     use crate::schema::agents::dsl::*;
 
     let mut conn = pool.get().expect("Failed to get DB connection");
-    let session_user_id = auth_session.session.user_id.clone();
+    let session_user_id = auth_session.session.user_id;
 
     let results = web::block(move || {
         agents
@@ -46,7 +46,7 @@ pub async fn create_agent(
     let def = WrappedDefinition {
         definition: def_clone.clone(),
     };
-    let session_user_id = session.user_id.clone();
+    let session_user_id = session.user_id;
     let new_agent = web::block(move || {
         diesel::insert_into(agents)
             .values((

@@ -57,9 +57,4 @@ diesel::joinable!(agents -> users (user_id));
 diesel::joinable!(sessions -> users (user_id));
 diesel::joinable!(user_memory -> users (user_id));
 
-diesel::allow_tables_to_appear_in_same_query!(
-    agents,
-    sessions,
-    user_memory,
-    users,
-);
+diesel::allow_tables_to_appear_in_same_query!(agents, sessions, user_memory, users,);

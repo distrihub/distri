@@ -10,10 +10,10 @@ pub fn get_session_store() -> Option<Arc<Box<dyn SessionStore>>> {
     dotenv::dotenv().ok();
     let session_key = std::env::var("LYNEL_SESSION").unwrap();
     // Create executor with static session store
-    let session_store = Some(Arc::new(
+
+    Some(Arc::new(
         Box::new(StaticSessionStore { session_key }) as Box<dyn SessionStore>
-    ));
-    session_store
+    ))
 }
 
 pub struct StaticSessionStore {
