@@ -3,7 +3,7 @@ use crate::{
     init_logging,
     tests::utils::{get_registry, get_session_store, get_twitter_tool},
     tools::get_tools,
-    types::{AgentDefinition, ModelSettings, UserMessage},
+    types::{AgentDefinition, Message, ModelSettings, Role},
 };
 
 static SYSTEM_PROMPT: &str = r#"You are a helpful AI assistant that can access Twitter and summarize information.
@@ -30,17 +30,19 @@ async fn test_twitter_summary() {
         system_prompt: Some(SYSTEM_PROMPT.to_string()),
         model_settings: ModelSettings::default(),
         tools: tool_defs.clone(),
+        parameters: Default::default(),
     };
     let server_tools = get_tools(tool_defs, registry.clone()).await.unwrap();
 
     let executor = AgentExecutor::new(agent_def, registry, get_session_store(), server_tools);
 
-    let messages = vec![UserMessage {
+    let messages = vec![Message {
         message: "Get my latest tweets and summarize them".to_string(),
         name: None,
+        role: Role::User,
     }];
 
     // Execute and print response
-    let response = executor.execute(messages).await.unwrap();
+    let response = executor.execute(messages, None).await.unwrap();
     println!("Response: {}", response);
 }

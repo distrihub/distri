@@ -28,7 +28,6 @@ pub async fn run(
             sleep(Duration::from_secs(*every)).await
         } else {
             let times = times.unwrap_or(1);
-            info!("times: {times} count: {count}");
             if count > times {
                 break;
             }
@@ -42,7 +41,7 @@ pub async fn run(
             }
             _ = async {
                 info!("Executing scheduled agent run - iteration: {count}");
-                match executor.execute(messages.clone()).await {
+                match executor.execute(messages.clone(), None).await {
                     Ok(response) => {
                         info!("Agent execution completed successfully");
                         info!("Agent response: {}", response);

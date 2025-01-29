@@ -311,7 +311,7 @@ fn register_tools<T: Transport>(server: &mut ServerBuilder<T>) -> Result<()> {
 
             let result: Result<CallToolResponse, anyhow::Error> = async {
                 let scraper = get_session(&args).await?;
-                let query = args["query"].as_str().unwrap();
+                let query = args["query"].as_str().context("query is missing")?;
                 let max_tweets = args
                     .get("max_tweets")
                     .and_then(|v| v.as_u64())

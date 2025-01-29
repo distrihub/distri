@@ -22,6 +22,8 @@ use tracing::{debug, info};
 pub struct AgentConfig {
     pub definition: AgentDefinition,
     pub workflow: cli::RunWorkflow,
+    #[serde(default = "default_max_history")]
+    pub max_history: usize,
 }
 
 #[derive(serde::Deserialize)]
@@ -110,9 +112,7 @@ async fn main() -> Result<()> {
             let registry = init_registry(memory).await;
 
             match &agent_config.workflow {
-                cli::RunWorkflow::Chat => {
-                    chat::run(&agent_config.definition, registry, session_store).await
-                }
+                cli::RunWorkflow::Chat => chat::run(&agent_config, registry, session_store).await,
                 mode => event::run(&agent_config.definition, registry, session_store, mode).await,
             }?;
         }
@@ -126,4 +126,8 @@ pub async fn init_memory(agent: &str) -> Result<Arc<Mutex<FileMemory>>> {
     memory_path.push(format!("{agent}.memory"));
     let memory = FileMemory::new(memory_path).await?;
     Ok(Arc::new(Mutex::new(memory)))
+}
+
+fn default_max_history() -> usize {
+    5
 }

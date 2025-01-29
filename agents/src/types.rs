@@ -1,6 +1,11 @@
+use anyhow::Context;
+use jsonschema::Validator;
 use mcp_sdk::types::Tool;
 use serde::{Deserialize, Serialize};
-use std::time::SystemTime;
+use serde_json::{self, json};
+use std::{collections::HashMap, time::SystemTime};
+
+use crate::AgentError;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum _AuthType {
@@ -25,19 +30,30 @@ pub enum TransportType {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentDefinition {
     pub name: String,
-    pub description: String,
     #[serde(default)]
+    pub description: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_prompt: Option<String>,
     #[serde(default)]
     pub tools: Vec<ToolDefinition>,
     #[serde(default)]
     pub model_settings: ModelSettings,
+    #[serde(default)]
+    pub parameters: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UserMessage {
+pub struct Message {
     pub name: Option<String>,
+    pub role: Role,
     pub message: String,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+
+pub enum Role {
+    User,
+    Assistant,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -143,4 +159,42 @@ fn default_presence_penalty() -> f32 {
 
 fn default_max_iterations() -> u32 {
     10
+}
+
+// Add this new default helper function
+fn default_parameter_type() -> String {
+    "object".to_string()
+}
+
+pub fn validate_parameters(
+    schema: &mut serde_json::Value,
+    params: Option<serde_json::Value>,
+) -> anyhow::Result<()> {
+    if schema.is_null() {
+        return Ok(());
+    }
+
+    let params = params.unwrap_or(serde_json::Value::Null);
+    let obj = schema
+        .as_object_mut()
+        .context("parameters must be an object")?;
+
+    // Add type: "object" if not present
+    if !obj.contains_key("type") {
+        obj.insert("type".to_string(), json!("object"));
+    } else if obj["type"].as_str().unwrap_or_default() != "object" {
+        return Err(anyhow::anyhow!("type must be an object",));
+    }
+
+    // Add required: [] if not present
+    if !obj.contains_key("required") {
+        obj.insert("required".to_string(), json!([]));
+    }
+
+    let validator = jsonschema::validator_for(&schema)?;
+
+    validator
+        .validate(&params)
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    Ok(())
 }

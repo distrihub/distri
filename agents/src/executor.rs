@@ -4,7 +4,7 @@ use crate::{
     error::AgentError,
     servers::registry::ServerRegistry,
     tools::execute_tool,
-    types::{ServerTools, ToolCall, UserMessage},
+    types::{validate_parameters, Message, Role, ServerTools, ToolCall},
     AgentDefinition, SessionStore,
 };
 use async_openai::{
@@ -17,6 +17,7 @@ use async_openai::{
     },
     Client,
 };
+use serde_json::{json, Value};
 
 pub struct AgentExecutor {
     client: Client<OpenAIConfig>,
@@ -41,6 +42,7 @@ impl AgentExecutor {
     ) -> Self {
         tracing::debug!("Creating new AgentExecutor");
         let client = Client::new();
+
         Self {
             client,
             registry,
@@ -89,7 +91,7 @@ impl AgentExecutor {
         }
     }
 
-    pub fn map_messages(&self, messages: Vec<UserMessage>) -> Vec<ChatCompletionRequestMessage> {
+    pub fn map_messages(&self, messages: Vec<Message>) -> Vec<ChatCompletionRequestMessage> {
         let system_message = ChatCompletionRequestMessage::System(
             ChatCompletionRequestSystemMessageArgs::default()
                 .content(
@@ -102,21 +104,28 @@ impl AgentExecutor {
                 .build()
                 .unwrap(),
         );
-        let user_messages = messages
+        let messages = messages
             .into_iter()
-            .map(|m| {
-                let mut msg = ChatCompletionRequestUserMessageArgs::default();
-                msg.content(m.message);
-                if let Some(name) = m.name {
-                    msg.name(name);
+            .map(|m| match m.role {
+                Role::User => {
+                    let mut msg = ChatCompletionRequestUserMessageArgs::default();
+                    msg.content(m.message);
+                    if let Some(name) = m.name {
+                        msg.name(name);
+                    }
+                    ChatCompletionRequestMessage::User(msg.build().unwrap())
                 }
-                ChatCompletionRequestMessage::User(msg.build().unwrap())
+                Role::Assistant => {
+                    let mut msg = ChatCompletionRequestAssistantMessageArgs::default();
+                    msg.content(m.message);
+                    if let Some(name) = m.name {
+                        msg.name(name);
+                    }
+                    ChatCompletionRequestMessage::Assistant(msg.build().unwrap())
+                }
             })
             .collect::<Vec<_>>();
-        vec![system_message]
-            .into_iter()
-            .chain(user_messages)
-            .collect()
+        vec![system_message].into_iter().chain(messages).collect()
     }
 
     async fn handle_tool_calls(
@@ -158,7 +167,16 @@ impl AgentExecutor {
         }))
         .await
     }
-    pub async fn execute(&self, messages: Vec<UserMessage>) -> Result<String, AgentError> {
+    pub async fn execute(
+        &self,
+        messages: Vec<Message>,
+        params: Option<Value>,
+    ) -> Result<String, AgentError> {
+        // Create normalized parameters
+        let mut schema = self.agent_def.parameters.clone();
+        validate_parameters(&mut schema, params)
+            .map_err(|e| AgentError::Parameter(e.to_string()))?;
+
         tracing::info!("Starting agent execution with {} messages", messages.len());
         let messages = self.map_messages(messages);
         let request = self.build_request(messages);

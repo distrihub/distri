@@ -179,7 +179,7 @@ impl<T: Transport + Clone> ToolExecutor<T> {
         let name = tool_call.tool_name.clone();
         tracing::info!("Executing tool: {name}, mcp_server: {mcp_server}");
 
-        tracing::debug!("Parsing tool arguments: {}", tool_call.input);
+        tracing::info!("Parsing tool arguments: {}", tool_call.input);
         let mut args: HashMap<String, Value> =
             serde_json::from_str(&tool_call.input).unwrap_or_default();
 
