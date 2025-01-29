@@ -273,7 +273,7 @@ checksum = "512761e0bb2578dd7380c6baaa0f4ce03e84f95e960231d1dec8bf4d7d6e2627"
 [[package]]
 name = "agent-twitter-client"
 version = "0.1.2"
-source = "git+https://github.com/distriai/agent-twitter-client.git?rev=019a59829af72c9410233529b098e67bb4a568f9#019a59829af72c9410233529b098e67bb4a568f9"
+source = "git+https://github.com/DistriAi/agent-twitter-client.git?rev=019a59829af72c9410233529b098e67bb4a568f9#019a59829af72c9410233529b098e67bb4a568f9"
 dependencies = [
  "async-trait",
  "chrono",
@@ -297,6 +297,7 @@ name = "agents"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-mcp",
  "async-openai",
  "async-trait",
  "clap",
@@ -304,7 +305,6 @@ dependencies = [
  "dotenv",
  "futures",
  "jsonschema",
- "mcp-sdk",
  "regex",
  "reqwest 0.12.12",
  "rustyline",
@@ -437,6 +437,7 @@ dependencies = [
  "agent-twitter-client",
  "agents",
  "anyhow",
+ "async-mcp",
  "chrono",
  "diesel",
  "dotenv",
@@ -444,7 +445,6 @@ dependencies = [
  "firebase-auth",
  "futures",
  "futures-util",
- "mcp-sdk",
  "r2d2",
  "rand",
  "redis",
@@ -473,6 +473,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6d416feee97712e43152cd42874de162b8f9b77295b1c85e5d92725cc8310bae"
 dependencies = [
  "async-trait",
+]
+
+[[package]]
+name = "async-mcp"
+version = "0.0.1"
+source = "git+https://github.com/DistriAi/async-mcp.git?rev=96924157f4db9494d7319bffb8a16f97ae7fd636#96924157f4db9494d7319bffb8a16f97ae7fd636"
+dependencies = [
+ "actix-lab",
+ "actix-web",
+ "anyhow",
+ "async-trait",
+ "futures",
+ "jsonwebtoken 8.3.0",
+ "reqwest 0.12.12",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-stream",
+ "tracing",
+ "url",
+ "uuid",
 ]
 
 [[package]]
@@ -2186,27 +2207,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0e7465ac9959cc2b1404e8e2367b43684a6d13790fe23056cc8c6c5a6b7bcb94"
 
 [[package]]
-name = "mcp-sdk"
-version = "0.0.2"
-source = "git+https://github.com/distriai/mcp-sdk.git?rev=a36c51fa6f3d40989e5c269c8e5a09efb02303a7#a36c51fa6f3d40989e5c269c8e5a09efb02303a7"
-dependencies = [
- "actix-lab",
- "actix-web",
- "anyhow",
- "async-trait",
- "futures",
- "jsonwebtoken 8.3.0",
- "reqwest 0.12.12",
- "serde",
- "serde_json",
- "tokio",
- "tokio-stream",
- "tracing",
- "url",
- "uuid",
-]
-
-[[package]]
 name = "mediatype"
 version = "0.19.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3779,9 +3779,9 @@ version = "0.1.0"
 dependencies = [
  "agent-twitter-client",
  "anyhow",
+ "async-mcp",
  "async-trait",
  "dotenv",
- "mcp-sdk",
  "serde",
  "serde_json",
  "tokio",

@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use anyhow::Result;
-use mcp_sdk::{
+use async_mcp::{
     client::ClientBuilder,
     protocol::RequestOptions,
     transport::{ClientStdioTransport, Transport},

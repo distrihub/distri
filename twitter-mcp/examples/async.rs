@@ -2,9 +2,9 @@ use std::time::Duration;
 
 use anyhow::Result;
 
-use mcp_sdk::{
+use async_mcp::{
     protocol::RequestOptions,
-    transport::{ClientAsyncTransport, ServerAsyncTransport, Transport},
+    transport::{ClientInMemoryTransport, ServerInMemoryTransport, Transport},
 };
 use serde_json::json;
 use tracing::info;
@@ -16,7 +16,7 @@ async fn main() -> Result<()> {
     r
 }
 
-async fn async_server(transport: ServerAsyncTransport) {
+async fn async_server(transport: ServerInMemoryTransport) {
     let server = build(transport.clone()).unwrap();
     server.listen().await.unwrap();
 }
@@ -28,11 +28,11 @@ async fn run() -> Result<()> {
         .init();
 
     // Create transports
-    let client_transport = ClientAsyncTransport::new(|t| tokio::spawn(async_server(t)));
+    let client_transport = ClientInMemoryTransport::new(|t| tokio::spawn(async_server(t)));
     client_transport.open().await?;
 
     // Create and start client
-    let client = mcp_sdk::client::ClientBuilder::new(client_transport.clone()).build();
+    let client = async_mcp::client::ClientBuilder::new(client_transport.clone()).build();
     let client_clone = client.clone();
     let client_handle = tokio::spawn(async move { client_clone.start().await });
 

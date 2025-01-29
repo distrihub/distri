@@ -1,6 +1,6 @@
 use anyhow::Context;
+use async_mcp::types::Tool;
 use jsonschema::Validator;
-use mcp_sdk::types::Tool;
 use serde::{Deserialize, Serialize};
 use serde_json::{self, json};
 use std::{collections::HashMap, time::SystemTime};

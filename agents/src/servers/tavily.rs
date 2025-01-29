@@ -1,7 +1,7 @@
 use anyhow::Result;
-use mcp_sdk::server::{Server, ServerBuilder};
-use mcp_sdk::transport::Transport;
-use mcp_sdk::types::{
+use async_mcp::server::{Server, ServerBuilder};
+use async_mcp::transport::Transport;
+use async_mcp::types::{
     CallToolRequest, CallToolResponse, ListRequest, PromptsListResponse, ResourcesListResponse,
     ServerCapabilities, Tool, ToolResponseContent,
 };
@@ -148,10 +148,10 @@ fn register_tools<T: Transport>(server: &mut ServerBuilder<T>) -> Result<()> {
 mod tests {
     use std::time::Duration;
 
-    use mcp_sdk::{
+    use async_mcp::{
         client::ClientBuilder,
         protocol::RequestOptions,
-        transport::{ClientAsyncTransport, ServerAsyncTransport, Transport},
+        transport::{ClientInMemoryTransport, ServerInMemoryTransport, Transport},
     };
     use serde_json::json;
 
@@ -165,12 +165,12 @@ mod tests {
             .with_writer(std::io::stderr)
             .init();
 
-        async fn async_server(transport: ServerAsyncTransport) {
+        async fn async_server(transport: ServerInMemoryTransport) {
             let server = build(transport.clone()).unwrap();
             server.listen().await.unwrap();
         }
 
-        let transport = ClientAsyncTransport::new(|t| tokio::spawn(async_server(t)));
+        let transport = ClientInMemoryTransport::new(|t| tokio::spawn(async_server(t)));
         transport.open().await?;
 
         let client = ClientBuilder::new(transport).build();

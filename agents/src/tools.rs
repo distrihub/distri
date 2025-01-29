@@ -4,9 +4,9 @@ use std::sync::Arc;
 use std::{collections::HashMap, time::Duration};
 
 use anyhow::Result;
-use mcp_sdk::transport::{ClientAsyncTransport, ServerAsyncTransport};
-use mcp_sdk::types::{Tool, ToolsListResponse};
-use mcp_sdk::{
+use async_mcp::transport::{ClientInMemoryTransport, ServerInMemoryTransport};
+use async_mcp::types::{Tool, ToolsListResponse};
+use async_mcp::{
     client::{Client, ClientBuilder},
     protocol::RequestOptions,
     transport::Transport,
@@ -20,7 +20,7 @@ use crate::types::{ActionsFilter, ServerTools};
 use crate::types::{ToolCall, ToolDefinition};
 use crate::SessionStore;
 
-async fn async_server(metadata: ServerMetadata, transport: ServerAsyncTransport) -> Result<()> {
+async fn async_server(metadata: ServerMetadata, transport: ServerInMemoryTransport) -> Result<()> {
     let builder = metadata
         .builder
         .as_ref()
@@ -34,7 +34,7 @@ macro_rules! with_transport {
         match &$metadata.mcp_transport {
             TransportType::Async => {
                 let metadata = $metadata.clone();
-                let client_transport = ClientAsyncTransport::new(move |t| {
+                let client_transport = ClientInMemoryTransport::new(move |t| {
                     let metadata = metadata.clone();
                     tokio::spawn(async move { async_server(metadata, t).await.unwrap() })
                 });
@@ -43,7 +43,7 @@ macro_rules! with_transport {
                     as Pin<Box<dyn Future<Output = _> + Send>>
             }
             TransportType::Stdio { command, args } => {
-                let transport = mcp_sdk::transport::ClientStdioTransport::new(
+                let transport = async_mcp::transport::ClientStdioTransport::new(
                     command,
                     args.iter().map(|s| s.as_str()).collect::<Vec<_>>().as_ref(),
                 )?;

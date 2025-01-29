@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
-use mcp_sdk::server::{Server, ServerBuilder};
-use mcp_sdk::transport::Transport;
-use mcp_sdk::types::{
+use async_mcp::server::{Server, ServerBuilder};
+use async_mcp::transport::Transport;
+use async_mcp::types::{
     CallToolRequest, CallToolResponse, ListRequest, PromptsListResponse, ResourcesListResponse,
     ServerCapabilities, Tool, ToolResponseContent,
 };
@@ -368,10 +368,10 @@ fn register_tools<T: Transport>(
 mod tests {
     use super::*;
     use crate::servers::memory::FileMemory;
-    use mcp_sdk::{
+    use async_mcp::{
         client::ClientBuilder,
         protocol::RequestOptions,
-        transport::{ClientAsyncTransport, ServerAsyncTransport},
+        transport::{ClientInMemoryTransport, ServerInMemoryTransport},
     };
     use std::time::Duration;
     use tempfile::NamedTempFile;
@@ -382,7 +382,7 @@ mod tests {
         let memory = FileMemory::new(temp_file.path()).await?;
         let memory = Arc::new(Mutex::new(memory));
 
-        async fn async_server(transport: ServerAsyncTransport, memory: Arc<Mutex<FileMemory>>) {
+        async fn async_server(transport: ServerInMemoryTransport, memory: Arc<Mutex<FileMemory>>) {
             let metadata = ServerMetadata {
                 auth_session_key: Default::default(),
                 mcp_transport: crate::types::TransportType::Async,
@@ -393,7 +393,7 @@ mod tests {
             server.listen().await.unwrap();
         }
 
-        let transport = ClientAsyncTransport::new(move |t| {
+        let transport = ClientInMemoryTransport::new(move |t| {
             let memory = memory.clone();
             tokio::spawn(async move { async_server(t, memory).await })
         });

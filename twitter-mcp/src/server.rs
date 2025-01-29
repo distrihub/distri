@@ -2,9 +2,9 @@ use agent_twitter_client::scraper::Scraper;
 use agent_twitter_client::search::SearchMode;
 use anyhow::Context;
 use anyhow::Result;
-use mcp_sdk::server::{Server, ServerBuilder};
-use mcp_sdk::transport::Transport;
-use mcp_sdk::types::{
+use async_mcp::server::{Server, ServerBuilder};
+use async_mcp::transport::Transport;
+use async_mcp::types::{
     CallToolRequest, CallToolResponse, ListRequest, PromptsListResponse, Resource,
     ResourcesListResponse, ServerCapabilities, Tool, ToolResponseContent,
 };

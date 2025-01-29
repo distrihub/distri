@@ -1,11 +1,11 @@
-use mcp_sdk::{
+use async_mcp::{
     protocol::RequestOptions,
-    transport::{ClientAsyncTransport, ServerAsyncTransport, Transport},
+    transport::{ClientInMemoryTransport, ServerInMemoryTransport, Transport},
 };
 use serde_json::json;
 use std::{env, time::Duration};
 
-async fn async_server(transport: ServerAsyncTransport) {
+async fn async_server(transport: ServerInMemoryTransport) {
     let server = crate::build(transport.clone()).unwrap();
     server.listen().await.unwrap();
 }
@@ -21,11 +21,11 @@ async fn test_methods() -> anyhow::Result<()> {
     let session = env::var("LYNEL_SESSION").unwrap();
 
     // Create transports
-    let client_transport = ClientAsyncTransport::new(|t| tokio::spawn(async_server(t)));
+    let client_transport = ClientInMemoryTransport::new(|t| tokio::spawn(async_server(t)));
     client_transport.open().await?;
 
     // Create and start client
-    let client = mcp_sdk::client::ClientBuilder::new(client_transport.clone()).build();
+    let client = async_mcp::client::ClientBuilder::new(client_transport.clone()).build();
     let client_clone = client.clone();
     let _client_handle = tokio::spawn(async move { client_clone.start().await });
 

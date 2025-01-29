@@ -1,17 +1,17 @@
 use crate::types::TransportType;
 use anyhow::Result;
-use mcp_sdk::{server::Server, transport::Transport};
+use async_mcp::{server::Server, transport::Transport};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::servers::tavily;
-use mcp_sdk::transport::ServerAsyncTransport;
+use async_mcp::transport::ServerInMemoryTransport;
 
 use super::memory::{self, FileMemory, Memory};
 pub type BuilderFn =
-    dyn Fn(&ServerMetadata, ServerAsyncTransport) -> Result<Box<dyn ServerTrait>> + Send + Sync;
+    dyn Fn(&ServerMetadata, ServerInMemoryTransport) -> Result<Box<dyn ServerTrait>> + Send + Sync;
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ServerMetadata {
     #[serde(default)]
@@ -50,7 +50,7 @@ impl ServerRegistry {
         self.servers.insert(name, metadata);
     }
 
-    pub async fn run(&self, mcp_server: &str, transport: ServerAsyncTransport) -> Result<()> {
+    pub async fn run(&self, mcp_server: &str, transport: ServerInMemoryTransport) -> Result<()> {
         match self.servers.get(mcp_server) {
             Some(metadata) => {
                 let builder = metadata.builder.as_ref().ok_or_else(|| {

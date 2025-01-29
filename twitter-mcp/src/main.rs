@@ -1,5 +1,5 @@
 use anyhow::Result;
-use mcp_sdk::transport::ServerStdioTransport;
+use async_mcp::transport::ServerStdioTransport;
 use twitter_mcp::build;
 
 #[tokio::main]
