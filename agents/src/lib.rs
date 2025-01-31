@@ -5,7 +5,7 @@ pub mod tools;
 pub mod types;
 pub use error::AgentError;
 pub use store::{InMemorySessionStore, SessionStore};
-pub use types::{AgentDefinition, McpSession, ModelSettings, ToolDefinition};
+pub use types::{AgentDefinition, McpSession, ModelSettings, McpDefinition};
 pub mod cli;
 mod logging;
 pub mod servers;

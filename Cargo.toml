@@ -4,7 +4,8 @@ members = ["app", "agents"]
 default-members = ["app", "agents"]
 
 [workspace.dependencies]
-async-mcp = { git = "https://github.com/DistriAi/async-mcp.git", rev = "96924157f4db9494d7319bffb8a16f97ae7fd636" }
+# async-mcp = { git = "https://github.com/DistriAi/async-mcp.git", rev = "96924157f4db9494d7319bffb8a16f97ae7fd636" }
+async-mcp = { version = "0.0.6" }
 anyhow = "1.0"
 agent-twitter-client = { git = "https://github.com/DistriAi/agent-twitter-client.git", rev = "019a59829af72c9410233529b098e67bb4a568f9" }
 tracing = "0.1"

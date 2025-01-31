@@ -16,8 +16,8 @@ use serde_json::{json, Value};
 
 use crate::servers::registry::{ServerMetadata, ServerRegistry};
 use crate::types::TransportType;
-use crate::types::{ActionsFilter, ServerTools};
-use crate::types::{ToolCall, ToolDefinition};
+use crate::types::{McpDefinition, ToolCall};
+use crate::types::{ServerTools, ToolsFilter};
 use crate::SessionStore;
 
 async fn async_server(metadata: ServerMetadata, transport: ServerInMemoryTransport) -> Result<()> {
@@ -55,7 +55,7 @@ macro_rules! with_transport {
     };
 }
 pub async fn get_tools(
-    definitions: Vec<ToolDefinition>,
+    definitions: Vec<McpDefinition>,
     registry: Arc<ServerRegistry>,
 ) -> Result<Vec<ServerTools>> {
     let mut all_tools = Vec::new();
@@ -92,11 +92,11 @@ pub async fn get_tools(
             let total_tools = tools.len();
 
             // Filter tools based on actions_filter if specified
-            match &tool_def.actions_filter {
-                ActionsFilter::All => {
+            match &tool_def.filter {
+                ToolsFilter::All => {
                     tracing::info!("Loading all {} tools from {}", total_tools, mcp_server_name);
                 }
-                ActionsFilter::Selected(selected) => {
+                ToolsFilter::Selected(selected) => {
                     let before_count = tools.len();
                     tools.retain_mut(|tool| {
                         let found = selected.iter().find(|t| *t.name == tool.name);
@@ -131,7 +131,7 @@ pub async fn get_tools(
 
 pub async fn execute_tool(
     tool_call: &ToolCall,
-    tool_def: &ToolDefinition,
+    tool_def: &McpDefinition,
     registry: Arc<ServerRegistry>,
     session_store: Option<Arc<Box<dyn SessionStore>>>,
 ) -> Result<String> {

@@ -29,7 +29,7 @@ async fn test_twitter_summary() {
         description: "Agent that can access Twitter".to_string(),
         system_prompt: Some(SYSTEM_PROMPT.to_string()),
         model_settings: ModelSettings::default(),
-        tools: tool_defs.clone(),
+        mcp_servers: tool_defs.clone(),
         parameters: Default::default(),
     };
     let server_tools = get_tools(tool_defs, registry.clone()).await.unwrap();

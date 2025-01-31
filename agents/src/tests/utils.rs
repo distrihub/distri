@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::{
     servers::registry::{ServerMetadata, ServerRegistry, ServerTrait},
     types::TransportType,
-    McpSession, SessionStore, ToolDefinition,
+    McpDefinition, McpSession, SessionStore,
 };
 
 pub fn get_session_store() -> Option<Arc<Box<dyn SessionStore>>> {
@@ -31,9 +31,9 @@ impl SessionStore for StaticSessionStore {
 }
 
 // Comment out the simple version
-pub fn get_twitter_tool() -> ToolDefinition {
-    ToolDefinition {
-        actions_filter: crate::types::ActionsFilter::All,
+pub fn get_twitter_tool() -> McpDefinition {
+    McpDefinition {
+        filter: crate::types::ToolsFilter::All,
         mcp_server: "twitter".to_string(),
     }
 }

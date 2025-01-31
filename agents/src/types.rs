@@ -8,6 +8,7 @@ use std::{collections::HashMap, time::SystemTime};
 use crate::AgentError;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum _AuthType {
     OAuth {
         client_id: String,
@@ -21,6 +22,7 @@ pub enum _AuthType {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum TransportType {
     Async,
     SSE { server_url: String },
@@ -28,6 +30,7 @@ pub enum TransportType {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AgentDefinition {
     pub name: String,
     #[serde(default)]
@@ -35,7 +38,7 @@ pub struct AgentDefinition {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_prompt: Option<String>,
     #[serde(default)]
-    pub tools: Vec<ToolDefinition>,
+    pub mcp_servers: Vec<McpDefinition>,
     #[serde(default)]
     pub model_settings: ModelSettings,
     #[serde(default)]
@@ -43,20 +46,23 @@ pub struct AgentDefinition {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Message {
     pub name: Option<String>,
     pub role: Role,
     pub message: String,
 }
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-
+#[serde(deny_unknown_fields)]
 pub enum Role {
     User,
     Assistant,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct McpSession {
     pub token: String,
     pub expiry: Option<SystemTime>,
@@ -64,36 +70,40 @@ pub struct McpSession {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
-pub enum ActionsFilter {
+pub enum ToolsFilter {
     All,
-    Selected(Vec<ActionSelector>),
+    Selected(Vec<ToolSelector>),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ActionSelector {
+#[serde(deny_unknown_fields)]
+pub struct ToolSelector {
     pub name: String,
     pub description: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolDefinition {
-    #[serde(default = "default_actions_filter")]
-    pub actions_filter: ActionsFilter,
+#[serde(deny_unknown_fields)]
+pub struct McpDefinition {
+    #[serde(default = "default_tools_filter")]
+    pub filter: ToolsFilter,
     pub mcp_server: String,
 }
 
 // Helper functions for serde defaults
-fn default_actions_filter() -> ActionsFilter {
-    ActionsFilter::All
+fn default_tools_filter() -> ToolsFilter {
+    ToolsFilter::All
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ServerTools {
-    pub definition: ToolDefinition,
+    pub definition: McpDefinition,
     pub tools: Vec<Tool>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct ToolCall {
     pub tool_id: String,
     pub tool_name: String,
@@ -101,6 +111,7 @@ pub struct ToolCall {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ModelSettings {
     #[serde(default = "default_model")]
     pub model: String,

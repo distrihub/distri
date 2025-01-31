@@ -15,7 +15,7 @@ pub async fn run(
     session_store: Option<Arc<Box<dyn SessionStore>>>,
     mode: &RunWorkflow,
 ) -> anyhow::Result<()> {
-    let server_tools = get_tools(agent.tools.clone(), registry.clone()).await?;
+    let server_tools = get_tools(agent.mcp_servers.clone(), registry.clone()).await?;
     let executor = AgentExecutor::new(agent.clone(), registry, session_store, server_tools);
     let messages = Vec::new();
 

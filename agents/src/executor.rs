@@ -17,7 +17,7 @@ use async_openai::{
     },
     Client,
 };
-use serde_json::{json, Value};
+use serde_json::Value;
 
 pub struct AgentExecutor {
     client: Client<OpenAIConfig>,
@@ -61,24 +61,27 @@ impl AgentExecutor {
             "Building chat completion request with model: {}",
             settings.model
         );
+        let tools: Vec<_> = self
+            .server_tools
+            .iter()
+            .flat_map(|t| {
+                t.tools.iter().map(|t| ChatCompletionTool {
+                    r#type: async_openai::types::ChatCompletionToolType::Function,
+                    function: ChatCompletionFunctions {
+                        name: t.name.clone(),
+                        description: t.description.clone(),
+                        parameters: t.input_schema.clone(),
+                    },
+                })
+            })
+            .collect();
         CreateChatCompletionRequest {
             model: settings.model.clone(),
             messages,
-            tools: Some(
-                self.server_tools
-                    .iter()
-                    .flat_map(|t| {
-                        t.tools.iter().map(|t| ChatCompletionTool {
-                            r#type: async_openai::types::ChatCompletionToolType::Function,
-                            function: ChatCompletionFunctions {
-                                name: t.name.clone(),
-                                description: t.description.clone(),
-                                parameters: t.input_schema.clone(),
-                            },
-                        })
-                    })
-                    .collect(),
-            ),
+            tools: match tools.len() > 0 {
+                true => Some(tools),
+                false => None,
+            },
             ..Default::default()
         }
     }
