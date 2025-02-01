@@ -31,10 +31,17 @@ async fn test_twitter_summary() {
         model_settings: ModelSettings::default(),
         mcp_servers: tool_defs.clone(),
         parameters: Default::default(),
+        sub_agents: vec![],
     };
     let server_tools = get_tools(tool_defs, registry.clone()).await.unwrap();
 
-    let executor = AgentExecutor::new(agent_def, registry, get_session_store(), server_tools);
+    let executor = AgentExecutor::new(
+        agent_def,
+        registry,
+        get_session_store(),
+        server_tools,
+        None, // No coordinator needed for direct testing
+    );
 
     let messages = vec![Message {
         message: "Get my latest tweets and summarize them".to_string(),

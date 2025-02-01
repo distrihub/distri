@@ -22,7 +22,7 @@ pub async fn run(
     let agent = &agent_config.definition;
     let max_history = agent_config.max_history;
     let server_tools = get_tools(agent.mcp_servers.clone(), registry.clone()).await?;
-    let executor = AgentExecutor::new(agent.clone(), registry, session_store, server_tools);
+    let executor = AgentExecutor::new(agent.clone(), registry, session_store, server_tools, None);
 
     // Set up messages file in .distri folder
     let messages_file = {

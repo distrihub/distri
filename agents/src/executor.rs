@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use crate::{
+    coordinator::coordinator::AgentHandle,
     error::AgentError,
     servers::registry::ServerRegistry,
     tools::execute_tool,
@@ -25,7 +26,9 @@ pub struct AgentExecutor {
     registry: Arc<ServerRegistry>,
     session_store: Option<Arc<Box<dyn SessionStore>>>,
     server_tools: Vec<ServerTools>,
+    coordinator: Option<Arc<AgentHandle>>,
 }
+
 pub const MAX_RETRIES: i32 = 3;
 pub const DEFAULT_MODEL: &str = "gpt-4o-mini";
 
@@ -39,6 +42,7 @@ impl AgentExecutor {
         registry: Arc<ServerRegistry>,
         session_store: Option<Arc<Box<dyn SessionStore>>>,
         server_tools: Vec<ServerTools>,
+        coordinator: Option<Arc<AgentHandle>>,
     ) -> Self {
         tracing::debug!("Creating new AgentExecutor");
         let client = Client::new();
@@ -49,7 +53,138 @@ impl AgentExecutor {
             agent_def,
             session_store,
             server_tools,
+            coordinator,
         }
+    }
+
+    pub fn get_server_tools(&self) -> Vec<ServerTools> {
+        self.server_tools.clone()
+    }
+
+    pub async fn execute_sub_agent(
+        &self,
+        agent_id: &str,
+        messages: Vec<Message>,
+    ) -> Result<String, AgentError> {
+        // Create a new agent handle through the coordinator
+        let handle = self
+            .coordinator
+            .as_ref()
+            .unwrap()
+            .execute(messages.clone(), None)
+            .await?;
+        Ok(handle)
+    }
+
+    pub async fn execute(
+        &self,
+        messages: Vec<Message>,
+        params: Option<Value>,
+    ) -> Result<String, AgentError> {
+        // Check if this is a request to execute a sub-agent
+        if let Some(last_message) = messages.last() {
+            if let Role::User = last_message.role {
+                for agent_id in &self.agent_def.sub_agents {
+                    if last_message.message.contains(agent_id.as_str()) {
+                        return self.execute_sub_agent(agent_id, messages.clone()).await;
+                    }
+                }
+            }
+        }
+
+        // Continue with normal execution if not a sub-agent request
+        // Create normalized parameters
+        let mut schema = self.agent_def.parameters.clone();
+        validate_parameters(&mut schema, params)
+            .map_err(|e| AgentError::Parameter(e.to_string()))?;
+
+        tracing::info!("Starting agent execution with {} messages", messages.len());
+        let messages = self.map_messages(messages);
+        let request = self.build_request(messages);
+        tracing::debug!(
+            "Request: {:?} ",
+            serde_json::to_string_pretty(&request).unwrap()
+        );
+        let mut token_usage = 0;
+        let mut calls = vec![request];
+        let mut iterations = 0;
+
+        let max_tokens = self.agent_def.model_settings.max_tokens;
+        let max_iterations = self.agent_def.model_settings.max_iterations;
+        tracing::debug!("Max tokens limit set to: {}", max_tokens);
+        tracing::debug!("Max iterations per run set to: {}", max_iterations);
+
+        while let Some(req) = calls.pop() {
+            if token_usage > max_tokens {
+                tracing::warn!("Max tokens limit reached: {}", max_tokens);
+                return Err(AgentError::LLMError(format!(
+                    "Max tokens reached: {max_tokens}",
+                )));
+            }
+
+            if iterations >= max_iterations {
+                tracing::warn!("Max iterations limit reached: {}", max_iterations);
+                return Err(AgentError::LLMError(format!(
+                    "Max iterations reached: {max_iterations}",
+                )));
+            }
+            iterations += 1;
+
+            tracing::debug!("Sending chat completion request");
+            let input_messages = req.messages.clone();
+            let response = self.client.chat().create(req).await.map_err(|e| {
+                tracing::error!("LLM request failed: {}", e);
+                AgentError::LLMError(e.to_string())
+            })?;
+
+            token_usage += response.usage.as_ref().map(|a| a.total_tokens).unwrap_or(0);
+            tracing::debug!("Current token usage: {}", token_usage);
+
+            let choice = &response.choices[0];
+            let finish_reason = choice.finish_reason.unwrap();
+            tracing::debug!("Response finish reason: {:?}", finish_reason);
+
+            match finish_reason {
+                async_openai::types::FinishReason::Stop => {
+                    tracing::info!("Agent execution completed successfully");
+                    return Ok(choice.message.content.clone().unwrap_or_default());
+                }
+
+                async_openai::types::FinishReason::ToolCalls => {
+                    let tool_calls = choice.message.tool_calls.as_ref().unwrap().clone();
+                    tracing::info!("Processing {} tool calls", tool_calls.len());
+                    let mut messages: Vec<ChatCompletionRequestMessage> =
+                        vec![ChatCompletionRequestMessage::Assistant(
+                            ChatCompletionRequestAssistantMessageArgs::default()
+                                .tool_calls(tool_calls.clone())
+                                .build()
+                                .map_err(llm_err)?,
+                        )];
+                    let tool_responses = Self::handle_tool_calls(
+                        tool_calls.iter(),
+                        self.coordinator.as_ref().cloned(),
+                        self.registry.clone(),
+                        self.session_store.clone(),
+                        self.server_tools.clone(),
+                    )
+                    .await;
+
+                    messages.extend(tool_responses);
+
+                    let conversation_messages = [input_messages, messages].concat();
+                    let request = self.build_request(conversation_messages);
+                    calls.push(request);
+                    continue;
+                }
+                x => {
+                    tracing::error!("Agent stopped unexpectedly with reason: {:?}", x);
+                    return Err(AgentError::LLMError(format!(
+                        "Agent stopped with the reason {x:?}"
+                    )));
+                }
+            }
+        }
+        unreachable!()
     }
 
     pub fn build_request(
@@ -133,6 +268,7 @@ impl AgentExecutor {
 
     async fn handle_tool_calls(
         function_calls: impl Iterator<Item = &ChatCompletionMessageToolCall>,
+        agent_handle: Option<Arc<AgentHandle>>,
         registry: Arc<ServerRegistry>,
         session_store: Option<Arc<Box<dyn SessionStore>>>,
         server_tools: Vec<ServerTools>,
@@ -141,6 +277,8 @@ impl AgentExecutor {
             let server_tools = server_tools.clone();
             let session_store = session_store.clone();
             let registry = registry.clone();
+            let agent_handle = agent_handle.clone();
+
             async move {
                 let id = tool_call.id.clone();
                 let function = tool_call.function.clone();
@@ -151,13 +289,21 @@ impl AgentExecutor {
                     .iter()
                     .find(|t| t.tools.iter().any(|tool| tool.name == tool_call.tool_name));
 
-                let content = match tool_def {
-                    Some(server_tool) => {
+                let content = match (tool_def, agent_handle) {
+                    (Some(_), Some(handle)) => {
+                        // Use coordinator for async execution
+                        handle
+                            .execute_tool(tool_call)
+                            .await
+                            .unwrap_or_else(|err| format!("Error: {}", err))
+                    }
+                    (Some(server_tool), None) => {
+                        // Fallback to direct execution if no coordinator
                         execute_tool(&tool_call, &server_tool.definition, registry, session_store)
                             .await
                             .unwrap_or_else(|err| format!("Error: {}", err))
                     }
-                    None => format!("Tool not found {}", tool_call.tool_name),
+                    (None, _) => format!("Tool not found {}", tool_call.tool_name),
                 };
 
                 tracing::debug!("Tool Response ({id}) ({content})");
@@ -169,102 +315,5 @@ impl AgentExecutor {
             }
         }))
         .await
-    }
-    pub async fn execute(
-        &self,
-        messages: Vec<Message>,
-        params: Option<Value>,
-    ) -> Result<String, AgentError> {
-        // Create normalized parameters
-        let mut schema = self.agent_def.parameters.clone();
-        validate_parameters(&mut schema, params)
-            .map_err(|e| AgentError::Parameter(e.to_string()))?;
-
-        tracing::info!("Starting agent execution with {} messages", messages.len());
-        let messages = self.map_messages(messages);
-        let request = self.build_request(messages);
-        tracing::debug!(
-            "Request: {:?} ",
-            serde_json::to_string_pretty(&request).unwrap()
-        );
-        let mut token_usage = 0;
-        let mut calls = vec![request];
-        let mut iterations = 0;
-
-        let max_tokens = self.agent_def.model_settings.max_tokens;
-        let max_iterations = self.agent_def.model_settings.max_iterations;
-        tracing::debug!("Max tokens limit set to: {}", max_tokens);
-        tracing::debug!("Max iterations per run set to: {}", max_iterations);
-
-        while let Some(req) = calls.pop() {
-            if token_usage > max_tokens {
-                tracing::warn!("Max tokens limit reached: {}", max_tokens);
-                return Err(AgentError::LLMError(format!(
-                    "Max tokens reached: {max_tokens}",
-                )));
-            }
-
-            if iterations >= max_iterations {
-                tracing::warn!("Max iterations limit reached: {}", max_iterations);
-                return Err(AgentError::LLMError(format!(
-                    "Max iterations reached: {max_iterations}",
-                )));
-            }
-            iterations += 1;
-
-            tracing::debug!("Sending chat completion request");
-            let input_messages = req.messages.clone();
-            let response = self.client.chat().create(req).await.map_err(|e| {
-                tracing::error!("LLM request failed: {}", e);
-                AgentError::LLMError(e.to_string())
-            })?;
-
-            token_usage += response.usage.as_ref().map(|a| a.total_tokens).unwrap_or(0);
-            tracing::debug!("Current token usage: {}", token_usage);
-
-            let choice = &response.choices[0];
-            let finish_reason = choice.finish_reason.unwrap();
-            tracing::debug!("Response finish reason: {:?}", finish_reason);
-
-            match finish_reason {
-                async_openai::types::FinishReason::Stop => {
-                    tracing::info!("Agent execution completed successfully");
-                    return Ok(choice.message.content.clone().unwrap_or_default());
-                }
-
-                async_openai::types::FinishReason::ToolCalls => {
-                    let tool_calls = choice.message.tool_calls.as_ref().unwrap().clone();
-                    tracing::info!("Processing {} tool calls", tool_calls.len());
-                    let mut messages: Vec<ChatCompletionRequestMessage> =
-                        vec![ChatCompletionRequestMessage::Assistant(
-                            ChatCompletionRequestAssistantMessageArgs::default()
-                                .tool_calls(tool_calls.clone())
-                                .build()
-                                .map_err(llm_err)?,
-                        )];
-                    let tool_responses = Self::handle_tool_calls(
-                        tool_calls.iter(),
-                        self.registry.clone(),
-                        self.session_store.clone(),
-                        self.server_tools.clone(),
-                    )
-                    .await;
-
-                    messages.extend(tool_responses);
-
-                    let conversation_messages = [input_messages, messages].concat();
-                    let request = self.build_request(conversation_messages);
-                    calls.push(request);
-                    continue;
-                }
-                x => {
-                    tracing::error!("Agent stopped unexpectedly with reason: {:?}", x);
-                    return Err(AgentError::LLMError(format!(
-                        "Agent stopped with the reason {x:?}"
-                    )));
-                }
-            }
-        }
-        unreachable!()
     }
 }

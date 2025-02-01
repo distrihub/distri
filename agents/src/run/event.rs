@@ -16,7 +16,7 @@ pub async fn run(
     mode: &RunWorkflow,
 ) -> anyhow::Result<()> {
     let server_tools = get_tools(agent.mcp_servers.clone(), registry.clone()).await?;
-    let executor = AgentExecutor::new(agent.clone(), registry, session_store, server_tools);
+    let executor = AgentExecutor::new(agent.clone(), registry, session_store, server_tools, None);
     let messages = Vec::new();
 
     info!("Running agent (Ctrl+C to stop)...");

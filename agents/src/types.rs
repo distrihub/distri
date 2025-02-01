@@ -43,6 +43,8 @@ pub struct AgentDefinition {
     pub model_settings: ModelSettings,
     #[serde(default)]
     pub parameters: serde_json::Value,
+    #[serde(default)]
+    pub sub_agents: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -66,6 +68,24 @@ pub enum Role {
 pub struct McpSession {
     pub token: String,
     pub expiry: Option<SystemTime>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum AgentStatus {
+    Idle,
+    Running,
+    Stopped,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentSession {
+    pub agent_id: String,
+    pub status: AgentStatus,
+    pub state: serde_json::Value,
+    pub parent_session: Option<String>,
+    pub created_at: SystemTime,
+    pub updated_at: SystemTime,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
