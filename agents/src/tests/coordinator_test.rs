@@ -27,6 +27,7 @@ async fn test_agent_coordination() -> anyhow::Result<()> {
         mcp_servers: tool_defs.clone(),
         model_settings: ModelSettings::default(),
         parameters: Default::default(),
+        response_format: None,
     };
 
     let agent2_def = AgentDefinition {
@@ -43,6 +44,7 @@ async fn test_agent_coordination() -> anyhow::Result<()> {
         }],
         model_settings: ModelSettings::default(),
         parameters: Default::default(),
+        response_format: None
     };
 
     // Initialize coordinator with session stores

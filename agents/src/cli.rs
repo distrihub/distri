@@ -2,7 +2,7 @@ use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 use std::{fmt::Display, path::PathBuf};
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(tag = "mode")]
 pub enum RunWorkflow {
     #[serde(rename = "chat")]
@@ -45,6 +45,13 @@ pub enum Commands {
     Run {
         /// Agent name
         agent: String,
+    },
+
+    /// Generate config schema
+    ConfigSchema {
+        /// Whether to pretty print the schema
+        #[arg(long, default_value_t = false)]
+        pretty: bool,
     },
 }
 

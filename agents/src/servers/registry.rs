@@ -17,7 +17,7 @@ use async_mcp::transport::ServerInMemoryTransport;
 use super::memory::{self, FileMemory, Memory};
 pub type BuilderFn =
     dyn Fn(&ServerMetadata, ServerInMemoryTransport) -> Result<Box<dyn ServerTrait>> + Send + Sync;
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ServerMetadata {
     #[serde(default)]
     pub auth_session_key: Option<String>,

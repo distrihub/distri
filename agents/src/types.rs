@@ -1,10 +1,13 @@
 use anyhow::Context;
 use async_mcp::types::Tool;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{self, json};
-use std::time::SystemTime;
+use std::{collections::HashMap, time::SystemTime};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+use crate::servers::registry::ServerMetadata;
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub enum _AuthType {
     OAuth {
@@ -18,7 +21,7 @@ pub enum _AuthType {
     None,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub enum TransportType {
     Async,
@@ -26,7 +29,7 @@ pub enum TransportType {
     Stdio { command: String, args: Vec<String> },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AgentDefinition {
     pub name: String,
@@ -40,9 +43,11 @@ pub struct AgentDefinition {
     pub model_settings: ModelSettings,
     #[serde(default)]
     pub parameters: serde_json::Value,
+    #[serde(default)]
+    pub response_format: Option<serde_json::Value>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Message {
     pub name: Option<String>,
@@ -50,7 +55,7 @@ pub struct Message {
     pub message: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 #[serde(deny_unknown_fields)]
 pub enum Role {
@@ -58,14 +63,14 @@ pub enum Role {
     Assistant,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct McpSession {
     pub token: String,
     pub expiry: Option<SystemTime>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub enum AgentStatus {
     Idle,
     Running,
@@ -73,7 +78,7 @@ pub enum AgentStatus {
     Failed,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct AgentSession {
     pub agent_id: String,
     pub parent_agent_id: Option<String>,
@@ -82,28 +87,29 @@ pub struct AgentSession {
     pub updated_at: SystemTime,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(untagged)]
 pub enum ToolsFilter {
     All,
     Selected(Vec<ToolSelector>),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ToolSelector {
     pub name: String,
     pub description: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum McpServerType {
     #[default]
     Tool,
     Agent,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct McpDefinition {
     #[serde(default = "default_tools_filter")]
@@ -117,6 +123,7 @@ pub struct McpDefinition {
 fn default_tools_filter() -> ToolsFilter {
     ToolsFilter::All
 }
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ServerTools {
@@ -124,7 +131,7 @@ pub struct ServerTools {
     pub tools: Vec<Tool>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ToolCall {
     pub tool_id: String,
@@ -132,7 +139,7 @@ pub struct ToolCall {
     pub input: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ModelSettings {
     #[serde(default = "default_model")]
@@ -225,4 +232,44 @@ pub fn validate_parameters(
         .validate(&params)
         .map_err(|e| anyhow::anyhow!(e.to_string()))?;
     Ok(())
+}
+
+#[derive(Debug, serde::Deserialize, JsonSchema)]
+pub struct AgentConfig {
+    pub definition: AgentDefinition,
+    pub workflow: crate::cli::RunWorkflow,
+    #[serde(default = "default_max_history")]
+    pub max_history: usize,
+}
+
+#[derive(serde::Deserialize, JsonSchema)]
+pub struct Configuration {
+    pub agents: Vec<AgentConfig>,
+    pub sessions: HashMap<String, String>,
+    #[serde(default)]
+    pub servers: Vec<ServerMetadata>,
+}
+impl std::fmt::Debug for Configuration {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Configuration")
+            .field("agents", &self.agents)
+            .field("sessions", &self.sessions)
+            .finish()
+    }
+}
+
+fn default_max_history() -> usize {
+    5
+}
+
+pub fn get_distri_config_schema(pretty: bool) -> Result<String, serde_json::Error> {
+    let schema = schemars::schema_for!(Configuration);
+
+    let schema_json = if pretty {
+        serde_json::to_string_pretty(&schema)?
+    } else {
+        serde_json::to_string(&schema)?
+    };
+
+    Ok(schema_json)
 }

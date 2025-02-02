@@ -1,5 +1,6 @@
 use agents::coordinator::{AgentCoordinator, LocalCoordinator};
 use agents::store::AgentSessionStore;
+use agents::types::AgentConfig;
 use rustyline::DefaultEditor;
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
@@ -12,8 +13,6 @@ use agents::{
     types::{Message, Role},
     ToolSessionStore,
 };
-
-use crate::AgentConfig;
 
 pub async fn run(
     agent_config: &AgentConfig,

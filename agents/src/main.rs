@@ -1,47 +1,20 @@
 mod cli;
 mod run;
 use agents::{
+    cli::RunWorkflow,
     init_logging,
-    servers::{
-        memory::FileMemory,
-        registry::{init_registry_and_coordinator, ServerMetadata},
-    },
+    servers::{memory::FileMemory, registry::init_registry_and_coordinator},
     store::{AgentSessionStore, InMemoryAgentSessionStore},
-    AgentDefinition,
+    types::{get_distri_config_schema, Configuration},
 };
 use anyhow::Result;
 use clap::Parser;
 use cli::{Cli, Commands};
 use dotenv::dotenv;
 use run::{chat, event, session::get_session_store};
-use std::{collections::HashMap, fmt::Debug};
 use std::{env, sync::Arc};
 use tokio::sync::Mutex;
 use tracing::{debug, info};
-
-#[derive(Debug, serde::Deserialize)]
-pub struct AgentConfig {
-    pub definition: AgentDefinition,
-    pub workflow: cli::RunWorkflow,
-    #[serde(default = "default_max_history")]
-    pub max_history: usize,
-}
-
-#[derive(serde::Deserialize)]
-pub struct Configuration {
-    pub agents: Vec<AgentConfig>,
-    pub sessions: HashMap<String, String>,
-    #[serde(default)]
-    pub servers: Vec<ServerMetadata>,
-}
-impl Debug for Configuration {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Configuration")
-            .field("agents", &self.agents)
-            .field("sessions", &self.sessions)
-            .finish()
-    }
-}
 
 fn load_config(config_path: &str) -> Result<Configuration> {
     // Load .env file if it exists
@@ -88,18 +61,19 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
 
-    // Load configuration
-    let config = load_config(cli.config.to_str().unwrap())?;
-
     // Handle commands
     match cli.command {
         Commands::List => {
             info!("Available agents:");
+            let config = load_config(cli.config.to_str().unwrap())?;
             for agent in &config.agents {
                 info!("- {} ({})", agent.definition.name, agent.workflow);
             }
         }
+        Commands::ConfigSchema { pretty } => print_schema(pretty),
         Commands::Run { agent } => {
+            // Load configuration
+            let config = load_config(cli.config.to_str().unwrap())?;
             info!("Running agent: {:?}", agent);
             let agent_config = config
                 .agents
@@ -118,7 +92,7 @@ async fn main() -> Result<()> {
             ));
 
             match &agent_config.workflow {
-                cli::RunWorkflow::Chat => {
+                RunWorkflow::Chat => {
                     chat::run(agent_config, registry, agent_sessions, tool_sessions).await
                 }
                 mode => {
@@ -145,6 +119,7 @@ pub async fn init_memory(agent: &str) -> Result<Arc<Mutex<FileMemory>>> {
     Ok(Arc::new(Mutex::new(memory)))
 }
 
-fn default_max_history() -> usize {
-    5
+fn print_schema(pretty: bool) {
+    let schemas = get_distri_config_schema(pretty).expect("expected json schema");
+    println!("{schemas}");
 }

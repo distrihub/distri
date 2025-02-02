@@ -102,5 +102,6 @@ pub fn get_twitter_summarizer() -> AgentDefinition {
         model_settings: ModelSettings::default(),
         mcp_servers: vec![get_twitter_tool()],
         parameters: Default::default(),
+        response_format: None,
     }
 }

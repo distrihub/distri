@@ -9,10 +9,11 @@ use crate::{
 use async_openai::{
     config::OpenAIConfig,
     types::{
-        ChatCompletionFunctions, ChatCompletionMessageToolCall,
-        ChatCompletionRequestAssistantMessageArgs, ChatCompletionRequestMessage,
-        ChatCompletionRequestSystemMessageArgs, ChatCompletionRequestToolMessage,
+        ChatCompletionMessageToolCall, ChatCompletionRequestAssistantMessageArgs,
+        ChatCompletionRequestMessage, ChatCompletionRequestSystemMessageArgs,
+        ChatCompletionRequestToolMessage, ChatCompletionRequestToolMessageContent,
         ChatCompletionRequestUserMessageArgs, ChatCompletionTool, CreateChatCompletionRequest,
+        FunctionObject, ResponseFormatJsonSchema,
     },
     Client,
 };
@@ -152,8 +153,10 @@ impl AgentExecutor {
                                 tracing::debug!("Tool Response ({id}) ({content})");
                                 ChatCompletionRequestMessage::Tool(
                                     ChatCompletionRequestToolMessage {
-                                        content: Some(content),
-                                        role: async_openai::types::Role::Tool,
+                                        content: ChatCompletionRequestToolMessageContent::Text(
+                                            content,
+                                        ),
+                                        // role: async_openai::types::Role::Tool,
                                         tool_call_id: id,
                                     },
                                 )
@@ -191,10 +194,21 @@ impl AgentExecutor {
         let tools = self.build_tools();
         tracing::debug!("Tools: {tools:?}",);
 
+        let name = format!("{}_schema", self.agent_def.name);
         CreateChatCompletionRequest {
             model: settings.model.clone(),
             messages,
             tools: if !tools.is_empty() { Some(tools) } else { None },
+            response_format: self.agent_def.response_format.clone().map(|r| {
+                async_openai::types::ResponseFormat::JsonSchema {
+                    json_schema: ResponseFormatJsonSchema {
+                        description: None,
+                        name,
+                        schema: Some(r),
+                        strict: Some(true),
+                    },
+                }
+            }),
             ..Default::default()
         }
     }
@@ -211,10 +225,11 @@ impl AgentExecutor {
             for tool in &server_tools.tools {
                 tools.push(ChatCompletionTool {
                     r#type: async_openai::types::ChatCompletionToolType::Function,
-                    function: ChatCompletionFunctions {
+                    function: FunctionObject {
                         name: tool.name.clone(),
                         description: tool.description.clone(),
-                        parameters: tool.input_schema.clone(),
+                        parameters: Some(tool.input_schema.clone()),
+                        strict: None,
                     },
                 });
             }
