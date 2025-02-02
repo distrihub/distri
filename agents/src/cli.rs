@@ -29,7 +29,7 @@ impl Display for RunWorkflow {
 #[command(author, version, about, long_about = None)]
 pub struct Cli {
     /// Optional config file path
-    #[arg(short, long, default_value = "config.yaml")]
+    #[arg(short, long, default_value = "config.yaml", global = true)]
     pub config: PathBuf,
 
     #[command(subcommand)]

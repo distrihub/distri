@@ -49,6 +49,7 @@ macro_rules! with_transport {
                     command,
                     args.iter().map(|s| s.as_str()).collect::<Vec<_>>().as_ref(),
                 )?;
+                transport.open().await?;
                 Box::pin(async move { $body(transport).await })
                     as Pin<Box<dyn Future<Output = _> + Send>>
             }
@@ -66,6 +67,7 @@ macro_rules! with_transport {
                     None => transport,
                 }
                 .build();
+                transport.open().await?;
                 Box::pin(async move { $body(transport).await })
                     as Pin<Box<dyn Future<Output = _> + Send>>
             }

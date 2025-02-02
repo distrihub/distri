@@ -3,7 +3,7 @@
 ## Configuration
 Copy configuration to 
 ```bash
-cp config/config.example.yaml config.yaml
+cp samples/config.example.yaml config.yaml
 ```
 
 ## Authentication
