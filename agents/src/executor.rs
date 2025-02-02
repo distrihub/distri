@@ -3,10 +3,8 @@ use std::sync::Arc;
 use crate::{
     coordinator::coordinator::AgentHandle,
     error::AgentError,
-    servers::registry::ServerRegistry,
-    tools::execute_tool,
     types::{validate_parameters, Message, Role, ServerTools, ToolCall},
-    AgentDefinition, SessionStore,
+    AgentDefinition,
 };
 use async_openai::{
     config::OpenAIConfig,
@@ -23,8 +21,6 @@ use serde_json::Value;
 pub struct AgentExecutor {
     client: Client<OpenAIConfig>,
     agent_def: AgentDefinition,
-    registry: Arc<ServerRegistry>,
-    session_store: Option<Arc<Box<dyn SessionStore>>>,
     server_tools: Vec<ServerTools>,
     coordinator: Option<Arc<AgentHandle>>,
 }
@@ -39,19 +35,21 @@ fn llm_err(e: impl ToString) -> AgentError {
 impl AgentExecutor {
     pub fn new(
         agent_def: AgentDefinition,
-        registry: Arc<ServerRegistry>,
-        session_store: Option<Arc<Box<dyn SessionStore>>>,
         server_tools: Vec<ServerTools>,
         coordinator: Option<Arc<AgentHandle>>,
     ) -> Self {
         tracing::debug!("Creating new AgentExecutor");
         let client = Client::new();
 
+        // Log the number of tools being passed
+        tracing::debug!(
+            "Initializing executor with {} server tools",
+            server_tools.len()
+        );
+
         Self {
             client,
-            registry,
             agent_def,
-            session_store,
             server_tools,
             coordinator,
         }
@@ -61,38 +59,11 @@ impl AgentExecutor {
         self.server_tools.clone()
     }
 
-    pub async fn execute_sub_agent(
-        &self,
-        agent_id: &str,
-        messages: Vec<Message>,
-    ) -> Result<String, AgentError> {
-        // Create a new agent handle through the coordinator
-        let handle = self
-            .coordinator
-            .as_ref()
-            .unwrap()
-            .execute(messages.clone(), None)
-            .await?;
-        Ok(handle)
-    }
-
     pub async fn execute(
         &self,
         messages: Vec<Message>,
         params: Option<Value>,
     ) -> Result<String, AgentError> {
-        // Check if this is a request to execute a sub-agent
-        if let Some(last_message) = messages.last() {
-            if let Role::User = last_message.role {
-                for agent_id in &self.agent_def.sub_agents {
-                    if last_message.message.contains(agent_id.as_str()) {
-                        return self.execute_sub_agent(agent_id, messages.clone()).await;
-                    }
-                }
-            }
-        }
-
-        // Continue with normal execution if not a sub-agent request
         // Create normalized parameters
         let mut schema = self.agent_def.parameters.clone();
         validate_parameters(&mut schema, params)
@@ -153,6 +124,7 @@ impl AgentExecutor {
                 async_openai::types::FinishReason::ToolCalls => {
                     let tool_calls = choice.message.tool_calls.as_ref().unwrap().clone();
                     tracing::info!("Processing {} tool calls", tool_calls.len());
+
                     let mut messages: Vec<ChatCompletionRequestMessage> =
                         vec![ChatCompletionRequestMessage::Assistant(
                             ChatCompletionRequestAssistantMessageArgs::default()
@@ -160,17 +132,37 @@ impl AgentExecutor {
                                 .build()
                                 .map_err(llm_err)?,
                         )];
-                    let tool_responses = Self::handle_tool_calls(
-                        tool_calls.iter(),
-                        self.coordinator.as_ref().cloned(),
-                        self.registry.clone(),
-                        self.session_store.clone(),
-                        self.server_tools.clone(),
-                    )
-                    .await;
+
+                    // All tool calls go through coordinator
+                    let coordinator = self.coordinator.as_ref().ok_or_else(|| {
+                        AgentError::ToolExecution("No coordinator available".to_string())
+                    })?;
+
+                    let tool_responses =
+                        futures::future::join_all(tool_calls.iter().map(|tool_call| {
+                            let coordinator = coordinator.clone();
+                            async move {
+                                let id = tool_call.id.clone();
+                                let tool_call = Self::map_tool_call(tool_call);
+
+                                let content = coordinator
+                                    .execute_tool(tool_call)
+                                    .await
+                                    .unwrap_or_else(|err| format!("Error: {}", err));
+
+                                tracing::debug!("Tool Response ({id}) ({content})");
+                                ChatCompletionRequestMessage::Tool(
+                                    ChatCompletionRequestToolMessage {
+                                        content: Some(content),
+                                        role: async_openai::types::Role::Tool,
+                                        tool_call_id: id,
+                                    },
+                                )
+                            }
+                        }))
+                        .await;
 
                     messages.extend(tool_responses);
-
                     let conversation_messages = [input_messages, messages].concat();
                     let request = self.build_request(conversation_messages);
                     calls.push(request);
@@ -196,29 +188,40 @@ impl AgentExecutor {
             "Building chat completion request with model: {}",
             settings.model
         );
-        let tools: Vec<_> = self
-            .server_tools
-            .iter()
-            .flat_map(|t| {
-                t.tools.iter().map(|t| ChatCompletionTool {
-                    r#type: async_openai::types::ChatCompletionToolType::Function,
-                    function: ChatCompletionFunctions {
-                        name: t.name.clone(),
-                        description: t.description.clone(),
-                        parameters: t.input_schema.clone(),
-                    },
-                })
-            })
-            .collect();
+
+        let tools = self.build_tools();
+        tracing::debug!("Tools: {tools:?}",);
+
         CreateChatCompletionRequest {
             model: settings.model.clone(),
             messages,
-            tools: match tools.len() > 0 {
-                true => Some(tools),
-                false => None,
-            },
+            tools: if !tools.is_empty() { Some(tools) } else { None },
             ..Default::default()
         }
+    }
+
+    pub fn build_tools(&self) -> Vec<ChatCompletionTool> {
+        let mut tools = Vec::new();
+
+        // Add all server tools
+        for server_tools in &self.server_tools {
+            tracing::debug!(
+                "Adding tools from server: {}",
+                server_tools.definition.mcp_server
+            );
+            for tool in &server_tools.tools {
+                tools.push(ChatCompletionTool {
+                    r#type: async_openai::types::ChatCompletionToolType::Function,
+                    function: ChatCompletionFunctions {
+                        name: tool.name.clone(),
+                        description: tool.description.clone(),
+                        parameters: tool.input_schema.clone(),
+                    },
+                });
+            }
+        }
+
+        tools
     }
 
     pub fn map_tool_call(tool_call: &ChatCompletionMessageToolCall) -> ToolCall {
@@ -264,56 +267,5 @@ impl AgentExecutor {
             })
             .collect::<Vec<_>>();
         vec![system_message].into_iter().chain(messages).collect()
-    }
-
-    async fn handle_tool_calls(
-        function_calls: impl Iterator<Item = &ChatCompletionMessageToolCall>,
-        agent_handle: Option<Arc<AgentHandle>>,
-        registry: Arc<ServerRegistry>,
-        session_store: Option<Arc<Box<dyn SessionStore>>>,
-        server_tools: Vec<ServerTools>,
-    ) -> Vec<ChatCompletionRequestMessage> {
-        futures::future::join_all(function_calls.map(|tool_call| {
-            let server_tools = server_tools.clone();
-            let session_store = session_store.clone();
-            let registry = registry.clone();
-            let agent_handle = agent_handle.clone();
-
-            async move {
-                let id = tool_call.id.clone();
-                let function = tool_call.function.clone();
-                tracing::trace!("Calling tool ({id}) {function:?}");
-
-                let tool_call = Self::map_tool_call(tool_call);
-                let tool_def = server_tools
-                    .iter()
-                    .find(|t| t.tools.iter().any(|tool| tool.name == tool_call.tool_name));
-
-                let content = match (tool_def, agent_handle) {
-                    (Some(_), Some(handle)) => {
-                        // Use coordinator for async execution
-                        handle
-                            .execute_tool(tool_call)
-                            .await
-                            .unwrap_or_else(|err| format!("Error: {}", err))
-                    }
-                    (Some(server_tool), None) => {
-                        // Fallback to direct execution if no coordinator
-                        execute_tool(&tool_call, &server_tool.definition, registry, session_store)
-                            .await
-                            .unwrap_or_else(|err| format!("Error: {}", err))
-                    }
-                    (None, _) => format!("Tool not found {}", tool_call.tool_name),
-                };
-
-                tracing::debug!("Tool Response ({id}) ({content})");
-                ChatCompletionRequestMessage::Tool(ChatCompletionRequestToolMessage {
-                    content: Some(content),
-                    role: async_openai::types::Role::Tool,
-                    tool_call_id: id.clone(),
-                })
-            }
-        }))
-        .await
     }
 }

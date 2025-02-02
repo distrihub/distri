@@ -55,7 +55,7 @@ macro_rules! with_transport {
     };
 }
 pub async fn get_tools(
-    definitions: Vec<McpDefinition>,
+    definitions: &[McpDefinition],
     registry: Arc<ServerRegistry>,
 ) -> Result<Vec<ServerTools>> {
     let mut all_tools = Vec::new();

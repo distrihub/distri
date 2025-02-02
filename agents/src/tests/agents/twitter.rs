@@ -1,47 +1,34 @@
 use crate::{
-    executor::AgentExecutor,
+    coordinator::coordinator::LocalCoordinator,
     init_logging,
-    tests::utils::{get_registry, get_session_store, get_twitter_tool},
-    tools::get_tools,
-    types::{AgentDefinition, Message, ModelSettings, Role},
+    tests::utils::{get_registry, get_session_store, get_twitter_summarizer},
+    types::{Message, Role},
 };
-
-static SYSTEM_PROMPT: &str = r#"You are a helpful AI assistant that can access Twitter and summarize information.
-When asked about tweets, you will:
-1. Get the timeline using the Twitter tool
-2. Format the tweets in a clean markdown format
-3. Add brief summaries and insights
-4. Group similar tweets together by theme
-5. Highlight particularly interesting or important tweets
-6. You dont need to login; Session is already available. 
-
-Keep your summaries concise but informative. Use markdown formatting to make the output readable."#;
 
 #[tokio::test]
 async fn test_twitter_summary() {
     init_logging("debug");
 
-    let tool_defs = vec![get_twitter_tool()];
     let registry = get_registry();
-    // Create agent definition with Twitter tool
-    let agent_def = AgentDefinition {
-        name: "Twitter Agent".to_string(),
-        description: "Agent that can access Twitter".to_string(),
-        system_prompt: Some(SYSTEM_PROMPT.to_string()),
-        model_settings: ModelSettings::default(),
-        mcp_servers: tool_defs.clone(),
-        parameters: Default::default(),
-        sub_agents: vec![],
-    };
-    let server_tools = get_tools(tool_defs, registry.clone()).await.unwrap();
 
-    let executor = AgentExecutor::new(
-        agent_def,
-        registry,
+    let agent_def = get_twitter_summarizer();
+    // Initialize coordinator
+    let coordinator = LocalCoordinator::new(
+        registry.clone(),
+        None, // No agent sessions needed for this test
         get_session_store(),
-        server_tools,
-        None, // No coordinator needed for direct testing
     );
+
+    // Register the agent
+    coordinator.register_agent(agent_def.clone()).await.unwrap();
+
+    // Get handle for the agent
+    let handle = coordinator.get_handle("Twitter Agent".to_string());
+
+    // Start coordinator in background
+    let coordinator_handle = tokio::spawn(async move {
+        coordinator.run().await;
+    });
 
     let messages = vec![Message {
         message: "Get my latest tweets and summarize them".to_string(),
@@ -49,7 +36,10 @@ async fn test_twitter_summary() {
         role: Role::User,
     }];
 
-    // Execute and print response
-    let response = executor.execute(messages, None).await.unwrap();
+    // Execute using the handle
+    let response = handle.execute(messages, None).await.unwrap();
     println!("Response: {}", response);
+
+    // Clean up
+    coordinator_handle.abort();
 }

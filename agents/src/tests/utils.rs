@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::{
     servers::registry::{ServerMetadata, ServerRegistry, ServerTrait},
     types::TransportType,
-    McpDefinition, McpSession, SessionStore,
+    AgentDefinition, McpDefinition, McpSession, ModelSettings, SessionStore,
 };
 
 pub fn get_session_store() -> Option<Arc<Box<dyn SessionStore>>> {
@@ -35,6 +35,7 @@ pub fn get_twitter_tool() -> McpDefinition {
     McpDefinition {
         filter: crate::types::ToolsFilter::All,
         mcp_server: "twitter".to_string(),
+        mcp_server_type: Default::default(),
     }
 }
 
@@ -53,4 +54,28 @@ pub fn get_registry() -> Arc<ServerRegistry> {
         },
     );
     Arc::new(registry)
+}
+
+pub static SYSTEM_PROMPT: &str = r#"You are a helpful AI assistant that can access Twitter and summarize information.
+When asked about tweets, you will:
+1. Get the timeline using the Twitter tool
+2. Format the tweets in a clean markdown format
+3. Add brief summaries and insights
+4. Group similar tweets together by theme
+5. Highlight particularly interesting or important tweets
+6. You dont need to login; Session is already available. 
+
+Keep your summaries concise but informative. Use markdown formatting to make the output readable."#;
+
+pub fn get_twitter_summarizer() -> AgentDefinition {
+    // Create agent definition with Twitter tool
+    let agent_def = AgentDefinition {
+        name: "Twitter Agent".to_string(),
+        description: "Agent that can access Twitter".to_string(),
+        system_prompt: Some(SYSTEM_PROMPT.to_string()),
+        model_settings: ModelSettings::default(),
+        mcp_servers: vec![get_twitter_tool()],
+        parameters: Default::default(),
+    };
+    return agent_def;
 }

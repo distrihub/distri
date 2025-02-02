@@ -1,22 +1,22 @@
 use crate::cli::RunWorkflow;
+use agents::coordinator::coordinator::{AgentCoordinator, LocalCoordinator};
+use agents::store::AgentSessionStore;
 use std::sync::Arc;
 use tokio::signal;
 use tokio::time::{sleep, Duration};
 use tracing::{error, info};
 
-use agents::{
-    executor::AgentExecutor, servers::registry::ServerRegistry, tools::get_tools, AgentDefinition,
-    SessionStore,
-};
+use agents::{servers::registry::ServerRegistry, AgentDefinition, SessionStore};
 
 pub async fn run(
     agent: &AgentDefinition,
     registry: Arc<ServerRegistry>,
-    session_store: Option<Arc<Box<dyn SessionStore>>>,
+    agent_sessions: Option<Arc<Box<dyn AgentSessionStore>>>,
+    tool_sessions: Option<Arc<Box<dyn SessionStore>>>,
     mode: &RunWorkflow,
 ) -> anyhow::Result<()> {
-    let server_tools = get_tools(agent.mcp_servers.clone(), registry.clone()).await?;
-    let executor = AgentExecutor::new(agent.clone(), registry, session_store, server_tools, None);
+    let agent_name = &agent.name;
+    let coordinator = LocalCoordinator::new(registry, agent_sessions, tool_sessions);
     let messages = Vec::new();
 
     info!("Running agent (Ctrl+C to stop)...");
@@ -41,7 +41,7 @@ pub async fn run(
             }
             _ = async {
                 info!("Executing scheduled agent run - iteration: {count}");
-                match executor.execute(messages.clone(), None).await {
+                match coordinator.execute(agent_name, messages.clone(), None).await {
                     Ok(response) => {
                         info!("Agent execution completed successfully");
                         info!("Agent response: {}", response);

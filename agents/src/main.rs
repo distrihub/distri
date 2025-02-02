@@ -6,6 +6,7 @@ use agents::{
         memory::FileMemory,
         registry::{init_registry, ServerMetadata},
     },
+    store::{AgentSessionStore, InMemoryAgentSessionStore},
     AgentDefinition,
 };
 use anyhow::Result;
@@ -107,13 +108,28 @@ async fn main() -> Result<()> {
                 .unwrap_or_else(|| panic!("Agent not found {agent}"));
 
             let sessions = config.sessions;
-            let session_store = get_session_store(sessions);
+
             let memory = init_memory(&agent).await?;
             let registry = init_registry(memory).await;
+            let agent_sessions = Some(Arc::new(
+                Box::new(InMemoryAgentSessionStore::default()) as Box<dyn AgentSessionStore>
+            ));
+            let tool_sessions = get_session_store(sessions);
 
             match &agent_config.workflow {
-                cli::RunWorkflow::Chat => chat::run(&agent_config, registry, session_store).await,
-                mode => event::run(&agent_config.definition, registry, session_store, mode).await,
+                cli::RunWorkflow::Chat => {
+                    chat::run(&agent_config, registry, agent_sessions, tool_sessions).await
+                }
+                mode => {
+                    event::run(
+                        &agent_config.definition,
+                        registry,
+                        agent_sessions,
+                        tool_sessions,
+                        mode,
+                    )
+                    .await
+                }
             }?;
         }
     }

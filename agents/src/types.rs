@@ -1,11 +1,8 @@
 use anyhow::Context;
 use async_mcp::types::Tool;
-use jsonschema::Validator;
 use serde::{Deserialize, Serialize};
 use serde_json::{self, json};
-use std::{collections::HashMap, time::SystemTime};
-
-use crate::AgentError;
+use std::time::SystemTime;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -43,8 +40,6 @@ pub struct AgentDefinition {
     pub model_settings: ModelSettings,
     #[serde(default)]
     pub parameters: serde_json::Value,
-    #[serde(default)]
-    pub sub_agents: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -102,19 +97,27 @@ pub struct ToolSelector {
     pub description: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum McpServerType {
+    #[default]
+    Tool,
+    Agent,
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct McpDefinition {
     #[serde(default = "default_tools_filter")]
     pub filter: ToolsFilter,
     pub mcp_server: String,
+    #[serde(default)]
+    pub mcp_server_type: McpServerType,
 }
 
 // Helper functions for serde defaults
 fn default_tools_filter() -> ToolsFilter {
     ToolsFilter::All
 }
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ServerTools {

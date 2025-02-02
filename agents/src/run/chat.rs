@@ -1,3 +1,5 @@
+use agents::coordinator::coordinator::{AgentCoordinator, LocalCoordinator};
+use agents::store::AgentSessionStore;
 use rustyline::DefaultEditor;
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
@@ -5,9 +7,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use agents::{
-    executor::AgentExecutor,
     servers::registry::ServerRegistry,
-    tools::get_tools,
     types::{Message, Role},
     SessionStore,
 };
@@ -17,13 +17,15 @@ use crate::AgentConfig;
 pub async fn run(
     agent_config: &AgentConfig,
     registry: Arc<ServerRegistry>,
-    session_store: Option<Arc<Box<dyn SessionStore>>>,
+    agent_sessions: Option<Arc<Box<dyn AgentSessionStore>>>,
+    tool_sessions: Option<Arc<Box<dyn SessionStore>>>,
 ) -> anyhow::Result<()> {
     let agent = &agent_config.definition;
     let max_history = agent_config.max_history;
-    let server_tools = get_tools(agent.mcp_servers.clone(), registry.clone()).await?;
-    let executor = AgentExecutor::new(agent.clone(), registry, session_store, server_tools, None);
+    let agent_name = &agent.name;
+    let coordinator = LocalCoordinator::new(registry, agent_sessions, tool_sessions);
 
+    coordinator.register_agent(agent.clone()).await?;
     // Set up messages file in .distri folder
     let messages_file = {
         let path = PathBuf::from(".distri");
@@ -122,7 +124,7 @@ pub async fn run(
             .rev()
             .cloned()
             .collect();
-        match executor.execute(context, None).await {
+        match coordinator.execute(agent_name, context, None).await {
             Ok(response) => {
                 println!("{}", response);
                 let assistant_message = Message {

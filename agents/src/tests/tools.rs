@@ -30,7 +30,7 @@ async fn get_tools_test() {
     init_logging("debug");
     let tool_def = get_twitter_tool();
     let registry = crate::tests::utils::get_registry();
-    let server_tools = get_tools(vec![tool_def], registry)
+    let server_tools = get_tools(&[tool_def], registry)
         .await
         .expect("failed to fetch tools");
 

@@ -3,17 +3,13 @@ use crate::{
     executor::AgentExecutor,
     servers::registry::ServerRegistry,
     store::{AgentSessionStore, SessionStore},
-    tools::execute_tool,
-    types::{AgentDefinition, AgentSession, AgentStatus, Message, ServerTools, ToolCall},
+    tools::{execute_tool, get_tools},
+    types::{AgentDefinition, Message, Role, ServerTools, ToolCall},
 };
-use async_mcp::{
-    server::{Server, ServerBuilder},
-    transport::Transport,
-    types::{CallToolRequest, CallToolResponse, ServerCapabilities, Tool},
-};
-use serde_json::json;
-use std::{collections::HashMap, sync::Arc, time::SystemTime};
-use tokio::sync::{mpsc, oneshot, RwLock};
+
+use anyhow::Context;
+use std::{collections::HashMap, sync::Arc};
+use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
 
 // Message types for coordinator communication
 #[derive(Debug)]
@@ -23,38 +19,45 @@ pub enum CoordinatorMessage {
         tool_call: ToolCall,
         response_tx: oneshot::Sender<String>,
     },
-    NewAgent {
+    Execute {
         agent_id: String,
-        definition: AgentDefinition,
+        messages: Vec<Message>,
+        params: Option<serde_json::Value>,
         parent_session: Option<String>,
-        response_tx: oneshot::Sender<Result<AgentHandle, AgentError>>,
-    },
-    GetAgentStatus {
-        agent_id: String,
-        response_tx: oneshot::Sender<Option<AgentStatus>>,
-    },
-    StopAgent {
-        agent_id: String,
-        response_tx: oneshot::Sender<Result<(), AgentError>>,
+        response_tx: oneshot::Sender<Result<String, AgentError>>,
     },
 }
 
+pub static DISTRI_LOCAL_SERVER: &str = "distri-mcp-seerver";
 #[derive(Debug, Clone)]
 pub struct AgentHandle {
     pub agent_id: String,
     coordinator_tx: mpsc::Sender<CoordinatorMessage>,
 }
 
-pub struct AgentCoordinator {
-    agents: Arc<RwLock<HashMap<String, Arc<AgentExecutor>>>>,
+#[async_trait::async_trait]
+pub trait AgentCoordinator {
+    async fn get_agent(&self, agent_name: &str) -> Result<AgentDefinition, AgentError>;
+    async fn get_tools(&self, agent_name: &str) -> Result<Vec<ServerTools>, AgentError>;
+    async fn execute(
+        &self,
+        agent_name: &str,
+        messages: Vec<Message>,
+        params: Option<serde_json::Value>,
+    ) -> Result<String, AgentError>;
+}
+
+pub struct LocalCoordinator {
+    agent_definitions: Arc<RwLock<HashMap<String, AgentDefinition>>>,
+    agent_tools: Arc<RwLock<HashMap<String, Vec<ServerTools>>>>,
     agent_sessions: Option<Arc<Box<dyn AgentSessionStore>>>,
     tool_sessions: Option<Arc<Box<dyn SessionStore>>>,
     registry: Arc<ServerRegistry>,
-    coordinator_rx: mpsc::Receiver<CoordinatorMessage>,
+    coordinator_rx: Mutex<mpsc::Receiver<CoordinatorMessage>>,
     coordinator_tx: mpsc::Sender<CoordinatorMessage>,
 }
 
-impl AgentCoordinator {
+impl LocalCoordinator {
     pub fn new(
         registry: Arc<ServerRegistry>,
         agent_sessions: Option<Arc<Box<dyn AgentSessionStore>>>,
@@ -62,11 +65,12 @@ impl AgentCoordinator {
     ) -> Self {
         let (coordinator_tx, coordinator_rx) = mpsc::channel(100);
         Self {
-            agents: Arc::new(RwLock::new(HashMap::new())),
+            agent_definitions: Arc::new(RwLock::new(HashMap::new())),
+            agent_tools: Arc::new(RwLock::new(HashMap::new())),
             agent_sessions,
             tool_sessions,
             registry,
-            coordinator_rx,
+            coordinator_rx: Mutex::new(coordinator_rx),
             coordinator_tx,
         }
     }
@@ -78,125 +82,128 @@ impl AgentCoordinator {
         }
     }
 
-    async fn update_session_status(&self, agent_id: &str, status: AgentStatus) {
-        if let Some(sessions) = &self.agent_sessions {
-            if let Ok(mut session) = sessions.get_agent_session(agent_id).await {
-                if let Some(mut session) = session {
-                    session.status = status;
-                    session.updated_at = SystemTime::now();
-                    let _ = sessions.set_agent_session(session).await;
-                }
-            }
-        }
+    pub async fn register_agent(&self, definition: AgentDefinition) -> anyhow::Result<()> {
+        let mut definitions = self.agent_definitions.write().await;
+
+        let name = definition.name.clone();
+        tracing::debug!("Registering agent: {name}");
+
+        let resolved_tools = get_tools(&definition.mcp_servers, self.registry.clone()).await?;
+        // Store both the definition and its tools
+        definitions.insert(name.clone(), definition);
+
+        // Store the resolved tools
+        let mut tools = self.agent_tools.write().await;
+        tools.insert(name, resolved_tools);
+        Ok(())
     }
 
-    pub async fn run(&mut self) {
-        while let Some(msg) = self.coordinator_rx.recv().await {
+    pub async fn run(&self) {
+        tracing::info!("AgentCoordinator run loop started");
+
+        while let Some(msg) = self.coordinator_rx.lock().await.recv().await {
+            tracing::info!("AgentCoordinator received a message: {:?}", msg);
             match msg {
                 CoordinatorMessage::ExecuteTool {
                     agent_id,
                     tool_call,
                     response_tx,
                 } => {
+                    tracing::info!("Handling ExecuteTool for agent: {}", agent_id);
                     let registry = self.registry.clone();
-                    let agents = self.agents.clone();
-                    let agent_sessions = self.agent_sessions.clone();
+                    let agent_tools = self.agent_tools.clone();
                     let tool_sessions = self.tool_sessions.clone();
-
                     tokio::spawn(async move {
-                        let result = if let Some(agent) = agents.read().await.get(&agent_id) {
-                            let can_execute = if let Some(sessions) = agent_sessions {
-                                if let Ok(Some(session)) =
-                                    sessions.get_agent_session(&agent_id).await
-                                {
-                                    session.status == AgentStatus::Running
-                                } else {
-                                    true // No session tracking, allow execution
-                                }
-                            } else {
-                                true // No session store, allow execution
-                            };
+                        let result = async {
+                            // Check if this is a sub-agent execution
 
-                            if can_execute {
-                                let server_tools = agent.get_server_tools();
-                                execute_tool_async(&tool_call, registry, server_tools).await
+                            // Regular tool execution
+                            if let Some(server_tools) = agent_tools.read().await.get(&agent_id) {
+                                // Execute the tool
+                                let tool_def = server_tools.iter().find(|t| {
+                                    t.tools.iter().any(|tool| tool.name == tool_call.tool_name)
+                                });
+
+                                let content = match tool_def {
+                                    Some(server_tool) => execute_tool(
+                                        &tool_call,
+                                        &server_tool.definition,
+                                        registry,
+                                        tool_sessions,
+                                    )
+                                    .await
+                                    .unwrap_or_else(|err| format!("Error: {}", err)),
+                                    None => format!("Tool not found {}", tool_call.tool_name),
+                                };
+                                Ok(content)
                             } else {
                                 Err(AgentError::ToolExecution(format!(
-                                    "Agent {} is not running",
+                                    "Agent {} not found",
                                     agent_id
                                 )))
                             }
-                        } else {
-                            Err(AgentError::ToolExecution(format!(
-                                "Agent {} not found",
-                                agent_id
-                            )))
-                        };
+                        }
+                        .await;
 
                         let _ =
                             response_tx.send(result.unwrap_or_else(|e| format!("Error: {}", e)));
                     });
                 }
-                CoordinatorMessage::NewAgent {
+                CoordinatorMessage::Execute {
                     agent_id,
-                    definition,
+                    messages,
+                    params,
                     parent_session,
                     response_tx,
                 } => {
-                    // Create session if we have a session store
-                    if let Some(sessions) = &self.agent_sessions {
-                        let session = AgentSession {
-                            agent_id: agent_id.clone(),
-                            status: AgentStatus::Idle,
-                            state: json!({}),
-                            parent_session,
-                            created_at: SystemTime::now(),
-                            updated_at: SystemTime::now(),
-                        };
-                        let _ = sessions.set_agent_session(session).await;
-                    }
-
-                    // Create new agent executor
-                    let executor = AgentExecutor::new(
-                        definition.clone(),
-                        self.registry.clone(),
-                        self.tool_sessions.clone(),
-                        vec![],
-                        Some(Arc::new(self.get_handle(agent_id.clone()))),
+                    tracing::info!(
+                        "Handling Execute for agent: {} with messages: {:?}",
+                        agent_id,
+                        messages
                     );
-                    let mut agents = self.agents.write().await;
-                    agents.insert(agent_id.clone(), Arc::new(executor));
+                    let definitions = self.agent_definitions.clone();
+                    let coordinator = Arc::new(self.get_handle(agent_id.clone()));
+                    let agent_sessions = self.agent_sessions.clone();
+                    let agent_tools = self.agent_tools.clone();
 
-                    self.update_session_status(&agent_id, AgentStatus::Running)
-                        .await;
-                    let handle = self.get_handle(agent_id);
-                    let _ = response_tx.send(Ok(handle));
-                }
-                CoordinatorMessage::GetAgentStatus {
-                    agent_id,
-                    response_tx,
-                } => {
-                    let status = if let Some(sessions) = &self.agent_sessions {
-                        if let Ok(Some(session)) = sessions.get_agent_session(&agent_id).await {
-                            Some(session.status)
-                        } else {
-                            None
+                    tokio::spawn(async move {
+                        tracing::info!("Spawned Execute task for agent: {}", agent_id);
+                        let result = async {
+                            // Get agent definition
+                            let definition = definitions
+                                .read()
+                                .await
+                                .get(&agent_id)
+                                .cloned()
+                                .ok_or_else(|| {
+                                    AgentError::ToolExecution(format!(
+                                        "Agent {} not found",
+                                        agent_id
+                                    ))
+                                })?;
+
+                            // Get the tools for this agent
+                            let tools = agent_tools
+                                .read()
+                                .await
+                                .get(&agent_id)
+                                .cloned()
+                                .unwrap_or_default();
+
+                            // Create executor and execute
+                            let mut executor =
+                                AgentExecutor::new(definition, tools, Some(coordinator));
+
+                            executor.execute(messages, params).await
                         }
-                    } else {
-                        None
-                    };
-                    let _ = response_tx.send(status);
-                }
-                CoordinatorMessage::StopAgent {
-                    agent_id,
-                    response_tx,
-                } => {
-                    self.update_session_status(&agent_id, AgentStatus::Stopped)
                         .await;
-                    let _ = response_tx.send(Ok(()));
+
+                        let _ = response_tx.send(result);
+                    });
                 }
             }
         }
+        tracing::info!("AgentCoordinator run loop exiting");
     }
 }
 
@@ -219,36 +226,6 @@ impl AgentHandle {
         })
     }
 
-    pub async fn get_status(&self) -> Result<Option<AgentStatus>, AgentError> {
-        let (response_tx, response_rx) = oneshot::channel();
-        self.coordinator_tx
-            .send(CoordinatorMessage::GetAgentStatus {
-                agent_id: self.agent_id.clone(),
-                response_tx,
-            })
-            .await
-            .map_err(|e| AgentError::ToolExecution(format!("Failed to get agent status: {}", e)))?;
-
-        response_rx.await.map_err(|e| {
-            AgentError::ToolExecution(format!("Failed to receive agent status: {}", e))
-        })
-    }
-
-    pub async fn stop(&self) -> Result<(), AgentError> {
-        let (response_tx, response_rx) = oneshot::channel();
-        self.coordinator_tx
-            .send(CoordinatorMessage::StopAgent {
-                agent_id: self.agent_id.clone(),
-                response_tx,
-            })
-            .await
-            .map_err(|e| AgentError::ToolExecution(format!("Failed to stop agent: {}", e)))?;
-
-        response_rx.await.map_err(|e| {
-            AgentError::ToolExecution(format!("Failed to receive stop confirmation: {}", e))
-        })?
-    }
-
     pub async fn execute(
         &self,
         messages: Vec<Message>,
@@ -256,56 +233,52 @@ impl AgentHandle {
     ) -> Result<String, AgentError> {
         let (response_tx, response_rx) = oneshot::channel();
         self.coordinator_tx
-            .send(CoordinatorMessage::NewAgent {
+            .send(CoordinatorMessage::Execute {
                 agent_id: self.agent_id.clone(),
-                definition: AgentDefinition {
-                    name: self.agent_id.clone(),
-                    description: String::new(),
-                    system_prompt: None,
-                    mcp_servers: vec![],
-                    model_settings: Default::default(),
-                    parameters: Default::default(),
-                    sub_agents: vec![],
-                },
+                messages,
+                params,
                 parent_session: None,
                 response_tx,
             })
             .await
-            .map_err(|e| AgentError::ToolExecution(format!("Failed to create agent: {}", e)))?;
+            .map_err(|e| AgentError::ToolExecution(format!("Failed to execute agent: {}", e)))?;
 
-        let handle = response_rx.await.map_err(|e| {
-            AgentError::ToolExecution(format!("Failed to receive agent handle: {}", e))
-        })??;
-
-        handle
-            .execute_tool(ToolCall {
-                tool_id: "execute".to_string(),
-                tool_name: "execute".to_string(),
-                input: serde_json::to_string(&json!({
-                    "messages": messages,
-                    "params": params
-                }))
-                .unwrap(),
-            })
-            .await
+        response_rx.await.map_err(|e| {
+            AgentError::ToolExecution(format!("Failed to receive execution response: {}", e))
+        })?
     }
 }
 
-async fn execute_tool_async(
-    tool_call: &ToolCall,
-    registry: Arc<ServerRegistry>,
-    server_tools: Vec<ServerTools>,
-) -> Result<String, AgentError> {
-    // Find the tool definition
-    let tool_def = server_tools
-        .iter()
-        .find(|t| t.tools.iter().any(|tool| tool.name == tool_call.tool_name))
-        .ok_or_else(|| {
-            AgentError::ToolExecution(format!("Tool not found: {}", tool_call.tool_name))
-        })?;
+#[async_trait::async_trait]
+impl AgentCoordinator for LocalCoordinator {
+    async fn get_agent(&self, agent_name: &str) -> Result<AgentDefinition, AgentError> {
+        self.agent_definitions
+            .read()
+            .await
+            .get(agent_name)
+            .cloned()
+            .ok_or_else(|| AgentError::ToolExecution(format!("Agent {} not found", agent_name)))
+    }
 
-    // Execute the tool
-    execute_tool(tool_call, &tool_def.definition, registry, None)
-        .await
-        .map_err(|e| AgentError::ToolExecution(e.to_string()))
+    async fn get_tools(&self, agent_name: &str) -> Result<Vec<ServerTools>, AgentError> {
+        Ok(self
+            .agent_tools
+            .read()
+            .await
+            .get(agent_name)
+            .cloned()
+            .unwrap_or_default())
+    }
+
+    async fn execute(
+        &self,
+        agent_name: &str,
+        messages: Vec<Message>,
+        params: Option<serde_json::Value>,
+    ) -> Result<String, AgentError> {
+        // Start coordinator in background
+
+        let handle = self.get_handle(agent_name.to_string());
+        handle.execute(messages, params).await
+    }
 }
