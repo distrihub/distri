@@ -27,3 +27,14 @@ agents:
               - name: search_tweets
     workflow: 
       mode: "chat"
+
+# proxy:
+#   port: 3004
+#   servers:
+#     filesystem:
+#       type: stdio
+#       command: npx
+#       args:
+#         - -y
+#         - "@modelcontextprotocol/server-filesystem"
+#         - .      

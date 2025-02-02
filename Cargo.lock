@@ -309,6 +309,7 @@ dependencies = [
  "async-trait",
  "clap",
  "dirs",
+ "distri-proxy",
  "dotenv",
  "futures",
  "jsonschema",
@@ -1187,6 +1188,26 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "distri-proxy"
+version = "0.1.0"
+source = "git+https://github.com/DistriAI/distri-proxy.git?rev=fb902a895d0476d256d0617aee4d9270b81a9cd5#fb902a895d0476d256d0617aee4d9270b81a9cd5"
+dependencies = [
+ "anyhow",
+ "async-mcp",
+ "async-trait",
+ "clap",
+ "futures",
+ "schemars",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "url",
 ]
 
 [[package]]

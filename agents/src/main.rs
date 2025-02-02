@@ -9,6 +9,7 @@ use agents::{
 use anyhow::Result;
 use clap::Parser;
 use cli::{Cli, Commands};
+use distri_proxy::{types::ProxyMcpServer, McpProxy};
 use dotenv::dotenv;
 use run::{chat, event, session::get_session_store};
 use std::{env, sync::Arc};
@@ -105,6 +106,21 @@ async fn main() -> Result<()> {
                 mode => event::run(&agent_config.definition, coordinator, mode).await,
             }?;
             coordinator_handle.abort();
+        }
+        Commands::Proxy => {
+            let config = load_config(cli.config.to_str().unwrap())?;
+            let proxy_config = Arc::new(config.proxy.expect("proxy configuration is missing"));
+            let port = proxy_config.port;
+            let proxy = McpProxy::new(proxy_config).await?;
+
+            async_mcp::run_http_server(port, None, move |transport| {
+                let proxy = proxy.clone();
+                async move {
+                    let server = proxy.build(transport).await?;
+                    Ok(server)
+                }
+            })
+            .await?;
         }
     }
 
