@@ -2,15 +2,12 @@ use crate::{
     error::AgentError,
     executor::AgentExecutor,
     servers::registry::ServerRegistry,
-    store::{AgentSessionStore, SessionStore},
+    store::{AgentSessionStore, ToolSessionStore},
     tools::{execute_tool, get_tools},
-    types::{AgentDefinition, Message, Role, ServerTools, ToolCall},
+    types::{AgentDefinition, Message, ServerTools, ToolCall},
 };
-
-use anyhow::Context;
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
-
 // Message types for coordinator communication
 #[derive(Debug)]
 pub enum CoordinatorMessage {
@@ -28,7 +25,6 @@ pub enum CoordinatorMessage {
     },
 }
 
-pub static DISTRI_LOCAL_SERVER: &str = "distri-mcp-seerver";
 #[derive(Debug, Clone)]
 pub struct AgentHandle {
     pub agent_id: String,
@@ -37,6 +33,10 @@ pub struct AgentHandle {
 
 #[async_trait::async_trait]
 pub trait AgentCoordinator {
+    async fn list_agents(
+        &self,
+        cursor: Option<String>,
+    ) -> Result<(Vec<AgentDefinition>, Option<String>), AgentError>;
     async fn get_agent(&self, agent_name: &str) -> Result<AgentDefinition, AgentError>;
     async fn get_tools(&self, agent_name: &str) -> Result<Vec<ServerTools>, AgentError>;
     async fn execute(
@@ -51,17 +51,17 @@ pub struct LocalCoordinator {
     agent_definitions: Arc<RwLock<HashMap<String, AgentDefinition>>>,
     agent_tools: Arc<RwLock<HashMap<String, Vec<ServerTools>>>>,
     agent_sessions: Option<Arc<Box<dyn AgentSessionStore>>>,
-    tool_sessions: Option<Arc<Box<dyn SessionStore>>>,
-    registry: Arc<ServerRegistry>,
+    tool_sessions: Option<Arc<Box<dyn ToolSessionStore>>>,
+    registry: Arc<RwLock<ServerRegistry>>,
     coordinator_rx: Mutex<mpsc::Receiver<CoordinatorMessage>>,
     coordinator_tx: mpsc::Sender<CoordinatorMessage>,
 }
 
 impl LocalCoordinator {
     pub fn new(
-        registry: Arc<ServerRegistry>,
+        registry: Arc<RwLock<ServerRegistry>>,
         agent_sessions: Option<Arc<Box<dyn AgentSessionStore>>>,
-        tool_sessions: Option<Arc<Box<dyn SessionStore>>>,
+        tool_sessions: Option<Arc<Box<dyn ToolSessionStore>>>,
     ) -> Self {
         let (coordinator_tx, coordinator_rx) = mpsc::channel(100);
         Self {
@@ -86,10 +86,20 @@ impl LocalCoordinator {
         let mut definitions = self.agent_definitions.write().await;
 
         let name = definition.name.clone();
-        tracing::debug!("Registering agent: {name}");
 
         let resolved_tools = get_tools(&definition.mcp_servers, self.registry.clone()).await?;
         // Store both the definition and its tools
+
+        tracing::debug!(
+            "Registering agent: {name} with {:?}",
+            resolved_tools
+                .iter()
+                .map(
+                    |r| serde_json::json!({"name": r.definition.mcp_server, "type": r.definition.mcp_server_type, "tools": r.tools.len()})
+                )
+                .collect::<Vec<_>>()
+        );
+
         definitions.insert(name.clone(), definition);
 
         // Store the resolved tools
@@ -191,8 +201,7 @@ impl LocalCoordinator {
                                 .unwrap_or_default();
 
                             // Create executor and execute
-                            let mut executor =
-                                AgentExecutor::new(definition, tools, Some(coordinator));
+                            let executor = AgentExecutor::new(definition, tools, Some(coordinator));
 
                             executor.execute(messages, params).await
                         }
@@ -251,6 +260,21 @@ impl AgentHandle {
 
 #[async_trait::async_trait]
 impl AgentCoordinator for LocalCoordinator {
+    async fn list_agents(
+        &self,
+        _cursor: Option<String>,
+    ) -> Result<(Vec<AgentDefinition>, Option<String>), AgentError> {
+        let agents = self
+            .agent_definitions
+            .read()
+            .await
+            .values()
+            .cloned()
+            .skip(0)
+            .take(30)
+            .collect();
+        Ok((agents, None))
+    }
     async fn get_agent(&self, agent_name: &str) -> Result<AgentDefinition, AgentError> {
         self.agent_definitions
             .read()

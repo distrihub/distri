@@ -1,10 +1,15 @@
-use crate::types::TransportType;
+use crate::{
+    coordinator::{self, coordinator::LocalCoordinator, DISTRI_LOCAL_SERVER},
+    store::{AgentSessionStore, InMemoryAgentSessionStore},
+    types::TransportType,
+    ToolSessionStore,
+};
 use anyhow::Result;
 use async_mcp::{server::Server, transport::Transport};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 
 use crate::servers::tavily;
 use async_mcp::transport::ServerInMemoryTransport;
@@ -22,6 +27,16 @@ pub struct ServerMetadata {
     pub memory: Option<Arc<Mutex<dyn Memory>>>,
     #[serde(skip)]
     pub builder: Option<Arc<BuilderFn>>,
+}
+impl std::fmt::Debug for ServerMetadata {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ServerMetadata")
+            .field("auth_session_key", &self.auth_session_key)
+            .field("mcp_transport", &self.mcp_transport)
+            .field("memory", &self.memory.is_some())
+            .field("builder", &self.builder.is_some())
+            .finish()
+    }
 }
 
 fn default_transport_type() -> TransportType {
@@ -76,10 +91,23 @@ impl<T: Transport> ServerTrait for Server<T> {
     }
 }
 
-pub async fn init_registry(memory: Arc<Mutex<FileMemory>>) -> Arc<ServerRegistry> {
-    let server_registry = ServerRegistry::new();
-    let mut registry = server_registry;
+pub async fn init_registry_and_coordinator(
+    memory: Arc<Mutex<FileMemory>>,
+    tool_sessions: Option<Arc<Box<dyn ToolSessionStore>>>,
+) -> Arc<RwLock<ServerRegistry>> {
+    let server_registry = Arc::new(RwLock::new(ServerRegistry::new()));
+    let reg_clone = server_registry.clone();
+    let mut registry = reg_clone.write().await;
 
+    let agent_sessions = Some(Arc::new(
+        Box::new(InMemoryAgentSessionStore::default()) as Box<dyn AgentSessionStore>
+    ));
+
+    let coordinator = Arc::new(LocalCoordinator::new(
+        server_registry.clone(),
+        agent_sessions,
+        tool_sessions,
+    ));
     registry.register(
         "twitter".to_string(),
         ServerMetadata {
@@ -119,5 +147,19 @@ pub async fn init_registry(memory: Arc<Mutex<FileMemory>>) -> Arc<ServerRegistry
         },
     );
 
-    Arc::new(registry)
+    registry.register(
+        DISTRI_LOCAL_SERVER.to_string(),
+        ServerMetadata {
+            auth_session_key: None,
+            mcp_transport: TransportType::Async,
+            memory: None,
+            builder: Some(Arc::new(move |_, transport| {
+                let coordinator = coordinator.clone();
+                let server = coordinator::build_server(transport, coordinator)?;
+                Ok(Box::new(server) as Box<dyn ServerTrait>)
+            })),
+        },
+    );
+
+    server_registry
 }

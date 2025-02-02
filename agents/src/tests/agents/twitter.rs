@@ -1,7 +1,7 @@
 use crate::{
     coordinator::coordinator::LocalCoordinator,
     init_logging,
-    tests::utils::{get_registry, get_session_store, get_twitter_summarizer},
+    tests::utils::{get_registry, get_tools_session_store, get_twitter_summarizer},
     types::{Message, Role},
 };
 
@@ -9,14 +9,14 @@ use crate::{
 async fn test_twitter_summary() {
     init_logging("debug");
 
-    let registry = get_registry();
+    let registry = get_registry().await;
 
     let agent_def = get_twitter_summarizer();
     // Initialize coordinator
     let coordinator = LocalCoordinator::new(
         registry.clone(),
         None, // No agent sessions needed for this test
-        get_session_store(),
+        get_tools_session_store(),
     );
 
     // Register the agent

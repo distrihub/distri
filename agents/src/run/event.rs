@@ -3,16 +3,17 @@ use agents::coordinator::coordinator::{AgentCoordinator, LocalCoordinator};
 use agents::store::AgentSessionStore;
 use std::sync::Arc;
 use tokio::signal;
+use tokio::sync::RwLock;
 use tokio::time::{sleep, Duration};
 use tracing::{error, info};
 
-use agents::{servers::registry::ServerRegistry, AgentDefinition, SessionStore};
+use agents::{servers::registry::ServerRegistry, AgentDefinition, ToolSessionStore};
 
 pub async fn run(
     agent: &AgentDefinition,
-    registry: Arc<ServerRegistry>,
+    registry: Arc<RwLock<ServerRegistry>>,
     agent_sessions: Option<Arc<Box<dyn AgentSessionStore>>>,
-    tool_sessions: Option<Arc<Box<dyn SessionStore>>>,
+    tool_sessions: Option<Arc<Box<dyn ToolSessionStore>>>,
     mode: &RunWorkflow,
 ) -> anyhow::Result<()> {
     let agent_name = &agent.name;

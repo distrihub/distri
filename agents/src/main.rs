@@ -4,7 +4,7 @@ use agents::{
     init_logging,
     servers::{
         memory::FileMemory,
-        registry::{init_registry, ServerMetadata},
+        registry::{init_registry_and_coordinator, ServerMetadata},
     },
     store::{AgentSessionStore, InMemoryAgentSessionStore},
     AgentDefinition,
@@ -110,11 +110,12 @@ async fn main() -> Result<()> {
             let sessions = config.sessions;
 
             let memory = init_memory(&agent).await?;
-            let registry = init_registry(memory).await;
+            let tool_sessions = get_session_store(sessions);
+
+            let registry = init_registry_and_coordinator(memory, tool_sessions.clone()).await;
             let agent_sessions = Some(Arc::new(
                 Box::new(InMemoryAgentSessionStore::default()) as Box<dyn AgentSessionStore>
             ));
-            let tool_sessions = get_session_store(sessions);
 
             match &agent_config.workflow {
                 cli::RunWorkflow::Chat => {

@@ -38,12 +38,11 @@ impl AgentExecutor {
         server_tools: Vec<ServerTools>,
         coordinator: Option<Arc<AgentHandle>>,
     ) -> Self {
-        tracing::debug!("Creating new AgentExecutor");
         let client = Client::new();
-
+        let name = &agent_def.name;
         // Log the number of tools being passed
         tracing::debug!(
-            "Initializing executor with {} server tools",
+            "Initializing AgentExecutor {name} with {} server tools",
             server_tools.len()
         );
 

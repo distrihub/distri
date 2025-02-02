@@ -5,20 +5,21 @@ use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
+use tokio::sync::RwLock;
 
 use agents::{
     servers::registry::ServerRegistry,
     types::{Message, Role},
-    SessionStore,
+    ToolSessionStore,
 };
 
 use crate::AgentConfig;
 
 pub async fn run(
     agent_config: &AgentConfig,
-    registry: Arc<ServerRegistry>,
+    registry: Arc<RwLock<ServerRegistry>>,
     agent_sessions: Option<Arc<Box<dyn AgentSessionStore>>>,
-    tool_sessions: Option<Arc<Box<dyn SessionStore>>>,
+    tool_sessions: Option<Arc<Box<dyn ToolSessionStore>>>,
 ) -> anyhow::Result<()> {
     let agent = &agent_config.definition;
     let max_history = agent_config.max_history;

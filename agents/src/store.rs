@@ -6,7 +6,7 @@ use tokio::sync::RwLock;
 use crate::types::{AgentSession, McpSession};
 
 #[async_trait]
-pub trait SessionStore: Send + Sync {
+pub trait ToolSessionStore: Send + Sync {
     async fn get_session(&self, tool_name: &str) -> anyhow::Result<Option<McpSession>>;
 }
 
@@ -31,7 +31,7 @@ impl InMemorySessionStore {
 }
 
 #[async_trait]
-impl SessionStore for InMemorySessionStore {
+impl ToolSessionStore for InMemorySessionStore {
     async fn get_session(&self, tool_name: &str) -> anyhow::Result<Option<McpSession>> {
         Ok(self.mcp_sessions.get(tool_name).cloned())
     }
@@ -82,7 +82,7 @@ pub struct RedisSessionStore {
 
 #[cfg(feature = "redis")]
 #[async_trait]
-impl SessionStore for RedisSessionStore {
+impl ToolSessionStore for RedisSessionStore {
     async fn get_session(&self, _tool_name: &str) -> anyhow::Result<Option<McpSession>> {
         unimplemented!("Redis session store not implemented yet")
     }

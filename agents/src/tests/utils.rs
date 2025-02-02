@@ -1,18 +1,21 @@
 use std::sync::Arc;
 
+use tokio::sync::RwLock;
+
 use crate::{
+    coordinator::{coordinator::LocalCoordinator, DISTRI_LOCAL_SERVER},
     servers::registry::{ServerMetadata, ServerRegistry, ServerTrait},
     types::TransportType,
-    AgentDefinition, McpDefinition, McpSession, ModelSettings, SessionStore,
+    AgentDefinition, McpDefinition, McpSession, ModelSettings, ToolSessionStore,
 };
 
-pub fn get_session_store() -> Option<Arc<Box<dyn SessionStore>>> {
+pub fn get_tools_session_store() -> Option<Arc<Box<dyn ToolSessionStore>>> {
     dotenv::dotenv().ok();
     let session_key = std::env::var("LYNEL_SESSION").unwrap();
     // Create executor with static session store
 
     Some(Arc::new(
-        Box::new(StaticSessionStore { session_key }) as Box<dyn SessionStore>
+        Box::new(StaticSessionStore { session_key }) as Box<dyn ToolSessionStore>
     ))
 }
 
@@ -21,7 +24,7 @@ pub struct StaticSessionStore {
 }
 
 #[async_trait::async_trait]
-impl SessionStore for StaticSessionStore {
+impl ToolSessionStore for StaticSessionStore {
     async fn get_session(&self, _tool_name: &str) -> anyhow::Result<Option<McpSession>> {
         Ok(Some(McpSession {
             token: self.session_key.clone(),
@@ -39,8 +42,11 @@ pub fn get_twitter_tool() -> McpDefinition {
     }
 }
 
-pub fn get_registry() -> Arc<ServerRegistry> {
-    let mut registry = ServerRegistry::new();
+pub async fn get_registry() -> Arc<RwLock<ServerRegistry>> {
+    let server_registry = Arc::new(RwLock::new(ServerRegistry::new()));
+    let reg_clone = server_registry.clone();
+    let mut registry = reg_clone.write().await;
+
     registry.register(
         "twitter".to_string(),
         ServerMetadata {
@@ -53,7 +59,28 @@ pub fn get_registry() -> Arc<ServerRegistry> {
             memory: None,
         },
     );
-    Arc::new(registry)
+
+    server_registry
+}
+
+pub async fn register_coordinator(
+    registry: Arc<RwLock<ServerRegistry>>,
+    coordinator: Arc<LocalCoordinator>,
+) {
+    let mut registry = registry.write().await;
+    registry.register(
+        DISTRI_LOCAL_SERVER.to_string(),
+        ServerMetadata {
+            auth_session_key: None,
+            mcp_transport: TransportType::Async,
+            memory: None,
+            builder: Some(Arc::new(move |_, transport| {
+                let coordinator = coordinator.clone();
+                let server = crate::coordinator::build_server(transport, coordinator)?;
+                Ok(Box::new(server) as Box<dyn ServerTrait>)
+            })),
+        },
+    );
 }
 
 pub static SYSTEM_PROMPT: &str = r#"You are a helpful AI assistant that can access Twitter and summarize information.

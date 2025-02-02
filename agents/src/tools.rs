@@ -13,12 +13,14 @@ use async_mcp::{
     types::{CallToolRequest, CallToolResponse, ToolResponseContent},
 };
 use serde_json::{json, Value};
+use tokio::sync::RwLock;
+use tracing::debug;
 
 use crate::servers::registry::{ServerMetadata, ServerRegistry};
 use crate::types::TransportType;
 use crate::types::{McpDefinition, ToolCall};
 use crate::types::{ServerTools, ToolsFilter};
-use crate::SessionStore;
+use crate::ToolSessionStore;
 
 async fn async_server(metadata: ServerMetadata, transport: ServerInMemoryTransport) -> Result<()> {
     let builder = metadata
@@ -56,7 +58,7 @@ macro_rules! with_transport {
 }
 pub async fn get_tools(
     definitions: &[McpDefinition],
-    registry: Arc<ServerRegistry>,
+    registry: Arc<RwLock<ServerRegistry>>,
 ) -> Result<Vec<ServerTools>> {
     let mut all_tools = Vec::new();
 
@@ -64,7 +66,8 @@ pub async fn get_tools(
         let mcp_server = tool_def.mcp_server.clone();
         let definition = tool_def.clone();
         let registry = registry.clone();
-        let metadata = registry
+        let servers = registry.read().await;
+        let metadata = servers
             .servers
             .get(&mcp_server)
             .cloned()
@@ -99,7 +102,10 @@ pub async fn get_tools(
                 ToolsFilter::Selected(selected) => {
                     let before_count = tools.len();
                     tools.retain_mut(|tool| {
-                        let found = selected.iter().find(|t| *t.name == tool.name);
+                        let found = selected.iter().find(|t| {
+                            debug!("{} {}", t.name, tool.name);
+                            *t.name == tool.name
+                        });
                         if let Some(Some(d)) = found.as_ref().map(|t| t.description.as_ref()) {
                             tool.description = Some(d.clone());
                         }
@@ -132,8 +138,8 @@ pub async fn get_tools(
 pub async fn execute_tool(
     tool_call: &ToolCall,
     tool_def: &McpDefinition,
-    registry: Arc<ServerRegistry>,
-    session_store: Option<Arc<Box<dyn SessionStore>>>,
+    registry: Arc<RwLock<ServerRegistry>>,
+    session_store: Option<Arc<Box<dyn ToolSessionStore>>>,
 ) -> Result<String> {
     tracing::info!(
         "Executing tool '{}' with ID: {}",
@@ -142,6 +148,8 @@ pub async fn execute_tool(
     );
     let mcp_server = &tool_def.mcp_server;
     let metadata = registry
+        .read()
+        .await
         .servers
         .get(&tool_def.mcp_server)
         .cloned()
@@ -174,7 +182,7 @@ impl<T: Transport + Clone> ToolExecutor<T> {
         tool_call: &ToolCall,
         mcp_server: &str,
         metadata: &ServerMetadata,
-        session_store: Option<Arc<Box<dyn SessionStore>>>,
+        session_store: Option<Arc<Box<dyn ToolSessionStore>>>,
     ) -> Result<String> {
         let name = tool_call.tool_name.clone();
         tracing::info!("Executing tool: {name}, mcp_server: {mcp_server}");
