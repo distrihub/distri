@@ -76,9 +76,8 @@ pub enum AgentStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentSession {
     pub agent_id: String,
-    pub status: AgentStatus,
-    pub state: serde_json::Value,
-    pub parent_session: Option<String>,
+    pub parent_agent_id: Option<String>,
+    pub messages: Vec<Message>,
     pub created_at: SystemTime,
     pub updated_at: SystemTime,
 }
@@ -193,11 +192,6 @@ fn default_presence_penalty() -> f32 {
 
 fn default_max_iterations() -> u32 {
     10
-}
-
-// Add this new default helper function
-fn default_parameter_type() -> String {
-    "object".to_string()
 }
 
 pub fn validate_parameters(

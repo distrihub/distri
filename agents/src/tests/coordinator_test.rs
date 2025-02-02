@@ -68,7 +68,7 @@ async fn test_tools() -> anyhow::Result<()> {
     let coordinator_clone = coordinator.clone();
     // Start coordinator in background
     let coordinator_handle = tokio::spawn(async move {
-        coordinator_clone.run().await;
+        coordinator_clone.run().await.unwrap();
     });
 
     println!("I AM HERE");
@@ -135,7 +135,7 @@ async fn test_agent_coordination() -> anyhow::Result<()> {
     let coordinator_clone = coordinator.clone();
     // Start coordinator in background
     let coordinator_handle = tokio::spawn(async move {
-        coordinator_clone.run().await;
+        coordinator_clone.run().await.unwrap();
     });
 
     // Test agent2 execution with sub-agent call

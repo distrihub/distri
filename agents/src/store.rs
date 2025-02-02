@@ -3,7 +3,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::types::{AgentSession, McpSession};
+use crate::{
+    types::{AgentSession, McpSession},
+    AgentError,
+};
 
 #[async_trait]
 pub trait ToolSessionStore: Send + Sync {
@@ -12,10 +15,10 @@ pub trait ToolSessionStore: Send + Sync {
 
 #[async_trait]
 pub trait AgentSessionStore: Send + Sync {
-    async fn get_agent_session(&self, agent_id: &str) -> anyhow::Result<Option<AgentSession>>;
-    async fn set_agent_session(&self, session: AgentSession) -> anyhow::Result<()>;
-    async fn remove_agent_session(&self, agent_id: &str) -> anyhow::Result<()>;
-    async fn list_agent_sessions(&self) -> anyhow::Result<Vec<AgentSession>>;
+    async fn get_session(&self, agent_id: &str) -> Result<Option<AgentSession>, AgentError>;
+    async fn set_session(&self, session: AgentSession) -> Result<(), AgentError>;
+    async fn remove_session(&self, agent_id: &str) -> Result<(), AgentError>;
+    async fn list_sessions(&self) -> Result<Vec<AgentSession>, AgentError>;
 }
 
 // Example in-memory implementation
@@ -52,11 +55,11 @@ impl Default for InMemoryAgentSessionStore {
 
 #[async_trait]
 impl AgentSessionStore for InMemoryAgentSessionStore {
-    async fn get_agent_session(&self, agent_id: &str) -> anyhow::Result<Option<AgentSession>> {
+    async fn get_session(&self, agent_id: &str) -> Result<Option<AgentSession>, AgentError> {
         Ok(self.sessions.read().await.get(agent_id).cloned())
     }
 
-    async fn set_agent_session(&self, session: AgentSession) -> anyhow::Result<()> {
+    async fn set_session(&self, session: AgentSession) -> anyhow::Result<(), AgentError> {
         self.sessions
             .write()
             .await
@@ -64,12 +67,12 @@ impl AgentSessionStore for InMemoryAgentSessionStore {
         Ok(())
     }
 
-    async fn remove_agent_session(&self, agent_id: &str) -> anyhow::Result<()> {
+    async fn remove_session(&self, agent_id: &str) -> anyhow::Result<(), AgentError> {
         self.sessions.write().await.remove(agent_id);
         Ok(())
     }
 
-    async fn list_agent_sessions(&self) -> anyhow::Result<Vec<AgentSession>> {
+    async fn list_sessions(&self) -> anyhow::Result<Vec<AgentSession>, AgentError> {
         Ok(self.sessions.read().await.values().cloned().collect())
     }
 }

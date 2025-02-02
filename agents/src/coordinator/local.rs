@@ -4,21 +4,22 @@ use crate::{
     servers::registry::ServerRegistry,
     store::{AgentSessionStore, ToolSessionStore},
     tools::{execute_tool, get_tools},
-    types::{AgentDefinition, Message, ServerTools},
+    types::{AgentDefinition, AgentSession, Message, ServerTools},
 };
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, time::SystemTime};
 use tokio::sync::{mpsc, Mutex, RwLock};
 
 use super::{AgentCoordinator, AgentHandle, CoordinatorMessage};
 // Message types for coordinator communication
 
+#[derive(Clone)]
 pub struct LocalCoordinator {
     agent_definitions: Arc<RwLock<HashMap<String, AgentDefinition>>>,
     agent_tools: Arc<RwLock<HashMap<String, Vec<ServerTools>>>>,
     agent_sessions: Option<Arc<Box<dyn AgentSessionStore>>>,
     tool_sessions: Option<Arc<Box<dyn ToolSessionStore>>>,
     registry: Arc<RwLock<ServerRegistry>>,
-    coordinator_rx: Mutex<mpsc::Receiver<CoordinatorMessage>>,
+    coordinator_rx: Arc<Mutex<mpsc::Receiver<CoordinatorMessage>>>,
     coordinator_tx: mpsc::Sender<CoordinatorMessage>,
 }
 
@@ -35,7 +36,7 @@ impl LocalCoordinator {
             agent_sessions,
             tool_sessions,
             registry,
-            coordinator_rx: Mutex::new(coordinator_rx),
+            coordinator_rx: Arc::new(Mutex::new(coordinator_rx)),
             coordinator_tx,
         }
     }
@@ -73,7 +74,42 @@ impl LocalCoordinator {
         Ok(())
     }
 
-    pub async fn run(&self) {
+    async fn store_session_messages(
+        &self,
+        agent_id: &str,
+        messages: &[Message],
+    ) -> anyhow::Result<()> {
+        if let Some(store) = &self.agent_sessions {
+            let session = store
+                .get_session(agent_id)
+                .await?
+                .unwrap_or_else(|| AgentSession {
+                    agent_id: agent_id.to_string(),
+                    parent_agent_id: None,
+                    messages: Vec::new(),
+                    created_at: SystemTime::now(),
+                    updated_at: SystemTime::now(),
+                });
+
+            let mut updated_session = session.clone();
+            updated_session.messages.extend_from_slice(messages);
+            updated_session.updated_at = SystemTime::now();
+
+            store.set_session(updated_session).await?;
+        }
+        Ok(())
+    }
+
+    async fn get_session_messages(&self, agent_id: &str) -> Result<Vec<Message>, AgentError> {
+        if let Some(store) = &self.agent_sessions {
+            if let Some(session) = store.get_session(agent_id).await? {
+                return Ok(session.messages);
+            }
+        }
+        Ok(Vec::new())
+    }
+
+    pub async fn run(&self) -> anyhow::Result<()> {
         tracing::info!("AgentCoordinator run loop started");
 
         while let Some(msg) = self.coordinator_rx.lock().await.recv().await {
@@ -128,7 +164,6 @@ impl LocalCoordinator {
                     agent_id,
                     messages,
                     params,
-                    parent_session,
                     response_tx,
                 } => {
                     tracing::info!(
@@ -138,12 +173,17 @@ impl LocalCoordinator {
                     );
                     let definitions = self.agent_definitions.clone();
                     let coordinator = Arc::new(self.get_handle(agent_id.clone()));
-                    let agent_sessions = self.agent_sessions.clone();
                     let agent_tools = self.agent_tools.clone();
+                    let this = self.clone();
 
                     tokio::spawn(async move {
                         tracing::info!("Spawned Execute task for agent: {}", agent_id);
                         let result = async {
+                            // Store new messages
+                            this.store_session_messages(&agent_id, &messages)
+                                .await
+                                .map_err(|e| AgentError::Session(e.to_string()))?;
+
                             // Get agent definition
                             let definition = definitions
                                 .read()
@@ -165,10 +205,14 @@ impl LocalCoordinator {
                                 .cloned()
                                 .unwrap_or_default();
 
+                            // Get all messages including parent messages
+                            let mut all_messages = this.get_session_messages(&agent_id).await?;
+                            // Append new messages
+                            all_messages.extend_from_slice(&messages);
+
                             // Create executor and execute
                             let executor = AgentExecutor::new(definition, tools, Some(coordinator));
-
-                            executor.execute(messages, params).await
+                            executor.execute(all_messages, params).await
                         }
                         .await;
 
@@ -178,6 +222,7 @@ impl LocalCoordinator {
             }
         }
         tracing::info!("AgentCoordinator run loop exiting");
+        Ok(())
     }
 }
 

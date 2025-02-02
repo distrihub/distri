@@ -27,7 +27,7 @@ async fn test_twitter_summary() {
 
     // Start coordinator in background
     let coordinator_handle = tokio::spawn(async move {
-        coordinator.run().await;
+        coordinator.run().await.unwrap();
     });
 
     let messages = vec![Message {

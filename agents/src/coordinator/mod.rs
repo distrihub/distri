@@ -20,7 +20,6 @@ pub enum CoordinatorMessage {
         agent_id: String,
         messages: Vec<Message>,
         params: Option<serde_json::Value>,
-        parent_session: Option<String>,
         response_tx: oneshot::Sender<Result<String, AgentError>>,
     },
 }
@@ -77,7 +76,6 @@ impl AgentHandle {
                 agent_id: self.agent_id.clone(),
                 messages,
                 params,
-                parent_session: None,
                 response_tx,
             })
             .await
