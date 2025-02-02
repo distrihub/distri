@@ -225,7 +225,7 @@ pub fn validate_parameters(
         obj.insert("required".to_string(), json!([]));
     }
 
-    let validator = jsonschema::validator_for(&schema)?;
+    let validator = jsonschema::validator_for(schema)?;
 
     validator
         .validate(&params)

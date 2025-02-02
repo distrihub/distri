@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::{
-    coordinator::{coordinator::LocalCoordinator, DISTRI_LOCAL_SERVER},
+    coordinator::{LocalCoordinator, DISTRI_LOCAL_SERVER},
     init_logging,
     store::InMemoryAgentSessionStore,
     tests::utils::{get_registry, get_tools_session_store, get_twitter_tool, register_coordinator},
@@ -15,7 +15,7 @@ use crate::{
 async fn test_tools() -> anyhow::Result<()> {
     init_logging("debug");
     // Create test agent definitions
-    let _tool_defs = vec![get_twitter_tool()];
+    let _tool_defs = [get_twitter_tool()];
     let agent1_def = AgentDefinition {
         name: "twitter_agent".to_string(),
         description: "Test agent 1".to_string(),

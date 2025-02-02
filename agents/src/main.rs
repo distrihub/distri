@@ -119,7 +119,7 @@ async fn main() -> Result<()> {
 
             match &agent_config.workflow {
                 cli::RunWorkflow::Chat => {
-                    chat::run(&agent_config, registry, agent_sessions, tool_sessions).await
+                    chat::run(agent_config, registry, agent_sessions, tool_sessions).await
                 }
                 mode => {
                     event::run(

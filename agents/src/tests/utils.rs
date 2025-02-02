@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::{
-    coordinator::{coordinator::LocalCoordinator, DISTRI_LOCAL_SERVER},
+    coordinator::{LocalCoordinator, DISTRI_LOCAL_SERVER},
     servers::registry::{ServerMetadata, ServerRegistry, ServerTrait},
     types::TransportType,
     AgentDefinition, McpDefinition, McpSession, ModelSettings, ToolSessionStore,
@@ -96,13 +96,13 @@ Keep your summaries concise but informative. Use markdown formatting to make the
 
 pub fn get_twitter_summarizer() -> AgentDefinition {
     // Create agent definition with Twitter tool
-    let agent_def = AgentDefinition {
+    
+    AgentDefinition {
         name: "Twitter Agent".to_string(),
         description: "Agent that can access Twitter".to_string(),
         system_prompt: Some(SYSTEM_PROMPT.to_string()),
         model_settings: ModelSettings::default(),
         mcp_servers: vec![get_twitter_tool()],
         parameters: Default::default(),
-    };
-    return agent_def;
+    }
 }

@@ -1,4 +1,4 @@
-use agents::coordinator::coordinator::{AgentCoordinator, LocalCoordinator};
+use agents::coordinator::{AgentCoordinator, LocalCoordinator};
 use agents::store::AgentSessionStore;
 use rustyline::DefaultEditor;
 use std::fs::{File, OpenOptions};

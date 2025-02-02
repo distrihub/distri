@@ -1,5 +1,5 @@
 use crate::{
-    coordinator::{self, coordinator::LocalCoordinator, DISTRI_LOCAL_SERVER},
+    coordinator::{self, LocalCoordinator, DISTRI_LOCAL_SERVER},
     store::{AgentSessionStore, InMemoryAgentSessionStore},
     types::TransportType,
     ToolSessionStore,

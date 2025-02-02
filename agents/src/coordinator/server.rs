@@ -16,7 +16,7 @@ use crate::{
     types::{Message, Role},
 };
 
-use super::coordinator::{AgentCoordinator, LocalCoordinator};
+use super::{AgentCoordinator, LocalCoordinator};
 
 pub static DISTRI_LOCAL_SERVER: &str = "distri-mcp-server-local";
 
@@ -104,7 +104,7 @@ mod tests {
     use anyhow::Result;
 
     use crate::{
-        coordinator::coordinator::LocalCoordinator,
+        coordinator::LocalCoordinator,
         store::InMemoryAgentSessionStore,
         tests::utils::{get_registry, get_tools_session_store},
     };

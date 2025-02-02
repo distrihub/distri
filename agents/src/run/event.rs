@@ -1,5 +1,5 @@
 use crate::cli::RunWorkflow;
-use agents::coordinator::coordinator::{AgentCoordinator, LocalCoordinator};
+use agents::coordinator::{AgentCoordinator, LocalCoordinator};
 use agents::store::AgentSessionStore;
 use std::sync::Arc;
 use tokio::signal;

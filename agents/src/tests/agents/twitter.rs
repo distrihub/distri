@@ -1,5 +1,5 @@
 use crate::{
-    coordinator::coordinator::LocalCoordinator,
+    coordinator::LocalCoordinator,
     init_logging,
     tests::utils::{get_registry, get_tools_session_store, get_twitter_summarizer},
     types::{Message, Role},

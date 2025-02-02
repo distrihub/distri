@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::{
-    coordinator::coordinator::AgentHandle,
+    coordinator::AgentHandle,
     error::AgentError,
     types::{validate_parameters, Message, Role, ServerTools, ToolCall},
     AgentDefinition,
