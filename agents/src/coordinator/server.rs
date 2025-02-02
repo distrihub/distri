@@ -32,7 +32,12 @@ pub fn build_server<T: Transport>(
             let coordinator = coordinator_clone.clone();
             Box::pin(async move {
                 let cursor = req.cursor;
-                let (agents, next_cursor) = coordinator.list_agents(cursor).await?;
+                let (agents, next_cursor) = tokio::time::timeout(
+                    std::time::Duration::from_secs(5),
+                    coordinator.list_agents(cursor),
+                )
+                .await
+                .map_err(|_| AgentError::ToolExecution("list_agents timed out".into()))??;
 
                 let response = ToolsListResponse {
                     tools: agents
@@ -56,7 +61,6 @@ pub fn build_server<T: Transport>(
                     next_cursor,
                     meta: None,
                 };
-                // Create executor with required parameters
 
                 Ok(response)
             })

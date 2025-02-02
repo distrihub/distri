@@ -127,7 +127,10 @@ pub async fn get_tools(
         if let Ok(tools) = tools {
             all_tools.push(ServerTools { tools, definition });
         } else {
-            tracing::error!("Failed to get tools for mcp_server: {}", mcp_server);
+            return Err(anyhow::anyhow!(
+                "Failed to get tools for mcp_server: {}",
+                mcp_server
+            ));
         }
     }
 

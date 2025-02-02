@@ -49,11 +49,12 @@ impl LocalCoordinator {
     }
 
     pub async fn register_agent(&self, definition: AgentDefinition) -> anyhow::Result<()> {
-        let mut definitions = self.agent_definitions.write().await;
+        let (name, resolved_tools) = {
+            let name = definition.name.clone();
+            let server_tools = get_tools(&definition.mcp_servers, self.registry.clone()).await?;
 
-        let name = definition.name.clone();
-
-        let resolved_tools = get_tools(&definition.mcp_servers, self.registry.clone()).await?;
+            (name, server_tools)
+        };
         // Store both the definition and its tools
 
         tracing::debug!(
@@ -66,7 +67,10 @@ impl LocalCoordinator {
                 .collect::<Vec<_>>()
         );
 
-        definitions.insert(name.clone(), definition);
+        {
+            let mut definitions = self.agent_definitions.write().await;
+            definitions.insert(name.clone(), definition);
+        }
 
         // Store the resolved tools
         let mut tools = self.agent_tools.write().await;
@@ -126,32 +130,36 @@ impl LocalCoordinator {
                     let tool_sessions = self.tool_sessions.clone();
                     tokio::spawn(async move {
                         let result = async {
-                            // Check if this is a sub-agent execution
+                            // Get the server tools in a separate scope to release the lock quickly
+                            let server_tools = {
+                                let tools = agent_tools.read().await;
+                                tools.get(&agent_id).cloned()
+                            };
 
-                            // Regular tool execution
-                            if let Some(server_tools) = agent_tools.read().await.get(&agent_id) {
-                                // Execute the tool
-                                let tool_def = server_tools.iter().find(|t| {
-                                    t.tools.iter().any(|tool| tool.name == tool_call.tool_name)
-                                });
+                            match server_tools {
+                                Some(server_tools) => {
+                                    // Execute the tool
+                                    let tool_def = server_tools.iter().find(|t| {
+                                        t.tools.iter().any(|tool| tool.name == tool_call.tool_name)
+                                    });
 
-                                let content = match tool_def {
-                                    Some(server_tool) => execute_tool(
-                                        &tool_call,
-                                        &server_tool.definition,
-                                        registry,
-                                        tool_sessions,
-                                    )
-                                    .await
-                                    .unwrap_or_else(|err| format!("Error: {}", err)),
-                                    None => format!("Tool not found {}", tool_call.tool_name),
-                                };
-                                Ok(content)
-                            } else {
-                                Err(AgentError::ToolExecution(format!(
+                                    let content = match tool_def {
+                                        Some(server_tool) => execute_tool(
+                                            &tool_call,
+                                            &server_tool.definition,
+                                            registry,
+                                            tool_sessions,
+                                        )
+                                        .await
+                                        .unwrap_or_else(|err| format!("Error: {}", err)),
+                                        None => format!("Tool not found {}", tool_call.tool_name),
+                                    };
+                                    Ok(content)
+                                }
+                                None => Err(AgentError::ToolExecution(format!(
                                     "Agent {} not found",
                                     agent_id
-                                )))
+                                ))),
                             }
                         }
                         .await;
@@ -184,29 +192,30 @@ impl LocalCoordinator {
                                 .await
                                 .map_err(|e| AgentError::Session(e.to_string()))?;
 
-                            // Get agent definition
-                            let definition = definitions
-                                .read()
-                                .await
-                                .get(&agent_id)
-                                .cloned()
-                                .ok_or_else(|| {
+                            // Get agent definition - MOVE THIS OUTSIDE OTHER ASYNC OPERATIONS
+                            let definition = {
+                                let definitions = definitions.read().await;
+                                definitions.get(&agent_id).cloned().ok_or_else(|| {
                                     AgentError::ToolExecution(format!(
                                         "Agent {} not found",
                                         agent_id
                                     ))
-                                })?;
+                                })?
+                            };
 
                             // Get the tools for this agent
-                            let tools = agent_tools
-                                .read()
-                                .await
-                                .get(&agent_id)
-                                .cloned()
-                                .unwrap_or_default();
+                            let tools = {
+                                agent_tools
+                                    .read()
+                                    .await
+                                    .get(&agent_id)
+                                    .cloned()
+                                    .unwrap_or_default()
+                            };
 
                             // Get all messages including parent messages
                             let mut all_messages = this.get_session_messages(&agent_id).await?;
+
                             // Append new messages
                             all_messages.extend_from_slice(&messages);
 
@@ -232,34 +241,32 @@ impl AgentCoordinator for LocalCoordinator {
         &self,
         _cursor: Option<String>,
     ) -> Result<(Vec<AgentDefinition>, Option<String>), AgentError> {
-        let agents = self
-            .agent_definitions
-            .read()
-            .await
-            .values()
-            .skip(0)
-            .take(30)
-            .cloned()
-            .collect();
+        let definitions = self.agent_definitions.read().await;
+        let agents: Vec<AgentDefinition> = definitions.values().take(30).cloned().collect();
         Ok((agents, None))
     }
+
     async fn get_agent(&self, agent_name: &str) -> Result<AgentDefinition, AgentError> {
-        self.agent_definitions
-            .read()
-            .await
+        let definitions = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            self.agent_definitions.read(),
+        )
+        .await
+        .map_err(|_| AgentError::ToolExecution("get_agent timed out".into()))?;
+
+        definitions
             .get(agent_name)
             .cloned()
             .ok_or_else(|| AgentError::ToolExecution(format!("Agent {} not found", agent_name)))
     }
 
     async fn get_tools(&self, agent_name: &str) -> Result<Vec<ServerTools>, AgentError> {
-        Ok(self
-            .agent_tools
-            .read()
-            .await
-            .get(agent_name)
-            .cloned()
-            .unwrap_or_default())
+        let tools =
+            tokio::time::timeout(std::time::Duration::from_secs(5), self.agent_tools.read())
+                .await
+                .map_err(|_| AgentError::ToolExecution("get_tools timed out".into()))?;
+
+        Ok(tools.get(agent_name).cloned().unwrap_or_default())
     }
 
     async fn execute(

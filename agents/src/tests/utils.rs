@@ -43,11 +43,9 @@ pub fn get_twitter_tool() -> McpDefinition {
 }
 
 pub async fn get_registry() -> Arc<RwLock<ServerRegistry>> {
-    let server_registry = Arc::new(RwLock::new(ServerRegistry::new()));
-    let reg_clone = server_registry.clone();
-    let mut registry = reg_clone.write().await;
+    let mut server_registry = ServerRegistry::new();
 
-    registry.register(
+    server_registry.register(
         "twitter".to_string(),
         ServerMetadata {
             auth_session_key: Some("session_string".to_string()),
@@ -60,7 +58,7 @@ pub async fn get_registry() -> Arc<RwLock<ServerRegistry>> {
         },
     );
 
-    server_registry
+    Arc::new(RwLock::new(server_registry))
 }
 
 pub async fn register_coordinator(
@@ -96,7 +94,7 @@ Keep your summaries concise but informative. Use markdown formatting to make the
 
 pub fn get_twitter_summarizer() -> AgentDefinition {
     // Create agent definition with Twitter tool
-    
+
     AgentDefinition {
         name: "Twitter Agent".to_string(),
         description: "Agent that can access Twitter".to_string(),
