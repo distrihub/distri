@@ -4,7 +4,6 @@ use agents::{
     cli::RunWorkflow,
     init_logging,
     servers::{memory::FileMemory, registry::init_registry_and_coordinator},
-    store::{AgentSessionStore, InMemoryAgentSessionStore},
     types::{get_distri_config_schema, Configuration},
 };
 use anyhow::Result;
@@ -74,6 +73,18 @@ async fn main() -> Result<()> {
         Commands::Run { agent } => {
             // Load configuration
             let config = load_config(cli.config.to_str().unwrap())?;
+
+            let sessions = config.sessions;
+
+            let memory = init_memory(&agent).await?;
+            let tool_sessions = get_session_store(sessions);
+
+            let (_, coordinator) =
+                init_registry_and_coordinator(memory, tool_sessions.clone(), &config.mcp_servers)
+                    .await;
+
+            let coordinator_clone = coordinator.clone();
+
             info!("Running agent: {:?}", agent);
             let agent_config = config
                 .agents
@@ -81,31 +92,19 @@ async fn main() -> Result<()> {
                 .find(|a| a.definition.name == agent)
                 .unwrap_or_else(|| panic!("Agent not found {agent}"));
 
-            let sessions = config.sessions;
+            for agent in &config.agents {
+                coordinator.register_agent(agent.definition.clone()).await?;
+            }
 
-            let memory = init_memory(&agent).await?;
-            let tool_sessions = get_session_store(sessions);
-
-            let registry = init_registry_and_coordinator(memory, tool_sessions.clone()).await;
-            let agent_sessions = Some(Arc::new(
-                Box::new(InMemoryAgentSessionStore::default()) as Box<dyn AgentSessionStore>
-            ));
+            let coordinator_handle = tokio::spawn(async move {
+                coordinator_clone.run().await.unwrap();
+            });
 
             match &agent_config.workflow {
-                RunWorkflow::Chat => {
-                    chat::run(agent_config, registry, agent_sessions, tool_sessions).await
-                }
-                mode => {
-                    event::run(
-                        &agent_config.definition,
-                        registry,
-                        agent_sessions,
-                        tool_sessions,
-                        mode,
-                    )
-                    .await
-                }
+                RunWorkflow::Chat => chat::run(agent_config, coordinator).await,
+                mode => event::run(&agent_config.definition, coordinator, mode).await,
             }?;
+            coordinator_handle.abort();
         }
     }
 

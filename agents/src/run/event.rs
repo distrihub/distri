@@ -1,23 +1,19 @@
 use agents::cli::RunWorkflow;
 use agents::coordinator::{AgentCoordinator, LocalCoordinator};
-use agents::store::AgentSessionStore;
 use std::sync::Arc;
 use tokio::signal;
-use tokio::sync::RwLock;
 use tokio::time::{sleep, Duration};
 use tracing::{error, info};
 
-use agents::{servers::registry::ServerRegistry, AgentDefinition, ToolSessionStore};
+use agents::AgentDefinition;
 
 pub async fn run(
     agent: &AgentDefinition,
-    registry: Arc<RwLock<ServerRegistry>>,
-    agent_sessions: Option<Arc<Box<dyn AgentSessionStore>>>,
-    tool_sessions: Option<Arc<Box<dyn ToolSessionStore>>>,
+    coordinator: Arc<LocalCoordinator>,
     mode: &RunWorkflow,
 ) -> anyhow::Result<()> {
     let agent_name = &agent.name;
-    let coordinator = LocalCoordinator::new(registry, agent_sessions, tool_sessions);
+
     let messages = Vec::new();
 
     info!("Running agent (Ctrl+C to stop)...");

@@ -1,7 +1,7 @@
 use crate::{
     coordinator::{self, LocalCoordinator, DISTRI_LOCAL_SERVER},
     store::{AgentSessionStore, InMemoryAgentSessionStore},
-    types::TransportType,
+    types::{ExternalMcpServer, TransportType},
     ToolSessionStore,
 };
 use anyhow::Result;
@@ -21,7 +21,7 @@ pub type BuilderFn =
 pub struct ServerMetadata {
     #[serde(default)]
     pub auth_session_key: Option<String>,
-    #[serde(default = "default_transport_type")]
+    #[serde(default = "default_transport_type", flatten)]
     pub mcp_transport: TransportType,
     #[serde(skip)]
     pub memory: Option<Arc<Mutex<dyn Memory>>>,
@@ -37,10 +37,6 @@ impl std::fmt::Debug for ServerMetadata {
             .field("builder", &self.builder.is_some())
             .finish()
     }
-}
-
-fn default_transport_type() -> TransportType {
-    TransportType::Async
 }
 
 // This registry is only really for local running agents using async methos
@@ -94,7 +90,8 @@ impl<T: Transport> ServerTrait for Server<T> {
 pub async fn init_registry_and_coordinator(
     memory: Arc<Mutex<FileMemory>>,
     tool_sessions: Option<Arc<Box<dyn ToolSessionStore>>>,
-) -> Arc<RwLock<ServerRegistry>> {
+    external_servers: &[ExternalMcpServer],
+) -> (Arc<RwLock<ServerRegistry>>, Arc<LocalCoordinator>) {
     let server_registry = Arc::new(RwLock::new(ServerRegistry::new()));
     let reg_clone = server_registry.clone();
     let mut registry = reg_clone.write().await;
@@ -147,6 +144,7 @@ pub async fn init_registry_and_coordinator(
         },
     );
 
+    let coordinator_clone = coordinator.clone();
     registry.register(
         DISTRI_LOCAL_SERVER.to_string(),
         ServerMetadata {
@@ -161,5 +159,10 @@ pub async fn init_registry_and_coordinator(
         },
     );
 
-    server_registry
+    // Register external servers
+    for server in external_servers {
+        registry.register(server.name.clone(), server.config.clone());
+    }
+
+    (server_registry, coordinator_clone)
 }

@@ -37,8 +37,8 @@ impl ToolSessionStore for StaticSessionStore {
 pub fn get_twitter_tool() -> McpDefinition {
     McpDefinition {
         filter: crate::types::ToolsFilter::All,
-        mcp_server: "twitter".to_string(),
-        mcp_server_type: Default::default(),
+        name: "twitter".to_string(),
+        r#type: Default::default(),
     }
 }
 
@@ -103,5 +103,6 @@ pub fn get_twitter_summarizer() -> AgentDefinition {
         mcp_servers: vec![get_twitter_tool()],
         parameters: Default::default(),
         response_format: None,
+        history_size: None,
     }
 }

@@ -86,7 +86,7 @@ pub fn build_server<T: Transport>(
                     name: None,
                 }];
 
-                let result = executor.execute(messages, None).await?;
+                let result = executor.execute(&messages, None).await?;
 
                 Ok(CallToolResponse {
                     content: vec![ToolResponseContent::Text { text: result }],

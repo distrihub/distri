@@ -22,11 +22,25 @@ pub enum _AuthType {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
+#[serde(deny_unknown_fields, untagged)]
 pub enum TransportType {
     Async,
-    SSE { server_url: String },
-    Stdio { command: String, args: Vec<String> },
+    SSE {
+        server_url: String,
+        #[serde(flatten, skip_serializing_if = "Option::is_none")]
+        auth: Option<TransportAuth>,
+    },
+    Stdio {
+        command: String,
+        args: Vec<String>,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "auth_type", content = "value")]
+pub enum TransportAuth {
+    Bearer(String),
+    JwtSecret(String),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -45,6 +59,8 @@ pub struct AgentDefinition {
     pub parameters: serde_json::Value,
     #[serde(default)]
     pub response_format: Option<serde_json::Value>,
+    #[serde(default = "default_history_size")]
+    pub history_size: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -114,9 +130,9 @@ pub enum McpServerType {
 pub struct McpDefinition {
     #[serde(default = "default_tools_filter")]
     pub filter: ToolsFilter,
-    pub mcp_server: String,
+    pub name: String,
     #[serde(default)]
-    pub mcp_server_type: McpServerType,
+    pub r#type: McpServerType,
 }
 
 // Helper functions for serde defaults
@@ -201,6 +217,10 @@ fn default_max_iterations() -> u32 {
     10
 }
 
+fn default_history_size() -> Option<usize> {
+    Some(5)
+}
+
 pub fn validate_parameters(
     schema: &mut serde_json::Value,
     params: Option<serde_json::Value>,
@@ -247,7 +267,13 @@ pub struct Configuration {
     pub agents: Vec<AgentConfig>,
     pub sessions: HashMap<String, String>,
     #[serde(default)]
-    pub servers: Vec<ServerMetadata>,
+    pub mcp_servers: Vec<ExternalMcpServer>,
+}
+
+#[derive(serde::Deserialize, JsonSchema)]
+pub struct ExternalMcpServer {
+    pub name: String,
+    pub config: ServerMetadata,
 }
 impl std::fmt::Debug for Configuration {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

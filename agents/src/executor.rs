@@ -61,7 +61,7 @@ impl AgentExecutor {
 
     pub async fn execute(
         &self,
-        messages: Vec<Message>,
+        messages: &[Message],
         params: Option<Value>,
     ) -> Result<String, AgentError> {
         // Create normalized parameters
@@ -218,10 +218,7 @@ impl AgentExecutor {
 
         // Add all server tools
         for server_tools in &self.server_tools {
-            tracing::debug!(
-                "Adding tools from server: {}",
-                server_tools.definition.mcp_server
-            );
+            tracing::debug!("Adding tools from server: {}", server_tools.definition.name);
             for tool in &server_tools.tools {
                 tools.push(ChatCompletionTool {
                     r#type: async_openai::types::ChatCompletionToolType::Function,
@@ -246,7 +243,7 @@ impl AgentExecutor {
         }
     }
 
-    pub fn map_messages(&self, messages: Vec<Message>) -> Vec<ChatCompletionRequestMessage> {
+    pub fn map_messages(&self, messages: &[Message]) -> Vec<ChatCompletionRequestMessage> {
         let system_message = ChatCompletionRequestMessage::System(
             ChatCompletionRequestSystemMessageArgs::default()
                 .content(
@@ -260,20 +257,20 @@ impl AgentExecutor {
                 .unwrap(),
         );
         let messages = messages
-            .into_iter()
+            .iter()
             .map(|m| match m.role {
                 Role::User => {
                     let mut msg = ChatCompletionRequestUserMessageArgs::default();
-                    msg.content(m.message);
-                    if let Some(name) = m.name {
+                    msg.content(m.message.clone());
+                    if let Some(name) = &m.name {
                         msg.name(name);
                     }
                     ChatCompletionRequestMessage::User(msg.build().unwrap())
                 }
                 Role::Assistant => {
                     let mut msg = ChatCompletionRequestAssistantMessageArgs::default();
-                    msg.content(m.message);
-                    if let Some(name) = m.name {
+                    msg.content(m.message.clone());
+                    if let Some(name) = &m.name {
                         msg.name(name);
                     }
                     ChatCompletionRequestMessage::Assistant(msg.build().unwrap())

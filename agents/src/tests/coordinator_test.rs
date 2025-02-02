@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 use tracing::info;
 
@@ -28,6 +28,7 @@ async fn test_agent_coordination() -> anyhow::Result<()> {
         model_settings: ModelSettings::default(),
         parameters: Default::default(),
         response_format: None,
+        history_size: None,
     };
 
     let agent2_def = AgentDefinition {
@@ -39,12 +40,13 @@ async fn test_agent_coordination() -> anyhow::Result<()> {
                 name: "twitter_agent".to_string(),
                 description: Some("Execute the twitter agent to get twitter information".to_string()),
             }]),
-            mcp_server: DISTRI_LOCAL_SERVER.to_string(),
-            mcp_server_type: crate::types::McpServerType::Agent,
+            name: DISTRI_LOCAL_SERVER.to_string(),
+            r#type: crate::types::McpServerType::Agent,
         }],
         model_settings: ModelSettings::default(),
         parameters: Default::default(),
-        response_format: None
+        response_format: None,
+        history_size: None
     };
 
     // Initialize coordinator with session stores
@@ -65,7 +67,6 @@ async fn test_agent_coordination() -> anyhow::Result<()> {
 
     // Register agent definitions
     coordinator.register_agent(agent1_def.clone()).await?;
-    tokio::time::sleep(Duration::from_millis(2000)).await;
 
     coordinator.register_agent(agent2_def.clone()).await?;
     let coordinator_clone = coordinator.clone();

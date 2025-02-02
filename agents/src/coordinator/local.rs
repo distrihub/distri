@@ -62,7 +62,7 @@ impl LocalCoordinator {
             resolved_tools
                 .iter()
                 .map(
-                    |r| serde_json::json!({"name": r.definition.mcp_server, "type": r.definition.mcp_server_type, "tools": r.tools.len()})
+                    |r| serde_json::json!({"name": r.definition.name, "type": r.definition.r#type, "tools": r.tools.len()})
                 )
                 .collect::<Vec<_>>()
         );
@@ -187,11 +187,6 @@ impl LocalCoordinator {
                     tokio::spawn(async move {
                         tracing::info!("Spawned Execute task for agent: {}", agent_id);
                         let result = async {
-                            // Store new messages
-                            this.store_session_messages(&agent_id, &messages)
-                                .await
-                                .map_err(|e| AgentError::Session(e.to_string()))?;
-
                             // Get agent definition - MOVE THIS OUTSIDE OTHER ASYNC OPERATIONS
                             let definition = {
                                 let definitions = definitions.read().await;
@@ -213,15 +208,38 @@ impl LocalCoordinator {
                                     .unwrap_or_default()
                             };
 
+                            let history_size = definition.history_size;
                             // Get all messages including parent messages
-                            let mut all_messages = this.get_session_messages(&agent_id).await?;
-
+                            let mut all_messages = if history_size.is_some() {
+                                this.get_session_messages(&agent_id).await?
+                            } else {
+                                vec![]
+                            };
                             // Append new messages
                             all_messages.extend_from_slice(&messages);
 
                             // Create executor and execute
                             let executor = AgentExecutor::new(definition, tools, Some(coordinator));
-                            executor.execute(all_messages, params).await
+                            let response = executor.execute(&all_messages, params).await?;
+
+                            all_messages.push(Message {
+                                name: Some(agent_id.clone()),
+                                role: crate::types::Role::Assistant,
+                                message: response.clone(),
+                            });
+                            if let Some(history_size) = history_size {
+                                let sliced_messages = all_messages
+                                    .into_iter()
+                                    .rev()
+                                    .take(history_size)
+                                    .rev()
+                                    .collect::<Vec<_>>();
+                                this.store_session_messages(&agent_id, &sliced_messages)
+                                    .await
+                                    .map_err(|e| AgentError::Session(e.to_string()))?;
+                            }
+
+                            Ok(response)
                         }
                         .await;
 

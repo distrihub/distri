@@ -1,31 +1,22 @@
 use agents::coordinator::{AgentCoordinator, LocalCoordinator};
-use agents::store::AgentSessionStore;
 use agents::types::AgentConfig;
 use rustyline::DefaultEditor;
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use tracing::info;
 
-use agents::{
-    servers::registry::ServerRegistry,
-    types::{Message, Role},
-    ToolSessionStore,
-};
+use agents::types::{Message, Role};
 
 pub async fn run(
     agent_config: &AgentConfig,
-    registry: Arc<RwLock<ServerRegistry>>,
-    agent_sessions: Option<Arc<Box<dyn AgentSessionStore>>>,
-    tool_sessions: Option<Arc<Box<dyn ToolSessionStore>>>,
+    coordinator: Arc<LocalCoordinator>,
 ) -> anyhow::Result<()> {
     let agent = &agent_config.definition;
     let max_history = agent_config.max_history;
     let agent_name = &agent.name;
-    let coordinator = LocalCoordinator::new(registry, agent_sessions, tool_sessions);
 
-    coordinator.register_agent(agent.clone()).await?;
     // Set up messages file in .distri folder
     let messages_file = {
         let path = PathBuf::from(".distri");
@@ -99,7 +90,6 @@ pub async fn run(
         if input.is_empty() {
             continue;
         }
-
         // Create user message
         let user_message = Message {
             message: input.to_string(),
@@ -114,17 +104,21 @@ pub async fn run(
         }
 
         // Add message to history
-        messages.push(user_message);
+        // messages.push(user_message);
 
         // Execute and print response - only send last n messages to executor
-        let context = messages
-            .iter()
-            .rev()
-            .take(max_history)
-            .rev()
-            .cloned()
-            .collect();
-        match coordinator.execute(agent_name, context, None).await {
+        // let context = messages
+        //     .iter()
+        //     .rev()
+        //     .take(max_history)
+        //     .rev()
+        //     .cloned()
+        //     .collect();
+        info!("{agent_name}: {user_message:?}");
+        match coordinator
+            .execute(agent_name, vec![user_message], None)
+            .await
+        {
             Ok(response) => {
                 println!("{}", response);
                 let assistant_message = Message {
