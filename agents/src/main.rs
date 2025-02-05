@@ -9,7 +9,7 @@ use agents::{
 use anyhow::Result;
 use clap::Parser;
 use cli::{Cli, Commands};
-use distri_proxy::{types::ProxyMcpServer, McpProxy};
+use distri_proxy::McpProxy;
 use dotenv::dotenv;
 use run::{chat, event, session::get_session_store};
 use std::{env, sync::Arc};
