@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use tokio::sync::RwLock;
 
@@ -54,7 +54,8 @@ pub async fn get_registry() -> Arc<RwLock<ServerRegistry>> {
                 let server = twitter_mcp::build(transport)?;
                 Ok(Box::new(server) as Box<dyn ServerTrait>)
             })),
-            memory: None,
+            kg_memory: None,
+            memories: HashMap::new(),
         },
     );
 
@@ -71,12 +72,13 @@ pub async fn register_coordinator(
         ServerMetadata {
             auth_session_key: None,
             mcp_transport: TransportType::Async,
-            memory: None,
+            kg_memory: None,
             builder: Some(Arc::new(move |_, transport| {
                 let coordinator = coordinator.clone();
                 let server = crate::coordinator::build_server(transport, coordinator)?;
                 Ok(Box::new(server) as Box<dyn ServerTrait>)
             })),
+            memories: HashMap::new(),
         },
     );
 }

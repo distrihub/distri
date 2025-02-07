@@ -14,7 +14,10 @@ use tokio::sync::{Mutex, RwLock};
 use crate::servers::tavily;
 use async_mcp::transport::ServerInMemoryTransport;
 
-use super::memory::{self, FileMemory, Memory};
+use super::{
+    kg::{self, KgMemory},
+    memory::AgentMemory,
+};
 pub type BuilderFn =
     dyn Fn(&ServerMetadata, ServerInMemoryTransport) -> Result<Box<dyn ServerTrait>> + Send + Sync;
 #[derive(Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -24,7 +27,9 @@ pub struct ServerMetadata {
     #[serde(default = "default_transport_type", flatten)]
     pub mcp_transport: TransportType,
     #[serde(skip)]
-    pub memory: Option<Arc<Mutex<dyn Memory>>>,
+    pub kg_memory: Option<Arc<Mutex<dyn KgMemory>>>,
+    #[serde(skip)]
+    pub memories: HashMap<String, Arc<Mutex<dyn AgentMemory>>>,
     #[serde(skip)]
     pub builder: Option<Arc<BuilderFn>>,
 }
@@ -33,7 +38,7 @@ impl std::fmt::Debug for ServerMetadata {
         f.debug_struct("ServerMetadata")
             .field("auth_session_key", &self.auth_session_key)
             .field("mcp_transport", &self.mcp_transport)
-            .field("memory", &self.memory.is_some())
+            .field("memory", &self.kg_memory.is_some())
             .field("builder", &self.builder.is_some())
             .finish()
     }
@@ -88,7 +93,8 @@ impl<T: Transport> ServerTrait for Server<T> {
 }
 
 pub async fn init_registry_and_coordinator(
-    memory: Arc<Mutex<FileMemory>>,
+    local_memories: HashMap<String, Arc<Mutex<dyn AgentMemory>>>,
+    kg_memory: Arc<Mutex<dyn KgMemory>>,
     tool_sessions: Option<Arc<Box<dyn ToolSessionStore>>>,
     external_servers: &[ExternalMcpServer],
 ) -> (Arc<RwLock<ServerRegistry>>, Arc<LocalCoordinator>) {
@@ -110,11 +116,12 @@ pub async fn init_registry_and_coordinator(
         ServerMetadata {
             auth_session_key: Some("session_string".to_string()),
             mcp_transport: TransportType::Async,
-            memory: None,
+            kg_memory: None,
             builder: Some(Arc::new(|_, transport| {
                 let server = twitter_mcp::build(transport)?;
                 Ok(Box::new(server) as Box<dyn ServerTrait>)
             })),
+            memories: HashMap::new(),
         },
     );
 
@@ -123,11 +130,26 @@ pub async fn init_registry_and_coordinator(
         ServerMetadata {
             auth_session_key: None,
             mcp_transport: TransportType::Async,
-            memory: Some(memory),
+            kg_memory: Some(kg_memory),
             builder: Some(Arc::new(|metadata, transport| {
-                let server = memory::build::build(metadata, transport)?;
+                let server = kg::build::build(metadata, transport)?;
                 Ok(Box::new(server) as Box<dyn ServerTrait>)
             })),
+            memories: HashMap::new(),
+        },
+    );
+
+    registry.register(
+        "local_memory".to_string(),
+        ServerMetadata {
+            auth_session_key: None,
+            mcp_transport: TransportType::Async,
+            memories: local_memories,
+            builder: Some(Arc::new(|metadata, transport| {
+                let server = kg::build::build(metadata, transport)?;
+                Ok(Box::new(server) as Box<dyn ServerTrait>)
+            })),
+            kg_memory: None,
         },
     );
 
@@ -136,11 +158,12 @@ pub async fn init_registry_and_coordinator(
         ServerMetadata {
             auth_session_key: None,
             mcp_transport: TransportType::Async,
-            memory: None,
+            kg_memory: None,
             builder: Some(Arc::new(|_, transport| {
                 let server = tavily::build(transport)?;
                 Ok(Box::new(server) as Box<dyn ServerTrait>)
             })),
+            memories: HashMap::new(),
         },
     );
 
@@ -150,12 +173,13 @@ pub async fn init_registry_and_coordinator(
         ServerMetadata {
             auth_session_key: None,
             mcp_transport: TransportType::Async,
-            memory: None,
+            kg_memory: None,
             builder: Some(Arc::new(move |_, transport| {
                 let coordinator = coordinator.clone();
                 let server = coordinator::build_server(transport, coordinator)?;
                 Ok(Box::new(server) as Box<dyn ServerTrait>)
             })),
+            memories: HashMap::new(),
         },
     );
 

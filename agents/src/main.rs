@@ -3,7 +3,7 @@ mod run;
 use agents::{
     cli::RunWorkflow,
     init_logging,
-    servers::{memory::FileMemory, registry::init_registry_and_coordinator},
+    servers::{kg::FileMemory, registry::init_registry_and_coordinator},
     types::{get_distri_config_schema, Configuration},
 };
 use anyhow::Result;
@@ -12,7 +12,7 @@ use cli::{Cli, Commands};
 use distri_proxy::McpProxy;
 use dotenv::dotenv;
 use run::{chat, event, session::get_session_store};
-use std::{env, sync::Arc};
+use std::{collections::HashMap, env, sync::Arc};
 use tokio::sync::Mutex;
 use tracing::{debug, info};
 
@@ -77,12 +77,18 @@ async fn main() -> Result<()> {
 
             let sessions = config.sessions;
 
-            let memory = init_memory(&agent).await?;
+            let kg_memory = init_kg_memory(&agent).await?;
+
+            let local_memories = HashMap::new();
             let tool_sessions = get_session_store(sessions);
 
-            let (_, coordinator) =
-                init_registry_and_coordinator(memory, tool_sessions.clone(), &config.mcp_servers)
-                    .await;
+            let (_, coordinator) = init_registry_and_coordinator(
+                local_memories,
+                kg_memory,
+                tool_sessions.clone(),
+                &config.mcp_servers,
+            )
+            .await;
 
             let coordinator_clone = coordinator.clone();
 
@@ -127,7 +133,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-pub async fn init_memory(agent: &str) -> Result<Arc<Mutex<FileMemory>>> {
+pub async fn init_kg_memory(agent: &str) -> Result<Arc<Mutex<FileMemory>>> {
     let mut memory_path = std::path::PathBuf::from(".distri");
     memory_path.push(format!("{agent}.memory"));
     let memory = FileMemory::new(memory_path).await?;

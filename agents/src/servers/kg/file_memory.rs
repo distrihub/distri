@@ -1,4 +1,4 @@
-use super::{Entity, KnowledgeGraph, Memory, Relation};
+use super::{Entity, KgMemory, KnowledgeGraph, Relation};
 use anyhow::Result;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
@@ -75,7 +75,7 @@ impl FileMemory {
 }
 
 #[async_trait::async_trait]
-impl Memory for FileMemory {
+impl KgMemory for FileMemory {
     async fn create_entities(&self, entities: Vec<Entity>) -> Result<Vec<Entity>> {
         let mut graph = self.graph.lock().await;
         let new_entities: Vec<_> = entities

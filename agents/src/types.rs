@@ -87,14 +87,6 @@ pub struct McpSession {
     pub expiry: Option<SystemTime>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema)]
-pub enum AgentStatus {
-    Idle,
-    Running,
-    Stopped,
-    Failed,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct AgentSession {
     pub agent_id: String,

@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use agents::{
     servers::{
@@ -21,7 +21,8 @@ pub fn _init_registry() -> Arc<ServerRegistry> {
                 let server = twitter_mcp::build(transport)?;
                 Ok(Box::new(server) as Box<dyn ServerTrait>)
             })),
-            memory: None,
+            kg_memory: None,
+            memories: HashMap::new(),
         },
     );
 
@@ -34,7 +35,8 @@ pub fn _init_registry() -> Arc<ServerRegistry> {
                 let server = tavily::build(transport)?;
                 Ok(Box::new(server) as Box<dyn ServerTrait>)
             })),
-            memory: None,
+            kg_memory: None,
+            memories: HashMap::new(),
         },
     );
 

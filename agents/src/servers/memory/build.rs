@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use async_mcp::server::{Server, ServerBuilder};
 use async_mcp::transport::Transport;
 use async_mcp::types::{
@@ -6,15 +6,15 @@ use async_mcp::types::{
     ServerCapabilities, Tool, ToolResponseContent,
 };
 use serde_json::json;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+use super::types::{AgentMemory, MemoryStep};
 use crate::servers::registry::ServerMetadata;
 
-use super::{Entity, Memory, Relation};
-
 pub fn build<T: Transport>(metadata: &ServerMetadata, transport: T) -> Result<Server<T>> {
-    let memory = metadata.memory.as_ref().context("Memory is expected")?;
+    let memories = metadata.memories.clone();
     let mut server = Server::builder(transport)
         .capabilities(ServerCapabilities {
             tools: Some(json!({})),
@@ -39,315 +39,133 @@ pub fn build<T: Transport>(metadata: &ServerMetadata, transport: T) -> Result<Se
             })
         });
 
-    register_tools(&mut server, memory.clone())?;
+    register_tools(&mut server, memories.clone())?;
 
     Ok(server.build())
 }
 
 fn register_tools<T: Transport>(
     server: &mut ServerBuilder<T>,
-    memory: Arc<Mutex<dyn Memory>>,
+    memories: HashMap<String, Arc<Mutex<dyn AgentMemory>>>,
 ) -> Result<()> {
     let tools = vec![
         Tool {
-            name: "create_entities".to_string(),
-            description: Some("Create multiple new entities in the knowledge graph".to_string()),
+            name: "reset_memory".to_string(),
+            description: Some("Reset the memory, clearing all steps".to_string()),
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "entities": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "name": { "type": "string" },
-                                "entity_type": { "type": "string" },
-                                "observations": {
-                                    "type": "array",
-                                    "items": { "type": "string" }
-                                }
-                            },
-                            "required": ["name", "entity_type", "observations"]
-                        }
+                    "agent_name": {
+                        "type": "string",
+                        "description": "Name of the agent whose memory to reset"
                     }
                 },
-                "required": ["entities"]
+                "required": ["agent_name"]
             }),
         },
         Tool {
-            name: "create_relations".to_string(),
-            description: Some(
-                "Create multiple new relations between entities in the knowledge graph".to_string(),
-            ),
+            name: "get_succinct_steps".to_string(),
+            description: Some("Get a succinct version of all memory steps".to_string()),
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "relations": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "from": { "type": "string" },
-                                "to": { "type": "string" },
-                                "relation_type": { "type": "string" }
-                            },
-                            "required": ["from", "to", "relation_type"]
-                        }
+                    "agent_name": {
+                        "type": "string",
+                        "description": "Name of the agent whose memory steps to get"
                     }
                 },
-                "required": ["relations"]
+                "required": ["agent_name"]
             }),
         },
         Tool {
-            name: "add_observations".to_string(),
-            description: Some("Add new observations to existing entities".to_string()),
+            name: "get_full_steps".to_string(),
+            description: Some("Get the full version of all memory steps".to_string()),
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "observations": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "entityName": { "type": "string" },
-                                "contents": {
-                                    "type": "array",
-                                    "items": { "type": "string" }
-                                }
-                            },
-                            "required": ["entityName", "contents"]
-                        }
+                    "agent_name": {
+                        "type": "string",
+                        "description": "Name of the agent whose memory steps to get"
                     }
                 },
-                "required": ["observations"]
+                "required": ["agent_name"]
             }),
         },
         Tool {
-            name: "delete_entities".to_string(),
-            description: Some(
-                "Delete multiple entities and their associated relations".to_string(),
-            ),
+            name: "add_step".to_string(),
+            description: Some("Add a new step to memory".to_string()),
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "entityNames": {
-                        "type": "array",
-                        "items": { "type": "string" }
+                    "agent_name": {
+                        "type": "string",
+                        "description": "Name of the agent whose memory to update"
+                    },
+                    "step": {
+                        "type": "object",
+                        "description": "The memory step to add"
                     }
                 },
-                "required": ["entityNames"]
+                "required": ["agent_name", "step"]
             }),
         },
         Tool {
-            name: "delete_observations".to_string(),
-            description: Some("Delete specific observations from entities".to_string()),
+            name: "get_system_prompt".to_string(),
+            description: Some("Get the system prompt".to_string()),
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "deletions": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "entityName": { "type": "string" },
-                                "observations": {
-                                    "type": "array",
-                                    "items": { "type": "string" }
-                                }
-                            },
-                            "required": ["entityName", "observations"]
-                        }
+                    "agent_name": {
+                        "type": "string",
+                        "description": "Name of the agent whose system prompt to get"
                     }
                 },
-                "required": ["deletions"]
-            }),
-        },
-        Tool {
-            name: "delete_relations".to_string(),
-            description: Some("Delete multiple relations from the knowledge graph".to_string()),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "relations": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "from": { "type": "string" },
-                                "to": { "type": "string" },
-                                "relation_type": { "type": "string" }
-                            },
-                            "required": ["from", "to", "relation_type"]
-                        }
-                    }
-                },
-                "required": ["relations"]
-            }),
-        },
-        Tool {
-            name: "read_graph".to_string(),
-            description: Some("Read the entire knowledge graph".to_string()),
-            input_schema: json!({
-                "type": "object",
-                "properties": {}
-            }),
-        },
-        Tool {
-            name: "search_nodes".to_string(),
-            description: Some(
-                "Search for nodes in the knowledge graph based on a query".to_string(),
-            ),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "query": { "type": "string" }
-                },
-                "required": ["query"]
-            }),
-        },
-        Tool {
-            name: "open_nodes".to_string(),
-            description: Some(
-                "Open specific nodes in the knowledge graph by their names".to_string(),
-            ),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "names": {
-                        "type": "array",
-                        "items": { "type": "string" }
-                    }
-                },
-                "required": ["names"]
+                "required": ["agent_name"]
             }),
         },
     ];
 
     for tool in tools {
-        let memory = memory.clone();
+        let memories = memories.clone();
         server.register_tool(tool.clone(), move |req: CallToolRequest| {
-            let memory = memory.clone();
+            let memories = memories.clone();
             let tool = tool.clone();
             Box::pin(async move {
                 let args = req.arguments.unwrap_or_default();
+                let agent_name = args["agent_name"].as_str().ok_or_else(|| {
+                    anyhow::anyhow!("agent_name is required and must be a string")
+                })?;
+
+                let memory = memories
+                    .get(agent_name)
+                    .ok_or_else(|| anyhow::anyhow!("No memory found for agent: {}", agent_name))?;
 
                 let result = match tool.name.as_str() {
-                    "create_entities" => {
-                        let entities: Vec<Entity> =
-                            serde_json::from_value(args["entities"].clone())?;
-                        let memory = memory.lock().await;
-                        let result = memory.create_entities(entities).await?;
-                        serde_json::to_string(&result)?
+                    "reset_memory" => {
+                        let mut memory = memory.lock().await;
+                        memory.reset();
+                        "Memory reset successfully".to_string()
                     }
-                    "create_relations" => {
-                        let relations: Vec<Relation> =
-                            serde_json::from_value(args["relations"].clone())?;
+                    "get_succinct_steps" => {
                         let memory = memory.lock().await;
-                        let result = memory.create_relations(relations).await?;
-                        serde_json::to_string(&result)?
+                        let steps = memory.get_succinct_steps();
+                        serde_json::to_string(&steps)?
                     }
-                    "add_observations" => {
-                        let observations = args["observations"]
-                            .as_array()
-                            .ok_or_else(|| anyhow::anyhow!("observations must be an array"))?
-                            .iter()
-                            .map(|o| {
-                                Ok((
-                                    o["entityName"]
-                                        .as_str()
-                                        .ok_or_else(|| {
-                                            anyhow::anyhow!("entityName must be a string")
-                                        })?
-                                        .to_string(),
-                                    o["contents"]
-                                        .as_array()
-                                        .ok_or_else(|| {
-                                            anyhow::anyhow!("contents must be an array")
-                                        })?
-                                        .iter()
-                                        .map(|c| {
-                                            c.as_str()
-                                                .ok_or_else(|| {
-                                                    anyhow::anyhow!("content must be a string")
-                                                })
-                                                .map(String::from)
-                                        })
-                                        .collect::<Result<Vec<_>>>()?,
-                                ))
-                            })
-                            .collect::<Result<Vec<_>>>()?;
-
+                    "get_full_steps" => {
                         let memory = memory.lock().await;
-                        let result = memory.add_observations(observations).await?;
-                        serde_json::to_string(&result)?
+                        let steps = memory.get_full_steps();
+                        serde_json::to_string(&steps)?
                     }
-                    "delete_entities" => {
-                        let entity_names: Vec<String> =
-                            serde_json::from_value(args["entityNames"].clone())?;
-                        let memory = memory.lock().await;
-                        memory.delete_entities(entity_names).await?;
-                        "Entities deleted successfully".to_string()
+                    "add_step" => {
+                        let step: MemoryStep = serde_json::from_value(args["step"].clone())?;
+                        let mut memory = memory.lock().await;
+                        memory.add_step(step);
+                        "Step added successfully".to_string()
                     }
-                    "delete_observations" => {
-                        let deletions = args["deletions"]
-                            .as_array()
-                            .ok_or_else(|| anyhow::anyhow!("deletions must be an array"))?
-                            .iter()
-                            .map(|d| {
-                                Ok((
-                                    d["entityName"]
-                                        .as_str()
-                                        .ok_or_else(|| {
-                                            anyhow::anyhow!("entityName must be a string")
-                                        })?
-                                        .to_string(),
-                                    d["observations"]
-                                        .as_array()
-                                        .ok_or_else(|| {
-                                            anyhow::anyhow!("observations must be an array")
-                                        })?
-                                        .iter()
-                                        .map(|o| {
-                                            o.as_str()
-                                                .ok_or_else(|| {
-                                                    anyhow::anyhow!("observation must be a string")
-                                                })
-                                                .map(String::from)
-                                        })
-                                        .collect::<Result<Vec<_>>>()?,
-                                ))
-                            })
-                            .collect::<Result<Vec<_>>>()?;
-
+                    "get_system_prompt" => {
                         let memory = memory.lock().await;
-                        memory.delete_observations(deletions).await?;
-                        "Observations deleted successfully".to_string()
-                    }
-                    "delete_relations" => {
-                        let relations: Vec<Relation> =
-                            serde_json::from_value(args["relations"].clone())?;
-                        let memory = memory.lock().await;
-                        memory.delete_relations(relations).await?;
-                        "Relations deleted successfully".to_string()
-                    }
-                    "read_graph" => {
-                        let memory = memory.lock().await;
-                        let result = memory.read_graph().await?;
-                        serde_json::to_string(&result)?
-                    }
-                    "search_nodes" => {
-                        let query = args["query"]
-                            .as_str()
-                            .ok_or_else(|| anyhow::anyhow!("query must be a string"))?;
-                        let memory = memory.lock().await;
-                        let result = memory.search_nodes(query).await?;
-                        serde_json::to_string(&result)?
-                    }
-                    "open_nodes" => {
-                        let names: Vec<String> = serde_json::from_value(args["names"].clone())?;
-                        let memory = memory.lock().await;
-                        let result = memory.open_nodes(names).await?;
-                        serde_json::to_string(&result)?
+                        let system_prompt = memory.get_system_prompt();
+                        serde_json::to_string(&system_prompt)?
                     }
                     _ => return Err(anyhow::anyhow!("Unknown tool: {}", tool.name)),
                 };
@@ -367,27 +185,33 @@ fn register_tools<T: Transport>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::servers::memory::FileMemory;
+    use crate::servers::memory::types::LocalAgentMemory;
     use async_mcp::{
         client::ClientBuilder,
         protocol::RequestOptions,
         transport::{ClientInMemoryTransport, ServerInMemoryTransport},
     };
-    use std::time::Duration;
-    use tempfile::NamedTempFile;
+    use std::{collections::HashMap, time::Duration};
 
     #[tokio::test]
     async fn test_memory_server() -> Result<()> {
-        let temp_file = NamedTempFile::new()?;
-        let memory = FileMemory::new(temp_file.path()).await?;
-        let memory = Arc::new(Mutex::new(memory));
+        let memory = Arc::new(Mutex::new(LocalAgentMemory::new(
+            "Test system prompt".to_string(),
+        )));
 
-        async fn async_server(transport: ServerInMemoryTransport, memory: Arc<Mutex<FileMemory>>) {
+        async fn async_server(
+            transport: ServerInMemoryTransport,
+            memory: Arc<Mutex<LocalAgentMemory>>,
+        ) {
             let metadata = ServerMetadata {
                 auth_session_key: Default::default(),
                 mcp_transport: crate::types::TransportType::Async,
-                memory: Some(memory.clone()),
+                memories: HashMap::from([(
+                    "agent1".to_string(),
+                    memory as Arc<Mutex<dyn AgentMemory>>,
+                )]),
                 builder: None,
+                kg_memory: None,
             };
             let server = build(&metadata, transport.clone()).unwrap();
             server.listen().await.unwrap();
@@ -403,19 +227,13 @@ mod tests {
         let client_clone = client.clone();
         tokio::spawn(async move { client_clone.start().await });
 
-        // Test creating an entity
+        // Test getting system prompt
         let response = client
             .request(
                 "tools/call",
                 Some(json!({
-                    "name": "create_entities",
-                    "arguments": {
-                        "entities": [{
-                            "name": "Alice",
-                            "entity_type": "person",
-                            "observations": ["likes coffee"]
-                        }]
-                    }
+                    "name": "get_system_prompt",
+                    "arguments": {}
                 })),
                 RequestOptions::default().timeout(Duration::from_secs(10)),
             )
@@ -424,7 +242,7 @@ mod tests {
         assert!(response["content"][0]["text"]
             .as_str()
             .unwrap()
-            .contains("Alice"));
+            .contains("Test system prompt"));
 
         Ok(())
     }
