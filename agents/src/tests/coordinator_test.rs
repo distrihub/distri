@@ -48,7 +48,7 @@ async fn test_agent_coordination() -> anyhow::Result<()> {
         parameters: Default::default(),
         response_format: None,
         history_size: None,
-        planning_config: Some(PlanningConfig::new(3)),
+        planning_config: Some(PlanningConfig::new(3, 10)),
     };
 
     // Initialize coordinator with session stores

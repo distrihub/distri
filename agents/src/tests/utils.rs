@@ -117,6 +117,7 @@ pub fn get_twitter_summarizer(
         planning_config: planning_interval.map(|i| PlanningConfig {
             enabled: true,
             interval: Some(i),
+            max_iterations: Some(max_iterations.unwrap_or(10) as i32),
         }),
     }
 }

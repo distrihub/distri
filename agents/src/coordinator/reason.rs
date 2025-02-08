@@ -146,6 +146,6 @@ pub fn get_planning_definition() -> AgentDefinition {
         model_settings: ModelSettings::default(),
         parameters: Default::default(),
         response_format: None,
-        planning_config: Some(PlanningConfig::new(5)),
+        planning_config: Some(PlanningConfig::new(5, 10)),
     }
 }

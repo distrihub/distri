@@ -110,6 +110,7 @@ pub struct LocalCoordinator {
     coordinator_tx: mpsc::Sender<CoordinatorMessage>,
     memory_store: Arc<Box<dyn MemoryStore>>,
     logger: StepLogger,
+    iterations: Arc<RwLock<HashMap<String, i32>>>,
 }
 
 impl LocalCoordinator {
@@ -130,6 +131,7 @@ impl LocalCoordinator {
             memory_store: memory_store
                 .unwrap_or_else(|| Arc::new(Box::new(LocalMemoryStore::new()))),
             logger: StepLogger::new(verbose),
+            iterations: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -284,24 +286,68 @@ impl LocalCoordinator {
             .map_err(|e| AgentError::Session(e.to_string()))?;
         self.logger.log_step(agent_id, &task_step);
 
-        // Create planning if enabled in agent definition
+        // Handle planning if enabled
         if let Some(planning_config) = &definition.planning_config {
             if planning_config.enabled {
-                let (facts, plan) = create_initial_plan(&task, &tools_desc, &|msgs| {
-                    let planning_executor = AgentExecutor::new(
-                        super::reason::get_planning_definition(),
-                        vec![],
-                        Some(Arc::new(self.get_handle(agent_id.to_string()))),
-                        self.logger.verbose,
-                    );
-                    Box::pin(async move {
-                        planning_executor
-                            .execute(&msgs, None)
-                            .await
-                            .map_err(|e| anyhow::anyhow!("Planning execution failed: {}", e))
+                // Get current iteration count
+                let iteration = {
+                    let mut iterations = self.iterations.write().await;
+                    let count = iterations.entry(agent_id.to_string()).or_insert(0);
+                    *count += 1;
+                    *count
+                };
+
+                // Get previous messages for planning update
+                let previous_messages = if iteration > 1 {
+                    self.memory_store
+                        .get_messages(agent_id, thread_id)
+                        .await
+                        .map_err(|e| AgentError::Session(e.to_string()))?
+                } else {
+                    vec![]
+                };
+
+                // Run either initial planning or planning update
+                let (facts, plan) = if iteration == 1 {
+                    create_initial_plan(&task, &tools_desc, &|msgs| {
+                        let planning_executor = AgentExecutor::new(
+                            super::reason::get_planning_definition(),
+                            vec![],
+                            Some(Arc::new(self.get_handle(agent_id.to_string()))),
+                            self.logger.verbose,
+                        );
+                        Box::pin(async move {
+                            planning_executor
+                                .execute(&msgs, None)
+                                .await
+                                .map_err(|e| anyhow::anyhow!("Planning execution failed: {}", e))
+                        })
                     })
-                })
-                .await
+                    .await
+                } else {
+                    let remaining_steps =
+                        planning_config.max_iterations.unwrap_or(10) - iteration + 1;
+                    super::reason::update_plan(
+                        &task.task,
+                        &tools_desc,
+                        &previous_messages,
+                        remaining_steps,
+                        &|msgs| {
+                            let planning_executor = AgentExecutor::new(
+                                super::reason::get_planning_definition(),
+                                vec![],
+                                Some(Arc::new(self.get_handle(agent_id.to_string()))),
+                                self.logger.verbose,
+                            );
+                            Box::pin(async move {
+                                planning_executor.execute(&msgs, None).await.map_err(|e| {
+                                    anyhow::anyhow!("Planning execution failed: {}", e)
+                                })
+                            })
+                        },
+                    )
+                    .await
+                }
                 .map_err(|e| AgentError::Session(e.to_string()))?;
 
                 // Store planning step

@@ -65,17 +65,18 @@ pub struct AgentDefinition {
     pub planning_config: Option<PlanningConfig>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema)]
-#[derive(Default)]
+#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, Default)]
 pub struct PlanningConfig {
     pub enabled: bool,
-    pub interval: Option<i32>, // How often to replan (in steps)
+    pub interval: Option<i32>,       // How often to replan (in steps)
+    pub max_iterations: Option<i32>, // Maximum number of iterations
 }
 impl PlanningConfig {
-    pub fn new(interval: i32) -> Self {
+    pub fn new(interval: i32, max_iterations: i32) -> Self {
         Self {
             enabled: true,
             interval: Some(interval),
+            max_iterations: Some(max_iterations),
         }
     }
 }
