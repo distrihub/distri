@@ -378,7 +378,7 @@ impl McpProxy {
         // If no server specified, find the first server that has the tool
         let tools = self.tools_cache.lock().await;
         for (server_name, server_tools) in tools.iter() {
-            if server_tools.iter().find(|s| req.name == s.name).is_some() {
+            if server_tools.iter().any(|s| req.name == s.name) {
                 if let Some(server) = self.config.servers.get(server_name) {
                     if let Ok(client) = self.get_or_create_client(server_name, server).await {
                         let response = client

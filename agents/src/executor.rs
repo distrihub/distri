@@ -133,7 +133,7 @@ impl AgentExecutor {
                 &self.agent_def.model_settings.model,
                 input_messages.len(),
                 None,
-                Some(token_usage as u32),
+                Some(token_usage),
             );
             tracing::debug!("Current token usage: {}", token_usage);
 

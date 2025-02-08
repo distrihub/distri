@@ -54,6 +54,12 @@ pub struct LocalMemoryStore {
     memories: Arc<RwLock<HashMap<String, LocalAgentMemory>>>,
 }
 
+impl Default for LocalMemoryStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LocalMemoryStore {
     pub fn new() -> Self {
         Self {

@@ -45,7 +45,7 @@ async fn main() -> Result<()> {
     match cli.command {
         Commands::List => {
             println!("Configured servers:");
-            for (name, _) in &config.servers {
+            for name in config.servers.keys() {
                 println!("- {}", name);
             }
         }

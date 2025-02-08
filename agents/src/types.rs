@@ -66,6 +66,7 @@ pub struct AgentDefinition {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, JsonSchema)]
+#[derive(Default)]
 pub struct PlanningConfig {
     pub enabled: bool,
     pub interval: Option<i32>, // How often to replan (in steps)
@@ -75,14 +76,6 @@ impl PlanningConfig {
         Self {
             enabled: true,
             interval: Some(interval),
-        }
-    }
-}
-impl Default for PlanningConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            interval: None,
         }
     }
 }
@@ -291,7 +284,7 @@ pub fn get_tool_description(tool: &Tool, template: &str) -> String {
         .replace("{name}", &tool.name)
         .replace(
             "{description}",
-            &tool.description.as_ref().unwrap_or(&"".to_string()),
+            tool.description.as_ref().unwrap_or(&"".to_string()),
         )
         .replace("{inputs}", &tool.input_schema.to_string())
 }
