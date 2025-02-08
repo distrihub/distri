@@ -4,8 +4,8 @@ use crate::{
     models::agent::{Agent, WrappedDefinition},
 };
 use actix_web::{get, post, web, HttpResponse, Result};
-use agents::AgentDefinition;
 use diesel::prelude::*;
+use distri::AgentDefinition;
 
 #[get("")]
 pub async fn list_agents(

@@ -1,6 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 
-use agents::{McpSession, ToolSessionStore};
+use distri::{McpSession, ToolSessionStore};
 
 pub fn get_session_store(
     sessions: HashMap<String, String>,

@@ -1,6 +1,6 @@
-use agents::coordinator::{AgentCoordinator, LocalCoordinator};
-use agents::servers::memory::TaskStep;
-use agents::types::AgentConfig;
+use distri::coordinator::{AgentCoordinator, LocalCoordinator};
+use distri::servers::memory::TaskStep;
+use distri::types::AgentConfig;
 use rustyline::DefaultEditor;
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::info;
 
-use agents::types::{Message, MessageContent, MessageRole};
+use distri::types::{Message, MessageContent, MessageRole};
 
 pub async fn run(
     agent_config: &AgentConfig,

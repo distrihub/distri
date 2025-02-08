@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
-members = ["app", "agents", "proxy", "code-mcp"]
-default-members = ["app", "agents", "proxy"]
+members = ["app", "distri", "proxy", "code-mcp"]
+default-members = ["app", "distri", "proxy"]
 
 [workspace.dependencies]
 async-mcp = { version = "0.0.8" }

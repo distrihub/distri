@@ -1,6 +1,6 @@
 mod cli;
 mod run;
-use agents::{
+use distri::{
     cli::RunWorkflow,
     init_logging,
     servers::{kg::FileMemory, registry::init_registry_and_coordinator},

@@ -1,4 +1,4 @@
-use agents::AgentDefinition;
+use distri::AgentDefinition;
 use chrono::NaiveDateTime;
 use diesel::deserialize::{FromSql, FromSqlRow};
 use diesel::expression::AsExpression;

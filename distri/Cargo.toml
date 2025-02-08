@@ -1,5 +1,5 @@
 [package]
-name = "agents"
+name = "distri"
 version = "0.1.0"
 edition = "2021"
 

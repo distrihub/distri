@@ -1,6 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 
-use agents::{
+use distri::{
     servers::{
         registry::{ServerMetadata, ServerRegistry, ServerTrait},
         tavily,

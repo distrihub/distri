@@ -300,35 +300,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "agents"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-mcp",
- "async-openai",
- "async-trait",
- "clap",
- "dirs",
- "distri-proxy",
- "dotenv",
- "futures",
- "jsonschema",
- "regex",
- "reqwest 0.12.12",
- "rustyline",
- "schemars",
- "serde",
- "serde_json",
- "serde_yaml",
- "tempfile",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "twitter-mcp",
-]
-
-[[package]]
 name = "ahash"
 version = "0.8.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -436,38 +407,6 @@ name = "anyhow"
 version = "1.0.95"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "34ac096ce696dc2fcabef30516bb13c0a68a11d30131d3df6f04711467681b04"
-
-[[package]]
-name = "app"
-version = "0.1.0"
-dependencies = [
- "actix-web",
- "actix-web-lab",
- "agent-twitter-client",
- "agents",
- "anyhow",
- "async-mcp",
- "chrono",
- "diesel",
- "dotenv",
- "env_logger",
- "firebase-auth",
- "futures",
- "futures-util",
- "r2d2",
- "rand",
- "redis",
- "reqwest 0.12.12",
- "serde",
- "serde_json",
- "serde_yaml",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "twitter-mcp",
- "uuid",
-]
 
 [[package]]
 name = "arc-swap"
@@ -1234,6 +1173,67 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.96",
+]
+
+[[package]]
+name = "distri"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-mcp",
+ "async-openai",
+ "async-trait",
+ "clap",
+ "dirs",
+ "distri-proxy",
+ "dotenv",
+ "futures",
+ "jsonschema",
+ "regex",
+ "reqwest 0.12.12",
+ "rustyline",
+ "schemars",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "twitter-mcp",
+]
+
+[[package]]
+name = "distri-app"
+version = "0.1.0"
+dependencies = [
+ "actix-web",
+ "actix-web-lab",
+ "agent-twitter-client",
+ "anyhow",
+ "async-mcp",
+ "chrono",
+ "diesel",
+ "distri",
+ "dotenv",
+ "env_logger",
+ "firebase-auth",
+ "futures",
+ "futures-util",
+ "r2d2",
+ "rand",
+ "redis",
+ "reqwest 0.12.12",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "twitter-mcp",
+ "uuid",
 ]
 
 [[package]]

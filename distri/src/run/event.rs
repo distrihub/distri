@@ -1,12 +1,12 @@
-use agents::cli::RunWorkflow;
-use agents::coordinator::{AgentCoordinator, LocalCoordinator};
-use agents::servers::memory::TaskStep;
+use distri::cli::RunWorkflow;
+use distri::coordinator::{AgentCoordinator, LocalCoordinator};
+use distri::servers::memory::TaskStep;
 use std::sync::Arc;
 use tokio::signal;
 use tokio::time::{sleep, Duration};
 use tracing::{error, info};
 
-use agents::AgentDefinition;
+use distri::AgentDefinition;
 
 pub async fn run(
     agent: &AgentDefinition,
