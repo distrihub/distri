@@ -1,5 +1,6 @@
 use agents::cli::RunWorkflow;
 use agents::coordinator::{AgentCoordinator, LocalCoordinator};
+use agents::servers::memory::TaskStep;
 use std::sync::Arc;
 use tokio::signal;
 use tokio::time::{sleep, Duration};
@@ -13,8 +14,6 @@ pub async fn run(
     mode: &RunWorkflow,
 ) -> anyhow::Result<()> {
     let agent_name = &agent.name;
-
-    let messages = Vec::new();
 
     info!("Running agent (Ctrl+C to stop)...");
 
@@ -38,7 +37,10 @@ pub async fn run(
             }
             _ = async {
                 info!("Executing scheduled agent run - iteration: {count}");
-                match coordinator.execute(agent_name, messages.clone(), None).await {
+                match coordinator.execute(agent_name, TaskStep {
+                    task: "Run this workflow".to_string(),
+                    task_images: None,
+                }, None).await {
                     Ok(response) => {
                         info!("Agent execution completed successfully");
                         info!("Agent response: {}", response);

@@ -1,23 +1,20 @@
 use crate::{
     coordinator::LocalCoordinator,
     init_logging,
+    servers::memory::TaskStep,
     tests::utils::{get_registry, get_tools_session_store, get_twitter_summarizer},
-    types::{Message, Role},
 };
 
 #[tokio::test]
 async fn test_twitter_summary() {
-    init_logging("debug");
+    init_logging("info");
 
     let registry = get_registry().await;
 
-    let agent_def = get_twitter_summarizer();
+    let agent_def = get_twitter_summarizer(Some(5), Some(10), Some(10000));
     // Initialize coordinator
-    let coordinator = LocalCoordinator::new(
-        registry.clone(),
-        None, // No agent sessions needed for this test
-        get_tools_session_store(),
-    );
+    let coordinator =
+        LocalCoordinator::new(registry.clone(), get_tools_session_store(), None, true);
 
     // Register the agent
     coordinator.register_agent(agent_def.clone()).await.unwrap();
@@ -30,14 +27,13 @@ async fn test_twitter_summary() {
         coordinator.run().await.unwrap();
     });
 
-    let messages = vec![Message {
-        message: "Get my latest tweets and summarize them".to_string(),
-        name: None,
-        role: Role::User,
-    }];
+    let task = TaskStep {
+        task: "Get my latest tweets and summarize them".to_string(),
+        task_images: None,
+    };
 
     // Execute using the handle
-    let response = handle.execute(messages, None).await.unwrap();
+    let response = handle.execute(task, None).await.unwrap();
     println!("Response: {}", response);
 
     // Clean up

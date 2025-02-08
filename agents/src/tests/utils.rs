@@ -5,7 +5,7 @@ use tokio::sync::RwLock;
 use crate::{
     coordinator::{LocalCoordinator, DISTRI_LOCAL_SERVER},
     servers::registry::{ServerMetadata, ServerRegistry, ServerTrait},
-    types::TransportType,
+    types::{PlanningConfig, TransportType},
     AgentDefinition, McpDefinition, McpSession, ModelSettings, ToolSessionStore,
 };
 
@@ -75,7 +75,7 @@ pub async fn register_coordinator(
             kg_memory: None,
             builder: Some(Arc::new(move |_, transport| {
                 let coordinator = coordinator.clone();
-                let server = crate::coordinator::build_server(transport, coordinator)?;
+                let server = crate::coordinator::build_server(transport, coordinator, true)?;
                 Ok(Box::new(server) as Box<dyn ServerTrait>)
             })),
             memories: HashMap::new(),
@@ -94,17 +94,29 @@ When asked about tweets, you will:
 
 Keep your summaries concise but informative. Use markdown formatting to make the output readable."#;
 
-pub fn get_twitter_summarizer() -> AgentDefinition {
+pub fn get_twitter_summarizer(
+    planning_interval: Option<i32>,
+    max_iterations: Option<u32>,
+    max_tokens: Option<u32>,
+) -> AgentDefinition {
     // Create agent definition with Twitter tool
 
     AgentDefinition {
         name: "Twitter Agent".to_string(),
         description: "Agent that can access Twitter".to_string(),
         system_prompt: Some(SYSTEM_PROMPT.to_string()),
-        model_settings: ModelSettings::default(),
+        model_settings: ModelSettings {
+            max_iterations: max_iterations.unwrap_or(10),
+            max_tokens: max_tokens.unwrap_or(1000),
+            ..Default::default()
+        },
         mcp_servers: vec![get_twitter_tool()],
         parameters: Default::default(),
         response_format: None,
         history_size: None,
+        planning_config: planning_interval.map(|i| PlanningConfig {
+            enabled: true,
+            interval: Some(i),
+        }),
     }
 }

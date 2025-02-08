@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
 use crate::{
-    coordinator::AgentHandle,
+    coordinator::{AgentHandle, ModelLogger},
     error::AgentError,
-    types::{validate_parameters, Message, Role, ServerTools, ToolCall},
+    types::{validate_parameters, Message, MessageRole, ServerTools, ToolCall},
     AgentDefinition,
 };
 use async_openai::{
@@ -24,6 +24,8 @@ pub struct AgentExecutor {
     agent_def: AgentDefinition,
     server_tools: Vec<ServerTools>,
     coordinator: Option<Arc<AgentHandle>>,
+    verbose: bool,
+    model_logger: ModelLogger,
 }
 
 pub const MAX_RETRIES: i32 = 3;
@@ -38,6 +40,7 @@ impl AgentExecutor {
         agent_def: AgentDefinition,
         server_tools: Vec<ServerTools>,
         coordinator: Option<Arc<AgentHandle>>,
+        verbose: bool,
     ) -> Self {
         let client = Client::new();
         let name = &agent_def.name;
@@ -52,6 +55,8 @@ impl AgentExecutor {
             agent_def,
             server_tools,
             coordinator,
+            verbose,
+            model_logger: ModelLogger::new(verbose),
         }
     }
 
@@ -65,9 +70,11 @@ impl AgentExecutor {
         params: Option<Value>,
     ) -> Result<String, AgentError> {
         // Create normalized parameters
-        let mut schema = self.agent_def.parameters.clone();
-        validate_parameters(&mut schema, params)
-            .map_err(|e| AgentError::Parameter(e.to_string()))?;
+        if let Some(schema) = self.agent_def.parameters.as_ref() {
+            let mut schema = schema.clone();
+            validate_parameters(&mut schema, params)
+                .map_err(|e| AgentError::Parameter(e.to_string()))?;
+        }
 
         tracing::info!("Starting agent execution with {} messages", messages.len());
         let messages = self.map_messages(messages);
@@ -101,6 +108,19 @@ impl AgentExecutor {
             }
             iterations += 1;
 
+            let settings = format!(
+                "Max Tokens: {}\nMax Iterations: {}",
+                self.agent_def.model_settings.max_tokens,
+                self.agent_def.model_settings.max_iterations
+            );
+
+            self.model_logger.log_model_execution(
+                &self.agent_def.model_settings.model,
+                req.messages.len(),
+                Some(&settings),
+                None,
+            );
+
             tracing::debug!("Sending chat completion request");
             let input_messages = req.messages.clone();
             let response = self.client.chat().create(req).await.map_err(|e| {
@@ -109,6 +129,12 @@ impl AgentExecutor {
             })?;
 
             token_usage += response.usage.as_ref().map(|a| a.total_tokens).unwrap_or(0);
+            self.model_logger.log_model_execution(
+                &self.agent_def.model_settings.model,
+                input_messages.len(),
+                None,
+                Some(token_usage as u32),
+            );
             tracing::debug!("Current token usage: {}", token_usage);
 
             let choice = &response.choices[0];
@@ -259,21 +285,38 @@ impl AgentExecutor {
         let messages = messages
             .iter()
             .map(|m| match m.role {
-                Role::User => {
+                MessageRole::User => {
                     let mut msg = ChatCompletionRequestUserMessageArgs::default();
-                    msg.content(m.message.clone());
+                    msg.content(m.content[0].text.clone().unwrap_or_default());
                     if let Some(name) = &m.name {
                         msg.name(name);
                     }
                     ChatCompletionRequestMessage::User(msg.build().unwrap())
                 }
-                Role::Assistant => {
+                MessageRole::Assistant => {
                     let mut msg = ChatCompletionRequestAssistantMessageArgs::default();
-                    msg.content(m.message.clone());
+                    msg.content(m.content[0].text.clone().unwrap_or_default());
                     if let Some(name) = &m.name {
                         msg.name(name);
                     }
                     ChatCompletionRequestMessage::Assistant(msg.build().unwrap())
+                }
+                MessageRole::System => {
+                    let mut msg = ChatCompletionRequestSystemMessageArgs::default();
+                    msg.content(m.content[0].text.clone().unwrap_or_default());
+                    if let Some(name) = &m.name {
+                        msg.name(name);
+                    }
+                    ChatCompletionRequestMessage::System(msg.build().unwrap())
+                }
+                MessageRole::ToolResponse => {
+                    let msg = ChatCompletionRequestToolMessage {
+                        content: ChatCompletionRequestToolMessageContent::Text(
+                            m.content[0].text.clone().unwrap_or_default(),
+                        ),
+                        tool_call_id: m.content[0].text.clone().unwrap_or_default(),
+                    };
+                    ChatCompletionRequestMessage::Tool(msg)
                 }
             })
             .collect::<Vec<_>>();

@@ -2,10 +2,13 @@ mod server;
 pub use server::{build_server, DISTRI_LOCAL_SERVER};
 mod local;
 pub use local::*;
-
+mod log;
+pub use log::*;
+mod reason;
 use crate::{
     error::AgentError,
-    types::{AgentDefinition, Message, ServerTools, ToolCall},
+    servers::memory::TaskStep,
+    types::{AgentDefinition, ServerTools, ToolCall},
 };
 use tokio::sync::{mpsc, oneshot};
 // Message types for coordinator communication
@@ -18,7 +21,7 @@ pub enum CoordinatorMessage {
     },
     Execute {
         agent_id: String,
-        messages: Vec<Message>,
+        task: TaskStep,
         params: Option<serde_json::Value>,
         response_tx: oneshot::Sender<Result<String, AgentError>>,
     },
@@ -28,6 +31,7 @@ pub enum CoordinatorMessage {
 pub struct AgentHandle {
     pub agent_id: String,
     pub coordinator_tx: mpsc::Sender<CoordinatorMessage>,
+    pub verbose: bool,
 }
 
 #[async_trait::async_trait]
@@ -41,7 +45,7 @@ pub trait AgentCoordinator {
     async fn execute(
         &self,
         agent_name: &str,
-        messages: Vec<Message>,
+        task: TaskStep,
         params: Option<serde_json::Value>,
     ) -> Result<String, AgentError>;
 }
@@ -67,14 +71,14 @@ impl AgentHandle {
 
     pub async fn execute(
         &self,
-        messages: Vec<Message>,
+        task: TaskStep,
         params: Option<serde_json::Value>,
     ) -> Result<String, AgentError> {
         let (response_tx, response_rx) = oneshot::channel();
         self.coordinator_tx
             .send(CoordinatorMessage::Execute {
                 agent_id: self.agent_id.clone(),
-                messages,
+                task,
                 params,
                 response_tx,
             })

@@ -57,27 +57,59 @@ pub struct AgentDefinition {
     #[serde(default)]
     pub model_settings: ModelSettings,
     #[serde(default)]
-    pub parameters: serde_json::Value,
+    pub parameters: Option<serde_json::Value>,
     #[serde(default)]
     pub response_format: Option<serde_json::Value>,
     #[serde(default = "default_history_size")]
     pub history_size: Option<usize>,
+    pub planning_config: Option<PlanningConfig>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct Message {
-    pub name: Option<String>,
-    pub role: Role,
-    pub message: String,
+#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema)]
+pub struct PlanningConfig {
+    pub enabled: bool,
+    pub interval: Option<i32>, // How often to replan (in steps)
 }
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+impl PlanningConfig {
+    pub fn new(interval: i32) -> Self {
+        Self {
+            enabled: true,
+            interval: Some(interval),
+        }
+    }
+}
+impl Default for PlanningConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            interval: None,
+        }
+    }
+}
+#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema)]
 #[serde(rename_all = "lowercase")]
-#[serde(deny_unknown_fields)]
-pub enum Role {
-    User,
+pub enum MessageRole {
+    System,
     Assistant,
+    User,
+    ToolResponse,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema)]
+pub struct MessageContent {
+    #[serde(rename = "type")]
+    pub content_type: String,
+    #[serde(default)]
+    pub text: Option<String>,
+    #[serde(default)]
+    pub image: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema)]
+pub struct Message {
+    pub role: MessageRole,
+    pub name: Option<String>,
+    pub content: Vec<MessageContent>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -85,15 +117,6 @@ pub enum Role {
 pub struct McpSession {
     pub token: String,
     pub expiry: Option<SystemTime>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct AgentSession {
-    pub agent_id: String,
-    pub parent_agent_id: Option<String>,
-    pub messages: Vec<Message>,
-    pub created_at: SystemTime,
-    pub updated_at: SystemTime,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -245,6 +268,32 @@ pub fn validate_parameters(
         .validate(&params)
         .map_err(|e| anyhow::anyhow!(e.to_string()))?;
     Ok(())
+}
+
+pub const DEFAULT_TOOL_DESCRIPTION_TEMPLATE: &str = r#"
+- {name}: {description}
+    Takes inputs: {inputs}
+    Returns an output of type: {output_type}
+"#;
+
+pub fn get_tool_descriptions(tools: &Vec<ServerTools>, template: Option<&str>) -> String {
+    let template = template.unwrap_or(DEFAULT_TOOL_DESCRIPTION_TEMPLATE);
+
+    tools
+        .iter()
+        .flat_map(|t| t.tools.iter().map(|t| get_tool_description(t, template)))
+        .collect::<Vec<String>>()
+        .join("\n")
+}
+
+pub fn get_tool_description(tool: &Tool, template: &str) -> String {
+    template
+        .replace("{name}", &tool.name)
+        .replace(
+            "{description}",
+            &tool.description.as_ref().unwrap_or(&"".to_string()),
+        )
+        .replace("{inputs}", &tool.input_schema.to_string())
 }
 
 #[derive(Debug, serde::Deserialize, JsonSchema)]

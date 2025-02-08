@@ -5,16 +5,16 @@ use tracing::info;
 use crate::{
     coordinator::{LocalCoordinator, DISTRI_LOCAL_SERVER},
     init_logging,
-    store::InMemoryAgentSessionStore,
+    servers::memory::TaskStep,
     tests::utils::{get_registry, get_tools_session_store, get_twitter_tool, register_coordinator},
     types::{
-        AgentDefinition, McpDefinition, Message, ModelSettings, Role, ToolSelector, ToolsFilter,
+        AgentDefinition, McpDefinition, ModelSettings, PlanningConfig, ToolSelector, ToolsFilter,
     },
 };
 
 #[tokio::test]
 async fn test_agent_coordination() -> anyhow::Result<()> {
-    init_logging("debug");
+    init_logging("info");
     // Create test agent definitions
     let tool_defs = vec![get_twitter_tool()];
     let agent1_def = AgentDefinition {
@@ -29,6 +29,7 @@ async fn test_agent_coordination() -> anyhow::Result<()> {
         parameters: Default::default(),
         response_format: None,
         history_size: None,
+        planning_config: None,
     };
 
     let agent2_def = AgentDefinition {
@@ -46,20 +47,20 @@ async fn test_agent_coordination() -> anyhow::Result<()> {
         model_settings: ModelSettings::default(),
         parameters: Default::default(),
         response_format: None,
-        history_size: None
+        history_size: None,
+        planning_config: Some(PlanningConfig::new(3)),
     };
 
     // Initialize coordinator with session stores
     let registry = get_registry().await;
-    let agent_sessions =
-        Some(Arc::new(Box::new(InMemoryAgentSessionStore::default())
-            as Box<dyn crate::store::AgentSessionStore>));
+
     let tool_sessions = get_tools_session_store();
 
     let coordinator = Arc::new(LocalCoordinator::new(
         registry.clone(),
-        agent_sessions,
         tool_sessions,
+        None,
+        true,
     ));
 
     //register coordinator in registry
@@ -77,11 +78,10 @@ async fn test_agent_coordination() -> anyhow::Result<()> {
     let agent2_handle = coordinator.get_handle("agent2".to_string());
     let agent2_result = agent2_handle
         .execute(
-            vec![Message {
-                message: "Ask twitter_agent for the summary of my timeline".to_string(),
-                name: None,
-                role: Role::User,
-            }],
+            TaskStep {
+                task: "Ask twitter_agent for the summary of my timeline".to_string(),
+                task_images: None,
+            },
             None,
         )
         .await?;

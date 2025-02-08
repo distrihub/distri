@@ -87,6 +87,7 @@ async fn main() -> Result<()> {
                 kg_memory,
                 tool_sessions.clone(),
                 &config.mcp_servers,
+                true,
             )
             .await;
 

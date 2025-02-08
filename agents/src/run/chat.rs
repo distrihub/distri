@@ -1,4 +1,5 @@
 use agents::coordinator::{AgentCoordinator, LocalCoordinator};
+use agents::servers::memory::TaskStep;
 use agents::types::AgentConfig;
 use rustyline::DefaultEditor;
 use std::fs::{File, OpenOptions};
@@ -7,7 +8,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::info;
 
-use agents::types::{Message, Role};
+use agents::types::{Message, MessageContent, MessageRole};
 
 pub async fn run(
     agent_config: &AgentConfig,
@@ -92,8 +93,12 @@ pub async fn run(
         }
         // Create user message
         let user_message = Message {
-            message: input.to_string(),
-            role: Role::User,
+            content: vec![MessageContent {
+                content_type: "text".to_string(),
+                text: Some(input.to_string()),
+                image: None,
+            }],
+            role: MessageRole::User,
             name: None,
         };
 
@@ -116,15 +121,26 @@ pub async fn run(
         //     .collect();
         info!("{agent_name}: {user_message:?}");
         match coordinator
-            .execute(agent_name, vec![user_message], None)
+            .execute(
+                agent_name,
+                TaskStep {
+                    task: user_message.content[0].text.clone().unwrap(),
+                    task_images: None,
+                },
+                None,
+            )
             .await
         {
             Ok(response) => {
                 println!("{}", response);
                 let assistant_message = Message {
                     name: Some(agent.name.clone()),
-                    role: Role::Assistant,
-                    message: response,
+                    role: MessageRole::Assistant,
+                    content: vec![MessageContent {
+                        content_type: "text".to_string(),
+                        text: Some(response),
+                        image: None,
+                    }],
                 };
 
                 // Append assistant message to file

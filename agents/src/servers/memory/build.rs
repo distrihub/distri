@@ -162,11 +162,6 @@ fn register_tools<T: Transport>(
                         memory.add_step(step);
                         "Step added successfully".to_string()
                     }
-                    "get_system_prompt" => {
-                        let memory = memory.lock().await;
-                        let system_prompt = memory.get_system_prompt();
-                        serde_json::to_string(&system_prompt)?
-                    }
                     _ => return Err(anyhow::anyhow!("Unknown tool: {}", tool.name)),
                 };
 
@@ -195,9 +190,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_memory_server() -> Result<()> {
-        let memory = Arc::new(Mutex::new(LocalAgentMemory::new(
-            "Test system prompt".to_string(),
-        )));
+        let memory = Arc::new(Mutex::new(LocalAgentMemory::new()));
 
         async fn async_server(
             transport: ServerInMemoryTransport,

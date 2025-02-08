@@ -1,6 +1,5 @@
 use crate::{
-    coordinator::{self, LocalCoordinator, DISTRI_LOCAL_SERVER},
-    store::{AgentSessionStore, InMemoryAgentSessionStore},
+    coordinator::{self, LocalCoordinator, LocalMemoryStore, MemoryStore, DISTRI_LOCAL_SERVER},
     types::{ExternalMcpServer, TransportType},
     ToolSessionStore,
 };
@@ -97,20 +96,23 @@ pub async fn init_registry_and_coordinator(
     kg_memory: Arc<Mutex<dyn KgMemory>>,
     tool_sessions: Option<Arc<Box<dyn ToolSessionStore>>>,
     external_servers: &[ExternalMcpServer],
+    verbose: bool,
 ) -> (Arc<RwLock<ServerRegistry>>, Arc<LocalCoordinator>) {
     let server_registry = Arc::new(RwLock::new(ServerRegistry::new()));
     let reg_clone = server_registry.clone();
     let mut registry = reg_clone.write().await;
 
-    let agent_sessions = Some(Arc::new(
-        Box::new(InMemoryAgentSessionStore::default()) as Box<dyn AgentSessionStore>
+    let memory_store = Some(Arc::new(
+        Box::new(LocalMemoryStore::new()) as Box<dyn MemoryStore>
     ));
 
     let coordinator = Arc::new(LocalCoordinator::new(
         server_registry.clone(),
-        agent_sessions,
         tool_sessions,
+        memory_store,
+        verbose,
     ));
+
     registry.register(
         "twitter".to_string(),
         ServerMetadata {
@@ -176,7 +178,7 @@ pub async fn init_registry_and_coordinator(
             kg_memory: None,
             builder: Some(Arc::new(move |_, transport| {
                 let coordinator = coordinator.clone();
-                let server = coordinator::build_server(transport, coordinator)?;
+                let server = coordinator::build_server(transport, coordinator, verbose)?;
                 Ok(Box::new(server) as Box<dyn ServerTrait>)
             })),
             memories: HashMap::new(),

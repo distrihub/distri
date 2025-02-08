@@ -13,7 +13,7 @@ use serde_json::json;
 use crate::{
     error::AgentError,
     executor::AgentExecutor,
-    types::{Message, Role},
+    types::{Message, MessageContent, MessageRole},
 };
 
 use super::{AgentCoordinator, LocalCoordinator};
@@ -23,6 +23,7 @@ pub static DISTRI_LOCAL_SERVER: &str = "distri-mcp-server-local";
 pub fn build_server<T: Transport>(
     transport: T,
     coordinator: Arc<LocalCoordinator>,
+    verbose: bool,
 ) -> Result<Server<T>, AgentError> {
     let coordinator_clone = coordinator.clone();
     let coordinator_clone2 = coordinator.clone();
@@ -77,13 +78,18 @@ pub fn build_server<T: Transport>(
                 let tools = coordinator.get_tools(&agent_name).await?;
 
                 // Create executor with required parameters
-                let coordinator_handle = Arc::new(coordinator.get_handle(agent_name));
-                let executor = AgentExecutor::new(agent_def, tools, Some(coordinator_handle));
+                let coordinator_handle = Arc::new(coordinator.get_handle(agent_name.clone()));
+                let executor =
+                    AgentExecutor::new(agent_def, tools, Some(coordinator_handle), verbose);
 
                 let messages = vec![Message {
-                    message,
-                    role: Role::User,
-                    name: None,
+                    role: MessageRole::User,
+                    name: Some(agent_name),
+                    content: vec![MessageContent {
+                        content_type: "text".to_string(),
+                        text: Some(message),
+                        image: None,
+                    }],
                 }];
 
                 let result = executor.execute(&messages, None).await?;
@@ -108,8 +114,7 @@ mod tests {
     use anyhow::Result;
 
     use crate::{
-        coordinator::LocalCoordinator,
-        store::InMemoryAgentSessionStore,
+        coordinator::{LocalCoordinator, LocalMemoryStore, MemoryStore},
         tests::utils::{get_registry, get_tools_session_store},
     };
 
@@ -121,17 +126,19 @@ mod tests {
     use serde_json::json;
     use tracing::info;
 
-    async fn async_server(transport: ServerInMemoryTransport) {
+    async fn async_server(transport: ServerInMemoryTransport, verbose: bool) {
         let registry = get_registry().await;
-        let agent_sessions = Some(Arc::new(Box::new(InMemoryAgentSessionStore::default())
-            as Box<dyn crate::store::AgentSessionStore>));
+        let memory_store = Some(Arc::new(
+            Box::new(LocalMemoryStore::new()) as Box<dyn MemoryStore>
+        ));
         let tool_sessions = get_tools_session_store();
         let coordinator = Arc::new(LocalCoordinator::new(
             registry.clone(),
-            agent_sessions,
             tool_sessions,
+            memory_store,
+            true,
         ));
-        let server = build_server(transport.clone(), coordinator).unwrap();
+        let server = build_server(transport.clone(), coordinator, verbose).unwrap();
         server.listen().await.unwrap();
     }
 
@@ -143,7 +150,8 @@ mod tests {
             .init();
 
         // Create transports
-        let client_transport = ClientInMemoryTransport::new(|t| tokio::spawn(async_server(t)));
+        let client_transport =
+            ClientInMemoryTransport::new(|t| tokio::spawn(async_server(t, true)));
         client_transport.open().await?;
 
         // Create and start client
