@@ -7,6 +7,31 @@ use std::collections::HashMap;
 pub struct ProxyServerConfig {
     pub servers: HashMap<String, ProxyMcpServer>,
     pub port: u16,
+    #[serde(default)]
+    pub timeout: TimeoutConfig,
+}
+#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema)]
+pub struct TimeoutConfig {
+    #[serde(default = "default_list_timeout")]
+    pub list: u64,
+    #[serde(default = "default_call_timeout")]
+    pub call: u64,
+}
+
+impl Default for TimeoutConfig {
+    fn default() -> Self {
+        Self {
+            list: default_list_timeout(),
+            call: default_call_timeout(),
+        }
+    }
+}
+
+fn default_list_timeout() -> u64 {
+    120
+}
+fn default_call_timeout() -> u64 {
+    60
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, JsonSchema)]

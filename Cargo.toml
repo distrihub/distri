@@ -1,12 +1,11 @@
 [workspace]
 resolver = "2"
-members = ["app", "distri", "proxy", "code-mcp"]
-default-members = ["app", "distri", "proxy"]
+members = ["distri", "proxy", "code-mcp"]
+default-members = ["distri"]
 
 [workspace.dependencies]
 async-mcp = { version = "0.0.8" }
-# async-mcp = { git = "https://github.com/DistriAi/async-mcp.git", rev = "3930039" }
 anyhow = "1.0"
-agent-twitter-client = { git = "https://github.com/DistriAi/agent-twitter-client.git", rev = "019a59829af72c9410233529b098e67bb4a568f9" }
+agent-twitter-client = { git = "https://github.com/DistriLabs/agent-twitter-client.git", rev = "019a59829af72c9410233529b098e67bb4a568f9" }
 tracing = "0.1"
 tracing-subscriber = "0.3"

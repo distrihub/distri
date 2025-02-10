@@ -202,7 +202,8 @@ impl McpProxy {
                     .request(
                         "tools/list",
                         None,
-                        RequestOptions::default().timeout(Duration::from_secs(5)),
+                        RequestOptions::default()
+                            .timeout(Duration::from_secs(self.config.timeout.list)),
                     )
                     .await?;
 
@@ -245,7 +246,8 @@ impl McpProxy {
                     .request(
                         "resources/list",
                         None,
-                        RequestOptions::default().timeout(Duration::from_secs(5)),
+                        RequestOptions::default()
+                            .timeout(Duration::from_secs(self.config.timeout.list)),
                     )
                     .await
                 {
@@ -366,7 +368,8 @@ impl McpProxy {
                         .request(
                             "tools/call",
                             Some(serde_json::to_value(&req)?),
-                            RequestOptions::default().timeout(Duration::from_secs(30)),
+                            RequestOptions::default()
+                                .timeout(Duration::from_secs(self.config.timeout.call)),
                         )
                         .await?;
                     return Ok(serde_json::from_value(response)?);
@@ -385,7 +388,8 @@ impl McpProxy {
                             .request(
                                 "tools/call",
                                 Some(serde_json::to_value(&req)?),
-                                RequestOptions::default().timeout(Duration::from_secs(30)),
+                                RequestOptions::default()
+                                    .timeout(Duration::from_secs(self.config.timeout.call)),
                             )
                             .await?;
                         return Ok(serde_json::from_value(response)?);
