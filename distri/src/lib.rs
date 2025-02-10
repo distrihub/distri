@@ -8,6 +8,7 @@ pub use store::{InMemorySessionStore, ToolSessionStore};
 pub use types::{AgentDefinition, McpDefinition, McpSession, ModelSettings};
 pub mod cli;
 pub mod coordinator;
+pub mod langdb;
 mod logging;
 pub mod memory;
 pub mod servers;

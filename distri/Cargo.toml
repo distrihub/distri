@@ -26,6 +26,7 @@ dirs = "5.0"
 jsonschema = "0.28.3"
 schemars = "0.8.21"
 distri-proxy = { path = "../proxy" }
+secrecy = { version = "0.10.3", features = ["serde"] }
 
 [dev-dependencies]
 dotenv = "0.15"

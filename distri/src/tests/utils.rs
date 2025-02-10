@@ -5,7 +5,7 @@ use tokio::sync::RwLock;
 use crate::{
     coordinator::{LocalCoordinator, DISTRI_LOCAL_SERVER},
     servers::registry::{ServerMetadata, ServerRegistry, ServerTrait},
-    types::{PlanningConfig, TransportType},
+    types::{PlanConfig, TransportType},
     AgentDefinition, McpDefinition, McpSession, ModelSettings, ToolSessionStore,
 };
 
@@ -114,7 +114,7 @@ pub fn get_twitter_summarizer(
         parameters: Default::default(),
         response_format: None,
         history_size: None,
-        planning_config: planning_interval.map(|i| PlanningConfig {
+        plan: planning_interval.map(|i| PlanConfig {
             enabled: true,
             interval: Some(i),
             max_iterations: Some(max_iterations.unwrap_or(10) as i32),

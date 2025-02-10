@@ -62,16 +62,16 @@ pub struct AgentDefinition {
     pub response_format: Option<serde_json::Value>,
     #[serde(default = "default_history_size")]
     pub history_size: Option<usize>,
-    pub planning_config: Option<PlanningConfig>,
+    pub plan: Option<PlanConfig>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, Default)]
-pub struct PlanningConfig {
+pub struct PlanConfig {
     pub enabled: bool,
     pub interval: Option<i32>,       // How often to replan (in steps)
     pub max_iterations: Option<i32>, // Maximum number of iterations
 }
-impl PlanningConfig {
+impl PlanConfig {
     pub fn new(interval: i32, max_iterations: i32) -> Self {
         Self {
             enabled: true,
@@ -166,6 +166,13 @@ pub struct ToolCall {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ModelProvider {
+    OpenAI,
+    AIGateway,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ModelSettings {
     #[serde(default = "default_model")]
@@ -182,6 +189,8 @@ pub struct ModelSettings {
     pub presence_penalty: f32,
     #[serde(default = "default_max_iterations")]
     pub max_iterations: u32,
+    #[serde(default = "default_model_provider")]
+    pub model_provider: ModelProvider,
 }
 
 impl Default for ModelSettings {
@@ -194,8 +203,13 @@ impl Default for ModelSettings {
             frequency_penalty: 0.0,
             presence_penalty: 0.0,
             max_iterations: 10,
+            model_provider: ModelProvider::AIGateway,
         }
     }
+}
+
+fn default_model_provider() -> ModelProvider {
+    ModelProvider::AIGateway
 }
 
 // Add these default helper functions after the existing default_actions_filter function
@@ -270,7 +284,7 @@ pub const DEFAULT_TOOL_DESCRIPTION_TEMPLATE: &str = r#"
     Returns an output of type: {output_type}
 "#;
 
-pub fn get_tool_descriptions(tools: &Vec<ServerTools>, template: Option<&str>) -> String {
+pub fn get_tool_descriptions(tools: &[ServerTools], template: Option<&str>) -> String {
     let template = template.unwrap_or(DEFAULT_TOOL_DESCRIPTION_TEMPLATE);
 
     tools

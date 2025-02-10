@@ -1,6 +1,6 @@
 use crate::{
     coordinator::{self, LocalCoordinator, DISTRI_LOCAL_SERVER},
-    memory::AgentMemory,
+    memory::{file_memory_store::FileMemoryStore, AgentMemory, MemoryConfig},
     store::{LocalMemoryStore, MemoryStore},
     types::{ExternalMcpServer, TransportType},
     ToolSessionStore,
@@ -96,14 +96,20 @@ pub async fn init_registry_and_coordinator(
     tool_sessions: Option<Arc<Box<dyn ToolSessionStore>>>,
     external_servers: &[ExternalMcpServer],
     verbose: bool,
+    memory_config: MemoryConfig,
 ) -> (Arc<RwLock<ServerRegistry>>, Arc<LocalCoordinator>) {
     let server_registry = Arc::new(RwLock::new(ServerRegistry::new()));
     let reg_clone = server_registry.clone();
     let mut registry = reg_clone.write().await;
 
-    let memory_store = Some(Arc::new(
-        Box::new(LocalMemoryStore::new()) as Box<dyn MemoryStore>
-    ));
+    let memory_store = match memory_config {
+        MemoryConfig::InMemory => Some(Arc::new(
+            Box::new(LocalMemoryStore::new()) as Box<dyn MemoryStore>
+        )),
+        MemoryConfig::File(path) => Some(Arc::new(
+            Box::new(FileMemoryStore::new(path)) as Box<dyn MemoryStore>
+        )),
+    };
 
     let coordinator = Arc::new(LocalCoordinator::new(
         server_registry.clone(),
@@ -127,7 +133,7 @@ pub async fn init_registry_and_coordinator(
     );
 
     registry.register(
-        "file_memory".to_string(),
+        "file_knowledge_graph".to_string(),
         ServerMetadata {
             auth_session_key: None,
             mcp_transport: TransportType::Async,
@@ -140,14 +146,27 @@ pub async fn init_registry_and_coordinator(
         },
     );
 
+    // registry.register(
+    //     "local_memory".to_string(),
+    //     ServerMetadata {
+    //         auth_session_key: None,
+    //         mcp_transport: TransportType::Async,
+    //         memories: local_memories,
+    //         builder: Some(Arc::new(|metadata, transport| {
+    //             let server = kg::build::build(metadata, transport)?;
+    //             Ok(Box::new(server) as Box<dyn ServerTrait>)
+    //         })),
+    //         kg_memory: None,
+    //     },
+    // );
     registry.register(
-        "local_memory".to_string(),
+        "file_memory".to_string(),
         ServerMetadata {
             auth_session_key: None,
             mcp_transport: TransportType::Async,
             memories: local_memories,
             builder: Some(Arc::new(|metadata, transport| {
-                let server = kg::build::build(metadata, transport)?;
+                let server = crate::memory::build::build(metadata, transport)?;
                 Ok(Box::new(server) as Box<dyn ServerTrait>)
             })),
             kg_memory: None,

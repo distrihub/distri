@@ -1,6 +1,6 @@
 use crate::{
     memory::TaskStep,
-    types::{AgentDefinition, Message, MessageContent, MessageRole, ModelSettings, PlanningConfig},
+    types::{AgentDefinition, Message, MessageContent, MessageRole, ModelSettings, PlanConfig},
 };
 
 pub async fn create_initial_plan(
@@ -146,6 +146,6 @@ pub fn get_planning_definition() -> AgentDefinition {
         model_settings: ModelSettings::default(),
         parameters: Default::default(),
         response_format: None,
-        planning_config: Some(PlanningConfig::new(5, 10)),
+        plan: Some(PlanConfig::new(5, 10)),
     }
 }

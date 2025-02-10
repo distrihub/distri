@@ -965,6 +965,7 @@ dependencies = [
  "reqwest 0.12.12",
  "rustyline",
  "schemars",
+ "secrecy",
  "serde",
  "serde_json",
  "serde_yaml",

@@ -1,14 +1,15 @@
 mod cli;
 mod run;
-use distri::{
-    cli::RunWorkflow,
-    init_logging,
-    servers::{kg::FileMemory, registry::init_registry_and_coordinator},
-    types::{get_distri_config_schema, Configuration},
-};
 use anyhow::Result;
 use clap::Parser;
 use cli::{Cli, Commands};
+use distri::{
+    cli::RunWorkflow,
+    init_logging,
+    memory::MemoryConfig,
+    servers::{kg::FileMemory, registry::init_registry_and_coordinator},
+    types::{get_distri_config_schema, Configuration},
+};
 use distri_proxy::McpProxy;
 use dotenv::dotenv;
 use run::{chat, event, session::get_session_store};
@@ -82,12 +83,14 @@ async fn main() -> Result<()> {
             let local_memories = HashMap::new();
             let tool_sessions = get_session_store(sessions);
 
+            let memory_config = MemoryConfig::File(".distri/memory".to_string());
             let (_, coordinator) = init_registry_and_coordinator(
                 local_memories,
                 kg_memory,
                 tool_sessions.clone(),
                 &config.mcp_servers,
                 true,
+                memory_config,
             )
             .await;
 

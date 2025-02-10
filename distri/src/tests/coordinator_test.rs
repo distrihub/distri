@@ -7,9 +7,7 @@ use crate::{
     init_logging,
     memory::TaskStep,
     tests::utils::{get_registry, get_tools_session_store, get_twitter_tool, register_coordinator},
-    types::{
-        AgentDefinition, McpDefinition, ModelSettings, PlanningConfig, ToolSelector, ToolsFilter,
-    },
+    types::{AgentDefinition, McpDefinition, ModelSettings, PlanConfig, ToolSelector, ToolsFilter},
 };
 
 #[tokio::test]
@@ -29,7 +27,7 @@ async fn test_agent_coordination() -> anyhow::Result<()> {
         parameters: Default::default(),
         response_format: None,
         history_size: None,
-        planning_config: None,
+        plan: None,
     };
 
     let agent2_def = AgentDefinition {
@@ -48,7 +46,7 @@ async fn test_agent_coordination() -> anyhow::Result<()> {
         parameters: Default::default(),
         response_format: None,
         history_size: None,
-        planning_config: Some(PlanningConfig::new(3, 10)),
+        plan: Some(PlanConfig::new(3, 10)),
     };
 
     // Initialize coordinator with session stores

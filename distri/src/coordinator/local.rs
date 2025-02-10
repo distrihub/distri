@@ -206,7 +206,7 @@ impl LocalCoordinator {
         self.logger.log_step(agent_id, &task_step);
 
         // Handle planning if enabled
-        if let Some(planning_config) = &definition.planning_config {
+        if let Some(planning_config) = &definition.plan {
             if planning_config.enabled {
                 // Get current iteration count
                 let iteration = {

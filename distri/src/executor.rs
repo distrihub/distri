@@ -3,7 +3,8 @@ use std::sync::Arc;
 use crate::{
     coordinator::{AgentHandle, ModelLogger},
     error::AgentError,
-    types::{validate_parameters, Message, MessageRole, ServerTools, ToolCall},
+    langdb::GatewayConfig,
+    types::{validate_parameters, Message, MessageRole, ModelProvider, ServerTools, ToolCall},
     AgentDefinition,
 };
 use async_openai::{
@@ -13,18 +14,16 @@ use async_openai::{
         ChatCompletionRequestMessage, ChatCompletionRequestSystemMessageArgs,
         ChatCompletionRequestToolMessage, ChatCompletionRequestToolMessageContent,
         ChatCompletionRequestUserMessageArgs, ChatCompletionTool, CreateChatCompletionRequest,
-        FunctionObject, ResponseFormatJsonSchema,
+        CreateChatCompletionResponse, FunctionObject, ResponseFormatJsonSchema,
     },
     Client,
 };
 use serde_json::Value;
 
 pub struct AgentExecutor {
-    client: Client<OpenAIConfig>,
     agent_def: AgentDefinition,
     server_tools: Vec<ServerTools>,
     coordinator: Option<Arc<AgentHandle>>,
-    verbose: bool,
     model_logger: ModelLogger,
 }
 
@@ -42,7 +41,6 @@ impl AgentExecutor {
         coordinator: Option<Arc<AgentHandle>>,
         verbose: bool,
     ) -> Self {
-        let client = Client::new();
         let name = &agent_def.name;
         // Log the number of tools being passed
         tracing::debug!(
@@ -51,11 +49,9 @@ impl AgentExecutor {
         );
 
         Self {
-            client,
             agent_def,
             server_tools,
             coordinator,
-            verbose,
             model_logger: ModelLogger::new(verbose),
         }
     }
@@ -123,7 +119,7 @@ impl AgentExecutor {
 
             tracing::debug!("Sending chat completion request");
             let input_messages = req.messages.clone();
-            let response = self.client.chat().create(req).await.map_err(|e| {
+            let response = completion(&self.agent_def, req).await.map_err(|e| {
                 tracing::error!("LLM request failed: {}", e);
                 AgentError::LLMError(e.to_string())
             })?;
@@ -322,4 +318,25 @@ impl AgentExecutor {
             .collect::<Vec<_>>();
         vec![system_message].into_iter().chain(messages).collect()
     }
+}
+
+async fn completion(
+    agent_def: &AgentDefinition,
+    request: CreateChatCompletionRequest,
+) -> Result<CreateChatCompletionResponse, AgentError> {
+    let response = match agent_def.model_settings.model_provider {
+        ModelProvider::AIGateway => {
+            let client = Client::with_config(GatewayConfig::default());
+            client.chat().create(request).await
+        }
+        ModelProvider::OpenAI => {
+            let client = Client::with_config(OpenAIConfig::default());
+            client.chat().create(request).await
+        }
+    }
+    .map_err(|e| {
+        tracing::error!("LLM request failed: {}", e);
+        AgentError::LLMError(e.to_string())
+    })?;
+    Ok(response)
 }
