@@ -1,6 +1,6 @@
 mcp_servers:
   - name: proxy
-    config: 
+    config:
       server_url: "http://127.0.0.1:3004"
 
 agents:
@@ -15,16 +15,15 @@ agents:
       model_settings:
         model: "gpt-4o-mini"
         temperature: 0.7
-        max_tokens: 1000
+        max_tokens: 10000
 
       mcp_servers:
         - name: "proxy"
-    workflow: 
+    workflow:
       mode: "chat"
 
 sessions:
   proxy: "sdfs"
-
 
 proxy:
   port: 3004

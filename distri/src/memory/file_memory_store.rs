@@ -3,14 +3,11 @@ use crate::{
     store::MemoryStore,
 };
 use async_trait::async_trait;
-
-use std::{
-    collections::HashMap,
-    fs::{File, OpenOptions},
-    io::{self, Read, Write},
-    sync::Arc,
-};
+use std::{collections::HashMap, io, sync::Arc};
+use tokio::fs::OpenOptions;
+use tokio::io::AsyncWriteExt;
 use tokio::sync::RwLock;
+use tracing::{debug, info};
 
 #[derive(Clone)]
 pub struct FileMemoryStore {
@@ -22,8 +19,12 @@ impl FileMemoryStore {
     pub fn get_file_path(&self, agent_id: &str) -> String {
         format!("{}/{}.memory", self.file_path, agent_id)
     }
+
     pub fn new(file_path: String) -> Self {
         let memories = Arc::new(RwLock::new(HashMap::new()));
+
+        let file_path = format!("{}/memory", file_path);
+        std::fs::create_dir_all(&file_path).unwrap_or_default();
         Self {
             file_path,
             memories,
@@ -31,23 +32,33 @@ impl FileMemoryStore {
     }
 
     async fn load_from_file(&self, agent_id: &str) -> io::Result<()> {
-        let mut file = File::open(self.get_file_path(agent_id))?;
-        let mut contents = String::new();
-        file.read_to_string(&mut contents)?;
-
-        *self.memories.write().await = deserialize_memories(&contents);
+        let contents = {
+            let path = self.get_file_path(agent_id);
+            info!("Loading memories from file: {}", path);
+            tokio::fs::read_to_string(&path).await?
+        };
+        let mut memories = self.memories.write().await;
+        *memories = deserialize_memories(&contents);
+        info!("Successfully loaded memories for agent: {}", agent_id);
         Ok(())
     }
 
     async fn save_to_file(&self, agent_id: &str) -> io::Result<()> {
-        let memories = self.memories.read().await;
-        let serialized = serialize_memories(&memories); // Assuming a function serialize_memories exists
+        let serialized = {
+            let memories = self.memories.read().await;
+            serialize_memories(&memories)
+        };
+
+        let path = self.get_file_path(agent_id);
+        debug!("Saving memories to file: {}", path);
         let mut file = OpenOptions::new()
             .write(true)
             .create(true)
             .truncate(true)
-            .open(self.get_file_path(agent_id))?;
-        file.write_all(serialized.as_bytes())?;
+            .open(&path)
+            .await?;
+        file.write_all(serialized.as_bytes()).await?;
+        debug!("Successfully saved memories for agent: {}", agent_id);
         Ok(())
     }
 }
@@ -59,6 +70,7 @@ impl MemoryStore for FileMemoryStore {
         agent_id: &str,
         thread_id: Option<&str>,
     ) -> anyhow::Result<Vec<MemoryStep>> {
+        debug!("Getting steps for agent: {}", agent_id);
         self.load_from_file(agent_id).await?;
         let memories = self.memories.read().await;
         let memory = memories
@@ -74,11 +86,15 @@ impl MemoryStore for FileMemoryStore {
         step: MemoryStep,
         thread_id: Option<&str>,
     ) -> anyhow::Result<()> {
-        let mut memories = self.memories.write().await;
-        let memory = memories
-            .entry(agent_id.to_string())
-            .or_insert_with(LocalAgentMemory::default);
-        memory.add_step(step, thread_id);
+        info!("Storing step for agent: {}", agent_id);
+        {
+            let mut memories = self.memories.write().await;
+            let memory = memories
+                .entry(agent_id.to_string())
+                .or_insert_with(LocalAgentMemory::default);
+            memory.add_step(step, thread_id);
+        }
+
         self.save_to_file(agent_id).await?;
         Ok(())
     }
