@@ -47,29 +47,41 @@ pub enum TransportAuth {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AgentDefinition {
+    /// The name of the agent.
     pub name: String,
+    /// A brief description of the agent's purpose.
     #[serde(default)]
     pub description: String,
+    /// The system prompt for the agent, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_prompt: Option<String>,
+    /// A list of MCP server definitions associated with the agent.
     #[serde(default)]
     pub mcp_servers: Vec<McpDefinition>,
+    /// Settings related to the model used by the agent.
     #[serde(default)]
     pub model_settings: ModelSettings,
+    /// Additional parameters for the agent, if any.
     #[serde(default)]
     pub parameters: Option<serde_json::Value>,
+    /// The format of the response, if specified.
     #[serde(default)]
     pub response_format: Option<serde_json::Value>,
+    /// The size of the history to maintain for the agent.
     #[serde(default = "default_history_size")]
     pub history_size: Option<usize>,
+    /// The planning configuration for the agent, if any.
     pub plan: Option<PlanConfig>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, Default)]
 pub struct PlanConfig {
+    /// Indicates whether planning is enabled for the agent.
     pub enabled: bool,
-    pub interval: Option<i32>,       // How often to replan (in steps)
-    pub max_iterations: Option<i32>, // Maximum number of iterations
+    /// How often to replan, specified in steps.
+    pub interval: Option<i32>,
+    /// The maximum number of iterations allowed during planning.
+    pub max_iterations: Option<i32>,
 }
 impl PlanConfig {
     pub fn new(interval: i32, max_iterations: i32) -> Self {
@@ -83,18 +95,25 @@ impl PlanConfig {
 #[derive(Debug, Serialize, Deserialize, Clone, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum MessageRole {
+    /// Represents a system message.
     System,
+    /// Represents a message from the assistant.
     Assistant,
+    /// Represents a message from the user.
     User,
+    /// Represents a response from a tool.
     ToolResponse,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, JsonSchema)]
 pub struct MessageContent {
+    /// The type of content (e.g., text, image).
     #[serde(rename = "type")]
     pub content_type: String,
+    /// The text content of the message, if any.
     #[serde(default)]
     pub text: Option<String>,
+    /// The image content of the message, if any.
     #[serde(default)]
     pub image: Option<String>,
 }
@@ -109,7 +128,9 @@ pub struct Message {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct McpSession {
+    /// The token for the MCP session.
     pub token: String,
+    /// The expiry time of the session, if specified.
     pub expiry: Option<SystemTime>,
 }
 
@@ -138,9 +159,12 @@ pub enum McpServerType {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct McpDefinition {
+    /// The filter applied to the tools in this MCP definition.
     #[serde(default = "default_tools_filter")]
     pub filter: ToolsFilter,
+    /// The name of the MCP server.
     pub name: String,
+    /// The type of the MCP server (Tool or Agent).
     #[serde(default)]
     pub r#type: McpServerType,
 }
