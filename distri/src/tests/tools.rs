@@ -1,6 +1,9 @@
+use std::sync::Arc;
+
 use tracing::info;
 
 use crate::{
+    coordinator::CoordinatorContext,
     init_logging,
     tests::utils::{get_tools_session_store, get_twitter_tool},
     tools::{execute_tool, get_tools},
@@ -17,9 +20,15 @@ async fn execute_tool_test() {
         input: "".to_string(),
     };
     let registry = crate::tests::utils::get_registry().await;
-    let result = execute_tool(&tool_call, &tool_def, registry, get_tools_session_store())
-        .await
-        .unwrap();
+    let result = execute_tool(
+        &tool_call,
+        &tool_def,
+        registry,
+        get_tools_session_store(),
+        Arc::new(CoordinatorContext::default()),
+    )
+    .await
+    .unwrap();
 
     println!("{result}");
     assert!(!result.contains("Error"));

@@ -56,6 +56,14 @@ impl StepLogger {
                     }
                 }
             }
+            MemoryStep::System(system) => {
+                info!("| Step Type: System                         |");
+                info!("{}", separator);
+                info!("| System:");
+                for line in system.system_prompt.lines() {
+                    info!("| {:<41} |", line);
+                }
+            }
         }
         info!("{}\n", border);
     }

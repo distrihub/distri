@@ -10,7 +10,7 @@ pub struct AgentError {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(tag = "type")]
+#[serde(tag = "type", rename_all = "lowercase")]
 pub enum MemoryStep {
     // What needs to be done defined as a task
     Task(TaskStep),
@@ -18,6 +18,13 @@ pub enum MemoryStep {
     Planning(PlanningStep),
     // Entire object represented what happened executing the plan  involving tools
     Action(ActionStep),
+    // System prompt for the agent
+    System(SystemStep),
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct SystemStep {
+    pub system_prompt: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
@@ -175,6 +182,17 @@ impl MemoryStep {
                 }
 
                 messages
+            }
+            MemoryStep::System(system_step) => {
+                vec![Message {
+                    role: MessageRole::System,
+                    name: None,
+                    content: vec![MessageContent {
+                        content_type: "text".to_string(),
+                        text: Some(system_step.system_prompt.clone()),
+                        image: None,
+                    }],
+                }]
             }
             _ => Vec::new(),
         }

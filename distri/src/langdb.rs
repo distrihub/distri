@@ -1,7 +1,12 @@
+use std::sync::Arc;
+
 use async_openai::config::Config;
 use reqwest::header::{HeaderMap, AUTHORIZATION};
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
+use tokio::runtime::Handle;
+
+use crate::coordinator::CoordinatorContext;
 /// Using LangDB as a gateway for OpenAI
 /// https://docs.langdb.ai/
 pub const GATEWAY_API_BASE: &str = "https://api.us-east-1.langdb.ai/v1";
@@ -15,6 +20,8 @@ pub struct GatewayConfig {
     #[serde(skip)]
     api_key: SecretString,
     project_id: String,
+    #[serde(skip)]
+    context: Option<Arc<CoordinatorContext>>,
 }
 
 impl Default for GatewayConfig {
@@ -26,6 +33,7 @@ impl Default for GatewayConfig {
                 .unwrap_or_else(|_| "".to_string())
                 .into(),
             project_id: std::env::var("GATEWAY_PROJECT_ID").unwrap_or_else(|_| "".to_string()),
+            context: None,
         }
     }
 }
@@ -53,6 +61,11 @@ impl GatewayConfig {
         self.api_base = api_base.into();
         self
     }
+
+    pub fn with_context(mut self, context: Arc<CoordinatorContext>) -> Self {
+        self.context = Some(context);
+        self
+    }
 }
 
 impl Config for GatewayConfig {
@@ -73,6 +86,15 @@ impl Config for GatewayConfig {
                 .parse()
                 .unwrap(),
         );
+        if let Some(context) = &self.context {
+            headers.insert("X-Thread-Id", context.thread_id.parse().unwrap());
+
+            let run_id = tokio::task::block_in_place(|| {
+                Handle::current().block_on(async move { context.run_id.lock().await })
+            });
+            headers.insert("X-Run-Id", run_id.parse().unwrap());
+        }
+
         headers
     }
 

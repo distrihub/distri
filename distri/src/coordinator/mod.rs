@@ -10,7 +10,7 @@ use crate::{
     memory::TaskStep,
     types::{AgentDefinition, ServerTools, ToolCall},
 };
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, Mutex};
 // Message types for coordinator communication
 #[derive(Debug)]
 pub enum CoordinatorMessage {
@@ -88,5 +88,36 @@ impl AgentHandle {
         response_rx.await.map_err(|e| {
             AgentError::ToolExecution(format!("Failed to receive execution response: {}", e))
         })?
+    }
+}
+
+#[derive(Debug)]
+pub struct CoordinatorContext {
+    pub thread_id: String,
+    pub run_id: Mutex<String>,
+    pub verbose: bool,
+}
+impl Default for CoordinatorContext {
+    fn default() -> Self {
+        Self::new(
+            uuid::Uuid::new_v4().to_string(),
+            uuid::Uuid::new_v4().to_string(),
+            true,
+        )
+    }
+}
+
+impl CoordinatorContext {
+    pub fn new(thread_id: String, run_id: String, verbose: bool) -> Self {
+        Self {
+            thread_id,
+            run_id: Mutex::new(run_id),
+            verbose,
+        }
+    }
+
+    pub async fn update_run_id(&self, run_id: String) {
+        let mut run_id_guard = self.run_id.lock().await;
+        *run_id_guard = run_id;
     }
 }

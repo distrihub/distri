@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tracing::info;
 
 use crate::{
-    coordinator::{LocalCoordinator, DISTRI_LOCAL_SERVER},
+    coordinator::{CoordinatorContext, LocalCoordinator, DISTRI_LOCAL_SERVER},
     init_logging,
     memory::TaskStep,
     tests::utils::{get_registry, get_tools_session_store, get_twitter_tool, register_coordinator},
@@ -58,7 +58,7 @@ async fn test_agent_coordination() -> anyhow::Result<()> {
         registry.clone(),
         tool_sessions,
         None,
-        true,
+        Arc::new(CoordinatorContext::default()),
     ));
 
     //register coordinator in registry

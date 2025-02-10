@@ -975,6 +975,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "twitter-mcp",
+ "uuid",
 ]
 
 [[package]]

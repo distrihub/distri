@@ -16,14 +16,14 @@ use crate::{
     types::{Message, MessageContent, MessageRole},
 };
 
-use super::{AgentCoordinator, LocalCoordinator};
+use super::{AgentCoordinator, CoordinatorContext, LocalCoordinator};
 
 pub static DISTRI_LOCAL_SERVER: &str = "distri-mcp-server-local";
 
 pub fn build_server<T: Transport>(
     transport: T,
     coordinator: Arc<LocalCoordinator>,
-    verbose: bool,
+    context: Arc<CoordinatorContext>,
 ) -> Result<Server<T>, AgentError> {
     let coordinator_clone = coordinator.clone();
     let coordinator_clone2 = coordinator.clone();
@@ -68,6 +68,7 @@ pub fn build_server<T: Transport>(
         })
         .request_handler("tools/call", move |req: CallToolRequest| {
             let coordinator = coordinator_clone2.clone();
+            let context = context.clone();
             Box::pin(async move {
                 let agent_name = req.name.clone();
                 let args = req.arguments.unwrap_or_default();
@@ -80,7 +81,7 @@ pub fn build_server<T: Transport>(
                 // Create executor with required parameters
                 let coordinator_handle = Arc::new(coordinator.get_handle(agent_name.clone()));
                 let executor =
-                    AgentExecutor::new(agent_def, tools, Some(coordinator_handle), verbose);
+                    AgentExecutor::new(agent_def, tools, Some(coordinator_handle), context);
 
                 let messages = vec![Message {
                     role: MessageRole::User,
@@ -114,7 +115,7 @@ mod tests {
     use anyhow::Result;
 
     use crate::{
-        coordinator::LocalCoordinator,
+        coordinator::{CoordinatorContext, LocalCoordinator},
         store::{LocalMemoryStore, MemoryStore},
         tests::utils::{get_registry, get_tools_session_store},
     };
@@ -127,7 +128,7 @@ mod tests {
     use serde_json::json;
     use tracing::info;
 
-    async fn async_server(transport: ServerInMemoryTransport, verbose: bool) {
+    async fn async_server(transport: ServerInMemoryTransport, context: Arc<CoordinatorContext>) {
         let registry = get_registry().await;
         let memory_store = Some(Arc::new(
             Box::new(LocalMemoryStore::new()) as Box<dyn MemoryStore>
@@ -137,9 +138,9 @@ mod tests {
             registry.clone(),
             tool_sessions,
             memory_store,
-            true,
+            context.clone(),
         ));
-        let server = build_server(transport.clone(), coordinator, verbose).unwrap();
+        let server = build_server(transport.clone(), coordinator, context).unwrap();
         server.listen().await.unwrap();
     }
 
@@ -151,8 +152,9 @@ mod tests {
             .init();
 
         // Create transports
+        let context = Arc::new(CoordinatorContext::default());
         let client_transport =
-            ClientInMemoryTransport::new(|t| tokio::spawn(async_server(t, true)));
+            ClientInMemoryTransport::new(move |t| tokio::spawn(async_server(t, context.clone())));
         client_transport.open().await?;
 
         // Create and start client

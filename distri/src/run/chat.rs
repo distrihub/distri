@@ -29,7 +29,6 @@ pub async fn run(
     if history_file.exists() {
         let _ = rl.load_history(&history_file);
     }
-
     loop {
         // Show prompt and get user input with history support
         let input = match rl.readline("distri> ") {
@@ -85,6 +84,10 @@ pub async fn run(
             }
             Err(e) => eprintln!("Error from agent: {}", e),
         }
+        coordinator
+            .context
+            .update_run_id(uuid::Uuid::new_v4().to_string())
+            .await;
     }
 
     // Save history one final time before exiting

@@ -1,6 +1,7 @@
 use crate::{
     error::AgentError,
     executor::AgentExecutor,
+    memory::SystemStep,
     servers::registry::ServerRegistry,
     store::{LocalMemoryStore, MemoryStore, ToolSessionStore},
     tools::{execute_tool, get_tools},
@@ -12,8 +13,8 @@ use crate::{
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{mpsc, Mutex, RwLock};
 
-use super::log::StepLogger;
 use super::reason::create_initial_plan;
+use super::{log::StepLogger, CoordinatorContext};
 use super::{AgentCoordinator, AgentHandle, CoordinatorMessage};
 use crate::memory::{ActionStep, MemoryStep, PlanningStep, TaskStep};
 
@@ -30,6 +31,7 @@ pub struct LocalCoordinator {
     memory_store: Arc<Box<dyn MemoryStore>>,
     logger: StepLogger,
     iterations: Arc<RwLock<HashMap<String, i32>>>,
+    pub context: Arc<CoordinatorContext>,
 }
 
 impl LocalCoordinator {
@@ -37,9 +39,11 @@ impl LocalCoordinator {
         registry: Arc<RwLock<ServerRegistry>>,
         tool_sessions: Option<Arc<Box<dyn ToolSessionStore>>>,
         memory_store: Option<Arc<Box<dyn MemoryStore>>>,
-        verbose: bool,
+        context: Arc<CoordinatorContext>,
     ) -> Self {
         let (coordinator_tx, coordinator_rx) = mpsc::channel(100);
+
+        let logger = StepLogger::new(context.verbose);
         Self {
             agent_definitions: Arc::new(RwLock::new(HashMap::new())),
             agent_tools: Arc::new(RwLock::new(HashMap::new())),
@@ -49,8 +53,10 @@ impl LocalCoordinator {
             coordinator_tx,
             memory_store: memory_store
                 .unwrap_or_else(|| Arc::new(Box::new(LocalMemoryStore::new()))),
-            logger: StepLogger::new(verbose),
+
             iterations: Arc::new(RwLock::new(HashMap::new())),
+            context: context,
+            logger,
         }
     }
 
@@ -107,6 +113,7 @@ impl LocalCoordinator {
                     let registry = self.registry.clone();
                     let agent_tools = self.agent_tools.clone();
                     let tool_sessions = self.tool_sessions.clone();
+                    let context = self.context.clone();
                     tokio::spawn(async move {
                         let result = async {
                             // Get the server tools in a separate scope to release the lock quickly
@@ -128,6 +135,7 @@ impl LocalCoordinator {
                                             &server_tool.definition,
                                             registry,
                                             tool_sessions,
+                                            context,
                                         )
                                         .await
                                         .unwrap_or_else(|err| format!("Error: {}", err)),
@@ -160,9 +168,10 @@ impl LocalCoordinator {
                     );
                     let this = self.clone();
 
+                    let context = self.context.clone();
                     tokio::spawn(async move {
                         let result =
-                            async { this.run_task(&agent_id, task, None, params).await }.await;
+                            async { this.run_task(&agent_id, task, params, context).await }.await;
 
                         let _ = response_tx.send(result);
                     });
@@ -177,8 +186,8 @@ impl LocalCoordinator {
         &self,
         agent_id: &str,
         task: TaskStep,
-        thread_id: Option<&str>,
         params: Option<serde_json::Value>,
+        context: Arc<CoordinatorContext>,
     ) -> Result<String, AgentError> {
         // Get agent definition and tools
         let definition = self.get_agent(agent_id).await?;
@@ -186,12 +195,11 @@ impl LocalCoordinator {
         let tools_desc = get_tool_descriptions(&tools, Some(DEFAULT_TOOL_DESCRIPTION_TEMPLATE));
         // Store system message if present
         if let Some(system_prompt) = &definition.system_prompt {
-            let step = MemoryStep::Task(TaskStep {
-                task: system_prompt.clone(),
-                task_images: None,
+            let step = MemoryStep::System(SystemStep {
+                system_prompt: system_prompt.clone(),
             });
             self.memory_store
-                .store_step(agent_id, step.clone(), thread_id)
+                .store_step(agent_id, step.clone(), Some(&context.thread_id))
                 .await
                 .map_err(|e| AgentError::Session(e.to_string()))?;
             self.logger.log_step(agent_id, &step);
@@ -200,7 +208,7 @@ impl LocalCoordinator {
         // Store task step
         let task_step = MemoryStep::Task(task.clone());
         self.memory_store
-            .store_step(agent_id, task_step.clone(), thread_id)
+            .store_step(agent_id, task_step.clone(), Some(&context.thread_id))
             .await
             .map_err(|e| AgentError::Session(e.to_string()))?;
         self.logger.log_step(agent_id, &task_step);
@@ -219,7 +227,7 @@ impl LocalCoordinator {
                 // Get previous messages for planning update
                 let previous_messages = if iteration > 1 {
                     self.memory_store
-                        .get_messages(agent_id, thread_id)
+                        .get_messages(agent_id, Some(&context.thread_id))
                         .await
                         .map_err(|e| AgentError::Session(e.to_string()))?
                 } else {
@@ -233,7 +241,7 @@ impl LocalCoordinator {
                             super::reason::get_planning_definition(),
                             vec![],
                             Some(Arc::new(self.get_handle(agent_id.to_string()))),
-                            self.logger.verbose,
+                            context.clone(),
                         );
                         Box::pin(async move {
                             planning_executor
@@ -256,7 +264,7 @@ impl LocalCoordinator {
                                 super::reason::get_planning_definition(),
                                 vec![],
                                 Some(Arc::new(self.get_handle(agent_id.to_string()))),
-                                self.logger.verbose,
+                                context.clone(),
                             );
                             Box::pin(async move {
                                 planning_executor.execute(&msgs, None).await.map_err(|e| {
@@ -294,7 +302,7 @@ impl LocalCoordinator {
                     plan: plan.clone(),
                 });
                 self.memory_store
-                    .store_step(agent_id, planning_step.clone(), thread_id)
+                    .store_step(agent_id, planning_step.clone(), Some(&context.thread_id))
                     .await
                     .map_err(|e| AgentError::Session(e.to_string()))?;
                 self.logger.log_step(agent_id, &planning_step);
@@ -304,7 +312,7 @@ impl LocalCoordinator {
         // Get all messages from memory steps
         let messages = self
             .memory_store
-            .get_messages(agent_id, thread_id)
+            .get_messages(agent_id, Some(&context.thread_id))
             .await
             .map_err(|e| AgentError::Session(e.to_string()))?;
 
@@ -313,7 +321,7 @@ impl LocalCoordinator {
             definition,
             tools,
             Some(Arc::new(self.get_handle(agent_id.to_string()))),
-            self.logger.verbose,
+            context.clone(),
         );
 
         let response = executor
@@ -328,7 +336,7 @@ impl LocalCoordinator {
             ..Default::default()
         });
         self.memory_store
-            .store_step(agent_id, action_step.clone(), thread_id)
+            .store_step(agent_id, action_step.clone(), Some(&context.thread_id))
             .await
             .map_err(|e| AgentError::Session(e.to_string()))?;
         self.logger.log_step(agent_id, &action_step);
@@ -377,6 +385,7 @@ impl AgentCoordinator for LocalCoordinator {
         task: TaskStep,
         params: Option<serde_json::Value>,
     ) -> Result<String, AgentError> {
-        self.run_task(agent_name, task, None, params).await
+        self.run_task(agent_name, task, params, self.context.clone())
+            .await
     }
 }

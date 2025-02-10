@@ -3,7 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
 
 use crate::{
-    coordinator::{LocalCoordinator, DISTRI_LOCAL_SERVER},
+    coordinator::{CoordinatorContext, LocalCoordinator, DISTRI_LOCAL_SERVER},
     servers::registry::{ServerMetadata, ServerRegistry, ServerTrait},
     types::{PlanConfig, TransportType},
     AgentDefinition, McpDefinition, McpSession, ModelSettings, ToolSessionStore,
@@ -67,6 +67,7 @@ pub async fn register_coordinator(
     coordinator: Arc<LocalCoordinator>,
 ) {
     let mut registry = registry.write().await;
+    let context = Arc::new(CoordinatorContext::default());
     registry.register(
         DISTRI_LOCAL_SERVER.to_string(),
         ServerMetadata {
@@ -75,7 +76,8 @@ pub async fn register_coordinator(
             kg_memory: None,
             builder: Some(Arc::new(move |_, transport| {
                 let coordinator = coordinator.clone();
-                let server = crate::coordinator::build_server(transport, coordinator, true)?;
+                let context = context.clone();
+                let server = crate::coordinator::build_server(transport, coordinator, context)?;
                 Ok(Box::new(server) as Box<dyn ServerTrait>)
             })),
             memories: HashMap::new(),

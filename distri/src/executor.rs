@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::{
-    coordinator::{AgentHandle, ModelLogger},
+    coordinator::{AgentHandle, CoordinatorContext, ModelLogger},
     error::AgentError,
     langdb::GatewayConfig,
     types::{validate_parameters, Message, MessageRole, ModelProvider, ServerTools, ToolCall},
@@ -25,6 +25,7 @@ pub struct AgentExecutor {
     server_tools: Vec<ServerTools>,
     coordinator: Option<Arc<AgentHandle>>,
     model_logger: ModelLogger,
+    context: Arc<CoordinatorContext>,
 }
 
 pub const MAX_RETRIES: i32 = 3;
@@ -39,7 +40,7 @@ impl AgentExecutor {
         agent_def: AgentDefinition,
         server_tools: Vec<ServerTools>,
         coordinator: Option<Arc<AgentHandle>>,
-        verbose: bool,
+        context: Arc<CoordinatorContext>,
     ) -> Self {
         let name = &agent_def.name;
         // Log the number of tools being passed
@@ -52,7 +53,8 @@ impl AgentExecutor {
             agent_def,
             server_tools,
             coordinator,
-            model_logger: ModelLogger::new(verbose),
+            model_logger: ModelLogger::new(context.verbose),
+            context,
         }
     }
 
@@ -119,10 +121,12 @@ impl AgentExecutor {
 
             tracing::debug!("Sending chat completion request");
             let input_messages = req.messages.clone();
-            let response = completion(&self.agent_def, req).await.map_err(|e| {
-                tracing::error!("LLM request failed: {}", e);
-                AgentError::LLMError(e.to_string())
-            })?;
+            let response = completion(&self.agent_def, req, self.context.clone())
+                .await
+                .map_err(|e| {
+                    tracing::error!("LLM request failed: {}", e);
+                    AgentError::LLMError(e.to_string())
+                })?;
 
             token_usage += response.usage.as_ref().map(|a| a.total_tokens).unwrap_or(0);
             self.model_logger.log_model_execution(
@@ -266,18 +270,6 @@ impl AgentExecutor {
     }
 
     pub fn map_messages(&self, messages: &[Message]) -> Vec<ChatCompletionRequestMessage> {
-        let system_message = ChatCompletionRequestMessage::System(
-            ChatCompletionRequestSystemMessageArgs::default()
-                .content(
-                    self.agent_def
-                        .system_prompt
-                        .as_ref()
-                        .cloned()
-                        .unwrap_or_default(),
-                )
-                .build()
-                .unwrap(),
-        );
         let messages = messages
             .iter()
             .map(|m| match m.role {
@@ -316,17 +308,18 @@ impl AgentExecutor {
                 }
             })
             .collect::<Vec<_>>();
-        vec![system_message].into_iter().chain(messages).collect()
+        messages
     }
 }
 
 async fn completion(
     agent_def: &AgentDefinition,
     request: CreateChatCompletionRequest,
+    context: Arc<CoordinatorContext>,
 ) -> Result<CreateChatCompletionResponse, AgentError> {
     let response = match agent_def.model_settings.model_provider {
         ModelProvider::AIGateway => {
-            let client = Client::with_config(GatewayConfig::default());
+            let client = Client::with_config(GatewayConfig::default().with_context(context));
             client.chat().create(request).await
         }
         ModelProvider::OpenAI => {

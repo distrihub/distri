@@ -5,6 +5,7 @@ use clap::Parser;
 use cli::{Cli, Commands};
 use distri::{
     cli::RunWorkflow,
+    coordinator::CoordinatorContext,
     init_logging,
     memory::MemoryConfig,
     servers::{kg::FileMemory, registry::init_registry_and_coordinator},
@@ -84,12 +85,13 @@ async fn main() -> Result<()> {
             let tool_sessions = get_session_store(sessions);
 
             let memory_config = MemoryConfig::File(".distri/memory".to_string());
+            let context = Arc::new(CoordinatorContext::default());
             let (_, coordinator) = init_registry_and_coordinator(
                 local_memories,
                 kg_memory,
                 tool_sessions.clone(),
                 &config.mcp_servers,
-                true,
+                context,
                 memory_config,
             )
             .await;

@@ -14,6 +14,7 @@ agents:
 
       model_settings:
         model: "gpt-4o-mini"
+        # model: "deepseek/deepseek-reasoner"
         temperature: 0.7
         max_tokens: 10000
 

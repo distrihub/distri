@@ -1,5 +1,5 @@
 use crate::{
-    coordinator::{self, LocalCoordinator, DISTRI_LOCAL_SERVER},
+    coordinator::{self, CoordinatorContext, LocalCoordinator, DISTRI_LOCAL_SERVER},
     memory::{file_memory_store::FileMemoryStore, AgentMemory, MemoryConfig},
     store::{LocalMemoryStore, MemoryStore},
     types::{ExternalMcpServer, TransportType},
@@ -95,7 +95,7 @@ pub async fn init_registry_and_coordinator(
     kg_memory: Arc<Mutex<dyn KgMemory>>,
     tool_sessions: Option<Arc<Box<dyn ToolSessionStore>>>,
     external_servers: &[ExternalMcpServer],
-    verbose: bool,
+    context: Arc<CoordinatorContext>,
     memory_config: MemoryConfig,
 ) -> (Arc<RwLock<ServerRegistry>>, Arc<LocalCoordinator>) {
     let server_registry = Arc::new(RwLock::new(ServerRegistry::new()));
@@ -115,7 +115,7 @@ pub async fn init_registry_and_coordinator(
         server_registry.clone(),
         tool_sessions,
         memory_store,
-        verbose,
+        context.clone(),
     ));
 
     registry.register(
@@ -196,7 +196,8 @@ pub async fn init_registry_and_coordinator(
             kg_memory: None,
             builder: Some(Arc::new(move |_, transport| {
                 let coordinator = coordinator.clone();
-                let server = coordinator::build_server(transport, coordinator, verbose)?;
+                let context = context.clone();
+                let server = coordinator::build_server(transport, coordinator, context)?;
                 Ok(Box::new(server) as Box<dyn ServerTrait>)
             })),
             memories: HashMap::new(),

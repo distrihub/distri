@@ -1,5 +1,7 @@
+use std::sync::Arc;
+
 use crate::{
-    coordinator::LocalCoordinator,
+    coordinator::{CoordinatorContext, LocalCoordinator},
     init_logging,
     memory::TaskStep,
     tests::utils::{get_registry, get_tools_session_store, get_twitter_summarizer},
@@ -13,8 +15,12 @@ async fn test_twitter_summary() {
 
     let agent_def = get_twitter_summarizer(Some(5), Some(10), Some(10000));
     // Initialize coordinator
-    let coordinator =
-        LocalCoordinator::new(registry.clone(), get_tools_session_store(), None, true);
+    let coordinator = LocalCoordinator::new(
+        registry.clone(),
+        get_tools_session_store(),
+        None,
+        Arc::new(CoordinatorContext::default()),
+    );
 
     // Register the agent
     coordinator.register_agent(agent_def.clone()).await.unwrap();
