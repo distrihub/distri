@@ -20,7 +20,7 @@ pub async fn run(
 
     // Set up history file in .distri folder in current directory
     let history_file = {
-        let path = PathBuf::from(".distri");
+        let path = PathBuf::from(".distri").join(agent_name);
         std::fs::create_dir_all(&path).unwrap_or_default();
         path.join("history")
     };

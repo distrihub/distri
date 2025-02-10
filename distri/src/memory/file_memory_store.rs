@@ -23,7 +23,6 @@ impl FileMemoryStore {
     pub fn new(file_path: String) -> Self {
         let memories = Arc::new(RwLock::new(HashMap::new()));
 
-        let file_path = format!("{}/memory", file_path);
         std::fs::create_dir_all(&file_path).unwrap_or_default();
         Self {
             file_path,
