@@ -9,6 +9,7 @@ pub use types::{AgentDefinition, McpDefinition, McpSession, ModelSettings};
 pub mod cli;
 pub mod coordinator;
 mod logging;
+pub mod memory;
 pub mod servers;
 #[cfg(test)]
 mod tests;

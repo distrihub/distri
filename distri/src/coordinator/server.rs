@@ -114,7 +114,8 @@ mod tests {
     use anyhow::Result;
 
     use crate::{
-        coordinator::{LocalCoordinator, LocalMemoryStore, MemoryStore},
+        coordinator::LocalCoordinator,
+        store::{LocalMemoryStore, MemoryStore},
         tests::utils::{get_registry, get_tools_session_store},
     };
 

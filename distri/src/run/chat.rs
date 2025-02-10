@@ -1,5 +1,5 @@
 use distri::coordinator::{AgentCoordinator, LocalCoordinator};
-use distri::servers::memory::TaskStep;
+use distri::memory::TaskStep;
 use distri::types::AgentConfig;
 use rustyline::DefaultEditor;
 use std::fs::{File, OpenOptions};

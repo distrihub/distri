@@ -180,7 +180,7 @@ fn register_tools<T: Transport>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::servers::memory::types::LocalAgentMemory;
+    use crate::memory::types::LocalAgentMemory;
     use async_mcp::{
         client::ClientBuilder,
         protocol::RequestOptions,

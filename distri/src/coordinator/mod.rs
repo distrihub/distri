@@ -7,7 +7,7 @@ pub use log::*;
 mod reason;
 use crate::{
     error::AgentError,
-    servers::memory::TaskStep,
+    memory::TaskStep,
     types::{AgentDefinition, ServerTools, ToolCall},
 };
 use tokio::sync::{mpsc, oneshot};

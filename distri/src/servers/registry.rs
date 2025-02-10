@@ -1,5 +1,7 @@
 use crate::{
-    coordinator::{self, LocalCoordinator, LocalMemoryStore, MemoryStore, DISTRI_LOCAL_SERVER},
+    coordinator::{self, LocalCoordinator, DISTRI_LOCAL_SERVER},
+    memory::AgentMemory,
+    store::{LocalMemoryStore, MemoryStore},
     types::{ExternalMcpServer, TransportType},
     ToolSessionStore,
 };
@@ -13,10 +15,7 @@ use tokio::sync::{Mutex, RwLock};
 use crate::servers::tavily;
 use async_mcp::transport::ServerInMemoryTransport;
 
-use super::{
-    kg::{self, KgMemory},
-    memory::AgentMemory,
-};
+use super::kg::{self, KgMemory};
 pub type BuilderFn =
     dyn Fn(&ServerMetadata, ServerInMemoryTransport) -> Result<Box<dyn ServerTrait>> + Send + Sync;
 #[derive(Clone, Serialize, Deserialize, schemars::JsonSchema)]

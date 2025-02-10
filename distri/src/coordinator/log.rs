@@ -1,6 +1,6 @@
 use tracing::info;
 
-use crate::servers::memory::MemoryStep;
+use crate::memory::MemoryStep;
 
 #[derive(Debug, Clone)]
 pub struct StepLogger {

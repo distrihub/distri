@@ -1,11 +1,8 @@
 use crate::{
     error::AgentError,
     executor::AgentExecutor,
-    servers::{
-        memory::{ActionStep, AgentMemory},
-        registry::ServerRegistry,
-    },
-    store::ToolSessionStore,
+    servers::registry::ServerRegistry,
+    store::{LocalMemoryStore, MemoryStore, ToolSessionStore},
     tools::{execute_tool, get_tools},
     types::{
         get_tool_descriptions, AgentDefinition, Message, MessageContent, MessageRole, ServerTools,
@@ -18,85 +15,7 @@ use tokio::sync::{mpsc, Mutex, RwLock};
 use super::log::StepLogger;
 use super::reason::create_initial_plan;
 use super::{AgentCoordinator, AgentHandle, CoordinatorMessage};
-use crate::servers::memory::{LocalAgentMemory, MemoryStep, PlanningStep, TaskStep};
-
-// Define trait for memory storage
-#[async_trait::async_trait]
-pub trait MemoryStore: Send + Sync {
-    async fn get_messages(
-        &self,
-        agent_id: &str,
-        thread_id: Option<&str>,
-    ) -> anyhow::Result<Vec<Message>> {
-        let steps = self.get_steps(agent_id, thread_id).await?;
-        let messages = steps
-            .iter()
-            .flat_map(|step| step.to_messages(false, true))
-            .collect();
-        Ok(messages)
-    }
-    async fn get_steps(
-        &self,
-        agent_id: &str,
-        thread_id: Option<&str>,
-    ) -> anyhow::Result<Vec<MemoryStep>>;
-    async fn store_step(
-        &self,
-        agent_id: &str,
-        step: MemoryStep,
-        thread_id: Option<&str>,
-    ) -> anyhow::Result<()>;
-}
-
-// Local implementation using HashMap
-#[derive(Clone)]
-pub struct LocalMemoryStore {
-    memories: Arc<RwLock<HashMap<String, LocalAgentMemory>>>,
-}
-
-impl Default for LocalMemoryStore {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl LocalMemoryStore {
-    pub fn new() -> Self {
-        Self {
-            memories: Arc::new(RwLock::new(HashMap::new())),
-        }
-    }
-}
-
-#[async_trait::async_trait]
-impl MemoryStore for LocalMemoryStore {
-    async fn get_steps(
-        &self,
-        agent_id: &str,
-        thread_id: Option<&str>,
-    ) -> anyhow::Result<Vec<MemoryStep>> {
-        let memories = self.memories.read().await;
-        let memory = memories
-            .get(agent_id)
-            .cloned()
-            .unwrap_or_else(LocalAgentMemory::new);
-        Ok(memory.get_steps(thread_id))
-    }
-
-    async fn store_step(
-        &self,
-        agent_id: &str,
-        step: MemoryStep,
-        thread_id: Option<&str>,
-    ) -> anyhow::Result<()> {
-        let mut memories = self.memories.write().await;
-        let memory = memories
-            .entry(agent_id.to_string())
-            .or_insert_with(LocalAgentMemory::new);
-        memory.add_step(step, thread_id);
-        Ok(())
-    }
-}
+use crate::memory::{ActionStep, MemoryStep, PlanningStep, TaskStep};
 
 // Message types for coordinator communication
 

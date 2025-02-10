@@ -1,7 +1,11 @@
 use async_trait::async_trait;
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
+use tokio::sync::RwLock;
 
-use crate::types::McpSession;
+use crate::{
+    memory::{LocalAgentMemory, MemoryStep},
+    types::{McpSession, Message},
+};
 
 #[async_trait]
 pub trait ToolSessionStore: Send + Sync {
@@ -24,5 +28,83 @@ impl InMemorySessionStore {
 impl ToolSessionStore for InMemorySessionStore {
     async fn get_session(&self, tool_name: &str) -> anyhow::Result<Option<McpSession>> {
         Ok(self.mcp_sessions.get(tool_name).cloned())
+    }
+}
+
+// Define trait for memory storage
+#[async_trait::async_trait]
+pub trait MemoryStore: Send + Sync {
+    async fn get_messages(
+        &self,
+        agent_id: &str,
+        thread_id: Option<&str>,
+    ) -> anyhow::Result<Vec<Message>> {
+        let steps = self.get_steps(agent_id, thread_id).await?;
+        let messages = steps
+            .iter()
+            .flat_map(|step| step.to_messages(false, true))
+            .collect();
+        Ok(messages)
+    }
+    async fn get_steps(
+        &self,
+        agent_id: &str,
+        thread_id: Option<&str>,
+    ) -> anyhow::Result<Vec<MemoryStep>>;
+    async fn store_step(
+        &self,
+        agent_id: &str,
+        step: MemoryStep,
+        thread_id: Option<&str>,
+    ) -> anyhow::Result<()>;
+}
+
+// Local implementation using HashMap
+#[derive(Clone)]
+pub struct LocalMemoryStore {
+    memories: Arc<RwLock<HashMap<String, LocalAgentMemory>>>,
+}
+
+impl Default for LocalMemoryStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl LocalMemoryStore {
+    pub fn new() -> Self {
+        Self {
+            memories: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl MemoryStore for LocalMemoryStore {
+    async fn get_steps(
+        &self,
+        agent_id: &str,
+        thread_id: Option<&str>,
+    ) -> anyhow::Result<Vec<MemoryStep>> {
+        let memories = self.memories.read().await;
+        let memory = memories
+            .get(agent_id)
+            .cloned()
+            .unwrap_or_else(LocalAgentMemory::default);
+        Ok(memory.get_steps(thread_id))
+    }
+
+    async fn store_step(
+        &self,
+        agent_id: &str,
+        step: MemoryStep,
+        thread_id: Option<&str>,
+    ) -> anyhow::Result<()> {
+        let mut memories = self.memories.write().await;
+        let memory = memories
+            .entry(agent_id.to_string())
+            .or_insert_with(LocalAgentMemory::default);
+        memory.add_step(step, thread_id);
+        Ok(())
     }
 }

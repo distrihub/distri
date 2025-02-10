@@ -1,7 +1,7 @@
 use crate::{
     coordinator::LocalCoordinator,
     init_logging,
-    servers::memory::TaskStep,
+    memory::TaskStep,
     tests::utils::{get_registry, get_tools_session_store, get_twitter_summarizer},
 };
 
