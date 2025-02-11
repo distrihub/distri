@@ -143,6 +143,22 @@ fn register_tools<T: Transport>(server: &mut ServerBuilder<T>) -> Result<()> {
         }),
     };
 
+    // Send Tweet Tool
+    let send_tweet_tool = Tool {
+        name: "send_tweet".to_string(),
+        description: Some("Post a new tweet".to_string()),
+        input_schema: json!({
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "The text content of the tweet"},
+                "reply_to": {"type": "string", "description": "Optional tweet ID to reply to"},
+                "quote": {"type": "string", "description": "Optional tweet ID to quote"}
+            },
+            "required": ["text"],
+            "additionalProperties": false
+        }),
+    };
+
     // Register messages tool
     server.register_tool(messages_tool, |req: CallToolRequest| {
         Box::pin(async move {
@@ -330,6 +346,44 @@ fn register_tools<T: Transport>(server: &mut ServerBuilder<T>) -> Result<()> {
                 Ok(CallToolResponse {
                     content: vec![ToolResponseContent::Text {
                         text: serde_json::to_string(&search_results)?,
+                    }],
+                    is_error: None,
+                    meta: None,
+                })
+            }
+            .await;
+
+            match result {
+                Ok(response) => Ok(response),
+                Err(e) => {
+                    info!("Error handling request: {:#?}", e);
+                    Ok(CallToolResponse {
+                        content: vec![ToolResponseContent::Text {
+                            text: format!("{}", e),
+                        }],
+                        is_error: Some(true),
+                        meta: None,
+                    })
+                }
+            }
+        })
+    });
+
+    // Register send tweet tool
+    server.register_tool(send_tweet_tool, |req: CallToolRequest| {
+        Box::pin(async move {
+            let args = req.arguments.unwrap_or_default();
+
+            let result: Result<CallToolResponse, anyhow::Error> = async {
+                let scraper = get_session(&args).await?;
+                let text = args["text"].as_str().context("text is missing")?;
+                let reply_to = args.get("reply_to").and_then(|v| v.as_str());
+
+                let tweet = scraper.send_tweet(text, reply_to, None).await?;
+
+                Ok(CallToolResponse {
+                    content: vec![ToolResponseContent::Text {
+                        text: serde_json::to_string(&tweet)?,
                     }],
                     is_error: None,
                     meta: None,
