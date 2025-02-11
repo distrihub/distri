@@ -42,6 +42,7 @@ pub enum Commands {
     List,
     /// List available tools
     ListTools,
+
     Proxy,
 
     /// Run specified agents

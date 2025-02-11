@@ -116,7 +116,7 @@ pub async fn get_tools(
             // Filter tools based on actions_filter if specified
             match &tool_def.filter {
                 ToolsFilter::All => {
-                    tracing::info!("Loading all {} tools from {}", total_tools, mcp_server_name);
+                    tracing::debug!("Loading all {} tools from {}", total_tools, mcp_server_name);
                 }
                 ToolsFilter::Selected(selected) => {
                     let before_count = tools.len();
@@ -130,7 +130,7 @@ pub async fn get_tools(
                         }
                         found.is_some()
                     });
-                    tracing::info!(
+                    tracing::debug!(
                         "Filtered tools for {}: {}/{} tools selected",
                         mcp_server_name,
                         tools.len(),
@@ -157,7 +157,7 @@ pub async fn get_tools(
         }
     }
 
-    tracing::info!("Loaded {} tool definitions in total", all_tools.len());
+    tracing::debug!("Loaded {} tool definitions in total", all_tools.len());
     Ok(all_tools)
 }
 

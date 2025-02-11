@@ -19,7 +19,7 @@ use dotenv::dotenv;
 use run::{chat, event, session::get_session_store};
 use std::{collections::HashMap, env, sync::Arc};
 use tokio::sync::{Mutex, RwLock};
-use tracing::{debug, info};
+use tracing::debug;
 
 fn load_config(config_path: &str) -> Result<Configuration> {
     // Load .env file if it exists
@@ -85,7 +85,7 @@ async fn main() -> Result<()> {
     // Handle commands
     match cli.command {
         Commands::List => {
-            info!("Available agents:");
+            debug!("Available agents:");
             let config = load_config(cli.config.to_str().unwrap())?;
             let (_, coordinator) = init_all(&config).await?;
             for agent in &config.agents {
@@ -94,7 +94,7 @@ async fn main() -> Result<()> {
             run::list::list(coordinator.clone()).await?;
         }
         Commands::ListTools => {
-            info!("Available tools:");
+            debug!("Available tools:");
             let config = load_config(cli.config.to_str().unwrap())?;
             let (_, coordinator) = init_all(&config).await?;
             for agent in &config.agents {
@@ -108,7 +108,7 @@ async fn main() -> Result<()> {
             let (_, coordinator) = init_all(&config).await?;
             let coordinator_clone = coordinator.clone();
 
-            info!("Running agent: {:?}", agent);
+            debug!("Running agent: {:?}", agent);
             let agent_config = config
                 .agents
                 .iter()
