@@ -7,10 +7,10 @@ use crate::{
     init_logging,
     memory::TaskStep,
     tests::utils::{get_registry, get_tools_session_store, get_twitter_tool, register_coordinator},
-    types::{AgentDefinition, McpDefinition, ModelSettings, PlanConfig, ToolSelector, ToolsFilter},
+    types::{AgentDefinition, McpDefinition, ModelSettings, ToolSelector, ToolsFilter},
 };
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_agent_coordination() -> anyhow::Result<()> {
     init_logging("info");
     // Create test agent definitions
@@ -46,7 +46,7 @@ async fn test_agent_coordination() -> anyhow::Result<()> {
         parameters: Default::default(),
         response_format: None,
         history_size: None,
-        plan: Some(PlanConfig::new(3, 10)),
+        plan: None,
     };
 
     // Initialize coordinator with session stores

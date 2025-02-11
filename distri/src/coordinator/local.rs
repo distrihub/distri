@@ -215,25 +215,25 @@ impl LocalCoordinator {
 
         // Handle planning if enabled
         if let Some(planning_config) = &definition.plan {
-            if planning_config.enabled {
-                // Get current iteration count
-                let iteration = {
-                    let mut iterations = self.iterations.write().await;
-                    let count = iterations.entry(agent_id.to_string()).or_insert(0);
-                    *count += 1;
-                    *count
-                };
-
-                // Get previous messages for planning update
-                let previous_messages = if iteration > 1 {
-                    self.memory_store
+            // Get current iteration count
+            let iteration = {
+                let mut iterations = self.iterations.write().await;
+                let count = iterations.entry(agent_id.to_string()).or_insert(0);
+                // Update count based on the number of messages for subsequent iterations
+                if *count > 0 {
+                    let previous_messages = self
+                        .memory_store
                         .get_messages(agent_id, Some(&context.thread_id))
                         .await
-                        .map_err(|e| AgentError::Session(e.to_string()))?
+                        .map_err(|e| AgentError::Session(e.to_string()))?;
+                    *count = previous_messages.len() as i32; // Set count to number of messages
                 } else {
-                    vec![]
-                };
+                    *count += 1; // Increment for the first iteration
+                }
+                *count
+            };
 
+            if (iteration - 1) % planning_config.interval == 0 {
                 // Run either initial planning or planning update
                 let (facts, plan) = if iteration == 1 {
                     create_initial_plan(&task, &tools_desc, &|msgs| {
@@ -249,16 +249,25 @@ impl LocalCoordinator {
                             ])),
                         );
                         Box::pin(async move {
-                            planning_executor
-                                .execute(&msgs, None)
-                                .await
-                                .map_err(|e| anyhow::anyhow!("Planning execution failed: {}", e))
+                            let response = planning_executor.execute(&msgs, None).await;
+                            match response {
+                                Ok(response) => Ok(response),
+                                Err(e) => {
+                                    tracing::error!("Planning execution failed: {}", e);
+                                    Ok(format!("Planning execution failed: {}", e))
+                                }
+                            }
                         })
                     })
                     .await
                 } else {
                     let remaining_steps =
                         planning_config.max_iterations.unwrap_or(10) - iteration + 1;
+                    let previous_messages = self
+                        .memory_store
+                        .get_messages(agent_id, Some(&context.thread_id))
+                        .await
+                        .map_err(|e| AgentError::Session(e.to_string()))?;
                     super::reason::update_plan(
                         &task.task,
                         &tools_desc,
@@ -277,9 +286,14 @@ impl LocalCoordinator {
                                 ])),
                             );
                             Box::pin(async move {
-                                planning_executor.execute(&msgs, None).await.map_err(|e| {
-                                    anyhow::anyhow!("Planning execution failed: {}", e)
-                                })
+                                let response = planning_executor.execute(&msgs, None).await;
+                                match response {
+                                    Ok(response) => Ok(response),
+                                    Err(e) => {
+                                        tracing::error!("Planning execution failed: {}", e);
+                                        Ok(format!("Planning execution failed: {}", e))
+                                    }
+                                }
                             })
                         },
                     )
@@ -339,11 +353,13 @@ impl LocalCoordinator {
             ])),
         );
 
-        let response = executor
-            .execute(&messages, params)
-            .await
-            .map_err(|e| AgentError::Session(e.to_string()))?;
-
+        let response = match executor.execute(&messages, params).await {
+            Ok(response) => response,
+            Err(e) => {
+                tracing::error!("Error executing agent: {}", e);
+                format!("Error executing agent: {}", e)
+            }
+        };
         // Store response as action step
         let action_step = MemoryStep::Action(ActionStep {
             model_input_messages: Some(messages),

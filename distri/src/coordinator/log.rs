@@ -1,3 +1,4 @@
+use comfy_table::Table;
 use tracing::info;
 
 use crate::memory::MemoryStep;
@@ -17,55 +18,30 @@ impl StepLogger {
             return;
         }
 
-        let border = "+===========================================+";
-        let separator = "|----------------------------------------|";
-
-        info!("\n{}", border);
-        info!("| Agent: {:<39} |", agent_id);
-        info!("{}", separator);
+        let mut table = Table::new();
+        table.set_header(vec!["Agent", "Step Type", "Details"]);
 
         match step {
             MemoryStep::Task(task) => {
-                info!("| Step Type: Task                           |");
-                info!("{}", separator);
-                info!("| Task:");
-                for line in task.task.lines() {
-                    info!("| {:<41} |", line);
-                }
+                let details = task.task.to_string();
+                table.add_row(vec![agent_id, "Task", &details]);
             }
             MemoryStep::Planning(planning) => {
-                info!("| Step Type: Planning                       |");
-                info!("{}", separator);
-                info!("| Facts:");
-                for line in planning.facts.lines() {
-                    info!("| {:<41} |", line);
-                }
-                info!("{}", separator);
-                info!("| Plan:");
-                for line in planning.plan.lines() {
-                    info!("| {:<41} |", line);
-                }
+                let facts = planning.facts.to_string();
+                let plan = planning.plan.to_string();
+                table.add_row(vec![agent_id, "Planning", &facts]);
+                table.add_row(vec!["", "Plan", &plan]);
             }
             MemoryStep::Action(action) => {
-                info!("| Step Type: Action                         |");
-                info!("{}", separator);
-                if let Some(output) = &action.model_output {
-                    info!("| Output:");
-                    for line in output.lines() {
-                        info!("| {:<41} |", line);
-                    }
-                }
+                let output = action.model_output.as_deref().unwrap_or("No output");
+                table.add_row(vec![agent_id, "Action", output]);
             }
             MemoryStep::System(system) => {
-                info!("| Step Type: System                         |");
-                info!("{}", separator);
-                info!("| System:");
-                for line in system.system_prompt.lines() {
-                    info!("| {:<41} |", line);
-                }
+                let system_prompt = system.system_prompt.to_string();
+                table.add_row(vec![agent_id, "System", &system_prompt]);
             }
         }
-        info!("{}\n", border);
+        info!("\n{}", table);
     }
 }
 
@@ -90,28 +66,19 @@ impl ModelLogger {
             return;
         }
 
-        let border = "+===========================================+";
-        let separator = "|----------------------------------------|";
+        let mut table = Table::new();
+        table.set_header(vec!["Model", "Messages", "Settings", "Token Usage"]);
 
-        info!("\n{}", border);
-        info!("| Model Execution                            |");
-        info!("{}", separator);
-        info!("| Model: {:<37} |", model_name);
-        info!("| Messages: {:<34} |", messages_count);
+        let settings_str = settings.unwrap_or("None");
+        let token_str = token_usage.map_or("None".to_string(), |t| t.to_string());
 
-        if let Some(settings) = settings {
-            info!("{}", separator);
-            info!("| Settings:");
-            for line in settings.lines() {
-                info!("| {:<41} |", line);
-            }
-        }
+        table.add_row(vec![
+            model_name,
+            &messages_count.to_string(),
+            settings_str,
+            &token_str,
+        ]);
 
-        if let Some(tokens) = token_usage {
-            info!("{}", separator);
-            info!("| Token Usage: {:<31} |", tokens);
-        }
-
-        info!("{}\n", border);
+        info!("\n{}", table);
     }
 }

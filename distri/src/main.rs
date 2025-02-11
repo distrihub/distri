@@ -91,7 +91,13 @@ async fn main() -> Result<()> {
             for agent in &config.agents {
                 coordinator.register_agent(agent.definition.clone()).await?;
             }
+            let coordinator_clone = coordinator.clone();
+            let coordinator_handle = tokio::spawn(async move {
+                coordinator_clone.run().await.unwrap();
+            });
+
             run::list::list(coordinator.clone()).await?;
+            coordinator_handle.abort();
         }
         Commands::ListTools => {
             debug!("Available tools:");
@@ -100,7 +106,12 @@ async fn main() -> Result<()> {
             for agent in &config.agents {
                 coordinator.register_agent(agent.definition.clone()).await?;
             }
+            let coordinator_clone = coordinator.clone();
+            let coordinator_handle = tokio::spawn(async move {
+                coordinator_clone.run().await.unwrap();
+            });
             run::list::list_tools(coordinator.clone()).await?;
+            coordinator_handle.abort();
         }
         Commands::ConfigSchema { pretty } => print_schema(pretty),
         Commands::Run { agent } => {

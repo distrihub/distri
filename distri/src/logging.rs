@@ -23,6 +23,14 @@ pub fn init_logging(level: &str) {
         .with_line_number(false)
         .with_span_events(FmtSpan::NONE)
         .compact() // Use compact format
+        .event_format(
+            tracing_subscriber::fmt::format()
+                .compact()
+                .without_time()
+                .with_ansi(true)
+                .with_target(false)
+                .with_level(false),
+        )
         .with_ansi(true) // Enable colors
         .with_timer(tracing_subscriber::fmt::time::time());
 

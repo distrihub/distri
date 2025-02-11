@@ -71,23 +71,24 @@ pub struct AgentDefinition {
     #[serde(default = "default_history_size")]
     pub history_size: Option<usize>,
     /// The planning configuration for the agent, if any.
+    #[serde(default)]
     pub plan: Option<PlanConfig>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, Default)]
 pub struct PlanConfig {
     /// Indicates whether planning is enabled for the agent.
-    pub enabled: bool,
     /// How often to replan, specified in steps.
-    pub interval: Option<i32>,
+    #[serde(default)]
+    pub interval: i32,
     /// The maximum number of iterations allowed during planning.
+    #[serde(default)]
     pub max_iterations: Option<i32>,
 }
 impl PlanConfig {
     pub fn new(interval: i32, max_iterations: i32) -> Self {
         Self {
-            enabled: true,
-            interval: Some(interval),
+            interval: interval,
             max_iterations: Some(max_iterations),
         }
     }

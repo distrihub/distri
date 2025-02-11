@@ -32,6 +32,8 @@ async fn async_server(metadata: ServerMetadata, transport: ServerInMemoryTranspo
     server.listen().await
 }
 
+const TRANSPORT_TIMEOUT: Duration = Duration::from_secs(120);
+
 macro_rules! with_transport {
     ($metadata:expr, $body:expr) => {
         match &$metadata.mcp_transport {
@@ -257,7 +259,7 @@ impl<T: Transport + Clone> ToolExecutor<T> {
             .request(
                 "tools/call",
                 Some(params),
-                RequestOptions::default().timeout(Duration::from_secs(10)),
+                RequestOptions::default().timeout(TRANSPORT_TIMEOUT),
             )
             .await?;
 
