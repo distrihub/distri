@@ -22,12 +22,12 @@ use crate::memory::{ActionStep, MemoryStep, PlanningStep, TaskStep};
 
 #[derive(Clone)]
 pub struct LocalCoordinator {
-    agent_definitions: Arc<RwLock<HashMap<String, AgentDefinition>>>,
-    agent_tools: Arc<RwLock<HashMap<String, Vec<ServerTools>>>>,
-    tool_sessions: Option<Arc<Box<dyn ToolSessionStore>>>,
-    registry: Arc<RwLock<ServerRegistry>>,
-    coordinator_rx: Arc<Mutex<mpsc::Receiver<CoordinatorMessage>>>,
-    coordinator_tx: mpsc::Sender<CoordinatorMessage>,
+    pub agent_definitions: Arc<RwLock<HashMap<String, AgentDefinition>>>,
+    pub agent_tools: Arc<RwLock<HashMap<String, Vec<ServerTools>>>>,
+    pub tool_sessions: Option<Arc<Box<dyn ToolSessionStore>>>,
+    pub registry: Arc<RwLock<ServerRegistry>>,
+    pub coordinator_rx: Arc<Mutex<mpsc::Receiver<CoordinatorMessage>>>,
+    pub coordinator_tx: mpsc::Sender<CoordinatorMessage>,
     memory_store: Arc<Box<dyn MemoryStore>>,
     logger: StepLogger,
     iterations: Arc<RwLock<HashMap<String, i32>>>,

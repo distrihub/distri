@@ -15,7 +15,7 @@ use tokio::sync::{Mutex, RwLock};
 use crate::servers::tavily;
 use async_mcp::transport::ServerInMemoryTransport;
 
-use super::kg::{self, KgMemory};
+use super::kg::KgMemory;
 pub type BuilderFn =
     dyn Fn(&ServerMetadata, ServerInMemoryTransport) -> Result<Box<dyn ServerTrait>> + Send + Sync;
 #[derive(Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -92,7 +92,6 @@ impl<T: Transport> ServerTrait for Server<T> {
 
 pub async fn init_registry_and_coordinator(
     local_memories: HashMap<String, Arc<Mutex<dyn AgentMemory>>>,
-    kg_memory: Arc<Mutex<dyn KgMemory>>,
     tool_sessions: Option<Arc<Box<dyn ToolSessionStore>>>,
     external_servers: &[ExternalMcpServer],
     context: Arc<CoordinatorContext>,
@@ -132,19 +131,19 @@ pub async fn init_registry_and_coordinator(
         },
     );
 
-    registry.register(
-        "file_knowledge_graph".to_string(),
-        ServerMetadata {
-            auth_session_key: None,
-            mcp_transport: TransportType::Async,
-            kg_memory: Some(kg_memory),
-            builder: Some(Arc::new(|metadata, transport| {
-                let server = kg::build::build(metadata, transport)?;
-                Ok(Box::new(server) as Box<dyn ServerTrait>)
-            })),
-            memories: HashMap::new(),
-        },
-    );
+    // registry.register(
+    //     "file_knowledge_graph".to_string(),
+    //     ServerMetadata {
+    //         auth_session_key: None,
+    //         mcp_transport: TransportType::Async,
+    //         kg_memory: Some(kg_memory),
+    //         builder: Some(Arc::new(|metadata, transport| {
+    //             let server = kg::build::build(metadata, transport)?;
+    //             Ok(Box::new(server) as Box<dyn ServerTrait>)
+    //         })),
+    //         memories: HashMap::new(),
+    //     },
+    // );
 
     // registry.register(
     //     "local_memory".to_string(),

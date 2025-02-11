@@ -40,6 +40,8 @@ pub struct Cli {
 pub enum Commands {
     /// List available agents
     List,
+    /// List available tools
+    ListTools,
     Proxy,
 
     /// Run specified agents

@@ -28,6 +28,7 @@ schemars = "0.8.21"
 distri-proxy = { path = "../proxy" }
 secrecy = { version = "0.10.3", features = ["serde"] }
 uuid = "1.13.1"
+comfy-table = "7.0"
 
 [dev-dependencies]
 dotenv = "0.15"

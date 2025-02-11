@@ -5,17 +5,20 @@ use clap::Parser;
 use cli::{Cli, Commands};
 use distri::{
     cli::RunWorkflow,
-    coordinator::CoordinatorContext,
+    coordinator::{CoordinatorContext, LocalCoordinator},
     init_logging,
     memory::MemoryConfig,
-    servers::{kg::FileMemory, registry::init_registry_and_coordinator},
+    servers::{
+        kg::FileMemory,
+        registry::{init_registry_and_coordinator, ServerRegistry},
+    },
     types::{get_distri_config_schema, Configuration},
 };
 use distri_proxy::McpProxy;
 use dotenv::dotenv;
 use run::{chat, event, session::get_session_store};
 use std::{collections::HashMap, env, sync::Arc};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, info};
 
 fn load_config(config_path: &str) -> Result<Configuration> {
@@ -52,8 +55,24 @@ fn replace_env_vars(content: &str) -> String {
     result
 }
 
+const LOGO: &str = r#"
+          ****                                                                       
+    * ******++++==                                                                 
+  ***  ***++++++++===        =======        ====                              ==== 
+  *******   ++++++====       ===========    ====              ====            ==== 
+** ****++++++++++     =      ====   =====    ==      ====    ======   ==  ===  ==  
+ ****  +++++++++++=====      ====     ====  ====  ================== ======== ==== 
+* ****++++++++++++======     ====     ====  ==== ====   ====  ====   =====    ==== 
+****  +++++++++++======      ====     ====  ====  ========    ====   ====     ==== 
+ ****+++         +===        ====    =====  ====     =======  ====   ====     ==== 
+ ****+++++++++++======       ============   ==== ====   ====  =====  ====     ==== 
+   ***+++++++++=====         ==========     ====  =========    ===== ====     ==== 
+     *++ ++++++===                                                                 
+                                                                                   
+                                                                                   "#;
 #[tokio::main]
 async fn main() -> Result<()> {
+    println!("{}", LOGO);
     // Initialize logging
     init_logging("info");
 
@@ -68,34 +87,25 @@ async fn main() -> Result<()> {
         Commands::List => {
             info!("Available agents:");
             let config = load_config(cli.config.to_str().unwrap())?;
+            let (_, coordinator) = init_all(&config).await?;
             for agent in &config.agents {
-                info!("- {} ({})", agent.definition.name, agent.workflow);
+                coordinator.register_agent(agent.definition.clone()).await?;
             }
+            run::list::list(coordinator.clone()).await?;
+        }
+        Commands::ListTools => {
+            info!("Available tools:");
+            let config = load_config(cli.config.to_str().unwrap())?;
+            let (_, coordinator) = init_all(&config).await?;
+            for agent in &config.agents {
+                coordinator.register_agent(agent.definition.clone()).await?;
+            }
+            run::list::list_tools(coordinator.clone()).await?;
         }
         Commands::ConfigSchema { pretty } => print_schema(pretty),
         Commands::Run { agent } => {
-            // Load configuration
             let config = load_config(cli.config.to_str().unwrap())?;
-
-            let sessions = config.sessions;
-
-            let kg_memory = init_kg_memory(&agent).await?;
-
-            let local_memories = HashMap::new();
-            let tool_sessions = get_session_store(sessions);
-
-            let memory_config = MemoryConfig::File(".distri/memory".to_string());
-            let context = Arc::new(CoordinatorContext::default());
-            let (_, coordinator) = init_registry_and_coordinator(
-                local_memories,
-                kg_memory,
-                tool_sessions.clone(),
-                &config.mcp_servers,
-                context,
-                memory_config,
-            )
-            .await;
-
+            let (_, coordinator) = init_all(&config).await?;
             let coordinator_clone = coordinator.clone();
 
             info!("Running agent: {:?}", agent);
@@ -149,4 +159,26 @@ pub async fn init_kg_memory(agent: &str) -> Result<Arc<Mutex<FileMemory>>> {
 fn print_schema(pretty: bool) {
     let schemas = get_distri_config_schema(pretty).expect("expected json schema");
     println!("{schemas}");
+}
+
+async fn init_all(
+    config: &Configuration,
+) -> Result<(Arc<RwLock<ServerRegistry>>, Arc<LocalCoordinator>)> {
+    let sessions = config.sessions.clone();
+
+    let local_memories = HashMap::new();
+    let tool_sessions = get_session_store(sessions);
+
+    let memory_config = MemoryConfig::File(".distri/memory".to_string());
+    let context = Arc::new(CoordinatorContext::default());
+    let (registry, coordinator) = init_registry_and_coordinator(
+        local_memories,
+        tool_sessions.clone(),
+        &config.mcp_servers,
+        context,
+        memory_config,
+    )
+    .await;
+
+    Ok((registry, coordinator))
 }
