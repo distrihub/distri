@@ -126,7 +126,7 @@ pub async fn update_plan(
     Ok((updated_facts, updated_plan))
 }
 
-pub fn get_planning_definition() -> AgentDefinition {
+pub fn get_planning_definition(model_settings: ModelSettings) -> AgentDefinition {
     AgentDefinition {
         name: "planner".to_string(),
         description: "A planning agent that breaks down tasks and creates execution plans"
@@ -143,9 +143,9 @@ pub fn get_planning_definition() -> AgentDefinition {
         ),
         mcp_servers: vec![],
         history_size: None,
-        model_settings: ModelSettings::default(),
+        model_settings: model_settings.clone(),
         parameters: Default::default(),
         response_format: None,
-        plan: Some(PlanConfig::new(5, 10)),
+        plan: None,
     }
 }

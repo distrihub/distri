@@ -119,6 +119,10 @@ pub fn get_twitter_summarizer(
         plan: planning_interval.map(|i| PlanConfig {
             interval: i,
             max_iterations: Some(max_iterations.unwrap_or(10) as i32),
+            model_settings: ModelSettings {
+                model: "o1-preview".to_string(),
+                ..Default::default()
+            },
         }),
     }
 }

@@ -238,7 +238,9 @@ impl LocalCoordinator {
                 let (facts, plan) = if iteration == 1 {
                     create_initial_plan(&task, &tools_desc, &|msgs| {
                         let planning_executor = AgentExecutor::new(
-                            super::reason::get_planning_definition(),
+                            super::reason::get_planning_definition(
+                                planning_config.model_settings.clone(),
+                            ),
                             vec![],
                             Some(Arc::new(self.get_handle(agent_id.to_string()))),
                             context.clone(),
@@ -275,7 +277,9 @@ impl LocalCoordinator {
                         remaining_steps,
                         &|msgs| {
                             let planning_executor = AgentExecutor::new(
-                                super::reason::get_planning_definition(),
+                                super::reason::get_planning_definition(
+                                    planning_config.model_settings.clone(),
+                                ),
                                 vec![],
                                 Some(Arc::new(self.get_handle(agent_id.to_string()))),
                                 context.clone(),

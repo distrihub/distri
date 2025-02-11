@@ -84,12 +84,16 @@ pub struct PlanConfig {
     /// The maximum number of iterations allowed during planning.
     #[serde(default)]
     pub max_iterations: Option<i32>,
+    /// The model settings for the planning agent.
+    #[serde(default)]
+    pub model_settings: ModelSettings,
 }
 impl PlanConfig {
-    pub fn new(interval: i32, max_iterations: i32) -> Self {
+    pub fn new(interval: i32, max_iterations: i32, model_settings: ModelSettings) -> Self {
         Self {
             interval: interval,
             max_iterations: Some(max_iterations),
+            model_settings,
         }
     }
 }
