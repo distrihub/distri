@@ -81,7 +81,7 @@ pub fn build_server<T: Transport>(
                 // Create executor with required parameters
                 let coordinator_handle = Arc::new(coordinator.get_handle(agent_name.clone()));
                 let executor =
-                    AgentExecutor::new(agent_def, tools, Some(coordinator_handle), context);
+                    AgentExecutor::new(agent_def, tools, Some(coordinator_handle), context, None);
 
                 let messages = vec![Message {
                     role: MessageRole::User,

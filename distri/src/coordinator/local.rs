@@ -242,6 +242,11 @@ impl LocalCoordinator {
                             vec![],
                             Some(Arc::new(self.get_handle(agent_id.to_string()))),
                             context.clone(),
+                            Some(HashMap::from([
+                                ("name".to_string(), "initial_planner".to_string()),
+                                ("agent_name".to_string(), agent_id.to_string()),
+                                ("label".to_string(), "initial_planner".to_string()),
+                            ])),
                         );
                         Box::pin(async move {
                             planning_executor
@@ -265,6 +270,11 @@ impl LocalCoordinator {
                                 vec![],
                                 Some(Arc::new(self.get_handle(agent_id.to_string()))),
                                 context.clone(),
+                                Some(HashMap::from([
+                                    ("name".to_string(), "update_planner".to_string()),
+                                    ("agent_name".to_string(), agent_id.to_string()),
+                                    ("label".to_string(), "update_planner".to_string()),
+                                ])),
                             );
                             Box::pin(async move {
                                 planning_executor.execute(&msgs, None).await.map_err(|e| {
@@ -322,6 +332,11 @@ impl LocalCoordinator {
             tools,
             Some(Arc::new(self.get_handle(agent_id.to_string()))),
             context.clone(),
+            Some(HashMap::from([
+                ("name".to_string(), agent_id.to_string()),
+                ("agent_name".to_string(), agent_id.to_string()),
+                ("label".to_string(), agent_id.to_string()),
+            ])),
         );
 
         let response = executor

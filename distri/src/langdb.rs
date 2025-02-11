@@ -1,7 +1,7 @@
-use std::sync::Arc;
+use std::{collections::HashMap, str::FromStr, sync::Arc};
 
 use async_openai::config::Config;
-use reqwest::header::{HeaderMap, AUTHORIZATION};
+use reqwest::header::{HeaderMap, HeaderName, AUTHORIZATION};
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
 use tokio::runtime::Handle;
@@ -22,6 +22,7 @@ pub struct GatewayConfig {
     project_id: String,
     #[serde(skip)]
     context: Option<Arc<CoordinatorContext>>,
+    additional_tags: Option<HashMap<String, String>>,
 }
 
 impl Default for GatewayConfig {
@@ -34,6 +35,7 @@ impl Default for GatewayConfig {
                 .into(),
             project_id: std::env::var("GATEWAY_PROJECT_ID").unwrap_or_else(|_| "".to_string()),
             context: None,
+            additional_tags: None,
         }
     }
 }
@@ -66,6 +68,11 @@ impl GatewayConfig {
         self.context = Some(context);
         self
     }
+
+    pub fn with_additional_tags(mut self, additional_tags: HashMap<String, String>) -> Self {
+        self.additional_tags = Some(additional_tags);
+        self
+    }
 }
 
 impl Config for GatewayConfig {
@@ -93,6 +100,12 @@ impl Config for GatewayConfig {
                 Handle::current().block_on(async move { context.run_id.lock().await })
             });
             headers.insert("X-Run-Id", run_id.parse().unwrap());
+        }
+
+        if let Some(additional_tags) = &self.additional_tags {
+            for (key, value) in additional_tags.iter() {
+                headers.insert(HeaderName::from_str(key).unwrap(), value.parse().unwrap());
+            }
         }
 
         headers

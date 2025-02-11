@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use crate::{
     coordinator::{AgentHandle, CoordinatorContext, ModelLogger},
@@ -26,6 +26,7 @@ pub struct AgentExecutor {
     coordinator: Option<Arc<AgentHandle>>,
     model_logger: ModelLogger,
     context: Arc<CoordinatorContext>,
+    additional_tags: Option<HashMap<String, String>>,
 }
 
 pub const MAX_RETRIES: i32 = 3;
@@ -41,6 +42,7 @@ impl AgentExecutor {
         server_tools: Vec<ServerTools>,
         coordinator: Option<Arc<AgentHandle>>,
         context: Arc<CoordinatorContext>,
+        additional_tags: Option<HashMap<String, String>>,
     ) -> Self {
         let name = &agent_def.name;
         // Log the number of tools being passed
@@ -55,6 +57,7 @@ impl AgentExecutor {
             coordinator,
             model_logger: ModelLogger::new(context.verbose),
             context,
+            additional_tags,
         }
     }
 
@@ -121,12 +124,17 @@ impl AgentExecutor {
 
             tracing::debug!("Sending chat completion request");
             let input_messages = req.messages.clone();
-            let response = completion(&self.agent_def, req, self.context.clone())
-                .await
-                .map_err(|e| {
-                    tracing::error!("LLM request failed: {}", e);
-                    AgentError::LLMError(e.to_string())
-                })?;
+            let response = completion(
+                &self.agent_def,
+                req,
+                self.context.clone(),
+                self.additional_tags.clone().unwrap_or_default(),
+            )
+            .await
+            .map_err(|e| {
+                tracing::error!("LLM request failed: {}", e);
+                AgentError::LLMError(e.to_string())
+            })?;
 
             token_usage += response.usage.as_ref().map(|a| a.total_tokens).unwrap_or(0);
             self.model_logger.log_model_execution(
@@ -316,10 +324,15 @@ async fn completion(
     agent_def: &AgentDefinition,
     request: CreateChatCompletionRequest,
     context: Arc<CoordinatorContext>,
+    additional_tags: HashMap<String, String>,
 ) -> Result<CreateChatCompletionResponse, AgentError> {
     let response = match agent_def.model_settings.model_provider {
         ModelProvider::AIGateway => {
-            let client = Client::with_config(GatewayConfig::default().with_context(context));
+            let client = Client::with_config(
+                GatewayConfig::default()
+                    .with_context(context)
+                    .with_additional_tags(additional_tags),
+            );
             client.chat().create(request).await
         }
         ModelProvider::OpenAI => {
