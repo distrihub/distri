@@ -96,10 +96,9 @@ impl Config for GatewayConfig {
         if let Some(context) = &self.context {
             headers.insert("X-Thread-Id", context.thread_id.parse().unwrap());
 
-            let run_id = tokio::task::block_in_place(|| {
-                Handle::current().block_on(async move { context.run_id.lock().await })
-            });
-            headers.insert("X-Run-Id", run_id.parse().unwrap());
+            if let Ok(run_id) = context.run_id.try_lock() {
+                headers.insert("X-Run-Id", run_id.parse().unwrap());
+            }
         }
 
         if let Some(additional_tags) = &self.additional_tags {
