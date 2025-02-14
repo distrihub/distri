@@ -1,6 +1,6 @@
 use crate::{
     memory::TaskStep,
-    types::{AgentDefinition, Message, MessageContent, MessageRole, ModelSettings, PlanConfig},
+    types::{AgentDefinition, Message, MessageContent, MessageRole, ModelSettings},
 };
 
 pub async fn create_initial_plan(

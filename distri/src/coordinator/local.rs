@@ -171,7 +171,7 @@ impl LocalCoordinator {
                     let context = self.context.clone();
                     tokio::spawn(async move {
                         let result =
-                            async { this.run_task(&agent_id, task, params, context).await }.await;
+                            async { this.call_agent(&agent_id, task, params, context).await }.await;
 
                         let _ = response_tx.send(result);
                     });
@@ -182,7 +182,7 @@ impl LocalCoordinator {
         Ok(())
     }
 
-    async fn run_task(
+    async fn call_agent(
         &self,
         agent_id: &str,
         task: TaskStep,
@@ -420,7 +420,7 @@ impl AgentCoordinator for LocalCoordinator {
         task: TaskStep,
         params: Option<serde_json::Value>,
     ) -> Result<String, AgentError> {
-        self.run_task(agent_name, task, params, self.context.clone())
+        self.call_agent(agent_name, task, params, self.context.clone())
             .await
     }
 }
