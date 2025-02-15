@@ -27,6 +27,7 @@ enum ClientTransport {
     Stdio(ClientStdioTransport),
 }
 
+const TOOL_SEPARATOR: &str = "---";
 #[async_trait::async_trait]
 impl Transport for ClientTransport {
     async fn send(&self, message: &Message) -> Result<()> {
@@ -337,9 +338,11 @@ impl McpProxy {
         let tools = self.tools_cache.lock().await;
         let mut all_tools = Vec::new();
 
-        for (_server_name, server_tools) in tools.iter() {
+        for (server_name, server_tools) in tools.iter() {
             for tool in server_tools {
-                all_tools.push(tool.clone());
+                let mut tool = tool.clone();
+                tool.name = format!("{}{TOOL_SEPARATOR}{}", server_name, tool.name);
+                all_tools.push(tool);
             }
         }
         let response = ToolsListResponse {
@@ -353,15 +356,13 @@ impl McpProxy {
 
     async fn handle_tool(&self, req: CallToolRequest) -> Result<CallToolResponse> {
         // Check if server is specified in the request
-        if let Some(server_name) = req
-            .meta
-            .as_ref()
-            .and_then(|m| m.get("server"))
-            .and_then(|s| s.as_str())
-            .map(String::from)
-        {
-            if let Some(server) = self.config.servers.get(&server_name) {
-                info!("Executing tool {} on server {}", req.name, server_name);
+        let name = req.name.clone();
+        let server_name = name.split(TOOL_SEPARATOR).collect::<Vec<&str>>();
+
+        if server_name.len() == 2 {
+            let server_name = server_name[0];
+            if let Some(server) = self.config.servers.get(server_name) {
+                info!("Executing tool {} on server {}", name, server_name);
                 debug!("Tool request: {:?}", req);
                 if let Ok(client) = self.get_or_create_client(&server_name, server).await {
                     let response = client

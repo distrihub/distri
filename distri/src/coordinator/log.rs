@@ -1,4 +1,4 @@
-use comfy_table::Table;
+use comfy_table::{modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL, ContentArrangement, Table};
 use tracing::info;
 
 use crate::memory::MemoryStep;
@@ -18,7 +18,11 @@ impl StepLogger {
             return;
         }
 
-        let mut table = Table::new();
+        let mut table = Table::new()
+            .load_preset(UTF8_FULL)
+            .apply_modifier(UTF8_ROUND_CORNERS)
+            .set_content_arrangement(ContentArrangement::Dynamic)
+            .to_owned();
         table.set_header(vec!["Agent", "Step Type", "Details"]);
 
         match step {
@@ -66,7 +70,11 @@ impl ModelLogger {
             return;
         }
 
-        let mut table = Table::new();
+        let mut table = Table::new()
+            .load_preset(UTF8_FULL)
+            .apply_modifier(UTF8_ROUND_CORNERS)
+            .set_content_arrangement(ContentArrangement::Dynamic)
+            .to_owned();
         table.set_header(vec!["Model", "Messages", "Settings", "Token Usage"]);
 
         let settings_str = settings.unwrap_or("None");

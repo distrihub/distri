@@ -12,6 +12,7 @@ use async_mcp::{
     transport::Transport,
     types::{CallToolRequest, CallToolResponse, ToolResponseContent},
 };
+use regex::Regex;
 use serde_json::{json, Value};
 use tokio::sync::RwLock;
 use tracing::debug;
@@ -124,8 +125,14 @@ pub async fn get_tools(
                     let before_count = tools.len();
                     tools.retain_mut(|tool| {
                         let found = selected.iter().find(|t| {
-                            debug!("{} {}", t.name, tool.name);
-                            *t.name == tool.name
+                            if tool.name == t.name {
+                                true
+                            } else if let Ok(name_regex) = Regex::new(&t.name) {
+                                debug!("Matching {} against pattern {}", tool.name, t.name);
+                                name_regex.is_match(&tool.name)
+                            } else {
+                                false
+                            }
                         });
                         if let Some(Some(d)) = found.as_ref().map(|t| t.description.as_ref()) {
                             tool.description = Some(d.clone());

@@ -4,7 +4,6 @@ use async_openai::config::Config;
 use reqwest::header::{HeaderMap, HeaderName, AUTHORIZATION};
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
-use tokio::runtime::Handle;
 
 use crate::coordinator::CoordinatorContext;
 /// Using LangDB as a gateway for OpenAI

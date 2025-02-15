@@ -102,16 +102,9 @@ async fn main() -> Result<()> {
         Commands::ListTools => {
             debug!("Available tools:");
             let config = load_config(cli.config.to_str().unwrap())?;
-            let (_, coordinator) = init_all(&config).await?;
-            for agent in &config.agents {
-                coordinator.register_agent(agent.definition.clone()).await?;
-            }
-            let coordinator_clone = coordinator.clone();
-            let coordinator_handle = tokio::spawn(async move {
-                coordinator_clone.run().await.unwrap();
-            });
-            run::list::list_tools(coordinator.clone()).await?;
-            coordinator_handle.abort();
+            let (registry, _) = init_all(&config).await?;
+
+            run::list::list_tools(registry.clone()).await?;
         }
         Commands::ConfigSchema { pretty } => print_schema(pretty),
         Commands::Run { agent } => {
