@@ -357,14 +357,17 @@ impl McpProxy {
     async fn handle_tool(&self, req: CallToolRequest) -> Result<CallToolResponse> {
         // Check if server is specified in the request
         let name = req.name.clone();
-        let server_name = name.split(TOOL_SEPARATOR).collect::<Vec<&str>>();
+        let server_name_parts = name.split(TOOL_SEPARATOR).collect::<Vec<&str>>();
 
-        if server_name.len() == 2 {
-            let server_name = server_name[0];
+        if server_name_parts.len() == 2 {
+            let server_name = server_name_parts[0];
+            let function_name = server_name_parts[1];
             if let Some(server) = self.config.servers.get(server_name) {
                 info!("Executing tool {} on server {}", name, server_name);
                 debug!("Tool request: {:?}", req);
                 if let Ok(client) = self.get_or_create_client(&server_name, server).await {
+                    let mut req = req.clone();
+                    req.name = function_name.to_string();
                     let response = client
                         .request(
                             "tools/call",
