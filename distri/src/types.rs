@@ -198,7 +198,11 @@ pub struct ToolCall {
 #[serde(rename_all = "lowercase")]
 pub enum ModelProvider {
     OpenAI,
-    AIGateway,
+    AIGateway {
+        base_url: Option<String>,
+        api_key: Option<String>,
+        model: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -232,13 +236,17 @@ impl Default for ModelSettings {
             frequency_penalty: 0.0,
             presence_penalty: 0.0,
             max_iterations: 10,
-            model_provider: ModelProvider::AIGateway,
+            model_provider: default_model_provider(),
         }
     }
 }
 
 fn default_model_provider() -> ModelProvider {
-    ModelProvider::AIGateway
+    ModelProvider::AIGateway {
+        base_url: None,
+        api_key: None,
+        model: None,
+    }
 }
 
 // Add these default helper functions after the existing default_actions_filter function

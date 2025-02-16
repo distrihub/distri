@@ -326,13 +326,25 @@ async fn completion(
     context: Arc<CoordinatorContext>,
     additional_tags: HashMap<String, String>,
 ) -> Result<CreateChatCompletionResponse, AgentError> {
-    let response = match agent_def.model_settings.model_provider {
-        ModelProvider::AIGateway => {
-            let client = Client::with_config(
-                GatewayConfig::default()
-                    .with_context(context)
-                    .with_additional_tags(additional_tags),
-            );
+    let response = match &agent_def.model_settings.model_provider {
+        ModelProvider::AIGateway {
+            base_url,
+            api_key,
+            model: project_id,
+        } => {
+            let mut config = GatewayConfig::default()
+                .with_context(context)
+                .with_additional_tags(additional_tags);
+            if let Some(base_url) = base_url {
+                config = config.with_api_base(base_url);
+            }
+            if let Some(api_key) = api_key {
+                config = config.with_api_key(api_key);
+            }
+            if let Some(project_id) = project_id {
+                config = config.with_project_id(project_id);
+            }
+            let client = Client::with_config(config);
             client.chat().create(request).await
         }
         ModelProvider::OpenAI => {
