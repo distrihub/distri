@@ -330,7 +330,7 @@ async fn completion(
         ModelProvider::AIGateway {
             base_url,
             api_key,
-            model: project_id,
+            project_id,
         } => {
             let mut config = GatewayConfig::default()
                 .with_context(context)

@@ -201,7 +201,7 @@ pub enum ModelProvider {
     AIGateway {
         base_url: Option<String>,
         api_key: Option<String>,
-        model: Option<String>,
+        project_id: Option<String>,
     },
 }
 
@@ -245,7 +245,7 @@ fn default_model_provider() -> ModelProvider {
     ModelProvider::AIGateway {
         base_url: None,
         api_key: None,
-        model: None,
+        project_id: None,
     }
 }
 
