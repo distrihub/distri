@@ -216,7 +216,7 @@ checksum = "512761e0bb2578dd7380c6baaa0f4ce03e84f95e960231d1dec8bf4d7d6e2627"
 [[package]]
 name = "agent-twitter-client"
 version = "0.1.2"
-source = "git+https://github.com/DistriLabs/agent-twitter-client.git?rev=019a59829af72c9410233529b098e67bb4a568f9#019a59829af72c9410233529b098e67bb4a568f9"
+source = "git+https://github.com/distrihub/agent-twitter-client.git?rev=019a59829af72c9410233529b098e67bb4a568f9#019a59829af72c9410233529b098e67bb4a568f9"
 dependencies = [
  "async-trait",
  "chrono",
@@ -995,6 +995,7 @@ dependencies = [
  "dotenv",
  "futures",
  "jsonschema",
+ "openssl",
  "regex",
  "reqwest 0.12.12",
  "rustyline",
@@ -2253,6 +2254,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ff011a302c396a5197692431fc1948019154afc178baf7d8e37367442a4601cf"
 
 [[package]]
+name = "openssl-src"
+version = "300.4.2+3.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "168ce4e058f975fe43e89d9ccf78ca668601887ae736090aacc23ae353c298e2"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "openssl-sys"
 version = "0.9.104"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2260,6 +2270,7 @@ checksum = "45abf306cbf99debc8195b66b7346498d7b10c210de50418b5ccd7ceba08c741"
 dependencies = [
  "cc",
  "libc",
+ "openssl-src",
  "pkg-config",
  "vcpkg",
 ]

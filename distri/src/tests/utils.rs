@@ -11,7 +11,7 @@ use crate::{
 
 pub fn get_tools_session_store() -> Option<Arc<Box<dyn ToolSessionStore>>> {
     dotenv::dotenv().ok();
-    let session_key = std::env::var("LYNEL_SESSION").unwrap();
+    let session_key = std::env::var("X_USER_SESSION").unwrap();
     // Create executor with static session store
 
     Some(Arc::new(

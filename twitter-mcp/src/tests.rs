@@ -18,7 +18,7 @@ async fn test_methods() -> anyhow::Result<()> {
         .init();
 
     dotenv::dotenv().ok();
-    let session = env::var("LYNEL_SESSION").unwrap();
+    let session = env::var("X_USER_SESSION").unwrap();
 
     // Create transports
     let client_transport = ClientInMemoryTransport::new(|t| tokio::spawn(async_server(t)));

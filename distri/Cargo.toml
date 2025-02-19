@@ -37,3 +37,8 @@ tempfile = "3.15.0"
 [[bin]]
 name = "distri"
 path = "src/main.rs"
+
+
+[dependencies.openssl]
+version = "0.10"
+features = ["vendored"]
