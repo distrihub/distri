@@ -198,7 +198,7 @@ mod tests {
         ) {
             let metadata = ServerMetadata {
                 auth_session_key: Default::default(),
-                mcp_transport: crate::types::TransportType::Async,
+                mcp_transport: crate::types::TransportType::InMemory { arguments: None },
                 memories: HashMap::from([(
                     "agent1".to_string(),
                     memory as Arc<Mutex<dyn AgentMemory>>,

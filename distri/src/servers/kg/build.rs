@@ -385,7 +385,7 @@ mod tests {
         async fn async_server(transport: ServerInMemoryTransport, memory: Arc<Mutex<FileMemory>>) {
             let metadata = ServerMetadata {
                 auth_session_key: Default::default(),
-                mcp_transport: crate::types::TransportType::Async,
+                mcp_transport: crate::types::TransportType::InMemory { arguments: None },
                 kg_memory: Some(memory.clone()),
                 memories: HashMap::new(),
                 builder: None,

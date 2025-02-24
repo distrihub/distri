@@ -44,11 +44,21 @@ pub struct ProxyMcpServer {
 #[serde(tag = "type")]
 pub enum ProxyMcpServerType {
     #[serde(rename = "stdio")]
-    Stdio { command: String, args: Vec<String> },
+    Stdio {
+        command: String,
+        args: Vec<String>,
+        #[serde(flatten, skip_serializing_if = "Option::is_none")]
+        env_vars: Option<HashMap<String, String>>,
+    },
     #[serde(rename = "sse")]
     SSE {
         url: String,
-        auth: Option<ProxyTransportAuth>,
+        headers: Option<HashMap<String, String>>,
+    },
+    #[serde(rename = "ws")]
+    WS {
+        url: String,
+        headers: Option<HashMap<String, String>>,
     },
 }
 

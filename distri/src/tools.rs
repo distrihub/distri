@@ -38,7 +38,7 @@ const TRANSPORT_TIMEOUT: Duration = Duration::from_secs(120);
 macro_rules! with_transport {
     ($metadata:expr, $body:expr) => {
         match &$metadata.mcp_transport {
-            TransportType::Async => {
+            TransportType::InMemory { arguments } => {
                 let metadata = $metadata.clone();
                 let client_transport = ClientInMemoryTransport::new(move |t| {
                     let metadata = metadata.clone();
@@ -48,25 +48,54 @@ macro_rules! with_transport {
                 Box::pin(async move { $body(client_transport).await })
                     as Pin<Box<dyn Future<Output = _> + Send>>
             }
-            TransportType::Stdio { command, args } => {
+            TransportType::Stdio {
+                command,
+                args,
+                env_vars,
+            } => {
                 let transport = async_mcp::transport::ClientStdioTransport::new(
                     command,
                     args.iter().map(|s| s.as_str()).collect::<Vec<_>>().as_ref(),
+                    env_vars.clone(),
                 )?;
                 transport.open().await?;
                 Box::pin(async move { $body(transport).await })
                     as Pin<Box<dyn Future<Output = _> + Send>>
             }
-            TransportType::SSE { server_url, auth } => {
-                let transport =
+            TransportType::WS {
+                server_url,
+                headers,
+            } => {
+                let mut transport =
                     async_mcp::transport::ClientSseTransport::builder(server_url.clone());
 
-                let transport = match auth {
-                    Some(TransportAuth::Bearer(token)) => {
-                        transport.with_header("Authorization", format!("Bearer {token}"))
+                let transport = match headers {
+                    Some(headers) => {
+                        for (key, value) in headers.iter() {
+                            transport = transport.with_header(key, value);
+                        }
+                        transport
                     }
-                    Some(TransportAuth::JwtSecret(jwt_secret)) => {
-                        transport.with_auth(jwt_secret.clone())
+                    None => transport,
+                }
+                .build();
+                transport.open().await?;
+                Box::pin(async move { $body(transport).await })
+                    as Pin<Box<dyn Future<Output = _> + Send>>
+            }
+            TransportType::SSE {
+                server_url,
+                headers,
+            } => {
+                let mut transport =
+                    async_mcp::transport::ClientSseTransport::builder(server_url.clone());
+
+                let transport = match headers {
+                    Some(headers) => {
+                        for (key, value) in headers.iter() {
+                            transport = transport.with_header(key, value);
+                        }
+                        transport
                     }
                     None => transport,
                 }

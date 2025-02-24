@@ -3,7 +3,10 @@ use async_mcp::{
     client::ClientBuilder,
     protocol::RequestOptions,
     server::Server,
-    transport::{ClientSseTransport, ClientStdioTransport, Message, Transport},
+    transport::{
+        ClientSseTransport, ClientStdioTransport, ClientWsTransport, ClientWsTransportBuilder,
+        Message, Transport,
+    },
     types::{
         CallToolRequest, CallToolResponse, ListRequest, ResourcesListResponse, ServerCapabilities,
         Tool, ToolResponseContent, ToolsListResponse,
@@ -25,6 +28,7 @@ use crate::types::{
 enum ClientTransport {
     SSE(ClientSseTransport),
     Stdio(ClientStdioTransport),
+    WS(ClientWsTransport),
 }
 
 const TOOL_SEPARATOR: &str = "---";
@@ -34,6 +38,7 @@ impl Transport for ClientTransport {
         match self {
             ClientTransport::SSE(t) => t.send(message).await,
             ClientTransport::Stdio(t) => t.send(message).await,
+            ClientTransport::WS(t) => t.send(message).await,
         }
     }
 
@@ -41,6 +46,7 @@ impl Transport for ClientTransport {
         match self {
             ClientTransport::SSE(t) => t.receive().await,
             ClientTransport::Stdio(t) => t.receive().await,
+            ClientTransport::WS(t) => t.receive().await,
         }
     }
 
@@ -48,12 +54,14 @@ impl Transport for ClientTransport {
         match self {
             ClientTransport::SSE(t) => t.close().await,
             ClientTransport::Stdio(t) => t.close().await,
+            ClientTransport::WS(t) => t.close().await,
         }
     }
     async fn open(&self) -> Result<()> {
         match self {
             ClientTransport::SSE(t) => t.open().await?,
             ClientTransport::Stdio(t) => t.open().await?,
+            ClientTransport::WS(t) => t.open().await?,
         }
         Ok(())
     }
@@ -95,14 +103,14 @@ impl McpProxy {
         }
 
         let transport = match &server.server_type {
-            ProxyMcpServerType::SSE { url, auth } => {
-                let transport = ClientSseTransport::builder(url.clone());
-                let transport = match auth {
-                    Some(ProxyTransportAuth::Bearer(token)) => {
-                        transport.with_header("Authorization", format!("Bearer {token}"))
-                    }
-                    Some(ProxyTransportAuth::JwtSecret(jwt_secret)) => {
-                        transport.with_auth(jwt_secret.clone())
+            ProxyMcpServerType::SSE { url, headers } => {
+                let mut transport = ClientSseTransport::builder(url.clone());
+                let transport = match headers {
+                    Some(headers) => {
+                        for (key, value) in headers.iter() {
+                            transport = transport.with_header(key, value);
+                        }
+                        transport
                     }
                     None => transport,
                 }
@@ -110,16 +118,36 @@ impl McpProxy {
 
                 ClientTransport::SSE(transport)
             }
-            ProxyMcpServerType::Stdio { command, args } => {
+            ProxyMcpServerType::Stdio {
+                command,
+                args,
+                env_vars,
+            } => {
                 let args: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-                let transport = ClientStdioTransport::new(command.as_str(), &args)?;
+                let transport =
+                    ClientStdioTransport::new(command.as_str(), &args, env_vars.clone())?;
                 ClientTransport::Stdio(transport)
+            }
+            ProxyMcpServerType::WS { url, headers } => {
+                let mut transport = ClientWsTransportBuilder::new(url.clone());
+                let transport = match headers {
+                    Some(headers) => {
+                        for (key, value) in headers.iter() {
+                            transport = transport.with_header(key, value);
+                        }
+                        transport
+                    }
+                    None => transport,
+                }
+                .build();
+                ClientTransport::WS(transport)
             }
         };
 
         match &transport {
             ClientTransport::SSE(t) => t.open().await?,
             ClientTransport::Stdio(t) => t.open().await?,
+            ClientTransport::WS(t) => t.open().await?,
         }
 
         let client = ClientBuilder::new(transport).build();

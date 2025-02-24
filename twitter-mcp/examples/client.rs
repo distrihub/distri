@@ -17,7 +17,7 @@ async fn main() -> Result<()> {
         .init();
 
     // Create transport connected to cat command which will stay alive
-    let transport = ClientStdioTransport::new("./mcp_test.sh", &[])?;
+    let transport = ClientStdioTransport::new("./mcp_test.sh", &[], None)?;
 
     // Open transport
     transport.open().await?;

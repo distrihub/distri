@@ -3,7 +3,7 @@ use async_mcp::types::Tool;
 use distri_proxy::types::ProxyServerConfig;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::{self, json};
+use serde_json::{self, json, Value};
 use std::{collections::HashMap, time::SystemTime};
 
 use crate::servers::registry::ServerMetadata;
@@ -25,15 +25,25 @@ pub enum _AuthType {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, untagged)]
 pub enum TransportType {
-    Async,
+    InMemory {
+        #[serde(flatten, skip_serializing_if = "Option::is_none")]
+        arguments: Option<HashMap<String, Value>>,
+    },
     SSE {
         server_url: String,
         #[serde(flatten, skip_serializing_if = "Option::is_none")]
-        auth: Option<TransportAuth>,
+        headers: Option<HashMap<String, String>>,
+    },
+    WS {
+        server_url: String,
+        #[serde(flatten, skip_serializing_if = "Option::is_none")]
+        headers: Option<HashMap<String, String>>,
     },
     Stdio {
         command: String,
         args: Vec<String>,
+        #[serde(flatten, skip_serializing_if = "Option::is_none")]
+        env_vars: Option<HashMap<String, String>>,
     },
 }
 
