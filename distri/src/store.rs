@@ -3,13 +3,18 @@ use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
 
 use crate::{
+    coordinator::CoordinatorContext,
     memory::{LocalAgentMemory, MemoryStep},
     types::{McpSession, Message},
 };
 
 #[async_trait]
 pub trait ToolSessionStore: Send + Sync {
-    async fn get_session(&self, tool_name: &str) -> anyhow::Result<Option<McpSession>>;
+    async fn get_session(
+        &self,
+        server_name: &str,
+        context: &CoordinatorContext,
+    ) -> anyhow::Result<Option<McpSession>>;
 }
 
 // Example in-memory implementation
@@ -26,8 +31,12 @@ impl InMemorySessionStore {
 
 #[async_trait]
 impl ToolSessionStore for InMemorySessionStore {
-    async fn get_session(&self, tool_name: &str) -> anyhow::Result<Option<McpSession>> {
-        Ok(self.mcp_sessions.get(tool_name).cloned())
+    async fn get_session(
+        &self,
+        server_name: &str,
+        _context: &CoordinatorContext,
+    ) -> anyhow::Result<Option<McpSession>> {
+        Ok(self.mcp_sessions.get(server_name).cloned())
     }
 }
 

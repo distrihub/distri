@@ -19,9 +19,9 @@ use tracing::debug;
 
 use crate::coordinator::CoordinatorContext;
 use crate::servers::registry::{ServerMetadata, ServerRegistry};
+use crate::types::TransportType;
 use crate::types::{McpDefinition, ToolCall};
 use crate::types::{ServerTools, ToolsFilter};
-use crate::types::{TransportAuth, TransportType};
 use crate::ToolSessionStore;
 
 async fn async_server(metadata: ServerMetadata, transport: ServerInMemoryTransport) -> Result<()> {
@@ -38,7 +38,7 @@ const TRANSPORT_TIMEOUT: Duration = Duration::from_secs(120);
 macro_rules! with_transport {
     ($metadata:expr, $body:expr) => {
         match &$metadata.mcp_transport {
-            TransportType::InMemory { arguments } => {
+            TransportType::InMemory => {
                 let metadata = $metadata.clone();
                 let client_transport = ClientInMemoryTransport::new(move |t| {
                     let metadata = metadata.clone();
@@ -255,19 +255,23 @@ impl<T: Transport + Clone> ToolExecutor<T> {
         tracing::info!("Executing tool: {name}, mcp_server: {mcp_server}");
 
         tracing::info!("Parsing tool arguments: {}", tool_call.input);
-        let mut args: HashMap<String, Value> =
+        let args: HashMap<String, Value> =
             serde_json::from_str(&tool_call.input).unwrap_or_default();
 
+        let mut meta = None;
         // Insert session into arguments if available
         if let Some(store) = tool_sessions {
             tracing::debug!(
                 "Attempting to retrieve session for mcp_server: {}",
                 mcp_server
             );
-            if let Some(session) = store.get_session(mcp_server).await? {
+            if let Some(session) = store.get_session(mcp_server, &self._context).await? {
                 if let Some(session_key) = &metadata.auth_session_key {
                     tracing::debug!("Injecting session data for mcp_server: {}", mcp_server);
-                    args.insert(session_key.clone(), Value::String(session.token.clone()));
+                    meta = Some(serde_json::to_value(HashMap::from([(
+                        session_key.clone(),
+                        serde_json::to_value(session.token)?,
+                    )]))?);
                 } else {
                     tracing::warn!("auth_session_key not provided: {}", mcp_server);
                 }
@@ -279,7 +283,7 @@ impl<T: Transport + Clone> ToolExecutor<T> {
         let request = CallToolRequest {
             name: name.clone(),
             arguments: Some(args),
-            meta: None,
+            meta: meta,
         };
 
         let params = serde_json::to_value(request)?;

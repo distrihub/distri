@@ -121,7 +121,7 @@ pub async fn init_registry_and_coordinator(
         "twitter".to_string(),
         ServerMetadata {
             auth_session_key: Some("session_string".to_string()),
-            mcp_transport: TransportType::InMemory { arguments: None },
+            mcp_transport: TransportType::InMemory,
             kg_memory: None,
             builder: Some(Arc::new(|_, transport| {
                 let server = twitter_mcp::build(transport)?;
@@ -162,7 +162,7 @@ pub async fn init_registry_and_coordinator(
         "file_memory".to_string(),
         ServerMetadata {
             auth_session_key: None,
-            mcp_transport: TransportType::InMemory { arguments: None },
+            mcp_transport: TransportType::InMemory,
             memories: local_memories,
             builder: Some(Arc::new(|metadata, transport| {
                 let server = crate::memory::build::build(metadata, transport)?;
@@ -176,7 +176,7 @@ pub async fn init_registry_and_coordinator(
         "web_search".to_string(),
         ServerMetadata {
             auth_session_key: None,
-            mcp_transport: TransportType::InMemory { arguments: None },
+            mcp_transport: TransportType::InMemory,
             kg_memory: None,
             builder: Some(Arc::new(|_, transport| {
                 let server = tavily::build(transport)?;
@@ -191,7 +191,7 @@ pub async fn init_registry_and_coordinator(
         DISTRI_LOCAL_SERVER.to_string(),
         ServerMetadata {
             auth_session_key: None,
-            mcp_transport: TransportType::InMemory { arguments: None },
+            mcp_transport: TransportType::InMemory,
             kg_memory: None,
             builder: Some(Arc::new(move |_, transport| {
                 let coordinator = coordinator.clone();

@@ -9,14 +9,15 @@ use async_mcp::types::{
     ResourcesListResponse, ServerCapabilities, Tool, ToolResponseContent,
 };
 use serde_json::json;
-use std::collections::HashMap;
+use serde_json::Value;
 use tracing::info;
 use url::Url;
 
 // Helper to extract session string from arguments
-async fn get_session(args: &HashMap<String, serde_json::Value>) -> Result<Scraper> {
+async fn get_session(args: &Option<Value>) -> Result<Scraper> {
     let session = args
-        .get("session_string")
+        .as_ref()
+        .and_then(|v| v.get("session_string"))
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
         .ok_or_else(|| anyhow::anyhow!("Missing or invalid session_string"))?;
@@ -163,9 +164,9 @@ fn register_tools<T: Transport>(server: &mut ServerBuilder<T>) -> Result<()> {
     server.register_tool(messages_tool, |req: CallToolRequest| {
         Box::pin(async move {
             let args = req.arguments.unwrap_or_default();
-
+            let meta = req.meta;
             let result: Result<CallToolResponse, anyhow::Error> = async {
-                let scraper = get_session(&args).await?;
+                let scraper = get_session(&meta).await?;
                 let username = args["username"].as_str().unwrap();
 
                 let messages = scraper
@@ -202,9 +203,9 @@ fn register_tools<T: Transport>(server: &mut ServerBuilder<T>) -> Result<()> {
     server.register_tool(profile_tool, |req: CallToolRequest| {
         Box::pin(async move {
             let args = req.arguments.unwrap_or_default();
-
+            let meta = req.meta;
             let result: Result<CallToolResponse, anyhow::Error> = async {
-                let scraper = get_session(&args).await?;
+                let scraper = get_session(&meta).await?;
                 let username = args["username"].as_str().unwrap();
 
                 let profile = scraper.get_profile(username).await?;
@@ -239,9 +240,9 @@ fn register_tools<T: Transport>(server: &mut ServerBuilder<T>) -> Result<()> {
     server.register_tool(timeline_tool, |req: CallToolRequest| {
         Box::pin(async move {
             let args = req.arguments.unwrap_or_default();
-
+            let meta = req.meta;
             let result: Result<CallToolResponse, anyhow::Error> = async {
-                let scraper = get_session(&args).await?;
+                let scraper = get_session(&meta).await?;
                 let count = args.get("count").and_then(|v| v.as_u64()).unwrap_or(10) as i32;
 
                 info!("Getting timeline with count: {count}");
@@ -280,9 +281,9 @@ fn register_tools<T: Transport>(server: &mut ServerBuilder<T>) -> Result<()> {
     server.register_tool(trends_tool, |req: CallToolRequest| {
         Box::pin(async move {
             let args = req.arguments.unwrap_or_default();
-
+            let meta = req.meta;
             let result: Result<CallToolResponse, anyhow::Error> = async {
-                let scraper = get_session(&args).await?;
+                let scraper = get_session(&meta).await?;
                 let count = args.get("count").and_then(|v| v.as_u64()).unwrap_or(20) as i16;
 
                 // First get explore timelines
@@ -324,9 +325,9 @@ fn register_tools<T: Transport>(server: &mut ServerBuilder<T>) -> Result<()> {
     server.register_tool(search_tool, |req: CallToolRequest| {
         Box::pin(async move {
             let args = req.arguments.unwrap_or_default();
-
+            let meta = req.meta;
             let result: Result<CallToolResponse, anyhow::Error> = async {
-                let scraper = get_session(&args).await?;
+                let scraper = get_session(&meta).await?;
                 let query = args["query"].as_str().context("query is missing")?;
                 let max_tweets = args
                     .get("max_tweets")
@@ -373,9 +374,9 @@ fn register_tools<T: Transport>(server: &mut ServerBuilder<T>) -> Result<()> {
     server.register_tool(send_tweet_tool, |req: CallToolRequest| {
         Box::pin(async move {
             let args = req.arguments.unwrap_or_default();
-
+            let meta = req.meta;
             let result: Result<CallToolResponse, anyhow::Error> = async {
-                let scraper = get_session(&args).await?;
+                let scraper = get_session(&meta).await?;
                 let text = args["text"].as_str().context("text is missing")?;
                 let reply_to = args.get("reply_to").and_then(|v| v.as_str());
 

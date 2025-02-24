@@ -25,7 +25,11 @@ pub struct StaticSessionStore {
 
 #[async_trait::async_trait]
 impl ToolSessionStore for StaticSessionStore {
-    async fn get_session(&self, _tool_name: &str) -> anyhow::Result<Option<McpSession>> {
+    async fn get_session(
+        &self,
+        _tool_name: &str,
+        _context: &CoordinatorContext,
+    ) -> anyhow::Result<Option<McpSession>> {
         Ok(Some(McpSession {
             token: self.session_key.clone(),
             expiry: None,
@@ -49,7 +53,7 @@ pub async fn get_registry() -> Arc<RwLock<ServerRegistry>> {
         "twitter".to_string(),
         ServerMetadata {
             auth_session_key: Some("session_string".to_string()),
-            mcp_transport: TransportType::InMemory { arguments: None },
+            mcp_transport: TransportType::InMemory,
             builder: Some(Arc::new(|_, transport| {
                 let server = twitter_mcp::build(transport)?;
                 Ok(Box::new(server) as Box<dyn ServerTrait>)
@@ -72,7 +76,7 @@ pub async fn register_coordinator(
         DISTRI_LOCAL_SERVER.to_string(),
         ServerMetadata {
             auth_session_key: None,
-            mcp_transport: TransportType::InMemory { arguments: None },
+            mcp_transport: TransportType::InMemory,
             kg_memory: None,
             builder: Some(Arc::new(move |_, transport| {
                 let coordinator = coordinator.clone();

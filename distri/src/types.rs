@@ -25,10 +25,7 @@ pub enum _AuthType {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, untagged)]
 pub enum TransportType {
-    InMemory {
-        #[serde(flatten, skip_serializing_if = "Option::is_none")]
-        arguments: Option<HashMap<String, Value>>,
-    },
+    InMemory,
     SSE {
         server_url: String,
         #[serde(flatten, skip_serializing_if = "Option::is_none")]

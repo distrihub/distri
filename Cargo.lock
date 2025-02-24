@@ -347,7 +347,8 @@ checksum = "34ac096ce696dc2fcabef30516bb13c0a68a11d30131d3df6f04711467681b04"
 [[package]]
 name = "async-mcp"
 version = "0.1.0"
-source = "git+https://github.com/v3g42/async-mcp.git?rev=113e1a5#113e1a5fb57c5e420ccfce791f06959f15393e48"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bfae921d727062db2fbe4340d2e49df9edbb5e4e2882887e5219ccf9f399d5cf"
 dependencies = [
  "actix-web",
  "actix-ws",

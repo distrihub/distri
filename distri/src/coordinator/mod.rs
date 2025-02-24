@@ -96,6 +96,7 @@ pub struct CoordinatorContext {
     pub thread_id: String,
     pub run_id: Mutex<String>,
     pub verbose: bool,
+    pub user_id: Option<String>,
 }
 impl Default for CoordinatorContext {
     fn default() -> Self {
@@ -103,16 +104,18 @@ impl Default for CoordinatorContext {
             uuid::Uuid::new_v4().to_string(),
             uuid::Uuid::new_v4().to_string(),
             true,
+            None,
         )
     }
 }
 
 impl CoordinatorContext {
-    pub fn new(thread_id: String, run_id: String, verbose: bool) -> Self {
+    pub fn new(thread_id: String, run_id: String, verbose: bool, user_id: Option<String>) -> Self {
         Self {
             thread_id,
             run_id: Mutex::new(run_id),
             verbose,
+            user_id,
         }
     }
 
