@@ -1,4 +1,7 @@
 mod server;
+use std::collections::HashMap;
+
+use serde_json::Value;
 pub use server::{build_server, DISTRI_LOCAL_SERVER};
 mod local;
 pub use local::*;
@@ -97,6 +100,8 @@ pub struct CoordinatorContext {
     pub run_id: Mutex<String>,
     pub verbose: bool,
     pub user_id: Option<String>,
+    /// Add additional context for tools to use passed as meta in MCP calls
+    pub tools_context: HashMap<String, HashMap<String, Value>>,
 }
 impl Default for CoordinatorContext {
     fn default() -> Self {
@@ -105,17 +110,25 @@ impl Default for CoordinatorContext {
             uuid::Uuid::new_v4().to_string(),
             true,
             None,
+            HashMap::new(),
         )
     }
 }
 
 impl CoordinatorContext {
-    pub fn new(thread_id: String, run_id: String, verbose: bool, user_id: Option<String>) -> Self {
+    pub fn new(
+        thread_id: String,
+        run_id: String,
+        verbose: bool,
+        user_id: Option<String>,
+        tools_context: HashMap<String, HashMap<String, Value>>,
+    ) -> Self {
         Self {
             thread_id,
             run_id: Mutex::new(run_id),
             verbose,
             user_id,
+            tools_context,
         }
     }
 

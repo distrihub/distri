@@ -232,7 +232,7 @@ pub async fn execute_tool(
 
 pub struct ToolExecutor<T: Transport> {
     client: Client<T>,
-    _context: Arc<CoordinatorContext>,
+    context: Arc<CoordinatorContext>,
 }
 
 impl<T: Transport + Clone> ToolExecutor<T> {
@@ -240,7 +240,7 @@ impl<T: Transport + Clone> ToolExecutor<T> {
         tracing::debug!("Creating new ToolExecutor");
         Self {
             client: ClientBuilder::new(transport).build(),
-            _context: context,
+            context: context,
         }
     }
 
@@ -258,20 +258,17 @@ impl<T: Transport + Clone> ToolExecutor<T> {
         let args: HashMap<String, Value> =
             serde_json::from_str(&tool_call.input).unwrap_or_default();
 
-        let mut meta = None;
+        let mut meta = HashMap::new();
         // Insert session into arguments if available
         if let Some(store) = tool_sessions {
             tracing::debug!(
                 "Attempting to retrieve session for mcp_server: {}",
                 mcp_server
             );
-            if let Some(session) = store.get_session(mcp_server, &self._context).await? {
+            if let Some(session) = store.get_session(mcp_server, &self.context).await? {
                 if let Some(session_key) = &metadata.auth_session_key {
                     tracing::debug!("Injecting session data for mcp_server: {}", mcp_server);
-                    meta = Some(serde_json::to_value(HashMap::from([(
-                        session_key.clone(),
-                        serde_json::to_value(session.token)?,
-                    )]))?);
+                    meta.insert(session_key.clone(), serde_json::to_value(session.token)?);
                 } else {
                     tracing::warn!("auth_session_key not provided: {}", mcp_server);
                 }
@@ -280,6 +277,24 @@ impl<T: Transport + Clone> ToolExecutor<T> {
             }
         }
 
+        debug!(
+            "mcp_server: {}, self.context.tools_context: {:?}",
+            mcp_server, self.context.tools_context
+        );
+        // Add additional context for tools to use passed as meta in MCP calls
+        for (key, context) in &self.context.tools_context {
+            if key == mcp_server {
+                for (context_key, context_value) in context {
+                    meta.insert(context_key.clone(), context_value.clone());
+                }
+            }
+        }
+        debug!("meta: {:?}", meta);
+        let meta = if meta.is_empty() {
+            None
+        } else {
+            Some(serde_json::to_value(meta)?)
+        };
         let request = CallToolRequest {
             name: name.clone(),
             arguments: Some(args),
