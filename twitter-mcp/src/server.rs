@@ -84,6 +84,12 @@ fn register_tools<T: Transport>(server: &mut ServerBuilder<T>) -> Result<()> {
             "required": ["username"],
             "additionalProperties": false
         }),
+        output_schema: Some(json!({
+            "type": "object",
+            "properties": {
+                "messages": {"type": "array", "items": {"type": "object"}}
+            },
+        })),
     };
 
     // Profile Tool
@@ -98,6 +104,12 @@ fn register_tools<T: Transport>(server: &mut ServerBuilder<T>) -> Result<()> {
             "required": ["username"],
             "additionalProperties": false
         }),
+        output_schema: Some(json!({
+            "type": "object",
+            "properties": {
+                "profile": {"type": "object"}
+            },
+        })),
     };
 
     // Timeline Tool
@@ -112,6 +124,12 @@ fn register_tools<T: Transport>(server: &mut ServerBuilder<T>) -> Result<()> {
             "required": [],
             "additionalProperties": false
         }),
+        output_schema: Some(json!({
+            "type": "object",
+            "properties": {
+                "timeline": {"type": "array", "items": {"type": "object"}}
+            },
+        })),
     };
 
     // Trends Tool
@@ -126,6 +144,12 @@ fn register_tools<T: Transport>(server: &mut ServerBuilder<T>) -> Result<()> {
             "required": [],
             "additionalProperties": false
         }),
+        output_schema: Some(json!({
+            "type": "object",
+            "properties": {
+                "trends": {"type": "array", "items": {"type": "object"}}
+            },
+        })),
     };
 
     // Search Tool
@@ -142,6 +166,12 @@ fn register_tools<T: Transport>(server: &mut ServerBuilder<T>) -> Result<()> {
             "required": ["query"],
             "additionalProperties": false
         }),
+        output_schema: Some(json!({
+            "type": "object",
+            "properties": {
+                "tweets": {"type": "array", "items": {"type": "object"}}
+            },
+        })),
     };
 
     // Send Tweet Tool
@@ -158,6 +188,12 @@ fn register_tools<T: Transport>(server: &mut ServerBuilder<T>) -> Result<()> {
             "required": ["text"],
             "additionalProperties": false
         }),
+        output_schema: Some(json!({
+            "type": "object",
+            "properties": {
+                "tweet": {"type": "object"}
+            },
+        })),
     };
 
     // Register messages tool

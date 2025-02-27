@@ -70,6 +70,12 @@ fn register_tools<T: Transport>(server: &mut ServerBuilder<T>) -> Result<()> {
             "required": ["code"],
             "additionalProperties": false
         }),
+        output_schema: Some(json!({
+            "type": "object",
+            "properties": {
+                "output": {"type": "string"}
+            },
+        })),
     };
 
     server.register_tool(python_tool, |req: CallToolRequest| {

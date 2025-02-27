@@ -62,6 +62,7 @@ fn register_tools<T: Transport>(
                 },
                 "required": ["agent_name"]
             }),
+            output_schema: None,
         },
         Tool {
             name: "get_succinct_steps".to_string(),
@@ -76,6 +77,7 @@ fn register_tools<T: Transport>(
                 },
                 "required": ["agent_name"]
             }),
+            output_schema: None,
         },
         Tool {
             name: "get_full_steps".to_string(),
@@ -90,6 +92,7 @@ fn register_tools<T: Transport>(
                 },
                 "required": ["agent_name"]
             }),
+            output_schema: None,
         },
         Tool {
             name: "add_step".to_string(),
@@ -108,6 +111,7 @@ fn register_tools<T: Transport>(
                 },
                 "required": ["agent_name", "step"]
             }),
+            output_schema: None,
         },
         Tool {
             name: "get_system_prompt".to_string(),
@@ -122,6 +126,7 @@ fn register_tools<T: Transport>(
                 },
                 "required": ["agent_name"]
             }),
+            output_schema: None,
         },
     ];
 

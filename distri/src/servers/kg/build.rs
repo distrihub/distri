@@ -73,6 +73,7 @@ fn register_tools<T: Transport>(
                 },
                 "required": ["entities"]
             }),
+            output_schema: None,
         },
         Tool {
             name: "create_relations".to_string(),
@@ -97,6 +98,7 @@ fn register_tools<T: Transport>(
                 },
                 "required": ["relations"]
             }),
+            output_schema: None,
         },
         Tool {
             name: "add_observations".to_string(),
@@ -121,6 +123,7 @@ fn register_tools<T: Transport>(
                 },
                 "required": ["observations"]
             }),
+            output_schema: None,
         },
         Tool {
             name: "delete_entities".to_string(),
@@ -137,6 +140,7 @@ fn register_tools<T: Transport>(
                 },
                 "required": ["entityNames"]
             }),
+            output_schema: None,
         },
         Tool {
             name: "delete_observations".to_string(),
@@ -161,6 +165,7 @@ fn register_tools<T: Transport>(
                 },
                 "required": ["deletions"]
             }),
+            output_schema: None,
         },
         Tool {
             name: "delete_relations".to_string(),
@@ -183,6 +188,7 @@ fn register_tools<T: Transport>(
                 },
                 "required": ["relations"]
             }),
+            output_schema: None,
         },
         Tool {
             name: "read_graph".to_string(),
@@ -191,6 +197,7 @@ fn register_tools<T: Transport>(
                 "type": "object",
                 "properties": {}
             }),
+            output_schema: None,
         },
         Tool {
             name: "search_nodes".to_string(),
@@ -204,6 +211,7 @@ fn register_tools<T: Transport>(
                 },
                 "required": ["query"]
             }),
+            output_schema: None,
         },
         Tool {
             name: "open_nodes".to_string(),
@@ -220,6 +228,7 @@ fn register_tools<T: Transport>(
                 },
                 "required": ["names"]
             }),
+            output_schema: None,
         },
     ];
 

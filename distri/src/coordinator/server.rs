@@ -57,6 +57,7 @@ pub fn build_server<T: Transport>(
                                 "required": ["message"],
                                 "additionalProperties": false
                             }),
+                            output_schema: t.response_format.clone(),
                         })
                         .collect(),
                     next_cursor,

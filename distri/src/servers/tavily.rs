@@ -98,6 +98,12 @@ fn register_tools<T: Transport>(server: &mut ServerBuilder<T>) -> Result<()> {
             "required": ["query"],
             "additionalProperties": false
         }),
+        output_schema: Some(json!({
+            "type": "object",
+            "properties": {
+                "results": {"type": "array", "items": {"type": "object"}}
+            },
+        })),
     };
 
     // Register search tool
