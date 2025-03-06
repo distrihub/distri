@@ -322,7 +322,7 @@ impl AgentExecutor {
 
 async fn completion(
     agent_def: &AgentDefinition,
-    request: CreateChatCompletionRequest,
+    mut request: CreateChatCompletionRequest,
     context: Arc<CoordinatorContext>,
     additional_tags: HashMap<String, String>,
 ) -> Result<CreateChatCompletionResponse, AgentError> {
@@ -332,6 +332,10 @@ async fn completion(
             api_key,
             project_id,
         } => {
+            if let Some(user_id) = &context.user_id {
+                request.user = Some(user_id.clone());
+            }
+
             let mut config = GatewayConfig::default()
                 .with_context(context)
                 .with_additional_tags(additional_tags);
@@ -344,6 +348,7 @@ async fn completion(
             if let Some(project_id) = project_id {
                 config = config.with_project_id(project_id);
             }
+
             let client = Client::with_config(config);
             client.chat().create(request).await
         }
