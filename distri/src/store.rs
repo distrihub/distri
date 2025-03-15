@@ -51,7 +51,7 @@ pub trait MemoryStore: Send + Sync {
         let steps = self.get_steps(agent_id, thread_id).await?;
         let messages = steps
             .iter()
-            .flat_map(|step| step.to_messages(false, true))
+            .flat_map(|step| step.to_messages(false, false))
             .collect();
         Ok(messages)
     }

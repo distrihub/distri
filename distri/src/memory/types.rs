@@ -144,7 +144,7 @@ impl AgentMemory for LocalAgentMemory {
 impl MemoryStep {
     pub fn to_messages(&self, summary_mode: bool, show_model_input_messages: bool) -> Vec<Message> {
         match self {
-            MemoryStep::Task(task_step) if show_model_input_messages => {
+            MemoryStep::Task(task_step) => {
                 vec![Message {
                     role: MessageRole::User,
                     name: Some("user".to_string()),
