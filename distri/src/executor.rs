@@ -1,7 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use crate::{
-    coordinator::{AgentHandle, CoordinatorContext, ModelLogger},
+    coordinator::{CoordinatorContext, ModelLogger},
     error::AgentError,
     langdb::GatewayConfig,
     types::{validate_parameters, Message, MessageRole, ModelProvider, ServerTools, ToolCall},
@@ -23,7 +23,6 @@ use serde_json::Value;
 pub struct AgentExecutor {
     agent_def: AgentDefinition,
     server_tools: Vec<ServerTools>,
-    coordinator: Option<Arc<AgentHandle>>,
     model_logger: ModelLogger,
     context: Arc<CoordinatorContext>,
     additional_tags: Option<HashMap<String, String>>,
@@ -32,15 +31,10 @@ pub struct AgentExecutor {
 pub const MAX_RETRIES: i32 = 3;
 pub const DEFAULT_MODEL: &str = "gpt-4o-mini";
 
-fn llm_err(e: impl ToString) -> AgentError {
-    AgentError::LLMError(e.to_string())
-}
-
 impl AgentExecutor {
     pub fn new(
         agent_def: AgentDefinition,
         server_tools: Vec<ServerTools>,
-        coordinator: Option<Arc<AgentHandle>>,
         context: Arc<CoordinatorContext>,
         additional_tags: Option<HashMap<String, String>>,
     ) -> Self {
@@ -54,7 +48,6 @@ impl AgentExecutor {
         Self {
             agent_def,
             server_tools,
-            coordinator,
             model_logger: ModelLogger::new(context.verbose),
             context,
             additional_tags,
@@ -65,154 +58,64 @@ impl AgentExecutor {
         self.server_tools.clone()
     }
 
+    /// Helper function to extract just the content string from the first choice in a response
+    pub fn extract_first_choice(response: &CreateChatCompletionResponse) -> String {
+        let choice = &response.choices[0];
+        choice.message.content.clone().unwrap_or_default()
+    }
+
+    /// Execute a single LLM call and return the complete response
     pub async fn execute(
         &self,
         messages: &[Message],
         params: Option<Value>,
-    ) -> Result<String, AgentError> {
+    ) -> Result<CreateChatCompletionResponse, AgentError> {
         // Create normalized parameters
         if let Some(schema) = self.agent_def.parameters.as_ref() {
             let mut schema = schema.clone();
-            validate_parameters(&mut schema, params)
+            validate_parameters(&mut schema, params.clone())
                 .map_err(|e| AgentError::Parameter(e.to_string()))?;
         }
 
-        tracing::info!("Starting agent execution with {} messages", messages.len());
-        let messages = self.map_messages(messages);
-        let request = self.build_request(messages);
-        tracing::debug!(
-            "Request: {:?} ",
-            serde_json::to_string_pretty(&request).unwrap()
+        tracing::info!("Executing LLM call with {} messages", messages.len());
+        let llm_messages = self.map_messages(messages);
+        let request = self.build_request(llm_messages);
+        let message_count = request.messages.len();
+
+        let settings = format!(
+            "Max Tokens: {}\nMax Iterations: {}",
+            self.agent_def.model_settings.max_tokens, self.agent_def.model_settings.max_iterations
         );
-        let mut token_usage = 0;
-        let mut calls = vec![request];
-        let mut iterations = 0;
 
-        let max_tokens = self.agent_def.model_settings.max_tokens;
-        let max_iterations = self.agent_def.model_settings.max_iterations;
-        tracing::debug!("Max tokens limit set to: {}", max_tokens);
-        tracing::debug!("Max iterations per run set to: {}", max_iterations);
+        self.model_logger.log_model_execution(
+            &self.agent_def.model_settings.model,
+            message_count,
+            Some(&settings),
+            None,
+        );
 
-        while let Some(req) = calls.pop() {
-            if token_usage > max_tokens {
-                tracing::warn!("Max tokens limit reached: {}", max_tokens);
-                return Err(AgentError::LLMError(format!(
-                    "Max tokens reached: {max_tokens}",
-                )));
-            }
+        tracing::debug!("Sending chat completion request");
+        let response = completion(
+            &self.agent_def,
+            request,
+            self.context.clone(),
+            self.additional_tags.clone().unwrap_or_default(),
+        )
+        .await
+        .map_err(|e| {
+            tracing::error!("LLM request failed: {}", e);
+            AgentError::LLMError(e.to_string())
+        })?;
 
-            if iterations >= max_iterations {
-                tracing::warn!("Max iterations limit reached: {}", max_iterations);
-                return Err(AgentError::LLMError(format!(
-                    "Max iterations reached: {max_iterations}",
-                )));
-            }
-            iterations += 1;
+        let token_usage = response.usage.as_ref().map(|a| a.total_tokens).unwrap_or(0);
+        self.model_logger.log_model_execution(
+            &self.agent_def.model_settings.model,
+            message_count,
+            None,
+            Some(token_usage),
+        );
 
-            let settings = format!(
-                "Max Tokens: {}\nMax Iterations: {}",
-                self.agent_def.model_settings.max_tokens,
-                self.agent_def.model_settings.max_iterations
-            );
-
-            self.model_logger.log_model_execution(
-                &self.agent_def.model_settings.model,
-                req.messages.len(),
-                Some(&settings),
-                None,
-            );
-
-            tracing::debug!("Sending chat completion request");
-            let input_messages = req.messages.clone();
-            let response = completion(
-                &self.agent_def,
-                req,
-                self.context.clone(),
-                self.additional_tags.clone().unwrap_or_default(),
-            )
-            .await
-            .map_err(|e| {
-                tracing::error!("LLM request failed: {}", e);
-                AgentError::LLMError(e.to_string())
-            })?;
-
-            token_usage += response.usage.as_ref().map(|a| a.total_tokens).unwrap_or(0);
-            self.model_logger.log_model_execution(
-                &self.agent_def.model_settings.model,
-                input_messages.len(),
-                None,
-                Some(token_usage),
-            );
-            tracing::debug!("Current token usage: {}", token_usage);
-
-            let choice = &response.choices[0];
-            let finish_reason = choice.finish_reason.unwrap();
-            tracing::debug!("Response finish reason: {:?}", finish_reason);
-
-            match finish_reason {
-                async_openai::types::FinishReason::Stop => {
-                    tracing::info!("Agent execution completed successfully");
-                    return Ok(choice.message.content.clone().unwrap_or_default());
-                }
-
-                async_openai::types::FinishReason::ToolCalls => {
-                    let tool_calls = choice.message.tool_calls.as_ref().unwrap().clone();
-                    tracing::info!("Processing {} tool calls", tool_calls.len());
-
-                    let mut messages: Vec<ChatCompletionRequestMessage> =
-                        vec![ChatCompletionRequestMessage::Assistant(
-                            ChatCompletionRequestAssistantMessageArgs::default()
-                                .tool_calls(tool_calls.clone())
-                                .build()
-                                .map_err(llm_err)?,
-                        )];
-
-                    // All tool calls go through coordinator
-                    let coordinator = self.coordinator.as_ref().ok_or_else(|| {
-                        AgentError::ToolExecution("No coordinator available".to_string())
-                    })?;
-
-                    let tool_responses =
-                        futures::future::join_all(tool_calls.iter().map(|tool_call| {
-                            let coordinator = coordinator.clone();
-                            async move {
-                                let id = tool_call.id.clone();
-                                let tool_call = Self::map_tool_call(tool_call);
-
-                                let content = coordinator
-                                    .execute_tool(tool_call)
-                                    .await
-                                    .unwrap_or_else(|err| format!("Error: {}", err));
-
-                                tracing::debug!("Tool Response ({id}) ({content})");
-                                ChatCompletionRequestMessage::Tool(
-                                    ChatCompletionRequestToolMessage {
-                                        content: ChatCompletionRequestToolMessageContent::Text(
-                                            content,
-                                        ),
-                                        // role: async_openai::types::Role::Tool,
-                                        tool_call_id: id,
-                                    },
-                                )
-                            }
-                        }))
-                        .await;
-
-                    messages.extend(tool_responses);
-                    let conversation_messages = [input_messages, messages].concat();
-                    let request = self.build_request(conversation_messages);
-                    calls.push(request);
-                    continue;
-                }
-                x => {
-                    tracing::error!("Agent stopped unexpectedly with reason: {:?}", x);
-                    return Err(AgentError::LLMError(format!(
-                        "Agent stopped with the reason {x:?}"
-                    )));
-                }
-            }
-        }
-        unreachable!()
+        Ok(response)
     }
 
     pub fn build_request(

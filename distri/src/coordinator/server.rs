@@ -80,9 +80,7 @@ pub fn build_server<T: Transport>(
                 let tools = coordinator.get_tools(&agent_name).await?;
 
                 // Create executor with required parameters
-                let coordinator_handle = Arc::new(coordinator.get_handle(agent_name.clone()));
-                let executor =
-                    AgentExecutor::new(agent_def, tools, Some(coordinator_handle), context, None);
+                let executor = AgentExecutor::new(agent_def, tools, context, None);
 
                 let messages = vec![Message {
                     role: MessageRole::User,
@@ -95,9 +93,10 @@ pub fn build_server<T: Transport>(
                 }];
 
                 let result = executor.execute(&messages, None).await?;
+                let content = AgentExecutor::extract_first_choice(&result);
 
                 Ok(CallToolResponse {
-                    content: vec![ToolResponseContent::Text { text: result }],
+                    content: vec![ToolResponseContent::Text { text: content }],
                     is_error: None,
                     meta: None,
                 })

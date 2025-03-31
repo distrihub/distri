@@ -242,7 +242,6 @@ impl LocalCoordinator {
                                 planning_config.model_settings.clone(),
                             ),
                             vec![],
-                            Some(Arc::new(self.get_handle(agent_id.to_string()))),
                             context.clone(),
                             Some(HashMap::from([
                                 ("name".to_string(), "initial_planner".to_string()),
@@ -253,7 +252,11 @@ impl LocalCoordinator {
                         Box::pin(async move {
                             let response = planning_executor.execute(&msgs, None).await;
                             match response {
-                                Ok(response) => Ok(response),
+                                Ok(response) => {
+                                    // Extract just the content string
+                                    let content = AgentExecutor::extract_first_choice(&response);
+                                    Ok(content)
+                                }
                                 Err(e) => {
                                     tracing::error!("Planning execution failed: {}", e);
                                     Ok(format!("Planning execution failed: {}", e))
@@ -281,7 +284,6 @@ impl LocalCoordinator {
                                     planning_config.model_settings.clone(),
                                 ),
                                 vec![],
-                                Some(Arc::new(self.get_handle(agent_id.to_string()))),
                                 context.clone(),
                                 Some(HashMap::from([
                                     ("name".to_string(), "update_planner".to_string()),
@@ -292,7 +294,12 @@ impl LocalCoordinator {
                             Box::pin(async move {
                                 let response = planning_executor.execute(&msgs, None).await;
                                 match response {
-                                    Ok(response) => Ok(response),
+                                    Ok(response) => {
+                                        // Extract just the content string
+                                        let content =
+                                            AgentExecutor::extract_first_choice(&response);
+                                        Ok(content)
+                                    }
                                     Err(e) => {
                                         tracing::error!("Planning execution failed: {}", e);
                                         Ok(format!("Planning execution failed: {}", e))
@@ -344,11 +351,10 @@ impl LocalCoordinator {
             .await
             .map_err(|e| AgentError::Session(e.to_string()))?;
 
-        // Execute with agent executor
+        // Create executor as a thin wrapper for LLM calls
         let executor = AgentExecutor::new(
-            definition,
+            definition.clone(),
             tools,
-            Some(Arc::new(self.get_handle(agent_id.to_string()))),
             context.clone(),
             Some(HashMap::from([
                 ("name".to_string(), agent_id.to_string()),
@@ -357,26 +363,124 @@ impl LocalCoordinator {
             ])),
         );
 
-        let response = match executor.execute(&messages, params).await {
-            Ok(response) => response,
-            Err(e) => {
-                tracing::error!("Error executing agent: {}", e);
-                format!("Error executing agent: {}", e)
-            }
-        };
-        // Store response as action step
-        let action_step = MemoryStep::Action(ActionStep {
-            model_input_messages: Some(messages),
-            model_output: Some(response.clone()),
-            ..Default::default()
-        });
-        self.memory_store
-            .store_step(agent_id, action_step.clone(), Some(&context.thread_id))
-            .await
-            .map_err(|e| AgentError::Session(e.to_string()))?;
-        self.logger.log_step(agent_id, &action_step);
+        // Execute the main execution loop that was previously in AgentExecutor
+        let mut token_usage = 0;
+        let mut iterations = 0;
+        let mut current_messages = messages;
+        let handle = self.get_handle(agent_id.to_string());
 
-        Ok(response)
+        let max_tokens = definition.model_settings.max_tokens;
+        let max_iterations = definition.model_settings.max_iterations;
+        tracing::debug!("Max tokens limit set to: {}", max_tokens);
+        tracing::debug!("Max iterations per run set to: {}", max_iterations);
+
+        loop {
+            if token_usage > max_tokens {
+                tracing::warn!("Max tokens limit reached: {}", max_tokens);
+                return Err(AgentError::LLMError(format!(
+                    "Max tokens reached: {max_tokens}",
+                )));
+            }
+
+            if iterations >= max_iterations {
+                tracing::warn!("Max iterations limit reached: {}", max_iterations);
+                return Err(AgentError::LLMError(format!(
+                    "Max iterations reached: {max_iterations}",
+                )));
+            }
+            iterations += 1;
+
+            // Execute a single LLM call through the executor
+            let response = executor.execute(&current_messages, params.clone()).await?;
+
+            // Update token usage
+            let new_token_usage = response.usage.as_ref().map(|a| a.total_tokens).unwrap_or(0);
+            token_usage += new_token_usage;
+            tracing::debug!("Current token usage: {}", token_usage);
+
+            // Get the first choice
+            let choice = &response.choices[0];
+            let finish_reason = choice
+                .finish_reason
+                .unwrap_or(async_openai::types::FinishReason::Stop);
+            let content = choice.message.content.clone().unwrap_or_default();
+            let tool_calls = choice.message.tool_calls.clone();
+
+            match finish_reason {
+                async_openai::types::FinishReason::Stop => {
+                    tracing::info!("Agent execution completed successfully");
+
+                    // Store final response as action step
+                    let action_step = MemoryStep::Action(ActionStep {
+                        model_input_messages: Some(current_messages),
+                        model_output: Some(content.clone()),
+                        ..Default::default()
+                    });
+                    self.memory_store
+                        .store_step(agent_id, action_step.clone(), Some(&context.thread_id))
+                        .await
+                        .map_err(|e| AgentError::Session(e.to_string()))?;
+                    self.logger.log_step(agent_id, &action_step);
+
+                    return Ok(content);
+                }
+
+                async_openai::types::FinishReason::ToolCalls => {
+                    if let Some(tool_calls) = tool_calls {
+                        tracing::info!("Processing {} tool calls", tool_calls.len());
+
+                        // Convert assistant message with tool calls
+                        let mut new_messages = current_messages.clone();
+                        let assistant_message = Message {
+                            role: MessageRole::Assistant,
+                            name: Some(agent_id.to_string()),
+                            content: vec![MessageContent {
+                                content_type: "text".to_string(),
+                                text: Some(content.clone()),
+                                image: None,
+                            }],
+                        };
+                        new_messages.push(assistant_message);
+
+                        // Process all tool calls in parallel
+                        let tool_responses =
+                            futures::future::join_all(tool_calls.iter().map(|tool_call| {
+                                let handle = handle.clone();
+                                async move {
+                                    let mapped_tool_call = AgentExecutor::map_tool_call(tool_call);
+
+                                    let content = handle
+                                        .execute_tool(mapped_tool_call)
+                                        .await
+                                        .unwrap_or_else(|err| format!("Error: {}", err));
+
+                                    Message {
+                                        role: MessageRole::ToolResponse,
+                                        name: Some(tool_call.function.name.clone()),
+                                        content: vec![MessageContent {
+                                            content_type: "text".to_string(),
+                                            text: Some(content),
+                                            image: None,
+                                        }],
+                                    }
+                                }
+                            }))
+                            .await;
+
+                        // Add tool responses to messages
+                        new_messages.extend(tool_responses);
+                        current_messages = new_messages;
+                        continue;
+                    }
+                }
+                x => {
+                    tracing::error!("Agent stopped unexpectedly with reason: {:?}", x);
+                    return Err(AgentError::LLMError(format!(
+                        "Agent stopped with the reason {x:?}"
+                    )));
+                }
+            }
+        }
     }
 }
 
