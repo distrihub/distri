@@ -1,5 +1,5 @@
 [package]
-name = "distri-proxy"
+name = "mcp-proxy"
 version = "0.1.0"
 edition = "2021"
 
@@ -18,5 +18,5 @@ futures = "0.3"
 clap = { version = "4.5", features = ["derive"] }
 schemars = "0.8.21"
 [[bin]]
-name = "distri-proxy"
+name = "mcp-proxy"
 path = "src/main.rs"

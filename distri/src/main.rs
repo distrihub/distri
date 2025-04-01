@@ -14,8 +14,8 @@ use distri::{
     },
     types::{get_distri_config_schema, Configuration},
 };
-use distri_proxy::McpProxy;
 use dotenv::dotenv;
+use mcp_proxy::McpProxy;
 use run::{chat, event, session::get_session_store};
 use std::{collections::HashMap, env, sync::Arc};
 use tokio::sync::{Mutex, RwLock};
@@ -137,7 +137,7 @@ async fn main() -> Result<()> {
             let config = load_config(cli.config.to_str().unwrap())?;
             let proxy_config = Arc::new(config.proxy.expect("proxy configuration is missing"));
             let port = proxy_config.port;
-            let proxy = McpProxy::new(proxy_config).await?;
+            let proxy = McpProxy::initialize(proxy_config).await?;
 
             async_mcp::run_http_server(port, None, move |transport| {
                 let proxy = proxy.clone();

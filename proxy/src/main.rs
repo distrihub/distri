@@ -55,7 +55,7 @@ async fn main() -> Result<()> {
                 config.servers.len()
             );
             let port = config.port;
-            let proxy = McpProxy::new(config).await?;
+            let proxy = McpProxy::initialize(config).await?;
 
             run_http_server(port, None, move |transport| {
                 let proxy = proxy.clone();

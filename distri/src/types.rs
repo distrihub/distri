@@ -1,9 +1,9 @@
 use anyhow::Context;
 use async_mcp::types::Tool;
-use distri_proxy::types::ProxyServerConfig;
+use mcp_proxy::types::ProxyServerConfig;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::{self, json, Value};
+use serde_json::{self, json};
 use std::{collections::HashMap, time::SystemTime};
 
 use crate::servers::registry::ServerMetadata;

@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use anyhow::Result;
 use async_mcp::{
     client::ClientBuilder,
@@ -12,16 +13,17 @@ use async_mcp::{
         Tool, ToolResponseContent, ToolsListResponse,
     },
 };
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::fs::read_to_string;
 use tokio::sync::Mutex;
 use tracing::{debug, error, info};
 
-use crate::types::{
-    ProxyMcpServer, ProxyMcpServerType, ProxyServerConfig as Config, ProxyTransportAuth,
-};
+use crate::types::{ProxyMcpServer, ProxyMcpServerType, ProxyServerConfig as Config};
 
 // Update the type to use an enum
 #[derive(Clone)]
@@ -75,8 +77,29 @@ pub struct McpProxy {
     resources_cache: Arc<Mutex<HashMap<String, Vec<async_mcp::types::Resource>>>>,
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct McpCache {
+    tools: HashMap<String, Vec<Tool>>,
+    resources: HashMap<String, Vec<async_mcp::types::Resource>>,
+}
+
 impl McpProxy {
-    pub async fn new(config: Arc<Config>) -> Result<Self> {
+    /// Initialize the proxy's caches from a file path or a JSON string
+    pub fn new(config: Arc<Config>, cached_content: &str) -> Result<McpProxy> {
+        let cache_data: McpCache = serde_json::from_str(&cached_content)?;
+
+        // Update the tools cache
+        let proxy = McpProxy {
+            config,
+            clients: Arc::new(Mutex::new(HashMap::new())),
+            tools_cache: Arc::new(Mutex::new(cache_data.tools)),
+            resources_cache: Arc::new(Mutex::new(cache_data.resources)),
+        };
+
+        Ok(proxy)
+    }
+
+    pub async fn initialize(config: Arc<Config>) -> Result<Self> {
         info!("Creating new MCP Proxy");
         let proxy = Self {
             config,
@@ -95,6 +118,7 @@ impl McpProxy {
         &self,
         server_name: &str,
         server: &ProxyMcpServer,
+        env_vars: Option<HashMap<String, String>>,
     ) -> Result<async_mcp::client::Client<ClientTransport>> {
         let mut clients = self.clients.lock().await;
 
@@ -121,11 +145,14 @@ impl McpProxy {
             ProxyMcpServerType::Stdio {
                 command,
                 args,
-                env_vars,
+                env_vars: default_env_vars,
             } => {
                 let args: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-                let transport =
-                    ClientStdioTransport::new(command.as_str(), &args, env_vars.clone())?;
+                let env_vars = match env_vars {
+                    Some(env_vars) => Some(env_vars),
+                    None => default_env_vars.clone(),
+                };
+                let transport = ClientStdioTransport::new(command.as_str(), &args, env_vars)?;
                 ClientTransport::Stdio(transport)
             }
             ProxyMcpServerType::WS { url, headers } => {
@@ -218,7 +245,7 @@ impl McpProxy {
             // Future for fetching tools
             let tools_future = async move {
                 debug!("Fetching tools for server: {}", name);
-                let client = match self_clone.get_or_create_client(&name, &server).await {
+                let client = match self_clone.get_or_create_client(&name, &server, None).await {
                     Ok(client) => client,
                     Err(e) => {
                         error!("Failed to connect to server {}: {:?}", name, e);
@@ -260,7 +287,7 @@ impl McpProxy {
             let resources_future = async move {
                 debug!("Fetching resources for server: {}", name_clone);
                 let client = match self_clone
-                    .get_or_create_client(&name_clone, &server_clone)
+                    .get_or_create_client(&name_clone, &server_clone, None)
                     .await
                 {
                     Ok(client) => client,
@@ -382,6 +409,24 @@ impl McpProxy {
         serde_json::to_value(response).unwrap_or_default()
     }
 
+    fn get_env_vars(req: &CallToolRequest) -> Option<HashMap<String, String>> {
+        if let Some(Value::Object(meta)) = req.meta.as_ref() {
+            if let Some(Value::Object(vars)) = meta.get("env_vars") {
+                let mut env_vars = HashMap::new();
+                for (key, value) in vars {
+                    if let Value::String(value) = value {
+                        env_vars.insert(key.clone(), value.clone());
+                    }
+                }
+                Some(env_vars)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+
     async fn handle_tool(&self, req: CallToolRequest) -> Result<CallToolResponse> {
         // Check if server is specified in the request
         let server_name_parts = req.name.split(TOOL_SEPARATOR).collect::<Vec<&str>>();
@@ -390,9 +435,17 @@ impl McpProxy {
             let server_name = server_name_parts[0];
             let function_name = server_name_parts[1];
             if let Some(server) = self.config.servers.get(server_name) {
-                if let Ok(client) = self.get_or_create_client(&server_name, server).await {
+                // Extract env_vars from meta if they exist
+
+                let env_vars = Self::get_env_vars(&req);
+
+                if let Ok(client) = self
+                    .get_or_create_client(&server_name, server, env_vars)
+                    .await
+                {
                     let mut req = req.clone();
                     req.name = function_name.to_string();
+
                     info!("Executing tool {} on server {}", function_name, server_name);
                     debug!("Tool request: {:?}", req);
                     let response = client
@@ -414,7 +467,11 @@ impl McpProxy {
         for (server_name, server_tools) in tools.iter() {
             if server_tools.iter().any(|s| req.name == s.name) {
                 if let Some(server) = self.config.servers.get(server_name) {
-                    if let Ok(client) = self.get_or_create_client(server_name, server).await {
+                    let env_vars = Self::get_env_vars(&req);
+                    if let Ok(client) = self
+                        .get_or_create_client(server_name, server, env_vars)
+                        .await
+                    {
                         let response = client
                             .request(
                                 "tools/call",
@@ -430,5 +487,19 @@ impl McpProxy {
         }
 
         anyhow::bail!("Tool {} not found in any server", req.name)
+    }
+
+    /// Get the current state of the proxy's caches
+    ///
+    /// # Returns
+    /// * `Result<McpCache>` - The current cache state if successful
+    pub async fn state(&self) -> Result<McpCache> {
+        let tools_cache = self.tools_cache.lock().await;
+        let resources_cache = self.resources_cache.lock().await;
+
+        Ok(McpCache {
+            tools: tools_cache.clone(),
+            resources: resources_cache.clone(),
+        })
     }
 }
