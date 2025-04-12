@@ -136,7 +136,7 @@ async fn main() -> Result<()> {
         Commands::Proxy => {
             let config = load_config(cli.config.to_str().unwrap())?;
             let proxy_config = Arc::new(config.proxy.expect("proxy configuration is missing"));
-            let port = proxy_config.port;
+            let port = proxy_config.server_config.port;
             let proxy = McpProxy::initialize(proxy_config).await?;
 
             async_mcp::run_http_server(port, None, move |transport| {

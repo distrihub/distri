@@ -13,27 +13,27 @@ pub async fn _visualize_agents(coordinator: Arc<LocalCoordinator>) -> anyhow::Re
         .zip(coordinator.agent_tools.read().await.values())
     {
         // Add agent representation
-        lines.push(format!("┌─────────────────────────────┐"));
+        lines.push("┌─────────────────────────────┐".to_string());
         lines.push(format!("│         {}            │", agent.name));
         lines.push(format!("│  Description: {} │", agent.description));
-        lines.push(format!("└─────────────────────────────┘"));
+        lines.push("└─────────────────────────────┘".to_string());
 
         // Connect agent to its tools
         for tool in server_tools {
             for tool in &tool.tools {
-                lines.push(format!("         |"));
-                lines.push(format!("         |"));
-                lines.push(format!("┌───────────────┐"));
+                lines.push("         |".to_string());
+                lines.push("         |".to_string());
+                lines.push("┌───────────────┐".to_string());
                 lines.push(format!("│ {}        │", tool.name));
-                lines.push(format!("│ Description:  │"));
+                lines.push("│ Description:  │".to_string());
                 lines.push(format!(
                     "│ {}   │",
                     tool.description.clone().unwrap_or_default()
                 ));
-                lines.push(format!("└───────────────┘"));
+                lines.push("└───────────────┘".to_string());
             }
         }
-        lines.push(format!(""));
+        lines.push(String::new());
     }
 
     // Print the constructed lines

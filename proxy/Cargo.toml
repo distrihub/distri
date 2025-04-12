@@ -17,6 +17,8 @@ serde_yaml = "0.9"
 futures = "0.3"
 clap = { version = "4.5", features = ["derive"] }
 schemars = "0.8.21"
+regex = "1.11.1"
+
 [[bin]]
 name = "mcp-proxy"
 path = "src/main.rs"

@@ -98,7 +98,7 @@ pub struct PlanConfig {
 impl PlanConfig {
     pub fn new(interval: i32, max_iterations: i32, model_settings: ModelSettings) -> Self {
         Self {
-            interval: interval,
+            interval,
             max_iterations: Some(max_iterations),
             model_settings,
         }

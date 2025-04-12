@@ -79,9 +79,7 @@ impl LocalAgentMemory {
         self.steps
             .iter()
             .filter(|(step_thread_id, _)| {
-                thread_id.map_or(true, |tid| {
-                    step_thread_id.as_ref().map_or(true, |stid| stid == tid)
-                })
+                thread_id.is_none_or(|tid| step_thread_id.as_ref().is_none_or(|stid| stid == tid))
             })
             .map(|(_, step)| step.clone())
             .collect()
