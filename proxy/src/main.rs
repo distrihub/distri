@@ -1,4 +1,5 @@
 use std::{fs, sync::Arc};
+mod auth;
 mod server;
 mod types;
 
@@ -54,7 +55,7 @@ async fn main() -> Result<()> {
                 "Starting proxy server with {} servers",
                 config.servers.len()
             );
-            let port = config.port;
+            let port = config.server_config.port;
             let proxy = McpProxy::initialize(config).await?;
 
             run_http_server(port, None, move |transport| {

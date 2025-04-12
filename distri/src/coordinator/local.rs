@@ -55,7 +55,7 @@ impl LocalCoordinator {
                 .unwrap_or_else(|| Arc::new(Box::new(LocalMemoryStore::new()))),
 
             iterations: Arc::new(RwLock::new(HashMap::new())),
-            context: context,
+            context,
             logger,
         }
     }

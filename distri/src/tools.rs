@@ -240,7 +240,7 @@ impl<T: Transport + Clone> ToolExecutor<T> {
         tracing::debug!("Creating new ToolExecutor");
         Self {
             client: ClientBuilder::new(transport).build(),
-            context: context,
+            context,
         }
     }
 
@@ -298,7 +298,7 @@ impl<T: Transport + Clone> ToolExecutor<T> {
         let request = CallToolRequest {
             name: name.clone(),
             arguments: Some(args),
-            meta: meta,
+            meta,
         };
 
         let params = serde_json::to_value(request)?;

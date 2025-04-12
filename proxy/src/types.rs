@@ -6,10 +6,19 @@ use std::collections::HashMap;
 #[derive(Debug, Serialize, Deserialize, Clone, JsonSchema)]
 pub struct ProxyServerConfig {
     pub servers: HashMap<String, ProxyMcpServer>,
-    pub port: u16,
     #[serde(default)]
     pub timeout: TimeoutConfig,
+    #[serde(flatten)]
+    pub server_config: ServerConfig,
 }
+
+#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema)]
+pub struct ServerConfig {
+    pub host: String,
+    pub port: u16,
+    pub server_url: String,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, JsonSchema)]
 pub struct TimeoutConfig {
     #[serde(default = "default_list_timeout")]
@@ -37,6 +46,8 @@ fn default_call_timeout() -> u64 {
 #[derive(Debug, Serialize, Deserialize, Clone, JsonSchema)]
 pub struct ProxyMcpServer {
     pub default_args: Option<Value>,
+    #[serde(default)]
+    pub auth: Option<ProxyTransportAuth>,
     #[serde(flatten)]
     pub server_type: ProxyMcpServerType,
 }
@@ -47,8 +58,8 @@ pub enum ProxyMcpServerType {
     Stdio {
         command: String,
         args: Vec<String>,
-        #[serde(flatten, skip_serializing_if = "Option::is_none")]
-        env_vars: Option<HashMap<String, String>>,
+        #[serde(flatten, skip_serializing_if = "HashMap::is_empty")]
+        env_vars: HashMap<String, String>,
     },
     #[serde(rename = "sse")]
     SSE {
@@ -67,4 +78,6 @@ pub enum ProxyMcpServerType {
 pub enum ProxyTransportAuth {
     Bearer(String),
     JwtSecret(String),
+    #[serde(alias = "files")]
+    Files(HashMap<String, serde_json::Value>),
 }

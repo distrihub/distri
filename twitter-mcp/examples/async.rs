@@ -12,8 +12,7 @@ use twitter_mcp::build;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let r = run().await;
-    r
+    run().await
 }
 
 async fn async_server(transport: ServerInMemoryTransport) {
