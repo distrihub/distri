@@ -347,7 +347,7 @@ checksum = "34ac096ce696dc2fcabef30516bb13c0a68a11d30131d3df6f04711467681b04"
 [[package]]
 name = "async-mcp"
 version = "0.1.2"
-source = "git+https://github.com/karolisg/async-mcp.git?rev=28e7c573d9c1b5eb1f9747ef8f9cf9211995b7a1#28e7c573d9c1b5eb1f9747ef8f9cf9211995b7a1"
+source = "git+https://github.com/karolisg/async-mcp.git?rev=c4d47bb365154da91c0de9e848667e69846f8d0a#c4d47bb365154da91c0de9e848667e69846f8d0a"
 dependencies = [
  "actix-web",
  "actix-ws",
