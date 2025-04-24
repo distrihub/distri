@@ -332,7 +332,9 @@ impl McpProxy {
                     ref mut env_vars, ..
                 } = &mut proxied_server.server_type
                 {
-                    *env_vars = HashMap::new();
+                    for (_, value) in env_vars.iter_mut() {
+                        *value = "none".to_string();
+                    }
                 }
                 let client = match self_clone
                     .get_or_create_client(&name, &proxied_server, None)
@@ -383,7 +385,9 @@ impl McpProxy {
                     ref mut env_vars, ..
                 } = &mut proxied_server.server_type
                 {
-                    *env_vars = HashMap::new();
+                    for (_, value) in env_vars.iter_mut() {
+                        *value = "none".to_string();
+                    }
                 }
                 let client = match self_clone
                     .get_or_create_client(&name_clone, &proxied_server, None)
