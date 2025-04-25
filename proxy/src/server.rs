@@ -100,8 +100,13 @@ pub struct McpCache {
 
 impl McpProxy {
     /// Initialize the proxy's caches from a file path or a JSON string
-    pub fn new(config: Arc<Config>, cached_content: &str) -> Result<McpProxy> {
-        let cache_data: McpCache = serde_json::from_str(cached_content)?;
+    pub fn new(config: Arc<Config>, cached_content: &str, mcp_cache_update: Option<&McpCache>) -> Result<McpProxy> {
+        let mut cache_data: McpCache = serde_json::from_str(cached_content)?;
+
+        if let Some(mcp_cache_update) = mcp_cache_update {
+            cache_data.tools.extend(mcp_cache_update.tools.clone());
+            cache_data.resources.extend(mcp_cache_update.resources.clone());
+        }
 
         // Update the tools cache
         let proxy = McpProxy {
@@ -333,7 +338,9 @@ impl McpProxy {
                 } = &mut proxied_server.server_type
                 {
                     for (_, value) in env_vars.iter_mut() {
-                        *value = "none".to_string();
+                        if value.starts_with("{{") && value.ends_with("}}") {
+                            *value = "none".to_string();
+                        }
                     }
                 }
                 let client = match self_clone
