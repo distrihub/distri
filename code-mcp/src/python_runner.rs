@@ -64,14 +64,14 @@ for i in range(3):
 "#;
 
         let result = execute_python(code).unwrap();
-        println!("{}", result.stdout.to_string());
-        println!("{}", result.stderr.to_string());
+        println!("{}", result.stdout);
+        println!("{}", result.stderr);
         assert_eq!(result.exit_code, Some(0));
         assert_eq!(
             result.stdout.trim(),
             "Hello, World!\nNumber: 0\nNumber: 1\nNumber: 2"
         );
-        println!("{}", result.stderr.to_string());
+        println!("{}", result.stderr);
         assert!(result.stderr.is_empty());
     }
 
