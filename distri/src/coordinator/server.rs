@@ -18,7 +18,7 @@ use crate::{
 
 use super::{AgentCoordinator, CoordinatorContext, LocalCoordinator};
 
-pub static DISTRI_LOCAL_SERVER: &str = "distri-mcp-server-local";
+pub static DISTRI_LOCAL_SERVER: &str = "distri_agents";
 
 pub fn build_server<T: Transport>(
     transport: T,

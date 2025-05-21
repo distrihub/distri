@@ -55,7 +55,7 @@ agents:
         max_tokens: 20000
 
       mcp_servers:
-        - name: "distri-mcp-server-local"
+        - name: "distri_agents"
           type: "agent"
           filter:
             - name: github_explorer
