@@ -100,12 +100,18 @@ pub struct McpCache {
 
 impl McpProxy {
     /// Initialize the proxy's caches from a file path or a JSON string
-    pub fn new(config: Arc<Config>, cached_content: &str, mcp_cache_update: Option<&McpCache>) -> Result<McpProxy> {
+    pub fn new(
+        config: Arc<Config>,
+        cached_content: &str,
+        mcp_cache_update: Option<&McpCache>,
+    ) -> Result<McpProxy> {
         let mut cache_data: McpCache = serde_json::from_str(cached_content)?;
 
         if let Some(mcp_cache_update) = mcp_cache_update {
             cache_data.tools.extend(mcp_cache_update.tools.clone());
-            cache_data.resources.extend(mcp_cache_update.resources.clone());
+            cache_data
+                .resources
+                .extend(mcp_cache_update.resources.clone());
         }
 
         // Update the tools cache
@@ -580,7 +586,22 @@ impl McpProxy {
         if server_name_parts.len() == 2 {
             let server_name = server_name_parts[0];
             let function_name = server_name_parts[1];
-            if let Some(server) = self.config.servers.get(server_name) {
+            let server = if let Some(Value::Object(meta)) = req.meta.as_ref() {
+                if let Some(v) = meta.get("dynamic_server") {
+                    let dynamic_server: ProxyMcpServerType = serde_json::from_value(v.clone())?;
+                    Some(ProxyMcpServer {
+                        default_args: None,
+                        auth: None,
+                        server_type: dynamic_server,
+                    })
+                } else {
+                    self.config.servers.get(server_name).cloned()
+                }
+            } else {
+                self.config.servers.get(server_name).cloned()
+            };
+
+            if let Some(server) = &server {
                 let env_vars = Self::get_env_vars(&req);
 
                 match self

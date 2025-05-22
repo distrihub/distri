@@ -139,7 +139,7 @@ async fn main() -> Result<()> {
             let port = proxy_config.server_config.port;
             let proxy = McpProxy::initialize(proxy_config).await?;
 
-            async_mcp::run_http_server(port, None, move |transport| {
+            async_mcp::run_http_server(port, None, move |transport, _| {
                 let proxy = proxy.clone();
                 async move {
                     let server = proxy.build(transport).await?;
