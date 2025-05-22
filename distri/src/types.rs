@@ -135,6 +135,8 @@ pub struct Message {
     pub role: MessageRole,
     pub name: Option<String>,
     pub content: Vec<MessageContent>,
+    #[serde(default)]
+    pub tool_calls: Vec<ToolCall>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

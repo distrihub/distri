@@ -415,6 +415,22 @@ impl LLMExecutor {
                     if let Some(name) = &m.name {
                         msg.name(name);
                     }
+                    // Add tool calls if present
+                    if !m.tool_calls.is_empty() {
+                        let tool_calls: Vec<ChatCompletionMessageToolCall> = m
+                            .tool_calls
+                            .iter()
+                            .map(|tc| ChatCompletionMessageToolCall {
+                                id: tc.tool_id.clone(),
+                                r#type: async_openai::types::ChatCompletionToolType::Function,
+                                function: async_openai::types::FunctionCall {
+                                    name: tc.tool_name.clone(),
+                                    arguments: tc.input.clone(),
+                                },
+                            })
+                            .collect();
+                        msg.tool_calls(tool_calls);
+                    }
                     ChatCompletionRequestMessage::Assistant(msg.build().unwrap())
                 }
                 MessageRole::System => {
@@ -430,7 +446,7 @@ impl LLMExecutor {
                         content: ChatCompletionRequestToolMessageContent::Text(
                             m.content[0].text.clone().unwrap_or_default(),
                         ),
-                        tool_call_id: m.content[0].text.clone().unwrap_or_default(),
+                        tool_call_id: m.tool_calls[0].tool_id.clone(),
                     };
                     ChatCompletionRequestMessage::Tool(msg)
                 }

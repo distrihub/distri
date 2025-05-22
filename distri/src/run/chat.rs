@@ -65,6 +65,7 @@ pub async fn run(
             }],
             role: MessageRole::User,
             name: None,
+            tool_calls: Vec::new(),
         };
 
         info!("{agent_name}: {user_message:?}");

@@ -240,6 +240,7 @@ impl LocalCoordinator {
                             text: Some(facts.clone()),
                             image: None,
                         }],
+                        tool_calls: Vec::new(),
                     },
                     facts: facts.clone(),
                     model_output_message_plan: Message {
@@ -250,6 +251,7 @@ impl LocalCoordinator {
                             text: Some(plan.clone()),
                             image: None,
                         }],
+                        tool_calls: Vec::new(),
                     },
                     plan: plan.clone(),
                 });
@@ -533,6 +535,7 @@ impl LocalCoordinator {
                             text: Some(facts.clone()),
                             image: None,
                         }],
+                        tool_calls: Vec::new(),
                     },
                     facts: facts.clone(),
                     model_output_message_plan: Message {
@@ -543,6 +546,7 @@ impl LocalCoordinator {
                             text: Some(plan.clone()),
                             image: None,
                         }],
+                        tool_calls: Vec::new(),
                     },
                     plan: plan.clone(),
                 });
@@ -649,6 +653,7 @@ impl LocalCoordinator {
                                 text: Some(content.clone()),
                                 image: None,
                             }],
+                            tool_calls: tool_calls.iter().map(LLMExecutor::map_tool_call).collect(),
                         };
                         new_messages.push(assistant_message);
 
@@ -660,7 +665,7 @@ impl LocalCoordinator {
                                     let mapped_tool_call = LLMExecutor::map_tool_call(tool_call);
 
                                     let content = handle
-                                        .execute_tool(mapped_tool_call)
+                                        .execute_tool(mapped_tool_call.clone())
                                         .await
                                         .unwrap_or_else(|err| format!("Error: {}", err));
 
@@ -672,6 +677,7 @@ impl LocalCoordinator {
                                             text: Some(content),
                                             image: None,
                                         }],
+                                        tool_calls: vec![mapped_tool_call],
                                     }
                                 }
                             }))

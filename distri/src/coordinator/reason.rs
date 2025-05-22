@@ -22,6 +22,7 @@ pub async fn create_initial_plan(
                 ),
                 image: None,
             }],
+            tool_calls: Vec::new(),
         },
         Message {
             role: MessageRole::User,
@@ -31,6 +32,7 @@ pub async fn create_initial_plan(
                 text: Some(format!("Task:\n{}", task.task)),
                 image: None,
             }],
+            tool_calls: Vec::new(),
         },
     ];
 
@@ -49,6 +51,7 @@ pub async fn create_initial_plan(
                 )),
                 image: None,
             }],
+            tool_calls: Vec::new(),
         },
         Message {
             role: MessageRole::User,
@@ -58,6 +61,7 @@ pub async fn create_initial_plan(
                 text: Some(format!("Task: {}\n\nKnown facts:\n{}", task.task, facts)),
                 image: None,
             }],
+            tool_calls: Vec::new(),
         },
     ];
 
@@ -86,6 +90,7 @@ pub async fn update_plan(
             ),
             image: None,
         }],
+        tool_calls: Vec::new(),
     }];
     let mut all_messages = facts_update_messages;
     all_messages.extend_from_slice(previous_steps);
@@ -103,9 +108,9 @@ pub async fn update_plan(
                     remaining_steps, tools_description
                 )),
                 image: None,
-            }],
-        },
-    ];
+        }],
+        tool_calls: Vec::new(),
+    }];
     let mut all_messages = plan_update_messages;
     all_messages.extend_from_slice(previous_steps);
     all_messages.push(Message {
@@ -119,6 +124,7 @@ pub async fn update_plan(
             )),
             image: None,
         }],
+        tool_calls: Vec::new(),
     });
 
     let updated_plan = model(all_messages).await?;

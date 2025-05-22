@@ -153,6 +153,7 @@ impl MemoryStep {
                         text: Some(task_step.task.clone()),
                         image: None,
                     }],
+                    tool_calls: Vec::new(),
                 }]
             }
             MemoryStep::Planning(planning_step) if !summary_mode => {
@@ -178,6 +179,7 @@ impl MemoryStep {
                             text: Some(output.clone()),
                             image: None,
                         }],
+                        tool_calls: Vec::new(),
                     });
                 }
 
@@ -192,6 +194,7 @@ impl MemoryStep {
                         text: Some(system_step.system_prompt.clone()),
                         image: None,
                     }],
+                    tool_calls: Vec::new(),
                 }]
             }
             _ => Vec::new(),

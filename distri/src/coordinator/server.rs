@@ -90,6 +90,7 @@ pub fn build_server<T: Transport>(
                         text: Some(message),
                         image: None,
                     }],
+                    tool_calls: Vec::new(),
                 }];
 
                 let result = executor.execute(&messages, None).await?;

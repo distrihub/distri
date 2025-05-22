@@ -12,6 +12,7 @@ use crate::{
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_agent_coordination() -> anyhow::Result<()> {
+    dotenv::dotenv().ok();
     init_logging("info");
     // Create test agent definitions
     let tool_defs = vec![get_twitter_tool()];
