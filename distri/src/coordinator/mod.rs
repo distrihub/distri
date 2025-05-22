@@ -14,6 +14,86 @@ use crate::{
     types::{AgentDefinition, ServerTools, ToolCall},
 };
 use tokio::sync::{mpsc, oneshot, Mutex};
+
+// Event types for streaming responses
+#[derive(Debug, Clone)]
+pub enum AgentEvent {
+    RunStarted {
+        thread_id: String,
+        run_id: String,
+    },
+    RunFinished {
+        thread_id: String,
+        run_id: String,
+    },
+    RunError {
+        thread_id: String,
+        run_id: String,
+        message: String,
+        code: Option<String>,
+    },
+    StepStarted {
+        thread_id: String,
+        run_id: String,
+        step_name: String,
+    },
+    StepFinished {
+        thread_id: String,
+        run_id: String,
+        step_name: String,
+    },
+    TextMessageStart {
+        thread_id: String,
+        run_id: String,
+        message_id: String,
+        role: String,
+    },
+    TextMessageContent {
+        thread_id: String,
+        run_id: String,
+        message_id: String,
+        delta: String,
+    },
+    TextMessageEnd {
+        thread_id: String,
+        run_id: String,
+        message_id: String,
+    },
+    ToolCallStart {
+        thread_id: String,
+        run_id: String,
+        tool_call_id: String,
+        tool_call_name: String,
+        parent_message_id: Option<String>,
+    },
+    ToolCallArgs {
+        thread_id: String,
+        run_id: String,
+        tool_call_id: String,
+        delta: String,
+    },
+    ToolCallEnd {
+        thread_id: String,
+        run_id: String,
+        tool_call_id: String,
+    },
+    StateSnapshot {
+        thread_id: String,
+        run_id: String,
+        snapshot: Value,
+    },
+    StateDelta {
+        thread_id: String,
+        run_id: String,
+        delta: Value,
+    },
+    MessagesSnapshot {
+        thread_id: String,
+        run_id: String,
+        messages: Vec<Value>,
+    },
+}
+
 // Message types for coordinator communication
 #[derive(Debug)]
 pub enum CoordinatorMessage {
@@ -27,6 +107,12 @@ pub enum CoordinatorMessage {
         task: TaskStep,
         params: Option<serde_json::Value>,
         response_tx: oneshot::Sender<Result<String, AgentError>>,
+    },
+    ExecuteStream {
+        agent_id: String,
+        task: TaskStep,
+        params: Option<serde_json::Value>,
+        event_tx: mpsc::Sender<AgentEvent>,
     },
 }
 
@@ -51,6 +137,13 @@ pub trait AgentCoordinator {
         task: TaskStep,
         params: Option<serde_json::Value>,
     ) -> Result<String, AgentError>;
+    async fn execute_stream(
+        &self,
+        agent_name: &str,
+        task: TaskStep,
+        params: Option<serde_json::Value>,
+        event_tx: mpsc::Sender<AgentEvent>,
+    ) -> Result<(), AgentError>;
 }
 
 impl AgentHandle {
@@ -92,6 +185,23 @@ impl AgentHandle {
             AgentError::ToolExecution(format!("Failed to receive execution response: {}", e))
         })?
     }
+
+    pub async fn execute_stream(
+        &self,
+        task: TaskStep,
+        params: Option<serde_json::Value>,
+        event_tx: mpsc::Sender<AgentEvent>,
+    ) -> Result<(), AgentError> {
+        self.coordinator_tx
+            .send(CoordinatorMessage::ExecuteStream {
+                agent_id: self.agent_id.clone(),
+                task,
+                params,
+                event_tx,
+            })
+            .await
+            .map_err(|e| AgentError::ToolExecution(format!("Failed to execute agent: {}", e)))
+    }
 }
 
 #[derive(Debug)]
@@ -103,6 +213,7 @@ pub struct CoordinatorContext {
     /// Add additional context for tools to use passed as meta in MCP calls
     pub tools_context: HashMap<String, HashMap<String, Value>>,
 }
+
 impl Default for CoordinatorContext {
     fn default() -> Self {
         Self::new(

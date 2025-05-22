@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tracing::info;
 
 use crate::{
-    coordinator::{CoordinatorContext, LocalCoordinator, DISTRI_LOCAL_SERVER},
+    coordinator::{AgentEvent, CoordinatorContext, LocalCoordinator, DISTRI_LOCAL_SERVER},
     init_logging,
     memory::TaskStep,
     tests::utils::{get_registry, get_tools_session_store, get_twitter_tool, register_coordinator},
@@ -84,6 +84,86 @@ async fn test_agent_coordination() -> anyhow::Result<()> {
         )
         .await?;
     info!("Agent 2 result: {}", agent2_result);
+
+    // Clean up
+    coordinator_handle.abort();
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_agent_coordination_streaming() -> anyhow::Result<()> {
+    init_logging("info");
+
+    // Create test agent definition
+    let agent_def = AgentDefinition {
+        name: "streaming_agent".to_string(),
+        description: "Test streaming agent".to_string(),
+        system_prompt: Some(
+            "You are a streaming test agent. When you receive a message, respond with a stream of text that counts from 1 to 5.".to_string(),
+        ),
+        mcp_servers: vec![],
+        model_settings: ModelSettings::default(),
+        parameters: Default::default(),
+        response_format: None,
+        history_size: None,
+        plan: None,
+    };
+
+    // Initialize coordinator
+    let registry = get_registry().await;
+    let tool_sessions = get_tools_session_store();
+    let coordinator = Arc::new(LocalCoordinator::new(
+        registry.clone(),
+        tool_sessions,
+        None,
+        Arc::new(CoordinatorContext::default()),
+    ));
+
+    // Register coordinator in registry
+    register_coordinator(registry, coordinator.clone()).await;
+
+    // Register agent definition
+    coordinator.register_agent(agent_def.clone()).await?;
+
+    // Start coordinator in background
+    let coordinator_clone = coordinator.clone();
+    let coordinator_handle = tokio::spawn(async move {
+        coordinator_clone.run().await.unwrap();
+    });
+
+    // Create channel for streaming events
+    let (event_tx, mut event_rx) = tokio::sync::mpsc::channel(100);
+
+    // Get agent handle and execute streaming task
+    let agent_handle = coordinator.get_handle("streaming_agent".to_string());
+    let task = TaskStep {
+        task: "Count from 1 to 5".to_string(),
+        task_images: None,
+    };
+
+    // Spawn task to handle streaming events
+    let event_handle = tokio::spawn(async move {
+        let mut received_content = String::new();
+        while let Some(event) = event_rx.recv().await {
+            match event {
+                AgentEvent::TextMessageContent { delta, .. } => {
+                    received_content.push_str(&delta);
+                    info!("Received stream chunk: {}", delta);
+                }
+                AgentEvent::RunFinished { .. } => {
+                    info!("Stream finished. Final content: {}", received_content);
+                    break;
+                }
+                _ => {}
+            }
+        }
+    });
+
+    // Execute streaming task
+    agent_handle.execute_stream(task, None, event_tx).await?;
+
+    // Wait for event handling to complete
+    event_handle.await?;
 
     // Clean up
     coordinator_handle.abort();

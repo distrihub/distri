@@ -1,6 +1,6 @@
 use crate::{
     error::AgentError,
-    executor::AgentExecutor,
+    executor::LLMExecutor,
     memory::SystemStep,
     servers::registry::ServerRegistry,
     store::{LocalMemoryStore, MemoryStore, ToolSessionStore},
@@ -13,8 +13,8 @@ use crate::{
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{mpsc, Mutex, RwLock};
 
-use super::reason::create_initial_plan;
 use super::{log::StepLogger, CoordinatorContext};
+use super::{reason::create_initial_plan, AgentEvent};
 use super::{AgentCoordinator, AgentHandle, CoordinatorMessage};
 use crate::memory::{ActionStep, MemoryStep, PlanningStep, TaskStep};
 
@@ -98,6 +98,192 @@ impl LocalCoordinator {
         Ok(())
     }
 
+    async fn call_agent_stream(
+        &self,
+        agent_id: &str,
+        task: TaskStep,
+        params: Option<serde_json::Value>,
+        context: Arc<CoordinatorContext>,
+        event_tx: mpsc::Sender<AgentEvent>,
+    ) -> Result<(), AgentError> {
+        // Get agent definition and tools
+        let definition = self.get_agent(agent_id).await?;
+        let tools = self.get_tools(agent_id).await?;
+        let tools_desc = get_tool_descriptions(&tools, Some(DEFAULT_TOOL_DESCRIPTION_TEMPLATE));
+
+        // Store system message if present
+        if let Some(system_prompt) = &definition.system_prompt {
+            let step = MemoryStep::System(SystemStep {
+                system_prompt: system_prompt.clone(),
+            });
+            self.memory_store
+                .store_step(agent_id, step.clone(), Some(&context.thread_id))
+                .await
+                .map_err(|e| AgentError::Session(e.to_string()))?;
+            self.logger.log_step(agent_id, &step);
+        }
+
+        // Store task step
+        let task_step = MemoryStep::Task(task.clone());
+        self.memory_store
+            .store_step(agent_id, task_step.clone(), Some(&context.thread_id))
+            .await
+            .map_err(|e| AgentError::Session(e.to_string()))?;
+        self.logger.log_step(agent_id, &task_step);
+
+        // Handle planning if enabled
+        if let Some(planning_config) = &definition.plan {
+            // Get current iteration count
+            let iteration = {
+                let mut iterations = self.iterations.write().await;
+                let count = iterations.entry(agent_id.to_string()).or_insert(0);
+                // Update count based on the number of messages for subsequent iterations
+                if *count > 0 {
+                    let previous_messages = self
+                        .memory_store
+                        .get_messages(agent_id, Some(&context.thread_id))
+                        .await
+                        .map_err(|e| AgentError::Session(e.to_string()))?;
+                    *count = previous_messages.len() as i32; // Set count to number of messages
+                } else {
+                    *count += 1; // Increment for the first iteration
+                }
+                *count
+            };
+
+            if (iteration - 1) % planning_config.interval == 0 {
+                // Run either initial planning or planning update
+                let (facts, plan) = if iteration == 1 {
+                    create_initial_plan(&task, &tools_desc, &|msgs| {
+                        let planning_executor = LLMExecutor::new(
+                            super::reason::get_planning_definition(
+                                planning_config.model_settings.clone(),
+                            ),
+                            vec![],
+                            context.clone(),
+                            Some(HashMap::from([
+                                ("name".to_string(), "initial_planner".to_string()),
+                                ("agent_name".to_string(), agent_id.to_string()),
+                                ("label".to_string(), "initial_planner".to_string()),
+                            ])),
+                        );
+                        Box::pin(async move {
+                            let response = planning_executor.execute(&msgs, None).await;
+                            match response {
+                                Ok(response) => {
+                                    // Extract just the content string
+                                    let content = LLMExecutor::extract_first_choice(&response);
+                                    Ok(content)
+                                }
+                                Err(e) => {
+                                    tracing::error!("Planning execution failed: {}", e);
+                                    Ok(format!("Planning execution failed: {}", e))
+                                }
+                            }
+                        })
+                    })
+                    .await
+                } else {
+                    let remaining_steps =
+                        planning_config.max_iterations.unwrap_or(10) - iteration + 1;
+                    let previous_messages = self
+                        .memory_store
+                        .get_messages(agent_id, Some(&context.thread_id))
+                        .await
+                        .map_err(|e| AgentError::Session(e.to_string()))?;
+                    super::reason::update_plan(
+                        &task.task,
+                        &tools_desc,
+                        &previous_messages,
+                        remaining_steps,
+                        &|msgs| {
+                            let planning_executor = LLMExecutor::new(
+                                super::reason::get_planning_definition(
+                                    planning_config.model_settings.clone(),
+                                ),
+                                vec![],
+                                context.clone(),
+                                Some(HashMap::from([
+                                    ("name".to_string(), "update_planner".to_string()),
+                                    ("agent_name".to_string(), agent_id.to_string()),
+                                    ("label".to_string(), "update_planner".to_string()),
+                                ])),
+                            );
+                            Box::pin(async move {
+                                let response = planning_executor.execute(&msgs, None).await;
+                                match response {
+                                    Ok(response) => {
+                                        // Extract just the content string
+                                        let content = LLMExecutor::extract_first_choice(&response);
+                                        Ok(content)
+                                    }
+                                    Err(e) => {
+                                        tracing::error!("Planning execution failed: {}", e);
+                                        Ok(format!("Planning execution failed: {}", e))
+                                    }
+                                }
+                            })
+                        },
+                    )
+                    .await
+                }
+                .map_err(|e| AgentError::Session(e.to_string()))?;
+
+                // Store planning step
+                let planning_step = MemoryStep::Planning(PlanningStep {
+                    model_input_messages: vec![],
+                    model_output_message_facts: Message {
+                        role: MessageRole::Assistant,
+                        name: Some("planner".to_string()),
+                        content: vec![MessageContent {
+                            content_type: "text".to_string(),
+                            text: Some(facts.clone()),
+                            image: None,
+                        }],
+                    },
+                    facts: facts.clone(),
+                    model_output_message_plan: Message {
+                        role: MessageRole::Assistant,
+                        name: Some("planner".to_string()),
+                        content: vec![MessageContent {
+                            content_type: "text".to_string(),
+                            text: Some(plan.clone()),
+                            image: None,
+                        }],
+                    },
+                    plan: plan.clone(),
+                });
+                self.memory_store
+                    .store_step(agent_id, planning_step.clone(), Some(&context.thread_id))
+                    .await
+                    .map_err(|e| AgentError::Session(e.to_string()))?;
+                self.logger.log_step(agent_id, &planning_step);
+            }
+        }
+
+        // Get all messages from memory steps
+        let messages = self
+            .memory_store
+            .get_messages(agent_id, Some(&context.thread_id))
+            .await
+            .map_err(|e| AgentError::Session(e.to_string()))?;
+
+        // Create executor as a thin wrapper for LLM calls
+        let executor = LLMExecutor::new(
+            definition.clone(),
+            tools,
+            context.clone(),
+            Some(HashMap::from([
+                ("name".to_string(), agent_id.to_string()),
+                ("agent_name".to_string(), agent_id.to_string()),
+                ("label".to_string(), agent_id.to_string()),
+            ])),
+        );
+
+        // Execute the streaming LLM call
+        executor.execute_stream(&messages, params, event_tx).await
+    }
+
     pub async fn run(&self) -> anyhow::Result<()> {
         tracing::info!("AgentCoordinator run loop started");
 
@@ -176,6 +362,31 @@ impl LocalCoordinator {
                         let _ = response_tx.send(result);
                     });
                 }
+                CoordinatorMessage::ExecuteStream {
+                    agent_id,
+                    task,
+                    params,
+                    event_tx,
+                } => {
+                    tracing::info!(
+                        "Handling ExecuteStream for agent: {} with messages: {:?}",
+                        agent_id,
+                        task
+                    );
+                    let this = self.clone();
+                    let context = self.context.clone();
+                    tokio::spawn(async move {
+                        let result = async {
+                            this.call_agent_stream(&agent_id, task, params, context, event_tx)
+                                .await
+                        }
+                        .await;
+
+                        if let Err(e) = result {
+                            tracing::error!("Error in streaming execution: {}", e);
+                        }
+                    });
+                }
             }
         }
         tracing::info!("AgentCoordinator run loop exiting");
@@ -237,7 +448,7 @@ impl LocalCoordinator {
                 // Run either initial planning or planning update
                 let (facts, plan) = if iteration == 1 {
                     create_initial_plan(&task, &tools_desc, &|msgs| {
-                        let planning_executor = AgentExecutor::new(
+                        let planning_executor = LLMExecutor::new(
                             super::reason::get_planning_definition(
                                 planning_config.model_settings.clone(),
                             ),
@@ -254,7 +465,7 @@ impl LocalCoordinator {
                             match response {
                                 Ok(response) => {
                                     // Extract just the content string
-                                    let content = AgentExecutor::extract_first_choice(&response);
+                                    let content = LLMExecutor::extract_first_choice(&response);
                                     Ok(content)
                                 }
                                 Err(e) => {
@@ -279,7 +490,7 @@ impl LocalCoordinator {
                         &previous_messages,
                         remaining_steps,
                         &|msgs| {
-                            let planning_executor = AgentExecutor::new(
+                            let planning_executor = LLMExecutor::new(
                                 super::reason::get_planning_definition(
                                     planning_config.model_settings.clone(),
                                 ),
@@ -296,8 +507,7 @@ impl LocalCoordinator {
                                 match response {
                                     Ok(response) => {
                                         // Extract just the content string
-                                        let content =
-                                            AgentExecutor::extract_first_choice(&response);
+                                        let content = LLMExecutor::extract_first_choice(&response);
                                         Ok(content)
                                     }
                                     Err(e) => {
@@ -352,7 +562,7 @@ impl LocalCoordinator {
             .map_err(|e| AgentError::Session(e.to_string()))?;
 
         // Create executor as a thin wrapper for LLM calls
-        let executor = AgentExecutor::new(
+        let executor = LLMExecutor::new(
             definition.clone(),
             tools,
             context.clone(),
@@ -447,7 +657,7 @@ impl LocalCoordinator {
                             futures::future::join_all(tool_calls.iter().map(|tool_call| {
                                 let handle = handle.clone();
                                 async move {
-                                    let mapped_tool_call = AgentExecutor::map_tool_call(tool_call);
+                                    let mapped_tool_call = LLMExecutor::map_tool_call(tool_call);
 
                                     let content = handle
                                         .execute_tool(mapped_tool_call)
@@ -525,6 +735,17 @@ impl AgentCoordinator for LocalCoordinator {
         params: Option<serde_json::Value>,
     ) -> Result<String, AgentError> {
         self.call_agent(agent_name, task, params, self.context.clone())
+            .await
+    }
+
+    async fn execute_stream(
+        &self,
+        agent_name: &str,
+        task: TaskStep,
+        params: Option<serde_json::Value>,
+        event_tx: mpsc::Sender<AgentEvent>,
+    ) -> Result<(), AgentError> {
+        self.call_agent_stream(agent_name, task, params, self.context.clone(), event_tx)
             .await
     }
 }

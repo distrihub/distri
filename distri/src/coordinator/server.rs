@@ -12,7 +12,7 @@ use serde_json::json;
 
 use crate::{
     error::AgentError,
-    executor::AgentExecutor,
+    executor::LLMExecutor,
     types::{Message, MessageContent, MessageRole},
 };
 
@@ -80,7 +80,7 @@ pub fn build_server<T: Transport>(
                 let tools = coordinator.get_tools(&agent_name).await?;
 
                 // Create executor with required parameters
-                let executor = AgentExecutor::new(agent_def, tools, context, None);
+                let executor = LLMExecutor::new(agent_def, tools, context, None);
 
                 let messages = vec![Message {
                     role: MessageRole::User,
@@ -93,7 +93,7 @@ pub fn build_server<T: Transport>(
                 }];
 
                 let result = executor.execute(&messages, None).await?;
-                let content = AgentExecutor::extract_first_choice(&result);
+                let content = LLMExecutor::extract_first_choice(&result);
 
                 Ok(CallToolResponse {
                     content: vec![ToolResponseContent::Text { text: content }],

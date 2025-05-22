@@ -61,6 +61,7 @@ impl ModelLogger {
 
     pub fn log_model_execution(
         &self,
+        agent_name: &str,
         model_name: &str,
         messages_count: usize,
         settings: Option<&str>,
@@ -75,12 +76,19 @@ impl ModelLogger {
             .apply_modifier(UTF8_ROUND_CORNERS)
             .set_content_arrangement(ContentArrangement::Dynamic)
             .to_owned();
-        table.set_header(vec!["Model", "Messages", "Settings", "Token Usage"]);
+        table.set_header(vec![
+            "Agent",
+            "Model",
+            "Messages",
+            "Settings",
+            "Token Usage",
+        ]);
 
         let settings_str = settings.unwrap_or("None");
         let token_str = token_usage.map_or("None".to_string(), |t| t.to_string());
 
         table.add_row(vec![
+            agent_name,
             model_name,
             &messages_count.to_string(),
             settings_str,
