@@ -3,18 +3,18 @@ mod run;
 use anyhow::Result;
 use clap::Parser;
 use cli::{Cli, Commands};
+mod logging;
 use distri::{
-    cli::RunWorkflow,
     coordinator::{CoordinatorContext, LocalCoordinator},
-    init_logging,
     memory::MemoryConfig,
     servers::{
         kg::FileMemory,
-        registry::{init_registry_and_coordinator, ServerRegistry},
+        registry::{ServerRegistry, init_registry_and_coordinator},
     },
-    types::{get_distri_config_schema, Configuration},
+    types::{Configuration, RunWorkflow, get_distri_config_schema},
 };
 use dotenv::dotenv;
+use logging::init_logging;
 use mcp_proxy::McpProxy;
 use run::{chat, event, session::get_session_store};
 use std::{collections::HashMap, env, sync::Arc};

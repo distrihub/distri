@@ -1,0 +1,28 @@
+[package]
+name = "distri-cli"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+distri = { path = "../distri" }
+dotenv = "0.15"
+clap = { version = "4.5", features = ["derive"] }
+anyhow = { workspace = true }
+mcp-proxy = { path = "../proxy" }
+tracing = "0.1"
+tracing-subscriber = { workspace = true }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.0", features = ["full"] }
+serde_yaml = "0.9"
+regex = "1.5"
+async-mcp = { workspace = true }
+rustyline = "12.0.0"
+dirs = "5.0"
+uuid = "1.13.1"
+async-trait = "0.1"
+comfy-table = "7.0"
+
+[[bin]]
+name = "distri"
+path = "src/main.rs"

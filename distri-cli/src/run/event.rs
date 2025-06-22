@@ -1,9 +1,9 @@
-use distri::cli::RunWorkflow;
 use distri::coordinator::{AgentCoordinator, LocalCoordinator};
 use distri::memory::TaskStep;
+use distri::types::RunWorkflow;
 use std::sync::Arc;
 use tokio::signal;
-use tokio::time::{sleep, Duration};
+use tokio::time::{Duration, sleep};
 use tracing::{error, info};
 
 use distri::AgentDefinition;

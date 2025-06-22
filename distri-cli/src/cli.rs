@@ -1,29 +1,5 @@
 use clap::{Parser, Subcommand};
-use serde::{Deserialize, Serialize};
-use std::{fmt::Display, path::PathBuf};
-
-#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
-#[serde(tag = "mode")]
-pub enum RunWorkflow {
-    #[serde(rename = "chat")]
-    Chat,
-    #[serde(rename = "event")]
-    Event {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        times: Option<i64>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        every: Option<u64>,
-    },
-}
-
-impl Display for RunWorkflow {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            RunWorkflow::Chat => write!(f, "chat"),
-            RunWorkflow::Event { times, every } => write!(f, "event: {times:?}, every: {every:?}"),
-        }
-    }
-}
+use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -61,7 +37,7 @@ pub enum Commands {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use distri::types::RunWorkflow;
 
     #[test]
     fn test_workflow_serialization() {

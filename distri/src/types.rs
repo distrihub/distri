@@ -4,7 +4,7 @@ use mcp_proxy::types::ProxyServerConfig;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{self, json};
-use std::{collections::HashMap, time::SystemTime};
+use std::{collections::HashMap, fmt::Display, time::SystemTime};
 
 use crate::servers::registry::ServerMetadata;
 
@@ -359,10 +359,24 @@ pub fn get_tool_description(tool: &Tool, template: &str) -> String {
         .replace("{inputs}", &tool.input_schema.to_string())
 }
 
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(tag = "mode")]
+pub enum RunWorkflow {
+    #[serde(rename = "chat")]
+    Chat,
+    #[serde(rename = "event")]
+    Event {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        times: Option<i64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        every: Option<u64>,
+    },
+}
+
 #[derive(Debug, serde::Deserialize, JsonSchema)]
 pub struct AgentConfig {
     pub definition: AgentDefinition,
-    pub workflow: crate::cli::RunWorkflow,
+    pub workflow: RunWorkflow,
     #[serde(default = "default_max_history")]
     pub max_history: usize,
 }
@@ -460,4 +474,13 @@ pub struct Parameter {
 
 fn default_version() -> String {
     "0.1.0".to_string()
+}
+
+impl Display for RunWorkflow {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RunWorkflow::Chat => write!(f, "chat"),
+            RunWorkflow::Event { times, every } => write!(f, "event: {times:?}, every: {every:?}"),
+        }
+    }
 }
