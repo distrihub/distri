@@ -28,7 +28,8 @@ pub struct LLMExecutor {
     server_tools: Vec<ServerTools>,
     model_logger: ModelLogger,
     context: Arc<CoordinatorContext>,
-    additional_tags: Option<HashMap<String, String>>,
+    additional_headers: Option<HashMap<String, String>>,
+    label: Option<String>,
 }
 
 pub const MAX_RETRIES: i32 = 3;
@@ -39,7 +40,8 @@ impl LLMExecutor {
         agent_def: AgentDefinition,
         server_tools: Vec<ServerTools>,
         context: Arc<CoordinatorContext>,
-        additional_tags: Option<HashMap<String, String>>,
+        additional_headers: Option<HashMap<String, String>>,
+        label: Option<String>,
     ) -> Self {
         let name = &agent_def.name;
         // Log the number of tools being passed
@@ -53,7 +55,8 @@ impl LLMExecutor {
             server_tools,
             model_logger: ModelLogger::new(context.verbose),
             context,
-            additional_tags,
+            additional_headers,
+            label,
         }
     }
 
@@ -104,7 +107,8 @@ impl LLMExecutor {
             &self.agent_def,
             request,
             self.context.clone(),
-            self.additional_tags.clone().unwrap_or_default(),
+            self.additional_headers.clone(),
+            self.label.clone(),
         )
         .await
         .map_err(|e| {
@@ -177,7 +181,8 @@ impl LLMExecutor {
             &self.agent_def,
             request,
             self.context.clone(),
-            self.additional_tags.clone().unwrap_or_default(),
+            self.additional_headers.clone(),
+            self.label.clone(),
         )
         .await
         .map_err(|e| {
@@ -460,7 +465,8 @@ async fn completion(
     agent_def: &AgentDefinition,
     mut request: CreateChatCompletionRequest,
     context: Arc<CoordinatorContext>,
-    additional_tags: HashMap<String, String>,
+    additional_headers: Option<HashMap<String, String>>,
+    label: Option<String>,
 ) -> Result<CreateChatCompletionResponse, AgentError> {
     let response = match &agent_def.model_settings.model_provider {
         ModelProvider::AIGateway {
@@ -472,9 +478,10 @@ async fn completion(
                 request.user = Some(user_id.clone());
             }
 
+            let additional_headers = get_headers(agent_def, additional_headers, label);
             let mut config = GatewayConfig::default()
                 .with_context(context)
-                .with_additional_tags(additional_tags);
+                .with_additional_headers(additional_headers);
             if let Some(base_url) = base_url {
                 config = config.with_api_base(base_url);
             }
@@ -504,7 +511,8 @@ async fn completion_stream(
     agent_def: &AgentDefinition,
     mut request: CreateChatCompletionRequest,
     context: Arc<CoordinatorContext>,
-    additional_tags: HashMap<String, String>,
+    additional_headers: Option<HashMap<String, String>>,
+    label: Option<String>,
 ) -> Result<
     impl Stream<Item = Result<CreateChatCompletionStreamResponse, async_openai::error::OpenAIError>>,
     AgentError,
@@ -519,9 +527,11 @@ async fn completion_stream(
                 request.user = Some(user_id.clone());
             }
 
+            let additional_headers = get_headers(agent_def, additional_headers, label);
+
             let mut config = GatewayConfig::default()
                 .with_context(context)
-                .with_additional_tags(additional_tags);
+                .with_additional_headers(additional_headers);
             if let Some(base_url) = base_url {
                 config = config.with_api_base(base_url);
             }
@@ -545,4 +555,19 @@ async fn completion_stream(
         AgentError::LLMError(e.to_string())
     })?;
     Ok(stream)
+}
+
+fn get_headers(
+    agent_def: &AgentDefinition,
+    additional_headers: Option<HashMap<String, String>>,
+    label: Option<String>,
+) -> HashMap<String, String> {
+    let mut headers = additional_headers.clone().unwrap_or_default();
+
+    if let Some(label) = label {
+        headers.insert("X-Label".to_string(), label);
+    } else {
+        headers.insert("X-Label".to_string(), agent_def.name.clone());
+    }
+    headers
 }

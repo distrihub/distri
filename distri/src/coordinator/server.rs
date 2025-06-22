@@ -10,11 +10,7 @@ use async_mcp::{
 };
 use serde_json::json;
 
-use crate::{
-    error::AgentError,
-    executor::LLMExecutor,
-    types::{Message, MessageContent, MessageRole},
-};
+use crate::{error::AgentError, memory::TaskStep};
 
 use super::{AgentCoordinator, CoordinatorContext, LocalCoordinator};
 
@@ -69,38 +65,37 @@ pub fn build_server<T: Transport>(
         })
         .request_handler("tools/call", move |req: CallToolRequest| {
             let coordinator = coordinator_clone2.clone();
-            let context = context.clone();
             Box::pin(async move {
                 let agent_name = req.name.clone();
                 let args = req.arguments.unwrap_or_default();
                 let message = args["message"].as_str().unwrap().to_string();
 
-                // Get agent definition and tools using the interface methods
-                let agent_def = coordinator.get_agent(&agent_name).await?;
-                let tools = coordinator.get_tools(&agent_name).await?;
+                let agent_handle = coordinator.get_handle(agent_name);
+                let result = agent_handle
+                    .execute(
+                        TaskStep {
+                            task: message,
+                            task_images: None,
+                        },
+                        None,
+                    )
+                    .await
+                    .map_err(|e| AgentError::ToolExecution(e.to_string()));
 
-                // Create executor with required parameters
-                let executor = LLMExecutor::new(agent_def, tools, context, None);
-
-                let messages = vec![Message {
-                    role: MessageRole::User,
-                    name: Some(agent_name),
-                    content: vec![MessageContent {
-                        content_type: "text".to_string(),
-                        text: Some(message),
-                        image: None,
-                    }],
-                    tool_calls: Vec::new(),
-                }];
-
-                let result = executor.execute(&messages, None).await?;
-                let content = LLMExecutor::extract_first_choice(&result);
-
-                Ok(CallToolResponse {
-                    content: vec![ToolResponseContent::Text { text: content }],
-                    is_error: None,
-                    meta: None,
-                })
+                match result {
+                    Ok(result) => Ok(CallToolResponse {
+                        content: vec![ToolResponseContent::Text { text: result }],
+                        is_error: None,
+                        meta: None,
+                    }),
+                    Err(e) => Ok(CallToolResponse {
+                        content: vec![ToolResponseContent::Text {
+                            text: e.to_string(),
+                        }],
+                        is_error: Some(true),
+                        meta: None,
+                    }),
+                }
             })
         })
         .build();

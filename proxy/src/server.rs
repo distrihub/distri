@@ -16,10 +16,8 @@ use async_mcp::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
-use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::fs::read_to_string;
 use tokio::sync::Mutex;
 use tracing::{debug, error, info};
 

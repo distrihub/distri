@@ -153,5 +153,6 @@ pub fn get_planning_definition(model_settings: ModelSettings) -> AgentDefinition
         parameters: Default::default(),
         response_format: None,
         plan: None,
+        a2a: None,
     }
 }

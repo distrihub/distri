@@ -1,0 +1,16 @@
+[package]
+name = "distri-server"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+actix-web = "4.4"
+actix-rt = "2.9"
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+
+tracing = { workspace = true }
+distri = { path = "../distri" }
+a2a-rs = { workspace = true }

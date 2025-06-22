@@ -29,6 +29,7 @@ async fn test_agent_coordination() -> anyhow::Result<()> {
         response_format: None,
         history_size: None,
         plan: None,
+        a2a: None,
     };
 
     let agent2_def = AgentDefinition {
@@ -48,6 +49,7 @@ async fn test_agent_coordination() -> anyhow::Result<()> {
         response_format: None,
         history_size: None,
         plan: None,
+        a2a: None,
     };
 
     // Initialize coordinator with session stores
@@ -108,6 +110,7 @@ async fn test_agent_coordination_streaming() -> anyhow::Result<()> {
         response_format: None,
         history_size: None,
         plan: None,
+        a2a: None,
     };
 
     // Initialize coordinator

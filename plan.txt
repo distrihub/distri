@@ -1,0 +1,50 @@
+Ok we ll do a big refactor lets plan properly. 
+
+Lets use this repo a2a-rs where we ll borrow the types from
+@https://github.com/EmilLindfors/a2a-rs/blob/master/a2a-mcp/src/adapter/agent_to_tool.rs 
+
+We ll replace all our types to be compatible with a2a specification. 
+@https://google.github.io/A2A/specification/#55-agentcard-object-structure 
+
+we ll create another crate called distri-server where we ll implement the http routes necessary to expose agents over http using actix. 
+
+also remodel the agents interface to be compatible with a2a in terms of skills etc modify our existing yaml parsing behavior too.  Add all additional fields necessary Have and a to/from AgentCard converter. 
+
+Our current Registry should implement A2A base server methods. 
+
+## Progress and TODO List
+
+### Completed
+- [x] Created new distri-server crate
+- [x] Set up basic module structure (routes, types, server)
+- [x] Added initial A2A types and response structures
+
+### In Progress
+- [ ] Reorganizing dependencies (moving actix-web to distri-server only)
+
+### TODO
+1. Types and Conversions
+   - [ ] Implement AgentCard conversion from our types
+   - [ ] Add A2A-compatible fields to AgentDefinition
+   - [ ] Create conversion traits between our types and A2A types
+
+2. Registry Implementation
+   - [ ] Implement A2A base server methods in Registry
+   - [ ] Add A2A-compatible endpoints
+   - [ ] Add proper error handling
+
+3. HTTP Server (distri-server)
+   - [ ] Complete A2A endpoint implementations
+   - [ ] Add proper error handling and logging
+   - [ ] Add authentication if needed
+   - [ ] Add tests for endpoints
+
+4. YAML Configuration
+   - [ ] Update YAML parsing for A2A compatibility
+   - [ ] Add new fields for skills and capabilities
+   - [ ] Add validation for A2A fields
+
+5. Testing
+   - [ ] Add unit tests for type conversions
+   - [ ] Add integration tests for A2A endpoints
+   - [ ] Add validation tests for YAML configs

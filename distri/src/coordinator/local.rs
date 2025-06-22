@@ -161,11 +161,8 @@ impl LocalCoordinator {
                             ),
                             vec![],
                             context.clone(),
-                            Some(HashMap::from([
-                                ("name".to_string(), "initial_planner".to_string()),
-                                ("agent_name".to_string(), agent_id.to_string()),
-                                ("label".to_string(), "initial_planner".to_string()),
-                            ])),
+                            None,
+                            Some(format!("{}:{}", agent_id, "initial_plan")),
                         );
                         Box::pin(async move {
                             let response = planning_executor.execute(&msgs, None).await;
@@ -203,11 +200,8 @@ impl LocalCoordinator {
                                 ),
                                 vec![],
                                 context.clone(),
-                                Some(HashMap::from([
-                                    ("name".to_string(), "update_planner".to_string()),
-                                    ("agent_name".to_string(), agent_id.to_string()),
-                                    ("label".to_string(), "update_planner".to_string()),
-                                ])),
+                                None,
+                                Some(format!("{}:{}", agent_id, "update_plan")),
                             );
                             Box::pin(async move {
                                 let response = planning_executor.execute(&msgs, None).await;
@@ -275,11 +269,8 @@ impl LocalCoordinator {
             definition.clone(),
             tools,
             context.clone(),
-            Some(HashMap::from([
-                ("name".to_string(), agent_id.to_string()),
-                ("agent_name".to_string(), agent_id.to_string()),
-                ("label".to_string(), agent_id.to_string()),
-            ])),
+            None,
+            Some(agent_id.to_string()),
         );
 
         // Execute the streaming LLM call
@@ -456,11 +447,8 @@ impl LocalCoordinator {
                             ),
                             vec![],
                             context.clone(),
-                            Some(HashMap::from([
-                                ("name".to_string(), "initial_planner".to_string()),
-                                ("agent_name".to_string(), agent_id.to_string()),
-                                ("label".to_string(), "initial_planner".to_string()),
-                            ])),
+                            None,
+                            Some("initial_plan".to_string()),
                         );
                         Box::pin(async move {
                             let response = planning_executor.execute(&msgs, None).await;
@@ -498,11 +486,8 @@ impl LocalCoordinator {
                                 ),
                                 vec![],
                                 context.clone(),
-                                Some(HashMap::from([
-                                    ("name".to_string(), "update_planner".to_string()),
-                                    ("agent_name".to_string(), agent_id.to_string()),
-                                    ("label".to_string(), "update_planner".to_string()),
-                                ])),
+                                None,
+                                Some("update_plan".to_string()),
                             );
                             Box::pin(async move {
                                 let response = planning_executor.execute(&msgs, None).await;
@@ -570,11 +555,8 @@ impl LocalCoordinator {
             definition.clone(),
             tools,
             context.clone(),
-            Some(HashMap::from([
-                ("name".to_string(), agent_id.to_string()),
-                ("agent_name".to_string(), agent_id.to_string()),
-                ("label".to_string(), agent_id.to_string()),
-            ])),
+            None,
+            Some(format!("{}:{}", agent_id, "execute")),
         );
 
         // Execute the main execution loop that was previously in AgentExecutor

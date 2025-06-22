@@ -114,6 +114,7 @@ pub fn get_twitter_summarizer(
         model_settings: ModelSettings {
             max_iterations: max_iterations.unwrap_or(10),
             max_tokens: max_tokens.unwrap_or(1000),
+            model: "openai/gpt-4.1".to_string(),
             ..Default::default()
         },
         mcp_servers: vec![get_twitter_tool()],
@@ -124,9 +125,10 @@ pub fn get_twitter_summarizer(
             interval: i,
             max_iterations: Some(max_iterations.unwrap_or(10) as i32),
             model_settings: ModelSettings {
-                model: "o1-preview".to_string(),
+                model: "openai/gpt-4.1-mini".to_string(),
                 ..Default::default()
             },
         }),
+        a2a: None,
     }
 }

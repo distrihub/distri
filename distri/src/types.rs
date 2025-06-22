@@ -80,6 +80,15 @@ pub struct AgentDefinition {
     /// The planning configuration for the agent, if any.
     #[serde(default)]
     pub plan: Option<PlanConfig>,
+    /// A2A-specific fields
+    #[serde(default, flatten)]
+    pub a2a: Option<A2ADefinition>,
+}
+#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, Default)]
+pub struct A2ADefinition {
+    pub version: String,
+    pub capabilities: Vec<Capability>,
+    pub skills: Vec<Skill>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, Default)]
@@ -238,7 +247,7 @@ pub struct ModelSettings {
 impl Default for ModelSettings {
     fn default() -> Self {
         Self {
-            model: "gpt-4o-mini".to_string(),
+            model: "openai/gpt-4.1-mini".to_string(),
             temperature: 0.7,
             max_tokens: 1000,
             top_p: 1.0,
@@ -396,4 +405,59 @@ pub fn get_distri_config_schema(pretty: bool) -> Result<String, serde_json::Erro
     };
 
     Ok(schema_json)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct Capability {
+    /// The name of the capability
+    pub name: String,
+    /// A description of the capability
+    pub description: String,
+    /// The parameters required for this capability
+    #[serde(default)]
+    pub parameters: HashMap<String, Parameter>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct Skill {
+    /// The name of the skill
+    pub name: String,
+    /// A description of the skill
+    pub description: String,
+    /// The capabilities required for this skill
+    pub required_capabilities: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct AuthMethod {
+    /// The type of authentication method
+    pub r#type: String,
+    /// The parameters required for this authentication method
+    #[serde(default)]
+    pub parameters: HashMap<String, Parameter>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct Endpoint {
+    /// The URL of the endpoint
+    pub url: String,
+    /// The protocol used by the endpoint
+    pub protocol: String,
+    /// The authentication methods supported by this endpoint
+    pub auth_methods: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct Parameter {
+    /// The type of the parameter
+    pub r#type: String,
+    /// A description of the parameter
+    pub description: String,
+    /// Whether the parameter is required
+    #[serde(default)]
+    pub required: bool,
+}
+
+fn default_version() -> String {
+    "0.1.0".to_string()
 }

@@ -21,7 +21,7 @@ pub struct GatewayConfig {
     project_id: String,
     #[serde(skip)]
     context: Option<Arc<CoordinatorContext>>,
-    additional_tags: Option<HashMap<String, String>>,
+    additional_headers: Option<HashMap<String, String>>,
 }
 
 impl Default for GatewayConfig {
@@ -34,7 +34,7 @@ impl Default for GatewayConfig {
                 .into(),
             project_id: std::env::var("GATEWAY_PROJECT_ID").unwrap_or_else(|_| "".to_string()),
             context: None,
-            additional_tags: None,
+            additional_headers: None,
         }
     }
 }
@@ -68,8 +68,8 @@ impl GatewayConfig {
         self
     }
 
-    pub fn with_additional_tags(mut self, additional_tags: HashMap<String, String>) -> Self {
-        self.additional_tags = Some(additional_tags);
+    pub fn with_additional_headers(mut self, additional_headers: HashMap<String, String>) -> Self {
+        self.additional_headers = Some(additional_headers);
         self
     }
 }
@@ -100,8 +100,8 @@ impl Config for GatewayConfig {
             }
         }
 
-        if let Some(additional_tags) = &self.additional_tags {
-            for (key, value) in additional_tags.iter() {
+        if let Some(additional_headers) = &self.additional_headers {
+            for (key, value) in additional_headers.iter() {
                 headers.insert(HeaderName::from_str(key).unwrap(), value.parse().unwrap());
             }
         }
