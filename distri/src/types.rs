@@ -1,5 +1,6 @@
 use anyhow::Context;
 use async_mcp::types::Tool;
+use distri_a2a::{AgentCapabilities, AgentProvider, AgentSkill, SecurityScheme};
 use mcp_proxy::types::ProxyServerConfig;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -7,7 +8,6 @@ use serde_json::{self, json};
 use std::{collections::HashMap, fmt::Display, time::SystemTime};
 
 use crate::servers::registry::ServerMetadata;
-
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub enum _AuthType {
@@ -51,7 +51,7 @@ pub enum TransportAuth {
     JwtSecret(String),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 #[serde(deny_unknown_fields)]
 pub struct AgentDefinition {
     /// The name of the agent.
@@ -81,14 +81,8 @@ pub struct AgentDefinition {
     #[serde(default)]
     pub plan: Option<PlanConfig>,
     /// A2A-specific fields
-    #[serde(default, flatten)]
-    pub a2a: Option<A2ADefinition>,
-}
-#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, Default)]
-pub struct A2ADefinition {
-    pub version: String,
-    pub capabilities: Vec<Capability>,
-    pub skills: Vec<Skill>,
+    #[serde(default)]
+    pub icon_url: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, Default)]
@@ -389,6 +383,30 @@ pub struct Configuration {
     pub mcp_servers: Vec<ExternalMcpServer>,
     #[serde(default)]
     pub proxy: Option<ProxyServerConfig>,
+    #[serde(default)]
+    pub server: Option<ServerConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
+pub struct ServerConfig {
+    #[serde(default)]
+    pub server_url: String,
+    #[serde(default)]
+    pub provider: Option<AgentProvider>,
+    #[serde(default)]
+    pub default_input_modes: Vec<String>,
+    #[serde(default)]
+    pub default_output_modes: Vec<String>,
+    #[serde(default)]
+    pub security_schemes: HashMap<String, SecurityScheme>,
+    #[serde(default)]
+    pub security: Vec<HashMap<String, Vec<String>>>,
+    #[serde(default)]
+    pub capabilities: AgentCapabilities,
+    #[serde(default)]
+    pub preferred_transport: Option<String>,
+    #[serde(default)]
+    pub documentation_url: Option<String>,
 }
 
 #[derive(serde::Deserialize, JsonSchema)]
@@ -419,61 +437,6 @@ pub fn get_distri_config_schema(pretty: bool) -> Result<String, serde_json::Erro
     };
 
     Ok(schema_json)
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct Capability {
-    /// The name of the capability
-    pub name: String,
-    /// A description of the capability
-    pub description: String,
-    /// The parameters required for this capability
-    #[serde(default)]
-    pub parameters: HashMap<String, Parameter>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct Skill {
-    /// The name of the skill
-    pub name: String,
-    /// A description of the skill
-    pub description: String,
-    /// The capabilities required for this skill
-    pub required_capabilities: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct AuthMethod {
-    /// The type of authentication method
-    pub r#type: String,
-    /// The parameters required for this authentication method
-    #[serde(default)]
-    pub parameters: HashMap<String, Parameter>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct Endpoint {
-    /// The URL of the endpoint
-    pub url: String,
-    /// The protocol used by the endpoint
-    pub protocol: String,
-    /// The authentication methods supported by this endpoint
-    pub auth_methods: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct Parameter {
-    /// The type of the parameter
-    pub r#type: String,
-    /// A description of the parameter
-    pub description: String,
-    /// Whether the parameter is required
-    #[serde(default)]
-    pub required: bool,
-}
-
-fn default_version() -> String {
-    "0.1.0".to_string()
 }
 
 impl Display for RunWorkflow {

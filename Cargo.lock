@@ -992,6 +992,7 @@ dependencies = [
  "async-openai",
  "async-trait",
  "comfy-table",
+ "distri-a2a",
  "dotenv",
  "futures",
  "jsonschema",

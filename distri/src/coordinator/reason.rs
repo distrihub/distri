@@ -150,9 +150,7 @@ pub fn get_planning_definition(model_settings: ModelSettings) -> AgentDefinition
         mcp_servers: vec![],
         history_size: None,
         model_settings: model_settings.clone(),
-        parameters: Default::default(),
-        response_format: None,
-        plan: None,
-        a2a: None,
+
+        ..Default::default()
     }
 }

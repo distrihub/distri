@@ -1,6 +1,6 @@
 use actix_web::{web, App, HttpServer};
 use anyhow::Result;
-use distri::coordinator::LocalCoordinator;
+use distri::{coordinator::LocalCoordinator, types::ServerConfig};
 use std::sync::Arc;
 
 use crate::routes;
@@ -14,11 +14,13 @@ impl A2AServer {
         Self { coordinator }
     }
 
-    pub async fn start(&self, host: &str, port: u16) -> Result<()> {
+    pub async fn start(&self, host: &str, port: u16, server_config: ServerConfig) -> Result<()> {
         let coordinator = self.coordinator.clone();
+
         HttpServer::new(move || {
             App::new()
                 .app_data(web::Data::new(coordinator.clone()))
+                .app_data(web::Data::new(server_config.clone()))
                 .configure(routes::config)
         })
         .bind((host, port))?

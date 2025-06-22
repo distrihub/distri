@@ -6,9 +6,9 @@ pub mod types;
 pub use error::AgentError;
 pub use store::{InMemorySessionStore, ToolSessionStore};
 pub use types::{AgentDefinition, McpDefinition, McpSession, ModelSettings};
+pub mod a2a;
 pub mod coordinator;
 pub mod langdb;
-
 pub mod memory;
 pub mod servers;
 #[cfg(test)]

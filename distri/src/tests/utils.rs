@@ -129,6 +129,6 @@ pub fn get_twitter_summarizer(
                 ..Default::default()
             },
         }),
-        a2a: None,
+        icon_url: None,
     }
 }

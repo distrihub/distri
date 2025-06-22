@@ -143,7 +143,9 @@ async fn main() -> Result<()> {
             }
             let server = A2AServer::new(coordinator);
             tracing::info!("Starting server at http://{}:{}", host, port);
-            server.start(&host, port).await?;
+            server
+                .start(&host, port, config.server.unwrap_or_default())
+                .await?;
         }
         Commands::Proxy => {
             let config = load_config(cli.config.to_str().unwrap())?;

@@ -1,6 +1,7 @@
 use actix_web::{web, HttpResponse};
+use distri::a2a::agent_def_to_card;
 use distri::coordinator::{AgentCoordinator, LocalCoordinator};
-use distri::types::AgentDefinition;
+use distri::types::{AgentDefinition, ServerConfig};
 use distri_a2a::{
     AgentCapabilities, AgentCard, AgentSkill, JsonRpcError, JsonRpcRequest, JsonRpcResponse,
     MessageSendParams, TaskIdParams,
@@ -22,11 +23,20 @@ pub fn config(cfg: &mut web::ServiceConfig) {
     );
 }
 
-async fn list_agents(coordinator: web::Data<Arc<LocalCoordinator>>) -> HttpResponse {
+async fn list_agents(
+    coordinator: web::Data<Arc<LocalCoordinator>>,
+    server_config: web::Data<ServerConfig>,
+) -> HttpResponse {
     let agent_defs = coordinator.agent_definitions.read().await;
     let agent_cards: Vec<AgentCard> = agent_defs
         .values()
-        .map(|def| agent_def_to_card(def, "http://127.0.0.1:8080")) // Placeholder URL
+        .map(|def| {
+            agent_def_to_card(
+                def,
+                server_config.get_ref().clone(),
+                "http://127.0.0.1:8080",
+            )
+        }) // Placeholder URL
         .collect();
     HttpResponse::Ok().json(agent_cards)
 }
@@ -34,12 +44,17 @@ async fn list_agents(coordinator: web::Data<Arc<LocalCoordinator>>) -> HttpRespo
 async fn get_agent_card(
     id: web::Path<String>,
     coordinator: web::Data<Arc<LocalCoordinator>>,
+    server_config: web::Data<ServerConfig>,
 ) -> HttpResponse {
     let agent_id = id.into_inner();
     let agents = coordinator.agent_definitions.read().await;
     match agents.get(&agent_id) {
         Some(agent_def) => {
-            let card = agent_def_to_card(agent_def, "http://127.0.0.1:8080"); // Placeholder URL
+            let card = agent_def_to_card(
+                agent_def,
+                server_config.get_ref().clone(),
+                "http://127.0.0.1:8080",
+            ); // Placeholder URL
             HttpResponse::Ok().json(card)
         }
         None => HttpResponse::NotFound().finish(),
@@ -149,37 +164,4 @@ async fn handle_task_cancel(
     });
 
     Ok(dummy_task)
-}
-
-// Helper to convert AgentDefinition to AgentCard
-fn agent_def_to_card(def: &AgentDefinition, base_url: &str) -> AgentCard {
-    AgentCard {
-        version: "0.1.0".to_string(),
-        name: def.name.clone(),
-        description: def.description.clone(),
-        url: format!("{}/api/v1/agents/{}", base_url, def.name),
-        capabilities: AgentCapabilities {
-            streaming: false,
-            push_notifications: false,
-            state_transition_history: false,
-            extensions: vec![],
-        },
-        default_input_modes: vec!["text/plain".to_string()],
-        default_output_modes: vec!["text/plain".to_string()],
-        skills: vec![AgentSkill {
-            id: "default".to_string(),
-            name: "Default Skill".to_string(),
-            description: "Default skill for general conversation".to_string(),
-            tags: vec![],
-            examples: vec![],
-            input_modes: None,
-            output_modes: None,
-        }],
-        icon_url: None,
-        documentation_url: None,
-        provider: None,
-        preferred_transport: None,
-        security_schemes: Default::default(),
-        security: Default::default(),
-    }
 }
