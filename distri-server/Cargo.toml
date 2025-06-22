@@ -13,4 +13,5 @@ tokio = { workspace = true }
 
 tracing = { workspace = true }
 distri = { path = "../distri" }
-a2a-rs = { workspace = true }
+distri-a2a = { path = "../distri-a2a" }
+schemars = "0.8.21"

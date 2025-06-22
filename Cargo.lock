@@ -3,23 +3,6 @@
 version = 4
 
 [[package]]
-name = "a2a-rs"
-version = "0.1.0"
-source = "git+https://github.com/distrihub/a2a-types.git#3ec043fb28d3e53ca0ec6773ff449755f4aeffcc"
-dependencies = [
- "async-trait",
- "base64 0.21.7",
- "chrono",
- "futures",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
- "tokio",
- "url",
- "uuid",
-]
-
-[[package]]
 name = "actix-codec"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1030,6 +1013,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "distri-a2a"
+version = "0.1.0"
+dependencies = [
+ "schemars",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "distri-cli"
 version = "0.1.0"
 dependencies = [
@@ -1040,6 +1032,7 @@ dependencies = [
  "comfy-table",
  "dirs",
  "distri",
+ "distri-server",
  "dotenv",
  "mcp-proxy",
  "regex",
@@ -1057,11 +1050,12 @@ dependencies = [
 name = "distri-server"
 version = "0.1.0"
 dependencies = [
- "a2a-rs",
  "actix-rt",
  "actix-web",
  "anyhow",
  "distri",
+ "distri-a2a",
+ "schemars",
  "serde",
  "serde_json",
  "tokio",
@@ -3919,7 +3913,6 @@ checksum = "3cf4199d1e5d15ddd86a694e4d0dffa9c323ce759fea589f00fef9d81cc1931d"
 dependencies = [
  "getrandom 0.3.3",
  "js-sys",
- "serde",
  "wasm-bindgen",
 ]
 

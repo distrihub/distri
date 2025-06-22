@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["distri", "proxy", "code-mcp", "distri-server", "distri-cli"]
+members = ["distri", "proxy", "code-mcp", "distri-server", "distri-cli", "distri-a2a"]
 default-members = ["distri-cli"]
 
 [workspace.dependencies]
@@ -11,5 +11,4 @@ tracing = "0.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokio = { version = "1.0", features = ["full"] }
-a2a-rs = { git = "https://github.com/distrihub/a2a-types.git" }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "chrono"] }

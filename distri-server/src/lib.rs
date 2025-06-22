@@ -3,7 +3,6 @@ use anyhow::Result;
 
 pub mod routes;
 pub mod server;
-pub mod types;
 
 /// Starts the HTTP server
 pub async fn start_server(host: &str, port: u16) -> Result<()> {
@@ -14,3 +13,5 @@ pub async fn start_server(host: &str, port: u16) -> Result<()> {
 
     Ok(())
 }
+
+pub use server::A2AServer;

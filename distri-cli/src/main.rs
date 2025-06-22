@@ -13,6 +13,7 @@ use distri::{
     },
     types::{Configuration, RunWorkflow, get_distri_config_schema},
 };
+use distri_server::A2AServer;
 use dotenv::dotenv;
 use logging::init_logging;
 use mcp_proxy::McpProxy;
@@ -132,6 +133,17 @@ async fn main() -> Result<()> {
                 mode => event::run(&agent_config.definition, coordinator, mode).await,
             }?;
             coordinator_handle.abort();
+        }
+        Commands::Serve { host, port } => {
+            let config = load_config(cli.config.to_str().unwrap())?;
+            let (_, coordinator) = init_all(&config).await?;
+
+            for agent in &config.agents {
+                coordinator.register_agent(agent.definition.clone()).await?;
+            }
+            let server = A2AServer::new(coordinator);
+            tracing::info!("Starting server at http://{}:{}", host, port);
+            server.start(&host, port).await?;
         }
         Commands::Proxy => {
             let config = load_config(cli.config.to_str().unwrap())?;
