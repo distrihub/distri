@@ -4,7 +4,7 @@ pub mod store;
 pub mod tools;
 pub mod types;
 pub use error::AgentError;
-pub use store::{InMemorySessionStore, ToolSessionStore};
+pub use store::{InMemorySessionStore, ToolSessionStore, TaskStore, HashMapTaskStore};
 pub use types::{AgentDefinition, McpDefinition, McpSession, ModelSettings};
 pub mod a2a;
 pub mod coordinator;

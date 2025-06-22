@@ -1,13 +1,18 @@
-use actix_web::{web, HttpResponse};
-use distri::a2a::agent_def_to_card;
-use distri::coordinator::{AgentCoordinator, LocalCoordinator};
+use actix_web::{web, HttpResponse, HttpRequest};
+use distri::coordinator::{AgentCoordinator, LocalCoordinator, AgentEvent};
 use distri::types::{AgentDefinition, ServerConfig};
+use distri::{TaskStore, memory::TaskStep};
 use distri_a2a::{
-    AgentCapabilities, AgentCard, AgentSkill, JsonRpcError, JsonRpcRequest, JsonRpcResponse,
-    MessageSendParams, TaskIdParams,
+    AgentCard, JsonRpcError, JsonRpcRequest, JsonRpcResponse,
+    MessageSendParams, TaskIdParams, Task, TaskState, TaskStatus, Message as A2aMessage,
+    Role, Part, TextPart,
 };
+use futures_util::StreamExt;
 use serde_json::json;
 use std::sync::Arc;
+use tokio::sync::{broadcast, mpsc};
+use uuid::Uuid;
+use actix_web_lab::sse::{self, Sse};
 
 // A2A specification
 // https://github.com/google-a2a/A2A/blob/main/specification/json/a2a.json
@@ -19,7 +24,9 @@ pub fn config(cfg: &mut web::ServiceConfig) {
                 web::resource("/agents/{id}")
                     .route(web::get().to(get_agent_card))
                     .route(web::post().to(jsonrpc_handler)),
-            ),
+            )
+            .service(web::resource("/agents/{id}/events").route(web::get().to(sse_handler)))
+            .service(web::resource("/tasks/{id}").route(web::get().to(get_task)))
     );
 }
 
@@ -31,12 +38,12 @@ async fn list_agents(
     let agent_cards: Vec<AgentCard> = agent_defs
         .values()
         .map(|def| {
-            agent_def_to_card(
+            distri::a2a::agent_def_to_card(
                 def,
                 server_config.get_ref().clone(),
                 "http://127.0.0.1:8080",
             )
-        }) // Placeholder URL
+        })
         .collect();
     HttpResponse::Ok().json(agent_cards)
 }
@@ -50,14 +57,48 @@ async fn get_agent_card(
     let agents = coordinator.agent_definitions.read().await;
     match agents.get(&agent_id) {
         Some(agent_def) => {
-            let card = agent_def_to_card(
+            let card = distri::a2a::agent_def_to_card(
                 agent_def,
                 server_config.get_ref().clone(),
                 "http://127.0.0.1:8080",
-            ); // Placeholder URL
+            );
             HttpResponse::Ok().json(card)
         }
         None => HttpResponse::NotFound().finish(),
+    }
+}
+
+async fn sse_handler(
+    req: HttpRequest,
+    id: web::Path<String>,
+    event_broadcaster: web::Data<broadcast::Sender<String>>,
+) -> Result<HttpResponse, actix_web::Error> {
+    let agent_id = id.into_inner();
+    let mut rx = event_broadcaster.subscribe();
+    
+    let stream = async_stream::stream! {
+        while let Ok(event) = rx.recv().await {
+            yield Ok(sse::Data::new(event));
+        }
+    };
+
+    Ok(Sse::from_stream(stream).into_response(&req))
+}
+
+async fn get_task(
+    id: web::Path<String>,
+    task_store: web::Data<Arc<dyn TaskStore>>,
+) -> HttpResponse {
+    let task_id = id.into_inner();
+    
+    match task_store.get_task(&task_id).await {
+        Ok(Some(task)) => HttpResponse::Ok().json(task),
+        Ok(None) => HttpResponse::NotFound().json(json!({
+            "error": "Task not found"
+        })),
+        Err(e) => HttpResponse::InternalServerError().json(json!({
+            "error": format!("Failed to get task: {}", e)
+        })),
     }
 }
 
@@ -65,15 +106,19 @@ async fn jsonrpc_handler(
     id: web::Path<String>,
     req: web::Json<JsonRpcRequest>,
     coordinator: web::Data<Arc<LocalCoordinator>>,
+    task_store: web::Data<Arc<dyn TaskStore>>,
+    event_broadcaster: web::Data<broadcast::Sender<String>>,
 ) -> HttpResponse {
     let agent_id = id.into_inner();
     let req = req.into_inner();
     let coordinator = coordinator.get_ref();
+    let task_store = task_store.get_ref();
 
     let result = match req.method.as_str() {
-        "message/send" => handle_message_send(agent_id, req.params, coordinator).await,
-        "tasks/get" => handle_task_get(agent_id, req.params, coordinator).await,
-        "tasks/cancel" => handle_task_cancel(agent_id, req.params, coordinator).await,
+        "message/send" => handle_message_send(agent_id, req.params, coordinator, task_store, event_broadcaster.get_ref()).await,
+        "message/send_streaming" => handle_message_send_streaming(agent_id, req.params, coordinator, task_store, event_broadcaster.get_ref()).await,
+        "tasks/get" => handle_task_get(agent_id, req.params, task_store).await,
+        "tasks/cancel" => handle_task_cancel(agent_id, req.params, task_store).await,
         _ => Err(JsonRpcError {
             code: -32601,
             message: "Method not found".to_string(),
@@ -100,68 +145,299 @@ async fn jsonrpc_handler(
 }
 
 async fn handle_message_send(
-    _agent_id: String,
+    agent_id: String,
     params: serde_json::Value,
-    _coordinator: &Arc<LocalCoordinator>,
+    coordinator: &Arc<LocalCoordinator>,
+    task_store: &Arc<dyn TaskStore>,
+    event_broadcaster: &broadcast::Sender<String>,
 ) -> Result<serde_json::Value, JsonRpcError> {
-    let _params: MessageSendParams = serde_json::from_value(params).map_err(|e| JsonRpcError {
+    let params: MessageSendParams = serde_json::from_value(params).map_err(|e| JsonRpcError {
         code: -32602,
         message: format!("Invalid params: {}", e),
         data: None,
     })?;
 
-    // TODO: Implement the actual logic by calling the coordinator
-    // For now, returning a dummy task.
-    let dummy_task = json!({
-        "id": "task-123",
-        "kind": "task",
-        "contextId": "context-456",
-        "status": { "state": "submitted" }
+    // Create a new task
+    let context_id = params.message.context_id.clone()
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
+    
+    let task = task_store.create_task(&agent_id, &context_id, "message").await
+        .map_err(|e| JsonRpcError {
+            code: -32603,
+            message: format!("Failed to create task: {}", e),
+            data: None,
+        })?;
+
+    // Convert A2A message to internal format
+    let task_step = TaskStep {
+        task: extract_text_from_message(&params.message),
+    };
+
+    // Update task status to working
+    let working_status = TaskStatus {
+        state: TaskState::Working,
+        message: Some(params.message.clone()),
+        timestamp: Some(chrono::Utc::now().to_rfc3339()),
+    };
+    task_store.update_task_status(&task.id, working_status).await
+        .map_err(|e| JsonRpcError {
+            code: -32603,
+            message: format!("Failed to update task status: {}", e),
+            data: None,
+        })?;
+
+    // Send event
+    let _ = event_broadcaster.send(json!({
+        "type": "task_status_changed",
+        "task_id": task.id,
+        "status": "working"
+    }).to_string());
+
+    // Execute the task using the coordinator
+    let execution_result = coordinator.execute(&agent_id, task_step, None).await;
+
+    let final_status = match execution_result {
+        Ok(response) => {
+            // Create response message
+            let response_message = A2aMessage {
+                message_id: Uuid::new_v4().to_string(),
+                role: Role::Agent,
+                parts: vec![Part::Text(TextPart { text: response })],
+                context_id: Some(context_id),
+                task_id: Some(task.id.clone()),
+                reference_task_ids: vec![],
+                extensions: vec![],
+                metadata: None,
+            };
+
+            // Add response to task history
+            task_store.add_message_to_task(&task.id, response_message.clone()).await
+                .map_err(|e| JsonRpcError {
+                    code: -32603,
+                    message: format!("Failed to add message to task: {}", e),
+                    data: None,
+                })?;
+
+            TaskStatus {
+                state: TaskState::Completed,
+                message: Some(response_message),
+                timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            }
+        }
+        Err(e) => {
+            TaskStatus {
+                state: TaskState::Failed,
+                message: None,
+                timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            }
+        }
+    };
+
+    // Update final task status
+    task_store.update_task_status(&task.id, final_status).await
+        .map_err(|e| JsonRpcError {
+            code: -32603,
+            message: format!("Failed to update final task status: {}", e),
+            data: None,
+        })?;
+
+    // Send completion event
+    let _ = event_broadcaster.send(json!({
+        "type": "task_status_changed",
+        "task_id": task.id,
+        "status": match execution_result {
+            Ok(_) => "completed",
+            Err(_) => "failed",
+        }
+    }).to_string());
+
+    // Get updated task
+    let updated_task = task_store.get_task(&task.id).await
+        .map_err(|e| JsonRpcError {
+            code: -32603,
+            message: format!("Failed to get updated task: {}", e),
+            data: None,
+        })?
+        .ok_or_else(|| JsonRpcError {
+            code: -32603,
+            message: "Task disappeared".to_string(),
+            data: None,
+        })?;
+
+    Ok(serde_json::to_value(updated_task).unwrap())
+}
+
+async fn handle_message_send_streaming(
+    agent_id: String,
+    params: serde_json::Value,
+    coordinator: &Arc<LocalCoordinator>,
+    task_store: &Arc<dyn TaskStore>,
+    event_broadcaster: &broadcast::Sender<String>,
+) -> Result<serde_json::Value, JsonRpcError> {
+    let params: MessageSendParams = serde_json::from_value(params).map_err(|e| JsonRpcError {
+        code: -32602,
+        message: format!("Invalid params: {}", e),
+        data: None,
+    })?;
+
+    // Create a new task
+    let context_id = params.message.context_id.clone()
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
+    
+    let task = task_store.create_task(&agent_id, &context_id, "message").await
+        .map_err(|e| JsonRpcError {
+            code: -32603,
+            message: format!("Failed to create task: {}", e),
+            data: None,
+        })?;
+
+    // Convert A2A message to internal format
+    let task_step = TaskStep {
+        task: extract_text_from_message(&params.message),
+    };
+
+    // Update task status to working
+    let working_status = TaskStatus {
+        state: TaskState::Working,
+        message: Some(params.message.clone()),
+        timestamp: Some(chrono::Utc::now().to_rfc3339()),
+    };
+    task_store.update_task_status(&task.id, working_status).await
+        .map_err(|e| JsonRpcError {
+            code: -32603,
+            message: format!("Failed to update task status: {}", e),
+            data: None,
+        })?;
+
+    // Create channel for streaming events
+    let (event_tx, mut event_rx) = mpsc::channel(100);
+    let task_id_clone = task.id.clone();
+    let event_broadcaster_clone = event_broadcaster.clone();
+    
+    // Spawn task to handle streaming events
+    tokio::spawn(async move {
+        while let Some(event) = event_rx.recv().await {
+            let event_json = match event {
+                AgentEvent::TextMessageContent { delta, .. } => {
+                    json!({
+                        "type": "text_delta",
+                        "task_id": task_id_clone,
+                        "delta": delta
+                    })
+                }
+                AgentEvent::RunFinished { .. } => {
+                    json!({
+                        "type": "task_completed",
+                        "task_id": task_id_clone
+                    })
+                }
+                AgentEvent::RunError { message, .. } => {
+                    json!({
+                        "type": "task_error",
+                        "task_id": task_id_clone,
+                        "error": message
+                    })
+                }
+                _ => continue,
+            };
+            let _ = event_broadcaster_clone.send(event_json.to_string());
+        }
     });
 
-    Ok(dummy_task)
+    // Execute the task using streaming
+    let execution_result = coordinator.execute_stream(&agent_id, task_step, None, event_tx).await;
+
+    let final_status = match execution_result {
+        Ok(_) => TaskStatus {
+            state: TaskState::Completed,
+            message: None,
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+        },
+        Err(_) => TaskStatus {
+            state: TaskState::Failed,
+            message: None,
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+        }
+    };
+
+    // Update final task status
+    task_store.update_task_status(&task.id, final_status).await
+        .map_err(|e| JsonRpcError {
+            code: -32603,
+            message: format!("Failed to update final task status: {}", e),
+            data: None,
+        })?;
+
+    // Get updated task
+    let updated_task = task_store.get_task(&task.id).await
+        .map_err(|e| JsonRpcError {
+            code: -32603,
+            message: format!("Failed to get updated task: {}", e),
+            data: None,
+        })?
+        .ok_or_else(|| JsonRpcError {
+            code: -32603,
+            message: "Task disappeared".to_string(),
+            data: None,
+        })?;
+
+    Ok(serde_json::to_value(updated_task).unwrap())
 }
 
 async fn handle_task_get(
     _agent_id: String,
     params: serde_json::Value,
-    _coordinator: &Arc<LocalCoordinator>,
+    task_store: &Arc<dyn TaskStore>,
 ) -> Result<serde_json::Value, JsonRpcError> {
-    let _params: TaskIdParams = serde_json::from_value(params).map_err(|e| JsonRpcError {
+    let params: TaskIdParams = serde_json::from_value(params).map_err(|e| JsonRpcError {
         code: -32602,
         message: format!("Invalid params: {}", e),
         data: None,
     })?;
 
-    // TODO: Implement the actual logic by calling the coordinator
-    let dummy_task = json!({
-        "id": "task-123",
-        "kind": "task",
-        "contextId": "context-456",
-        "status": { "state": "completed" }
-    });
+    let task = task_store.get_task(&params.id).await
+        .map_err(|e| JsonRpcError {
+            code: -32603,
+            message: format!("Failed to get task: {}", e),
+            data: None,
+        })?
+        .ok_or_else(|| JsonRpcError {
+            code: -32001,
+            message: "Task not found".to_string(),
+            data: None,
+        })?;
 
-    Ok(dummy_task)
+    Ok(serde_json::to_value(task).unwrap())
 }
 
 async fn handle_task_cancel(
     _agent_id: String,
     params: serde_json::Value,
-    _coordinator: &Arc<LocalCoordinator>,
+    task_store: &Arc<dyn TaskStore>,
 ) -> Result<serde_json::Value, JsonRpcError> {
-    let _params: TaskIdParams = serde_json::from_value(params).map_err(|e| JsonRpcError {
+    let params: TaskIdParams = serde_json::from_value(params).map_err(|e| JsonRpcError {
         code: -32602,
         message: format!("Invalid params: {}", e),
         data: None,
     })?;
 
-    // TODO: Implement the actual logic by calling the coordinator
-    let dummy_task = json!({
-        "id": "task-123",
-        "kind": "task",
-        "contextId": "context-456",
-        "status": { "state": "canceled" }
-    });
+    let task = task_store.cancel_task(&params.id).await
+        .map_err(|e| JsonRpcError {
+            code: -32603,
+            message: format!("Failed to cancel task: {}", e),
+            data: None,
+        })?;
 
-    Ok(dummy_task)
+    Ok(serde_json::to_value(task).unwrap())
+}
+
+fn extract_text_from_message(message: &A2aMessage) -> String {
+    message.parts
+        .iter()
+        .filter_map(|part| match part {
+            Part::Text(text_part) => Some(text_part.text.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
