@@ -289,7 +289,7 @@ pub struct MessageSendConfiguration {
 }
 
 /// A message exchanged between a user and an agent.
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Message {
     pub message_id: String,
@@ -308,7 +308,7 @@ pub struct Message {
 }
 
 /// The role of the message sender.
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub enum Role {
     User,
@@ -316,7 +316,7 @@ pub enum Role {
 }
 
 /// A part of a message.
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "kind")]
 pub enum Part {
     #[serde(rename = "text")]
@@ -328,20 +328,20 @@ pub enum Part {
 }
 
 /// A text part of a message.
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct TextPart {
     pub text: String,
 }
 
 /// A file part of a message.
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct FilePart {
     pub file: FileObject,
 }
 
 /// A file object, which can be represented by a URI or by its raw bytes.
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(untagged)]
 pub enum FileObject {
     WithUri { uri: String },
@@ -349,7 +349,7 @@ pub enum FileObject {
 }
 
 /// A data part of a message, containing arbitrary JSON data.
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct DataPart {
     pub data: serde_json::Value,
 }
@@ -373,7 +373,7 @@ pub struct TaskIdParams {
 }
 
 /// Represents a task being executed by the agent.
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Task {
     pub id: String,
@@ -388,7 +388,7 @@ pub struct Task {
 }
 
 /// The status of a task.
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskStatus {
     pub state: TaskState,
@@ -399,7 +399,7 @@ pub struct TaskStatus {
 }
 
 /// The state of a task.
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub enum TaskState {
     Submitted,
@@ -414,7 +414,7 @@ pub enum TaskState {
 }
 
 /// An artifact produced by a task.
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Artifact {
     pub artifact_id: String,

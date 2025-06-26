@@ -4,9 +4,9 @@
 server:
   host: "127.0.0.1"
   port: 8080
-  documentation_url: "https://github.com/your-org/distri"
+  documentation_url: "https://github.com/distrihub/distri"
   preferred_transport: "JSONRPC"
-  
+
   # A2A capabilities
   capabilities:
     streaming: true
@@ -18,7 +18,7 @@ server:
   default_input_modes:
     - "text/plain"
     - "text/markdown"
-  
+
   default_output_modes:
     - "text/plain"
     - "text/markdown"
@@ -38,7 +38,7 @@ agents:
       in your responses.
     icon_url: "https://example.com/assistant-icon.png"
     mcp_servers: []
-    
+
   - name: "researcher"
     description: "A research specialist that provides detailed analysis and information"
     model: "gpt-4"

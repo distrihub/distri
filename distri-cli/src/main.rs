@@ -108,7 +108,7 @@ async fn main() -> Result<()> {
             run::list::list_tools(registry.clone()).await?;
         }
         Commands::ConfigSchema { pretty } => print_schema(pretty),
-        Commands::Run { agent } => {
+        Commands::Run { agent, background } => {
             let config = load_config(cli.config.to_str().unwrap())?;
             let (_, coordinator) = init_all(&config).await?;
             let coordinator_clone = coordinator.clone();
@@ -128,10 +128,11 @@ async fn main() -> Result<()> {
                 coordinator_clone.run().await.unwrap();
             });
 
-            match &agent_config.workflow {
-                RunWorkflow::Chat => chat::run(agent_config, coordinator).await,
-                mode => event::run(&agent_config.definition, coordinator, mode).await,
-            }?;
+            if background {
+                event::run(&agent_config.definition, coordinator).await?;
+            } else {
+                chat::run(agent_config, coordinator).await?;
+            }
             coordinator_handle.abort();
         }
         Commands::Serve { host, port } => {

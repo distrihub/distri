@@ -1,18 +1,17 @@
-use actix_web::{web, HttpResponse, HttpRequest};
-use distri::coordinator::{AgentCoordinator, LocalCoordinator, AgentEvent};
-use distri::types::{AgentDefinition, ServerConfig};
-use distri::{TaskStore, memory::TaskStep};
+use actix_web::{web, HttpRequest, HttpResponse, Responder};
+use actix_web_lab::sse::{self, Sse};
+use distri::coordinator::{AgentCoordinator, AgentEvent, LocalCoordinator};
+use distri::types::ServerConfig;
+use distri::{memory::TaskStep, TaskStore};
 use distri_a2a::{
-    AgentCard, JsonRpcError, JsonRpcRequest, JsonRpcResponse,
-    MessageSendParams, TaskIdParams, Task, TaskState, TaskStatus, Message as A2aMessage,
-    Role, Part, TextPart,
+    AgentCard, JsonRpcError, JsonRpcRequest, JsonRpcResponse, Message as A2aMessage,
+    MessageSendParams, Part, Role, Task, TaskIdParams, TaskState, TaskStatus, TextPart,
 };
 use futures_util::StreamExt;
 use serde_json::json;
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
 use uuid::Uuid;
-use actix_web_lab::sse::{self, Sse};
 
 // A2A specification
 // https://github.com/google-a2a/A2A/blob/main/specification/json/a2a.json
@@ -26,7 +25,7 @@ pub fn config(cfg: &mut web::ServiceConfig) {
                     .route(web::post().to(jsonrpc_handler)),
             )
             .service(web::resource("/agents/{id}/events").route(web::get().to(sse_handler)))
-            .service(web::resource("/tasks/{id}").route(web::get().to(get_task)))
+            .service(web::resource("/tasks/{id}").route(web::get().to(get_task))),
     );
 }
 
@@ -72,17 +71,17 @@ async fn sse_handler(
     req: HttpRequest,
     id: web::Path<String>,
     event_broadcaster: web::Data<broadcast::Sender<String>>,
-) -> Result<HttpResponse, actix_web::Error> {
-    let agent_id = id.into_inner();
+) -> impl Responder {
+    let _agent_id = id.into_inner();
     let mut rx = event_broadcaster.subscribe();
-    
+
     let stream = async_stream::stream! {
         while let Ok(event) = rx.recv().await {
-            yield Ok(sse::Data::new(event));
+            yield Ok::<_, std::convert::Infallible>(sse::Data::new(event).into());
         }
     };
 
-    Ok(Sse::from_stream(stream).into_response(&req))
+    Sse::from_stream(stream)
 }
 
 async fn get_task(
@@ -90,7 +89,7 @@ async fn get_task(
     task_store: web::Data<Arc<dyn TaskStore>>,
 ) -> HttpResponse {
     let task_id = id.into_inner();
-    
+
     match task_store.get_task(&task_id).await {
         Ok(Some(task)) => HttpResponse::Ok().json(task),
         Ok(None) => HttpResponse::NotFound().json(json!({
@@ -115,8 +114,26 @@ async fn jsonrpc_handler(
     let task_store = task_store.get_ref();
 
     let result = match req.method.as_str() {
-        "message/send" => handle_message_send(agent_id, req.params, coordinator, task_store, event_broadcaster.get_ref()).await,
-        "message/send_streaming" => handle_message_send_streaming(agent_id, req.params, coordinator, task_store, event_broadcaster.get_ref()).await,
+        "message/send" => {
+            handle_message_send(
+                agent_id,
+                req.params,
+                coordinator,
+                task_store,
+                event_broadcaster.get_ref(),
+            )
+            .await
+        }
+        "message/send_streaming" => {
+            handle_message_send_streaming(
+                agent_id,
+                req.params,
+                coordinator,
+                task_store,
+                event_broadcaster.get_ref(),
+            )
+            .await
+        }
         "tasks/get" => handle_task_get(agent_id, req.params, task_store).await,
         "tasks/cancel" => handle_task_cancel(agent_id, req.params, task_store).await,
         _ => Err(JsonRpcError {
@@ -158,10 +175,15 @@ async fn handle_message_send(
     })?;
 
     // Create a new task
-    let context_id = params.message.context_id.clone()
+    let context_id = params
+        .message
+        .context_id
+        .clone()
         .unwrap_or_else(|| Uuid::new_v4().to_string());
-    
-    let task = task_store.create_task(&agent_id, &context_id, "message").await
+
+    let task = task_store
+        .create_task(&agent_id, &context_id, "message")
+        .await
         .map_err(|e| JsonRpcError {
             code: -32603,
             message: format!("Failed to create task: {}", e),
@@ -171,6 +193,7 @@ async fn handle_message_send(
     // Convert A2A message to internal format
     let task_step = TaskStep {
         task: extract_text_from_message(&params.message),
+        task_images: None,
     };
 
     // Update task status to working
@@ -179,7 +202,9 @@ async fn handle_message_send(
         message: Some(params.message.clone()),
         timestamp: Some(chrono::Utc::now().to_rfc3339()),
     };
-    task_store.update_task_status(&task.id, working_status).await
+    task_store
+        .update_task_status(&task.id, working_status)
+        .await
         .map_err(|e| JsonRpcError {
             code: -32603,
             message: format!("Failed to update task status: {}", e),
@@ -187,15 +212,19 @@ async fn handle_message_send(
         })?;
 
     // Send event
-    let _ = event_broadcaster.send(json!({
-        "type": "task_status_changed",
-        "task_id": task.id,
-        "status": "working"
-    }).to_string());
+    let _ = event_broadcaster.send(
+        json!({
+            "type": "task_status_changed",
+            "task_id": task.id,
+            "status": "working"
+        })
+        .to_string(),
+    );
 
     // Execute the task using the coordinator
     let execution_result = coordinator.execute(&agent_id, task_step, None).await;
 
+    let mut broadcast_status = "completed";
     let final_status = match execution_result {
         Ok(response) => {
             // Create response message
@@ -211,7 +240,9 @@ async fn handle_message_send(
             };
 
             // Add response to task history
-            task_store.add_message_to_task(&task.id, response_message.clone()).await
+            task_store
+                .add_message_to_task(&task.id, response_message.clone())
+                .await
                 .map_err(|e| JsonRpcError {
                     code: -32603,
                     message: format!("Failed to add message to task: {}", e),
@@ -224,7 +255,8 @@ async fn handle_message_send(
                 timestamp: Some(chrono::Utc::now().to_rfc3339()),
             }
         }
-        Err(e) => {
+        Err(_) => {
+            broadcast_status = "failed";
             TaskStatus {
                 state: TaskState::Failed,
                 message: None,
@@ -234,7 +266,9 @@ async fn handle_message_send(
     };
 
     // Update final task status
-    task_store.update_task_status(&task.id, final_status).await
+    task_store
+        .update_task_status(&task.id, final_status)
+        .await
         .map_err(|e| JsonRpcError {
             code: -32603,
             message: format!("Failed to update final task status: {}", e),
@@ -242,17 +276,19 @@ async fn handle_message_send(
         })?;
 
     // Send completion event
-    let _ = event_broadcaster.send(json!({
-        "type": "task_status_changed",
-        "task_id": task.id,
-        "status": match execution_result {
-            Ok(_) => "completed",
-            Err(_) => "failed",
-        }
-    }).to_string());
+    let _ = event_broadcaster.send(
+        json!({
+            "type": "task_status_changed",
+            "task_id": task.id,
+            "status": broadcast_status,
+        })
+        .to_string(),
+    );
 
     // Get updated task
-    let updated_task = task_store.get_task(&task.id).await
+    let updated_task = task_store
+        .get_task(&task.id)
+        .await
         .map_err(|e| JsonRpcError {
             code: -32603,
             message: format!("Failed to get updated task: {}", e),
@@ -281,10 +317,15 @@ async fn handle_message_send_streaming(
     })?;
 
     // Create a new task
-    let context_id = params.message.context_id.clone()
+    let context_id = params
+        .message
+        .context_id
+        .clone()
         .unwrap_or_else(|| Uuid::new_v4().to_string());
-    
-    let task = task_store.create_task(&agent_id, &context_id, "message").await
+
+    let task = task_store
+        .create_task(&agent_id, &context_id, "message")
+        .await
         .map_err(|e| JsonRpcError {
             code: -32603,
             message: format!("Failed to create task: {}", e),
@@ -294,6 +335,7 @@ async fn handle_message_send_streaming(
     // Convert A2A message to internal format
     let task_step = TaskStep {
         task: extract_text_from_message(&params.message),
+        task_images: None,
     };
 
     // Update task status to working
@@ -302,7 +344,9 @@ async fn handle_message_send_streaming(
         message: Some(params.message.clone()),
         timestamp: Some(chrono::Utc::now().to_rfc3339()),
     };
-    task_store.update_task_status(&task.id, working_status).await
+    task_store
+        .update_task_status(&task.id, working_status)
+        .await
         .map_err(|e| JsonRpcError {
             code: -32603,
             message: format!("Failed to update task status: {}", e),
@@ -313,7 +357,7 @@ async fn handle_message_send_streaming(
     let (event_tx, mut event_rx) = mpsc::channel(100);
     let task_id_clone = task.id.clone();
     let event_broadcaster_clone = event_broadcaster.clone();
-    
+
     // Spawn task to handle streaming events
     tokio::spawn(async move {
         while let Some(event) = event_rx.recv().await {
@@ -345,7 +389,9 @@ async fn handle_message_send_streaming(
     });
 
     // Execute the task using streaming
-    let execution_result = coordinator.execute_stream(&agent_id, task_step, None, event_tx).await;
+    let execution_result = coordinator
+        .execute_stream(&agent_id, task_step, None, event_tx)
+        .await;
 
     let final_status = match execution_result {
         Ok(_) => TaskStatus {
@@ -357,11 +403,13 @@ async fn handle_message_send_streaming(
             state: TaskState::Failed,
             message: None,
             timestamp: Some(chrono::Utc::now().to_rfc3339()),
-        }
+        },
     };
 
     // Update final task status
-    task_store.update_task_status(&task.id, final_status).await
+    task_store
+        .update_task_status(&task.id, final_status)
+        .await
         .map_err(|e| JsonRpcError {
             code: -32603,
             message: format!("Failed to update final task status: {}", e),
@@ -369,7 +417,9 @@ async fn handle_message_send_streaming(
         })?;
 
     // Get updated task
-    let updated_task = task_store.get_task(&task.id).await
+    let updated_task = task_store
+        .get_task(&task.id)
+        .await
         .map_err(|e| JsonRpcError {
             code: -32603,
             message: format!("Failed to get updated task: {}", e),
@@ -395,7 +445,9 @@ async fn handle_task_get(
         data: None,
     })?;
 
-    let task = task_store.get_task(&params.id).await
+    let task = task_store
+        .get_task(&params.id)
+        .await
         .map_err(|e| JsonRpcError {
             code: -32603,
             message: format!("Failed to get task: {}", e),
@@ -421,7 +473,9 @@ async fn handle_task_cancel(
         data: None,
     })?;
 
-    let task = task_store.cancel_task(&params.id).await
+    let task = task_store
+        .cancel_task(&params.id)
+        .await
         .map_err(|e| JsonRpcError {
             code: -32603,
             message: format!("Failed to cancel task: {}", e),
@@ -432,7 +486,8 @@ async fn handle_task_cancel(
 }
 
 fn extract_text_from_message(message: &A2aMessage) -> String {
-    message.parts
+    message
+        .parts
         .iter()
         .filter_map(|part| match part {
             Part::Text(text_part) => Some(text_part.text.clone()),
