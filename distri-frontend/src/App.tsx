@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { AgentProvider, useAgent } from '@ag-ui/react';
 import { MessageSquare, Settings, Activity, Loader2 } from 'lucide-react';
 import Chat from './components/Chat';
 import AgentList from './components/AgentList';
@@ -26,14 +25,14 @@ function App() {
     try {
       const response = await fetch('/api/v1/agents');
       const agentCards = await response.json();
-      
+
       const formattedAgents: Agent[] = agentCards.map((card: any) => ({
         id: card.name,
         name: card.name,
         description: card.description,
         status: 'online' as const,
       }));
-      
+
       setAgents(formattedAgents);
       if (formattedAgents.length > 0 && !selectedAgent) {
         setSelectedAgent(formattedAgents[0]);
@@ -70,33 +69,30 @@ function App() {
               <div className="flex bg-gray-100 rounded-lg p-1">
                 <button
                   onClick={() => setActiveTab('chat')}
-                  className={`flex items-center space-x-1 px-3 py-1 rounded text-sm font-medium transition-colors ${
-                    activeTab === 'chat'
-                      ? 'bg-white text-blue-600 shadow-sm'
-                      : 'text-gray-600 hover:text-gray-900'
-                  }`}
+                  className={`flex items-center space-x-1 px-3 py-1 rounded text-sm font-medium transition-colors ${activeTab === 'chat'
+                    ? 'bg-white text-blue-600 shadow-sm'
+                    : 'text-gray-600 hover:text-gray-900'
+                    }`}
                 >
                   <MessageSquare className="h-4 w-4" />
                   <span>Chat</span>
                 </button>
                 <button
                   onClick={() => setActiveTab('agents')}
-                  className={`flex items-center space-x-1 px-3 py-1 rounded text-sm font-medium transition-colors ${
-                    activeTab === 'agents'
-                      ? 'bg-white text-blue-600 shadow-sm'
-                      : 'text-gray-600 hover:text-gray-900'
-                  }`}
+                  className={`flex items-center space-x-1 px-3 py-1 rounded text-sm font-medium transition-colors ${activeTab === 'agents'
+                    ? 'bg-white text-blue-600 shadow-sm'
+                    : 'text-gray-600 hover:text-gray-900'
+                    }`}
                 >
                   <Settings className="h-4 w-4" />
                   <span>Agents</span>
                 </button>
                 <button
                   onClick={() => setActiveTab('tasks')}
-                  className={`flex items-center space-x-1 px-3 py-1 rounded text-sm font-medium transition-colors ${
-                    activeTab === 'tasks'
-                      ? 'bg-white text-blue-600 shadow-sm'
-                      : 'text-gray-600 hover:text-gray-900'
-                  }`}
+                  className={`flex items-center space-x-1 px-3 py-1 rounded text-sm font-medium transition-colors ${activeTab === 'tasks'
+                    ? 'bg-white text-blue-600 shadow-sm'
+                    : 'text-gray-600 hover:text-gray-900'
+                    }`}
                 >
                   <Activity className="h-4 w-4" />
                   <span>Tasks</span>
@@ -119,20 +115,18 @@ function App() {
                   <button
                     key={agent.id}
                     onClick={() => setSelectedAgent(agent)}
-                    className={`w-full text-left p-3 rounded-lg transition-colors ${
-                      selectedAgent?.id === agent.id
-                        ? 'bg-blue-50 border border-blue-200'
-                        : 'hover:bg-gray-50 border border-transparent'
-                    }`}
+                    className={`w-full text-left p-3 rounded-lg transition-colors ${selectedAgent?.id === agent.id
+                      ? 'bg-blue-50 border border-blue-200'
+                      : 'hover:bg-gray-50 border border-transparent'
+                      }`}
                   >
                     <div className="flex items-center justify-between">
                       <div>
                         <h3 className="font-medium text-gray-900">{agent.name}</h3>
                         <p className="text-sm text-gray-500 truncate">{agent.description}</p>
                       </div>
-                      <div className={`w-2 h-2 rounded-full ${
-                        agent.status === 'online' ? 'bg-green-400' : 'bg-gray-400'
-                      }`} />
+                      <div className={`w-2 h-2 rounded-full ${agent.status === 'online' ? 'bg-green-400' : 'bg-gray-400'
+                        }`} />
                     </div>
                   </button>
                 ))}
@@ -143,22 +137,15 @@ function App() {
           {/* Main Content Area */}
           <div className="lg:col-span-3">
             {activeTab === 'chat' && selectedAgent && (
-              <AgentProvider
-                key={selectedAgent.id}
-                agent={{
-                  name: selectedAgent.name,
-                  baseUrl: '/api/v1',
-                  agentId: selectedAgent.id,
-                }}
-              >
-                <Chat agent={selectedAgent} />
-              </AgentProvider>
+
+              <Chat agent={selectedAgent} />
+
             )}
-            
+
             {activeTab === 'agents' && (
               <AgentList agents={agents} onRefresh={fetchAgents} />
             )}
-            
+
             {activeTab === 'tasks' && (
               <TaskMonitor />
             )}

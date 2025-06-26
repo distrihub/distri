@@ -2,3 +2,4 @@
 /config.yaml
 .distri/
 .env
+distri-frontend/node_modules/

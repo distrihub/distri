@@ -1,5 +1,4 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { useAgent } from '@ag-ui/react';
 import { Send, Loader2, User, Bot } from 'lucide-react';
 
 interface Agent {
@@ -81,7 +80,7 @@ const Chat: React.FC<ChatProps> = ({ agent }) => {
       });
 
       const result = await response.json();
-      
+
       if (result.error) {
         throw new Error(result.error.message);
       }
@@ -122,11 +121,11 @@ const Chat: React.FC<ChatProps> = ({ agent }) => {
 
   const setupSSEListener = (taskId: string) => {
     const eventSource = new EventSource(`/api/v1/agents/${agent.id}/events`);
-    
+
     eventSource.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        
+
         if (data.task_id === taskId) {
           if (data.type === 'text_delta') {
             // Update the last agent message with streaming content
@@ -182,9 +181,8 @@ const Chat: React.FC<ChatProps> = ({ agent }) => {
             <p className="text-sm text-gray-500">{agent.description}</p>
           </div>
         </div>
-        <div className={`w-2 h-2 rounded-full ${
-          agent.status === 'online' ? 'bg-green-400' : 'bg-gray-400'
-        }`} />
+        <div className={`w-2 h-2 rounded-full ${agent.status === 'online' ? 'bg-green-400' : 'bg-gray-400'
+          }`} />
       </div>
 
       {/* Messages */}
@@ -195,18 +193,17 @@ const Chat: React.FC<ChatProps> = ({ agent }) => {
             <p className="text-gray-500">Start a conversation with {agent.name}</p>
           </div>
         )}
-        
+
         {messages.map((message) => (
           <div
             key={message.id}
             className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
           >
             <div
-              className={`max-w-[70%] rounded-lg px-4 py-2 ${
-                message.role === 'user'
+              className={`max-w-[70%] rounded-lg px-4 py-2 ${message.role === 'user'
                   ? 'bg-blue-600 text-white'
                   : 'bg-gray-100 text-gray-900'
-              }`}
+                }`}
             >
               <div className="flex items-start space-x-2">
                 {message.role === 'agent' && (
@@ -217,9 +214,8 @@ const Chat: React.FC<ChatProps> = ({ agent }) => {
                 )}
                 <div className="flex-1">
                   <p className="whitespace-pre-wrap">{message.content}</p>
-                  <p className={`text-xs mt-1 ${
-                    message.role === 'user' ? 'text-blue-200' : 'text-gray-500'
-                  }`}>
+                  <p className={`text-xs mt-1 ${message.role === 'user' ? 'text-blue-200' : 'text-gray-500'
+                    }`}>
                     {message.timestamp.toLocaleTimeString()}
                   </p>
                 </div>
@@ -227,7 +223,7 @@ const Chat: React.FC<ChatProps> = ({ agent }) => {
             </div>
           </div>
         ))}
-        
+
         {isLoading && (
           <div className="flex justify-start">
             <div className="bg-gray-100 rounded-lg px-4 py-2">
@@ -239,7 +235,7 @@ const Chat: React.FC<ChatProps> = ({ agent }) => {
             </div>
           </div>
         )}
-        
+
         <div ref={messagesEndRef} />
       </div>
 
