@@ -31,6 +31,14 @@ pub enum Commands {
         /// Agent name
         #[clap(help = "The name of the agent to run")]
         agent: String,
+
+        #[clap(
+            long,
+            short,
+            help = "Run the agent in the background",
+            default_value = "false"
+        )]
+        background: bool,
     },
 
     /// Generate config schema

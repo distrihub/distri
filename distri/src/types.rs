@@ -369,8 +369,8 @@ pub enum RunWorkflow {
 
 #[derive(Debug, serde::Deserialize, JsonSchema)]
 pub struct AgentConfig {
+    #[serde(flatten)]
     pub definition: AgentDefinition,
-    pub workflow: RunWorkflow,
     #[serde(default = "default_max_history")]
     pub max_history: usize,
 }
@@ -378,6 +378,7 @@ pub struct AgentConfig {
 #[derive(serde::Deserialize, JsonSchema)]
 pub struct Configuration {
     pub agents: Vec<AgentConfig>,
+    #[serde(default)]
     pub sessions: HashMap<String, String>,
     #[serde(default)]
     pub mcp_servers: Vec<ExternalMcpServer>,

@@ -1,12 +1,14 @@
 use async_trait::async_trait;
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
+use uuid::Uuid;
 
 use crate::{
     coordinator::CoordinatorContext,
     memory::{LocalAgentMemory, MemoryStep},
     types::{McpSession, Message},
 };
+use distri_a2a::{Task, TaskState, TaskStatus, Role, Part, TextPart, Message as A2aMessage};
 
 #[async_trait]
 pub trait ToolSessionStore: Send + Sync {
@@ -115,5 +117,99 @@ impl MemoryStore for LocalMemoryStore {
             .or_insert_with(LocalAgentMemory::default);
         memory.add_step(step, thread_id);
         Ok(())
+    }
+}
+
+// Task Store trait for A2A task management
+#[async_trait]
+pub trait TaskStore: Send + Sync {
+    async fn create_task(&self, agent_id: &str, context_id: &str, kind: &str) -> anyhow::Result<Task>;
+    async fn get_task(&self, task_id: &str) -> anyhow::Result<Option<Task>>;
+    async fn update_task_status(&self, task_id: &str, status: TaskStatus) -> anyhow::Result<()>;
+    async fn cancel_task(&self, task_id: &str) -> anyhow::Result<Task>;
+    async fn add_message_to_task(&self, task_id: &str, message: A2aMessage) -> anyhow::Result<()>;
+    async fn list_tasks(&self, agent_id: Option<&str>) -> anyhow::Result<Vec<Task>>;
+}
+
+// HashMap-based task store implementation
+#[derive(Clone)]
+pub struct HashMapTaskStore {
+    tasks: Arc<RwLock<HashMap<String, Task>>>,
+}
+
+impl Default for HashMapTaskStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl HashMapTaskStore {
+    pub fn new() -> Self {
+        Self {
+            tasks: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+}
+
+#[async_trait]
+impl TaskStore for HashMapTaskStore {
+    async fn create_task(&self, agent_id: &str, context_id: &str, kind: &str) -> anyhow::Result<Task> {
+        let task_id = Uuid::new_v4().to_string();
+        let task = Task {
+            id: task_id.clone(),
+            kind: kind.to_string(),
+            context_id: context_id.to_string(),
+            status: TaskStatus {
+                state: TaskState::Submitted,
+                message: None,
+                timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            },
+            artifacts: vec![],
+            history: vec![],
+        };
+
+        let mut tasks = self.tasks.write().await;
+        tasks.insert(task_id, task.clone());
+        Ok(task)
+    }
+
+    async fn get_task(&self, task_id: &str) -> anyhow::Result<Option<Task>> {
+        let tasks = self.tasks.read().await;
+        Ok(tasks.get(task_id).cloned())
+    }
+
+    async fn update_task_status(&self, task_id: &str, status: TaskStatus) -> anyhow::Result<()> {
+        let mut tasks = self.tasks.write().await;
+        if let Some(task) = tasks.get_mut(task_id) {
+            task.status = status;
+        }
+        Ok(())
+    }
+
+    async fn cancel_task(&self, task_id: &str) -> anyhow::Result<Task> {
+        let mut tasks = self.tasks.write().await;
+        if let Some(task) = tasks.get_mut(task_id) {
+            task.status = TaskStatus {
+                state: TaskState::Canceled,
+                message: None,
+                timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            };
+            Ok(task.clone())
+        } else {
+            Err(anyhow::anyhow!("Task not found"))
+        }
+    }
+
+    async fn add_message_to_task(&self, task_id: &str, message: A2aMessage) -> anyhow::Result<()> {
+        let mut tasks = self.tasks.write().await;
+        if let Some(task) = tasks.get_mut(task_id) {
+            task.history.push(message);
+        }
+        Ok(())
+    }
+
+    async fn list_tasks(&self, _agent_id: Option<&str>) -> anyhow::Result<Vec<Task>> {
+        let tasks = self.tasks.read().await;
+        Ok(tasks.values().cloned().collect())
     }
 }
