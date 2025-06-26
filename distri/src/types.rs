@@ -6,6 +6,12 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{self, json};
 use std::{collections::HashMap, fmt::Display, time::SystemTime};
+use async_openai::types::{
+    ChatCompletionResponseMessage, ChatCompletionTool, FinishReason, FunctionObjectArgs,
+};
+use distri_a2a::{Message as A2aMessage, Part, Role, TextPart};
+use uuid;
+use chrono;
 
 use crate::servers::registry::ServerMetadata;
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -447,4 +453,71 @@ impl Display for RunWorkflow {
             RunWorkflow::Event { times, every } => write!(f, "event: {times:?}, every: {every:?}"),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Thread {
+    pub id: String,
+    pub title: String,
+    pub agent_id: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub message_count: u32,
+    pub last_message: Option<String>,
+    pub metadata: HashMap<String, serde_json::Value>,
+}
+
+impl Thread {
+    pub fn new(agent_id: String, title: Option<String>) -> Self {
+        let now = chrono::Utc::now();
+        Self {
+            id: uuid::Uuid::new_v4().to_string(),
+            title: title.unwrap_or_else(|| "New conversation".to_string()),
+            agent_id,
+            created_at: now,
+            updated_at: now,
+            message_count: 0,
+            last_message: None,
+            metadata: HashMap::new(),
+        }
+    }
+
+    pub fn update_with_message(&mut self, message: &str) {
+        self.updated_at = chrono::Utc::now();
+        self.message_count += 1;
+        self.last_message = Some(message.chars().take(100).collect());
+        
+        // Auto-generate title from first message if it's still default
+        if self.title == "New conversation" && self.message_count == 1 {
+            self.title = message.chars().take(50).collect::<String>()
+                .trim().to_string();
+            if self.title.is_empty() {
+                self.title = "Untitled conversation".to_string();
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThreadSummary {
+    pub id: String,
+    pub title: String,
+    pub agent_id: String,
+    pub agent_name: String,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub message_count: u32,
+    pub last_message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateThreadRequest {
+    pub agent_id: String,
+    pub title: Option<String>,
+    pub initial_message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateThreadRequest {
+    pub title: Option<String>,
+    pub metadata: Option<HashMap<String, serde_json::Value>>,
 }

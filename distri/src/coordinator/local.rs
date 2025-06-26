@@ -3,11 +3,11 @@ use crate::{
     executor::LLMExecutor,
     memory::SystemStep,
     servers::registry::ServerRegistry,
-    store::{LocalMemoryStore, MemoryStore, ToolSessionStore},
+    store::{LocalMemoryStore, MemoryStore, ToolSessionStore, ThreadStore, HashMapThreadStore},
     tools::{execute_tool, get_tools},
     types::{
         get_tool_descriptions, AgentDefinition, Message, MessageContent, MessageRole, ServerTools,
-        DEFAULT_TOOL_DESCRIPTION_TEMPLATE,
+        DEFAULT_TOOL_DESCRIPTION_TEMPLATE, Thread, ThreadSummary, CreateThreadRequest, UpdateThreadRequest,
     },
 };
 use std::{collections::HashMap, sync::Arc};
@@ -29,6 +29,7 @@ pub struct LocalCoordinator {
     pub coordinator_rx: Arc<Mutex<mpsc::Receiver<CoordinatorMessage>>>,
     pub coordinator_tx: mpsc::Sender<CoordinatorMessage>,
     memory_store: Arc<Box<dyn MemoryStore>>,
+    thread_store: Arc<Box<dyn ThreadStore>>,
     logger: StepLogger,
     iterations: Arc<RwLock<HashMap<String, i32>>>,
     pub context: Arc<CoordinatorContext>,
@@ -42,6 +43,7 @@ impl LocalCoordinator {
         context: Arc<CoordinatorContext>,
     ) -> Self {
         let (coordinator_tx, coordinator_rx) = mpsc::channel(100);
+        let thread_store = Arc::new(Box::new(HashMapThreadStore::new()) as Box<dyn ThreadStore>);
 
         let logger = StepLogger::new(context.verbose);
         Self {
@@ -53,7 +55,7 @@ impl LocalCoordinator {
             coordinator_tx,
             memory_store: memory_store
                 .unwrap_or_else(|| Arc::new(Box::new(LocalMemoryStore::new()))),
-
+            thread_store,
             iterations: Arc::new(RwLock::new(HashMap::new())),
             context: context,
             logger,
@@ -679,6 +681,110 @@ impl LocalCoordinator {
                 }
             }
         }
+    }
+
+    // Thread management methods
+    pub async fn create_thread(&self, request: CreateThreadRequest) -> Result<Thread, AgentError> {
+        // Validate that the agent exists
+        let agent_definitions = self.agent_definitions.read().await;
+        if !agent_definitions.contains_key(&request.agent_id) {
+            return Err(AgentError::NotFound(format!("Agent '{}' not found", request.agent_id)));
+        }
+        drop(agent_definitions);
+
+        self.thread_store.create_thread(request).await
+            .map_err(|e| AgentError::Session(e.to_string()))
+    }
+
+    pub async fn get_thread(&self, thread_id: &str) -> Result<Option<Thread>, AgentError> {
+        self.thread_store.get_thread(thread_id).await
+            .map_err(|e| AgentError::Session(e.to_string()))
+    }
+
+    pub async fn update_thread(&self, thread_id: &str, request: UpdateThreadRequest) -> Result<Thread, AgentError> {
+        self.thread_store.update_thread(thread_id, request).await
+            .map_err(|e| AgentError::Session(e.to_string()))
+    }
+
+    pub async fn delete_thread(&self, thread_id: &str) -> Result<(), AgentError> {
+        self.thread_store.delete_thread(thread_id).await
+            .map_err(|e| AgentError::Session(e.to_string()))
+    }
+
+    pub async fn list_threads(&self, agent_id: Option<&str>, limit: Option<u32>, offset: Option<u32>) -> Result<Vec<ThreadSummary>, AgentError> {
+        self.thread_store.list_threads(agent_id, limit, offset).await
+            .map_err(|e| AgentError::Session(e.to_string()))
+    }
+
+    pub async fn execute_in_thread(
+        &self,
+        thread_id: &str,
+        task: TaskStep,
+        params: Option<serde_json::Value>,
+    ) -> Result<String, AgentError> {
+        // Get thread to determine the agent
+        let thread = self.get_thread(thread_id).await?
+            .ok_or_else(|| AgentError::NotFound(format!("Thread '{}' not found", thread_id)))?;
+
+        // Update thread with the new message
+        self.thread_store.update_thread_with_message(thread_id, &task.task).await
+            .map_err(|e| AgentError::Session(e.to_string()))?;
+
+        // Create thread-specific context
+        let thread_context = Arc::new(CoordinatorContext::new(
+            thread_id.to_string(),
+            uuid::Uuid::new_v4().to_string(),
+            self.context.verbose,
+            self.context.user_id.clone(),
+            self.context.tools_context.clone(),
+        ));
+
+        // Execute using the thread's agent
+        let result = self.call_agent(&thread.agent_id, task, params, thread_context).await?;
+
+        // Update thread store with agent definitions for thread listing
+        let agent_definitions = self.agent_definitions.read().await;
+        if let Ok(thread_store) = self.thread_store.as_ref().as_any().downcast_ref::<HashMapThreadStore>() {
+            thread_store.set_agent_definitions(agent_definitions.clone()).await;
+        }
+
+        Ok(result)
+    }
+
+    pub async fn execute_stream_in_thread(
+        &self,
+        thread_id: &str,
+        task: TaskStep,
+        params: Option<serde_json::Value>,
+        event_tx: mpsc::Sender<AgentEvent>,
+    ) -> Result<(), AgentError> {
+        // Get thread to determine the agent
+        let thread = self.get_thread(thread_id).await?
+            .ok_or_else(|| AgentError::NotFound(format!("Thread '{}' not found", thread_id)))?;
+
+        // Update thread with the new message
+        self.thread_store.update_thread_with_message(thread_id, &task.task).await
+            .map_err(|e| AgentError::Session(e.to_string()))?;
+
+        // Create thread-specific context
+        let thread_context = Arc::new(CoordinatorContext::new(
+            thread_id.to_string(),
+            uuid::Uuid::new_v4().to_string(),
+            self.context.verbose,
+            self.context.user_id.clone(),
+            self.context.tools_context.clone(),
+        ));
+
+        // Execute using the thread's agent
+        self.call_agent_stream(&thread.agent_id, task, params, thread_context, event_tx).await?;
+
+        // Update thread store with agent definitions for thread listing
+        let agent_definitions = self.agent_definitions.read().await;
+        if let Ok(thread_store) = self.thread_store.as_ref().as_any().downcast_ref::<HashMapThreadStore>() {
+            thread_store.set_agent_definitions(agent_definitions.clone()).await;
+        }
+
+        Ok(())
     }
 }
 

@@ -8,8 +8,20 @@ interface Agent {
   status: 'online' | 'offline';
 }
 
+interface Thread {
+  id: string;
+  title: string;
+  agent_id: string;
+  agent_name: string;
+  updated_at: string;
+  message_count: number;
+  last_message?: string;
+}
+
 interface ChatProps {
+  thread: Thread;
   agent: Agent;
+  onThreadUpdate?: () => void;
 }
 
 interface Message {
@@ -20,7 +32,7 @@ interface Message {
   taskId?: string;
 }
 
-const Chat: React.FC<ChatProps> = ({ agent }) => {
+const Chat: React.FC<ChatProps> = ({ thread, agent, onThreadUpdate }) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -33,6 +45,24 @@ const Chat: React.FC<ChatProps> = ({ agent }) => {
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  // Load thread messages when thread changes
+  useEffect(() => {
+    if (thread) {
+      loadThreadMessages();
+    }
+  }, [thread.id]);
+
+  const loadThreadMessages = async () => {
+    try {
+      // For now, we'll start with empty messages since we don't have a 
+      // thread messages endpoint yet. In a real implementation, you'd fetch
+      // the thread's message history here.
+      setMessages([]);
+    } catch (error) {
+      console.error('Failed to load thread messages:', error);
+    }
+  };
 
   const sendMessage = async () => {
     if (!input.trim() || isLoading) return;
@@ -49,60 +79,35 @@ const Chat: React.FC<ChatProps> = ({ agent }) => {
     setIsLoading(true);
 
     try {
-      // Send message using A2A protocol
-      const response = await fetch(`/api/v1/agents/${agent.id}`, {
+      // Send message to thread endpoint
+      const response = await fetch(`/api/v1/threads/${thread.id}/messages`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          jsonrpc: '2.0',
-          method: 'message/send',
-          params: {
-            message: {
-              messageId: userMessage.id,
-              role: 'user',
-              parts: [
-                {
-                  kind: 'text',
-                  text: userMessage.content,
-                }
-              ],
-              contextId: `chat-${agent.id}`,
-            },
-            configuration: {
-              acceptedOutputModes: ['text/plain'],
-              blocking: true,
-            },
-          },
-          id: userMessage.id,
+          message: userMessage.content,
         }),
       });
 
       const result = await response.json();
 
-      if (result.error) {
-        throw new Error(result.error.message);
-      }
+      if (response.ok) {
+        const agentMessage: Message = {
+          id: `${Date.now()}-agent`,
+          role: 'agent',
+          content: result.response,
+          timestamp: new Date(),
+        };
 
-      const task = result.result;
-      const responseContent = task.status?.message?.parts
-        ?.find((part: any) => part.kind === 'text')
-        ?.text || 'No response received';
+        setMessages((prev: Message[]) => [...prev, agentMessage]);
 
-      const agentMessage: Message = {
-        id: `${Date.now()}-agent`,
-        role: 'agent',
-        content: responseContent,
-        timestamp: new Date(),
-        taskId: task.id,
-      };
-
-      setMessages(prev => [...prev, agentMessage]);
-
-      // Set up SSE listener for real-time updates if needed
-      if (task.status?.state === 'working') {
-        setupSSEListener(task.id);
+        // Update thread in parent component
+        if (onThreadUpdate) {
+          onThreadUpdate();
+        }
+      } else {
+        throw new Error(result.error || 'Failed to send message');
       }
 
     } catch (error) {
@@ -117,48 +122,6 @@ const Chat: React.FC<ChatProps> = ({ agent }) => {
     } finally {
       setIsLoading(false);
     }
-  };
-
-  const setupSSEListener = (taskId: string) => {
-    const eventSource = new EventSource(`/api/v1/agents/${agent.id}/events`);
-
-    eventSource.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-
-        if (data.task_id === taskId) {
-          if (data.type === 'text_delta') {
-            // Update the last agent message with streaming content
-            setMessages(prev => {
-              const lastMessage = prev[prev.length - 1];
-              if (lastMessage && lastMessage.role === 'agent' && lastMessage.taskId === taskId) {
-                return [
-                  ...prev.slice(0, -1),
-                  {
-                    ...lastMessage,
-                    content: lastMessage.content + data.delta,
-                  }
-                ];
-              }
-              return prev;
-            });
-          } else if (data.type === 'task_completed' || data.type === 'task_error') {
-            eventSource.close();
-          }
-        }
-      } catch (error) {
-        console.error('Error parsing SSE data:', error);
-      }
-    };
-
-    eventSource.onerror = () => {
-      eventSource.close();
-    };
-
-    // Clean up after 30 seconds
-    setTimeout(() => {
-      eventSource.close();
-    }, 30000);
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -177,8 +140,8 @@ const Chat: React.FC<ChatProps> = ({ agent }) => {
             <Bot className="h-4 w-4 text-white" />
           </div>
           <div>
-            <h3 className="font-medium text-gray-900">{agent.name}</h3>
-            <p className="text-sm text-gray-500">{agent.description}</p>
+            <h3 className="font-medium text-gray-900">{thread.title}</h3>
+            <p className="text-sm text-gray-500">with {agent.name}</p>
           </div>
         </div>
         <div className={`w-2 h-2 rounded-full ${agent.status === 'online' ? 'bg-green-400' : 'bg-gray-400'
@@ -190,7 +153,10 @@ const Chat: React.FC<ChatProps> = ({ agent }) => {
         {messages.length === 0 && (
           <div className="text-center py-8">
             <Bot className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-            <p className="text-gray-500">Start a conversation with {agent.name}</p>
+            <p className="text-gray-500">Start your conversation with {agent.name}</p>
+            <p className="text-sm text-gray-400 mt-1">
+              This is the beginning of your thread: "{thread.title}"
+            </p>
           </div>
         )}
 

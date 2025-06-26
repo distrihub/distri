@@ -1,14 +1,15 @@
 use actix_web::{web, HttpRequest, HttpResponse, Responder};
 use actix_web_lab::sse::{self, Sse};
 use distri::coordinator::{AgentCoordinator, AgentEvent, LocalCoordinator};
-use distri::types::ServerConfig;
+use distri::types::{ServerConfig, CreateThreadRequest, UpdateThreadRequest, ThreadSummary};
 use distri::{memory::TaskStep, TaskStore};
 use distri_a2a::{
     AgentCard, JsonRpcError, JsonRpcRequest, JsonRpcResponse, Message as A2aMessage,
     MessageSendParams, Part, Role, Task, TaskIdParams, TaskState, TaskStatus, TextPart,
 };
 use futures_util::StreamExt;
-use serde_json::json;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
 use uuid::Uuid;
@@ -25,7 +26,24 @@ pub fn config(cfg: &mut web::ServiceConfig) {
                     .route(web::post().to(jsonrpc_handler)),
             )
             .service(web::resource("/agents/{id}/events").route(web::get().to(sse_handler)))
-            .service(web::resource("/tasks/{id}").route(web::get().to(get_task))),
+            .service(web::resource("/tasks/{id}").route(web::get().to(get_task)))
+            // Thread endpoints
+            .service(web::resource("/threads").route(web::get().to(list_threads_handler)))
+            .service(web::resource("/threads").route(web::post().to(create_thread_handler)))
+            .service(
+                web::resource("/threads/{thread_id}")
+                    .route(web::get().to(get_thread_handler))
+                    .route(web::put().to(update_thread_handler))
+                    .route(web::delete().to(delete_thread_handler)),
+            )
+            .service(
+                web::resource("/threads/{thread_id}/messages")
+                    .route(web::post().to(send_message_to_thread_handler)),
+            )
+            .service(
+                web::resource("/threads/{thread_id}/events")
+                    .route(web::get().to(thread_events_handler)),
+            ),
     );
 }
 
@@ -495,4 +513,132 @@ fn extract_text_from_message(message: &A2aMessage) -> String {
         })
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+// Thread handlers
+#[derive(Deserialize)]
+struct ListThreadsQuery {
+    agent_id: Option<String>,
+    limit: Option<u32>,
+    offset: Option<u32>,
+}
+
+async fn list_threads_handler(
+    query: web::Query<ListThreadsQuery>,
+    coordinator: web::Data<Arc<LocalCoordinator>>,
+) -> HttpResponse {
+    match coordinator
+        .list_threads(query.agent_id.as_deref(), query.limit, query.offset)
+        .await
+    {
+        Ok(threads) => HttpResponse::Ok().json(threads),
+        Err(e) => HttpResponse::InternalServerError().json(json!({
+            "error": format!("Failed to list threads: {}", e)
+        })),
+    }
+}
+
+async fn create_thread_handler(
+    request: web::Json<CreateThreadRequest>,
+    coordinator: web::Data<Arc<LocalCoordinator>>,
+) -> HttpResponse {
+    match coordinator.create_thread(request.into_inner()).await {
+        Ok(thread) => HttpResponse::Ok().json(thread),
+        Err(e) => HttpResponse::BadRequest().json(json!({
+            "error": format!("Failed to create thread: {}", e)
+        })),
+    }
+}
+
+async fn get_thread_handler(
+    path: web::Path<String>,
+    coordinator: web::Data<Arc<LocalCoordinator>>,
+) -> HttpResponse {
+    let thread_id = path.into_inner();
+    match coordinator.get_thread(&thread_id).await {
+        Ok(Some(thread)) => HttpResponse::Ok().json(thread),
+        Ok(None) => HttpResponse::NotFound().json(json!({
+            "error": "Thread not found"
+        })),
+        Err(e) => HttpResponse::InternalServerError().json(json!({
+            "error": format!("Failed to get thread: {}", e)
+        })),
+    }
+}
+
+async fn update_thread_handler(
+    path: web::Path<String>,
+    request: web::Json<UpdateThreadRequest>,
+    coordinator: web::Data<Arc<LocalCoordinator>>,
+) -> HttpResponse {
+    let thread_id = path.into_inner();
+    match coordinator
+        .update_thread(&thread_id, request.into_inner())
+        .await
+    {
+        Ok(thread) => HttpResponse::Ok().json(thread),
+        Err(e) => HttpResponse::BadRequest().json(json!({
+            "error": format!("Failed to update thread: {}", e)
+        })),
+    }
+}
+
+async fn delete_thread_handler(
+    path: web::Path<String>,
+    coordinator: web::Data<Arc<LocalCoordinator>>,
+) -> HttpResponse {
+    let thread_id = path.into_inner();
+    match coordinator.delete_thread(&thread_id).await {
+        Ok(_) => HttpResponse::NoContent().finish(),
+        Err(e) => HttpResponse::InternalServerError().json(json!({
+            "error": format!("Failed to delete thread: {}", e)
+        })),
+    }
+}
+
+#[derive(Deserialize)]
+struct ThreadMessageRequest {
+    message: String,
+}
+
+async fn send_message_to_thread_handler(
+    path: web::Path<String>,
+    request: web::Json<ThreadMessageRequest>,
+    coordinator: web::Data<Arc<LocalCoordinator>>,
+) -> HttpResponse {
+    let thread_id = path.into_inner();
+    let task_step = TaskStep {
+        task: request.message.clone(),
+        task_images: None,
+    };
+
+    match coordinator
+        .execute_in_thread(&thread_id, task_step, None)
+        .await
+    {
+        Ok(result) => HttpResponse::Ok().json(json!({
+            "thread_id": thread_id,
+            "response": result
+        })),
+        Err(e) => HttpResponse::InternalServerError().json(json!({
+            "error": format!("Failed to execute in thread: {}", e)
+        })),
+    }
+}
+
+async fn thread_events_handler(
+    path: web::Path<String>,
+    event_broadcaster: web::Data<broadcast::Sender<String>>,
+) -> impl Responder {
+    let thread_id = path.into_inner();
+    let mut rx = event_broadcaster.subscribe();
+
+    let stream = async_stream::stream! {
+        while let Ok(event) = rx.recv().await {
+            // Filter events for this specific thread if needed
+            yield Ok::<_, std::convert::Infallible>(sse::Data::new(event).into());
+        }
+    };
+
+    Sse::from_stream(stream)
 }
