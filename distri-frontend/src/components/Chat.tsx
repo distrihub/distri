@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Send, Loader2, User, Bot } from 'lucide-react';
+import ArtifactRenderer from './ArtifactRenderer';
 
 interface Agent {
   id: string;
@@ -20,8 +21,20 @@ interface Message {
   taskId?: string;
 }
 
+interface Artifact {
+  artifactId: string;
+  name?: string;
+  description?: string;
+  parts: Array<{
+    kind: string;
+    text?: string;
+    data?: any;
+  }>;
+}
+
 const Chat: React.FC<ChatProps> = ({ agent }) => {
   const [messages, setMessages] = useState<Message[]>([]);
+  const [artifacts, setArtifacts] = useState<{ [taskId: string]: Artifact[] }>({});
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -32,7 +45,7 @@ const Chat: React.FC<ChatProps> = ({ agent }) => {
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages]);
+  }, [messages, artifacts]);
 
   const sendMessage = async () => {
     if (!input.trim() || isLoading) return;
@@ -49,7 +62,7 @@ const Chat: React.FC<ChatProps> = ({ agent }) => {
     setIsLoading(true);
 
     try {
-      // Send message using A2A protocol
+      // Send message using A2A protocol with streaming
       const response = await fetch(`/api/v1/agents/${agent.id}`, {
         method: 'POST',
         headers: {
@@ -57,7 +70,7 @@ const Chat: React.FC<ChatProps> = ({ agent }) => {
         },
         body: JSON.stringify({
           jsonrpc: '2.0',
-          method: 'message/send',
+          method: 'message/send_streaming',
           params: {
             message: {
               messageId: userMessage.id,
@@ -71,8 +84,8 @@ const Chat: React.FC<ChatProps> = ({ agent }) => {
               contextId: `chat-${agent.id}`,
             },
             configuration: {
-              acceptedOutputModes: ['text/plain'],
-              blocking: true,
+              acceptedOutputModes: ['text/plain', 'text/markdown'],
+              blocking: false,
             },
           },
           id: userMessage.id,
@@ -86,24 +99,20 @@ const Chat: React.FC<ChatProps> = ({ agent }) => {
       }
 
       const task = result.result;
-      const responseContent = task.status?.message?.parts
-        ?.find((part: any) => part.kind === 'text')
-        ?.text || 'No response received';
-
+      
+      // Start with an empty agent message that will be streamed
       const agentMessage: Message = {
         id: `${Date.now()}-agent`,
         role: 'agent',
-        content: responseContent,
+        content: '',
         timestamp: new Date(),
         taskId: task.id,
       };
 
       setMessages(prev => [...prev, agentMessage]);
 
-      // Set up SSE listener for real-time updates if needed
-      if (task.status?.state === 'working') {
-        setupSSEListener(task.id);
-      }
+      // Set up SSE listener for real-time updates
+      setupSSEListener(task.id);
 
     } catch (error) {
       console.error('Failed to send message:', error);
@@ -126,7 +135,7 @@ const Chat: React.FC<ChatProps> = ({ agent }) => {
       try {
         const data = JSON.parse(event.data);
 
-        if (data.task_id === taskId) {
+        if (data.task_id === taskId || data.taskId === taskId) {
           if (data.type === 'text_delta') {
             // Update the last agent message with streaming content
             setMessages(prev => {
@@ -142,8 +151,26 @@ const Chat: React.FC<ChatProps> = ({ agent }) => {
               }
               return prev;
             });
+          } else if (data.kind === 'artifact-update') {
+            // Handle artifact updates
+            const artifact = data.artifact;
+            setArtifacts(prev => {
+              const taskArtifacts = prev[taskId] || [];
+              const existingIndex = taskArtifacts.findIndex(a => a.artifactId === artifact.artifactId);
+              
+              if (existingIndex >= 0) {
+                // Update existing artifact
+                const updated = [...taskArtifacts];
+                updated[existingIndex] = artifact;
+                return { ...prev, [taskId]: updated };
+              } else {
+                // Add new artifact
+                return { ...prev, [taskId]: [...taskArtifacts, artifact] };
+              }
+            });
           } else if (data.type === 'task_completed' || data.type === 'task_error') {
             eventSource.close();
+            setIsLoading(false);
           }
         }
       } catch (error) {
@@ -153,11 +180,13 @@ const Chat: React.FC<ChatProps> = ({ agent }) => {
 
     eventSource.onerror = () => {
       eventSource.close();
+      setIsLoading(false);
     };
 
     // Clean up after 30 seconds
     setTimeout(() => {
       eventSource.close();
+      setIsLoading(false);
     }, 30000);
   };
 
@@ -195,32 +224,46 @@ const Chat: React.FC<ChatProps> = ({ agent }) => {
         )}
 
         {messages.map((message) => (
-          <div
-            key={message.id}
-            className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
-          >
+          <div key={message.id}>
             <div
-              className={`max-w-[70%] rounded-lg px-4 py-2 ${message.role === 'user'
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-gray-100 text-gray-900'
-                }`}
+              className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
             >
-              <div className="flex items-start space-x-2">
-                {message.role === 'agent' && (
-                  <Bot className="h-4 w-4 mt-0.5 flex-shrink-0" />
-                )}
-                {message.role === 'user' && (
-                  <User className="h-4 w-4 mt-0.5 flex-shrink-0" />
-                )}
-                <div className="flex-1">
-                  <p className="whitespace-pre-wrap">{message.content}</p>
-                  <p className={`text-xs mt-1 ${message.role === 'user' ? 'text-blue-200' : 'text-gray-500'
-                    }`}>
-                    {message.timestamp.toLocaleTimeString()}
-                  </p>
+              <div
+                className={`max-w-[70%] rounded-lg px-4 py-2 ${message.role === 'user'
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-gray-100 text-gray-900'
+                  }`}
+              >
+                <div className="flex items-start space-x-2">
+                  {message.role === 'agent' && (
+                    <Bot className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                  )}
+                  {message.role === 'user' && (
+                    <User className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                  )}
+                  <div className="flex-1">
+                    <p className="whitespace-pre-wrap">{message.content}</p>
+                    <p className={`text-xs mt-1 ${message.role === 'user' ? 'text-blue-200' : 'text-gray-500'
+                      }`}>
+                      {message.timestamp.toLocaleTimeString()}
+                    </p>
+                  </div>
                 </div>
               </div>
             </div>
+            
+            {/* Render artifacts for this message */}
+            {message.taskId && artifacts[message.taskId] && artifacts[message.taskId].length > 0 && (
+              <div className="mt-4 space-y-3">
+                {artifacts[message.taskId].map((artifact) => (
+                  <ArtifactRenderer
+                    key={artifact.artifactId}
+                    artifact={artifact}
+                    className="max-w-[90%] mx-auto"
+                  />
+                ))}
+              </div>
+            )}
           </div>
         ))}
 

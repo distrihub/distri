@@ -8,7 +8,7 @@ use crate::{
     memory::{LocalAgentMemory, MemoryStep},
     types::{McpSession, Message},
 };
-use distri_a2a::{Task, TaskState, TaskStatus, Role, Part, TextPart, Message as A2aMessage};
+use distri_a2a::{Task, TaskState, TaskStatus, Role, Part, TextPart, Message as A2aMessage, Artifact};
 
 #[async_trait]
 pub trait ToolSessionStore: Send + Sync {
@@ -128,6 +128,8 @@ pub trait TaskStore: Send + Sync {
     async fn update_task_status(&self, task_id: &str, status: TaskStatus) -> anyhow::Result<()>;
     async fn cancel_task(&self, task_id: &str) -> anyhow::Result<Task>;
     async fn add_message_to_task(&self, task_id: &str, message: A2aMessage) -> anyhow::Result<()>;
+    async fn add_artifact_to_task(&self, task_id: &str, artifact: Artifact) -> anyhow::Result<()>;
+    async fn update_artifact_in_task(&self, task_id: &str, artifact: Artifact) -> anyhow::Result<()>;
     async fn list_tasks(&self, agent_id: Option<&str>) -> anyhow::Result<Vec<Task>>;
 }
 
@@ -204,6 +206,26 @@ impl TaskStore for HashMapTaskStore {
         let mut tasks = self.tasks.write().await;
         if let Some(task) = tasks.get_mut(task_id) {
             task.history.push(message);
+        }
+        Ok(())
+    }
+
+    async fn add_artifact_to_task(&self, task_id: &str, artifact: Artifact) -> anyhow::Result<()> {
+        let mut tasks = self.tasks.write().await;
+        if let Some(task) = tasks.get_mut(task_id) {
+            task.artifacts.push(artifact);
+        }
+        Ok(())
+    }
+
+    async fn update_artifact_in_task(&self, task_id: &str, updated_artifact: Artifact) -> anyhow::Result<()> {
+        let mut tasks = self.tasks.write().await;
+        if let Some(task) = tasks.get_mut(task_id) {
+            if let Some(existing_artifact) = task.artifacts.iter_mut().find(|a| a.artifact_id == updated_artifact.artifact_id) {
+                *existing_artifact = updated_artifact;
+            } else {
+                task.artifacts.push(updated_artifact);
+            }
         }
         Ok(())
     }

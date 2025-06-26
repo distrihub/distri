@@ -1,5 +1,17 @@
 import React, { useState, useEffect } from 'react';
-import { Activity, Clock, CheckCircle, XCircle, AlertCircle, Loader2 } from 'lucide-react';
+import { Activity, Clock, CheckCircle, XCircle, AlertCircle, Loader2, FileText } from 'lucide-react';
+import ArtifactRenderer from './ArtifactRenderer';
+
+interface Artifact {
+  artifactId: string;
+  name?: string;
+  description?: string;
+  parts: Array<{
+    kind: string;
+    text?: string;
+    data?: any;
+  }>;
+}
 
 interface Task {
   id: string;
@@ -10,7 +22,7 @@ interface Task {
     message?: any;
     timestamp?: string;
   };
-  artifacts: any[];
+  artifacts: Artifact[];
   history: any[];
 }
 
@@ -128,28 +140,23 @@ const TaskMonitor: React.FC = () => {
   return (
     <div className="bg-white rounded-lg shadow">
       <div className="flex items-center justify-between p-6 border-b">
-        <h2 className="text-lg font-medium text-gray-900">Task Monitor</h2>
         <div className="flex items-center space-x-2">
-          <button
-            onClick={fetchTasks}
-            disabled={loading}
-            className="flex items-center space-x-2 px-3 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
-          >
-            {loading ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Activity className="h-4 w-4" />
-            )}
-            <span>Refresh</span>
-          </button>
+          <Activity className="h-5 w-5 text-blue-600" />
+          <h2 className="text-lg font-semibold text-gray-900">Task Monitor</h2>
         </div>
+        <button
+          onClick={fetchTasks}
+          className="text-sm text-blue-600 hover:text-blue-800 font-medium"
+        >
+          Refresh
+        </button>
       </div>
 
       <div className="p-6">
-        {tasks.length === 0 ? (
-          <div className="text-center py-8">
-            <Activity className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-            <p className="text-gray-500">No tasks found</p>
+        {loading ? (
+          <div className="flex items-center justify-center py-8">
+            <Loader2 className="h-8 w-8 text-blue-600 animate-spin" />
+            <span className="ml-2 text-gray-600">Loading tasks...</span>
           </div>
         ) : (
           <div className="space-y-4">
@@ -189,6 +196,27 @@ const TaskMonitor: React.FC = () => {
                     View Details
                   </button>
                 </div>
+                
+                {/* Display artifacts if any */}
+                {task.artifacts.length > 0 && (
+                  <div className="mt-4 pt-4 border-t border-gray-100">
+                    <div className="flex items-center space-x-2 mb-3">
+                      <FileText className="h-4 w-4 text-gray-500" />
+                      <h4 className="text-sm font-medium text-gray-700">
+                        Artifacts ({task.artifacts.length})
+                      </h4>
+                    </div>
+                    <div className="space-y-3">
+                      {task.artifacts.map((artifact) => (
+                        <ArtifactRenderer
+                          key={artifact.artifactId}
+                          artifact={artifact}
+                          className="bg-gray-50"
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )}
                 
                 {task.history.length > 0 && (
                   <div className="mt-4 pt-4 border-t border-gray-100">

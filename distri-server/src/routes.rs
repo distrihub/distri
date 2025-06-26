@@ -5,7 +5,7 @@ use distri::types::ServerConfig;
 use distri::{memory::TaskStep, TaskStore};
 use distri_a2a::{
     AgentCard, JsonRpcError, JsonRpcRequest, JsonRpcResponse, Message as A2aMessage,
-    MessageSendParams, Part, Role, Task, TaskIdParams, TaskState, TaskStatus, TextPart,
+    MessageSendParams, Part, Role, Task, TaskIdParams, TaskState, TaskStatus, TextPart, Artifact,
 };
 use futures_util::StreamExt;
 use serde_json::json;
@@ -357,9 +357,12 @@ async fn handle_message_send_streaming(
     let (event_tx, mut event_rx) = mpsc::channel(100);
     let task_id_clone = task.id.clone();
     let event_broadcaster_clone = event_broadcaster.clone();
+    let task_store_clone = task_store.clone();
 
     // Spawn task to handle streaming events
     tokio::spawn(async move {
+        let mut current_artifacts: std::collections::HashMap<String, Artifact> = std::collections::HashMap::new();
+        
         while let Some(event) = event_rx.recv().await {
             let event_json = match event {
                 AgentEvent::TextMessageContent { delta, .. } => {
@@ -368,6 +371,65 @@ async fn handle_message_send_streaming(
                         "task_id": task_id_clone,
                         "delta": delta
                     })
+                }
+                AgentEvent::ArtifactStart { artifact_id, artifact_type, name, description, .. } => {
+                    let artifact = Artifact {
+                        artifact_id: artifact_id.clone(),
+                        name: name.clone(),
+                        description: description.clone(),
+                        parts: vec![],
+                    };
+                    current_artifacts.insert(artifact_id.clone(), artifact.clone());
+                    
+                    json!({
+                        "kind": "artifact-update",
+                        "taskId": task_id_clone,
+                        "contextId": context_id,
+                        "artifact": artifact,
+                        "append": false,
+                        "lastChunk": false
+                    })
+                }
+                AgentEvent::ArtifactContent { artifact_id, delta, part_index, .. } => {
+                    if let Some(artifact) = current_artifacts.get_mut(&artifact_id) {
+                        // Ensure we have enough parts
+                        while artifact.parts.len() <= part_index {
+                            artifact.parts.push(Part::Text(TextPart { text: String::new() }));
+                        }
+                        
+                        // Append to the appropriate part
+                        if let Some(Part::Text(text_part)) = artifact.parts.get_mut(part_index) {
+                            text_part.text.push_str(&delta);
+                        }
+                        
+                        json!({
+                            "kind": "artifact-update",
+                            "taskId": task_id_clone,
+                            "contextId": context_id,
+                            "artifact": artifact,
+                            "append": true,
+                            "lastChunk": false
+                        })
+                    } else {
+                        continue;
+                    }
+                }
+                AgentEvent::ArtifactEnd { artifact_id, .. } => {
+                    if let Some(artifact) = current_artifacts.get(&artifact_id) {
+                        // Add artifact to task store
+                        let _ = task_store_clone.add_artifact_to_task(&task_id_clone, artifact.clone()).await;
+                        
+                        json!({
+                            "kind": "artifact-update",
+                            "taskId": task_id_clone,
+                            "contextId": context_id,
+                            "artifact": artifact,
+                            "append": false,
+                            "lastChunk": true
+                        })
+                    } else {
+                        continue;
+                    }
                 }
                 AgentEvent::RunFinished { .. } => {
                     json!({

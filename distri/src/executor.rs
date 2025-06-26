@@ -22,6 +22,12 @@ use async_openai::{
 use futures::{Stream, StreamExt};
 use serde_json::Value;
 use tokio::sync::mpsc;
+use uuid;
+use regex;
+use distri_a2a::{Artifact, Part, TextPart};
+use anyhow::{anyhow, Context, Result};
+use async_trait::async_trait;
+use langdb::{completion, completion_stream, ChatCompletionRequest};
 
 pub struct LLMExecutor {
     agent_def: AgentDefinition,
@@ -126,6 +132,66 @@ impl LLMExecutor {
         );
 
         Ok(response)
+    }
+
+    /// Create artifacts from response content based on patterns
+    fn create_artifacts_from_content(&self, content: &str, context_id: &str) -> Vec<Artifact> {
+        let mut artifacts = Vec::new();
+        
+        // Check for code blocks
+        if let Ok(code_block_regex) = regex::Regex::new(r"```(\w+)?\n([\s\S]*?)```") {
+            for (i, captures) in code_block_regex.captures_iter(content).enumerate() {
+                let language = captures.get(1).map(|m| m.as_str()).unwrap_or("text");
+                let code = captures.get(2).map(|m| m.as_str()).unwrap_or("");
+                
+                if !code.trim().is_empty() {
+                    let artifact_id = format!("{}-code-{}", context_id, i);
+                    let artifact = Artifact {
+                        artifact_id: artifact_id.clone(),
+                        name: Some(format!("{} Code Block", language.to_uppercase())),
+                        description: Some(format!("Code block in {} language", language)),
+                        parts: vec![Part::Text(TextPart {
+                            text: code.trim().to_string(),
+                        })],
+                    };
+                    artifacts.push(artifact);
+                }
+            }
+        }
+        
+        // Check for markdown content (if the entire response looks like structured markdown)
+        if content.contains("# ") || content.contains("## ") || content.contains("### ") {
+            if content.len() > 500 && (content.contains("# ") || content.starts_with("## ")) {
+                let artifact_id = format!("{}-markdown", context_id);
+                let artifact = Artifact {
+                    artifact_id: artifact_id.clone(),
+                    name: Some("Markdown Document".to_string()),
+                    description: Some("Generated markdown content".to_string()),
+                    parts: vec![Part::Text(TextPart {
+                        text: content.to_string(),
+                    })],
+                };
+                artifacts.push(artifact);
+            }
+        }
+        
+        // Check for JSON data
+        if content.trim().starts_with('{') && content.trim().ends_with('}') {
+            if serde_json::from_str::<serde_json::Value>(content).is_ok() {
+                let artifact_id = format!("{}-json", context_id);
+                let artifact = Artifact {
+                    artifact_id: artifact_id.clone(),
+                    name: Some("JSON Data".to_string()),
+                    description: Some("Generated JSON data".to_string()),
+                    parts: vec![Part::Text(TextPart {
+                        text: content.to_string(),
+                    })],
+                };
+                artifacts.push(artifact);
+            }
+        }
+        
+        artifacts
     }
 
     /// Execute a streaming LLM call and send events through the channel
@@ -299,8 +365,8 @@ impl LLMExecutor {
                     }
                 }
                 Err(e) => {
-                    tracing::error!("Error in stream: {}", e);
-                    // Send RunError event
+                    tracing::error!("Stream error: {}", e);
+                    // Send error event
                     event_tx
                         .send(crate::coordinator::AgentEvent::RunError {
                             thread_id: thread_id.clone(),
@@ -329,9 +395,61 @@ impl LLMExecutor {
                 AgentError::LLMError(format!("Failed to send TextMessageEnd event: {}", e))
             })?;
 
+        // Create artifacts from the final content
+        let artifacts = self.create_artifacts_from_content(&current_content, &thread_id);
+        for artifact in artifacts {
+            // Send artifact start event
+            event_tx
+                .send(crate::coordinator::AgentEvent::ArtifactStart {
+                    thread_id: thread_id.clone(),
+                    run_id: run_id.clone(),
+                    artifact_id: artifact.artifact_id.clone(),
+                    artifact_type: "text".to_string(), // Could be enhanced to detect type
+                    name: artifact.name.clone(),
+                    description: artifact.description.clone(),
+                })
+                .await
+                .map_err(|e| {
+                    AgentError::LLMError(format!("Failed to send ArtifactStart event: {}", e))
+                })?;
+
+            // Send artifact content
+            for (i, part) in artifact.parts.iter().enumerate() {
+                if let Part::Text(text_part) = part {
+                    event_tx
+                        .send(crate::coordinator::AgentEvent::ArtifactContent {
+                            thread_id: thread_id.clone(),
+                            run_id: run_id.clone(),
+                            artifact_id: artifact.artifact_id.clone(),
+                            delta: text_part.text.clone(),
+                            part_index: i,
+                        })
+                        .await
+                        .map_err(|e| {
+                            AgentError::LLMError(format!("Failed to send ArtifactContent event: {}", e))
+                        })?;
+                }
+            }
+
+            // Send artifact end event
+            event_tx
+                .send(crate::coordinator::AgentEvent::ArtifactEnd {
+                    thread_id: thread_id.clone(),
+                    run_id: run_id.clone(),
+                    artifact_id: artifact.artifact_id.clone(),
+                })
+                .await
+                .map_err(|e| {
+                    AgentError::LLMError(format!("Failed to send ArtifactEnd event: {}", e))
+                })?;
+        }
+
         // Send RunFinished event
         event_tx
-            .send(crate::coordinator::AgentEvent::RunFinished { thread_id, run_id })
+            .send(crate::coordinator::AgentEvent::RunFinished {
+                thread_id: thread_id.clone(),
+                run_id: run_id.clone(),
+            })
             .await
             .map_err(|e| {
                 AgentError::LLMError(format!("Failed to send RunFinished event: {}", e))

@@ -77,6 +77,26 @@ pub enum AgentEvent {
         run_id: String,
         tool_call_id: String,
     },
+    ArtifactStart {
+        thread_id: String,
+        run_id: String,
+        artifact_id: String,
+        artifact_type: String,
+        name: Option<String>,
+        description: Option<String>,
+    },
+    ArtifactContent {
+        thread_id: String,
+        run_id: String,
+        artifact_id: String,
+        delta: String,
+        part_index: usize,
+    },
+    ArtifactEnd {
+        thread_id: String,
+        run_id: String,
+        artifact_id: String,
+    },
     StateSnapshot {
         thread_id: String,
         run_id: String,
