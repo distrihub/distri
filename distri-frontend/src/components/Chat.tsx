@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Loader2, User, Bot } from 'lucide-react';
+import { Send, Loader2, User, Bot, Check, X, AlertCircle, Tool } from 'lucide-react';
 
 interface Agent {
   id: string;
@@ -12,19 +12,33 @@ interface ChatProps {
   agent: Agent;
 }
 
+interface ToolCall {
+  id: string;
+  name: string;
+  args: string;
+  status: 'pending_approval' | 'waiting_approval' | 'approved' | 'rejected' | 'executing' | 'completed' | 'error';
+  parentMessageId?: string;
+  result?: string;
+  error?: string;
+}
+
 interface Message {
   id: string;
   role: 'user' | 'agent';
   content: string;
   timestamp: Date;
   taskId?: string;
+  toolCalls?: ToolCall[];
+  isStreaming?: boolean;
 }
 
 const Chat: React.FC<ChatProps> = ({ agent }) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [toolCalls, setToolCalls] = useState<Map<string, ToolCall>>(new Map());
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const eventSourceRef = useRef<EventSource | null>(null);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -33,6 +47,183 @@ const Chat: React.FC<ChatProps> = ({ agent }) => {
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  useEffect(() => {
+    // Set up SSE connection for real-time events
+    setupEventSource();
+    
+    return () => {
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+      }
+    };
+  }, [agent.id]);
+
+  const setupEventSource = () => {
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+    }
+
+    const eventSource = new EventSource(`/api/v1/agents/${agent.id}/events`);
+    eventSourceRef.current = eventSource;
+
+    eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        handleStreamEvent(data);
+      } catch (error) {
+        console.error('Error parsing SSE data:', error);
+      }
+    };
+
+    eventSource.onerror = () => {
+      console.warn('SSE connection error, will retry...');
+    };
+  };
+
+  const handleStreamEvent = (data: any) => {
+    const { type, task_id } = data;
+
+    switch (type) {
+      case 'text_delta':
+        handleTextDelta(data.delta, task_id);
+        break;
+      case 'tool_call_start':
+        handleToolCallStart(data);
+        break;
+      case 'tool_call_args':
+        handleToolCallArgs(data);
+        break;
+      case 'tool_call_end':
+        handleToolCallEnd(data);
+        break;
+      case 'tool_call_approved':
+        handleToolCallApproved(data.tool_call_id);
+        break;
+      case 'tool_call_rejected':
+        handleToolCallRejected(data.tool_call_id);
+        break;
+      case 'task_completed':
+        handleTaskCompleted(task_id);
+        break;
+      case 'task_error':
+        handleTaskError(data.error, task_id);
+        break;
+    }
+  };
+
+  const handleTextDelta = (delta: string, taskId: string) => {
+    setMessages((prev: Message[]) => {
+      const lastMessage = prev[prev.length - 1];
+      if (lastMessage && lastMessage.role === 'agent' && lastMessage.taskId === taskId && lastMessage.isStreaming) {
+        return [
+          ...prev.slice(0, -1),
+          {
+            ...lastMessage,
+            content: lastMessage.content + delta,
+          }
+        ];
+      }
+      return prev;
+    });
+  };
+
+  const handleToolCallStart = (data: any) => {
+    const toolCall: ToolCall = {
+      id: data.tool_call_id,
+      name: data.tool_name,
+      args: '',
+      status: 'pending_approval',
+      parentMessageId: data.parent_message_id,
+    };
+
+    setToolCalls(prev => new Map(prev.set(data.tool_call_id, toolCall)));
+  };
+
+  const handleToolCallArgs = (data: any) => {
+    setToolCalls((prev: Map<string, ToolCall>) => {
+      const newMap = new Map(prev);
+      const existing = newMap.get(data.tool_call_id);
+      if (existing) {
+        newMap.set(data.tool_call_id, {
+          ...existing,
+          args: existing.args + (data.args_delta || ''),
+        });
+      }
+      return newMap;
+    });
+  };
+
+  const handleToolCallEnd = (data: any) => {
+    setToolCalls((prev: Map<string, ToolCall>) => {
+      const newMap = new Map(prev);
+      const existing = newMap.get(data.tool_call_id);
+      if (existing) {
+        newMap.set(data.tool_call_id, {
+          ...existing,
+          status: 'waiting_approval',
+        });
+      }
+      return newMap;
+    });
+  };
+
+  const handleToolCallApproved = (toolCallId: string) => {
+    setToolCalls((prev: Map<string, ToolCall>) => {
+      const newMap = new Map(prev);
+      const existing = newMap.get(toolCallId);
+      if (existing) {
+        newMap.set(toolCallId, {
+          ...existing,
+          status: 'executing',
+        });
+      }
+      return newMap;
+    });
+  };
+
+  const handleToolCallRejected = (toolCallId: string) => {
+    setToolCalls((prev: Map<string, ToolCall>) => {
+      const newMap = new Map(prev);
+      const existing = newMap.get(toolCallId);
+      if (existing) {
+        newMap.set(toolCallId, {
+          ...existing,
+          status: 'rejected',
+        });
+      }
+      return newMap;
+    });
+  };
+
+  const handleTaskCompleted = (taskId: string) => {
+    setIsLoading(false);
+    setMessages((prev: Message[]) => {
+      const lastMessage = prev[prev.length - 1];
+      if (lastMessage && lastMessage.taskId === taskId && lastMessage.isStreaming) {
+        return [
+          ...prev.slice(0, -1),
+          {
+            ...lastMessage,
+            isStreaming: false,
+          }
+        ];
+      }
+      return prev;
+    });
+  };
+
+  const handleTaskError = (error: string, taskId: string) => {
+    setIsLoading(false);
+    const errorMessage: Message = {
+      id: `${Date.now()}-error`,
+      role: 'agent',
+      content: `Error: ${error}`,
+      timestamp: new Date(),
+      taskId,
+    };
+    setMessages(prev => [...prev, errorMessage]);
+  };
 
   const sendMessage = async () => {
     if (!input.trim() || isLoading) return;
@@ -49,7 +240,7 @@ const Chat: React.FC<ChatProps> = ({ agent }) => {
     setIsLoading(true);
 
     try {
-      // Send message using A2A protocol
+      // Send message using streaming A2A protocol
       const response = await fetch(`/api/v1/agents/${agent.id}`, {
         method: 'POST',
         headers: {
@@ -57,7 +248,7 @@ const Chat: React.FC<ChatProps> = ({ agent }) => {
         },
         body: JSON.stringify({
           jsonrpc: '2.0',
-          method: 'message/send',
+          method: 'message/send_streaming',
           params: {
             message: {
               messageId: userMessage.id,
@@ -72,7 +263,7 @@ const Chat: React.FC<ChatProps> = ({ agent }) => {
             },
             configuration: {
               acceptedOutputModes: ['text/plain'],
-              blocking: true,
+              blocking: false,
             },
           },
           id: userMessage.id,
@@ -86,27 +277,22 @@ const Chat: React.FC<ChatProps> = ({ agent }) => {
       }
 
       const task = result.result;
-      const responseContent = task.status?.message?.parts
-        ?.find((part: any) => part.kind === 'text')
-        ?.text || 'No response received';
 
+      // Create initial streaming agent message
       const agentMessage: Message = {
         id: `${Date.now()}-agent`,
         role: 'agent',
-        content: responseContent,
+        content: '',
         timestamp: new Date(),
         taskId: task.id,
+        isStreaming: true,
       };
 
       setMessages(prev => [...prev, agentMessage]);
 
-      // Set up SSE listener for real-time updates if needed
-      if (task.status?.state === 'working') {
-        setupSSEListener(task.id);
-      }
-
     } catch (error) {
       console.error('Failed to send message:', error);
+      setIsLoading(false);
       const errorMessage: Message = {
         id: `${Date.now()}-error`,
         role: 'agent',
@@ -114,51 +300,27 @@ const Chat: React.FC<ChatProps> = ({ agent }) => {
         timestamp: new Date(),
       };
       setMessages(prev => [...prev, errorMessage]);
-    } finally {
-      setIsLoading(false);
     }
   };
 
-  const setupSSEListener = (taskId: string) => {
-    const eventSource = new EventSource(`/api/v1/agents/${agent.id}/events`);
+  const approveToolCall = async (toolCallId: string) => {
+    try {
+      await fetch(`/api/v1/tool-calls/${toolCallId}/approve`, {
+        method: 'POST',
+      });
+    } catch (error) {
+      console.error('Failed to approve tool call:', error);
+    }
+  };
 
-    eventSource.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-
-        if (data.task_id === taskId) {
-          if (data.type === 'text_delta') {
-            // Update the last agent message with streaming content
-            setMessages(prev => {
-              const lastMessage = prev[prev.length - 1];
-              if (lastMessage && lastMessage.role === 'agent' && lastMessage.taskId === taskId) {
-                return [
-                  ...prev.slice(0, -1),
-                  {
-                    ...lastMessage,
-                    content: lastMessage.content + data.delta,
-                  }
-                ];
-              }
-              return prev;
-            });
-          } else if (data.type === 'task_completed' || data.type === 'task_error') {
-            eventSource.close();
-          }
-        }
-      } catch (error) {
-        console.error('Error parsing SSE data:', error);
-      }
-    };
-
-    eventSource.onerror = () => {
-      eventSource.close();
-    };
-
-    // Clean up after 30 seconds
-    setTimeout(() => {
-      eventSource.close();
-    }, 30000);
+  const rejectToolCall = async (toolCallId: string) => {
+    try {
+      await fetch(`/api/v1/tool-calls/${toolCallId}/reject`, {
+        method: 'POST',
+      });
+    } catch (error) {
+      console.error('Failed to reject tool call:', error);
+    }
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -166,6 +328,90 @@ const Chat: React.FC<ChatProps> = ({ agent }) => {
       e.preventDefault();
       sendMessage();
     }
+  };
+
+  const renderToolCall = (toolCall: ToolCall) => {
+    const getStatusColor = () => {
+      switch (toolCall.status) {
+        case 'waiting_approval':
+          return 'bg-yellow-50 border-yellow-200';
+        case 'approved':
+        case 'executing':
+          return 'bg-blue-50 border-blue-200';
+        case 'completed':
+          return 'bg-green-50 border-green-200';
+        case 'rejected':
+        case 'error':
+          return 'bg-red-50 border-red-200';
+        default:
+          return 'bg-gray-50 border-gray-200';
+      }
+    };
+
+    const getStatusIcon = () => {
+      switch (toolCall.status) {
+        case 'waiting_approval':
+          return <AlertCircle className="h-4 w-4 text-yellow-600" />;
+        case 'approved':
+        case 'completed':
+          return <Check className="h-4 w-4 text-green-600" />;
+        case 'executing':
+          return <Loader2 className="h-4 w-4 text-blue-600 animate-spin" />;
+        case 'rejected':
+        case 'error':
+          return <X className="h-4 w-4 text-red-600" />;
+        default:
+          return <Tool className="h-4 w-4 text-gray-600" />;
+      }
+    };
+
+    return (
+      <div key={toolCall.id} className={`border rounded-lg p-3 mb-2 ${getStatusColor()}`}>
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center space-x-2">
+            {getStatusIcon()}
+            <span className="font-medium text-sm">{toolCall.name}</span>
+            <span className="text-xs text-gray-500 capitalize">{toolCall.status.replace('_', ' ')}</span>
+          </div>
+          {toolCall.status === 'waiting_approval' && (
+            <div className="flex space-x-2">
+              <button
+                onClick={() => approveToolCall(toolCall.id)}
+                className="px-2 py-1 bg-green-600 text-white text-xs rounded hover:bg-green-700 flex items-center space-x-1"
+              >
+                <Check className="h-3 w-3" />
+                <span>Approve</span>
+              </button>
+              <button
+                onClick={() => rejectToolCall(toolCall.id)}
+                className="px-2 py-1 bg-red-600 text-white text-xs rounded hover:bg-red-700 flex items-center space-x-1"
+              >
+                <X className="h-3 w-3" />
+                <span>Reject</span>
+              </button>
+            </div>
+          )}
+        </div>
+        {toolCall.args && (
+          <div className="bg-white bg-opacity-50 rounded p-2 text-xs">
+            <strong>Arguments:</strong>
+            <pre className="mt-1 whitespace-pre-wrap">{toolCall.args}</pre>
+          </div>
+        )}
+        {toolCall.result && (
+          <div className="bg-white bg-opacity-50 rounded p-2 text-xs mt-2">
+            <strong>Result:</strong>
+            <pre className="mt-1 whitespace-pre-wrap">{toolCall.result}</pre>
+          </div>
+        )}
+        {toolCall.error && (
+          <div className="bg-red-100 rounded p-2 text-xs mt-2">
+            <strong>Error:</strong>
+            <pre className="mt-1 whitespace-pre-wrap text-red-800">{toolCall.error}</pre>
+          </div>
+        )}
+      </div>
+    );
   };
 
   return (
@@ -181,8 +427,10 @@ const Chat: React.FC<ChatProps> = ({ agent }) => {
             <p className="text-sm text-gray-500">{agent.description}</p>
           </div>
         </div>
-        <div className={`w-2 h-2 rounded-full ${agent.status === 'online' ? 'bg-green-400' : 'bg-gray-400'
-          }`} />
+        <div className="flex items-center space-x-2">
+          <div className={`w-2 h-2 rounded-full ${agent.status === 'online' ? 'bg-green-400' : 'bg-gray-400'}`} />
+          <span className="text-xs text-gray-500">Streaming Mode</span>
+        </div>
       </div>
 
       {/* Messages */}
@@ -191,38 +439,64 @@ const Chat: React.FC<ChatProps> = ({ agent }) => {
           <div className="text-center py-8">
             <Bot className="h-12 w-12 text-gray-400 mx-auto mb-4" />
             <p className="text-gray-500">Start a conversation with {agent.name}</p>
+            <p className="text-xs text-gray-400 mt-2">Tool calls will require your approval</p>
           </div>
         )}
 
         {messages.map((message) => (
-          <div
-            key={message.id}
-            className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
-          >
-            <div
-              className={`max-w-[70%] rounded-lg px-4 py-2 ${message.role === 'user'
+          <div key={message.id}>
+            <div className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+              <div className={`max-w-[70%] rounded-lg px-4 py-2 ${
+                message.role === 'user'
                   ? 'bg-blue-600 text-white'
                   : 'bg-gray-100 text-gray-900'
-                }`}
-            >
-              <div className="flex items-start space-x-2">
-                {message.role === 'agent' && (
-                  <Bot className="h-4 w-4 mt-0.5 flex-shrink-0" />
-                )}
-                {message.role === 'user' && (
-                  <User className="h-4 w-4 mt-0.5 flex-shrink-0" />
-                )}
-                <div className="flex-1">
-                  <p className="whitespace-pre-wrap">{message.content}</p>
-                  <p className={`text-xs mt-1 ${message.role === 'user' ? 'text-blue-200' : 'text-gray-500'
+                }`}>
+                <div className="flex items-start space-x-2">
+                  {message.role === 'agent' && (
+                    <Bot className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                  )}
+                  {message.role === 'user' && (
+                    <User className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                  )}
+                  <div className="flex-1">
+                    <p className="whitespace-pre-wrap">
+                      {message.content}
+                      {message.isStreaming && (
+                        <span className="inline-block w-2 h-4 bg-current ml-1 animate-pulse"></span>
+                      )}
+                    </p>
+                    <p className={`text-xs mt-1 ${
+                      message.role === 'user' ? 'text-blue-200' : 'text-gray-500'
                     }`}>
-                    {message.timestamp.toLocaleTimeString()}
-                  </p>
+                      {message.timestamp.toLocaleTimeString()}
+                    </p>
+                  </div>
                 </div>
               </div>
             </div>
+            
+            {/* Tool calls for this message */}
+            {message.role === 'agent' && (
+              <div className="mt-2 ml-8">
+                {Array.from(toolCalls.values())
+                  .filter(tc => tc.parentMessageId === message.id)
+                  .map(renderToolCall)}
+              </div>
+            )}
           </div>
         ))}
+
+        {/* Show pending tool calls that aren't attached to a specific message */}
+        {Array.from(toolCalls.values())
+          .filter(tc => !tc.parentMessageId && ['waiting_approval', 'executing'].includes(tc.status))
+          .length > 0 && (
+          <div className="border-t pt-4">
+            <h4 className="text-sm font-medium text-gray-700 mb-2">Pending Tool Calls</h4>
+            {Array.from(toolCalls.values())
+              .filter(tc => !tc.parentMessageId && ['waiting_approval', 'executing'].includes(tc.status))
+              .map(renderToolCall)}
+          </div>
+        )}
 
         {isLoading && (
           <div className="flex justify-start">

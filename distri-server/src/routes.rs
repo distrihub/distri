@@ -25,7 +25,9 @@ pub fn config(cfg: &mut web::ServiceConfig) {
                     .route(web::post().to(jsonrpc_handler)),
             )
             .service(web::resource("/agents/{id}/events").route(web::get().to(sse_handler)))
-            .service(web::resource("/tasks/{id}").route(web::get().to(get_task))),
+            .service(web::resource("/tasks/{id}").route(web::get().to(get_task)))
+            .service(web::resource("/tool-calls/{id}/approve").route(web::post().to(approve_tool_call)))
+            .service(web::resource("/tool-calls/{id}/reject").route(web::post().to(reject_tool_call))),
     );
 }
 
@@ -369,6 +371,44 @@ async fn handle_message_send_streaming(
                         "delta": delta
                     })
                 }
+                AgentEvent::ToolCallStart { 
+                    tool_call_id, 
+                    tool_call_name, 
+                    parent_message_id,
+                    .. 
+                } => {
+                    json!({
+                        "type": "tool_call_start",
+                        "task_id": task_id_clone,
+                        "tool_call_id": tool_call_id,
+                        "tool_name": tool_call_name,
+                        "parent_message_id": parent_message_id,
+                        "status": "pending_approval"
+                    })
+                }
+                AgentEvent::ToolCallArgs { 
+                    tool_call_id, 
+                    delta,
+                    .. 
+                } => {
+                    json!({
+                        "type": "tool_call_args",
+                        "task_id": task_id_clone,
+                        "tool_call_id": tool_call_id,
+                        "args_delta": delta
+                    })
+                }
+                AgentEvent::ToolCallEnd { 
+                    tool_call_id,
+                    .. 
+                } => {
+                    json!({
+                        "type": "tool_call_end",
+                        "task_id": task_id_clone,
+                        "tool_call_id": tool_call_id,
+                        "status": "waiting_approval"
+                    })
+                }
                 AgentEvent::RunFinished { .. } => {
                     json!({
                         "type": "task_completed",
@@ -495,4 +535,46 @@ fn extract_text_from_message(message: &A2aMessage) -> String {
         })
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+async fn approve_tool_call(
+    id: web::Path<String>,
+    event_broadcaster: web::Data<broadcast::Sender<String>>,
+) -> HttpResponse {
+    let tool_call_id = id.into_inner();
+    
+    // Send approval event
+    let _ = event_broadcaster.send(
+        json!({
+            "type": "tool_call_approved",
+            "tool_call_id": tool_call_id
+        })
+        .to_string(),
+    );
+    
+    HttpResponse::Ok().json(json!({
+        "status": "approved",
+        "tool_call_id": tool_call_id
+    }))
+}
+
+async fn reject_tool_call(
+    id: web::Path<String>,
+    event_broadcaster: web::Data<broadcast::Sender<String>>,
+) -> HttpResponse {
+    let tool_call_id = id.into_inner();
+    
+    // Send rejection event
+    let _ = event_broadcaster.send(
+        json!({
+            "type": "tool_call_rejected",
+            "tool_call_id": tool_call_id
+        })
+        .to_string(),
+    );
+    
+    HttpResponse::Ok().json(json!({
+        "status": "rejected",
+        "tool_call_id": tool_call_id
+    }))
 }
