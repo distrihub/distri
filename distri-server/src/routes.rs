@@ -1,4 +1,4 @@
-THIS SHOULD BE A LINTER ERRORuse actix_web::{web, HttpRequest, HttpResponse, Responder};
+use actix_web::{web, HttpRequest, HttpResponse, Responder};
 use actix_web_lab::sse::{self, Sse};
 use distri::coordinator::{AgentCoordinator, AgentEvent, LocalCoordinator};
 use distri::types::ServerConfig;
@@ -17,6 +17,12 @@ use uuid::Uuid;
 // https://github.com/google-a2a/A2A/blob/main/specification/json/a2a.json
 pub fn config(cfg: &mut web::ServiceConfig) {
     cfg.service(
+        // A2A .well-known routes for agent discovery
+        web::scope("/.well-known")
+            .service(web::resource("/agent-cards").route(web::get().to(well_known_agent_cards)))
+            .service(web::resource("/agent-cards/{id}").route(web::get().to(well_known_agent_card)))
+    )
+    .service(
         web::scope("/api/v1")
             .service(web::resource("/agents").route(web::get().to(list_agents)))
             .service(
@@ -25,6 +31,7 @@ pub fn config(cfg: &mut web::ServiceConfig) {
                     .route(web::post().to(jsonrpc_handler)),
             )
             .service(web::resource("/agents/{id}/events").route(web::get().to(sse_handler)))
+            .service(web::resource("/workflow/events").route(web::get().to(workflow_sse_handler)))
             .service(web::resource("/tasks/{id}").route(web::get().to(get_task)))
             .service(web::resource("/tool-calls/{id}/approve").route(web::post().to(approve_tool_call)))
             .service(web::resource("/tool-calls/{id}/reject").route(web::post().to(reject_tool_call))),
@@ -36,13 +43,17 @@ async fn list_agents(
     server_config: web::Data<ServerConfig>,
 ) -> HttpResponse {
     let agent_defs = coordinator.agent_definitions.read().await;
+    let agent_tools = coordinator.agent_tools.read().await;
+    
     let agent_cards: Vec<AgentCard> = agent_defs
         .values()
         .map(|def| {
-            distri::a2a::agent_def_to_card(
+            let tools = agent_tools.get(&def.name).cloned().unwrap_or_default();
+            distri::a2a::agent_def_to_card_with_tools(
                 def,
                 server_config.get_ref().clone(),
                 "http://127.0.0.1:8080",
+                &tools,
             )
         })
         .collect();
@@ -56,12 +67,16 @@ async fn get_agent_card(
 ) -> HttpResponse {
     let agent_id = id.into_inner();
     let agents = coordinator.agent_definitions.read().await;
+    let agent_tools = coordinator.agent_tools.read().await;
+    
     match agents.get(&agent_id) {
         Some(agent_def) => {
-            let card = distri::a2a::agent_def_to_card(
+            let tools = agent_tools.get(&agent_id).cloned().unwrap_or_default();
+            let card = distri::a2a::agent_def_to_card_with_tools(
                 agent_def,
                 server_config.get_ref().clone(),
                 "http://127.0.0.1:8080",
+                &tools,
             );
             HttpResponse::Ok().json(card)
         }
@@ -598,4 +613,87 @@ async fn reject_tool_call(
         "status": "rejected",
         "tool_call_id": tool_call_id
     }))
+}
+
+// A2A .well-known endpoints for agent discovery
+async fn well_known_agent_cards(
+    coordinator: web::Data<Arc<LocalCoordinator>>,
+    server_config: web::Data<ServerConfig>,
+) -> HttpResponse {
+    let agent_defs = coordinator.agent_definitions.read().await;
+    let agent_tools = coordinator.agent_tools.read().await;
+    
+    let agent_cards: Vec<AgentCard> = agent_defs
+        .values()
+        .map(|def| {
+            let tools = agent_tools.get(&def.name).cloned().unwrap_or_default();
+            distri::a2a::agent_def_to_card_with_tools(
+                def,
+                server_config.get_ref().clone(),
+                "http://127.0.0.1:8080",
+                &tools,
+            )
+        })
+        .collect();
+    
+    HttpResponse::Ok()
+        .insert_header(("Content-Type", "application/json"))
+        .insert_header(("Access-Control-Allow-Origin", "*"))
+        .json(agent_cards)
+}
+
+async fn well_known_agent_card(
+    id: web::Path<String>,
+    coordinator: web::Data<Arc<LocalCoordinator>>,
+    server_config: web::Data<ServerConfig>,
+) -> HttpResponse {
+    let agent_id = id.into_inner();
+    let agents = coordinator.agent_definitions.read().await;
+    let agent_tools = coordinator.agent_tools.read().await;
+    
+    match agents.get(&agent_id) {
+        Some(agent_def) => {
+            let tools = agent_tools.get(&agent_id).cloned().unwrap_or_default();
+            let card = distri::a2a::agent_def_to_card_with_tools(
+                agent_def,
+                server_config.get_ref().clone(),
+                "http://127.0.0.1:8080",
+                &tools,
+            );
+            HttpResponse::Ok()
+                .insert_header(("Content-Type", "application/json"))
+                .insert_header(("Access-Control-Allow-Origin", "*"))
+                .json(card)
+        }
+        None => HttpResponse::NotFound()
+            .insert_header(("Access-Control-Allow-Origin", "*"))
+            .finish(),
+    }
+}
+
+// Workflow-wide SSE handler for multi-agent coordination
+async fn workflow_sse_handler(
+    req: HttpRequest,
+    event_broadcaster: web::Data<broadcast::Sender<String>>,
+) -> impl Responder {
+    let mut rx = event_broadcaster.subscribe();
+
+    let stream = async_stream::stream! {
+        while let Ok(event) = rx.recv().await {
+            // Filter for workflow-level events (cross-agent coordination)
+            if let Ok(parsed_event) = serde_json::from_str::<serde_json::Value>(&event) {
+                if let Some(event_type) = parsed_event.get("type").and_then(|t| t.as_str()) {
+                    match event_type {
+                        "agent_started" | "agent_completed" | "agent_error" | 
+                        "tool_call_start" | "tool_call_approved" | "tool_call_rejected" => {
+                            yield Ok::<_, std::convert::Infallible>(sse::Data::new(event).into());
+                        }
+                        _ => {} // Filter out text deltas and other agent-specific events
+                    }
+                }
+            }
+        }
+    };
+
+    Sse::from_stream(stream)
 }
