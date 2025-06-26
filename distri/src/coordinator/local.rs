@@ -7,7 +7,7 @@ use crate::{
     tools::{execute_tool, get_tools},
     types::{
         get_tool_descriptions, AgentDefinition, Message, MessageContent, MessageRole, ServerTools,
-        DEFAULT_TOOL_DESCRIPTION_TEMPLATE,
+        DEFAULT_TOOL_DESCRIPTION_TEMPLATE, Agent, AgentContext, AgentRegistry,
     },
 };
 use std::{collections::HashMap, sync::Arc};
@@ -24,6 +24,7 @@ use crate::memory::{ActionStep, MemoryStep, PlanningStep, TaskStep};
 pub struct LocalCoordinator {
     pub agent_definitions: Arc<RwLock<HashMap<String, AgentDefinition>>>,
     pub agent_tools: Arc<RwLock<HashMap<String, Vec<ServerTools>>>>,
+    pub agent_registry: Arc<RwLock<AgentRegistry>>,
     pub tool_sessions: Option<Arc<Box<dyn ToolSessionStore>>>,
     pub registry: Arc<RwLock<ServerRegistry>>,
     pub coordinator_rx: Arc<Mutex<mpsc::Receiver<CoordinatorMessage>>>,
@@ -47,6 +48,7 @@ impl LocalCoordinator {
         Self {
             agent_definitions: Arc::new(RwLock::new(HashMap::new())),
             agent_tools: Arc::new(RwLock::new(HashMap::new())),
+            agent_registry: Arc::new(RwLock::new(AgentRegistry::new())),
             tool_sessions,
             registry,
             coordinator_rx: Arc::new(Mutex::new(coordinator_rx)),
@@ -78,7 +80,7 @@ impl LocalCoordinator {
         // Store both the definition and its tools
 
         tracing::debug!(
-            "Registering agent: {name} with {:?}",
+            "Registering YAML agent: {name} with {:?}",
             resolved_tools
                 .iter()
                 .map(
@@ -89,13 +91,86 @@ impl LocalCoordinator {
 
         {
             let mut definitions = self.agent_definitions.write().await;
-            definitions.insert(name.clone(), definition);
+            definitions.insert(name.clone(), definition.clone());
+        }
+
+        {
+            let mut registry = self.agent_registry.write().await;
+            registry.register_yaml_agent(definition);
         }
 
         // Store the resolved tools
         let mut tools = self.agent_tools.write().await;
         tools.insert(name, resolved_tools);
         Ok(())
+    }
+
+    pub async fn register_programmable_agent(&self, mut agent: Box<dyn Agent>) -> anyhow::Result<()> {
+        let name = agent.definition().name.clone();
+        
+        // Initialize the agent
+        agent.initialize().await?;
+        
+        // Get tools from the agent
+        let tools = agent.get_tools().await;
+        
+        tracing::debug!(
+            "Registering programmable agent: {name} with {} tools",
+            tools.len()
+        );
+
+        // Store the definition for compatibility
+        {
+            let mut definitions = self.agent_definitions.write().await;
+            definitions.insert(name.clone(), agent.definition().clone());
+        }
+
+        // Store the agent in the registry
+        {
+            let mut registry = self.agent_registry.write().await;
+            registry.register_agent(agent);
+        }
+
+        // Store the tools
+        {
+            let mut agent_tools = self.agent_tools.write().await;
+            agent_tools.insert(name, tools);
+        }
+
+        Ok(())
+    }
+
+    async fn is_programmable_agent(&self, agent_name: &str) -> bool {
+        let registry = self.agent_registry.read().await;
+        registry.programmable_agents.contains_key(agent_name)
+    }
+
+    async fn execute_programmable_agent(
+        &self,
+        agent_name: &str,
+        task: TaskStep,
+        params: Option<serde_json::Value>,
+        context: Arc<CoordinatorContext>,
+    ) -> Result<String, AgentError> {
+        let mut registry = self.agent_registry.write().await;
+        
+        if let Some(agent) = registry.get_agent(agent_name) {
+            let agent_context = AgentContext {
+                thread_id: context.thread_id.clone(),
+                run_id: context.run_id.lock().await.clone(),
+                user_id: context.user_id.clone(),
+                verbose: context.verbose,
+                max_tokens: 1000, // TODO: get from agent definition
+                max_iterations: 10, // TODO: get from agent definition
+                agent_handle: Some(self.get_handle(agent_name.to_string())),
+                memory_store: Some(self.memory_store.clone()),
+            };
+
+            let response = agent.invoke(task, agent_context, params).await?;
+            Ok(response.content)
+        } else {
+            Err(AgentError::ToolExecution(format!("Programmable agent {} not found", agent_name)))
+        }
     }
 
     async fn call_agent_stream(
@@ -393,7 +468,12 @@ impl LocalCoordinator {
         params: Option<serde_json::Value>,
         context: Arc<CoordinatorContext>,
     ) -> Result<String, AgentError> {
-        // Get agent definition and tools
+        // Check if this is a programmable agent
+        if self.is_programmable_agent(agent_id).await {
+            return self.execute_programmable_agent(agent_id, task, params, context).await;
+        }
+
+        // Get agent definition and tools for YAML-defined agents
         let definition = self.get_agent(agent_id).await?;
         let tools = self.get_tools(agent_id).await?;
         let tools_desc = get_tool_descriptions(&tools, Some(DEFAULT_TOOL_DESCRIPTION_TEMPLATE));
@@ -688,8 +768,8 @@ impl AgentCoordinator for LocalCoordinator {
         &self,
         _cursor: Option<String>,
     ) -> Result<(Vec<AgentDefinition>, Option<String>), AgentError> {
-        let definitions = self.agent_definitions.read().await;
-        let agents: Vec<AgentDefinition> = definitions.values().take(30).cloned().collect();
+        let registry = self.agent_registry.read().await;
+        let agents: Vec<AgentDefinition> = registry.list_all_agents().into_iter().take(30).collect();
         Ok((agents, None))
     }
 

@@ -31,6 +31,10 @@ dotenv = "0.15"
 tempfile = "3.15.0"
 tracing-subscriber = { workspace = true }
 
+[[example]]
+name = "programmable_agents"
+path = "examples/programmable_agents.rs"
+
 
 [dependencies.openssl]
 version = "0.10"

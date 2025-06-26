@@ -6,8 +6,15 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{self, json};
 use std::{collections::HashMap, fmt::Display, time::SystemTime};
+use std::sync::Arc;
+use uuid;
+use async_trait;
 
 use crate::servers::registry::ServerMetadata;
+use crate::memory::TaskStep;
+use crate::error::AgentError;
+use crate::store::MemoryStore;
+use crate::coordinator::AgentHandle;
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub enum _AuthType {
@@ -446,5 +453,289 @@ impl Display for RunWorkflow {
             RunWorkflow::Chat => write!(f, "chat"),
             RunWorkflow::Event { times, every } => write!(f, "event: {times:?}, every: {every:?}"),
         }
+    }
+}
+
+/// Programmable Agent Interface - similar to Google ADK
+/// This allows agents to be implemented in Rust code with an invoke method
+#[async_trait::async_trait]
+pub trait Agent: Send + Sync {
+    /// Get the agent's metadata/definition
+    fn definition(&self) -> &AgentDefinition;
+    
+    /// Invoke the agent with a task and optional parameters
+    async fn invoke(
+        &mut self,
+        task: TaskStep,
+        context: AgentContext,
+        params: Option<serde_json::Value>,
+    ) -> Result<AgentResponse, AgentError>;
+    
+    /// Get available tools for this agent
+    async fn get_tools(&self) -> Vec<ServerTools> {
+        vec![]
+    }
+    
+    /// Initialize the agent (called once when registered)
+    async fn initialize(&mut self) -> Result<(), AgentError> {
+        Ok(())
+    }
+    
+    /// Cleanup when agent is removed
+    async fn cleanup(&mut self) -> Result<(), AgentError> {
+        Ok(())
+    }
+}
+
+/// Context provided to agents during execution
+#[derive(Clone)]
+pub struct AgentContext {
+    pub thread_id: String,
+    pub run_id: String,
+    pub user_id: Option<String>,
+    pub verbose: bool,
+    pub max_tokens: u32,
+    pub max_iterations: i32,
+    pub agent_handle: Option<AgentHandle>,
+    pub memory_store: Option<Arc<Box<dyn MemoryStore>>>,
+}
+
+impl Default for AgentContext {
+    fn default() -> Self {
+        Self {
+            thread_id: uuid::Uuid::new_v4().to_string(),
+            run_id: uuid::Uuid::new_v4().to_string(),
+            user_id: None,
+            verbose: false,
+            max_tokens: 1000,
+            max_iterations: 10,
+            agent_handle: None,
+            memory_store: None,
+        }
+    }
+}
+
+impl std::fmt::Debug for AgentContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AgentContext")
+            .field("thread_id", &self.thread_id)
+            .field("run_id", &self.run_id)
+            .field("user_id", &self.user_id)
+            .field("verbose", &self.verbose)
+            .field("max_tokens", &self.max_tokens)
+            .field("max_iterations", &self.max_iterations)
+            .field("agent_handle", &self.agent_handle)
+            .field("memory_store", &self.memory_store.is_some())
+            .finish()
+    }
+}
+
+/// Response from agent execution
+#[derive(Debug, Clone)]
+pub struct AgentResponse {
+    pub content: String,
+    pub artifacts: Vec<Artifact>,
+    pub tool_calls: Vec<ToolCall>,
+    pub metadata: Option<serde_json::Value>,
+}
+
+impl AgentResponse {
+    pub fn text(content: impl Into<String>) -> Self {
+        Self {
+            content: content.into(),
+            artifacts: vec![],
+            tool_calls: vec![],
+            metadata: None,
+        }
+    }
+    
+    pub fn with_artifacts(mut self, artifacts: Vec<Artifact>) -> Self {
+        self.artifacts = artifacts;
+        self
+    }
+    
+    pub fn with_tool_calls(mut self, tool_calls: Vec<ToolCall>) -> Self {
+        self.tool_calls = tool_calls;
+        self
+    }
+    
+    pub fn with_metadata(mut self, metadata: serde_json::Value) -> Self {
+        self.metadata = Some(metadata);
+        self
+    }
+}
+
+/// Artifact produced by an agent
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Artifact {
+    pub id: String,
+    pub name: String,
+    pub content_type: String,
+    pub content: String,
+    pub metadata: Option<serde_json::Value>,
+}
+
+/// Builder for creating agents programmatically
+pub struct AgentBuilder {
+    definition: AgentDefinition,
+    handler: Option<Box<dyn Fn(TaskStep, AgentContext) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<AgentResponse, AgentError>> + Send>> + Send + Sync>>,
+}
+
+impl AgentBuilder {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            definition: AgentDefinition {
+                name: name.into(),
+                description: String::new(),
+                system_prompt: None,
+                mcp_servers: vec![],
+                model_settings: ModelSettings::default(),
+                parameters: None,
+                response_format: None,
+                history_size: None,
+                plan: None,
+                icon_url: None,
+            },
+            handler: None,
+        }
+    }
+    
+    pub fn description(mut self, description: impl Into<String>) -> Self {
+        self.definition.description = description.into();
+        self
+    }
+    
+    pub fn system_prompt(mut self, prompt: impl Into<String>) -> Self {
+        self.definition.system_prompt = Some(prompt.into());
+        self
+    }
+    
+    pub fn model_settings(mut self, settings: ModelSettings) -> Self {
+        self.definition.model_settings = settings;
+        self
+    }
+    
+    pub fn with_tools(mut self, mcp_servers: Vec<McpDefinition>) -> Self {
+        self.definition.mcp_servers = mcp_servers;
+        self
+    }
+    
+    pub fn icon_url(mut self, url: impl Into<String>) -> Self {
+        self.definition.icon_url = Some(url.into());
+        self
+    }
+    
+    pub fn handler<F, Fut>(mut self, handler: F) -> Self
+    where
+        F: Fn(TaskStep, AgentContext) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = Result<AgentResponse, AgentError>> + Send + 'static,
+    {
+        self.handler = Some(Box::new(move |task, context| {
+            Box::pin(handler(task, context))
+        }));
+        self
+    }
+    
+    pub fn build(self) -> ProgrammableAgent {
+        ProgrammableAgent {
+            definition: self.definition,
+            handler: self.handler,
+        }
+    }
+}
+
+/// A programmable agent that can be implemented in Rust code
+pub struct ProgrammableAgent {
+    definition: AgentDefinition,
+    handler: Option<Box<dyn Fn(TaskStep, AgentContext) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<AgentResponse, AgentError>> + Send>> + Send + Sync>>,
+}
+
+impl ProgrammableAgent {
+    pub fn builder(name: impl Into<String>) -> AgentBuilder {
+        AgentBuilder::new(name)
+    }
+    
+    pub fn new(definition: AgentDefinition) -> Self {
+        Self {
+            definition,
+            handler: None,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl Agent for ProgrammableAgent {
+    fn definition(&self) -> &AgentDefinition {
+        &self.definition
+    }
+    
+    async fn invoke(
+        &mut self,
+        task: TaskStep,
+        context: AgentContext,
+        _params: Option<serde_json::Value>,
+    ) -> Result<AgentResponse, AgentError> {
+        if let Some(handler) = &self.handler {
+            handler(task, context).await
+        } else {
+            // Default behavior: use the LLM with system prompt
+            if let Some(system_prompt) = &self.definition.system_prompt {
+                // This would integrate with the existing LLM execution logic
+                Ok(AgentResponse::text(format!(
+                    "Agent '{}' executed task: {}. System prompt: {}",
+                    self.definition.name, task.task, system_prompt
+                )))
+            } else {
+                Ok(AgentResponse::text(format!(
+                    "Agent '{}' executed task: {}",
+                    self.definition.name, task.task
+                )))
+            }
+        }
+    }
+}
+
+/// Agent registry for managing both YAML-defined and programmatic agents
+pub struct AgentRegistry {
+    pub yaml_agents: HashMap<String, AgentDefinition>,
+    pub programmable_agents: HashMap<String, Box<dyn Agent>>,
+}
+
+impl AgentRegistry {
+    pub fn new() -> Self {
+        Self {
+            yaml_agents: HashMap::new(),
+            programmable_agents: HashMap::new(),
+        }
+    }
+    
+    pub fn register_yaml_agent(&mut self, definition: AgentDefinition) {
+        self.yaml_agents.insert(definition.name.clone(), definition);
+    }
+    
+    pub fn register_agent(&mut self, agent: Box<dyn Agent>) {
+        let name = agent.definition().name.clone();
+        self.programmable_agents.insert(name, agent);
+    }
+    
+    pub fn get_yaml_agent(&self, name: &str) -> Option<&AgentDefinition> {
+        self.yaml_agents.get(name)
+    }
+    
+    pub fn get_agent(&mut self, name: &str) -> Option<&mut Box<dyn Agent>> {
+        self.programmable_agents.get_mut(name)
+    }
+    
+    pub fn list_all_agents(&self) -> Vec<AgentDefinition> {
+        let mut agents = Vec::new();
+        agents.extend(self.yaml_agents.values().cloned());
+        agents.extend(self.programmable_agents.values().map(|a| a.definition().clone()));
+        agents
+    }
+}
+
+impl Default for AgentRegistry {
+    fn default() -> Self {
+        Self::new()
     }
 }
