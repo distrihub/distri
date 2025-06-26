@@ -1,4 +1,4 @@
-use actix_web::{web, HttpRequest, HttpResponse, Responder};
+THIS SHOULD BE A LINTER ERRORuse actix_web::{web, HttpRequest, HttpResponse, Responder};
 use actix_web_lab::sse::{self, Sse};
 use distri::coordinator::{AgentCoordinator, AgentEvent, LocalCoordinator};
 use distri::types::ServerConfig;
@@ -358,16 +358,31 @@ async fn handle_message_send_streaming(
     // Create channel for streaming events
     let (event_tx, mut event_rx) = mpsc::channel(100);
     let task_id_clone = task.id.clone();
+    let agent_id_clone = agent_id.clone();
     let event_broadcaster_clone = event_broadcaster.clone();
 
     // Spawn task to handle streaming events
     tokio::spawn(async move {
         while let Some(event) = event_rx.recv().await {
             let event_json = match event {
+                AgentEvent::RunStarted { 
+                    thread_id, 
+                    run_id,
+                    .. 
+                } => {
+                    json!({
+                        "type": "agent_started",
+                        "task_id": task_id_clone,
+                        "agent_id": agent_id_clone,
+                        "thread_id": thread_id,
+                        "run_id": run_id
+                    })
+                }
                 AgentEvent::TextMessageContent { delta, .. } => {
                     json!({
                         "type": "text_delta",
                         "task_id": task_id_clone,
+                        "agent_id": agent_id_clone,
                         "delta": delta
                     })
                 }
@@ -380,10 +395,12 @@ async fn handle_message_send_streaming(
                     json!({
                         "type": "tool_call_start",
                         "task_id": task_id_clone,
+                        "agent_id": agent_id_clone,
                         "tool_call_id": tool_call_id,
                         "tool_name": tool_call_name,
                         "parent_message_id": parent_message_id,
-                        "status": "pending_approval"
+                        "status": "pending_approval",
+                        "is_agent_call": tool_call_name.starts_with("distri_agents/") || tool_call_name.contains("_agent")
                     })
                 }
                 AgentEvent::ToolCallArgs { 
@@ -394,6 +411,7 @@ async fn handle_message_send_streaming(
                     json!({
                         "type": "tool_call_args",
                         "task_id": task_id_clone,
+                        "agent_id": agent_id_clone,
                         "tool_call_id": tool_call_id,
                         "args_delta": delta
                     })
@@ -405,20 +423,23 @@ async fn handle_message_send_streaming(
                     json!({
                         "type": "tool_call_end",
                         "task_id": task_id_clone,
+                        "agent_id": agent_id_clone,
                         "tool_call_id": tool_call_id,
                         "status": "waiting_approval"
                     })
                 }
                 AgentEvent::RunFinished { .. } => {
                     json!({
-                        "type": "task_completed",
-                        "task_id": task_id_clone
+                        "type": "agent_completed",
+                        "task_id": task_id_clone,
+                        "agent_id": agent_id_clone
                     })
                 }
                 AgentEvent::RunError { message, .. } => {
                     json!({
-                        "type": "task_error",
+                        "type": "agent_error",
                         "task_id": task_id_clone,
+                        "agent_id": agent_id_clone,
                         "error": message
                     })
                 }
