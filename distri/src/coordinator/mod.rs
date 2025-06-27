@@ -136,6 +136,7 @@ pub trait AgentCoordinator {
         agent_name: &str,
         task: TaskStep,
         params: Option<serde_json::Value>,
+        context_id: Option<&str>,
     ) -> Result<String, AgentError>;
     async fn execute_stream(
         &self,
@@ -143,6 +144,7 @@ pub trait AgentCoordinator {
         task: TaskStep,
         params: Option<serde_json::Value>,
         event_tx: mpsc::Sender<AgentEvent>,
+        context_id: Option<&str>,
     ) -> Result<(), AgentError>;
 }
 

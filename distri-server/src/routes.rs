@@ -28,11 +28,7 @@ pub fn config(cfg: &mut web::ServiceConfig) {
             .service(web::resource("/agents/{id}/events").route(web::get().to(sse_handler)))
             .service(web::resource("/tasks/{id}").route(web::get().to(get_task)))
             // Thread endpoints
-            .service(
-                web::resource("/threads")
-                    .route(web::get().to(list_threads_handler))
-                    .route(web::post().to(create_thread_handler))
-            )
+            .service(web::resource("/threads").route(web::get().to(list_threads_handler)))
             .service(
                 web::resource("/threads/{thread_id}")
                     .route(web::get().to(get_thread_handler))
@@ -309,8 +305,8 @@ async fn handle_message_send(
         .to_string(),
     );
 
-    // Execute the task using the coordinator in thread context
-    let execution_result = coordinator.execute_in_thread(&thread_id, task_step, None).await;
+    // Execute the task using the coordinator with thread context
+    let execution_result = coordinator.execute(&agent_id, task_step, None, Some(&thread_id)).await;
 
     let mut broadcast_status = "completed";
     let final_status = match execution_result {
@@ -512,9 +508,9 @@ async fn handle_message_send_streaming(
         }
     });
 
-    // Execute the task using streaming in thread context
+    // Execute the task using streaming with thread context
     let execution_result = coordinator
-        .execute_stream_in_thread(&thread_id, task_step, None, event_tx)
+        .execute_stream(&agent_id, task_step, None, event_tx, Some(&thread_id))
         .await;
 
     let final_status = match execution_result {
@@ -644,17 +640,7 @@ async fn list_threads_handler(
     }
 }
 
-async fn create_thread_handler(
-    request: web::Json<CreateThreadRequest>,
-    coordinator: web::Data<Arc<LocalCoordinator>>,
-) -> HttpResponse {
-    match coordinator.create_thread(request.into_inner()).await {
-        Ok(thread) => HttpResponse::Ok().json(thread),
-        Err(e) => HttpResponse::BadRequest().json(json!({
-            "error": format!("Failed to create thread: {}", e)
-        })),
-    }
-}
+// create_thread_handler removed - threads are now auto-created from first messages
 
 async fn get_thread_handler(
     path: web::Path<String>,

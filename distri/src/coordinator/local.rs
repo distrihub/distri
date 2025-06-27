@@ -716,76 +716,9 @@ impl LocalCoordinator {
             .map_err(|e| AgentError::Session(e.to_string()))
     }
 
-    pub async fn execute_in_thread(
-        &self,
-        thread_id: &str,
-        task: TaskStep,
-        params: Option<serde_json::Value>,
-    ) -> Result<String, AgentError> {
-        // Get thread to determine the agent
-        let thread = self.get_thread(thread_id).await?
-            .ok_or_else(|| AgentError::NotFound(format!("Thread '{}' not found", thread_id)))?;
-
-        // Update thread with the new message
-        self.thread_store.update_thread_with_message(thread_id, &task.task).await
-            .map_err(|e| AgentError::Session(e.to_string()))?;
-
-        // Create thread-specific context
-        let thread_context = Arc::new(CoordinatorContext::new(
-            thread_id.to_string(),
-            uuid::Uuid::new_v4().to_string(),
-            self.context.verbose,
-            self.context.user_id.clone(),
-            self.context.tools_context.clone(),
-        ));
-
-        // Execute using the thread's agent
-        let result = self.call_agent(&thread.agent_id, task, params, thread_context).await?;
-
-        // Update thread store with agent definitions for thread listing
-        let agent_definitions = self.agent_definitions.read().await;
-        if let Some(thread_store) = self.thread_store.as_ref().as_any().downcast_ref::<HashMapThreadStore>() {
-            thread_store.set_agent_definitions(agent_definitions.clone()).await;
-        }
-
-        Ok(result)
-    }
-
-    pub async fn execute_stream_in_thread(
-        &self,
-        thread_id: &str,
-        task: TaskStep,
-        params: Option<serde_json::Value>,
-        event_tx: mpsc::Sender<AgentEvent>,
-    ) -> Result<(), AgentError> {
-        // Get thread to determine the agent
-        let thread = self.get_thread(thread_id).await?
-            .ok_or_else(|| AgentError::NotFound(format!("Thread '{}' not found", thread_id)))?;
-
-        // Update thread with the new message
-        self.thread_store.update_thread_with_message(thread_id, &task.task).await
-            .map_err(|e| AgentError::Session(e.to_string()))?;
-
-        // Create thread-specific context
-        let thread_context = Arc::new(CoordinatorContext::new(
-            thread_id.to_string(),
-            uuid::Uuid::new_v4().to_string(),
-            self.context.verbose,
-            self.context.user_id.clone(),
-            self.context.tools_context.clone(),
-        ));
-
-        // Execute using the thread's agent
-        self.call_agent_stream(&thread.agent_id, task, params, thread_context, event_tx).await?;
-
-        // Update thread store with agent definitions for thread listing
-        let agent_definitions = self.agent_definitions.read().await;
-        if let Some(thread_store) = self.thread_store.as_ref().as_any().downcast_ref::<HashMapThreadStore>() {
-            thread_store.set_agent_definitions(agent_definitions.clone()).await;
-        }
-
-        Ok(())
-    }
+    // Thread-specific execute methods have been removed.
+    // Threading is now handled automatically in the main execute and execute_stream methods
+    // by passing a context_id parameter.
 }
 
 #[async_trait::async_trait]
@@ -827,9 +760,53 @@ impl AgentCoordinator for LocalCoordinator {
         agent_name: &str,
         task: TaskStep,
         params: Option<serde_json::Value>,
+        context_id: Option<&str>,
     ) -> Result<String, AgentError> {
-        self.call_agent(agent_name, task, params, self.context.clone())
-            .await
+        // Determine the execution context based on context_id
+        let execution_context = if let Some(ctx_id) = context_id {
+            // Check if thread exists, auto-create if needed
+            let thread_exists = self.get_thread(ctx_id).await?
+                .is_some();
+
+            if !thread_exists {
+                // Auto-create thread for this agent and context
+                let create_request = CreateThreadRequest {
+                    agent_id: agent_name.to_string(),
+                    title: None, // Will be auto-generated from first message
+                    initial_message: Some(task.task.clone()),
+                };
+                
+                self.create_thread(create_request).await?;
+            }
+
+            // Update thread with the new message
+            self.thread_store.update_thread_with_message(ctx_id, &task.task).await
+                .map_err(|e| AgentError::Session(e.to_string()))?;
+
+            // Create thread-specific context
+            Arc::new(CoordinatorContext::new(
+                ctx_id.to_string(),
+                uuid::Uuid::new_v4().to_string(),
+                self.context.verbose,
+                self.context.user_id.clone(),
+                self.context.tools_context.clone(),
+            ))
+        } else {
+            // Use default context for non-threaded execution
+            self.context.clone()
+        };
+
+        let result = self.call_agent(agent_name, task, params, execution_context).await?;
+
+        // Update thread store with agent definitions for thread listing
+        if context_id.is_some() {
+            let agent_definitions = self.agent_definitions.read().await;
+            if let Some(thread_store) = self.thread_store.as_ref().as_any().downcast_ref::<HashMapThreadStore>() {
+                thread_store.set_agent_definitions(agent_definitions.clone()).await;
+            }
+        }
+
+        Ok(result)
     }
 
     async fn execute_stream(
@@ -838,8 +815,52 @@ impl AgentCoordinator for LocalCoordinator {
         task: TaskStep,
         params: Option<serde_json::Value>,
         event_tx: mpsc::Sender<AgentEvent>,
+        context_id: Option<&str>,
     ) -> Result<(), AgentError> {
-        self.call_agent_stream(agent_name, task, params, self.context.clone(), event_tx)
-            .await
+        // Determine the execution context based on context_id
+        let execution_context = if let Some(ctx_id) = context_id {
+            // Check if thread exists, auto-create if needed
+            let thread_exists = self.get_thread(ctx_id).await?
+                .is_some();
+
+            if !thread_exists {
+                // Auto-create thread for this agent and context
+                let create_request = CreateThreadRequest {
+                    agent_id: agent_name.to_string(),
+                    title: None, // Will be auto-generated from first message
+                    initial_message: Some(task.task.clone()),
+                };
+                
+                self.create_thread(create_request).await?;
+            }
+
+            // Update thread with the new message
+            self.thread_store.update_thread_with_message(ctx_id, &task.task).await
+                .map_err(|e| AgentError::Session(e.to_string()))?;
+
+            // Create thread-specific context
+            Arc::new(CoordinatorContext::new(
+                ctx_id.to_string(),
+                uuid::Uuid::new_v4().to_string(),
+                self.context.verbose,
+                self.context.user_id.clone(),
+                self.context.tools_context.clone(),
+            ))
+        } else {
+            // Use default context for non-threaded execution
+            self.context.clone()
+        };
+
+        self.call_agent_stream(agent_name, task, params, execution_context, event_tx).await?;
+
+        // Update thread store with agent definitions for thread listing
+        if context_id.is_some() {
+            let agent_definitions = self.agent_definitions.read().await;
+            if let Some(thread_store) = self.thread_store.as_ref().as_any().downcast_ref::<HashMapThreadStore>() {
+                thread_store.set_agent_definitions(agent_definitions.clone()).await;
+            }
+        }
+
+        Ok(())
     }
 }

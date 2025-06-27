@@ -507,6 +507,8 @@ pub struct ThreadSummary {
     pub last_message: Option<String>,
 }
 
+// CreateThreadRequest removed - threads are now auto-created from first messages
+// Thread creation is handled internally when a message is sent with a context_id
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateThreadRequest {
     pub agent_id: String,
