@@ -8,7 +8,7 @@ use crate::{
     memory::{LocalAgentMemory, MemoryStep},
     types::{McpSession, Message, Thread, ThreadSummary, CreateThreadRequest, UpdateThreadRequest},
 };
-use distri_a2a::{Task, TaskState, TaskStatus, Role, Part, TextPart, Message as A2aMessage};
+use distri_a2a::{Task, TaskState, TaskStatus, Message as A2aMessage};
 
 #[async_trait]
 pub trait ToolSessionStore: Send + Sync {
@@ -153,7 +153,7 @@ impl HashMapTaskStore {
 
 #[async_trait]
 impl TaskStore for HashMapTaskStore {
-    async fn create_task(&self, agent_id: &str, context_id: &str, kind: &str) -> anyhow::Result<Task> {
+    async fn create_task(&self, _agent_id: &str, context_id: &str, kind: &str) -> anyhow::Result<Task> {
         let task_id = Uuid::new_v4().to_string();
         let task = Task {
             id: task_id.clone(),
@@ -279,7 +279,7 @@ impl ThreadStore for HashMapThreadStore {
 
     async fn update_thread(&self, thread_id: &str, request: UpdateThreadRequest) -> anyhow::Result<Thread> {
         let mut threads = self.threads.write().await;
-        let mut thread = threads.get_mut(thread_id)
+        let thread = threads.get_mut(thread_id)
             .ok_or_else(|| anyhow::anyhow!("Thread not found"))?;
         
         if let Some(title) = request.title {

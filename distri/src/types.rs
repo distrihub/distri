@@ -1,15 +1,13 @@
 use anyhow::Context;
 use async_mcp::types::Tool;
-use distri_a2a::{AgentCapabilities, AgentProvider, AgentSkill, SecurityScheme};
+use distri_a2a::{AgentCapabilities, AgentProvider, SecurityScheme};
 use mcp_proxy::types::ProxyServerConfig;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{self, json};
 use std::{collections::HashMap, fmt::Display, time::SystemTime};
-use async_openai::types::{
-    ChatCompletionResponseMessage, ChatCompletionTool, FinishReason, FunctionObjectArgs,
-};
-use distri_a2a::{Message as A2aMessage, Part, Role, TextPart};
+// Removed unused OpenAI imports
+// Removed unused A2A imports
 use uuid;
 use chrono;
 

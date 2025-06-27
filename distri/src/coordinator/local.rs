@@ -744,7 +744,7 @@ impl LocalCoordinator {
 
         // Update thread store with agent definitions for thread listing
         let agent_definitions = self.agent_definitions.read().await;
-        if let Ok(thread_store) = self.thread_store.as_ref().as_any().downcast_ref::<HashMapThreadStore>() {
+        if let Some(thread_store) = self.thread_store.as_ref().as_any().downcast_ref::<HashMapThreadStore>() {
             thread_store.set_agent_definitions(agent_definitions.clone()).await;
         }
 
@@ -780,7 +780,7 @@ impl LocalCoordinator {
 
         // Update thread store with agent definitions for thread listing
         let agent_definitions = self.agent_definitions.read().await;
-        if let Ok(thread_store) = self.thread_store.as_ref().as_any().downcast_ref::<HashMapThreadStore>() {
+        if let Some(thread_store) = self.thread_store.as_ref().as_any().downcast_ref::<HashMapThreadStore>() {
             thread_store.set_agent_definitions(agent_definitions.clone()).await;
         }
 

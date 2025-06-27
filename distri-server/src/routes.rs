@@ -28,8 +28,11 @@ pub fn config(cfg: &mut web::ServiceConfig) {
             .service(web::resource("/agents/{id}/events").route(web::get().to(sse_handler)))
             .service(web::resource("/tasks/{id}").route(web::get().to(get_task)))
             // Thread endpoints
-            .service(web::resource("/threads").route(web::get().to(list_threads_handler)))
-            .service(web::resource("/threads").route(web::post().to(create_thread_handler)))
+            .service(
+                web::resource("/threads")
+                    .route(web::get().to(list_threads_handler))
+                    .route(web::post().to(create_thread_handler))
+            )
             .service(
                 web::resource("/threads/{thread_id}")
                     .route(web::get().to(get_thread_handler))

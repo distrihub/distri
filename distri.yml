@@ -1,0 +1,61 @@
+server:
+  host: "127.0.0.1"
+  port: 8080
+  documentation_url: "https://github.com/distrihub/distri"
+  preferred_transport: "JSONRPC"
+  capabilities:
+    streaming: true
+    push_notifications: true
+    state_transition_history: true
+    extensions: []
+  default_input_modes:
+    - "text/plain"
+    - "text/markdown"
+  default_output_modes:
+    - "text/plain"
+    - "text/markdown"
+  security_schemes: {}
+  security: []
+
+agents:
+  - name: "assistant"
+    description: "A helpful AI assistant that can answer questions and help with tasks"
+    system_prompt: |
+      You are a helpful AI assistant. You can answer questions, help with tasks,
+      and provide information on a wide variety of topics. Be concise but thorough
+      in your responses.
+    icon_url: "https://example.com/assistant-icon.png"
+    mcp_servers: []
+    model_settings:
+      model: "gpt-4o-mini"
+      temperature: 0.7
+      max_tokens: 1000
+
+  - name: "researcher"
+    description: "A research specialist that provides detailed analysis and information"
+    system_prompt: |
+      You are a research specialist. Your role is to provide detailed, accurate,
+      and well-sourced information on topics. Always cite sources when possible 
+      and provide comprehensive analysis.
+    icon_url: "https://example.com/researcher-icon.png"
+    mcp_servers: []
+    model_settings:
+      model: "gpt-4o-mini"
+      temperature: 0.7
+      max_tokens: 1000
+
+  - name: "coder"
+    description: "A programming assistant that helps with code development and debugging"
+    system_prompt: |
+      You are a programming assistant. Help users with coding tasks, debugging, 
+      code review, and software development best practices. Provide clear 
+      explanations and working code examples.
+    icon_url: "https://example.com/coder-icon.png"
+    mcp_servers: []
+    model_settings:
+      model: "gpt-4o-mini"
+      temperature: 0.7
+      max_tokens: 1000
+
+mcp_servers: []
+sessions: {}
