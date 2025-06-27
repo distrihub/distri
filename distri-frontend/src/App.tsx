@@ -58,15 +58,26 @@ function App() {
   const fetchThreads = async () => {
     try {
       const response = await fetch('/api/v1/threads');
-      const threadList = await response.json();
-      setThreads(threadList);
-      
-      // Select the first thread if none is selected
-      if (threadList.length > 0 && !selectedThread) {
-        setSelectedThread(threadList[0]);
+      if (response.ok) {
+        const threadList = await response.json();
+        
+        // Merge server threads with any local threads that may not be persisted yet
+        setThreads((currentThreads: Thread[]) => {
+          const serverThreadIds = new Set(threadList.map((t: Thread) => t.id));
+          const localThreads = currentThreads.filter(t => !serverThreadIds.has(t.id));
+          
+          // Combine server threads with local threads, server threads first
+          return [...threadList, ...localThreads];
+        });
+        
+        // Select the first thread if none is selected
+        if (threadList.length > 0 && !selectedThread) {
+          setSelectedThread(threadList[0]);
+        }
       }
     } catch (error) {
       console.error('Failed to fetch threads:', error);
+      // If we can't fetch from server, keep the current threads (likely local ones)
     }
   };
 
@@ -75,32 +86,22 @@ function App() {
 
     setCreatingThread(true);
     try {
-      const response = await fetch('/api/v1/threads', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          agent_id: selectedAgent.id,
-          title: 'New conversation',
-        }),
-      });
-
-      if (response.ok) {
-        const newThread = await response.json();
-        const threadSummary: Thread = {
-          id: newThread.id,
-          title: newThread.title,
-          agent_id: newThread.agent_id,
-          agent_name: selectedAgent.name,
-          updated_at: newThread.updated_at,
-          message_count: newThread.message_count,
-          last_message: newThread.last_message,
-        };
-        
-        setThreads((prev: Thread[]) => [threadSummary, ...prev]);
-        setSelectedThread(threadSummary);
-      }
+      // Generate a new thread ID that will be used as contextId in A2A messages
+      // The actual thread will be created automatically when the first message is sent
+      const newThreadId = `thread-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      
+      const threadSummary: Thread = {
+        id: newThreadId,
+        title: 'New conversation',
+        agent_id: selectedAgent.id,
+        agent_name: selectedAgent.name,
+        updated_at: new Date().toISOString(),
+        message_count: 0,
+        last_message: undefined,
+      };
+      
+      setThreads((prev: Thread[]) => [threadSummary, ...prev]);
+      setSelectedThread(threadSummary);
     } catch (error) {
       console.error('Failed to create thread:', error);
     } finally {
@@ -148,6 +149,36 @@ function App() {
       }
     } catch (error) {
       console.error('Failed to delete thread:', error);
+    }
+  };
+
+  const updateSpecificThread = async (threadId: string) => {
+    try {
+      const response = await fetch(`/api/v1/threads/${threadId}`);
+      if (response.ok) {
+        const updatedThread = await response.json();
+        const threadSummary: Thread = {
+          id: updatedThread.id,
+          title: updatedThread.title,
+          agent_id: updatedThread.agent_id,
+          agent_name: agents.find((a: Agent) => a.id === updatedThread.agent_id)?.name || updatedThread.agent_id,
+          updated_at: updatedThread.updated_at,
+          message_count: updatedThread.message_count,
+          last_message: updatedThread.last_message,
+        };
+
+        setThreads((prev: Thread[]) => 
+          prev.map((thread: Thread) => 
+            thread.id === threadId ? threadSummary : thread
+          )
+        );
+        
+        if (selectedThread?.id === threadId) {
+          setSelectedThread(threadSummary);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to update thread:', error);
     }
   };
 
@@ -307,7 +338,7 @@ function App() {
               <Chat 
                 thread={selectedThread} 
                 agent={selectedAgent}
-                onThreadUpdate={fetchThreads}
+                onThreadUpdate={() => updateSpecificThread(selectedThread.id)}
               />
             )}
 

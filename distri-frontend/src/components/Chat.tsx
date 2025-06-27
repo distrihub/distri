@@ -74,40 +74,70 @@ const Chat: React.FC<ChatProps> = ({ thread, agent, onThreadUpdate }) => {
       timestamp: new Date(),
     };
 
-    setMessages(prev => [...prev, userMessage]);
+    setMessages((prev: Message[]) => [...prev, userMessage]);
     setInput('');
     setIsLoading(true);
 
     try {
-      // Send message to thread endpoint
-      const response = await fetch(`/api/v1/threads/${thread.id}/messages`, {
+      // Send message using A2A protocol with thread.id as contextId
+      const response = await fetch(`/api/v1/agents/${agent.id}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          message: userMessage.content,
+          jsonrpc: '2.0',
+          method: 'message/send',
+          params: {
+            message: {
+              messageId: userMessage.id,
+              role: 'user',
+              parts: [
+                {
+                  kind: 'text',
+                  text: userMessage.content,
+                }
+              ],
+              contextId: thread.id, // Use thread ID as context ID
+            },
+            configuration: {
+              acceptedOutputModes: ['text/plain'],
+              blocking: true,
+            },
+          },
+          id: userMessage.id,
         }),
       });
 
       const result = await response.json();
 
-      if (response.ok) {
-        const agentMessage: Message = {
-          id: `${Date.now()}-agent`,
-          role: 'agent',
-          content: result.response,
-          timestamp: new Date(),
-        };
+      if (result.error) {
+        throw new Error(result.error.message);
+      }
 
-        setMessages((prev: Message[]) => [...prev, agentMessage]);
+      const task = result.result;
+      const responseContent = task.status?.message?.parts
+        ?.find((part: any) => part.kind === 'text')
+        ?.text || 'No response received';
 
-        // Update thread in parent component
-        if (onThreadUpdate) {
-          onThreadUpdate();
-        }
-      } else {
-        throw new Error(result.error || 'Failed to send message');
+      const agentMessage: Message = {
+        id: `${Date.now()}-agent`,
+        role: 'agent',
+        content: responseContent,
+        timestamp: new Date(),
+        taskId: task.id,
+      };
+
+      setMessages((prev: Message[]) => [...prev, agentMessage]);
+
+      // Set up SSE listener for real-time updates if needed
+      if (task.status?.state === 'working') {
+        setupSSEListener(task.id);
+      }
+
+      // Update thread in parent component
+      if (onThreadUpdate) {
+        onThreadUpdate();
       }
 
     } catch (error) {
@@ -118,10 +148,57 @@ const Chat: React.FC<ChatProps> = ({ thread, agent, onThreadUpdate }) => {
         content: `Error: ${error instanceof Error ? error.message : 'Failed to send message'}`,
         timestamp: new Date(),
       };
-      setMessages(prev => [...prev, errorMessage]);
+      setMessages((prev: Message[]) => [...prev, errorMessage]);
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const setupSSEListener = (taskId: string) => {
+    // Listen to events filtered by thread ID for better performance
+    const eventSource = new EventSource(`/api/v1/agents/${agent.id}/events?thread_id=${thread.id}`);
+
+    eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+
+        if (data.task_id === taskId && data.thread_id === thread.id) {
+          if (data.type === 'text_delta') {
+            // Update the last agent message with streaming content
+            setMessages((prev: Message[]) => {
+              const lastMessage = prev[prev.length - 1];
+              if (lastMessage && lastMessage.role === 'agent' && lastMessage.taskId === taskId) {
+                return [
+                  ...prev.slice(0, -1),
+                  {
+                    ...lastMessage,
+                    content: lastMessage.content + data.delta,
+                  }
+                ];
+              }
+              return prev;
+            });
+          } else if (data.type === 'task_completed' || data.type === 'task_error') {
+            eventSource.close();
+            // Update thread in parent component when task completes
+            if (onThreadUpdate) {
+              onThreadUpdate();
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Error parsing SSE data:', error);
+      }
+    };
+
+    eventSource.onerror = () => {
+      eventSource.close();
+    };
+
+    // Clean up after 30 seconds
+    setTimeout(() => {
+      eventSource.close();
+    }, 30000);
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -153,9 +230,9 @@ const Chat: React.FC<ChatProps> = ({ thread, agent, onThreadUpdate }) => {
         {messages.length === 0 && (
           <div className="text-center py-8">
             <Bot className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-            <p className="text-gray-500">Start your conversation with {agent.name}</p>
+            <p className="text-gray-500">Continue your conversation with {agent.name}</p>
             <p className="text-sm text-gray-400 mt-1">
-              This is the beginning of your thread: "{thread.title}"
+              Thread: "{thread.title}"
             </p>
           </div>
         )}
