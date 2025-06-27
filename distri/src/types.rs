@@ -83,6 +83,9 @@ pub struct AgentDefinition {
     /// A2A-specific fields
     #[serde(default)]
     pub icon_url: Option<String>,
+    /// Manually defined skills for the agent
+    #[serde(default)]
+    pub skills: Option<Vec<AgentSkill>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, Default)]

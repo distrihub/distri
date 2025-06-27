@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Loader2, User, Bot, Check, X, AlertCircle, Tool } from 'lucide-react';
+import { Send, Loader2, User, Bot, Check, X, AlertCircle, Tool, Brain } from 'lucide-react';
 
 interface Agent {
   id: string;
@@ -24,12 +24,14 @@ interface ToolCall {
 
 interface Message {
   id: string;
-  role: 'user' | 'agent';
+  role: 'user' | 'agent' | 'thinking' | 'system';
   content: string;
   timestamp: Date;
   taskId?: string;
   toolCalls?: ToolCall[];
   isStreaming?: boolean;
+  runId?: string;
+  thinkingId?: string;
 }
 
 const Chat: React.FC<ChatProps> = ({ agent }) => {
@@ -82,40 +84,95 @@ const Chat: React.FC<ChatProps> = ({ agent }) => {
   };
 
   const handleStreamEvent = (data: any) => {
-    const { type, task_id } = data;
+    const { type, run_id, task_id } = data;
 
     switch (type) {
-      case 'text_delta':
-        handleTextDelta(data.delta, task_id);
+      case 'runStarted':
+        handleRunStarted(data);
         break;
-      case 'tool_call_start':
+      case 'messageStart':
+        handleMessageStart(data);
+        break;
+      case 'messageStream':
+        handleMessageStream(data);
+        break;
+      case 'messageEnd':
+        handleMessageEnd(data);
+        break;
+      case 'toolCall':
         handleToolCallStart(data);
         break;
-      case 'tool_call_args':
+      case 'toolCallArgs':
         handleToolCallArgs(data);
         break;
-      case 'tool_call_end':
+      case 'toolCallEnd':
         handleToolCallEnd(data);
         break;
-      case 'tool_call_approved':
-        handleToolCallApproved(data.tool_call_id);
+      case 'toolResult':
+        handleToolResult(data);
         break;
-      case 'tool_call_rejected':
-        handleToolCallRejected(data.tool_call_id);
+      case 'thinkingStart':
+        handleThinkingStart(data);
+        break;
+      case 'thinkingStream':
+        handleThinkingStream(data);
+        break;
+      case 'thinkingEnd':
+        handleThinkingEnd(data);
+        break;
+      case 'runFinished':
+        handleRunFinished(data);
+        break;
+      case 'runError':
+        handleRunError(data);
+        break;
+      // Legacy event support for backwards compatibility
+      case 'text_delta':
+        handleMessageStream({ ...data, type: 'messageStream', delta: data.delta });
+        break;
+      case 'tool_call_start':
+        handleToolCallStart({ ...data, type: 'toolCall' });
         break;
       case 'task_completed':
-        handleTaskCompleted(task_id);
+        handleRunFinished(data);
         break;
       case 'task_error':
-        handleTaskError(data.error, task_id);
+        handleRunError(data);
         break;
     }
   };
 
-  const handleTextDelta = (delta: string, taskId: string) => {
+  const handleRunStarted = (data: any) => {
+    setIsLoading(true);
+  };
+
+  const handleMessageStart = (data: any) => {
+    const { run_id, message_id, role, task_id } = data;
+    
+    if (role === 'assistant') {
+      // Start a new assistant message
+      setMessages((prev: Message[]) => [
+        ...prev,
+        {
+          id: message_id,
+          role: 'agent',
+          content: '',
+          timestamp: new Date(),
+          isStreaming: true,
+          taskId: task_id,
+          runId: run_id,
+        }
+      ]);
+    }
+  };
+
+  const handleMessageStream = (data: any) => {
+    const { delta, task_id, run_id, message_id } = data;
+    
     setMessages((prev: Message[]) => {
       const lastMessage = prev[prev.length - 1];
-      if (lastMessage && lastMessage.role === 'agent' && lastMessage.taskId === taskId && lastMessage.isStreaming) {
+      if (lastMessage && lastMessage.role === 'agent' && lastMessage.isStreaming && 
+          (lastMessage.taskId === task_id || lastMessage.runId === run_id)) {
         return [
           ...prev.slice(0, -1),
           {
@@ -126,6 +183,95 @@ const Chat: React.FC<ChatProps> = ({ agent }) => {
       }
       return prev;
     });
+  };
+
+  const handleMessageEnd = (data: any) => {
+    const { task_id, run_id, message_id } = data;
+    
+    setMessages((prev: Message[]) => {
+      return prev.map(msg => {
+        if ((msg.taskId === task_id || msg.runId === run_id) && msg.isStreaming) {
+          return { ...msg, isStreaming: false };
+        }
+        return msg;
+      });
+    });
+  };
+
+  const handleThinkingStart = (data: any) => {
+    const { run_id, thinking_id, task_id } = data;
+    
+    // Add a thinking message
+    setMessages((prev: Message[]) => [
+      ...prev,
+      {
+        id: thinking_id,
+        role: 'thinking',
+        content: '',
+        timestamp: new Date(),
+        isStreaming: true,
+        taskId: task_id,
+        runId: run_id,
+        thinkingId: thinking_id,
+      }
+    ]);
+  };
+
+  const handleThinkingStream = (data: any) => {
+    const { delta, thinking_id, run_id } = data;
+    
+    setMessages((prev: Message[]) => {
+      return prev.map(msg => {
+        if (msg.role === 'thinking' && msg.thinkingId === thinking_id && msg.runId === run_id) {
+          return {
+            ...msg,
+            content: msg.content + delta,
+          };
+        }
+        return msg;
+      });
+    });
+  };
+
+  const handleThinkingEnd = (data: any) => {
+    const { thinking_id, run_id } = data;
+    
+    setMessages((prev: Message[]) => {
+      return prev.map(msg => {
+        if (msg.role === 'thinking' && msg.thinkingId === thinking_id && msg.runId === run_id) {
+          return { ...msg, isStreaming: false };
+        }
+        return msg;
+      });
+    });
+  };
+
+  const handleRunFinished = (data: any) => {
+    setIsLoading(false);
+    
+    // Mark all streaming messages as completed
+    setMessages((prev: Message[]) => {
+      return prev.map(msg => ({ ...msg, isStreaming: false }));
+    });
+  };
+
+  const handleRunError = (data: any) => {
+    setIsLoading(false);
+    const { error, task_id, run_id } = data;
+    
+    // Add error message
+    setMessages((prev: Message[]) => [
+      ...prev,
+      {
+        id: `error-${Date.now()}`,
+        role: 'system',
+        content: `Error: ${error}`,
+        timestamp: new Date(),
+        isStreaming: false,
+        taskId: task_id,
+        runId: run_id,
+      }
+    ]);
   };
 
   const handleToolCallStart = (data: any) => {
@@ -196,33 +342,20 @@ const Chat: React.FC<ChatProps> = ({ agent }) => {
     });
   };
 
-  const handleTaskCompleted = (taskId: string) => {
-    setIsLoading(false);
-    setMessages((prev: Message[]) => {
-      const lastMessage = prev[prev.length - 1];
-      if (lastMessage && lastMessage.taskId === taskId && lastMessage.isStreaming) {
-        return [
-          ...prev.slice(0, -1),
-          {
-            ...lastMessage,
-            isStreaming: false,
-          }
-        ];
+  const handleToolResult = (data: any) => {
+    const { tool_call_id, result } = data;
+    setToolCalls((prev: Map<string, ToolCall>) => {
+      const newMap = new Map(prev);
+      const existing = newMap.get(tool_call_id);
+      if (existing) {
+        newMap.set(tool_call_id, {
+          ...existing,
+          status: 'completed',
+          result: result,
+        });
       }
-      return prev;
+      return newMap;
     });
-  };
-
-  const handleTaskError = (error: string, taskId: string) => {
-    setIsLoading(false);
-    const errorMessage: Message = {
-      id: `${Date.now()}-error`,
-      role: 'agent',
-      content: `Error: ${error}`,
-      timestamp: new Date(),
-      taskId,
-    };
-    setMessages(prev => [...prev, errorMessage]);
   };
 
   const sendMessage = async () => {
@@ -445,35 +578,67 @@ const Chat: React.FC<ChatProps> = ({ agent }) => {
 
         {messages.map((message) => (
           <div key={message.id}>
-            <div className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-              <div className={`max-w-[70%] rounded-lg px-4 py-2 ${
-                message.role === 'user'
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-gray-100 text-gray-900'
-                }`}>
-                <div className="flex items-start space-x-2">
-                  {message.role === 'agent' && (
-                    <Bot className="h-4 w-4 mt-0.5 flex-shrink-0" />
-                  )}
-                  {message.role === 'user' && (
-                    <User className="h-4 w-4 mt-0.5 flex-shrink-0" />
-                  )}
-                  <div className="flex-1">
-                    <p className="whitespace-pre-wrap">
-                      {message.content}
-                      {message.isStreaming && (
-                        <span className="inline-block w-2 h-4 bg-current ml-1 animate-pulse"></span>
-                      )}
-                    </p>
-                    <p className={`text-xs mt-1 ${
-                      message.role === 'user' ? 'text-blue-200' : 'text-gray-500'
-                    }`}>
-                      {message.timestamp.toLocaleTimeString()}
-                    </p>
+            {/* Thinking messages - special styling */}
+            {message.role === 'thinking' && (
+              <div className="flex justify-start">
+                <div className="max-w-[70%] rounded-lg px-4 py-2 bg-purple-50 border border-purple-200 text-purple-900">
+                  <div className="flex items-start space-x-2">
+                    <Brain className="h-4 w-4 mt-0.5 flex-shrink-0 text-purple-600" />
+                    <div className="flex-1">
+                      <div className="text-xs font-medium text-purple-600 mb-1">Agent Thinking</div>
+                      <div className="text-sm font-mono whitespace-pre-wrap">
+                        {message.content}
+                        {message.isStreaming && (
+                          <span className="inline-block w-2 h-4 bg-purple-600 ml-1 animate-pulse"></span>
+                        )}
+                      </div>
+                      <p className="text-xs mt-1 text-purple-500">
+                        {message.timestamp.toLocaleTimeString()}
+                      </p>
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
+            )}
+            
+            {/* Regular messages */}
+            {message.role !== 'thinking' && (
+              <div className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                <div className={`max-w-[70%] rounded-lg px-4 py-2 ${
+                  message.role === 'user'
+                    ? 'bg-blue-600 text-white'
+                    : message.role === 'system'
+                    ? 'bg-red-50 border border-red-200 text-red-900'
+                    : 'bg-gray-100 text-gray-900'
+                  }`}>
+                  <div className="flex items-start space-x-2">
+                    {message.role === 'agent' && (
+                      <Bot className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                    )}
+                    {message.role === 'user' && (
+                      <User className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                    )}
+                    {message.role === 'system' && (
+                      <AlertCircle className="h-4 w-4 mt-0.5 flex-shrink-0 text-red-600" />
+                    )}
+                    <div className="flex-1">
+                      <p className="whitespace-pre-wrap">
+                        {message.content}
+                        {message.isStreaming && (
+                          <span className="inline-block w-2 h-4 bg-current ml-1 animate-pulse"></span>
+                        )}
+                      </p>
+                      <p className={`text-xs mt-1 ${
+                        message.role === 'user' ? 'text-blue-200' : 
+                        message.role === 'system' ? 'text-red-500' : 'text-gray-500'
+                      }`}>
+                        {message.timestamp.toLocaleTimeString()}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
             
             {/* Tool calls for this message */}
             {message.role === 'agent' && (

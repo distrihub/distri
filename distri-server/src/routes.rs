@@ -380,85 +380,185 @@ async fn handle_message_send_streaming(
     tokio::spawn(async move {
         while let Some(event) = event_rx.recv().await {
             let event_json = match event {
-                AgentEvent::RunStarted { 
-                    thread_id, 
-                    run_id,
-                    .. 
-                } => {
+                AgentEvent::RunStarted { run_id } => {
                     json!({
-                        "type": "agent_started",
-                        "task_id": task_id_clone,
-                        "agent_id": agent_id_clone,
-                        "thread_id": thread_id,
-                        "run_id": run_id
-                    })
-                }
-                AgentEvent::TextMessageContent { delta, .. } => {
-                    json!({
-                        "type": "text_delta",
-                        "task_id": task_id_clone,
-                        "agent_id": agent_id_clone,
-                        "delta": delta
-                    })
-                }
-                AgentEvent::ToolCallStart { 
-                    tool_call_id, 
-                    tool_call_name, 
-                    parent_message_id,
-                    .. 
-                } => {
-                    json!({
-                        "type": "tool_call_start",
-                        "task_id": task_id_clone,
-                        "agent_id": agent_id_clone,
-                        "tool_call_id": tool_call_id,
-                        "tool_name": tool_call_name,
-                        "parent_message_id": parent_message_id,
-                        "status": "pending_approval",
-                        "is_agent_call": tool_call_name.starts_with("distri_agents/") || tool_call_name.contains("_agent")
-                    })
-                }
-                AgentEvent::ToolCallArgs { 
-                    tool_call_id, 
-                    delta,
-                    .. 
-                } => {
-                    json!({
-                        "type": "tool_call_args",
-                        "task_id": task_id_clone,
-                        "agent_id": agent_id_clone,
-                        "tool_call_id": tool_call_id,
-                        "args_delta": delta
-                    })
-                }
-                AgentEvent::ToolCallEnd { 
-                    tool_call_id,
-                    .. 
-                } => {
-                    json!({
-                        "type": "tool_call_end",
-                        "task_id": task_id_clone,
-                        "agent_id": agent_id_clone,
-                        "tool_call_id": tool_call_id,
-                        "status": "waiting_approval"
-                    })
-                }
-                AgentEvent::RunFinished { .. } => {
-                    json!({
-                        "type": "agent_completed",
+                        "type": "runStarted",
+                        "run_id": run_id,
                         "task_id": task_id_clone,
                         "agent_id": agent_id_clone
                     })
                 }
-                AgentEvent::RunError { message, .. } => {
+                AgentEvent::MessageStart { 
+                    run_id,
+                    message_id, 
+                    role 
+                } => {
                     json!({
-                        "type": "agent_error",
+                        "type": "messageStart",
+                        "run_id": run_id,
+                        "message_id": message_id,
+                        "role": role,
                         "task_id": task_id_clone,
-                        "agent_id": agent_id_clone,
-                        "error": message
+                        "agent_id": agent_id_clone
                     })
                 }
-                _ => continue,
+                AgentEvent::MessageContent { 
+                    run_id,
+                    message_id,
+                    delta 
+                } => {
+                    json!({
+                        "type": "messageStream",
+                        "run_id": run_id,
+                        "message_id": message_id,
+                        "delta": delta,
+                        "task_id": task_id_clone,
+                        "agent_id": agent_id_clone
+                    })
+                }
+                AgentEvent::MessageEnd { 
+                    run_id,
+                    message_id 
+                } => {
+                    json!({
+                        "type": "messageEnd",
+                        "run_id": run_id,
+                        "message_id": message_id,
+                        "task_id": task_id_clone,
+                        "agent_id": agent_id_clone
+                    })
+                }
+                AgentEvent::ToolCallStart { 
+                    run_id,
+                    tool_call_id, 
+                    tool_name 
+                } => {
+                    json!({
+                        "type": "toolCall",
+                        "run_id": run_id,
+                        "tool_call_id": tool_call_id,
+                        "tool_name": tool_name,
+                        "status": "started",
+                        "task_id": task_id_clone,
+                        "agent_id": agent_id_clone
+                    })
+                }
+                AgentEvent::ToolCallArgs { 
+                    run_id,
+                    tool_call_id, 
+                    delta 
+                } => {
+                    json!({
+                        "type": "toolCallArgs",
+                        "run_id": run_id,
+                        "tool_call_id": tool_call_id,
+                        "args_delta": delta,
+                        "task_id": task_id_clone,
+                        "agent_id": agent_id_clone
+                    })
+                }
+                AgentEvent::ToolCallEnd { 
+                    run_id,
+                    tool_call_id 
+                } => {
+                    json!({
+                        "type": "toolCallEnd",
+                        "run_id": run_id,
+                        "tool_call_id": tool_call_id,
+                        "status": "waiting_approval",
+                        "task_id": task_id_clone,
+                        "agent_id": agent_id_clone
+                    })
+                }
+                AgentEvent::ToolResult { 
+                    run_id,
+                    tool_call_id,
+                    result 
+                } => {
+                    json!({
+                        "type": "toolResult",
+                        "run_id": run_id,
+                        "tool_call_id": tool_call_id,
+                        "result": result,
+                        "task_id": task_id_clone,
+                        "agent_id": agent_id_clone
+                    })
+                }
+                // Thinking events for plan rendering
+                AgentEvent::ThinkingStart { 
+                    run_id,
+                    thinking_id 
+                } => {
+                    json!({
+                        "type": "thinkingStart",
+                        "run_id": run_id,
+                        "thinking_id": thinking_id,
+                        "task_id": task_id_clone,
+                        "agent_id": agent_id_clone
+                    })
+                }
+                AgentEvent::ThinkingContent { 
+                    run_id,
+                    thinking_id,
+                    delta 
+                } => {
+                    json!({
+                        "type": "thinkingStream",
+                        "run_id": run_id,
+                        "thinking_id": thinking_id,
+                        "delta": delta,
+                        "task_id": task_id_clone,
+                        "agent_id": agent_id_clone
+                    })
+                }
+                AgentEvent::ThinkingEnd { 
+                    run_id,
+                    thinking_id 
+                } => {
+                    json!({
+                        "type": "thinkingEnd",
+                        "run_id": run_id,
+                        "thinking_id": thinking_id,
+                        "task_id": task_id_clone,
+                        "agent_id": agent_id_clone
+                    })
+                }
+                AgentEvent::RunFinished { run_id } => {
+                    json!({
+                        "type": "runFinished",
+                        "run_id": run_id,
+                        "task_id": task_id_clone,
+                        "agent_id": agent_id_clone
+                    })
+                }
+                AgentEvent::RunError { run_id, message, code } => {
+                    json!({
+                        "type": "runError",
+                        "run_id": run_id,
+                        "error": message,
+                        "code": code,
+                        "task_id": task_id_clone,
+                        "agent_id": agent_id_clone
+                    })
+                }
+                AgentEvent::StateSnapshot { run_id, snapshot } => {
+                    json!({
+                        "type": "stateSnapshot",
+                        "run_id": run_id,
+                        "snapshot": snapshot,
+                        "task_id": task_id_clone,
+                        "agent_id": agent_id_clone
+                    })
+                }
+                AgentEvent::StateDelta { run_id, delta } => {
+                    json!({
+                        "type": "stateDelta",
+                        "run_id": run_id,
+                        "delta": delta,
+                        "task_id": task_id_clone,
+                        "agent_id": agent_id_clone
+                    })
+                }
             };
             let _ = event_broadcaster_clone.send(event_json.to_string());
         }

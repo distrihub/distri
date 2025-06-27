@@ -15,82 +15,78 @@ use crate::{
 };
 use tokio::sync::{mpsc, oneshot, Mutex};
 
-// Event types for streaming responses
+// AG-UI protocol compliant event types
 #[derive(Debug, Clone)]
 pub enum AgentEvent {
+    // Core AG-UI events
     RunStarted {
-        thread_id: String,
         run_id: String,
     },
     RunFinished {
-        thread_id: String,
         run_id: String,
     },
     RunError {
-        thread_id: String,
         run_id: String,
         message: String,
         code: Option<String>,
     },
-    StepStarted {
-        thread_id: String,
-        run_id: String,
-        step_name: String,
-    },
-    StepFinished {
-        thread_id: String,
-        run_id: String,
-        step_name: String,
-    },
-    TextMessageStart {
-        thread_id: String,
+    // Message streaming (AG-UI messageStream)
+    MessageStart {
         run_id: String,
         message_id: String,
         role: String,
     },
-    TextMessageContent {
-        thread_id: String,
+    MessageContent {
         run_id: String,
         message_id: String,
         delta: String,
     },
-    TextMessageEnd {
-        thread_id: String,
+    MessageEnd {
         run_id: String,
         message_id: String,
     },
+    // Tool events (AG-UI toolCall/toolResult)
     ToolCallStart {
-        thread_id: String,
         run_id: String,
         tool_call_id: String,
-        tool_call_name: String,
-        parent_message_id: Option<String>,
+        tool_name: String,
     },
     ToolCallArgs {
-        thread_id: String,
         run_id: String,
         tool_call_id: String,
         delta: String,
     },
     ToolCallEnd {
-        thread_id: String,
         run_id: String,
         tool_call_id: String,
     },
+    ToolResult {
+        run_id: String,
+        tool_call_id: String,
+        result: String,
+    },
+    // Thinking events for plan rendering
+    ThinkingStart {
+        run_id: String,
+        thinking_id: String,
+    },
+    ThinkingContent {
+        run_id: String,
+        thinking_id: String,
+        delta: String,
+    },
+    ThinkingEnd {
+        run_id: String,
+        thinking_id: String,
+    },
+    // State management (AG-UI state events)
     StateSnapshot {
-        thread_id: String,
         run_id: String,
         snapshot: Value,
     },
     StateDelta {
-        thread_id: String,
         run_id: String,
         delta: Value,
-    },
-    MessagesSnapshot {
-        thread_id: String,
-        run_id: String,
-        messages: Vec<Value>,
     },
 }
 
