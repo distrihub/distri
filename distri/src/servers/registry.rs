@@ -1,7 +1,7 @@
 use crate::{
     coordinator::{self, CoordinatorContext, LocalCoordinator, DISTRI_LOCAL_SERVER},
     memory::{file_memory_store::FileMemoryStore, AgentMemory, MemoryConfig},
-    store::{LocalMemoryStore, MemoryStore},
+    store::{LocalAgentStore, LocalMemoryStore, MemoryStore, AgentStore},
     types::{ExternalMcpServer, TransportType},
     ToolSessionStore,
 };
@@ -16,8 +16,14 @@ use crate::servers::tavily;
 use async_mcp::transport::ServerInMemoryTransport;
 
 use super::kg::KgMemory;
+
+fn default_transport_type() -> TransportType {
+    TransportType::InMemory
+}
+
 pub type BuilderFn =
     dyn Fn(&ServerMetadata, ServerInMemoryTransport) -> Result<Box<dyn ServerTrait>> + Send + Sync;
+
 #[derive(Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ServerMetadata {
     #[serde(default)]
@@ -110,7 +116,11 @@ pub async fn init_registry_and_coordinator(
         )),
     };
 
+    // Create an agent store
+    let agent_store: Arc<dyn AgentStore> = Arc::new(LocalAgentStore::new());
+
     let coordinator = Arc::new(LocalCoordinator::new(
+        agent_store,
         server_registry.clone(),
         tool_sessions,
         memory_store,

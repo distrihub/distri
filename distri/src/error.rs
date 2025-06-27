@@ -2,6 +2,8 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum AgentError {
+    #[error("Agent not found: {0}")]
+    NotFound(String),
     #[error("LLMError: {0}")]
     LLMError(String),
     #[error("MCP service error: {0}")]

@@ -1,5 +1,5 @@
 use crate::types::{AgentDefinition, ServerConfig, ServerTools};
-use distri_a2a::{AgentCard, AgentSkill};
+use distri_a2a::AgentCard;
 
 pub fn agent_def_to_card(
     def: &AgentDefinition,

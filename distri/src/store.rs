@@ -6,9 +6,10 @@ use uuid::Uuid;
 use crate::{
     coordinator::CoordinatorContext,
     memory::{LocalAgentMemory, MemoryStep},
-    types::{McpSession, Message},
+    types::{AgentDefinition, McpSession, Message, ServerTools},
+    error::AgentError,
 };
-use distri_a2a::{Message as A2aMessage, Part, Role, Task, TaskState, TaskStatus, TextPart};
+use distri_a2a::{Message as A2aMessage, Task, TaskState, TaskStatus};
 
 #[async_trait]
 pub trait ToolSessionStore: Send + Sync {
@@ -221,5 +222,85 @@ impl TaskStore for HashMapTaskStore {
     async fn list_tasks(&self, _agent_id: Option<&str>) -> anyhow::Result<Vec<Task>> {
         let tasks = self.tasks.read().await;
         Ok(tasks.values().cloned().collect())
+    }
+}
+
+// AgentStore trait for managing agent definitions and tools
+#[async_trait]
+pub trait AgentStore: Send + Sync {
+    async fn register_agent(&self, definition: AgentDefinition, tools: Vec<ServerTools>) -> anyhow::Result<()>;
+    async fn get_agent(&self, agent_name: &str) -> Result<AgentDefinition, AgentError>;
+    async fn get_tools(&self, agent_name: &str) -> Result<Vec<ServerTools>, AgentError>;
+    async fn list_agents(&self, cursor: Option<String>) -> Result<(Vec<AgentDefinition>, Option<String>), AgentError>;
+    async fn has_agent(&self, agent_name: &str) -> bool;
+}
+
+// Local HashMap-based agent store implementation
+#[derive(Clone)]
+pub struct LocalAgentStore {
+    pub agent_definitions: Arc<RwLock<HashMap<String, AgentDefinition>>>,
+    pub agent_tools: Arc<RwLock<HashMap<String, Vec<ServerTools>>>>,
+}
+
+impl Default for LocalAgentStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl LocalAgentStore {
+    pub fn new() -> Self {
+        Self {
+            agent_definitions: Arc::new(RwLock::new(HashMap::new())),
+            agent_tools: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+}
+
+#[async_trait]
+impl AgentStore for LocalAgentStore {
+    async fn register_agent(&self, definition: AgentDefinition, tools: Vec<ServerTools>) -> anyhow::Result<()> {
+        let name = definition.name.clone();
+        
+        // Store the definition
+        {
+            let mut definitions = self.agent_definitions.write().await;
+            definitions.insert(name.clone(), definition);
+        }
+
+        // Store the tools
+        {
+            let mut agent_tools = self.agent_tools.write().await;
+            agent_tools.insert(name, tools);
+        }
+        
+        Ok(())
+    }
+
+    async fn get_agent(&self, agent_name: &str) -> Result<AgentDefinition, AgentError> {
+        let definitions = self.agent_definitions.read().await;
+        definitions
+            .get(agent_name)
+            .cloned()
+            .ok_or_else(|| AgentError::NotFound(format!("Agent '{}' not found", agent_name)))
+    }
+
+    async fn get_tools(&self, agent_name: &str) -> Result<Vec<ServerTools>, AgentError> {
+        let tools = self.agent_tools.read().await;
+        tools
+            .get(agent_name)
+            .cloned()
+            .ok_or_else(|| AgentError::NotFound(format!("Tools for agent '{}' not found", agent_name)))
+    }
+
+    async fn list_agents(&self, _cursor: Option<String>) -> Result<(Vec<AgentDefinition>, Option<String>), AgentError> {
+        let definitions = self.agent_definitions.read().await;
+        let agents: Vec<AgentDefinition> = definitions.values().cloned().collect();
+        Ok((agents, None))
+    }
+
+    async fn has_agent(&self, agent_name: &str) -> bool {
+        let definitions = self.agent_definitions.read().await;
+        definitions.contains_key(agent_name)
     }
 }

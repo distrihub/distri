@@ -1,8 +1,8 @@
 use actix_web::{web, HttpRequest, HttpResponse, Responder};
 use actix_web_lab::sse::{self, Sse};
 use distri::coordinator::{AgentCoordinator, AgentEvent, LocalCoordinator};
-use distri::types::ServerConfig;
-use distri::{memory::TaskStep, TaskStore};
+use distri::types::{ServerConfig, AgentDefinition};
+use distri::{memory::TaskStep, TaskStore, AgentStore};
 use distri_a2a::{
     AgentCard, JsonRpcError, JsonRpcRequest, JsonRpcResponse, Message as A2aMessage,
     MessageSendParams, Part, Role, Task, TaskIdParams, TaskState, TaskStatus, TextPart,
@@ -45,48 +45,64 @@ pub fn config(cfg: &mut web::ServiceConfig) {
 }
 
 async fn list_agents(
-    coordinator: web::Data<Arc<LocalCoordinator>>,
+    agent_store: web::Data<Arc<dyn AgentStore>>,
     server_config: web::Data<ServerConfig>,
 ) -> HttpResponse {
-    let agent_defs = coordinator.agent_definitions.read().await;
-    let agent_tools = coordinator.agent_tools.read().await;
-
-    let agent_cards: Vec<AgentCard> = agent_defs
-        .values()
-        .map(|def| {
-            let tools = agent_tools.get(&def.name).cloned().unwrap_or_default();
-            distri::a2a::agent_def_to_card_with_tools(
-                def,
-                server_config.get_ref().clone(),
-                "http://127.0.0.1:8080",
-                &tools,
-            )
-        })
-        .collect();
-    HttpResponse::Ok().json(agent_cards)
+    match agent_store.list_agents(None).await {
+        Ok((agent_defs, _)) => {
+            let mut agent_cards = Vec::new();
+            
+            for def in agent_defs {
+                // Get tools for this agent if it's local
+                let tools = agent_store.get_tools(&def.name).await.unwrap_or_default();
+                let card = distri::a2a::agent_def_to_card_with_tools(
+                    &def,
+                    server_config.get_ref().clone(),
+                    "http://127.0.0.1:8080",
+                    &tools,
+                );
+                agent_cards.push(card);
+            }
+            
+            HttpResponse::Ok().json(agent_cards)
+        }
+        Err(e) => {
+            HttpResponse::InternalServerError().json(json!({
+                "error": format!("Failed to list agents: {}", e)
+            }))
+        }
+    }
 }
 
 async fn get_agent_card(
     id: web::Path<String>,
-    coordinator: web::Data<Arc<LocalCoordinator>>,
+    agent_store: web::Data<Arc<dyn AgentStore>>,
     server_config: web::Data<ServerConfig>,
 ) -> HttpResponse {
     let agent_id = id.into_inner();
-    let agents = coordinator.agent_definitions.read().await;
-    let agent_tools = coordinator.agent_tools.read().await;
-
-    match agents.get(&agent_id) {
-        Some(agent_def) => {
-            let tools = agent_tools.get(&agent_id).cloned().unwrap_or_default();
+    
+    match get_agent_info(&agent_id, &agent_store).await {
+        Ok(agent_def) => {
+            // For local agents, get their tools. For remote agents, tools are in skills
+            let tools = if !is_remote_agent(&agent_id) {
+                agent_store.get_tools(&agent_id).await.unwrap_or_default()
+            } else {
+                vec![] // Remote agent tools would be derived from skills
+            };
+            
             let card = distri::a2a::agent_def_to_card_with_tools(
-                agent_def,
+                &agent_def,
                 server_config.get_ref().clone(),
                 "http://127.0.0.1:8080",
                 &tools,
             );
             HttpResponse::Ok().json(card)
         }
-        None => HttpResponse::NotFound().finish(),
+        Err(e) => {
+            HttpResponse::NotFound().json(json!({
+                "error": e
+            }))
+        }
     }
 }
 
@@ -726,57 +742,56 @@ async fn reject_tool_call(
 
 // A2A .well-known endpoints for agent discovery
 async fn well_known_agent_cards(
-    coordinator: web::Data<Arc<LocalCoordinator>>,
+    agent_store: web::Data<Arc<dyn AgentStore>>,
     server_config: web::Data<ServerConfig>,
 ) -> HttpResponse {
-    let agent_defs = coordinator.agent_definitions.read().await;
-    let agent_tools = coordinator.agent_tools.read().await;
-
-    let agent_cards: Vec<AgentCard> = agent_defs
-        .values()
-        .map(|def| {
-            let tools = agent_tools.get(&def.name).cloned().unwrap_or_default();
-            distri::a2a::agent_def_to_card_with_tools(
-                def,
-                server_config.get_ref().clone(),
-                "http://127.0.0.1:8080",
-                &tools,
-            )
-        })
-        .collect();
-
-    HttpResponse::Ok()
-        .insert_header(("Content-Type", "application/json"))
-        .insert_header(("Access-Control-Allow-Origin", "*"))
-        .json(agent_cards)
+    match agent_store.list_agents(None).await {
+        Ok((agent_defs, _)) => {
+            let mut agent_cards = Vec::new();
+            
+            for def in agent_defs {
+                // Get tools for this agent
+                let tools = agent_store.get_tools(&def.name).await.unwrap_or_default();
+                let card = distri::a2a::agent_def_to_card_with_tools(
+                    &def,
+                    server_config.get_ref().clone(),
+                    "http://127.0.0.1:8080",
+                    &tools,
+                );
+                agent_cards.push(card);
+            }
+            
+            HttpResponse::Ok().json(agent_cards)
+        }
+        Err(e) => {
+            HttpResponse::InternalServerError().json(json!({
+                "error": format!("Failed to list agents: {}", e)
+            }))
+        }
+    }
 }
 
 async fn well_known_agent_card(
     id: web::Path<String>,
-    coordinator: web::Data<Arc<LocalCoordinator>>,
+    agent_store: web::Data<Arc<dyn AgentStore>>,
     server_config: web::Data<ServerConfig>,
 ) -> HttpResponse {
     let agent_id = id.into_inner();
-    let agents = coordinator.agent_definitions.read().await;
-    let agent_tools = coordinator.agent_tools.read().await;
-
-    match agents.get(&agent_id) {
-        Some(agent_def) => {
-            let tools = agent_tools.get(&agent_id).cloned().unwrap_or_default();
+    
+    match agent_store.get_agent(&agent_id).await {
+        Ok(agent_def) => {
+            let tools = agent_store.get_tools(&agent_id).await.unwrap_or_default();
             let card = distri::a2a::agent_def_to_card_with_tools(
-                agent_def,
+                &agent_def,
                 server_config.get_ref().clone(),
                 "http://127.0.0.1:8080",
                 &tools,
             );
-            HttpResponse::Ok()
-                .insert_header(("Content-Type", "application/json"))
-                .insert_header(("Access-Control-Allow-Origin", "*"))
-                .json(card)
+            HttpResponse::Ok().json(card)
         }
-        None => HttpResponse::NotFound()
-            .insert_header(("Access-Control-Allow-Origin", "*"))
-            .finish(),
+        Err(_) => HttpResponse::NotFound().json(json!({
+            "error": "Agent not found"
+        })),
     }
 }
 
@@ -805,4 +820,117 @@ async fn workflow_sse_handler(
     };
 
     Sse::from_stream(stream)
+}
+
+// Helper function to check if an agent identifier represents a remote agent
+fn is_remote_agent(agent_id: &str) -> bool {
+    // A remote agent typically has a URL-like format or domain
+    agent_id.contains("://") || agent_id.contains(".")
+}
+
+// Helper function to fetch remote agent info via a2a .well-known route
+async fn fetch_remote_agent_info(agent_url: &str) -> Result<AgentDefinition, String> {
+    let client = reqwest::Client::new();
+    
+    // Extract base URL and agent name from the agent_id
+    let (base_url, agent_name) = if agent_url.contains("://") {
+        // Full URL provided
+        let parts: Vec<&str> = agent_url.rsplitn(2, '/').collect();
+        if parts.len() == 2 {
+            (parts[1], parts[0])
+        } else {
+            return Err("Invalid agent URL format".to_string());
+        }
+    } else {
+        // Assume domain format like "agent@domain.com"
+        let parts: Vec<&str> = agent_url.split('@').collect();
+        if parts.len() == 2 {
+            let base_url = format!("https://{}", parts[1]);
+            return fetch_remote_agent_info_from_domain(&base_url, parts[0]).await;
+        } else {
+            return Err("Invalid agent identifier format".to_string());
+        }
+    };
+
+    // Fetch agent card from .well-known route
+    let url = format!("{}/.well-known/agent-cards/{}", base_url, agent_name);
+    
+    match client.get(&url).send().await {
+        Ok(response) => {
+            if response.status().is_success() {
+                match response.json::<AgentCard>().await {
+                    Ok(card) => {
+                        // Convert AgentCard to AgentDefinition
+                        Ok(AgentDefinition {
+                            name: card.name,
+                            description: card.description,
+                            system_prompt: None, // Not available in AgentCard
+                            mcp_servers: vec![], // Would need to be inferred from skills
+                            model_settings: Default::default(),
+                            parameters: None,
+                            response_format: None,
+                            history_size: None,
+                            plan: None,
+                            icon_url: card.icon_url,
+                            skills: Some(card.skills),
+                        })
+                    }
+                    Err(e) => Err(format!("Failed to parse agent card: {}", e)),
+                }
+            } else {
+                Err(format!("HTTP error: {}", response.status()))
+            }
+        }
+        Err(e) => Err(format!("Network error: {}", e)),
+    }
+}
+
+// Helper function for domain-based agent lookups
+async fn fetch_remote_agent_info_from_domain(base_url: &str, agent_name: &str) -> Result<AgentDefinition, String> {
+    let client = reqwest::Client::new();
+    
+    // Fetch agent card from .well-known route
+    let url = format!("{}/.well-known/agent-cards/{}", base_url, agent_name);
+    
+    match client.get(&url).send().await {
+        Ok(response) => {
+            if response.status().is_success() {
+                match response.json::<AgentCard>().await {
+                    Ok(card) => {
+                        // Convert AgentCard to AgentDefinition
+                        Ok(AgentDefinition {
+                            name: card.name,
+                            description: card.description,
+                            system_prompt: None, // Not available in AgentCard
+                            mcp_servers: vec![], // Would need to be inferred from skills
+                            model_settings: Default::default(),
+                            parameters: None,
+                            response_format: None,
+                            history_size: None,
+                            plan: None,
+                            icon_url: card.icon_url,
+                            skills: Some(card.skills),
+                        })
+                    }
+                    Err(e) => Err(format!("Failed to parse agent card: {}", e)),
+                }
+            } else {
+                Err(format!("HTTP error: {}", response.status()))
+            }
+        }
+        Err(e) => Err(format!("Network error: {}", e)),
+    }
+}
+
+// Updated helper function to get agent info (local or remote)
+async fn get_agent_info(
+    agent_id: &str,
+    agent_store: &Arc<dyn AgentStore>,
+) -> Result<AgentDefinition, String> {
+    if is_remote_agent(agent_id) {
+        fetch_remote_agent_info(agent_id).await
+    } else {
+        agent_store.get_agent(agent_id).await
+            .map_err(|e| format!("Local agent not found: {}", e))
+    }
 }

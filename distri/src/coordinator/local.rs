@@ -3,7 +3,7 @@ use crate::{
     executor::LLMExecutor,
     memory::SystemStep,
     servers::registry::ServerRegistry,
-    store::{LocalMemoryStore, MemoryStore, ToolSessionStore},
+    store::{AgentStore, LocalMemoryStore, MemoryStore, ToolSessionStore},
     tools::{execute_tool, get_tools},
     types::{
         get_tool_descriptions, AgentDefinition, Message, MessageContent, MessageRole, ServerTools,
@@ -22,8 +22,7 @@ use crate::memory::{ActionStep, MemoryStep, PlanningStep, TaskStep};
 
 #[derive(Clone)]
 pub struct LocalCoordinator {
-    pub agent_definitions: Arc<RwLock<HashMap<String, AgentDefinition>>>,
-    pub agent_tools: Arc<RwLock<HashMap<String, Vec<ServerTools>>>>,
+    pub agent_store: Arc<dyn AgentStore>,
     pub tool_sessions: Option<Arc<Box<dyn ToolSessionStore>>>,
     pub registry: Arc<RwLock<ServerRegistry>>,
     pub coordinator_rx: Arc<Mutex<mpsc::Receiver<CoordinatorMessage>>>,
@@ -36,6 +35,7 @@ pub struct LocalCoordinator {
 
 impl LocalCoordinator {
     pub fn new(
+        agent_store: Arc<dyn AgentStore>,
         registry: Arc<RwLock<ServerRegistry>>,
         tool_sessions: Option<Arc<Box<dyn ToolSessionStore>>>,
         memory_store: Option<Arc<Box<dyn MemoryStore>>>,
@@ -45,8 +45,7 @@ impl LocalCoordinator {
 
         let logger = StepLogger::new(context.verbose);
         Self {
-            agent_definitions: Arc::new(RwLock::new(HashMap::new())),
-            agent_tools: Arc::new(RwLock::new(HashMap::new())),
+            agent_store,
             tool_sessions,
             registry,
             coordinator_rx: Arc::new(Mutex::new(coordinator_rx)),
@@ -69,17 +68,12 @@ impl LocalCoordinator {
     }
 
     pub async fn register_agent(&self, definition: AgentDefinition) -> anyhow::Result<()> {
-        let (name, resolved_tools) = {
-            let name = definition.name.clone();
-            let server_tools = get_tools(&definition.mcp_servers, self.registry.clone()).await?;
-
-            (name, server_tools)
-        };
-        // Store both the definition and its tools
+        let name = definition.name.clone();
+        let server_tools = get_tools(&definition.mcp_servers, self.registry.clone()).await?;
 
         tracing::debug!(
             "Registering agent: {name} with {:?}",
-            resolved_tools
+            server_tools
                 .iter()
                 .map(
                     |r| serde_json::json!({"name": r.definition.name, "type": r.definition.r#type, "tools": r.tools.len()})
@@ -87,14 +81,8 @@ impl LocalCoordinator {
                 .collect::<Vec<_>>()
         );
 
-        {
-            let mut definitions = self.agent_definitions.write().await;
-            definitions.insert(name.clone(), definition);
-        }
-
-        // Store the resolved tools
-        let mut tools = self.agent_tools.write().await;
-        tools.insert(name, resolved_tools);
+        // Use the agent store to register the agent
+        self.agent_store.register_agent(definition, server_tools).await?;
         Ok(())
     }
 
@@ -290,16 +278,13 @@ impl LocalCoordinator {
                 } => {
                     tracing::info!("Handling ExecuteTool for agent: {}", agent_id);
                     let registry = self.registry.clone();
-                    let agent_tools = self.agent_tools.clone();
+                    let agent_store = self.agent_store.clone();
                     let tool_sessions = self.tool_sessions.clone();
                     let context = self.context.clone();
                     tokio::spawn(async move {
                         let result = async {
-                            // Get the server tools in a separate scope to release the lock quickly
-                            let server_tools = {
-                                let tools = agent_tools.read().await;
-                                tools.get(&agent_id).cloned()
-                            };
+                            // Get the server tools from the agent store
+                            let server_tools = agent_store.get_tools(&agent_id).await.ok();
 
                             match server_tools {
                                 Some(server_tools) => {
@@ -686,34 +671,17 @@ impl LocalCoordinator {
 impl AgentCoordinator for LocalCoordinator {
     async fn list_agents(
         &self,
-        _cursor: Option<String>,
+        cursor: Option<String>,
     ) -> Result<(Vec<AgentDefinition>, Option<String>), AgentError> {
-        let definitions = self.agent_definitions.read().await;
-        let agents: Vec<AgentDefinition> = definitions.values().take(30).cloned().collect();
-        Ok((agents, None))
+        self.agent_store.list_agents(cursor).await
     }
 
     async fn get_agent(&self, agent_name: &str) -> Result<AgentDefinition, AgentError> {
-        let definitions = tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            self.agent_definitions.read(),
-        )
-        .await
-        .map_err(|_| AgentError::ToolExecution("get_agent timed out".into()))?;
-
-        definitions
-            .get(agent_name)
-            .cloned()
-            .ok_or_else(|| AgentError::ToolExecution(format!("Agent {} not found", agent_name)))
+        self.agent_store.get_agent(agent_name).await
     }
 
     async fn get_tools(&self, agent_name: &str) -> Result<Vec<ServerTools>, AgentError> {
-        let tools =
-            tokio::time::timeout(std::time::Duration::from_secs(5), self.agent_tools.read())
-                .await
-                .map_err(|_| AgentError::ToolExecution("get_tools timed out".into()))?;
-
-        Ok(tools.get(agent_name).cloned().unwrap_or_default())
+        self.agent_store.get_tools(agent_name).await
     }
 
     async fn execute(
