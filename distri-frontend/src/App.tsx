@@ -3,6 +3,7 @@ import { MessageSquare, Settings, Activity, Loader2, Globe, Shield, Zap } from '
 import Chat from './components/Chat';
 import AgentList from './components/AgentList';
 import TaskMonitor from './components/TaskMonitor';
+import { v4 as uuidv4 } from 'uuid';
 
 interface AgentCapabilities {
   streaming: boolean;
@@ -49,10 +50,51 @@ interface Agent {
 }
 
 function App() {
-  const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'chat' | 'agents' | 'tasks'>('chat');
+  const [activeTab, setActiveTab] = useState<'chat' | 'tasks'>('chat');
+  const [threads, setThreads] = useState<{ threadId: string; agent: Agent; createdAt: string }[]>([]);
+  const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
+  const [showAgentSelect, setShowAgentSelect] = useState(false);
+
+  // Load threads from localStorage on mount
+  useEffect(() => {
+    const savedThreads = localStorage.getItem('distri_threads');
+    if (savedThreads) {
+      setThreads(JSON.parse(savedThreads));
+      const lastSelected = localStorage.getItem('distri_selectedThreadId');
+      if (lastSelected) setSelectedThreadId(lastSelected);
+    }
+  }, []);
+
+  // Persist threads to localStorage
+  useEffect(() => {
+    localStorage.setItem('distri_threads', JSON.stringify(threads));
+  }, [threads]);
+
+  // Persist selectedThreadId
+  useEffect(() => {
+    if (selectedThreadId) localStorage.setItem('distri_selectedThreadId', selectedThreadId);
+  }, [selectedThreadId]);
+
+  // Auto-open agent select modal if no threads exist
+  useEffect(() => {
+    if (threads.length === 0 && !showAgentSelect) {
+      setShowAgentSelect(true);
+    }
+  }, [threads, showAgentSelect]);
+
+  // Start a new thread (show agent select modal)
+  const startNewThread = (agent: Agent) => {
+    const threadId = uuidv4();
+    const newThread = { threadId, agent, createdAt: new Date().toISOString() };
+    setThreads(prev => [newThread, ...prev]);
+    setSelectedThreadId(threadId);
+    setShowAgentSelect(false);
+  };
+
+  // Get the selected thread
+  const selectedThread = threads.find(t => t.threadId === selectedThreadId);
 
   useEffect(() => {
     fetchAgents();
@@ -75,9 +117,6 @@ function App() {
       }));
 
       setAgents(formattedAgents);
-      if (formattedAgents.length > 0 && !selectedAgent) {
-        setSelectedAgent(formattedAgents[0]);
-      }
     } catch (error) {
       console.error('Failed to fetch agent cards:', error);
       // Fallback to legacy API
@@ -91,9 +130,6 @@ function App() {
           status: 'online' as const,
         }));
         setAgents(formattedAgents);
-        if (formattedAgents.length > 0 && !selectedAgent) {
-          setSelectedAgent(formattedAgents[0]);
-        }
       } catch (fallbackError) {
         console.error('Failed to fetch agents from fallback API:', fallbackError);
       }
@@ -176,6 +212,66 @@ function App() {
     );
   };
 
+  // Sidebar: show all threads
+  const renderSidebar = () => (
+    <div className="bg-white rounded-lg shadow p-4 h-full flex flex-col">
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-lg font-medium text-gray-900">Conversations</h2>
+        <button
+          className="bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700"
+          onClick={() => setShowAgentSelect(true)}
+        >
+          New Conversation
+        </button>
+      </div>
+      <div className="flex-1 overflow-y-auto space-y-2">
+        {threads.length === 0 && (
+          <div className="text-gray-400 text-sm text-center mt-8">No conversations yet.</div>
+        )}
+        {threads.map(thread => (
+          <button
+            key={thread.threadId}
+            onClick={() => setSelectedThreadId(thread.threadId)}
+            className={`w-full text-left p-3 rounded-lg transition-colors border ${selectedThreadId === thread.threadId ? 'bg-blue-50 border-blue-200' : 'hover:bg-gray-50 border-transparent'}`}
+          >
+            <div className="flex items-center justify-between">
+              <span className="font-medium text-gray-900">{thread.agent.name}</span>
+              <span className="text-xs text-gray-500">{new Date(thread.createdAt).toLocaleDateString()}</span>
+            </div>
+            <div className="text-xs text-gray-500 truncate mt-1">
+              {/* Optionally show last message snippet if available */}
+              {/* This can be filled in after Chat.tsx is updated for per-thread message persistence */}
+            </div>
+          </button>
+        ))}
+      </div>
+      {/* Agent select modal */}
+      {showAgentSelect && (
+        <div className="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-lg p-6 w-80">
+            <h3 className="text-lg font-medium mb-4">Select an Agent</h3>
+            <div className="space-y-2">
+              {agents.map(agent => (
+                <button
+                  key={agent.id}
+                  onClick={() => startNewThread(agent)}
+                  className="w-full text-left p-2 rounded hover:bg-blue-50"
+                >
+                  <span className="font-medium text-gray-900">{agent.name}</span>
+                  <span className="block text-xs text-gray-500">{agent.description}</span>
+                </button>
+              ))}
+            </div>
+            <button
+              className="mt-4 w-full bg-gray-200 text-gray-700 rounded px-3 py-1 hover:bg-gray-300"
+              onClick={() => setShowAgentSelect(false)}
+            >Cancel</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
@@ -185,10 +281,10 @@ function App() {
             <div className="flex items-center space-x-4">
               <h1 className="text-2xl font-bold text-gray-900">Distri</h1>
               <span className="text-sm text-gray-500">A2A-Compatible Agent Platform</span>
-              {selectedAgent?.card && (
+              {selectedThread?.agent.card && (
                 <span className="inline-flex items-center px-2 py-1 rounded-full text-xs bg-green-100 text-green-800">
                   <Shield className="h-3 w-3 mr-1" />
-                  A2A v{selectedAgent.card.version}
+                  A2A v{selectedThread.agent.card.version}
                 </span>
               )}
             </div>
@@ -203,16 +299,6 @@ function App() {
                 >
                   <MessageSquare className="h-4 w-4" />
                   <span>Chat</span>
-                </button>
-                <button
-                  onClick={() => setActiveTab('agents')}
-                  className={`flex items-center space-x-1 px-3 py-1 rounded text-sm font-medium transition-colors ${activeTab === 'agents'
-                    ? 'bg-white text-blue-600 shadow-sm'
-                    : 'text-gray-600 hover:text-gray-900'
-                    }`}
-                >
-                  <Settings className="h-4 w-4" />
-                  <span>Agents</span>
                 </button>
                 <button
                   onClick={() => setActiveTab('tasks')}
@@ -241,8 +327,8 @@ function App() {
                 {agents.map((agent) => (
                   <button
                     key={agent.id}
-                    onClick={() => setSelectedAgent(agent)}
-                    className={`w-full text-left p-3 rounded-lg transition-colors ${selectedAgent?.id === agent.id
+                    onClick={() => startNewThread(agent)}
+                    className={`w-full text-left p-3 rounded-lg transition-colors ${selectedThread?.agent.id === agent.id
                       ? 'bg-blue-50 border border-blue-200'
                       : 'hover:bg-gray-50 border border-transparent'
                       }`}
@@ -276,7 +362,7 @@ function App() {
                         }`} />
                     </div>
 
-                    {selectedAgent?.id === agent.id && (
+                    {selectedThread?.agent.id === agent.id && (
                       <div className="mt-3 space-y-3">
                         {renderAgentCapabilities(agent)}
                         {renderAgentSkills(agent)}
@@ -290,14 +376,20 @@ function App() {
 
           {/* Main Content Area */}
           <div className="lg:col-span-3">
-            {activeTab === 'chat' && selectedAgent && (
-              <Chat agent={selectedAgent} />
+            {activeTab === 'chat' && selectedThread && (
+              <Chat agent={selectedThread.agent} threadId={selectedThread.threadId} />
             )}
-
-            {activeTab === 'agents' && (
-              <AgentList agents={agents} onRefresh={fetchAgents} />
+            {activeTab === 'chat' && !selectedThread && (
+              <div className="flex flex-col items-center justify-center h-full text-gray-400">
+                <p className="text-lg mb-2">Start a new conversation to begin chatting.</p>
+                <button
+                  className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
+                  onClick={() => setShowAgentSelect(true)}
+                >
+                  New Conversation
+                </button>
+              </div>
             )}
-
             {activeTab === 'tasks' && (
               <TaskMonitor />
             )}

@@ -10,6 +10,7 @@ interface Agent {
 
 interface ChatProps {
   agent: Agent;
+  threadId: string;
 }
 
 interface ToolCall {
@@ -34,7 +35,7 @@ interface Message {
   thinkingId?: string;
 }
 
-const Chat: React.FC<ChatProps> = ({ agent }) => {
+const Chat: React.FC<ChatProps> = ({ agent, threadId }) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -51,33 +52,34 @@ const Chat: React.FC<ChatProps> = ({ agent }) => {
   }, [messages]);
 
   useEffect(() => {
-    // Set up SSE connection for real-time events
+    // Set up SSE connection for real-time events, scoped by threadId
     setupEventSource();
-
+    setMessages([]); // Reset messages when thread changes
     return () => {
       if (eventSourceRef.current) {
         eventSourceRef.current.close();
       }
     };
-  }, [agent.id]);
+  }, [agent.id, threadId]);
 
   const setupEventSource = () => {
     if (eventSourceRef.current) {
       eventSourceRef.current.close();
     }
-
-    const eventSource = new EventSource(`/api/v1/agents/${agent.id}/events`);
+    // Optionally, pass threadId as a query param if backend supports filtering
+    const eventSource = new EventSource(`/api/v1/agents/${agent.id}/events?thread_id=${threadId}`);
     eventSourceRef.current = eventSource;
-
     eventSource.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        handleStreamEvent(data);
+        // Only handle events for this thread
+        if (!data.thread_id || data.thread_id === threadId) {
+          handleStreamEvent(data);
+        }
       } catch (error) {
         console.error('Error parsing SSE data:', error);
       }
     };
-
     eventSource.onerror = () => {
       console.warn('SSE connection error, will retry...');
     };
@@ -193,26 +195,30 @@ const Chat: React.FC<ChatProps> = ({ agent }) => {
 
   const handleThinkingStart = (data: any) => {
     const { run_id, thinking_id, task_id } = data;
-
-    // Add a thinking message
-    setMessages((prev: Message[]) => [
-      ...prev,
-      {
-        id: thinking_id,
-        role: 'thinking',
-        content: '',
-        timestamp: new Date(),
-        isStreaming: true,
-        taskId: task_id,
-        runId: run_id,
-        thinkingId: thinking_id,
-      }
-    ]);
+    // Only one thinking message per thinking_id/run_id/threadId
+    setMessages((prev: Message[]) => {
+      // Remove any existing thinking message for this thinking_id/run_id/threadId
+      const filtered = prev.filter(
+        msg => !(msg.role === 'thinking' && msg.thinkingId === thinking_id && msg.runId === run_id)
+      );
+      return [
+        ...filtered,
+        {
+          id: thinking_id,
+          role: 'thinking',
+          content: '',
+          timestamp: new Date(),
+          isStreaming: true,
+          taskId: task_id,
+          runId: run_id,
+          thinkingId: thinking_id,
+        }
+      ];
+    });
   };
 
   const handleThinkingStream = (data: any) => {
     const { delta, thinking_id, run_id } = data;
-
     setMessages((prev: Message[]) => {
       return prev.map(msg => {
         if (msg.role === 'thinking' && msg.thinkingId === thinking_id && msg.runId === run_id) {
@@ -228,14 +234,11 @@ const Chat: React.FC<ChatProps> = ({ agent }) => {
 
   const handleThinkingEnd = (data: any) => {
     const { thinking_id, run_id } = data;
-
     setMessages((prev: Message[]) => {
-      return prev.map(msg => {
-        if (msg.role === 'thinking' && msg.thinkingId === thinking_id && msg.runId === run_id) {
-          return { ...msg, isStreaming: false };
-        }
-        return msg;
-      });
+      // Remove the thinking message for this thinking_id/run_id/threadId
+      return prev.filter(
+        msg => !(msg.role === 'thinking' && msg.thinkingId === thinking_id && msg.runId === run_id)
+      );
     });
   };
 
