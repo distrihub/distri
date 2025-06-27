@@ -194,7 +194,7 @@ impl LLMExecutor {
 
         // Send MessageStart event
         event_tx
-            .send(crate::coordinator::AgentEvent::MessageStart {
+            .send(crate::coordinator::AgentEvent::TextMessageStart {
                 run_id: run_id.clone(),
                 message_id: message_id.clone(),
                 role: "assistant".to_string(),
@@ -214,7 +214,7 @@ impl LLMExecutor {
                             current_content.push_str(content);
                             // Send MessageContent event
                             event_tx
-                                .send(crate::coordinator::AgentEvent::MessageContent {
+                                .send(crate::coordinator::AgentEvent::TextMessageContent {
                                     run_id: run_id.clone(),
                                     message_id: message_id.clone(),
                                     delta: content.to_string(),
@@ -311,14 +311,12 @@ impl LLMExecutor {
 
         // Send MessageEnd event
         event_tx
-            .send(crate::coordinator::AgentEvent::MessageEnd {
+            .send(crate::coordinator::AgentEvent::TextMessageEnd {
                 run_id: run_id.clone(),
                 message_id: message_id.clone(),
             })
             .await
-            .map_err(|e| {
-                AgentError::LLMError(format!("Failed to send MessageEnd event: {}", e))
-            })?;
+            .map_err(|e| AgentError::LLMError(format!("Failed to send MessageEnd event: {}", e)))?;
 
         // Send RunFinished event
         event_tx

@@ -251,8 +251,8 @@ function App() {
                       <div className="flex-1">
                         <div className="flex items-center space-x-2">
                           {agent.card?.iconUrl ? (
-                            <img 
-                              src={agent.card.iconUrl} 
+                            <img
+                              src={agent.card.iconUrl}
                               alt={`${agent.name} icon`}
                               className="w-6 h-6 rounded"
                             />
@@ -264,7 +264,7 @@ function App() {
                           <h3 className="font-medium text-gray-900">{agent.name}</h3>
                         </div>
                         <p className="text-sm text-gray-500 mt-1 truncate">{agent.description}</p>
-                        
+
                         {/* Agent Provider */}
                         {agent.card?.provider && (
                           <div className="text-xs text-gray-400 mt-1">
@@ -275,7 +275,7 @@ function App() {
                       <div className={`w-2 h-2 rounded-full flex-shrink-0 ${agent.status === 'online' ? 'bg-green-400' : 'bg-gray-400'
                         }`} />
                     </div>
-                    
+
                     {selectedAgent?.id === agent.id && (
                       <div className="mt-3 space-y-3">
                         {renderAgentCapabilities(agent)}

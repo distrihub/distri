@@ -20,7 +20,9 @@ pub fn config(cfg: &mut web::ServiceConfig) {
         // A2A .well-known routes for agent discovery
         web::scope("/.well-known")
             .service(web::resource("/agent-cards").route(web::get().to(well_known_agent_cards)))
-            .service(web::resource("/agent-cards/{id}").route(web::get().to(well_known_agent_card)))
+            .service(
+                web::resource("/agent-cards/{id}").route(web::get().to(well_known_agent_card)),
+            ),
     )
     .service(
         web::scope("/api/v1")
@@ -33,8 +35,12 @@ pub fn config(cfg: &mut web::ServiceConfig) {
             .service(web::resource("/agents/{id}/events").route(web::get().to(sse_handler)))
             .service(web::resource("/workflow/events").route(web::get().to(workflow_sse_handler)))
             .service(web::resource("/tasks/{id}").route(web::get().to(get_task)))
-            .service(web::resource("/tool-calls/{id}/approve").route(web::post().to(approve_tool_call)))
-            .service(web::resource("/tool-calls/{id}/reject").route(web::post().to(reject_tool_call))),
+            .service(
+                web::resource("/tool-calls/{id}/approve").route(web::post().to(approve_tool_call)),
+            )
+            .service(
+                web::resource("/tool-calls/{id}/reject").route(web::post().to(reject_tool_call)),
+            ),
     );
 }
 
@@ -44,7 +50,7 @@ async fn list_agents(
 ) -> HttpResponse {
     let agent_defs = coordinator.agent_definitions.read().await;
     let agent_tools = coordinator.agent_tools.read().await;
-    
+
     let agent_cards: Vec<AgentCard> = agent_defs
         .values()
         .map(|def| {
@@ -68,7 +74,7 @@ async fn get_agent_card(
     let agent_id = id.into_inner();
     let agents = coordinator.agent_definitions.read().await;
     let agent_tools = coordinator.agent_tools.read().await;
-    
+
     match agents.get(&agent_id) {
         Some(agent_def) => {
             let tools = agent_tools.get(&agent_id).cloned().unwrap_or_default();
@@ -382,19 +388,19 @@ async fn handle_message_send_streaming(
             let event_json = match event {
                 AgentEvent::RunStarted { run_id } => {
                     json!({
-                        "type": "runStarted",
+                        "type": "RUN_STARTED",
                         "run_id": run_id,
                         "task_id": task_id_clone,
                         "agent_id": agent_id_clone
                     })
                 }
-                AgentEvent::MessageStart { 
+                AgentEvent::TextMessageStart {
                     run_id,
-                    message_id, 
-                    role 
+                    message_id,
+                    role,
                 } => {
                     json!({
-                        "type": "messageStart",
+                        "type": "TEXT_MESSAGE_START",
                         "run_id": run_id,
                         "message_id": message_id,
                         "role": role,
@@ -402,13 +408,13 @@ async fn handle_message_send_streaming(
                         "agent_id": agent_id_clone
                     })
                 }
-                AgentEvent::MessageContent { 
+                AgentEvent::TextMessageContent {
                     run_id,
                     message_id,
-                    delta 
+                    delta,
                 } => {
                     json!({
-                        "type": "messageStream",
+                        "type": "TEXT_MESSAGE_CONTENT",
                         "run_id": run_id,
                         "message_id": message_id,
                         "delta": delta,
@@ -416,25 +422,22 @@ async fn handle_message_send_streaming(
                         "agent_id": agent_id_clone
                     })
                 }
-                AgentEvent::MessageEnd { 
-                    run_id,
-                    message_id 
-                } => {
+                AgentEvent::TextMessageEnd { run_id, message_id } => {
                     json!({
-                        "type": "messageEnd",
+                        "type": "TEXT_MESSAGE_END",
                         "run_id": run_id,
                         "message_id": message_id,
                         "task_id": task_id_clone,
                         "agent_id": agent_id_clone
                     })
                 }
-                AgentEvent::ToolCallStart { 
+                AgentEvent::ToolCallStart {
                     run_id,
-                    tool_call_id, 
-                    tool_name 
+                    tool_call_id,
+                    tool_name,
                 } => {
                     json!({
-                        "type": "toolCall",
+                        "type": "TOOL_CALL_START",
                         "run_id": run_id,
                         "tool_call_id": tool_call_id,
                         "tool_name": tool_name,
@@ -443,13 +446,13 @@ async fn handle_message_send_streaming(
                         "agent_id": agent_id_clone
                     })
                 }
-                AgentEvent::ToolCallArgs { 
+                AgentEvent::ToolCallArgs {
                     run_id,
-                    tool_call_id, 
-                    delta 
+                    tool_call_id,
+                    delta,
                 } => {
                     json!({
-                        "type": "toolCallArgs",
+                        "type": "TOOL_CALL_ARGS",
                         "run_id": run_id,
                         "tool_call_id": tool_call_id,
                         "args_delta": delta,
@@ -457,12 +460,12 @@ async fn handle_message_send_streaming(
                         "agent_id": agent_id_clone
                     })
                 }
-                AgentEvent::ToolCallEnd { 
+                AgentEvent::ToolCallEnd {
                     run_id,
-                    tool_call_id 
+                    tool_call_id,
                 } => {
                     json!({
-                        "type": "toolCallEnd",
+                        "type": "TOOL_CALL_END",
                         "run_id": run_id,
                         "tool_call_id": tool_call_id,
                         "status": "waiting_approval",
@@ -470,13 +473,13 @@ async fn handle_message_send_streaming(
                         "agent_id": agent_id_clone
                     })
                 }
-                AgentEvent::ToolResult { 
+                AgentEvent::ToolResult {
                     run_id,
                     tool_call_id,
-                    result 
+                    result,
                 } => {
                     json!({
-                        "type": "toolResult",
+                        "type": "TOOL_CALL_RESULT",
                         "run_id": run_id,
                         "tool_call_id": tool_call_id,
                         "result": result,
@@ -484,26 +487,27 @@ async fn handle_message_send_streaming(
                         "agent_id": agent_id_clone
                     })
                 }
-                // Thinking events for plan rendering
-                AgentEvent::ThinkingStart { 
+                AgentEvent::ThinkingStart {
                     run_id,
-                    thinking_id 
+                    thinking_id,
                 } => {
                     json!({
-                        "type": "thinkingStart",
+                        "type": "CUSTOM",
+                        "customType": "THINKING_START",
                         "run_id": run_id,
                         "thinking_id": thinking_id,
                         "task_id": task_id_clone,
                         "agent_id": agent_id_clone
                     })
                 }
-                AgentEvent::ThinkingContent { 
+                AgentEvent::ThinkingContent {
                     run_id,
                     thinking_id,
-                    delta 
+                    delta,
                 } => {
                     json!({
-                        "type": "thinkingStream",
+                        "type": "CUSTOM",
+                        "customType": "THINKING_CONTENT",
                         "run_id": run_id,
                         "thinking_id": thinking_id,
                         "delta": delta,
@@ -511,12 +515,13 @@ async fn handle_message_send_streaming(
                         "agent_id": agent_id_clone
                     })
                 }
-                AgentEvent::ThinkingEnd { 
+                AgentEvent::ThinkingEnd {
                     run_id,
-                    thinking_id 
+                    thinking_id,
                 } => {
                     json!({
-                        "type": "thinkingEnd",
+                        "type": "CUSTOM",
+                        "customType": "THINKING_END",
                         "run_id": run_id,
                         "thinking_id": thinking_id,
                         "task_id": task_id_clone,
@@ -525,15 +530,19 @@ async fn handle_message_send_streaming(
                 }
                 AgentEvent::RunFinished { run_id } => {
                     json!({
-                        "type": "runFinished",
+                        "type": "RUN_FINISHED",
                         "run_id": run_id,
                         "task_id": task_id_clone,
                         "agent_id": agent_id_clone
                     })
                 }
-                AgentEvent::RunError { run_id, message, code } => {
+                AgentEvent::RunError {
+                    run_id,
+                    message,
+                    code,
+                } => {
                     json!({
-                        "type": "runError",
+                        "type": "RUN_ERROR",
                         "run_id": run_id,
                         "error": message,
                         "code": code,
@@ -543,7 +552,7 @@ async fn handle_message_send_streaming(
                 }
                 AgentEvent::StateSnapshot { run_id, snapshot } => {
                     json!({
-                        "type": "stateSnapshot",
+                        "type": "STATE_SNAPSHOT",
                         "run_id": run_id,
                         "snapshot": snapshot,
                         "task_id": task_id_clone,
@@ -552,7 +561,7 @@ async fn handle_message_send_streaming(
                 }
                 AgentEvent::StateDelta { run_id, delta } => {
                     json!({
-                        "type": "stateDelta",
+                        "type": "STATE_DELTA",
                         "run_id": run_id,
                         "delta": delta,
                         "task_id": task_id_clone,
@@ -678,7 +687,7 @@ async fn approve_tool_call(
     event_broadcaster: web::Data<broadcast::Sender<String>>,
 ) -> HttpResponse {
     let tool_call_id = id.into_inner();
-    
+
     // Send approval event
     let _ = event_broadcaster.send(
         json!({
@@ -687,7 +696,7 @@ async fn approve_tool_call(
         })
         .to_string(),
     );
-    
+
     HttpResponse::Ok().json(json!({
         "status": "approved",
         "tool_call_id": tool_call_id
@@ -699,7 +708,7 @@ async fn reject_tool_call(
     event_broadcaster: web::Data<broadcast::Sender<String>>,
 ) -> HttpResponse {
     let tool_call_id = id.into_inner();
-    
+
     // Send rejection event
     let _ = event_broadcaster.send(
         json!({
@@ -708,7 +717,7 @@ async fn reject_tool_call(
         })
         .to_string(),
     );
-    
+
     HttpResponse::Ok().json(json!({
         "status": "rejected",
         "tool_call_id": tool_call_id
@@ -722,7 +731,7 @@ async fn well_known_agent_cards(
 ) -> HttpResponse {
     let agent_defs = coordinator.agent_definitions.read().await;
     let agent_tools = coordinator.agent_tools.read().await;
-    
+
     let agent_cards: Vec<AgentCard> = agent_defs
         .values()
         .map(|def| {
@@ -735,7 +744,7 @@ async fn well_known_agent_cards(
             )
         })
         .collect();
-    
+
     HttpResponse::Ok()
         .insert_header(("Content-Type", "application/json"))
         .insert_header(("Access-Control-Allow-Origin", "*"))
@@ -750,7 +759,7 @@ async fn well_known_agent_card(
     let agent_id = id.into_inner();
     let agents = coordinator.agent_definitions.read().await;
     let agent_tools = coordinator.agent_tools.read().await;
-    
+
     match agents.get(&agent_id) {
         Some(agent_def) => {
             let tools = agent_tools.get(&agent_id).cloned().unwrap_or_default();
@@ -784,7 +793,7 @@ async fn workflow_sse_handler(
             if let Ok(parsed_event) = serde_json::from_str::<serde_json::Value>(&event) {
                 if let Some(event_type) = parsed_event.get("type").and_then(|t| t.as_str()) {
                     match event_type {
-                        "agent_started" | "agent_completed" | "agent_error" | 
+                        "agent_started" | "agent_completed" | "agent_error" |
                         "tool_call_start" | "tool_call_approved" | "tool_call_rejected" => {
                             yield Ok::<_, std::convert::Infallible>(sse::Data::new(event).into());
                         }

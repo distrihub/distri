@@ -8,7 +8,7 @@ use crate::{
     memory::{LocalAgentMemory, MemoryStep},
     types::{McpSession, Message},
 };
-use distri_a2a::{Task, TaskState, TaskStatus, Role, Part, TextPart, Message as A2aMessage};
+use distri_a2a::{Message as A2aMessage, Part, Role, Task, TaskState, TaskStatus, TextPart};
 
 #[async_trait]
 pub trait ToolSessionStore: Send + Sync {
@@ -123,7 +123,12 @@ impl MemoryStore for LocalMemoryStore {
 // Task Store trait for A2A task management
 #[async_trait]
 pub trait TaskStore: Send + Sync {
-    async fn create_task(&self, agent_id: &str, context_id: &str, kind: &str) -> anyhow::Result<Task>;
+    async fn create_task(
+        &self,
+        agent_id: &str,
+        context_id: &str,
+        kind: &str,
+    ) -> anyhow::Result<Task>;
     async fn get_task(&self, task_id: &str) -> anyhow::Result<Option<Task>>;
     async fn update_task_status(&self, task_id: &str, status: TaskStatus) -> anyhow::Result<()>;
     async fn cancel_task(&self, task_id: &str) -> anyhow::Result<Task>;
@@ -153,7 +158,12 @@ impl HashMapTaskStore {
 
 #[async_trait]
 impl TaskStore for HashMapTaskStore {
-    async fn create_task(&self, agent_id: &str, context_id: &str, kind: &str) -> anyhow::Result<Task> {
+    async fn create_task(
+        &self,
+        agent_id: &str,
+        context_id: &str,
+        kind: &str,
+    ) -> anyhow::Result<Task> {
         let task_id = Uuid::new_v4().to_string();
         let task = Task {
             id: task_id.clone(),

@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Loader2, User, Bot, Check, X, AlertCircle, Tool, Brain } from 'lucide-react';
+import { Send, Loader2, User, Bot, Check, X, AlertCircle, Wrench, Brain } from 'lucide-react';
 
 interface Agent {
   id: string;
@@ -53,7 +53,7 @@ const Chat: React.FC<ChatProps> = ({ agent }) => {
   useEffect(() => {
     // Set up SSE connection for real-time events
     setupEventSource();
-    
+
     return () => {
       if (eventSourceRef.current) {
         eventSourceRef.current.close();
@@ -87,58 +87,51 @@ const Chat: React.FC<ChatProps> = ({ agent }) => {
     const { type, run_id, task_id } = data;
 
     switch (type) {
-      case 'runStarted':
+      case 'RUN_STARTED':
         handleRunStarted(data);
         break;
-      case 'messageStart':
+      case 'TEXT_MESSAGE_START':
         handleMessageStart(data);
         break;
-      case 'messageStream':
+      case 'TEXT_MESSAGE_CONTENT':
         handleMessageStream(data);
         break;
-      case 'messageEnd':
+      case 'TEXT_MESSAGE_END':
         handleMessageEnd(data);
         break;
-      case 'toolCall':
+      case 'TOOL_CALL_START':
         handleToolCallStart(data);
         break;
-      case 'toolCallArgs':
+      case 'TOOL_CALL_ARGS':
         handleToolCallArgs(data);
         break;
-      case 'toolCallEnd':
+      case 'TOOL_CALL_END':
         handleToolCallEnd(data);
         break;
-      case 'toolResult':
+      case 'TOOL_CALL_RESULT':
         handleToolResult(data);
         break;
-      case 'thinkingStart':
-        handleThinkingStart(data);
-        break;
-      case 'thinkingStream':
-        handleThinkingStream(data);
-        break;
-      case 'thinkingEnd':
-        handleThinkingEnd(data);
-        break;
-      case 'runFinished':
+      case 'RUN_FINISHED':
         handleRunFinished(data);
         break;
-      case 'runError':
+      case 'RUN_ERROR':
         handleRunError(data);
         break;
-      // Legacy event support for backwards compatibility
-      case 'text_delta':
-        handleMessageStream({ ...data, type: 'messageStream', delta: data.delta });
+      case 'STATE_SNAPSHOT':
+        // Optionally handle state snapshot
         break;
-      case 'tool_call_start':
-        handleToolCallStart({ ...data, type: 'toolCall' });
+      case 'STATE_DELTA':
+        // Optionally handle state delta
         break;
-      case 'task_completed':
-        handleRunFinished(data);
+      case 'MESSAGES_SNAPSHOT':
+        // Optionally handle messages snapshot
         break;
-      case 'task_error':
-        handleRunError(data);
+      case 'CUSTOM':
+        if (data.customType === 'THINKING_START') handleThinkingStart(data);
+        else if (data.customType === 'THINKING_CONTENT') handleThinkingStream(data);
+        else if (data.customType === 'THINKING_END') handleThinkingEnd(data);
         break;
+      // No legacy/old event names
     }
   };
 
@@ -148,7 +141,7 @@ const Chat: React.FC<ChatProps> = ({ agent }) => {
 
   const handleMessageStart = (data: any) => {
     const { run_id, message_id, role, task_id } = data;
-    
+
     if (role === 'assistant') {
       // Start a new assistant message
       setMessages((prev: Message[]) => [
@@ -168,11 +161,11 @@ const Chat: React.FC<ChatProps> = ({ agent }) => {
 
   const handleMessageStream = (data: any) => {
     const { delta, task_id, run_id, message_id } = data;
-    
+
     setMessages((prev: Message[]) => {
       const lastMessage = prev[prev.length - 1];
-      if (lastMessage && lastMessage.role === 'agent' && lastMessage.isStreaming && 
-          (lastMessage.taskId === task_id || lastMessage.runId === run_id)) {
+      if (lastMessage && lastMessage.role === 'agent' && lastMessage.isStreaming &&
+        (lastMessage.taskId === task_id || lastMessage.runId === run_id)) {
         return [
           ...prev.slice(0, -1),
           {
@@ -187,7 +180,7 @@ const Chat: React.FC<ChatProps> = ({ agent }) => {
 
   const handleMessageEnd = (data: any) => {
     const { task_id, run_id, message_id } = data;
-    
+
     setMessages((prev: Message[]) => {
       return prev.map(msg => {
         if ((msg.taskId === task_id || msg.runId === run_id) && msg.isStreaming) {
@@ -200,7 +193,7 @@ const Chat: React.FC<ChatProps> = ({ agent }) => {
 
   const handleThinkingStart = (data: any) => {
     const { run_id, thinking_id, task_id } = data;
-    
+
     // Add a thinking message
     setMessages((prev: Message[]) => [
       ...prev,
@@ -219,7 +212,7 @@ const Chat: React.FC<ChatProps> = ({ agent }) => {
 
   const handleThinkingStream = (data: any) => {
     const { delta, thinking_id, run_id } = data;
-    
+
     setMessages((prev: Message[]) => {
       return prev.map(msg => {
         if (msg.role === 'thinking' && msg.thinkingId === thinking_id && msg.runId === run_id) {
@@ -235,7 +228,7 @@ const Chat: React.FC<ChatProps> = ({ agent }) => {
 
   const handleThinkingEnd = (data: any) => {
     const { thinking_id, run_id } = data;
-    
+
     setMessages((prev: Message[]) => {
       return prev.map(msg => {
         if (msg.role === 'thinking' && msg.thinkingId === thinking_id && msg.runId === run_id) {
@@ -248,7 +241,7 @@ const Chat: React.FC<ChatProps> = ({ agent }) => {
 
   const handleRunFinished = (data: any) => {
     setIsLoading(false);
-    
+
     // Mark all streaming messages as completed
     setMessages((prev: Message[]) => {
       return prev.map(msg => ({ ...msg, isStreaming: false }));
@@ -258,7 +251,7 @@ const Chat: React.FC<ChatProps> = ({ agent }) => {
   const handleRunError = (data: any) => {
     setIsLoading(false);
     const { error, task_id, run_id } = data;
-    
+
     // Add error message
     setMessages((prev: Message[]) => [
       ...prev,
@@ -494,7 +487,7 @@ const Chat: React.FC<ChatProps> = ({ agent }) => {
         case 'error':
           return <X className="h-4 w-4 text-red-600" />;
         default:
-          return <Tool className="h-4 w-4 text-gray-600" />;
+          return <Wrench className="h-4 w-4 text-gray-600" />;
       }
     };
 
@@ -600,14 +593,13 @@ const Chat: React.FC<ChatProps> = ({ agent }) => {
                 </div>
               </div>
             )}
-            
+
             {/* Regular messages */}
             {message.role !== 'thinking' && (
               <div className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                <div className={`max-w-[70%] rounded-lg px-4 py-2 ${
-                  message.role === 'user'
-                    ? 'bg-blue-600 text-white'
-                    : message.role === 'system'
+                <div className={`max-w-[70%] rounded-lg px-4 py-2 ${message.role === 'user'
+                  ? 'bg-blue-600 text-white'
+                  : message.role === 'system'
                     ? 'bg-red-50 border border-red-200 text-red-900'
                     : 'bg-gray-100 text-gray-900'
                   }`}>
@@ -628,10 +620,9 @@ const Chat: React.FC<ChatProps> = ({ agent }) => {
                           <span className="inline-block w-2 h-4 bg-current ml-1 animate-pulse"></span>
                         )}
                       </p>
-                      <p className={`text-xs mt-1 ${
-                        message.role === 'user' ? 'text-blue-200' : 
+                      <p className={`text-xs mt-1 ${message.role === 'user' ? 'text-blue-200' :
                         message.role === 'system' ? 'text-red-500' : 'text-gray-500'
-                      }`}>
+                        }`}>
                         {message.timestamp.toLocaleTimeString()}
                       </p>
                     </div>
@@ -639,7 +630,7 @@ const Chat: React.FC<ChatProps> = ({ agent }) => {
                 </div>
               </div>
             )}
-            
+
             {/* Tool calls for this message */}
             {message.role === 'agent' && (
               <div className="mt-2 ml-8">
@@ -655,13 +646,13 @@ const Chat: React.FC<ChatProps> = ({ agent }) => {
         {Array.from(toolCalls.values())
           .filter(tc => !tc.parentMessageId && ['waiting_approval', 'executing'].includes(tc.status))
           .length > 0 && (
-          <div className="border-t pt-4">
-            <h4 className="text-sm font-medium text-gray-700 mb-2">Pending Tool Calls</h4>
-            {Array.from(toolCalls.values())
-              .filter(tc => !tc.parentMessageId && ['waiting_approval', 'executing'].includes(tc.status))
-              .map(renderToolCall)}
-          </div>
-        )}
+            <div className="border-t pt-4">
+              <h4 className="text-sm font-medium text-gray-700 mb-2">Pending Tool Calls</h4>
+              {Array.from(toolCalls.values())
+                .filter(tc => !tc.parentMessageId && ['waiting_approval', 'executing'].includes(tc.status))
+                .map(renderToolCall)}
+            </div>
+          )}
 
         {isLoading && (
           <div className="flex justify-start">

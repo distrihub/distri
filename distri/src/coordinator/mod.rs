@@ -18,54 +18,71 @@ use tokio::sync::{mpsc, oneshot, Mutex};
 // AG-UI protocol compliant event types
 #[derive(Debug, Clone)]
 pub enum AgentEvent {
-    // Core AG-UI events
+    /// AGUI: RUN_STARTED
     RunStarted {
         run_id: String,
     },
+    /// AGUI: RUN_FINISHED
     RunFinished {
         run_id: String,
     },
+    /// AGUI: RUN_ERROR
     RunError {
         run_id: String,
         message: String,
         code: Option<String>,
     },
-    // Message streaming (AG-UI messageStream)
-    MessageStart {
+    /// AGUI: TEXT_MESSAGE_START
+    TextMessageStart {
         run_id: String,
         message_id: String,
         role: String,
     },
-    MessageContent {
+    /// AGUI: TEXT_MESSAGE_CONTENT
+    TextMessageContent {
         run_id: String,
         message_id: String,
         delta: String,
     },
-    MessageEnd {
+    /// AGUI: TEXT_MESSAGE_END
+    TextMessageEnd {
         run_id: String,
         message_id: String,
     },
-    // Tool events (AG-UI toolCall/toolResult)
+    /// AGUI: TOOL_CALL_START
     ToolCallStart {
         run_id: String,
         tool_call_id: String,
         tool_name: String,
     },
+    /// AGUI: TOOL_CALL_ARGS
     ToolCallArgs {
         run_id: String,
         tool_call_id: String,
         delta: String,
     },
+    /// AGUI: TOOL_CALL_END
     ToolCallEnd {
         run_id: String,
         tool_call_id: String,
     },
+    /// AGUI: TOOL_CALL_RESULT
     ToolResult {
         run_id: String,
         tool_call_id: String,
         result: String,
     },
-    // Thinking events for plan rendering
+    /// AGUI: STATE_SNAPSHOT
+    StateSnapshot {
+        run_id: String,
+        snapshot: Value,
+    },
+    /// AGUI: STATE_DELTA
+    StateDelta {
+        run_id: String,
+        delta: Value,
+    },
+    /// AGUI: CUSTOM (for thinking events, use customType: THINKING_START, THINKING_CONTENT, THINKING_END)
     ThinkingStart {
         run_id: String,
         thinking_id: String,
@@ -78,15 +95,6 @@ pub enum AgentEvent {
     ThinkingEnd {
         run_id: String,
         thinking_id: String,
-    },
-    // State management (AG-UI state events)
-    StateSnapshot {
-        run_id: String,
-        snapshot: Value,
-    },
-    StateDelta {
-        run_id: String,
-        delta: Value,
     },
 }
 
