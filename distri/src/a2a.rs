@@ -1,5 +1,5 @@
-use crate::types::{AgentDefinition, ServerConfig};
-use distri_a2a::AgentCard;
+use crate::types::{AgentDefinition, ServerConfig, ServerTools};
+use distri_a2a::{AgentCard, AgentSkill};
 
 pub fn agent_def_to_card(
     def: &AgentDefinition,
@@ -18,8 +18,17 @@ pub fn agent_def_to_card(
         capabilities: server_config.capabilities.clone(),
         default_input_modes: server_config.default_input_modes.clone(),
         default_output_modes: server_config.default_output_modes.clone(),
-        skills: vec![],
+        skills: def.skills.clone().unwrap_or_default(),
         security_schemes: server_config.security_schemes.clone(),
         security: server_config.security.clone(),
     }
+}
+
+pub fn agent_def_to_card_with_tools(
+    def: &AgentDefinition,
+    server_config: ServerConfig,
+    base_url: &str,
+    _tools: &[ServerTools],
+) -> AgentCard {
+    agent_def_to_card(def, server_config, base_url)
 }
