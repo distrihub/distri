@@ -25,6 +25,7 @@ use crate::memory::{ActionStep, MemoryStep, PlanningStep, TaskStep};
 pub struct LocalCoordinator {
     pub agent_definitions: Arc<RwLock<HashMap<String, AgentDefinition>>>,
     pub agent_tools: Arc<RwLock<HashMap<String, Vec<ServerTools>>>>,
+    pub runnable_agents: Arc<RwLock<HashMap<String, Box<dyn crate::types::BaseAgent>>>>,
     pub tool_sessions: Option<Arc<Box<dyn ToolSessionStore>>>,
     pub registry: Arc<RwLock<ServerRegistry>>,
     pub coordinator_rx: Arc<Mutex<mpsc::Receiver<CoordinatorMessage>>>,
@@ -51,6 +52,7 @@ impl LocalCoordinator {
         Self {
             agent_definitions: Arc::new(RwLock::new(HashMap::new())),
             agent_tools: Arc::new(RwLock::new(HashMap::new())),
+            runnable_agents: Arc::new(RwLock::new(HashMap::new())),
             tool_sessions,
             registry,
             coordinator_rx: Arc::new(Mutex::new(coordinator_rx)),
@@ -70,6 +72,49 @@ impl LocalCoordinator {
             coordinator_tx: self.coordinator_tx.clone(),
             verbose: self.logger.verbose,
         }
+    }
+
+    pub async fn register_runnable_agent(
+        &self,
+        definition: AgentDefinition,
+        base_agent: Box<dyn crate::types::BaseAgent>,
+    ) -> anyhow::Result<()> {
+        let (name, resolved_tools) = {
+            let name = definition.name.clone();
+            let server_tools = get_tools(&definition.mcp_servers, self.registry.clone()).await?;
+
+            (name, server_tools)
+        };
+
+        tracing::debug!(
+            "Registering runnable agent: {name} with {:?}",
+            resolved_tools
+                .iter()
+                .map(
+                    |r| serde_json::json!({"name": r.definition.name, "type": r.definition.r#type, "tools": r.tools.len()})
+                )
+                .collect::<Vec<_>>()
+        );
+
+        // Store the definition
+        {
+            let mut definitions = self.agent_definitions.write().await;
+            definitions.insert(name.clone(), definition);
+        }
+
+        // Store the resolved tools
+        {
+            let mut tools = self.agent_tools.write().await;
+            tools.insert(name.clone(), resolved_tools);
+        }
+
+        // Store the runnable agent
+        {
+            let mut runnable_agents = self.runnable_agents.write().await;
+            runnable_agents.insert(name, base_agent);
+        }
+
+        Ok(())
     }
 
     pub async fn register_agent(&self, definition: AgentDefinition) -> anyhow::Result<()> {
@@ -103,6 +148,51 @@ impl LocalCoordinator {
     }
 
     async fn call_agent_stream(
+        &self,
+        agent_id: &str,
+        task: TaskStep,
+        params: Option<serde_json::Value>,
+        context: Arc<CoordinatorContext>,
+        event_tx: mpsc::Sender<AgentEvent>,
+    ) -> Result<(), AgentError> {
+        // Check if this is a runnable agent
+        let base_agent = {
+            let runnable_agents = self.runnable_agents.read().await;
+            runnable_agents.get(agent_id).is_some()
+        };
+
+        // Call pre_execution hook if this is a runnable agent
+        if base_agent {
+            let runnable_agents = self.runnable_agents.read().await;
+            if let Some(agent) = runnable_agents.get(agent_id) {
+                agent
+                    .pre_execution(agent_id, &task, params.as_ref(), context.clone())
+                    .await?;
+            }
+        }
+
+        // Execute the main agent logic
+        let result = self.call_agent_stream_core(agent_id, task.clone(), params.clone(), context.clone(), event_tx).await;
+
+        // Call post_execution hook if this is a runnable agent
+        if base_agent {
+            let runnable_agents = self.runnable_agents.read().await;
+            if let Some(agent) = runnable_agents.get(agent_id) {
+                            // Convert Result<(), AgentError> to Result<String, AgentError> for the hook
+            let string_result = match &result {
+                Ok(_) => Ok(String::new()),
+                Err(e) => Err(e.clone()),
+            };
+                agent
+                    .post_execution(agent_id, &task, params.as_ref(), context.clone(), &string_result)
+                    .await?;
+            }
+        }
+
+        result
+    }
+
+    async fn call_agent_stream_core(
         &self,
         agent_id: &str,
         task: TaskStep,
@@ -408,6 +498,45 @@ impl LocalCoordinator {
     }
 
     async fn call_agent(
+        &self,
+        agent_id: &str,
+        task: TaskStep,
+        params: Option<serde_json::Value>,
+        context: Arc<CoordinatorContext>,
+    ) -> Result<String, AgentError> {
+        // Check if this is a runnable agent
+        let base_agent = {
+            let runnable_agents = self.runnable_agents.read().await;
+            runnable_agents.get(agent_id).is_some()
+        };
+
+        // Call pre_execution hook if this is a runnable agent
+        if base_agent {
+            let runnable_agents = self.runnable_agents.read().await;
+            if let Some(agent) = runnable_agents.get(agent_id) {
+                agent
+                    .pre_execution(agent_id, &task, params.as_ref(), context.clone())
+                    .await?;
+            }
+        }
+
+        // Execute the main agent logic
+        let result = self.call_agent_core(agent_id, task.clone(), params.clone(), context.clone()).await;
+
+        // Call post_execution hook if this is a runnable agent
+        if base_agent {
+            let runnable_agents = self.runnable_agents.read().await;
+            if let Some(agent) = runnable_agents.get(agent_id) {
+                agent
+                    .post_execution(agent_id, &task, params.as_ref(), context.clone(), &result)
+                    .await?;
+            }
+        }
+
+        result
+    }
+
+    async fn call_agent_core(
         &self,
         agent_id: &str,
         task: TaskStep,
