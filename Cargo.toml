@@ -4,7 +4,7 @@ members = ["distri", "proxy", "code-mcp", "distri-server", "distri-cli", "distri
 default-members = ["distri-cli"]
 
 [workspace.dependencies]
-async-mcp = { version = "0.1.1" }
+rust-mcp-sdk = { version = "0.4", features = ["server", "macros"] }
 anyhow = "1.0"
 agent-twitter-client = { git = "https://github.com/distrihub/agent-twitter-client.git", rev = "019a59829af72c9410233529b098e67bb4a568f9" }
 tracing = "0.1"
