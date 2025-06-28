@@ -23,6 +23,8 @@ dirs = "5.0"
 uuid = "1.13.1"
 async-trait = "0.1"
 comfy-table = "7.0"
+futures = "0.3.31"
+futures-util = "0.3.31"
 
 [[bin]]
 name = "distri"
