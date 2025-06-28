@@ -156,6 +156,13 @@ impl LocalCoordinator {
             };
 
             if (iteration - 1) % planning_config.interval == 0 {
+                // Send planning step started event
+                let _ = event_tx.send(AgentEvent::StepStarted {
+                    thread_id: context.thread_id.clone(),
+                    run_id: context.run_id.lock().await.clone(),
+                    step_name: "planning".to_string(),
+                }).await;
+                
                 // Run either initial planning or planning update
                 let (facts, plan) = if iteration == 1 {
                     create_initial_plan(&task, &tools_desc, &|msgs| {
@@ -258,6 +265,13 @@ impl LocalCoordinator {
                     .await
                     .map_err(|e| AgentError::Session(e.to_string()))?;
                 self.logger.log_step(agent_id, &planning_step);
+                
+                // Send planning step finished event
+                let _ = event_tx.send(AgentEvent::StepFinished {
+                    thread_id: context.thread_id.clone(),
+                    run_id: context.run_id.lock().await.clone(),
+                    step_name: "planning".to_string(),
+                }).await;
             }
         }
 

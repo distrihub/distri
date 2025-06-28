@@ -87,8 +87,8 @@ function App() {
 
     setCreatingThread(true);
     try {
+      // Create thread summary locally first
       const newThreadId = uuidv4();
-
       const threadSummary: Thread = {
         id: newThreadId,
         title: 'New conversation',
@@ -99,8 +99,12 @@ function App() {
         last_message: undefined,
       };
 
+      // Add to local state immediately for better UX
       setThreads((prev: Thread[]) => [threadSummary, ...prev]);
       setSelectedThread(threadSummary);
+
+      // The actual thread will be created in the backend when the first message is sent
+      // with the thread.id as contextId, ensuring the backend uses our thread ID
     } catch (error) {
       console.error('Failed to create thread:', error);
     } finally {

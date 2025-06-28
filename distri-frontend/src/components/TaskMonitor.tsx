@@ -27,32 +27,13 @@ const TaskMonitor: React.FC = () => {
 
   const fetchTasks = async () => {
     try {
-      // This is a placeholder - in a real implementation, you'd have an endpoint to list tasks
-      // For now, we'll just show a mock task list
-      setTasks([
-        {
-          id: 'task-1',
-          kind: 'message',
-          contextId: 'chat-agent1',
-          status: {
-            state: 'completed',
-            timestamp: new Date(Date.now() - 1000 * 60 * 5).toISOString(),
-          },
-          artifacts: [],
-          history: [],
-        },
-        {
-          id: 'task-2',
-          kind: 'message',
-          contextId: 'chat-agent2',
-          status: {
-            state: 'working',
-            timestamp: new Date(Date.now() - 1000 * 30).toISOString(),
-          },
-          artifacts: [],
-          history: [],
-        },
-      ]);
+      const response = await fetch('/api/v1/tasks');
+      if (response.ok) {
+        const tasksData = await response.json();
+        setTasks(tasksData);
+      } else {
+        throw new Error('Failed to fetch tasks');
+      }
       setError(null);
     } catch (err) {
       setError('Failed to fetch tasks');
