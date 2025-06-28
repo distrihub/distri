@@ -6,7 +6,7 @@ use uuid::Uuid;
 use crate::{
     coordinator::CoordinatorContext,
     memory::{LocalAgentMemory, MemoryStep},
-    types::{CreateThreadRequest, McpSession, Message, Thread, ThreadSummary, UpdateThreadRequest},
+    types::{Agent, AgentDefinition, CreateThreadRequest, McpSession, Message, Thread, ThreadSummary, UpdateThreadRequest},
 };
 use distri_a2a::{Message as A2aMessage, Task, TaskState, TaskStatus};
 
@@ -376,5 +376,80 @@ impl ThreadStore for HashMapThreadStore {
             thread.update_with_message(message);
         }
         Ok(())
+    }
+}
+
+// Agent Store trait for agent management
+#[async_trait]
+pub trait AgentStore: Send + Sync {
+    async fn create_agent(&self, agent: Agent) -> anyhow::Result<()>;
+    async fn get_agent(&self, agent_id: &str) -> anyhow::Result<Option<Agent>>;
+    async fn update_agent(&self, agent_id: &str, agent: Agent) -> anyhow::Result<()>;
+    async fn delete_agent(&self, agent_id: &str) -> anyhow::Result<()>;
+    async fn list_agents(&self) -> anyhow::Result<Vec<(String, Agent)>>;
+    async fn agent_exists(&self, agent_id: &str) -> anyhow::Result<bool>;
+}
+
+// HashMap-based agent store implementation
+#[derive(Clone, Default)]
+pub struct HashMapAgentStore {
+    agents: Arc<RwLock<HashMap<String, Agent>>>,
+}
+
+impl HashMapAgentStore {
+    pub fn new() -> Self {
+        Self {
+            agents: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+}
+
+#[async_trait]
+impl AgentStore for HashMapAgentStore {
+    async fn create_agent(&self, agent: Agent) -> anyhow::Result<()> {
+        let agent_id = match &agent {
+            Agent::Local(def) => def.name.clone(),
+            Agent::Remote(url) => url.clone(),
+            Agent::Runnable(def) => def.name.clone(),
+        };
+        
+        let mut agents = self.agents.write().await;
+        if agents.contains_key(&agent_id) {
+            return Err(anyhow::anyhow!("Agent '{}' already exists", agent_id));
+        }
+        agents.insert(agent_id, agent);
+        Ok(())
+    }
+
+    async fn get_agent(&self, agent_id: &str) -> anyhow::Result<Option<Agent>> {
+        let agents = self.agents.read().await;
+        Ok(agents.get(agent_id).cloned())
+    }
+
+    async fn update_agent(&self, agent_id: &str, agent: Agent) -> anyhow::Result<()> {
+        let mut agents = self.agents.write().await;
+        if !agents.contains_key(agent_id) {
+            return Err(anyhow::anyhow!("Agent '{}' not found", agent_id));
+        }
+        agents.insert(agent_id.to_string(), agent);
+        Ok(())
+    }
+
+    async fn delete_agent(&self, agent_id: &str) -> anyhow::Result<()> {
+        let mut agents = self.agents.write().await;
+        if agents.remove(agent_id).is_none() {
+            return Err(anyhow::anyhow!("Agent '{}' not found", agent_id));
+        }
+        Ok(())
+    }
+
+    async fn list_agents(&self) -> anyhow::Result<Vec<(String, Agent)>> {
+        let agents = self.agents.read().await;
+        Ok(agents.iter().map(|(id, agent)| (id.clone(), agent.clone())).collect())
+    }
+
+    async fn agent_exists(&self, agent_id: &str) -> anyhow::Result<bool> {
+        let agents = self.agents.read().await;
+        Ok(agents.contains_key(agent_id))
     }
 }

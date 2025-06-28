@@ -3,10 +3,10 @@ use crate::{
     executor::LLMExecutor,
     memory::SystemStep,
     servers::registry::ServerRegistry,
-    store::{HashMapThreadStore, LocalMemoryStore, MemoryStore, ThreadStore, ToolSessionStore},
+    store::{AgentStore, HashMapThreadStore, LocalMemoryStore, MemoryStore, ThreadStore, ToolSessionStore},
     tools::{execute_tool, get_tools},
     types::{
-        get_tool_descriptions, AgentDefinition, CreateThreadRequest, Message, MessageContent,
+        get_tool_descriptions, Agent, AgentDefinition, CreateThreadRequest, Message, MessageContent,
         MessageRole, ServerTools, Thread, ThreadSummary, UpdateThreadRequest,
         DEFAULT_TOOL_DESCRIPTION_TEMPLATE,
     },
@@ -23,7 +23,7 @@ use crate::memory::{ActionStep, MemoryStep, PlanningStep, TaskStep};
 
 #[derive(Clone)]
 pub struct LocalCoordinator {
-    pub agent_definitions: Arc<RwLock<HashMap<String, AgentDefinition>>>,
+    pub agent_store: Arc<Box<dyn AgentStore>>,
     pub agent_tools: Arc<RwLock<HashMap<String, Vec<ServerTools>>>>,
     pub tool_sessions: Option<Arc<Box<dyn ToolSessionStore>>>,
     pub registry: Arc<RwLock<ServerRegistry>>,
@@ -39,6 +39,7 @@ pub struct LocalCoordinator {
 impl LocalCoordinator {
     pub fn new(
         registry: Arc<RwLock<ServerRegistry>>,
+        agent_store: Arc<Box<dyn AgentStore>>,
         tool_sessions: Option<Arc<Box<dyn ToolSessionStore>>>,
         memory_store: Option<Arc<Box<dyn MemoryStore>>>,
         context: Arc<CoordinatorContext>,
@@ -49,7 +50,7 @@ impl LocalCoordinator {
 
         let logger = StepLogger::new(context.verbose);
         Self {
-            agent_definitions: Arc::new(RwLock::new(HashMap::new())),
+            agent_store,
             agent_tools: Arc::new(RwLock::new(HashMap::new())),
             tool_sessions,
             registry,
@@ -91,10 +92,9 @@ impl LocalCoordinator {
                 .collect::<Vec<_>>()
         );
 
-        {
-            let mut definitions = self.agent_definitions.write().await;
-            definitions.insert(name.clone(), definition);
-        }
+        // Store the agent as a Local agent in the agent store
+        let agent = Agent::Local(definition);
+        self.agent_store.create_agent(agent).await?;
 
         // Store the resolved tools
         let mut tools = self.agent_tools.write().await;
@@ -687,14 +687,14 @@ impl LocalCoordinator {
     // Thread management methods
     pub async fn create_thread(&self, request: CreateThreadRequest) -> Result<Thread, AgentError> {
         // Validate that the agent exists
-        let agent_definitions = self.agent_definitions.read().await;
-        if !agent_definitions.contains_key(&request.agent_id) {
+        let agent_exists = self.agent_store.agent_exists(&request.agent_id).await
+            .map_err(|e| AgentError::Session(e.to_string()))?;
+        if !agent_exists {
             return Err(AgentError::NotFound(format!(
                 "Agent '{}' not found",
                 request.agent_id
             )));
         }
-        drop(agent_definitions);
 
         self.thread_store
             .create_thread(request)
@@ -763,6 +763,40 @@ impl LocalCoordinator {
             }
         }
     }
+
+    /// Helper method to update thread store with current agent definitions
+    async fn update_thread_store_with_agents(&self) -> Result<(), AgentError> {
+        // Get all agents from the agent store
+        let agents_list = self.agent_store.list_agents().await
+            .map_err(|e| AgentError::Session(e.to_string()))?;
+        
+        // Convert to agent definitions map
+        let mut agent_definitions = HashMap::new();
+        for (agent_id, agent) in agents_list {
+            match agent {
+                Agent::Local(def) | Agent::Runnable(def) => {
+                    agent_definitions.insert(agent_id, def);
+                }
+                Agent::Remote(_) => {
+                    // Skip remote agents for thread store
+                }
+            }
+        }
+
+        // Update the thread store if it's a HashMapThreadStore
+        if let Some(thread_store) = self
+            .thread_store
+            .as_ref()
+            .as_any()
+            .downcast_ref::<HashMapThreadStore>()
+        {
+            thread_store
+                .set_agent_definitions(agent_definitions)
+                .await;
+        }
+
+        Ok(())
+    }
 }
 
 #[async_trait::async_trait]
@@ -771,23 +805,34 @@ impl AgentCoordinator for LocalCoordinator {
         &self,
         _cursor: Option<String>,
     ) -> Result<(Vec<AgentDefinition>, Option<String>), AgentError> {
-        let definitions = self.agent_definitions.read().await;
-        let agents: Vec<AgentDefinition> = definitions.values().take(30).cloned().collect();
-        Ok((agents, None))
+        let agents_list = self.agent_store.list_agents().await
+            .map_err(|e| AgentError::Session(e.to_string()))?;
+        
+        let definitions: Vec<AgentDefinition> = agents_list.into_iter()
+            .filter_map(|(_, agent)| match agent {
+                Agent::Local(def) | Agent::Runnable(def) => Some(def),
+                Agent::Remote(_) => None, // Skip remote agents for now
+            })
+            .take(30)
+            .collect();
+            
+        Ok((definitions, None))
     }
 
     async fn get_agent(&self, agent_name: &str) -> Result<AgentDefinition, AgentError> {
-        let definitions = tokio::time::timeout(
+        let agent = tokio::time::timeout(
             std::time::Duration::from_secs(5),
-            self.agent_definitions.read(),
+            self.agent_store.get_agent(agent_name),
         )
         .await
-        .map_err(|_| AgentError::ToolExecution("get_agent timed out".into()))?;
+        .map_err(|_| AgentError::ToolExecution("get_agent timed out".into()))?
+        .map_err(|e| AgentError::Session(e.to_string()))?;
 
-        definitions
-            .get(agent_name)
-            .cloned()
-            .ok_or_else(|| AgentError::ToolExecution(format!("Agent {} not found", agent_name)))
+        match agent {
+            Some(Agent::Local(def) | Agent::Runnable(def)) => Ok(def),
+            Some(Agent::Remote(_)) => Err(AgentError::ToolExecution(format!("Agent {} is remote", agent_name))),
+            None => Err(AgentError::ToolExecution(format!("Agent {} not found", agent_name))),
+        }
     }
 
     async fn get_tools(&self, agent_name: &str) -> Result<Vec<ServerTools>, AgentError> {
@@ -809,17 +854,7 @@ impl AgentCoordinator for LocalCoordinator {
         let result = self.call_agent(agent_name, task, params, context).await?;
 
         // Update thread store with agent definitions for thread listing
-        let agent_definitions = self.agent_definitions.read().await;
-        if let Some(thread_store) = self
-            .thread_store
-            .as_ref()
-            .as_any()
-            .downcast_ref::<HashMapThreadStore>()
-        {
-            thread_store
-                .set_agent_definitions(agent_definitions.clone())
-                .await;
-        }
+        self.update_thread_store_with_agents().await?;
 
         Ok(result)
     }
@@ -836,17 +871,7 @@ impl AgentCoordinator for LocalCoordinator {
             .await?;
 
         // Update thread store with agent definitions for thread listing
-        let agent_definitions = self.agent_definitions.read().await;
-        if let Some(thread_store) = self
-            .thread_store
-            .as_ref()
-            .as_any()
-            .downcast_ref::<HashMapThreadStore>()
-        {
-            thread_store
-                .set_agent_definitions(agent_definitions.clone())
-                .await;
-        }
+        self.update_thread_store_with_agents().await?;
 
         Ok(())
     }

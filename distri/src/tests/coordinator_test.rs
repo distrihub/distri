@@ -6,6 +6,7 @@ use crate::{
     coordinator::{AgentEvent, CoordinatorContext, LocalCoordinator, DISTRI_LOCAL_SERVER},
     init_logging,
     memory::TaskStep,
+    store::HashMapAgentStore,
     tests::utils::{get_registry, get_tools_session_store, get_twitter_tool, register_coordinator},
     types::{AgentDefinition, McpDefinition, ModelSettings, ToolSelector, ToolsFilter},
 };
@@ -51,8 +52,10 @@ async fn test_agent_coordination() -> anyhow::Result<()> {
 
     let tool_sessions = get_tools_session_store();
 
+    let agent_store = Arc::new(Box::new(HashMapAgentStore::new()) as Box<dyn crate::store::AgentStore>);
     let coordinator = Arc::new(LocalCoordinator::new(
         registry.clone(),
+        agent_store,
         tool_sessions,
         None,
         Arc::new(CoordinatorContext::default()),
@@ -111,8 +114,10 @@ async fn test_agent_coordination_streaming() -> anyhow::Result<()> {
     // Initialize coordinator
     let registry = get_registry().await;
     let tool_sessions = get_tools_session_store();
+    let agent_store = Arc::new(Box::new(HashMapAgentStore::new()) as Box<dyn crate::store::AgentStore>);
     let coordinator = Arc::new(LocalCoordinator::new(
         registry.clone(),
+        agent_store,
         tool_sessions,
         None,
         Arc::new(CoordinatorContext::default()),

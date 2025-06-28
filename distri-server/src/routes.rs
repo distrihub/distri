@@ -1,7 +1,8 @@
 use actix_web::{web, HttpRequest, HttpResponse, Responder};
 use actix_web_lab::sse::{self, Sse};
 use distri::coordinator::{AgentCoordinator, AgentEvent, LocalCoordinator};
-use distri::types::{ServerConfig, UpdateThreadRequest};
+use distri::store::AgentStore;
+use distri::types::{Agent, AgentDefinition, ServerConfig, UpdateThreadRequest};
 use distri::{memory::TaskStep, TaskStore};
 use distri_a2a::{
     AgentCard, JsonRpcError, JsonRpcRequest, JsonRpcResponse, Message as A2aMessage,
@@ -18,10 +19,17 @@ use uuid::Uuid;
 pub fn config(cfg: &mut web::ServiceConfig) {
     cfg.service(
         web::scope("/api/v1")
-            .service(web::resource("/agents").route(web::get().to(list_agents)))
+            // Agent CRUD endpoints
+            .service(
+                web::resource("/agents")
+                    .route(web::get().to(list_agents))
+                    .route(web::post().to(create_agent)),
+            )
             .service(
                 web::resource("/agents/{id}")
                     .route(web::get().to(get_agent_card))
+                    .route(web::put().to(update_agent))
+                    .route(web::delete().to(delete_agent))
                     .route(web::post().to(jsonrpc_handler)),
             )
             .service(web::resource("/agents/{id}/events").route(web::get().to(sse_handler)))
@@ -42,40 +50,120 @@ pub fn config(cfg: &mut web::ServiceConfig) {
 }
 
 async fn list_agents(
-    coordinator: web::Data<Arc<LocalCoordinator>>,
+    agent_store: web::Data<Arc<Box<dyn AgentStore>>>,
     server_config: web::Data<ServerConfig>,
 ) -> HttpResponse {
-    let agent_defs = coordinator.agent_definitions.read().await;
-    let agent_cards: Vec<AgentCard> = agent_defs
-        .values()
-        .map(|def| {
-            distri::a2a::agent_def_to_card(
-                def,
-                server_config.get_ref().clone(),
-                "http://127.0.0.1:8080",
-            )
-        })
-        .collect();
-    HttpResponse::Ok().json(agent_cards)
+    match agent_store.list_agents().await {
+        Ok(agents_list) => {
+            let agent_cards: Vec<AgentCard> = agents_list
+                .into_iter()
+                .filter_map(|(_, agent)| match agent {
+                    Agent::Local(def) | Agent::Runnable(def) => Some(distri::a2a::agent_def_to_card(
+                        &def,
+                        server_config.get_ref().clone(),
+                        "http://127.0.0.1:8080",
+                    )),
+                    Agent::Remote(_) => None, // Skip remote agents for now
+                })
+                .collect();
+            HttpResponse::Ok().json(agent_cards)
+        }
+        Err(e) => HttpResponse::InternalServerError().json(json!({
+            "error": format!("Failed to list agents: {}", e)
+        })),
+    }
 }
 
 async fn get_agent_card(
     id: web::Path<String>,
-    coordinator: web::Data<Arc<LocalCoordinator>>,
+    agent_store: web::Data<Arc<Box<dyn AgentStore>>>,
     server_config: web::Data<ServerConfig>,
 ) -> HttpResponse {
     let agent_id = id.into_inner();
-    let agents = coordinator.agent_definitions.read().await;
-    match agents.get(&agent_id) {
-        Some(agent_def) => {
-            let card = distri::a2a::agent_def_to_card(
-                agent_def,
-                server_config.get_ref().clone(),
-                "http://127.0.0.1:8080",
-            );
-            HttpResponse::Ok().json(card)
+    match agent_store.get_agent(&agent_id).await {
+        Ok(Some(agent)) => match agent {
+            Agent::Local(def) | Agent::Runnable(def) => {
+                let card = distri::a2a::agent_def_to_card(
+                    &def,
+                    server_config.get_ref().clone(),
+                    "http://127.0.0.1:8080",
+                );
+                HttpResponse::Ok().json(card)
+            }
+            Agent::Remote(_) => HttpResponse::BadRequest().json(json!({
+                "error": "Remote agent cards not supported"
+            })),
+        },
+        Ok(None) => HttpResponse::NotFound().finish(),
+        Err(e) => HttpResponse::InternalServerError().json(json!({
+            "error": format!("Failed to get agent: {}", e)
+        })),
+    }
+}
+
+// Agent creation request
+#[derive(Deserialize)]
+struct CreateAgentRequest {
+    agent: Agent,
+}
+
+// Agent update request  
+#[derive(Deserialize)]
+struct UpdateAgentRequest {
+    agent: Agent,
+}
+
+async fn create_agent(
+    request: web::Json<CreateAgentRequest>,
+    agent_store: web::Data<Arc<Box<dyn AgentStore>>>,
+) -> HttpResponse {
+    match agent_store.create_agent(request.agent.clone()).await {
+        Ok(()) => {
+            let agent_id = match &request.agent {
+                Agent::Local(def) | Agent::Runnable(def) => &def.name,
+                Agent::Remote(url) => url,
+            };
+            HttpResponse::Created().json(json!({
+                "agent_id": agent_id,
+                "status": "created"
+            }))
         }
-        None => HttpResponse::NotFound().finish(),
+        Err(e) => HttpResponse::BadRequest().json(json!({
+            "error": format!("Failed to create agent: {}", e)
+        })),
+    }
+}
+
+async fn update_agent(
+    id: web::Path<String>,
+    request: web::Json<UpdateAgentRequest>,
+    agent_store: web::Data<Arc<Box<dyn AgentStore>>>,
+) -> HttpResponse {
+    let agent_id = id.into_inner();
+    match agent_store.update_agent(&agent_id, request.agent.clone()).await {
+        Ok(()) => HttpResponse::Ok().json(json!({
+            "agent_id": agent_id,
+            "status": "updated"
+        })),
+        Err(e) => HttpResponse::BadRequest().json(json!({
+            "error": format!("Failed to update agent: {}", e)
+        })),
+    }
+}
+
+async fn delete_agent(
+    id: web::Path<String>,
+    agent_store: web::Data<Arc<Box<dyn AgentStore>>>,
+) -> HttpResponse {
+    let agent_id = id.into_inner();
+    match agent_store.delete_agent(&agent_id).await {
+        Ok(()) => HttpResponse::Ok().json(json!({
+            "agent_id": agent_id,
+            "status": "deleted"
+        })),
+        Err(e) => HttpResponse::BadRequest().json(json!({
+            "error": format!("Failed to delete agent: {}", e)
+        })),
     }
 }
 

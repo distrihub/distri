@@ -115,7 +115,7 @@ mod tests {
 
     use crate::{
         coordinator::{CoordinatorContext, LocalCoordinator},
-        store::{LocalMemoryStore, MemoryStore},
+        store::{HashMapAgentStore, LocalMemoryStore, MemoryStore},
         tests::utils::{get_registry, get_tools_session_store},
     };
 
@@ -133,8 +133,10 @@ mod tests {
             Box::new(LocalMemoryStore::new()) as Box<dyn MemoryStore>
         ));
         let tool_sessions = get_tools_session_store();
+        let agent_store = Arc::new(Box::new(HashMapAgentStore::new()) as Box<dyn crate::store::AgentStore>);
         let coordinator = Arc::new(LocalCoordinator::new(
             registry.clone(),
+            agent_store,
             tool_sessions,
             memory_store,
             context.clone(),

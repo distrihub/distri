@@ -60,6 +60,7 @@ pub enum TransportAuth {
 pub enum Agent {
     Local(AgentDefinition),
     Remote(String),
+    Runnable(AgentDefinition),
 }
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 #[serde(deny_unknown_fields)]

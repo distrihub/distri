@@ -1,7 +1,7 @@
 use crate::{
     coordinator::{self, CoordinatorContext, LocalCoordinator, DISTRI_LOCAL_SERVER},
     memory::{file_memory_store::FileMemoryStore, AgentMemory, MemoryConfig},
-    store::{LocalMemoryStore, MemoryStore},
+    store::{HashMapAgentStore, LocalMemoryStore, MemoryStore},
     types::{ExternalMcpServer, TransportType},
     ToolSessionStore,
 };
@@ -110,8 +110,10 @@ pub async fn init_registry_and_coordinator(
         )),
     };
 
+    let agent_store = Arc::new(Box::new(HashMapAgentStore::new()) as Box<dyn crate::store::AgentStore>);
     let coordinator = Arc::new(LocalCoordinator::new(
         server_registry.clone(),
+        agent_store,
         tool_sessions,
         memory_store,
         context.clone(),
