@@ -1,11 +1,12 @@
 use actix_web::{web, HttpRequest, HttpResponse, Responder};
 use actix_web_lab::sse::{self, Sse};
 use distri::coordinator::{AgentCoordinator, AgentEvent, LocalCoordinator};
-use distri::types::{ServerConfig, AgentDefinition};
-use distri::{memory::TaskStep, TaskStore, AgentStore};
+use distri::types::{AgentDefinition, ServerConfig};
+use distri::AgentStore;
+use distri::{memory::TaskStep, TaskStore};
 use distri_a2a::{
     AgentCard, JsonRpcError, JsonRpcRequest, JsonRpcResponse, Message as A2aMessage,
-    MessageSendParams, Part, Role, Task, TaskIdParams, TaskState, TaskStatus, TextPart,
+    MessageSendParams, Part, Role, TaskIdParams, TaskState, TaskStatus, TextPart,
 };
 use futures_util::StreamExt;
 use serde_json::json;
@@ -51,7 +52,7 @@ async fn list_agents(
     match agent_store.list_agents(None).await {
         Ok((agent_defs, _)) => {
             let mut agent_cards = Vec::new();
-            
+
             for def in agent_defs {
                 // Get tools for this agent if it's local
                 let tools = agent_store.get_tools(&def.name).await.unwrap_or_default();
@@ -63,14 +64,12 @@ async fn list_agents(
                 );
                 agent_cards.push(card);
             }
-            
+
             HttpResponse::Ok().json(agent_cards)
         }
-        Err(e) => {
-            HttpResponse::InternalServerError().json(json!({
-                "error": format!("Failed to list agents: {}", e)
-            }))
-        }
+        Err(e) => HttpResponse::InternalServerError().json(json!({
+            "error": format!("Failed to list agents: {}", e)
+        })),
     }
 }
 
@@ -80,7 +79,7 @@ async fn get_agent_card(
     server_config: web::Data<ServerConfig>,
 ) -> HttpResponse {
     let agent_id = id.into_inner();
-    
+
     match get_agent_info(&agent_id, &agent_store).await {
         Ok(agent_def) => {
             // For local agents, get their tools. For remote agents, tools are in skills
@@ -89,7 +88,7 @@ async fn get_agent_card(
             } else {
                 vec![] // Remote agent tools would be derived from skills
             };
-            
+
             let card = distri::a2a::agent_def_to_card_with_tools(
                 &agent_def,
                 server_config.get_ref().clone(),
@@ -98,11 +97,9 @@ async fn get_agent_card(
             );
             HttpResponse::Ok().json(card)
         }
-        Err(e) => {
-            HttpResponse::NotFound().json(json!({
-                "error": e
-            }))
-        }
+        Err(e) => HttpResponse::NotFound().json(json!({
+            "error": e
+        })),
     }
 }
 
@@ -748,7 +745,7 @@ async fn well_known_agent_cards(
     match agent_store.list_agents(None).await {
         Ok((agent_defs, _)) => {
             let mut agent_cards = Vec::new();
-            
+
             for def in agent_defs {
                 // Get tools for this agent
                 let tools = agent_store.get_tools(&def.name).await.unwrap_or_default();
@@ -760,14 +757,12 @@ async fn well_known_agent_cards(
                 );
                 agent_cards.push(card);
             }
-            
+
             HttpResponse::Ok().json(agent_cards)
         }
-        Err(e) => {
-            HttpResponse::InternalServerError().json(json!({
-                "error": format!("Failed to list agents: {}", e)
-            }))
-        }
+        Err(e) => HttpResponse::InternalServerError().json(json!({
+            "error": format!("Failed to list agents: {}", e)
+        })),
     }
 }
 
@@ -777,7 +772,7 @@ async fn well_known_agent_card(
     server_config: web::Data<ServerConfig>,
 ) -> HttpResponse {
     let agent_id = id.into_inner();
-    
+
     match agent_store.get_agent(&agent_id).await {
         Ok(agent_def) => {
             let tools = agent_store.get_tools(&agent_id).await.unwrap_or_default();
@@ -831,7 +826,7 @@ fn is_remote_agent(agent_id: &str) -> bool {
 // Helper function to fetch remote agent info via a2a .well-known route
 async fn fetch_remote_agent_info(agent_url: &str) -> Result<AgentDefinition, String> {
     let client = reqwest::Client::new();
-    
+
     // Extract base URL and agent name from the agent_id
     let (base_url, agent_name) = if agent_url.contains("://") {
         // Full URL provided
@@ -854,7 +849,7 @@ async fn fetch_remote_agent_info(agent_url: &str) -> Result<AgentDefinition, Str
 
     // Fetch agent card from .well-known route
     let url = format!("{}/.well-known/agent-cards/{}", base_url, agent_name);
-    
+
     match client.get(&url).send().await {
         Ok(response) => {
             if response.status().is_success() {
@@ -886,12 +881,15 @@ async fn fetch_remote_agent_info(agent_url: &str) -> Result<AgentDefinition, Str
 }
 
 // Helper function for domain-based agent lookups
-async fn fetch_remote_agent_info_from_domain(base_url: &str, agent_name: &str) -> Result<AgentDefinition, String> {
+async fn fetch_remote_agent_info_from_domain(
+    base_url: &str,
+    agent_name: &str,
+) -> Result<AgentDefinition, String> {
     let client = reqwest::Client::new();
-    
+
     // Fetch agent card from .well-known route
     let url = format!("{}/.well-known/agent-cards/{}", base_url, agent_name);
-    
+
     match client.get(&url).send().await {
         Ok(response) => {
             if response.status().is_success() {
@@ -930,7 +928,9 @@ async fn get_agent_info(
     if is_remote_agent(agent_id) {
         fetch_remote_agent_info(agent_id).await
     } else {
-        agent_store.get_agent(agent_id).await
+        agent_store
+            .get_agent(agent_id)
+            .await
             .map_err(|e| format!("Local agent not found: {}", e))
     }
 }
