@@ -35,10 +35,6 @@ pub fn config(cfg: &mut web::ServiceConfig) {
                     .route(web::delete().to(delete_thread_handler)),
             )
             .service(
-                web::resource("/threads/{thread_id}/messages")
-                    .route(web::post().to(send_message_to_thread_handler)),
-            )
-            .service(
                 web::resource("/threads/{thread_id}/events")
                     .route(web::get().to(thread_events_handler)),
             ),
@@ -91,7 +87,7 @@ struct EventQuery {
 }
 
 async fn sse_handler(
-    req: HttpRequest,
+    _req: HttpRequest,
     id: web::Path<String>,
     query: web::Query<EventQuery>,
     event_broadcaster: web::Data<broadcast::Sender<String>>,
@@ -229,45 +225,30 @@ async fn handle_message_send(
         data: None,
     })?;
 
-    // Extract or create thread ID from context_id
-    let thread_id = params
+    let run_id = params
         .message
-        .context_id
+        .task_id
         .clone()
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
     // Check if thread exists, create if not
-    let thread_exists = coordinator
-        .get_thread(&thread_id)
+    let thread = coordinator
+        .ensure_thread_exists(
+            &agent_id,
+            params.message.context_id.as_deref(),
+            Some(extract_text_from_message(&params.message)),
+        )
         .await
         .map_err(|e| JsonRpcError {
             code: -32603,
-            message: format!("Failed to check thread: {}", e),
+            message: format!("Failed to ensure thread exists: {}", e),
             data: None,
-        })?
-        .is_some();
+        })?;
 
-    if !thread_exists {
-        // Auto-create thread for this agent and context
-        let create_request = distri::types::CreateThreadRequest {
-            agent_id: agent_id.clone(),
-            title: None, // Will be auto-generated from first message
-            initial_message: Some(extract_text_from_message(&params.message)),
-        };
-
-        coordinator
-            .create_thread(create_request)
-            .await
-            .map_err(|e| JsonRpcError {
-                code: -32603,
-                message: format!("Failed to create thread: {}", e),
-                data: None,
-            })?;
-    }
-
-    // Create a new task
+    let thread_id = thread.id;
+    // Create a new task with run_id
     let task = task_store
-        .create_task(&agent_id, &thread_id, "message")
+        .create_task(&agent_id, &thread_id, "message", Some(&run_id))
         .await
         .map_err(|e| JsonRpcError {
             code: -32603,
@@ -309,8 +290,15 @@ async fn handle_message_send(
     );
 
     // Execute the task using the coordinator with thread context
+    let coordinator_context = Arc::new(distri::coordinator::CoordinatorContext::new(
+        thread_id.clone(),
+        run_id.clone(),
+        coordinator.context.verbose,
+        coordinator.context.user_id.clone(),
+        coordinator.context.tools_context.clone(),
+    ));
     let execution_result = coordinator
-        .execute(&agent_id, task_step, None, Some(&thread_id))
+        .execute(&agent_id, task_step, None, coordinator_context.clone())
         .await;
 
     let mut broadcast_status = "completed";
@@ -407,45 +395,30 @@ async fn handle_message_send_streaming(
         data: None,
     })?;
 
-    // Extract or create thread ID from context_id
-    let thread_id = params
-        .message
-        .context_id
-        .clone()
-        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-
     // Check if thread exists, create if not
-    let thread_exists = coordinator
-        .get_thread(&thread_id)
+    let thread = coordinator
+        .ensure_thread_exists(
+            &agent_id,
+            params.message.context_id.as_deref(),
+            Some(extract_text_from_message(&params.message)),
+        )
         .await
         .map_err(|e| JsonRpcError {
             code: -32603,
-            message: format!("Failed to check thread: {}", e),
+            message: format!("Failed to ensure thread exists: {}", e),
             data: None,
-        })?
-        .is_some();
+        })?;
 
-    if !thread_exists {
-        // Auto-create thread for this agent and context
-        let create_request = distri::types::CreateThreadRequest {
-            agent_id: agent_id.clone(),
-            title: None, // Will be auto-generated from first message
-            initial_message: Some(extract_text_from_message(&params.message)),
-        };
+    let thread_id = thread.id;
+    let run_id = params
+        .message
+        .task_id
+        .clone()
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
-        coordinator
-            .create_thread(create_request)
-            .await
-            .map_err(|e| JsonRpcError {
-                code: -32603,
-                message: format!("Failed to create thread: {}", e),
-                data: None,
-            })?;
-    }
-
-    // Create a new task
+    // Create a new task with run_id
     let task = task_store
-        .create_task(&agent_id, &thread_id, "message")
+        .create_task(&agent_id, &thread_id, "message", Some(&run_id))
         .await
         .map_err(|e| JsonRpcError {
             code: -32603,
@@ -529,8 +502,21 @@ async fn handle_message_send_streaming(
     });
 
     // Execute the task using streaming with thread context
+    let coordinator_context = Arc::new(distri::coordinator::CoordinatorContext::new(
+        thread_id.clone(),
+        run_id.clone(),
+        coordinator.context.verbose,
+        coordinator.context.user_id.clone(),
+        coordinator.context.tools_context.clone(),
+    ));
     let execution_result = coordinator
-        .execute_stream(&agent_id, task_step, None, event_tx, Some(&thread_id))
+        .execute_stream(
+            &agent_id,
+            task_step,
+            None,
+            event_tx,
+            coordinator_context.clone(),
+        )
         .await;
 
     let final_status = match execution_result {
@@ -706,40 +692,6 @@ async fn delete_thread_handler(
             "error": format!("Failed to delete thread: {}", e)
         })),
     }
-}
-
-// Note: Thread message sending is handled through A2A protocol in jsonrpc_handler
-// with automatic thread creation. This endpoint is kept for potential future use
-// or direct thread-based messaging if needed.
-
-async fn send_message_to_thread_handler(
-    path: web::Path<String>,
-    _request: web::Json<serde_json::Value>,
-    _coordinator: web::Data<Arc<LocalCoordinator>>,
-) -> HttpResponse {
-    let _thread_id = path.into_inner();
-
-    // Return information about using A2A protocol instead
-    HttpResponse::BadRequest().json(json!({
-        "error": "Direct thread messaging not supported. Use A2A protocol via /agents/{agent_id} endpoint with context_id.",
-        "instructions": {
-            "method": "POST",
-            "url": "/api/v1/agents/{agent_id}",
-            "body": {
-                "jsonrpc": "2.0",
-                "method": "message/send",
-                "params": {
-                    "message": {
-                        "messageId": "unique-id",
-                        "role": "user", 
-                        "parts": [{"kind": "text", "text": "your message"}],
-                        "contextId": "thread-id-or-will-be-created"
-                    }
-                },
-                "id": "request-id"
-            }
-        }
-    }))
 }
 
 async fn thread_events_handler(

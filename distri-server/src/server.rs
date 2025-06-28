@@ -1,6 +1,7 @@
+use actix_web::middleware::Logger;
 use actix_web::{web, App, HttpServer};
 use anyhow::Result;
-use distri::{coordinator::LocalCoordinator, types::ServerConfig, TaskStore, HashMapTaskStore};
+use distri::{coordinator::LocalCoordinator, types::ServerConfig, HashMapTaskStore, TaskStore};
 use std::sync::Arc;
 use tokio::sync::broadcast;
 
@@ -15,16 +16,19 @@ pub struct A2AServer {
 impl A2AServer {
     pub fn new(coordinator: Arc<LocalCoordinator>) -> Self {
         let (event_broadcaster, _) = broadcast::channel(1000);
-        Self { 
+        Self {
             coordinator,
             task_store: Arc::new(HashMapTaskStore::new()),
             event_broadcaster,
         }
     }
 
-    pub fn with_task_store(coordinator: Arc<LocalCoordinator>, task_store: Arc<dyn TaskStore>) -> Self {
+    pub fn with_task_store(
+        coordinator: Arc<LocalCoordinator>,
+        task_store: Arc<dyn TaskStore>,
+    ) -> Self {
         let (event_broadcaster, _) = broadcast::channel(1000);
-        Self { 
+        Self {
             coordinator,
             task_store,
             event_broadcaster,
@@ -38,6 +42,7 @@ impl A2AServer {
 
         HttpServer::new(move || {
             App::new()
+                .wrap(Logger::default())
                 .app_data(web::Data::new(coordinator.clone()))
                 .app_data(web::Data::new(task_store.clone()))
                 .app_data(web::Data::new(event_broadcaster.clone()))

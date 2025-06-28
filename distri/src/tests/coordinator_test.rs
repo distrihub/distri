@@ -78,6 +78,7 @@ async fn test_agent_coordination() -> anyhow::Result<()> {
                 task_images: None,
             },
             None,
+            Arc::default(),
         )
         .await?;
     info!("Agent 2 result: {}", agent2_result);
@@ -158,7 +159,9 @@ async fn test_agent_coordination_streaming() -> anyhow::Result<()> {
     });
 
     // Execute streaming task
-    agent_handle.execute_stream(task, None, event_tx).await?;
+    agent_handle
+        .execute_stream(task, None, event_tx, Arc::default())
+        .await?;
 
     // Wait for event handling to complete
     event_handle.await?;

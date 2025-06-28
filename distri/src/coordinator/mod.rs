@@ -106,13 +106,15 @@ pub enum CoordinatorMessage {
         agent_id: String,
         task: TaskStep,
         params: Option<serde_json::Value>,
+        context: std::sync::Arc<CoordinatorContext>,
         response_tx: oneshot::Sender<Result<String, AgentError>>,
     },
     ExecuteStream {
         agent_id: String,
         task: TaskStep,
         params: Option<serde_json::Value>,
-        event_tx: mpsc::Sender<AgentEvent>,
+        event_tx: tokio::sync::mpsc::Sender<AgentEvent>,
+        context: std::sync::Arc<CoordinatorContext>,
     },
 }
 
@@ -136,15 +138,15 @@ pub trait AgentCoordinator {
         agent_name: &str,
         task: TaskStep,
         params: Option<serde_json::Value>,
-        context_id: Option<&str>,
+        context: std::sync::Arc<CoordinatorContext>,
     ) -> Result<String, AgentError>;
     async fn execute_stream(
         &self,
         agent_name: &str,
         task: TaskStep,
         params: Option<serde_json::Value>,
-        event_tx: mpsc::Sender<AgentEvent>,
-        context_id: Option<&str>,
+        event_tx: tokio::sync::mpsc::Sender<AgentEvent>,
+        context: std::sync::Arc<CoordinatorContext>,
     ) -> Result<(), AgentError>;
 }
 
@@ -171,6 +173,7 @@ impl AgentHandle {
         &self,
         task: TaskStep,
         params: Option<serde_json::Value>,
+        context: std::sync::Arc<CoordinatorContext>,
     ) -> Result<String, AgentError> {
         let (response_tx, response_rx) = oneshot::channel();
         self.coordinator_tx
@@ -178,6 +181,7 @@ impl AgentHandle {
                 agent_id: self.agent_id.clone(),
                 task,
                 params,
+                context,
                 response_tx,
             })
             .await
@@ -192,7 +196,8 @@ impl AgentHandle {
         &self,
         task: TaskStep,
         params: Option<serde_json::Value>,
-        event_tx: mpsc::Sender<AgentEvent>,
+        event_tx: tokio::sync::mpsc::Sender<AgentEvent>,
+        context: std::sync::Arc<CoordinatorContext>,
     ) -> Result<(), AgentError> {
         self.coordinator_tx
             .send(CoordinatorMessage::ExecuteStream {
@@ -200,6 +205,7 @@ impl AgentHandle {
                 task,
                 params,
                 event_tx,
+                context,
             })
             .await
             .map_err(|e| AgentError::ToolExecution(format!("Failed to execute agent: {}", e)))

@@ -19,10 +19,11 @@ pub static DISTRI_LOCAL_SERVER: &str = "distri_agents";
 pub fn build_server<T: Transport>(
     transport: T,
     coordinator: Arc<LocalCoordinator>,
-    _context: Arc<CoordinatorContext>,
+    context: Arc<CoordinatorContext>,
 ) -> Result<Server<T>, AgentError> {
     let coordinator_clone = coordinator.clone();
     let coordinator_clone2 = coordinator.clone();
+    let context_clone = context.clone();
     let server = Server::builder(transport)
         .capabilities(ServerCapabilities::default())
         .request_handler("tools/list", move |req: ListRequest| {
@@ -65,6 +66,7 @@ pub fn build_server<T: Transport>(
         })
         .request_handler("tools/call", move |req: CallToolRequest| {
             let coordinator = coordinator_clone2.clone();
+            let context_clone = context_clone.clone();
             Box::pin(async move {
                 let agent_name = req.name.clone();
                 let args = req.arguments.unwrap_or_default();
@@ -78,6 +80,7 @@ pub fn build_server<T: Transport>(
                             task_images: None,
                         },
                         None,
+                        context_clone.clone(),
                     )
                     .await
                     .map_err(|e| AgentError::ToolExecution(e.to_string()));

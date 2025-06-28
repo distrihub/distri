@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { MessageSquare, Settings, Activity, Loader2, Plus, Bot } from 'lucide-react';
 import Chat from './components/Chat';
 import AgentList from './components/AgentList';
 import TaskMonitor from './components/TaskMonitor';
+import { v4 as uuidv4 } from 'uuid';
 
 interface Agent {
   id: string;
@@ -60,16 +61,16 @@ function App() {
       const response = await fetch('/api/v1/threads');
       if (response.ok) {
         const threadList = await response.json();
-        
+
         // Merge server threads with any local threads that may not be persisted yet
         setThreads((currentThreads: Thread[]) => {
           const serverThreadIds = new Set(threadList.map((t: Thread) => t.id));
           const localThreads = currentThreads.filter(t => !serverThreadIds.has(t.id));
-          
+
           // Combine server threads with local threads, server threads first
           return [...threadList, ...localThreads];
         });
-        
+
         // Select the first thread if none is selected
         if (threadList.length > 0 && !selectedThread) {
           setSelectedThread(threadList[0]);
@@ -86,10 +87,8 @@ function App() {
 
     setCreatingThread(true);
     try {
-      // Generate a new thread ID that will be used as contextId in A2A messages
-      // The actual thread will be created automatically when the first message is sent
-      const newThreadId = `thread-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-      
+      const newThreadId = uuidv4();
+
       const threadSummary: Thread = {
         id: newThreadId,
         title: 'New conversation',
@@ -99,7 +98,7 @@ function App() {
         message_count: 0,
         last_message: undefined,
       };
-      
+
       setThreads((prev: Thread[]) => [threadSummary, ...prev]);
       setSelectedThread(threadSummary);
     } catch (error) {
@@ -109,30 +108,6 @@ function App() {
     }
   };
 
-  const updateThreadTitle = async (threadId: string, newTitle: string) => {
-    try {
-      const response = await fetch(`/api/v1/threads/${threadId}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          title: newTitle,
-        }),
-      });
-
-      if (response.ok) {
-        setThreads((prev: Thread[]) => prev.map((thread: Thread) => 
-          thread.id === threadId ? { ...thread, title: newTitle } : thread
-        ));
-        if (selectedThread?.id === threadId) {
-          setSelectedThread((prev: Thread | null) => prev ? { ...prev, title: newTitle } : null);
-        }
-      }
-    } catch (error) {
-      console.error('Failed to update thread title:', error);
-    }
-  };
 
   const deleteThread = async (threadId: string) => {
     try {
@@ -167,12 +142,12 @@ function App() {
           last_message: updatedThread.last_message,
         };
 
-        setThreads((prev: Thread[]) => 
-          prev.map((thread: Thread) => 
+        setThreads((prev: Thread[]) =>
+          prev.map((thread: Thread) =>
             thread.id === threadId ? threadSummary : thread
           )
         );
-        
+
         if (selectedThread?.id === threadId) {
           setSelectedThread(threadSummary);
         }
@@ -203,7 +178,7 @@ function App() {
               <h1 className="text-2xl font-bold text-gray-900">Distri</h1>
               <span className="text-sm text-gray-500">AI Agent Platform</span>
             </div>
-            
+
             {/* Agent Selector */}
             <div className="flex items-center space-x-4">
               <div className="flex items-center space-x-2">
@@ -223,37 +198,34 @@ function App() {
                   ))}
                 </select>
               </div>
-              
+
               <div className="flex bg-gray-100 rounded-lg p-1">
                 <button
                   onClick={() => setActiveTab('chat')}
-                  className={`flex items-center space-x-1 px-3 py-1 rounded text-sm font-medium transition-colors ${
-                    activeTab === 'chat'
-                      ? 'bg-white text-blue-600 shadow-sm'
-                      : 'text-gray-600 hover:text-gray-900'
-                  }`}
+                  className={`flex items-center space-x-1 px-3 py-1 rounded text-sm font-medium transition-colors ${activeTab === 'chat'
+                    ? 'bg-white text-blue-600 shadow-sm'
+                    : 'text-gray-600 hover:text-gray-900'
+                    }`}
                 >
                   <MessageSquare className="h-4 w-4" />
                   <span>Chat</span>
                 </button>
                 <button
                   onClick={() => setActiveTab('agents')}
-                  className={`flex items-center space-x-1 px-3 py-1 rounded text-sm font-medium transition-colors ${
-                    activeTab === 'agents'
-                      ? 'bg-white text-blue-600 shadow-sm'
-                      : 'text-gray-600 hover:text-gray-900'
-                  }`}
+                  className={`flex items-center space-x-1 px-3 py-1 rounded text-sm font-medium transition-colors ${activeTab === 'agents'
+                    ? 'bg-white text-blue-600 shadow-sm'
+                    : 'text-gray-600 hover:text-gray-900'
+                    }`}
                 >
                   <Settings className="h-4 w-4" />
                   <span>Agents</span>
                 </button>
                 <button
                   onClick={() => setActiveTab('tasks')}
-                  className={`flex items-center space-x-1 px-3 py-1 rounded text-sm font-medium transition-colors ${
-                    activeTab === 'tasks'
-                      ? 'bg-white text-blue-600 shadow-sm'
-                      : 'text-gray-600 hover:text-gray-900'
-                  }`}
+                  className={`flex items-center space-x-1 px-3 py-1 rounded text-sm font-medium transition-colors ${activeTab === 'tasks'
+                    ? 'bg-white text-blue-600 shadow-sm'
+                    : 'text-gray-600 hover:text-gray-900'
+                    }`}
                 >
                   <Activity className="h-4 w-4" />
                   <span>Tasks</span>
@@ -285,7 +257,7 @@ function App() {
                   <span>New</span>
                 </button>
               </div>
-              
+
               {threads.length === 0 ? (
                 <div className="text-center py-8">
                   <MessageSquare className="h-12 w-12 text-gray-400 mx-auto mb-4" />
@@ -300,11 +272,10 @@ function App() {
                     <div
                       key={thread.id}
                       onClick={() => setSelectedThread(thread)}
-                      className={`p-3 rounded-lg cursor-pointer transition-colors border ${
-                        selectedThread?.id === thread.id
-                          ? 'bg-blue-50 border-blue-200'
-                          : 'hover:bg-gray-50 border-transparent'
-                      }`}
+                      className={`p-3 rounded-lg cursor-pointer transition-colors border ${selectedThread?.id === thread.id
+                        ? 'bg-blue-50 border-blue-200'
+                        : 'hover:bg-gray-50 border-transparent'
+                        }`}
                     >
                       <div className="flex items-start justify-between">
                         <div className="flex-1 min-w-0">
@@ -335,8 +306,8 @@ function App() {
           {/* Main Content Area */}
           <div className="lg:col-span-3">
             {activeTab === 'chat' && selectedThread && selectedAgent && (
-              <Chat 
-                thread={selectedThread} 
+              <Chat
+                thread={selectedThread}
                 agent={selectedAgent}
                 onThreadUpdate={() => updateSpecificThread(selectedThread.id)}
               />
@@ -349,7 +320,7 @@ function App() {
                   {selectedAgent ? 'Start a conversation' : 'Select an agent'}
                 </h3>
                 <p className="text-gray-500">
-                  {selectedAgent 
+                  {selectedAgent
                     ? 'Click "New" to create your first conversation'
                     : 'Choose an agent from the dropdown to begin'
                   }

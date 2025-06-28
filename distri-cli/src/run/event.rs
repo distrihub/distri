@@ -20,7 +20,7 @@ pub async fn run(
                 task_images: None,
             },
             None,
-            None, // No thread context for event execution
+            Arc::default(), // No thread context for event execution
         )
         .await
     {
