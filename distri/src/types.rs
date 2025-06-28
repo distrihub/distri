@@ -10,8 +10,17 @@ use std::{collections::HashMap, time::SystemTime};
 // Removed unused A2A imports
 use chrono;
 use uuid;
+use async_trait;
+use std::sync::Arc;
+use tokio::sync::mpsc;
+use async_openai::types::CreateChatCompletionResponse;
 
-use crate::servers::registry::ServerMetadata;
+use crate::{
+    coordinator::{AgentCoordinator, AgentEvent, CoordinatorContext},
+    error::AgentError,
+    memory::TaskStep,
+    servers::registry::ServerMetadata,
+};
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub enum _AuthType {
@@ -62,6 +71,54 @@ pub enum Agent {
     Remote(String),
     Runnable(AgentDefinition),
 }
+
+/// Base trait for all agent implementations
+#[async_trait::async_trait]
+pub trait BaseAgent: Send + Sync {
+    /// Plan the execution for a given task step
+    async fn plan(
+        &self,
+        task: &TaskStep,
+        coordinator: &dyn AgentCoordinator,
+    ) -> Result<(), AgentError>;
+
+    /// Execute a task step and return the result
+    async fn invoke(
+        &self,
+        task: TaskStep,
+        params: Option<serde_json::Value>,
+        coordinator: &dyn AgentCoordinator,
+        context: Arc<CoordinatorContext>,
+    ) -> Result<String, AgentError>;
+
+    /// Execute a task step with streaming support
+    async fn invoke_stream(
+        &self,
+        task: TaskStep,
+        params: Option<serde_json::Value>,
+        coordinator: &dyn AgentCoordinator,
+        context: Arc<CoordinatorContext>,
+        event_tx: mpsc::Sender<AgentEvent>,
+    ) -> Result<(), AgentError>;
+}
+
+/// Trait for runnable agents that can implement custom step logic
+#[async_trait::async_trait]
+pub trait RunnableAgent: Send + Sync {
+    /// Perform a single LLM step with custom logic
+    /// The `llm` function can be called to perform the actual LLM call
+    async fn step<F, Fut>(
+        &self,
+        messages: &[Message],
+        params: Option<serde_json::Value>,
+        context: Arc<CoordinatorContext>,
+        llm: F,
+    ) -> Result<CreateChatCompletionResponse, AgentError>
+    where
+        F: Fn(&[Message], Option<serde_json::Value>) -> Fut + Send + Sync,
+        Fut: std::future::Future<Output = Result<CreateChatCompletionResponse, AgentError>> + Send;
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 #[serde(deny_unknown_fields)]
 pub struct RemoteAgent {

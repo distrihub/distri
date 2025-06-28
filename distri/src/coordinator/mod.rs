@@ -126,7 +126,7 @@ pub struct AgentHandle {
 }
 
 #[async_trait::async_trait]
-pub trait AgentCoordinator {
+pub trait AgentCoordinator: Send + Sync {
     async fn list_agents(
         &self,
         cursor: Option<String>,

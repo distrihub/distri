@@ -851,7 +851,14 @@ impl AgentCoordinator for LocalCoordinator {
         params: Option<serde_json::Value>,
         context: Arc<CoordinatorContext>,
     ) -> Result<String, AgentError> {
-        let result = self.call_agent(agent_name, task, params, context).await?;
+        // Get the agent from the store
+        let agent = self.agent_store.get_agent(agent_name).await
+            .map_err(|e| AgentError::Session(e.to_string()))?
+            .ok_or_else(|| AgentError::NotFound(format!("Agent '{}' not found", agent_name)))?;
+
+        // Create the appropriate agent implementation and delegate
+        let agent_impl = crate::agents::create_agent(&agent);
+        let result = agent_impl.invoke(task, params, self, context).await?;
 
         // Update thread store with agent definitions for thread listing
         self.update_thread_store_with_agents().await?;
@@ -867,8 +874,14 @@ impl AgentCoordinator for LocalCoordinator {
         event_tx: mpsc::Sender<AgentEvent>,
         context: Arc<CoordinatorContext>,
     ) -> Result<(), AgentError> {
-        self.call_agent_stream(agent_name, task, params, context, event_tx)
-            .await?;
+        // Get the agent from the store
+        let agent = self.agent_store.get_agent(agent_name).await
+            .map_err(|e| AgentError::Session(e.to_string()))?
+            .ok_or_else(|| AgentError::NotFound(format!("Agent '{}' not found", agent_name)))?;
+
+        // Create the appropriate agent implementation and delegate
+        let agent_impl = crate::agents::create_agent(&agent);
+        agent_impl.invoke_stream(task, params, self, context, event_tx).await?;
 
         // Update thread store with agent definitions for thread listing
         self.update_thread_store_with_agents().await?;
