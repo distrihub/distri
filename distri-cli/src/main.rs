@@ -9,9 +9,9 @@ use distri::{
     memory::MemoryConfig,
     servers::{
         kg::FileMemory,
-        registry::{ServerRegistry, init_registry_and_coordinator},
+        registry::{init_registry_and_coordinator, ServerRegistry},
     },
-    types::{Configuration, RunWorkflow, get_distri_config_schema},
+    types::{get_distri_config_schema, Configuration},
 };
 use distri_server::A2AServer;
 use dotenv::dotenv;

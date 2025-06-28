@@ -19,7 +19,7 @@ pub static DISTRI_LOCAL_SERVER: &str = "distri_agents";
 pub fn build_server<T: Transport>(
     transport: T,
     coordinator: Arc<LocalCoordinator>,
-    context: Arc<CoordinatorContext>,
+    _context: Arc<CoordinatorContext>,
 ) -> Result<Server<T>, AgentError> {
     let coordinator_clone = coordinator.clone();
     let coordinator_clone2 = coordinator.clone();

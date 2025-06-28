@@ -1,15 +1,14 @@
 use actix_web::{web, HttpRequest, HttpResponse, Responder};
 use actix_web_lab::sse::{self, Sse};
 use distri::coordinator::{AgentCoordinator, AgentEvent, LocalCoordinator};
-use distri::types::{ServerConfig, CreateThreadRequest, UpdateThreadRequest, ThreadSummary};
+use distri::types::{ServerConfig, UpdateThreadRequest};
 use distri::{memory::TaskStep, TaskStore};
 use distri_a2a::{
     AgentCard, JsonRpcError, JsonRpcRequest, JsonRpcResponse, Message as A2aMessage,
-    MessageSendParams, Part, Role, Task, TaskIdParams, TaskState, TaskStatus, TextPart,
+    MessageSendParams, Part, Role, TaskIdParams, TaskState, TaskStatus, TextPart,
 };
-use futures_util::StreamExt;
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde::Deserialize;
+use serde_json::json;
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
 use uuid::Uuid;
@@ -238,7 +237,9 @@ async fn handle_message_send(
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
     // Check if thread exists, create if not
-    let thread_exists = coordinator.get_thread(&thread_id).await
+    let thread_exists = coordinator
+        .get_thread(&thread_id)
+        .await
         .map_err(|e| JsonRpcError {
             code: -32603,
             message: format!("Failed to check thread: {}", e),
@@ -253,8 +254,10 @@ async fn handle_message_send(
             title: None, // Will be auto-generated from first message
             initial_message: Some(extract_text_from_message(&params.message)),
         };
-        
-        coordinator.create_thread(create_request).await
+
+        coordinator
+            .create_thread(create_request)
+            .await
             .map_err(|e| JsonRpcError {
                 code: -32603,
                 message: format!("Failed to create thread: {}", e),
@@ -306,7 +309,9 @@ async fn handle_message_send(
     );
 
     // Execute the task using the coordinator with thread context
-    let execution_result = coordinator.execute(&agent_id, task_step, None, Some(&thread_id)).await;
+    let execution_result = coordinator
+        .execute(&agent_id, task_step, None, Some(&thread_id))
+        .await;
 
     let mut broadcast_status = "completed";
     let final_status = match execution_result {
@@ -410,7 +415,9 @@ async fn handle_message_send_streaming(
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
     // Check if thread exists, create if not
-    let thread_exists = coordinator.get_thread(&thread_id).await
+    let thread_exists = coordinator
+        .get_thread(&thread_id)
+        .await
         .map_err(|e| JsonRpcError {
             code: -32603,
             message: format!("Failed to check thread: {}", e),
@@ -425,8 +432,10 @@ async fn handle_message_send_streaming(
             title: None, // Will be auto-generated from first message
             initial_message: Some(extract_text_from_message(&params.message)),
         };
-        
-        coordinator.create_thread(create_request).await
+
+        coordinator
+            .create_thread(create_request)
+            .await
             .map_err(|e| JsonRpcError {
                 code: -32603,
                 message: format!("Failed to create thread: {}", e),
@@ -468,7 +477,7 @@ async fn handle_message_send_streaming(
     // Create channel for streaming events
     let (event_tx, mut event_rx) = mpsc::channel(100);
     let task_id_clone = task.id.clone();
-    let thread_id_clone = thread_id.clone();
+
     let agent_id_clone = agent_id.clone();
     let event_broadcaster_clone = event_broadcaster.clone();
 
@@ -476,7 +485,11 @@ async fn handle_message_send_streaming(
     tokio::spawn(async move {
         while let Some(event) = event_rx.recv().await {
             let event_json = match event {
-                AgentEvent::TextMessageContent { delta, thread_id: evt_thread_id, .. } => {
+                AgentEvent::TextMessageContent {
+                    delta,
+                    thread_id: evt_thread_id,
+                    ..
+                } => {
                     json!({
                         "type": "text_delta",
                         "task_id": task_id_clone,
@@ -485,7 +498,10 @@ async fn handle_message_send_streaming(
                         "delta": delta
                     })
                 }
-                AgentEvent::RunFinished { thread_id: evt_thread_id, .. } => {
+                AgentEvent::RunFinished {
+                    thread_id: evt_thread_id,
+                    ..
+                } => {
                     json!({
                         "type": "task_completed",
                         "task_id": task_id_clone,
@@ -493,7 +509,11 @@ async fn handle_message_send_streaming(
                         "agent_id": agent_id_clone
                     })
                 }
-                AgentEvent::RunError { message, thread_id: evt_thread_id, .. } => {
+                AgentEvent::RunError {
+                    message,
+                    thread_id: evt_thread_id,
+                    ..
+                } => {
                     json!({
                         "type": "task_error",
                         "task_id": task_id_clone,
@@ -698,7 +718,7 @@ async fn send_message_to_thread_handler(
     _coordinator: web::Data<Arc<LocalCoordinator>>,
 ) -> HttpResponse {
     let _thread_id = path.into_inner();
-    
+
     // Return information about using A2A protocol instead
     HttpResponse::BadRequest().json(json!({
         "error": "Direct thread messaging not supported. Use A2A protocol via /agents/{agent_id} endpoint with context_id.",

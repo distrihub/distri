@@ -5,11 +5,11 @@ use mcp_proxy::types::ProxyServerConfig;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{self, json};
-use std::{collections::HashMap, fmt::Display, time::SystemTime};
+use std::{collections::HashMap, time::SystemTime};
 // Removed unused OpenAI imports
 // Removed unused A2A imports
-use uuid;
 use chrono;
+use uuid;
 
 use crate::servers::registry::ServerMetadata;
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -357,20 +357,6 @@ pub fn get_tool_description(tool: &Tool, template: &str) -> String {
         .replace("{inputs}", &tool.input_schema.to_string())
 }
 
-#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
-#[serde(tag = "mode")]
-pub enum RunWorkflow {
-    #[serde(rename = "chat")]
-    Chat,
-    #[serde(rename = "event")]
-    Event {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        times: Option<i64>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        every: Option<u64>,
-    },
-}
-
 #[derive(Debug, serde::Deserialize, JsonSchema)]
 pub struct AgentConfig {
     #[serde(flatten)]
@@ -444,15 +430,6 @@ pub fn get_distri_config_schema(pretty: bool) -> Result<String, serde_json::Erro
     Ok(schema_json)
 }
 
-impl Display for RunWorkflow {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            RunWorkflow::Chat => write!(f, "chat"),
-            RunWorkflow::Event { times, every } => write!(f, "event: {times:?}, every: {every:?}"),
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Thread {
     pub id: String,
@@ -484,11 +461,15 @@ impl Thread {
         self.updated_at = chrono::Utc::now();
         self.message_count += 1;
         self.last_message = Some(message.chars().take(100).collect());
-        
+
         // Auto-generate title from first message if it's still default
         if self.title == "New conversation" && self.message_count == 1 {
-            self.title = message.chars().take(50).collect::<String>()
-                .trim().to_string();
+            self.title = message
+                .chars()
+                .take(50)
+                .collect::<String>()
+                .trim()
+                .to_string();
             if self.title.is_empty() {
                 self.title = "Untitled conversation".to_string();
             }
