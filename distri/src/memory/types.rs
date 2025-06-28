@@ -60,7 +60,7 @@ pub struct TaskStep {
 
 pub trait AgentMemory: Send + Sync {
     fn as_any(&self) -> &dyn Any;
-    fn new() -> Self
+    fn new(thread_id: String) -> Self
     where
         Self: Sized;
     fn reset(&mut self);
@@ -71,24 +71,17 @@ pub trait AgentMemory: Send + Sync {
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub struct LocalAgentMemory {
-    pub steps: Vec<(Option<String>, MemoryStep)>, // (thread_id, step)
+    pub thread_id: String,
+    pub steps: Vec<MemoryStep>,
 }
 
 impl LocalAgentMemory {
-    pub fn get_steps(&self, thread_id: Option<&str>) -> Vec<MemoryStep> {
-        self.steps
-            .iter()
-            .filter(|(step_thread_id, _)| {
-                thread_id.map_or(true, |tid| {
-                    step_thread_id.as_ref().map_or(true, |stid| stid == tid)
-                })
-            })
-            .map(|(_, step)| step.clone())
-            .collect()
+    pub fn get_steps(&self) -> Vec<MemoryStep> {
+        self.steps.clone()
     }
 
-    pub fn add_step(&mut self, step: MemoryStep, thread_id: Option<&str>) {
-        self.steps.push((thread_id.map(String::from), step));
+    pub fn add_step(&mut self, step: MemoryStep) {
+        self.steps.push(step);
     }
 
     pub fn get_steps_as_messages(
@@ -98,7 +91,7 @@ impl LocalAgentMemory {
     ) -> Vec<Message> {
         self.steps
             .iter()
-            .flat_map(|(_, step)| step.to_messages(!include_planning, include_task))
+            .flat_map(|step| step.to_messages(!include_planning, include_task))
             .collect()
     }
 }
@@ -108,8 +101,11 @@ impl AgentMemory for LocalAgentMemory {
         self
     }
 
-    fn new() -> Self {
-        Self { steps: Vec::new() }
+    fn new(thread_id: String) -> Self {
+        Self {
+            thread_id,
+            steps: Vec::new(),
+        }
     }
 
     fn reset(&mut self) {
@@ -119,7 +115,7 @@ impl AgentMemory for LocalAgentMemory {
     fn get_succinct_steps(&self) -> Vec<serde_json::Value> {
         self.steps
             .iter()
-            .map(|(_, step)| {
+            .map(|step| {
                 let mut value = serde_json::to_value(step).unwrap();
                 if let serde_json::Value::Object(obj) = &mut value {
                     obj.remove("model_input_messages");
@@ -132,12 +128,12 @@ impl AgentMemory for LocalAgentMemory {
     fn get_full_steps(&self) -> Vec<serde_json::Value> {
         self.steps
             .iter()
-            .map(|(_, step)| serde_json::to_value(step).unwrap())
+            .map(|step| serde_json::to_value(step).unwrap())
             .collect()
     }
 
     fn add_step(&mut self, step: MemoryStep) {
-        self.steps.push((None, step));
+        self.steps.push(step);
     }
 }
 

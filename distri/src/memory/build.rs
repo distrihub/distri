@@ -195,7 +195,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_memory_server() -> Result<()> {
-        let memory = Arc::new(Mutex::new(LocalAgentMemory::new()));
+        let memory = Arc::new(Mutex::new(LocalAgentMemory::new("test".to_string())));
 
         async fn async_server(
             transport: ServerInMemoryTransport,
