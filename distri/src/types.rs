@@ -457,10 +457,10 @@ pub struct Thread {
 }
 
 impl Thread {
-    pub fn new(agent_id: String, title: Option<String>) -> Self {
+    pub fn new(agent_id: String, title: Option<String>, thread_id: Option<String>) -> Self {
         let now = chrono::Utc::now();
         Self {
-            id: uuid::Uuid::new_v4().to_string(),
+            id: thread_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
             title: title.unwrap_or_else(|| "New conversation".to_string()),
             agent_id,
             created_at: now,
@@ -509,6 +509,7 @@ pub struct CreateThreadRequest {
     pub agent_id: String,
     pub title: Option<String>,
     pub initial_message: Option<String>,
+    pub thread_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

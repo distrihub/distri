@@ -578,7 +578,7 @@ impl ThreadStore for HashMapThreadStore {
     }
 
     async fn create_thread(&self, request: CreateThreadRequest) -> anyhow::Result<Thread> {
-        let mut thread = Thread::new(request.agent_id, request.title);
+        let mut thread = Thread::new(request.agent_id, request.title, request.thread_id);
 
         // If there's an initial message, update the thread with it
         if let Some(initial_message) = &request.initial_message {

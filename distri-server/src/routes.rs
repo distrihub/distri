@@ -240,7 +240,7 @@ async fn handle_message_send(
     let thread = coordinator
         .ensure_thread_exists(
             &agent_id,
-            params.message.context_id.as_deref(),
+            params.message.context_id.as_deref().map(String::from),
             Some(extract_text_from_message(&params.message)),
         )
         .await
@@ -404,7 +404,7 @@ async fn handle_message_send_streaming(
     let thread = coordinator
         .ensure_thread_exists(
             &agent_id,
-            params.message.context_id.as_deref(),
+            params.message.context_id.as_deref().map(String::from),
             Some(extract_text_from_message(&params.message)),
         )
         .await
@@ -757,7 +757,6 @@ async fn thread_events_handler(
 
     // For thread events, we filter specifically by thread_id
     let thread_filter = Some(thread_id);
-    let agent_filter = query.agent_id.clone();
 
     let stream = async_stream::stream! {
         while let Ok(event) = rx.recv().await {
@@ -774,15 +773,6 @@ async fn thread_events_handler(
                     } else {
                         // No thread_id in event, don't send for thread-specific endpoint
                         should_send = false;
-                    }
-                }
-
-                // Filter by agent_id if specified
-                if let Some(expected_agent) = &agent_filter {
-                    if let Some(event_agent) = parsed_event.get("agent_id").and_then(|v| v.as_str()) {
-                        if event_agent != expected_agent {
-                            should_send = false;
-                        }
                     }
                 }
 
@@ -814,17 +804,15 @@ async fn list_tasks(
             // Apply pagination
             let offset = query.offset.unwrap_or(0) as usize;
             let limit = query.limit.unwrap_or(50) as usize;
-            
+
             // Sort by timestamp descending (most recent first)
-            tasks.sort_by(|a, b| {
-                match (&a.status.timestamp, &b.status.timestamp) {
-                    (Some(a_time), Some(b_time)) => b_time.cmp(a_time),
-                    (Some(_), None) => std::cmp::Ordering::Less,
-                    (None, Some(_)) => std::cmp::Ordering::Greater,
-                    (None, None) => std::cmp::Ordering::Equal,
-                }
+            tasks.sort_by(|a, b| match (&a.status.timestamp, &b.status.timestamp) {
+                (Some(a_time), Some(b_time)) => b_time.cmp(a_time),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => std::cmp::Ordering::Equal,
             });
-            
+
             let end = std::cmp::min(offset + limit, tasks.len());
             if offset >= tasks.len() {
                 HttpResponse::Ok().json(Vec::<distri_a2a::Task>::new())
@@ -844,7 +832,7 @@ async fn get_thread_messages(
     task_store: web::Data<Arc<dyn TaskStore>>,
 ) -> HttpResponse {
     let thread_id = path.into_inner();
-    
+
     match task_store.list_tasks(None).await {
         Ok(tasks) => {
             // Filter tasks by thread context and extract messages from history
@@ -852,21 +840,25 @@ async fn get_thread_messages(
                 .into_iter()
                 .filter(|task| task.context_id == thread_id)
                 .collect();
-            
+
             let mut messages = Vec::new();
             for task in thread_tasks {
                 messages.extend(task.history);
             }
-            
+
             // Sort messages by timestamp if available
             messages.sort_by(|a, b| {
-                let a_time = a.metadata.as_ref()
+                let a_time = a
+                    .metadata
+                    .as_ref()
                     .and_then(|m| m.get("timestamp"))
                     .and_then(|t| t.as_str());
-                let b_time = b.metadata.as_ref()
+                let b_time = b
+                    .metadata
+                    .as_ref()
                     .and_then(|m| m.get("timestamp"))
                     .and_then(|t| t.as_str());
-                
+
                 match (a_time, b_time) {
                     (Some(a), Some(b)) => a.cmp(b),
                     (Some(_), None) => std::cmp::Ordering::Less,
@@ -874,7 +866,7 @@ async fn get_thread_messages(
                     (None, None) => std::cmp::Ordering::Equal,
                 }
             });
-            
+
             HttpResponse::Ok().json(messages)
         }
         Err(e) => HttpResponse::InternalServerError().json(json!({
