@@ -130,6 +130,5 @@ pub fn get_twitter_summarizer(
             },
         }),
         icon_url: None,
-        skills: None,
     }
 }

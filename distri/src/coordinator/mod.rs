@@ -15,86 +15,82 @@ use crate::{
 };
 use tokio::sync::{mpsc, oneshot, Mutex};
 
-// AG-UI protocol compliant event types
+// Event types for streaming responses
 #[derive(Debug, Clone)]
 pub enum AgentEvent {
-    /// AGUI: RUN_STARTED
     RunStarted {
+        thread_id: String,
         run_id: String,
     },
-    /// AGUI: RUN_FINISHED
     RunFinished {
+        thread_id: String,
         run_id: String,
     },
-    /// AGUI: RUN_ERROR
     RunError {
+        thread_id: String,
         run_id: String,
         message: String,
         code: Option<String>,
     },
-    /// AGUI: TEXT_MESSAGE_START
+    StepStarted {
+        thread_id: String,
+        run_id: String,
+        step_name: String,
+    },
+    StepFinished {
+        thread_id: String,
+        run_id: String,
+        step_name: String,
+    },
     TextMessageStart {
+        thread_id: String,
         run_id: String,
         message_id: String,
         role: String,
     },
-    /// AGUI: TEXT_MESSAGE_CONTENT
     TextMessageContent {
+        thread_id: String,
         run_id: String,
         message_id: String,
         delta: String,
     },
-    /// AGUI: TEXT_MESSAGE_END
     TextMessageEnd {
+        thread_id: String,
         run_id: String,
         message_id: String,
     },
-    /// AGUI: TOOL_CALL_START
     ToolCallStart {
+        thread_id: String,
         run_id: String,
         tool_call_id: String,
-        tool_name: String,
+        tool_call_name: String,
+        parent_message_id: Option<String>,
     },
-    /// AGUI: TOOL_CALL_ARGS
     ToolCallArgs {
+        thread_id: String,
         run_id: String,
         tool_call_id: String,
         delta: String,
     },
-    /// AGUI: TOOL_CALL_END
     ToolCallEnd {
+        thread_id: String,
         run_id: String,
         tool_call_id: String,
     },
-    /// AGUI: TOOL_CALL_RESULT
-    ToolResult {
-        run_id: String,
-        tool_call_id: String,
-        result: String,
-    },
-    /// AGUI: STATE_SNAPSHOT
     StateSnapshot {
+        thread_id: String,
         run_id: String,
         snapshot: Value,
     },
-    /// AGUI: STATE_DELTA
     StateDelta {
+        thread_id: String,
         run_id: String,
         delta: Value,
     },
-    /// AGUI: CUSTOM (for thinking events, use customType: THINKING_START, THINKING_CONTENT, THINKING_END)
-    ThinkingStart {
+    MessagesSnapshot {
+        thread_id: String,
         run_id: String,
-        thinking_id: String,
-    },
-    ThinkingContent {
-        run_id: String,
-        thinking_id: String,
-        delta: String,
-    },
-    ThinkingEnd {
-        run_id: String,
-        thinking_id: String,
+        messages: Vec<Value>,
     },
 }
 

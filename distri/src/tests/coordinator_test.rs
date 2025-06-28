@@ -105,7 +105,6 @@ async fn test_agent_coordination_streaming() -> anyhow::Result<()> {
         history_size: None,
         plan: None,
         icon_url: None,
-        skills: None,
     };
 
     // Initialize coordinator
