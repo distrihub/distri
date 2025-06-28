@@ -121,7 +121,7 @@ impl LocalCoordinator {
                 system_prompt: system_prompt.clone(),
             });
             self.session_store
-                .store_step(agent_id, &context.thread_id, step.clone())
+                .store_step(&context.thread_id, step.clone())
                 .await
                 .map_err(|e| AgentError::Session(e.to_string()))?;
             self.logger.log_step(agent_id, &step);
@@ -130,7 +130,7 @@ impl LocalCoordinator {
         // Store task step
         let task_step = MemoryStep::Task(task.clone());
         self.session_store
-            .store_step(agent_id, &context.thread_id, task_step.clone())
+            .store_step(&context.thread_id, task_step.clone())
             .await
             .map_err(|e| AgentError::Session(e.to_string()))?;
         self.logger.log_step(agent_id, &task_step);
@@ -145,7 +145,7 @@ impl LocalCoordinator {
                 if *count > 0 {
                     let previous_messages = self
                         .session_store
-                        .get_messages(agent_id, &context.thread_id)
+                        .get_messages(&context.thread_id)
                         .await
                         .map_err(|e| AgentError::Session(e.to_string()))?;
                     *count = previous_messages.len() as i32; // Set count to number of messages
@@ -189,7 +189,7 @@ impl LocalCoordinator {
                         planning_config.max_iterations.unwrap_or(10) - iteration + 1;
                     let previous_messages = self
                         .session_store
-                        .get_messages(agent_id, &context.thread_id)
+                        .get_messages(&context.thread_id)
                         .await
                         .map_err(|e| AgentError::Session(e.to_string()))?;
                     super::reason::update_plan(
@@ -254,7 +254,7 @@ impl LocalCoordinator {
                     plan: plan.clone(),
                 });
                 self.session_store
-                    .store_step(agent_id, &context.thread_id, planning_step.clone())
+                    .store_step(&context.thread_id, planning_step.clone())
                     .await
                     .map_err(|e| AgentError::Session(e.to_string()))?;
                 self.logger.log_step(agent_id, &planning_step);
@@ -264,7 +264,7 @@ impl LocalCoordinator {
         // Get all messages from memory steps
         let messages = self
             .session_store
-            .get_messages(agent_id, &context.thread_id)
+            .get_messages(&context.thread_id)
             .await
             .map_err(|e| AgentError::Session(e.to_string()))?;
 
@@ -406,7 +406,7 @@ impl LocalCoordinator {
                 system_prompt: system_prompt.clone(),
             });
             self.session_store
-                .store_step(agent_id, &context.thread_id, step.clone())
+                .store_step(&context.thread_id, step.clone())
                 .await
                 .map_err(|e| AgentError::Session(e.to_string()))?;
             self.logger.log_step(agent_id, &step);
@@ -415,7 +415,7 @@ impl LocalCoordinator {
         // Store task step
         let task_step = MemoryStep::Task(task.clone());
         self.session_store
-            .store_step(agent_id, &context.thread_id, task_step.clone())
+            .store_step(&context.thread_id, task_step.clone())
             .await
             .map_err(|e| AgentError::Session(e.to_string()))?;
         self.logger.log_step(agent_id, &task_step);
@@ -430,7 +430,7 @@ impl LocalCoordinator {
                 if *count > 0 {
                     let previous_messages = self
                         .session_store
-                        .get_messages(agent_id, &context.thread_id)
+                        .get_messages(&context.thread_id)
                         .await
                         .map_err(|e| AgentError::Session(e.to_string()))?;
                     *count = previous_messages.len() as i32; // Set count to number of messages
@@ -474,7 +474,7 @@ impl LocalCoordinator {
                         planning_config.max_iterations.unwrap_or(10) - iteration + 1;
                     let previous_messages = self
                         .session_store
-                        .get_messages(agent_id, &context.thread_id)
+                        .get_messages(&context.thread_id)
                         .await
                         .map_err(|e| AgentError::Session(e.to_string()))?;
                     super::reason::update_plan(
@@ -539,7 +539,7 @@ impl LocalCoordinator {
                     plan: plan.clone(),
                 });
                 self.session_store
-                    .store_step(agent_id, &context.thread_id, planning_step.clone())
+                    .store_step(&context.thread_id, planning_step.clone())
                     .await
                     .map_err(|e| AgentError::Session(e.to_string()))?;
                 self.logger.log_step(agent_id, &planning_step);
@@ -549,7 +549,7 @@ impl LocalCoordinator {
         // Get all messages from memory steps
         let messages = self
             .session_store
-            .get_messages(agent_id, &context.thread_id)
+            .get_messages(&context.thread_id)
             .await
             .map_err(|e| AgentError::Session(e.to_string()))?;
 
@@ -616,7 +616,7 @@ impl LocalCoordinator {
                         ..Default::default()
                     });
                     self.session_store
-                        .store_step(agent_id, &context.thread_id, action_step.clone())
+                        .store_step(&context.thread_id, action_step.clone())
                         .await
                         .map_err(|e| AgentError::Session(e.to_string()))?;
                     self.logger.log_step(agent_id, &action_step);
