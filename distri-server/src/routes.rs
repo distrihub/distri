@@ -1,4 +1,5 @@
-use actix_web::{web, HttpRequest, HttpResponse, Responder};
+use actix_web::Either;
+use actix_web::{web, HttpResponse};
 use actix_web_lab::sse::{self, Sse};
 use distri::coordinator::{AgentCoordinator, AgentEvent, LocalCoordinator};
 use distri::types::{ServerConfig, UpdateThreadRequest};
@@ -24,8 +25,8 @@ pub fn config(cfg: &mut web::ServiceConfig) {
                     .route(web::get().to(get_agent_card))
                     .route(web::post().to(jsonrpc_handler)),
             )
-            .service(web::resource("/agents/{id}/events").route(web::get().to(sse_handler)))
             .service(web::resource("/tasks/{id}").route(web::get().to(get_task)))
+            .service(web::resource("/tasks").route(web::get().to(list_tasks)))
             // Thread endpoints
             .service(web::resource("/threads").route(web::get().to(list_threads_handler)))
             .service(
@@ -35,8 +36,8 @@ pub fn config(cfg: &mut web::ServiceConfig) {
                     .route(web::delete().to(delete_thread_handler)),
             )
             .service(
-                web::resource("/threads/{thread_id}/events")
-                    .route(web::get().to(thread_events_handler)),
+                web::resource("/threads/{thread_id}/messages")
+                    .route(web::get().to(get_thread_messages)),
             ),
     );
 }
@@ -78,63 +79,6 @@ async fn get_agent_card(
         None => HttpResponse::NotFound().finish(),
     }
 }
-
-// Query parameters for event filtering
-#[derive(Deserialize)]
-struct EventQuery {
-    thread_id: Option<String>,
-    agent_id: Option<String>,
-}
-
-async fn sse_handler(
-    _req: HttpRequest,
-    id: web::Path<String>,
-    query: web::Query<EventQuery>,
-    event_broadcaster: web::Data<broadcast::Sender<String>>,
-) -> impl Responder {
-    let agent_id = id.into_inner();
-    let mut rx = event_broadcaster.subscribe();
-
-    let thread_filter = query.thread_id.clone();
-    let agent_filter = Some(agent_id.clone());
-
-    let stream = async_stream::stream! {
-        while let Ok(event) = rx.recv().await {
-            // Parse event to check if it matches filters
-            if let Ok(parsed_event) = serde_json::from_str::<serde_json::Value>(&event) {
-                let mut should_send = true;
-
-                // Filter by agent_id if specified
-                if let Some(expected_agent) = &agent_filter {
-                    if let Some(event_agent) = parsed_event.get("agent_id").and_then(|v| v.as_str()) {
-                        if event_agent != expected_agent {
-                            should_send = false;
-                        }
-                    }
-                }
-
-                // Filter by thread_id if specified
-                if let Some(expected_thread) = &thread_filter {
-                    if let Some(event_thread) = parsed_event.get("thread_id").and_then(|v| v.as_str()) {
-                        if event_thread != expected_thread {
-                            should_send = false;
-                        }
-                    }
-                }
-
-                if should_send {
-                    yield Ok::<_, std::convert::Infallible>(sse::Data::new(event).into());
-                }
-            } else {
-                // If we can't parse the event, send it anyway (backward compatibility)
-                yield Ok::<_, std::convert::Infallible>(sse::Data::new(event).into());
-            }
-        }
-    };
-
-    Sse::from_stream(stream)
-}
-
 async fn get_task(
     id: web::Path<String>,
     task_store: web::Data<Arc<dyn TaskStore>>,
@@ -152,31 +96,256 @@ async fn get_task(
     }
 }
 
+async fn handle_message_send_streaming_sse(
+    agent_id: String,
+    params: serde_json::Value,
+    coordinator: Arc<LocalCoordinator>,
+    task_store: Arc<dyn TaskStore>,
+    req_id: Option<serde_json::Value>,
+) -> Sse<impl futures_util::stream::Stream<Item = Result<sse::Event, std::convert::Infallible>>> {
+    let id_field_clone = req_id.clone();
+    let stream = async_stream::stream! {
+        let params: Result<MessageSendParams, _> = serde_json::from_value(params);
+        if params.is_err() {
+            let error = JsonRpcResponse {
+                jsonrpc: "2.0".to_string(),
+                result: None,
+                error: Some(JsonRpcError {
+                    code: -32602,
+                    message: "Invalid params".to_string(),
+                    data: None,
+                }),
+                id: id_field_clone.clone(),
+            };
+            yield Ok::<_, std::convert::Infallible>(sse::Data::new(serde_json::to_string(&error).unwrap()).into());
+            return;
+        }
+        let params = params.unwrap();
+        let thread = match coordinator.ensure_thread_exists(
+            &agent_id,
+            params.message.context_id.as_deref().map(String::from),
+            Some(extract_text_from_message(&params.message)),
+        ).await {
+            Ok(t) => t,
+            Err(e) => {
+                let error = JsonRpcResponse {
+                    jsonrpc: "2.0".to_string(),
+                    result: None,
+                    error: Some(JsonRpcError {
+                        code: -32603,
+                        message: format!("Failed to ensure thread exists: {}", e),
+                        data: None,
+                    }),
+                    id: id_field_clone.clone(),
+                };
+                yield Ok::<_, std::convert::Infallible>(sse::Data::new(serde_json::to_string(&error).unwrap()).into());
+                return;
+            }
+        };
+        let thread_id = thread.id;
+        let run_id = params.message.task_id.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let task = match task_store.create_task(&agent_id, &thread_id, "message", Some(&run_id)).await {
+            Ok(t) => t,
+            Err(e) => {
+                let error = JsonRpcResponse {
+                    jsonrpc: "2.0".to_string(),
+                    result: None,
+                    error: Some(JsonRpcError {
+                        code: -32603,
+                        message: format!("Failed to create task: {}", e),
+                        data: None,
+                    }),
+                    id: id_field_clone.clone(),
+                };
+                yield Ok::<_, std::convert::Infallible>(sse::Data::new(serde_json::to_string(&error).unwrap()).into());
+                return;
+            }
+        };
+        let task_id = task.id.clone();
+        let task_step = TaskStep {
+            task: extract_text_from_message(&params.message),
+            task_images: None,
+        };
+        let working_status = TaskStatus {
+            state: TaskState::Working,
+            message: Some(params.message.clone()),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+        };
+        let _ = task_store.update_task_status(&task_id, working_status).await;
+        let (event_tx, mut event_rx) = mpsc::channel(100);
+        let (sse_tx, mut sse_rx) = mpsc::channel(100);
+        let coordinator_context = Arc::new(distri::coordinator::CoordinatorContext::new(
+            thread_id.clone(),
+            run_id.clone(),
+            coordinator.context.verbose,
+            coordinator.context.user_id.clone(),
+            coordinator.context.tools_context.clone(),
+        ));
+        // Spawn execute_stream in the background
+        let agent_id_clone = agent_id.clone();
+        let task_step_clone = task_step.clone();
+        let coordinator_clone = coordinator.clone();
+        let coordinator_context_clone = coordinator_context.clone();
+        tokio::spawn(async move {
+            let _ = coordinator_clone.execute_stream(
+                &agent_id_clone,
+                task_step_clone,
+                None,
+                event_tx,
+                coordinator_context_clone,
+            ).await;
+        });
+        // Spawn a task to forward events from event_rx to sse_tx
+        let task_id_clone = task_id.clone();
+        let thread_id_clone = thread_id.clone();
+        let id_field_clone2 = id_field_clone.clone();
+        tokio::spawn(async move {
+            let mut completed = false;
+            while let Some(event) = event_rx.recv().await {
+                // Forward event to sse_tx as a JsonRpcResponse
+                let resp = match &event {
+                    AgentEvent::TextMessageContent { delta, .. } => {
+                        let update = json!({
+                            "id": task_id_clone,
+                            "status": {
+                                "state": "working",
+                                "message": {
+                                    "role": "agent",
+                                    "parts": [{"type": "text", "text": delta}],
+                                    "context_id": thread_id_clone,
+                                    "task_id": task_id_clone,
+                                    "reference_task_ids": [],
+                                    "extensions": [],
+                                    "metadata": null
+                                },
+                                "timestamp": chrono::Utc::now().to_rfc3339(),
+                            },
+                            "final": false
+                        });
+                        JsonRpcResponse {
+                            jsonrpc: "2.0".to_string(),
+                            result: Some(update),
+                            error: None,
+                            id: id_field_clone2.clone(),
+                        }
+                    }
+                    AgentEvent::RunError { message, .. } => {
+                        let update = json!({
+                            "id": task_id_clone,
+                            "status": {
+                                "state": "failed",
+                                "message": {
+                                    "role": "agent",
+                                    "parts": [{"type": "text", "text": message}],
+                                    "context_id": thread_id_clone,
+                                    "task_id": task_id_clone,
+                                    "reference_task_ids": [],
+                                    "extensions": [],
+                                    "metadata": null
+                                },
+                                "timestamp": chrono::Utc::now().to_rfc3339(),
+                            },
+                            "final": true
+                        });
+                        JsonRpcResponse {
+                            jsonrpc: "2.0".to_string(),
+                            result: Some(update),
+                            error: None,
+                            id: id_field_clone2.clone(),
+                        }
+                    }
+                    AgentEvent::RunFinished { .. } => {
+                        // Don't send anything, just mark as completed
+                        completed = true;
+                        continue;
+                    }
+                    _ => {
+                        // Ignore unknown events
+                        continue;
+                    }
+                };
+                let _ = sse_tx.send(resp).await;
+                if completed { break; }
+            }
+        });
+        // SSE stream yields status update first, then events from sse_rx
+        let status_update = json!({
+            "id": task_id,
+            "status": {
+                "state": "working",
+                "message": params.message,
+                "timestamp": chrono::Utc::now().to_rfc3339(),
+            },
+            "final": false
+        });
+        let resp = JsonRpcResponse {
+            jsonrpc: "2.0".to_string(),
+            result: Some(status_update),
+            error: None,
+            id: id_field_clone.clone(),
+        };
+        yield Ok::<_, std::convert::Infallible>(sse::Data::new(serde_json::to_string(&resp).unwrap()).into());
+        while let Some(resp) = sse_rx.recv().await {
+            yield Ok::<_, std::convert::Infallible>(sse::Data::new(serde_json::to_string(&resp).unwrap()).into());
+        }
+        // After all events, yield the final status
+        let final_task = task_store.get_task(&task_id).await.ok().flatten();
+        let final_status = if let Some(task) = final_task {
+            json!({
+                "id": task_id,
+                "status": task.status,
+                "final": true
+            })
+        } else {
+            json!({
+                "id": task_id,
+                "status": {"state": "completed"},
+                "final": true
+            })
+        };
+        let resp = JsonRpcResponse {
+            jsonrpc: "2.0".to_string(),
+            result: Some(final_status),
+            error: None,
+            id: id_field_clone.clone(),
+        };
+        yield Ok::<_, std::convert::Infallible>(sse::Data::new(serde_json::to_string(&resp).unwrap()).into());
+    };
+    Sse::from_stream(stream)
+}
+
 async fn jsonrpc_handler(
     id: web::Path<String>,
     req: web::Json<JsonRpcRequest>,
     coordinator: web::Data<Arc<LocalCoordinator>>,
     task_store: web::Data<Arc<dyn TaskStore>>,
     event_broadcaster: web::Data<broadcast::Sender<String>>,
-) -> HttpResponse {
+) -> Either<
+    Sse<impl futures_util::stream::Stream<Item = Result<sse::Event, std::convert::Infallible>>>,
+    HttpResponse,
+> {
     let agent_id = id.into_inner();
     let req = req.into_inner();
     let coordinator = coordinator.get_ref();
     let task_store = task_store.get_ref();
 
+    if req.method == "message/send_streaming" {
+        return Either::Left(
+            handle_message_send_streaming_sse(
+                agent_id,
+                req.params,
+                coordinator.clone(),
+                task_store.clone(),
+                req.id.clone(),
+            )
+            .await,
+        );
+    }
+
+    // Otherwise, handle as before
     let result = match req.method.as_str() {
         "message/send" => {
             handle_message_send(
-                agent_id,
-                req.params,
-                coordinator,
-                task_store,
-                event_broadcaster.get_ref(),
-            )
-            .await
-        }
-        "message/send_streaming" => {
-            handle_message_send_streaming(
                 agent_id,
                 req.params,
                 coordinator,
@@ -194,22 +363,23 @@ async fn jsonrpc_handler(
         }),
     };
 
+    let req_id = req.id.clone();
     let response = match result {
         Ok(res) => JsonRpcResponse {
             jsonrpc: "2.0".to_string(),
             result: Some(res),
             error: None,
-            id: req.id,
+            id: req_id.clone(),
         },
         Err(err) => JsonRpcResponse {
             jsonrpc: "2.0".to_string(),
             result: None,
             error: Some(err),
-            id: req.id,
+            id: req_id.clone(),
         },
     };
 
-    HttpResponse::Ok().json(response)
+    Either::Right(HttpResponse::Ok().json(response))
 }
 
 async fn handle_message_send(
@@ -235,7 +405,7 @@ async fn handle_message_send(
     let thread = coordinator
         .ensure_thread_exists(
             &agent_id,
-            params.message.context_id.as_deref(),
+            params.message.context_id.as_deref().map(String::from),
             Some(extract_text_from_message(&params.message)),
         )
         .await
@@ -363,184 +533,6 @@ async fn handle_message_send(
         })
         .to_string(),
     );
-
-    // Get updated task
-    let updated_task = task_store
-        .get_task(&task.id)
-        .await
-        .map_err(|e| JsonRpcError {
-            code: -32603,
-            message: format!("Failed to get updated task: {}", e),
-            data: None,
-        })?
-        .ok_or_else(|| JsonRpcError {
-            code: -32603,
-            message: "Task disappeared".to_string(),
-            data: None,
-        })?;
-
-    Ok(serde_json::to_value(updated_task).unwrap())
-}
-
-async fn handle_message_send_streaming(
-    agent_id: String,
-    params: serde_json::Value,
-    coordinator: &Arc<LocalCoordinator>,
-    task_store: &Arc<dyn TaskStore>,
-    event_broadcaster: &broadcast::Sender<String>,
-) -> Result<serde_json::Value, JsonRpcError> {
-    let params: MessageSendParams = serde_json::from_value(params).map_err(|e| JsonRpcError {
-        code: -32602,
-        message: format!("Invalid params: {}", e),
-        data: None,
-    })?;
-
-    // Check if thread exists, create if not
-    let thread = coordinator
-        .ensure_thread_exists(
-            &agent_id,
-            params.message.context_id.as_deref(),
-            Some(extract_text_from_message(&params.message)),
-        )
-        .await
-        .map_err(|e| JsonRpcError {
-            code: -32603,
-            message: format!("Failed to ensure thread exists: {}", e),
-            data: None,
-        })?;
-
-    let thread_id = thread.id;
-    let run_id = params
-        .message
-        .task_id
-        .clone()
-        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-
-    // Create a new task with run_id
-    let task = task_store
-        .create_task(&agent_id, &thread_id, "message", Some(&run_id))
-        .await
-        .map_err(|e| JsonRpcError {
-            code: -32603,
-            message: format!("Failed to create task: {}", e),
-            data: None,
-        })?;
-
-    // Convert A2A message to internal format
-    let task_step = TaskStep {
-        task: extract_text_from_message(&params.message),
-        task_images: None,
-    };
-
-    // Update task status to working
-    let working_status = TaskStatus {
-        state: TaskState::Working,
-        message: Some(params.message.clone()),
-        timestamp: Some(chrono::Utc::now().to_rfc3339()),
-    };
-    task_store
-        .update_task_status(&task.id, working_status)
-        .await
-        .map_err(|e| JsonRpcError {
-            code: -32603,
-            message: format!("Failed to update task status: {}", e),
-            data: None,
-        })?;
-
-    // Create channel for streaming events
-    let (event_tx, mut event_rx) = mpsc::channel(100);
-    let task_id_clone = task.id.clone();
-
-    let agent_id_clone = agent_id.clone();
-    let event_broadcaster_clone = event_broadcaster.clone();
-
-    // Spawn task to handle streaming events
-    tokio::spawn(async move {
-        while let Some(event) = event_rx.recv().await {
-            let event_json = match event {
-                AgentEvent::TextMessageContent {
-                    delta,
-                    thread_id: evt_thread_id,
-                    ..
-                } => {
-                    json!({
-                        "type": "text_delta",
-                        "task_id": task_id_clone,
-                        "thread_id": evt_thread_id,
-                        "agent_id": agent_id_clone,
-                        "delta": delta
-                    })
-                }
-                AgentEvent::RunFinished {
-                    thread_id: evt_thread_id,
-                    ..
-                } => {
-                    json!({
-                        "type": "task_completed",
-                        "task_id": task_id_clone,
-                        "thread_id": evt_thread_id,
-                        "agent_id": agent_id_clone
-                    })
-                }
-                AgentEvent::RunError {
-                    message,
-                    thread_id: evt_thread_id,
-                    ..
-                } => {
-                    json!({
-                        "type": "task_error",
-                        "task_id": task_id_clone,
-                        "thread_id": evt_thread_id,
-                        "agent_id": agent_id_clone,
-                        "error": message
-                    })
-                }
-                _ => continue,
-            };
-            let _ = event_broadcaster_clone.send(event_json.to_string());
-        }
-    });
-
-    // Execute the task using streaming with thread context
-    let coordinator_context = Arc::new(distri::coordinator::CoordinatorContext::new(
-        thread_id.clone(),
-        run_id.clone(),
-        coordinator.context.verbose,
-        coordinator.context.user_id.clone(),
-        coordinator.context.tools_context.clone(),
-    ));
-    let execution_result = coordinator
-        .execute_stream(
-            &agent_id,
-            task_step,
-            None,
-            event_tx,
-            coordinator_context.clone(),
-        )
-        .await;
-
-    let final_status = match execution_result {
-        Ok(_) => TaskStatus {
-            state: TaskState::Completed,
-            message: None,
-            timestamp: Some(chrono::Utc::now().to_rfc3339()),
-        },
-        Err(_) => TaskStatus {
-            state: TaskState::Failed,
-            message: None,
-            timestamp: Some(chrono::Utc::now().to_rfc3339()),
-        },
-    };
-
-    // Update final task status
-    task_store
-        .update_task_status(&task.id, final_status)
-        .await
-        .map_err(|e| JsonRpcError {
-            code: -32603,
-            message: format!("Failed to update final task status: {}", e),
-            data: None,
-        })?;
 
     // Get updated task
     let updated_task = task_store
@@ -694,51 +686,91 @@ async fn delete_thread_handler(
     }
 }
 
-async fn thread_events_handler(
-    path: web::Path<String>,
-    query: web::Query<EventQuery>,
-    event_broadcaster: web::Data<broadcast::Sender<String>>,
-) -> impl Responder {
-    let thread_id = path.into_inner();
-    let mut rx = event_broadcaster.subscribe();
+// Tasks endpoints
 
-    // For thread events, we filter specifically by thread_id
-    let thread_filter = Some(thread_id);
-    let agent_filter = query.agent_id.clone();
+#[derive(Deserialize)]
+struct ListTasksQuery {
+    agent_id: Option<String>,
+    limit: Option<u32>,
+    offset: Option<u32>,
+}
 
-    let stream = async_stream::stream! {
-        while let Ok(event) = rx.recv().await {
-            // Parse event to check if it matches filters
-            if let Ok(parsed_event) = serde_json::from_str::<serde_json::Value>(&event) {
-                let mut should_send = true;
+async fn list_tasks(
+    query: web::Query<ListTasksQuery>,
+    task_store: web::Data<Arc<dyn TaskStore>>,
+) -> HttpResponse {
+    match task_store.list_tasks(query.agent_id.as_deref()).await {
+        Ok(mut tasks) => {
+            // Apply pagination
+            let offset = query.offset.unwrap_or(0) as usize;
+            let limit = query.limit.unwrap_or(50) as usize;
 
-                // Filter by thread_id (required for thread events)
-                if let Some(expected_thread) = &thread_filter {
-                    if let Some(event_thread) = parsed_event.get("thread_id").and_then(|v| v.as_str()) {
-                        if event_thread != expected_thread {
-                            should_send = false;
-                        }
-                    } else {
-                        // No thread_id in event, don't send for thread-specific endpoint
-                        should_send = false;
-                    }
-                }
+            // Sort by timestamp descending (most recent first)
+            tasks.sort_by(|a, b| match (&a.status.timestamp, &b.status.timestamp) {
+                (Some(a_time), Some(b_time)) => b_time.cmp(a_time),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => std::cmp::Ordering::Equal,
+            });
 
-                // Filter by agent_id if specified
-                if let Some(expected_agent) = &agent_filter {
-                    if let Some(event_agent) = parsed_event.get("agent_id").and_then(|v| v.as_str()) {
-                        if event_agent != expected_agent {
-                            should_send = false;
-                        }
-                    }
-                }
-
-                if should_send {
-                    yield Ok::<_, std::convert::Infallible>(sse::Data::new(event).into());
-                }
+            let end = std::cmp::min(offset + limit, tasks.len());
+            if offset >= tasks.len() {
+                HttpResponse::Ok().json(Vec::<distri_a2a::Task>::new())
+            } else {
+                HttpResponse::Ok().json(&tasks[offset..end])
             }
         }
-    };
+        Err(e) => HttpResponse::InternalServerError().json(json!({
+            "error": format!("Failed to list tasks: {}", e)
+        })),
+    }
+}
 
-    Sse::from_stream(stream)
+// Thread messages endpoint
+async fn get_thread_messages(
+    path: web::Path<String>,
+    task_store: web::Data<Arc<dyn TaskStore>>,
+) -> HttpResponse {
+    let thread_id = path.into_inner();
+
+    match task_store.list_tasks(None).await {
+        Ok(tasks) => {
+            // Filter tasks by thread context and extract messages from history
+            let thread_tasks: Vec<_> = tasks
+                .into_iter()
+                .filter(|task| task.context_id == thread_id)
+                .collect();
+
+            let mut messages = Vec::new();
+            for task in thread_tasks {
+                messages.extend(task.history);
+            }
+
+            // Sort messages by timestamp if available
+            messages.sort_by(|a, b| {
+                let a_time = a
+                    .metadata
+                    .as_ref()
+                    .and_then(|m| m.get("timestamp"))
+                    .and_then(|t| t.as_str());
+                let b_time = b
+                    .metadata
+                    .as_ref()
+                    .and_then(|m| m.get("timestamp"))
+                    .and_then(|t| t.as_str());
+
+                match (a_time, b_time) {
+                    (Some(a), Some(b)) => a.cmp(b),
+                    (Some(_), None) => std::cmp::Ordering::Less,
+                    (None, Some(_)) => std::cmp::Ordering::Greater,
+                    (None, None) => std::cmp::Ordering::Equal,
+                }
+            });
+
+            HttpResponse::Ok().json(messages)
+        }
+        Err(e) => HttpResponse::InternalServerError().json(json!({
+            "error": format!("Failed to get thread messages: {}", e)
+        })),
+    }
 }

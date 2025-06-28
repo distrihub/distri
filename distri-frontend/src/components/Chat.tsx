@@ -1,6 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Send, Loader2, User, Bot } from 'lucide-react';
+import { v4 as uuidv4 } from 'uuid';
 
+const apiUrl = 'http://localhost:8080';
 interface Agent {
   id: string;
   name: string;
@@ -30,6 +32,7 @@ interface Message {
   content: string;
   timestamp: Date;
   taskId?: string;
+  type?: 'normal' | 'thinking';
 }
 
 const Chat: React.FC<ChatProps> = ({ thread, agent, onThreadUpdate }) => {
@@ -55,12 +58,29 @@ const Chat: React.FC<ChatProps> = ({ thread, agent, onThreadUpdate }) => {
 
   const loadThreadMessages = async () => {
     try {
-      // For now, we'll start with empty messages since we don't have a 
-      // thread messages endpoint yet. In a real implementation, you'd fetch
-      // the thread's message history here.
-      setMessages([]);
+      const response = await fetch(`${apiUrl}/api/v1/threads/${thread.id}/messages`);
+      if (response.ok) {
+        const threadMessages = await response.json();
+
+        // Convert A2A messages to our Message format
+        const convertedMessages: Message[] = threadMessages.map((msg: any, index: number) => ({
+          id: msg.messageId || `msg-${index}`,
+          role: msg.role === 'user' ? 'user' : 'agent',
+          content: msg.parts
+            ?.filter((part: any) => part.kind === 'text')
+            ?.map((part: any) => part.text)
+            ?.join(' ') || '',
+          timestamp: new Date(msg.metadata?.timestamp || Date.now()),
+        }));
+
+        setMessages(convertedMessages);
+      } else {
+        // If we can't load messages, start with empty state
+        setMessages([]);
+      }
     } catch (error) {
       console.error('Failed to load thread messages:', error);
+      setMessages([]);
     }
   };
 
@@ -79,15 +99,15 @@ const Chat: React.FC<ChatProps> = ({ thread, agent, onThreadUpdate }) => {
     setIsLoading(true);
 
     try {
-      // Send message using A2A protocol with thread.id as contextId
-      const response = await fetch(`/api/v1/agents/${agent.id}`, {
+      // Send message using A2A protocol with message/send_streaming method and thread.id as contextId
+      const response = await fetch(`${apiUrl}/api/v1/agents/${agent.id}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
           jsonrpc: '2.0',
-          method: 'message/send',
+          method: 'message/send_streaming',
           params: {
             message: {
               messageId: userMessage.id,
@@ -102,44 +122,98 @@ const Chat: React.FC<ChatProps> = ({ thread, agent, onThreadUpdate }) => {
             },
             configuration: {
               acceptedOutputModes: ['text/plain'],
-              blocking: true,
+              blocking: false, // Use non-blocking for streaming
             },
           },
           id: userMessage.id,
         }),
       });
 
-      const result = await response.json();
+      if (!response.body) throw new Error('No response body');
 
-      if (result.error) {
-        throw new Error(result.error.message);
-      }
-
-      const task = result.result;
-      const responseContent = task.status?.message?.parts
-        ?.find((part: any) => part.kind === 'text')
-        ?.text || 'No response received';
-
+      // Create initial empty agent message for streaming
+      const agentMessageId = `${Date.now()}-agent`;
       const agentMessage: Message = {
-        id: `${Date.now()}-agent`,
+        id: agentMessageId,
         role: 'agent',
-        content: responseContent,
+        content: '',
         timestamp: new Date(),
-        taskId: task.id,
+        taskId: uuidv4(),
       };
-
       setMessages((prev: Message[]) => [...prev, agentMessage]);
 
-      // Set up SSE listener for real-time updates if needed
-      if (task.status?.state === 'working') {
-        setupSSEListener(task.id);
-      }
+      // Set up streaming reader for SSE/JSON-RPC
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let done = false;
 
-      // Update thread in parent component
-      if (onThreadUpdate) {
-        onThreadUpdate();
-      }
+      while (!done) {
+        const { value, done: streamDone } = await reader.read();
+        if (streamDone) break;
+        buffer += decoder.decode(value, { stream: true });
 
+        // Process all complete SSE events in the buffer
+        let eventEnd;
+        while ((eventEnd = buffer.indexOf('\n\n')) !== -1) {
+          const eventStr = buffer.slice(0, eventEnd);
+          buffer = buffer.slice(eventEnd + 2);
+
+          // Extract all data: lines and join them
+          const dataLines = eventStr
+            .split('\n')
+            .filter(line => line.startsWith('data:'))
+            .map(line => line.slice(5).trim());
+          if (dataLines.length === 0) continue;
+          const jsonStr = dataLines.join('');
+          if (!jsonStr) continue;
+
+          try {
+            const json = JSON.parse(jsonStr);
+            if (json.error) {
+              throw new Error(json.error.message);
+            }
+            const result = json.result;
+            if (!result) continue;
+            // Handle streaming updates
+            if (result.status && result.status.message && result.status.message.role === 'agent' && result.status.message.parts) {
+              const delta = result.status.message.parts.map((p: any) => p.text).join(' ');
+              setMessages((prev: Message[]) => {
+                return prev.map(msg => {
+                  if (msg.id === agentMessageId) {
+                    return {
+                      ...msg,
+                      content: msg.content + delta,
+                    };
+                  }
+                  return msg;
+                });
+              });
+            }
+
+            if (result.final) {
+              done = true;
+              // Optionally update thread in parent component
+              if (onThreadUpdate) {
+                onThreadUpdate();
+              }
+            }
+          } catch (err) {
+            setMessages((prev: Message[]) => {
+              return prev.map(msg => {
+                if (msg.id === agentMessageId) {
+                  return {
+                    ...msg,
+                    content: `Error: ${err instanceof Error ? err.message : 'Failed to parse stream'}`,
+                  };
+                }
+                return msg;
+              });
+            });
+            done = true;
+          }
+        }
+      }
     } catch (error) {
       console.error('Failed to send message:', error);
       const errorMessage: Message = {
@@ -152,53 +226,6 @@ const Chat: React.FC<ChatProps> = ({ thread, agent, onThreadUpdate }) => {
     } finally {
       setIsLoading(false);
     }
-  };
-
-  const setupSSEListener = (taskId: string) => {
-    // Listen to events filtered by thread ID for better performance
-    const eventSource = new EventSource(`/api/v1/agents/${agent.id}/events?thread_id=${thread.id}`);
-
-    eventSource.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-
-        if (data.task_id === taskId && data.thread_id === thread.id) {
-          if (data.type === 'text_delta') {
-            // Update the last agent message with streaming content
-            setMessages((prev: Message[]) => {
-              const lastMessage = prev[prev.length - 1];
-              if (lastMessage && lastMessage.role === 'agent' && lastMessage.taskId === taskId) {
-                return [
-                  ...prev.slice(0, -1),
-                  {
-                    ...lastMessage,
-                    content: lastMessage.content + data.delta,
-                  }
-                ];
-              }
-              return prev;
-            });
-          } else if (data.type === 'task_completed' || data.type === 'task_error') {
-            eventSource.close();
-            // Update thread in parent component when task completes
-            if (onThreadUpdate) {
-              onThreadUpdate();
-            }
-          }
-        }
-      } catch (error) {
-        console.error('Error parsing SSE data:', error);
-      }
-    };
-
-    eventSource.onerror = () => {
-      eventSource.close();
-    };
-
-    // Clean up after 30 seconds
-    setTimeout(() => {
-      eventSource.close();
-    }, 30000);
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -237,27 +264,37 @@ const Chat: React.FC<ChatProps> = ({ thread, agent, onThreadUpdate }) => {
           </div>
         )}
 
-        {messages.map((message) => (
+        {messages.filter(message => message.content.length > 0).map((message) => (
           <div
             key={message.id}
             className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
           >
             <div
               className={`max-w-[70%] rounded-lg px-4 py-2 ${message.role === 'user'
-                  ? 'bg-blue-600 text-white'
+                ? 'bg-blue-600 text-white'
+                : message.type === 'thinking'
+                  ? 'bg-yellow-50 text-yellow-800 border border-yellow-200'
                   : 'bg-gray-100 text-gray-900'
                 }`}
             >
               <div className="flex items-start space-x-2">
                 {message.role === 'agent' && (
-                  <Bot className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                  <Bot className={`h-4 w-4 mt-0.5 flex-shrink-0 ${message.type === 'thinking' ? 'text-yellow-600' : ''
+                    }`} />
                 )}
                 {message.role === 'user' && (
                   <User className="h-4 w-4 mt-0.5 flex-shrink-0" />
                 )}
                 <div className="flex-1">
-                  <p className="whitespace-pre-wrap">{message.content}</p>
-                  <p className={`text-xs mt-1 ${message.role === 'user' ? 'text-blue-200' : 'text-gray-500'
+                  <p className={`whitespace-pre-wrap ${message.type === 'thinking' ? 'italic' : ''
+                    }`}>
+                    {message.content}
+                  </p>
+                  <p className={`text-xs mt-1 ${message.role === 'user'
+                    ? 'text-blue-200'
+                    : message.type === 'thinking'
+                      ? 'text-yellow-600'
+                      : 'text-gray-500'
                     }`}>
                     {message.timestamp.toLocaleTimeString()}
                   </p>
@@ -269,13 +306,7 @@ const Chat: React.FC<ChatProps> = ({ thread, agent, onThreadUpdate }) => {
 
         {isLoading && (
           <div className="flex justify-start">
-            <div className="bg-gray-100 rounded-lg px-4 py-2">
-              <div className="flex items-center space-x-2">
-                <Bot className="h-4 w-4" />
-                <Loader2 className="h-4 w-4 animate-spin" />
-                <span className="text-gray-600">Thinking...</span>
-              </div>
-            </div>
+            <Loader2 className="h-4 w-4 animate-spin" />
           </div>
         )}
 

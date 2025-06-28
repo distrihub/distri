@@ -1,7 +1,7 @@
 use crate::{
     coordinator::{self, CoordinatorContext, LocalCoordinator, DISTRI_LOCAL_SERVER},
     memory::{AgentMemory, MemoryConfig},
-    store::{LocalSessionStore, SessionStore, FileSessionStore},
+    store::{FileSessionStore, LocalSessionStore, SessionStore},
     types::{ExternalMcpServer, TransportType},
     ToolSessionStore,
 };

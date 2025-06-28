@@ -156,6 +156,15 @@ impl LocalCoordinator {
             };
 
             if (iteration - 1) % planning_config.interval == 0 {
+                // Send planning step started event
+                let _ = event_tx
+                    .send(AgentEvent::StepStarted {
+                        thread_id: context.thread_id.clone(),
+                        run_id: context.run_id.lock().await.clone(),
+                        step_name: "planning".to_string(),
+                    })
+                    .await;
+
                 // Run either initial planning or planning update
                 let (facts, plan) = if iteration == 1 {
                     create_initial_plan(&task, &tools_desc, &|msgs| {
@@ -258,6 +267,15 @@ impl LocalCoordinator {
                     .await
                     .map_err(|e| AgentError::Session(e.to_string()))?;
                 self.logger.log_step(agent_id, &planning_step);
+
+                // Send planning step finished event
+                let _ = event_tx
+                    .send(AgentEvent::StepFinished {
+                        thread_id: context.thread_id.clone(),
+                        run_id: context.run_id.lock().await.clone(),
+                        step_name: "planning".to_string(),
+                    })
+                    .await;
             }
         }
 
@@ -744,10 +762,10 @@ impl LocalCoordinator {
     pub async fn ensure_thread_exists(
         &self,
         agent_id: &str,
-        thread_id: Option<&str>,
+        thread_id: Option<String>,
         initial_message: Option<String>,
     ) -> Result<Thread, AgentError> {
-        let thread = match thread_id {
+        let thread = match &thread_id {
             Some(thread_id) => self.get_thread(thread_id).await?,
             None => None,
         };
@@ -758,6 +776,7 @@ impl LocalCoordinator {
                     agent_id: agent_id.to_string(),
                     title: None,
                     initial_message,
+                    thread_id,
                 };
                 self.create_thread(create_request).await
             }

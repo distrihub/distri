@@ -1,3 +1,4 @@
+use actix_cors::Cors;
 use actix_web::middleware::Logger;
 use actix_web::{web, App, HttpServer};
 use anyhow::Result;
@@ -43,6 +44,7 @@ impl A2AServer {
         HttpServer::new(move || {
             App::new()
                 .wrap(Logger::default())
+                .wrap(Cors::permissive())
                 .app_data(web::Data::new(coordinator.clone()))
                 .app_data(web::Data::new(task_store.clone()))
                 .app_data(web::Data::new(event_broadcaster.clone()))
