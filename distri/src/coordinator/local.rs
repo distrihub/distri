@@ -3,7 +3,7 @@ use crate::{
     executor::LLMExecutor,
     memory::SystemStep,
     servers::registry::ServerRegistry,
-    store::{HashMapThreadStore, LocalMemoryStore, MemoryStore, ThreadStore, ToolSessionStore},
+    store::{HashMapThreadStore, LocalSessionStore, SessionStore, ThreadStore, ToolSessionStore},
     tools::{execute_tool, get_tools},
     types::{
         get_tool_descriptions, AgentDefinition, CreateThreadRequest, Message, MessageContent,
@@ -29,7 +29,7 @@ pub struct LocalCoordinator {
     pub registry: Arc<RwLock<ServerRegistry>>,
     pub coordinator_rx: Arc<Mutex<mpsc::Receiver<CoordinatorMessage>>>,
     pub coordinator_tx: mpsc::Sender<CoordinatorMessage>,
-    memory_store: Arc<Box<dyn MemoryStore>>,
+    session_store: Arc<Box<dyn SessionStore>>,
     thread_store: Arc<Box<dyn ThreadStore>>,
     logger: StepLogger,
     iterations: Arc<RwLock<HashMap<String, i32>>>,
@@ -40,7 +40,7 @@ impl LocalCoordinator {
     pub fn new(
         registry: Arc<RwLock<ServerRegistry>>,
         tool_sessions: Option<Arc<Box<dyn ToolSessionStore>>>,
-        memory_store: Option<Arc<Box<dyn MemoryStore>>>,
+        session_store: Option<Arc<Box<dyn SessionStore>>>,
         context: Arc<CoordinatorContext>,
     ) -> Self {
         let (coordinator_tx, coordinator_rx) = mpsc::channel(100);
@@ -55,8 +55,8 @@ impl LocalCoordinator {
             registry,
             coordinator_rx: Arc::new(Mutex::new(coordinator_rx)),
             coordinator_tx,
-            memory_store: memory_store
-                .unwrap_or_else(|| Arc::new(Box::new(LocalMemoryStore::new()))),
+            session_store: session_store
+                .unwrap_or_else(|| Arc::new(Box::new(LocalSessionStore::new()))),
             thread_store,
             iterations: Arc::new(RwLock::new(HashMap::new())),
             context: context,
@@ -120,8 +120,8 @@ impl LocalCoordinator {
             let step = MemoryStep::System(SystemStep {
                 system_prompt: system_prompt.clone(),
             });
-            self.memory_store
-                .store_step(agent_id, step.clone(), Some(&context.thread_id))
+            self.session_store
+                .store_step(agent_id, &context.thread_id, step.clone())
                 .await
                 .map_err(|e| AgentError::Session(e.to_string()))?;
             self.logger.log_step(agent_id, &step);
@@ -129,8 +129,8 @@ impl LocalCoordinator {
 
         // Store task step
         let task_step = MemoryStep::Task(task.clone());
-        self.memory_store
-            .store_step(agent_id, task_step.clone(), Some(&context.thread_id))
+        self.session_store
+            .store_step(agent_id, &context.thread_id, task_step.clone())
             .await
             .map_err(|e| AgentError::Session(e.to_string()))?;
         self.logger.log_step(agent_id, &task_step);
@@ -144,8 +144,8 @@ impl LocalCoordinator {
                 // Update count based on the number of messages for subsequent iterations
                 if *count > 0 {
                     let previous_messages = self
-                        .memory_store
-                        .get_messages(agent_id, Some(&context.thread_id))
+                        .session_store
+                        .get_messages(agent_id, &context.thread_id)
                         .await
                         .map_err(|e| AgentError::Session(e.to_string()))?;
                     *count = previous_messages.len() as i32; // Set count to number of messages
@@ -188,8 +188,8 @@ impl LocalCoordinator {
                     let remaining_steps =
                         planning_config.max_iterations.unwrap_or(10) - iteration + 1;
                     let previous_messages = self
-                        .memory_store
-                        .get_messages(agent_id, Some(&context.thread_id))
+                        .session_store
+                        .get_messages(agent_id, &context.thread_id)
                         .await
                         .map_err(|e| AgentError::Session(e.to_string()))?;
                     super::reason::update_plan(
@@ -253,8 +253,8 @@ impl LocalCoordinator {
                     },
                     plan: plan.clone(),
                 });
-                self.memory_store
-                    .store_step(agent_id, planning_step.clone(), Some(&context.thread_id))
+                self.session_store
+                    .store_step(agent_id, &context.thread_id, planning_step.clone())
                     .await
                     .map_err(|e| AgentError::Session(e.to_string()))?;
                 self.logger.log_step(agent_id, &planning_step);
@@ -263,8 +263,8 @@ impl LocalCoordinator {
 
         // Get all messages from memory steps
         let messages = self
-            .memory_store
-            .get_messages(agent_id, Some(&context.thread_id))
+            .session_store
+            .get_messages(agent_id, &context.thread_id)
             .await
             .map_err(|e| AgentError::Session(e.to_string()))?;
 
@@ -405,8 +405,8 @@ impl LocalCoordinator {
             let step = MemoryStep::System(SystemStep {
                 system_prompt: system_prompt.clone(),
             });
-            self.memory_store
-                .store_step(agent_id, step.clone(), Some(&context.thread_id))
+            self.session_store
+                .store_step(agent_id, &context.thread_id, step.clone())
                 .await
                 .map_err(|e| AgentError::Session(e.to_string()))?;
             self.logger.log_step(agent_id, &step);
@@ -414,8 +414,8 @@ impl LocalCoordinator {
 
         // Store task step
         let task_step = MemoryStep::Task(task.clone());
-        self.memory_store
-            .store_step(agent_id, task_step.clone(), Some(&context.thread_id))
+        self.session_store
+            .store_step(agent_id, &context.thread_id, task_step.clone())
             .await
             .map_err(|e| AgentError::Session(e.to_string()))?;
         self.logger.log_step(agent_id, &task_step);
@@ -429,8 +429,8 @@ impl LocalCoordinator {
                 // Update count based on the number of messages for subsequent iterations
                 if *count > 0 {
                     let previous_messages = self
-                        .memory_store
-                        .get_messages(agent_id, Some(&context.thread_id))
+                        .session_store
+                        .get_messages(agent_id, &context.thread_id)
                         .await
                         .map_err(|e| AgentError::Session(e.to_string()))?;
                     *count = previous_messages.len() as i32; // Set count to number of messages
@@ -473,8 +473,8 @@ impl LocalCoordinator {
                     let remaining_steps =
                         planning_config.max_iterations.unwrap_or(10) - iteration + 1;
                     let previous_messages = self
-                        .memory_store
-                        .get_messages(agent_id, Some(&context.thread_id))
+                        .session_store
+                        .get_messages(agent_id, &context.thread_id)
                         .await
                         .map_err(|e| AgentError::Session(e.to_string()))?;
                     super::reason::update_plan(
@@ -538,8 +538,8 @@ impl LocalCoordinator {
                     },
                     plan: plan.clone(),
                 });
-                self.memory_store
-                    .store_step(agent_id, planning_step.clone(), Some(&context.thread_id))
+                self.session_store
+                    .store_step(agent_id, &context.thread_id, planning_step.clone())
                     .await
                     .map_err(|e| AgentError::Session(e.to_string()))?;
                 self.logger.log_step(agent_id, &planning_step);
@@ -548,8 +548,8 @@ impl LocalCoordinator {
 
         // Get all messages from memory steps
         let messages = self
-            .memory_store
-            .get_messages(agent_id, Some(&context.thread_id))
+            .session_store
+            .get_messages(agent_id, &context.thread_id)
             .await
             .map_err(|e| AgentError::Session(e.to_string()))?;
 
@@ -615,8 +615,8 @@ impl LocalCoordinator {
                         model_output: Some(content.clone()),
                         ..Default::default()
                     });
-                    self.memory_store
-                        .store_step(agent_id, action_step.clone(), Some(&context.thread_id))
+                    self.session_store
+                        .store_step(agent_id, &context.thread_id, action_step.clone())
                         .await
                         .map_err(|e| AgentError::Session(e.to_string()))?;
                     self.logger.log_step(agent_id, &action_step);

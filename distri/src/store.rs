@@ -42,13 +42,13 @@ impl ToolSessionStore for InMemorySessionStore {
     }
 }
 
-// Define trait for memory storage
+// SessionStore trait - manages current conversation thread/run
 #[async_trait::async_trait]
-pub trait MemoryStore: Send + Sync {
+pub trait SessionStore: Send + Sync {
     async fn get_messages(
         &self,
         agent_id: &str,
-        thread_id: Option<&str>,
+        thread_id: &str,
     ) -> anyhow::Result<Vec<Message>> {
         let steps = self.get_steps(agent_id, thread_id).await?;
         let messages = steps
@@ -57,29 +57,234 @@ pub trait MemoryStore: Send + Sync {
             .collect();
         Ok(messages)
     }
+    
     async fn get_steps(
         &self,
         agent_id: &str,
-        thread_id: Option<&str>,
+        thread_id: &str,
     ) -> anyhow::Result<Vec<MemoryStep>>;
+    
     async fn store_step(
         &self,
         agent_id: &str,
+        thread_id: &str,
         step: MemoryStep,
-        thread_id: Option<&str>,
+    ) -> anyhow::Result<()>;
+    
+    async fn clear_session(
+        &self,
+        agent_id: &str,
+        thread_id: &str,
     ) -> anyhow::Result<()>;
 }
 
-// Local implementation using HashMap
-#[derive(Clone)]
-pub struct LocalMemoryStore {
-    memories: Arc<RwLock<HashMap<String, LocalAgentMemory>>>,
+// Higher-level MemoryStore trait - manages cross-session permanent memory
+#[async_trait::async_trait]
+pub trait MemoryStore: Send + Sync {
+    /// Store permanent memory from a session for cross-session access
+    async fn store_memory(&self, session_memory: SessionMemory) -> anyhow::Result<()>;
+    
+    /// Search for relevant memories across sessions
+    async fn search_memories(
+        &self,
+        agent_id: &str,
+        query: &str,
+        limit: Option<usize>,
+    ) -> anyhow::Result<Vec<String>>;
+    
+    /// Get all permanent memories for an agent
+    async fn get_agent_memories(&self, agent_id: &str) -> anyhow::Result<Vec<String>>;
+    
+    /// Clear all memories for an agent
+    async fn clear_agent_memories(&self, agent_id: &str) -> anyhow::Result<()>;
 }
 
-impl Default for LocalMemoryStore {
+#[derive(Debug, Clone)]
+pub struct SessionMemory {
+    pub agent_id: String,
+    pub thread_id: String,
+    pub session_summary: String,
+    pub key_insights: Vec<String>,
+    pub important_facts: Vec<String>,
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+}
+
+// Local SessionStore implementation using HashMap
+#[derive(Clone)]
+pub struct LocalSessionStore {
+    sessions: Arc<RwLock<HashMap<String, LocalAgentMemory>>>,
+}
+
+impl Default for LocalSessionStore {
     fn default() -> Self {
         Self::new()
     }
+}
+
+impl LocalSessionStore {
+    pub fn new() -> Self {
+        Self {
+            sessions: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+    
+    fn get_session_key(agent_id: &str, thread_id: &str) -> String {
+        format!("{}:{}", agent_id, thread_id)
+    }
+}
+
+#[async_trait::async_trait]
+impl SessionStore for LocalSessionStore {
+    async fn get_steps(
+        &self,
+        agent_id: &str,
+        thread_id: &str,
+    ) -> anyhow::Result<Vec<MemoryStep>> {
+        let sessions = self.sessions.read().await;
+        let session_key = Self::get_session_key(agent_id, thread_id);
+        let memory = sessions
+            .get(&session_key)
+            .cloned()
+            .unwrap_or_else(LocalAgentMemory::default);
+        Ok(memory.get_steps(Some(thread_id)))
+    }
+
+    async fn store_step(
+        &self,
+        agent_id: &str,
+        thread_id: &str,
+        step: MemoryStep,
+    ) -> anyhow::Result<()> {
+        let mut sessions = self.sessions.write().await;
+        let session_key = Self::get_session_key(agent_id, thread_id);
+        let memory = sessions
+            .entry(session_key)
+            .or_insert_with(LocalAgentMemory::default);
+        memory.add_step(step, Some(thread_id));
+        Ok(())
+    }
+    
+    async fn clear_session(
+        &self,
+        agent_id: &str,
+        thread_id: &str,
+    ) -> anyhow::Result<()> {
+        let mut sessions = self.sessions.write().await;
+        let session_key = Self::get_session_key(agent_id, thread_id);
+        sessions.remove(&session_key);
+        Ok(())
+    }
+}
+
+// File-based SessionStore implementation
+#[derive(Clone)]
+pub struct FileSessionStore {
+    file_path: String,
+    sessions: Arc<RwLock<HashMap<String, LocalAgentMemory>>>,
+}
+
+impl FileSessionStore {
+    pub fn new(file_path: String) -> Self {
+        let sessions = Arc::new(RwLock::new(HashMap::new()));
+        std::fs::create_dir_all(&file_path).unwrap_or_default();
+        Self {
+            file_path,
+            sessions,
+        }
+    }
+    
+    fn get_session_key(agent_id: &str, thread_id: &str) -> String {
+        format!("{}:{}", agent_id, thread_id)
+    }
+    
+    fn get_file_path(&self, agent_id: &str, thread_id: &str) -> String {
+        format!("{}/{}_{}.session", self.file_path, agent_id, thread_id)
+    }
+
+    async fn load_from_file(&self, agent_id: &str, thread_id: &str) -> anyhow::Result<()> {
+        let path = self.get_file_path(agent_id, thread_id);
+        if !tokio::fs::try_exists(&path).await? {
+            return Ok(());
+        }
+        
+        let contents = tokio::fs::read_to_string(&path).await?;
+        let memory: LocalAgentMemory = serde_json::from_str(&contents)?;
+        
+        let mut sessions = self.sessions.write().await;
+        let session_key = Self::get_session_key(agent_id, thread_id);
+        sessions.insert(session_key, memory);
+        Ok(())
+    }
+
+    async fn save_to_file(&self, agent_id: &str, thread_id: &str) -> anyhow::Result<()> {
+        let sessions = self.sessions.read().await;
+        let session_key = Self::get_session_key(agent_id, thread_id);
+        
+        if let Some(memory) = sessions.get(&session_key) {
+            let serialized = serde_json::to_string(memory)?;
+            let path = self.get_file_path(agent_id, thread_id);
+            tokio::fs::write(&path, serialized).await?;
+        }
+        Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl SessionStore for FileSessionStore {
+    async fn get_steps(
+        &self,
+        agent_id: &str,
+        thread_id: &str,
+    ) -> anyhow::Result<Vec<MemoryStep>> {
+        self.load_from_file(agent_id, thread_id).await?;
+        let sessions = self.sessions.read().await;
+        let session_key = Self::get_session_key(agent_id, thread_id);
+        let memory = sessions
+            .get(&session_key)
+            .cloned()
+            .unwrap_or_else(LocalAgentMemory::default);
+        Ok(memory.get_steps(Some(thread_id)))
+    }
+
+    async fn store_step(
+        &self,
+        agent_id: &str,
+        thread_id: &str,
+        step: MemoryStep,
+    ) -> anyhow::Result<()> {
+        {
+            let mut sessions = self.sessions.write().await;
+            let session_key = Self::get_session_key(agent_id, thread_id);
+            let memory = sessions
+                .entry(session_key)
+                .or_insert_with(LocalAgentMemory::default);
+            memory.add_step(step, Some(thread_id));
+        }
+        self.save_to_file(agent_id, thread_id).await?;
+        Ok(())
+    }
+    
+    async fn clear_session(
+        &self,
+        agent_id: &str,
+        thread_id: &str,
+    ) -> anyhow::Result<()> {
+        let mut sessions = self.sessions.write().await;
+        let session_key = Self::get_session_key(agent_id, thread_id);
+        sessions.remove(&session_key);
+        
+        let path = self.get_file_path(agent_id, thread_id);
+        if tokio::fs::try_exists(&path).await? {
+            tokio::fs::remove_file(&path).await?;
+        }
+        Ok(())
+    }
+}
+
+// Local MemoryStore implementation for cross-session permanent memory
+#[derive(Clone, Default)]
+pub struct LocalMemoryStore {
+    memories: Arc<RwLock<HashMap<String, Vec<String>>>>,
 }
 
 impl LocalMemoryStore {
@@ -92,30 +297,176 @@ impl LocalMemoryStore {
 
 #[async_trait::async_trait]
 impl MemoryStore for LocalMemoryStore {
-    async fn get_steps(
-        &self,
-        agent_id: &str,
-        thread_id: Option<&str>,
-    ) -> anyhow::Result<Vec<MemoryStep>> {
-        let memories = self.memories.read().await;
-        let memory = memories
-            .get(agent_id)
-            .cloned()
-            .unwrap_or_else(LocalAgentMemory::default);
-        Ok(memory.get_steps(thread_id))
-    }
-
-    async fn store_step(
-        &self,
-        agent_id: &str,
-        step: MemoryStep,
-        thread_id: Option<&str>,
-    ) -> anyhow::Result<()> {
+    async fn store_memory(&self, session_memory: SessionMemory) -> anyhow::Result<()> {
         let mut memories = self.memories.write().await;
-        let memory = memories
-            .entry(agent_id.to_string())
-            .or_insert_with(LocalAgentMemory::default);
-        memory.add_step(step, thread_id);
+        let agent_memories = memories
+            .entry(session_memory.agent_id.clone())
+            .or_insert_with(Vec::new);
+        
+        // Create a consolidated memory entry from the session
+        let memory_entry = format!(
+            "Session: {} ({})\nSummary: {}\nInsights: {}\nFacts: {}",
+            session_memory.thread_id,
+            session_memory.timestamp.format("%Y-%m-%d %H:%M:%S"),
+            session_memory.session_summary,
+            session_memory.key_insights.join("; "),
+            session_memory.important_facts.join("; ")
+        );
+        
+        agent_memories.push(memory_entry);
+        Ok(())
+    }
+    
+    async fn search_memories(
+        &self,
+        agent_id: &str,
+        query: &str,
+        limit: Option<usize>,
+    ) -> anyhow::Result<Vec<String>> {
+        let memories = self.memories.read().await;
+        if let Some(agent_memories) = memories.get(agent_id) {
+            let query_lower = query.to_lowercase();
+            let mut relevant_memories: Vec<String> = agent_memories
+                .iter()
+                .filter(|memory| memory.to_lowercase().contains(&query_lower))
+                .cloned()
+                .collect();
+            
+            if let Some(limit) = limit {
+                relevant_memories.truncate(limit);
+            }
+            
+            Ok(relevant_memories)
+        } else {
+            Ok(Vec::new())
+        }
+    }
+    
+    async fn get_agent_memories(&self, agent_id: &str) -> anyhow::Result<Vec<String>> {
+        let memories = self.memories.read().await;
+        Ok(memories.get(agent_id).cloned().unwrap_or_default())
+    }
+    
+    async fn clear_agent_memories(&self, agent_id: &str) -> anyhow::Result<()> {
+        let mut memories = self.memories.write().await;
+        memories.remove(agent_id);
+        Ok(())
+    }
+}
+
+// File-based MemoryStore implementation
+#[derive(Clone)]
+pub struct FileMemoryStore {
+    file_path: String,
+    memories: Arc<RwLock<HashMap<String, Vec<String>>>>,
+}
+
+impl FileMemoryStore {
+    pub fn new(file_path: String) -> Self {
+        std::fs::create_dir_all(&file_path).unwrap_or_default();
+        Self {
+            file_path,
+            memories: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+    
+    fn get_memory_file_path(&self, agent_id: &str) -> String {
+        format!("{}/{}.memories", self.file_path, agent_id)
+    }
+    
+    async fn load_agent_memories(&self, agent_id: &str) -> anyhow::Result<()> {
+        let path = self.get_memory_file_path(agent_id);
+        if !tokio::fs::try_exists(&path).await? {
+            return Ok(());
+        }
+        
+        let contents = tokio::fs::read_to_string(&path).await?;
+        let agent_memories: Vec<String> = serde_json::from_str(&contents)?;
+        
+        let mut memories = self.memories.write().await;
+        memories.insert(agent_id.to_string(), agent_memories);
+        Ok(())
+    }
+    
+    async fn save_agent_memories(&self, agent_id: &str) -> anyhow::Result<()> {
+        let memories = self.memories.read().await;
+        if let Some(agent_memories) = memories.get(agent_id) {
+            let serialized = serde_json::to_string(agent_memories)?;
+            let path = self.get_memory_file_path(agent_id);
+            tokio::fs::write(&path, serialized).await?;
+        }
+        Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl MemoryStore for FileMemoryStore {
+    async fn store_memory(&self, session_memory: SessionMemory) -> anyhow::Result<()> {
+        self.load_agent_memories(&session_memory.agent_id).await?;
+        
+        {
+            let mut memories = self.memories.write().await;
+            let agent_memories = memories
+                .entry(session_memory.agent_id.clone())
+                .or_insert_with(Vec::new);
+            
+            let memory_entry = format!(
+                "Session: {} ({})\nSummary: {}\nInsights: {}\nFacts: {}",
+                session_memory.thread_id,
+                session_memory.timestamp.format("%Y-%m-%d %H:%M:%S"),
+                session_memory.session_summary,
+                session_memory.key_insights.join("; "),
+                session_memory.important_facts.join("; ")
+            );
+            
+            agent_memories.push(memory_entry);
+        }
+        
+        self.save_agent_memories(&session_memory.agent_id).await?;
+        Ok(())
+    }
+    
+    async fn search_memories(
+        &self,
+        agent_id: &str,
+        query: &str,
+        limit: Option<usize>,
+    ) -> anyhow::Result<Vec<String>> {
+        self.load_agent_memories(agent_id).await?;
+        
+        let memories = self.memories.read().await;
+        if let Some(agent_memories) = memories.get(agent_id) {
+            let query_lower = query.to_lowercase();
+            let mut relevant_memories: Vec<String> = agent_memories
+                .iter()
+                .filter(|memory| memory.to_lowercase().contains(&query_lower))
+                .cloned()
+                .collect();
+            
+            if let Some(limit) = limit {
+                relevant_memories.truncate(limit);
+            }
+            
+            Ok(relevant_memories)
+        } else {
+            Ok(Vec::new())
+        }
+    }
+    
+    async fn get_agent_memories(&self, agent_id: &str) -> anyhow::Result<Vec<String>> {
+        self.load_agent_memories(agent_id).await?;
+        let memories = self.memories.read().await;
+        Ok(memories.get(agent_id).cloned().unwrap_or_default())
+    }
+    
+    async fn clear_agent_memories(&self, agent_id: &str) -> anyhow::Result<()> {
+        let mut memories = self.memories.write().await;
+        memories.remove(agent_id);
+        
+        let path = self.get_memory_file_path(agent_id);
+        if tokio::fs::try_exists(&path).await? {
+            tokio::fs::remove_file(&path).await?;
+        }
         Ok(())
     }
 }

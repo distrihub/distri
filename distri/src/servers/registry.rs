@@ -1,7 +1,7 @@
 use crate::{
     coordinator::{self, CoordinatorContext, LocalCoordinator, DISTRI_LOCAL_SERVER},
-    memory::{file_memory_store::FileMemoryStore, AgentMemory, MemoryConfig},
-    store::{LocalMemoryStore, MemoryStore},
+    memory::{AgentMemory, MemoryConfig},
+    store::{LocalSessionStore, SessionStore, FileSessionStore},
     types::{ExternalMcpServer, TransportType},
     ToolSessionStore,
 };
@@ -101,19 +101,19 @@ pub async fn init_registry_and_coordinator(
     let reg_clone = server_registry.clone();
     let mut registry = reg_clone.write().await;
 
-    let memory_store = match memory_config {
+    let session_store = match memory_config {
         MemoryConfig::InMemory => Some(Arc::new(
-            Box::new(LocalMemoryStore::new()) as Box<dyn MemoryStore>
+            Box::new(LocalSessionStore::new()) as Box<dyn SessionStore>
         )),
         MemoryConfig::File(path) => Some(Arc::new(
-            Box::new(FileMemoryStore::new(path)) as Box<dyn MemoryStore>
+            Box::new(FileSessionStore::new(path)) as Box<dyn SessionStore>
         )),
     };
 
     let coordinator = Arc::new(LocalCoordinator::new(
         server_registry.clone(),
         tool_sessions,
-        memory_store,
+        session_store,
         context.clone(),
     ));
 

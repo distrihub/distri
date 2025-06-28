@@ -115,7 +115,7 @@ mod tests {
 
     use crate::{
         coordinator::{CoordinatorContext, LocalCoordinator},
-        store::{LocalMemoryStore, MemoryStore},
+        store::{LocalSessionStore, SessionStore},
         tests::utils::{get_registry, get_tools_session_store},
     };
 
@@ -129,14 +129,14 @@ mod tests {
 
     async fn async_server(transport: ServerInMemoryTransport, context: Arc<CoordinatorContext>) {
         let registry = get_registry().await;
-        let memory_store = Some(Arc::new(
-            Box::new(LocalMemoryStore::new()) as Box<dyn MemoryStore>
+        let session_store = Some(Arc::new(
+            Box::new(LocalSessionStore::new()) as Box<dyn SessionStore>
         ));
         let tool_sessions = get_tools_session_store();
         let coordinator = Arc::new(LocalCoordinator::new(
             registry.clone(),
             tool_sessions,
-            memory_store,
+            session_store,
             context.clone(),
         ));
         let server = build_server(transport.clone(), coordinator, context).unwrap();
