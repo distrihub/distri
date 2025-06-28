@@ -3,3 +3,4 @@
 .distri/
 .env
 distri-frontend/node_modules/
+distri-frontend/dist/
