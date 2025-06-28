@@ -55,6 +55,20 @@ pub enum TransportAuth {
     JwtSecret(String),
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub enum Agent {
+    Local(AgentDefinition),
+    Remote(String),
+}
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
+#[serde(deny_unknown_fields)]
+pub struct RemoteAgent {
+    // A2A agent url
+    pub url: String,
+    pub token: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 #[serde(deny_unknown_fields)]
 pub struct AgentDefinition {
