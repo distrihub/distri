@@ -12,4 +12,6 @@ pub enum AgentError {
     Session(String),
     #[error("Parameters error: {0}")]
     Parameter(String),
+    #[error("Not found: {0}")]
+    NotFound(String),
 }

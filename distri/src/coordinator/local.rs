@@ -3,10 +3,11 @@ use crate::{
     executor::LLMExecutor,
     memory::SystemStep,
     servers::registry::ServerRegistry,
-    store::{LocalMemoryStore, MemoryStore, ToolSessionStore},
+    store::{HashMapThreadStore, LocalMemoryStore, MemoryStore, ThreadStore, ToolSessionStore},
     tools::{execute_tool, get_tools},
     types::{
-        get_tool_descriptions, AgentDefinition, Message, MessageContent, MessageRole, ServerTools,
+        get_tool_descriptions, AgentDefinition, CreateThreadRequest, Message, MessageContent,
+        MessageRole, ServerTools, Thread, ThreadSummary, UpdateThreadRequest,
         DEFAULT_TOOL_DESCRIPTION_TEMPLATE,
     },
 };
@@ -29,6 +30,7 @@ pub struct LocalCoordinator {
     pub coordinator_rx: Arc<Mutex<mpsc::Receiver<CoordinatorMessage>>>,
     pub coordinator_tx: mpsc::Sender<CoordinatorMessage>,
     memory_store: Arc<Box<dyn MemoryStore>>,
+    thread_store: Arc<Box<dyn ThreadStore>>,
     logger: StepLogger,
     iterations: Arc<RwLock<HashMap<String, i32>>>,
     pub context: Arc<CoordinatorContext>,
@@ -42,6 +44,8 @@ impl LocalCoordinator {
         context: Arc<CoordinatorContext>,
     ) -> Self {
         let (coordinator_tx, coordinator_rx) = mpsc::channel(100);
+        let thread_store =
+            Arc::new(Box::new(HashMapThreadStore::default()) as Box<dyn ThreadStore>);
 
         let logger = StepLogger::new(context.verbose);
         Self {
@@ -53,7 +57,7 @@ impl LocalCoordinator {
             coordinator_tx,
             memory_store: memory_store
                 .unwrap_or_else(|| Arc::new(Box::new(LocalMemoryStore::new()))),
-
+            thread_store,
             iterations: Arc::new(RwLock::new(HashMap::new())),
             context: context,
             logger,
@@ -338,6 +342,7 @@ impl LocalCoordinator {
                     agent_id,
                     task,
                     params,
+                    context,
                     response_tx,
                 } => {
                     tracing::info!(
@@ -346,8 +351,6 @@ impl LocalCoordinator {
                         task
                     );
                     let this = self.clone();
-
-                    let context = self.context.clone();
                     tokio::spawn(async move {
                         let result =
                             async { this.call_agent(&agent_id, task, params, context).await }.await;
@@ -360,6 +363,7 @@ impl LocalCoordinator {
                     task,
                     params,
                     event_tx,
+                    context,
                 } => {
                     tracing::info!(
                         "Handling ExecuteStream for agent: {} with messages: {:?}",
@@ -367,7 +371,6 @@ impl LocalCoordinator {
                         task
                     );
                     let this = self.clone();
-                    let context = self.context.clone();
                     tokio::spawn(async move {
                         let result = async {
                             this.call_agent_stream(&agent_id, task, params, context, event_tx)
@@ -680,6 +683,86 @@ impl LocalCoordinator {
             }
         }
     }
+
+    // Thread management methods
+    pub async fn create_thread(&self, request: CreateThreadRequest) -> Result<Thread, AgentError> {
+        // Validate that the agent exists
+        let agent_definitions = self.agent_definitions.read().await;
+        if !agent_definitions.contains_key(&request.agent_id) {
+            return Err(AgentError::NotFound(format!(
+                "Agent '{}' not found",
+                request.agent_id
+            )));
+        }
+        drop(agent_definitions);
+
+        self.thread_store
+            .create_thread(request)
+            .await
+            .map_err(|e| AgentError::Session(e.to_string()))
+    }
+
+    pub async fn get_thread(&self, thread_id: &str) -> Result<Option<Thread>, AgentError> {
+        self.thread_store
+            .get_thread(thread_id)
+            .await
+            .map_err(|e| AgentError::Session(e.to_string()))
+    }
+
+    pub async fn update_thread(
+        &self,
+        thread_id: &str,
+        request: UpdateThreadRequest,
+    ) -> Result<Thread, AgentError> {
+        self.thread_store
+            .update_thread(thread_id, request)
+            .await
+            .map_err(|e| AgentError::Session(e.to_string()))
+    }
+
+    pub async fn delete_thread(&self, thread_id: &str) -> Result<(), AgentError> {
+        self.thread_store
+            .delete_thread(thread_id)
+            .await
+            .map_err(|e| AgentError::Session(e.to_string()))
+    }
+
+    pub async fn list_threads(
+        &self,
+        agent_id: Option<&str>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> Result<Vec<ThreadSummary>, AgentError> {
+        self.thread_store
+            .list_threads(agent_id, limit, offset)
+            .await
+            .map_err(|e| AgentError::Session(e.to_string()))
+    }
+
+    /// Ensures a thread exists for the given agent and thread_id, creating it if necessary.
+    /// Optionally takes an initial message for thread creation.
+    pub async fn ensure_thread_exists(
+        &self,
+        agent_id: &str,
+        thread_id: Option<&str>,
+        initial_message: Option<String>,
+    ) -> Result<Thread, AgentError> {
+        let thread = match thread_id {
+            Some(thread_id) => self.get_thread(thread_id).await?,
+            None => None,
+        };
+        match thread {
+            Some(thread) => Ok(thread),
+            None => {
+                let create_request = crate::types::CreateThreadRequest {
+                    agent_id: agent_id.to_string(),
+                    title: None,
+                    initial_message,
+                };
+                self.create_thread(create_request).await
+            }
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -721,9 +804,24 @@ impl AgentCoordinator for LocalCoordinator {
         agent_name: &str,
         task: TaskStep,
         params: Option<serde_json::Value>,
+        context: Arc<CoordinatorContext>,
     ) -> Result<String, AgentError> {
-        self.call_agent(agent_name, task, params, self.context.clone())
-            .await
+        let result = self.call_agent(agent_name, task, params, context).await?;
+
+        // Update thread store with agent definitions for thread listing
+        let agent_definitions = self.agent_definitions.read().await;
+        if let Some(thread_store) = self
+            .thread_store
+            .as_ref()
+            .as_any()
+            .downcast_ref::<HashMapThreadStore>()
+        {
+            thread_store
+                .set_agent_definitions(agent_definitions.clone())
+                .await;
+        }
+
+        Ok(result)
     }
 
     async fn execute_stream(
@@ -732,8 +830,24 @@ impl AgentCoordinator for LocalCoordinator {
         task: TaskStep,
         params: Option<serde_json::Value>,
         event_tx: mpsc::Sender<AgentEvent>,
+        context: Arc<CoordinatorContext>,
     ) -> Result<(), AgentError> {
-        self.call_agent_stream(agent_name, task, params, self.context.clone(), event_tx)
-            .await
+        self.call_agent_stream(agent_name, task, params, context, event_tx)
+            .await?;
+
+        // Update thread store with agent definitions for thread listing
+        let agent_definitions = self.agent_definitions.read().await;
+        if let Some(thread_store) = self
+            .thread_store
+            .as_ref()
+            .as_any()
+            .downcast_ref::<HashMapThreadStore>()
+        {
+            thread_store
+                .set_agent_definitions(agent_definitions.clone())
+                .await;
+        }
+
+        Ok(())
     }
 }

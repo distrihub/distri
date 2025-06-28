@@ -6,9 +6,9 @@ use uuid::Uuid;
 use crate::{
     coordinator::CoordinatorContext,
     memory::{LocalAgentMemory, MemoryStep},
-    types::{McpSession, Message},
+    types::{CreateThreadRequest, McpSession, Message, Thread, ThreadSummary, UpdateThreadRequest},
 };
-use distri_a2a::{Task, TaskState, TaskStatus, Role, Part, TextPart, Message as A2aMessage};
+use distri_a2a::{Message as A2aMessage, Task, TaskState, TaskStatus};
 
 #[async_trait]
 pub trait ToolSessionStore: Send + Sync {
@@ -123,7 +123,13 @@ impl MemoryStore for LocalMemoryStore {
 // Task Store trait for A2A task management
 #[async_trait]
 pub trait TaskStore: Send + Sync {
-    async fn create_task(&self, agent_id: &str, context_id: &str, kind: &str) -> anyhow::Result<Task>;
+    async fn create_task(
+        &self,
+        agent_id: &str,
+        context_id: &str,
+        kind: &str,
+        task_id: Option<&str>,
+    ) -> anyhow::Result<Task>;
     async fn get_task(&self, task_id: &str) -> anyhow::Result<Option<Task>>;
     async fn update_task_status(&self, task_id: &str, status: TaskStatus) -> anyhow::Result<()>;
     async fn cancel_task(&self, task_id: &str) -> anyhow::Result<Task>;
@@ -153,8 +159,16 @@ impl HashMapTaskStore {
 
 #[async_trait]
 impl TaskStore for HashMapTaskStore {
-    async fn create_task(&self, agent_id: &str, context_id: &str, kind: &str) -> anyhow::Result<Task> {
-        let task_id = Uuid::new_v4().to_string();
+    async fn create_task(
+        &self,
+        _agent_id: &str,
+        context_id: &str,
+        kind: &str,
+        task_id: Option<&str>,
+    ) -> anyhow::Result<Task> {
+        let task_id = task_id
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| Uuid::new_v4().to_string());
         let task = Task {
             id: task_id.clone(),
             kind: kind.to_string(),
@@ -167,7 +181,6 @@ impl TaskStore for HashMapTaskStore {
             artifacts: vec![],
             history: vec![],
         };
-
         let mut tasks = self.tasks.write().await;
         tasks.insert(task_id, task.clone());
         Ok(task)
@@ -211,5 +224,157 @@ impl TaskStore for HashMapTaskStore {
     async fn list_tasks(&self, _agent_id: Option<&str>) -> anyhow::Result<Vec<Task>> {
         let tasks = self.tasks.read().await;
         Ok(tasks.values().cloned().collect())
+    }
+}
+
+// Thread Store trait for thread management
+#[async_trait]
+pub trait ThreadStore: Send + Sync {
+    fn as_any(&self) -> &dyn std::any::Any;
+    async fn create_thread(&self, request: CreateThreadRequest) -> anyhow::Result<Thread>;
+    async fn get_thread(&self, thread_id: &str) -> anyhow::Result<Option<Thread>>;
+    async fn update_thread(
+        &self,
+        thread_id: &str,
+        request: UpdateThreadRequest,
+    ) -> anyhow::Result<Thread>;
+    async fn delete_thread(&self, thread_id: &str) -> anyhow::Result<()>;
+    async fn list_threads(
+        &self,
+        agent_id: Option<&str>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> anyhow::Result<Vec<ThreadSummary>>;
+    async fn update_thread_with_message(
+        &self,
+        thread_id: &str,
+        message: &str,
+    ) -> anyhow::Result<()>;
+}
+
+// HashMap-based thread store implementation
+#[derive(Clone, Default)]
+pub struct HashMapThreadStore {
+    threads: Arc<RwLock<HashMap<String, Thread>>>,
+    agent_definitions: Arc<RwLock<HashMap<String, crate::types::AgentDefinition>>>,
+}
+
+impl HashMapThreadStore {
+    pub async fn set_agent_definitions(
+        &self,
+        agents: HashMap<String, crate::types::AgentDefinition>,
+    ) {
+        let mut agent_defs = self.agent_definitions.write().await;
+        *agent_defs = agents;
+    }
+}
+
+#[async_trait]
+impl ThreadStore for HashMapThreadStore {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    async fn create_thread(&self, request: CreateThreadRequest) -> anyhow::Result<Thread> {
+        let mut thread = Thread::new(request.agent_id, request.title);
+
+        // If there's an initial message, update the thread with it
+        if let Some(initial_message) = &request.initial_message {
+            thread.update_with_message(initial_message);
+        }
+
+        let mut threads = self.threads.write().await;
+        threads.insert(thread.id.clone(), thread.clone());
+        Ok(thread)
+    }
+
+    async fn get_thread(&self, thread_id: &str) -> anyhow::Result<Option<Thread>> {
+        let threads = self.threads.read().await;
+        Ok(threads.get(thread_id).cloned())
+    }
+
+    async fn update_thread(
+        &self,
+        thread_id: &str,
+        request: UpdateThreadRequest,
+    ) -> anyhow::Result<Thread> {
+        let mut threads = self.threads.write().await;
+        let thread = threads
+            .get_mut(thread_id)
+            .ok_or_else(|| anyhow::anyhow!("Thread not found"))?;
+
+        if let Some(title) = request.title {
+            thread.title = title;
+        }
+
+        if let Some(metadata) = request.metadata {
+            thread.metadata = metadata;
+        }
+
+        thread.updated_at = chrono::Utc::now();
+        Ok(thread.clone())
+    }
+
+    async fn delete_thread(&self, thread_id: &str) -> anyhow::Result<()> {
+        let mut threads = self.threads.write().await;
+        threads.remove(thread_id);
+        Ok(())
+    }
+
+    async fn list_threads(
+        &self,
+        agent_id: Option<&str>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> anyhow::Result<Vec<ThreadSummary>> {
+        let threads = self.threads.read().await;
+        let agent_defs = self.agent_definitions.read().await;
+
+        let mut thread_list: Vec<ThreadSummary> = threads
+            .values()
+            .filter(|thread| agent_id.map_or(true, |aid| thread.agent_id == aid))
+            .map(|thread| {
+                let agent_name = agent_defs
+                    .get(&thread.agent_id)
+                    .map(|def| def.name.clone())
+                    .unwrap_or_else(|| thread.agent_id.clone());
+
+                ThreadSummary {
+                    id: thread.id.clone(),
+                    title: thread.title.clone(),
+                    agent_id: thread.agent_id.clone(),
+                    agent_name,
+                    updated_at: thread.updated_at,
+                    message_count: thread.message_count,
+                    last_message: thread.last_message.clone(),
+                }
+            })
+            .collect();
+
+        // Sort by updated_at descending (most recent first)
+        thread_list.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+
+        // Apply offset and limit
+        let offset = offset.unwrap_or(0) as usize;
+        let limit = limit.unwrap_or(50) as usize;
+
+        let end = std::cmp::min(offset + limit, thread_list.len());
+        if offset >= thread_list.len() {
+            return Ok(vec![]);
+        }
+
+        Ok(thread_list[offset..end].to_vec())
+    }
+
+    async fn update_thread_with_message(
+        &self,
+        thread_id: &str,
+        message: &str,
+    ) -> anyhow::Result<()> {
+        let mut threads = self.threads.write().await;
+        if let Some(thread) = threads.get_mut(thread_id) {
+            thread.update_with_message(message);
+        }
+        Ok(())
     }
 }

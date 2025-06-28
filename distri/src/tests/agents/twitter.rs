@@ -39,7 +39,7 @@ async fn test_twitter_summary() {
     };
 
     // Execute using the handle
-    let response = handle.execute(task, None).await.unwrap();
+    let response = handle.execute(task, None, Arc::default()).await.unwrap();
     println!("Response: {}", response);
 
     // Clean up

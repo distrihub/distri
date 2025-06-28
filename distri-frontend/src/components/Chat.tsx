@@ -8,8 +8,20 @@ interface Agent {
   status: 'online' | 'offline';
 }
 
+interface Thread {
+  id: string;
+  title: string;
+  agent_id: string;
+  agent_name: string;
+  updated_at: string;
+  message_count: number;
+  last_message?: string;
+}
+
 interface ChatProps {
+  thread: Thread;
   agent: Agent;
+  onThreadUpdate?: () => void;
 }
 
 interface Message {
@@ -20,7 +32,7 @@ interface Message {
   taskId?: string;
 }
 
-const Chat: React.FC<ChatProps> = ({ agent }) => {
+const Chat: React.FC<ChatProps> = ({ thread, agent, onThreadUpdate }) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -34,6 +46,24 @@ const Chat: React.FC<ChatProps> = ({ agent }) => {
     scrollToBottom();
   }, [messages]);
 
+  // Load thread messages when thread changes
+  useEffect(() => {
+    if (thread) {
+      loadThreadMessages();
+    }
+  }, [thread.id]);
+
+  const loadThreadMessages = async () => {
+    try {
+      // For now, we'll start with empty messages since we don't have a 
+      // thread messages endpoint yet. In a real implementation, you'd fetch
+      // the thread's message history here.
+      setMessages([]);
+    } catch (error) {
+      console.error('Failed to load thread messages:', error);
+    }
+  };
+
   const sendMessage = async () => {
     if (!input.trim() || isLoading) return;
 
@@ -44,12 +74,12 @@ const Chat: React.FC<ChatProps> = ({ agent }) => {
       timestamp: new Date(),
     };
 
-    setMessages(prev => [...prev, userMessage]);
+    setMessages((prev: Message[]) => [...prev, userMessage]);
     setInput('');
     setIsLoading(true);
 
     try {
-      // Send message using A2A protocol
+      // Send message using A2A protocol with thread.id as contextId
       const response = await fetch(`/api/v1/agents/${agent.id}`, {
         method: 'POST',
         headers: {
@@ -68,7 +98,7 @@ const Chat: React.FC<ChatProps> = ({ agent }) => {
                   text: userMessage.content,
                 }
               ],
-              contextId: `chat-${agent.id}`,
+              contextId: thread.id, // Use thread ID as context ID
             },
             configuration: {
               acceptedOutputModes: ['text/plain'],
@@ -98,11 +128,16 @@ const Chat: React.FC<ChatProps> = ({ agent }) => {
         taskId: task.id,
       };
 
-      setMessages(prev => [...prev, agentMessage]);
+      setMessages((prev: Message[]) => [...prev, agentMessage]);
 
       // Set up SSE listener for real-time updates if needed
       if (task.status?.state === 'working') {
         setupSSEListener(task.id);
+      }
+
+      // Update thread in parent component
+      if (onThreadUpdate) {
+        onThreadUpdate();
       }
 
     } catch (error) {
@@ -113,23 +148,24 @@ const Chat: React.FC<ChatProps> = ({ agent }) => {
         content: `Error: ${error instanceof Error ? error.message : 'Failed to send message'}`,
         timestamp: new Date(),
       };
-      setMessages(prev => [...prev, errorMessage]);
+      setMessages((prev: Message[]) => [...prev, errorMessage]);
     } finally {
       setIsLoading(false);
     }
   };
 
   const setupSSEListener = (taskId: string) => {
-    const eventSource = new EventSource(`/api/v1/agents/${agent.id}/events`);
+    // Listen to events filtered by thread ID for better performance
+    const eventSource = new EventSource(`/api/v1/agents/${agent.id}/events?thread_id=${thread.id}`);
 
     eventSource.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
 
-        if (data.task_id === taskId) {
+        if (data.task_id === taskId && data.thread_id === thread.id) {
           if (data.type === 'text_delta') {
             // Update the last agent message with streaming content
-            setMessages(prev => {
+            setMessages((prev: Message[]) => {
               const lastMessage = prev[prev.length - 1];
               if (lastMessage && lastMessage.role === 'agent' && lastMessage.taskId === taskId) {
                 return [
@@ -144,6 +180,10 @@ const Chat: React.FC<ChatProps> = ({ agent }) => {
             });
           } else if (data.type === 'task_completed' || data.type === 'task_error') {
             eventSource.close();
+            // Update thread in parent component when task completes
+            if (onThreadUpdate) {
+              onThreadUpdate();
+            }
           }
         }
       } catch (error) {
@@ -177,8 +217,8 @@ const Chat: React.FC<ChatProps> = ({ agent }) => {
             <Bot className="h-4 w-4 text-white" />
           </div>
           <div>
-            <h3 className="font-medium text-gray-900">{agent.name}</h3>
-            <p className="text-sm text-gray-500">{agent.description}</p>
+            <h3 className="font-medium text-gray-900">{thread.title}</h3>
+            <p className="text-sm text-gray-500">with {agent.name}</p>
           </div>
         </div>
         <div className={`w-2 h-2 rounded-full ${agent.status === 'online' ? 'bg-green-400' : 'bg-gray-400'
@@ -190,7 +230,10 @@ const Chat: React.FC<ChatProps> = ({ agent }) => {
         {messages.length === 0 && (
           <div className="text-center py-8">
             <Bot className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-            <p className="text-gray-500">Start a conversation with {agent.name}</p>
+            <p className="text-gray-500">Continue your conversation with {agent.name}</p>
+            <p className="text-sm text-gray-400 mt-1">
+              Thread: "{thread.title}"
+            </p>
           </div>
         )}
 

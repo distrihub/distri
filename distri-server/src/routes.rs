@@ -1,13 +1,13 @@
 use actix_web::{web, HttpRequest, HttpResponse, Responder};
 use actix_web_lab::sse::{self, Sse};
 use distri::coordinator::{AgentCoordinator, AgentEvent, LocalCoordinator};
-use distri::types::ServerConfig;
+use distri::types::{ServerConfig, UpdateThreadRequest};
 use distri::{memory::TaskStep, TaskStore};
 use distri_a2a::{
     AgentCard, JsonRpcError, JsonRpcRequest, JsonRpcResponse, Message as A2aMessage,
-    MessageSendParams, Part, Role, Task, TaskIdParams, TaskState, TaskStatus, TextPart,
+    MessageSendParams, Part, Role, TaskIdParams, TaskState, TaskStatus, TextPart,
 };
-use futures_util::StreamExt;
+use serde::Deserialize;
 use serde_json::json;
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
@@ -25,7 +25,19 @@ pub fn config(cfg: &mut web::ServiceConfig) {
                     .route(web::post().to(jsonrpc_handler)),
             )
             .service(web::resource("/agents/{id}/events").route(web::get().to(sse_handler)))
-            .service(web::resource("/tasks/{id}").route(web::get().to(get_task))),
+            .service(web::resource("/tasks/{id}").route(web::get().to(get_task)))
+            // Thread endpoints
+            .service(web::resource("/threads").route(web::get().to(list_threads_handler)))
+            .service(
+                web::resource("/threads/{thread_id}")
+                    .route(web::get().to(get_thread_handler))
+                    .route(web::put().to(update_thread_handler))
+                    .route(web::delete().to(delete_thread_handler)),
+            )
+            .service(
+                web::resource("/threads/{thread_id}/events")
+                    .route(web::get().to(thread_events_handler)),
+            ),
     );
 }
 
@@ -67,17 +79,56 @@ async fn get_agent_card(
     }
 }
 
+// Query parameters for event filtering
+#[derive(Deserialize)]
+struct EventQuery {
+    thread_id: Option<String>,
+    agent_id: Option<String>,
+}
+
 async fn sse_handler(
-    req: HttpRequest,
+    _req: HttpRequest,
     id: web::Path<String>,
+    query: web::Query<EventQuery>,
     event_broadcaster: web::Data<broadcast::Sender<String>>,
 ) -> impl Responder {
-    let _agent_id = id.into_inner();
+    let agent_id = id.into_inner();
     let mut rx = event_broadcaster.subscribe();
+
+    let thread_filter = query.thread_id.clone();
+    let agent_filter = Some(agent_id.clone());
 
     let stream = async_stream::stream! {
         while let Ok(event) = rx.recv().await {
-            yield Ok::<_, std::convert::Infallible>(sse::Data::new(event).into());
+            // Parse event to check if it matches filters
+            if let Ok(parsed_event) = serde_json::from_str::<serde_json::Value>(&event) {
+                let mut should_send = true;
+
+                // Filter by agent_id if specified
+                if let Some(expected_agent) = &agent_filter {
+                    if let Some(event_agent) = parsed_event.get("agent_id").and_then(|v| v.as_str()) {
+                        if event_agent != expected_agent {
+                            should_send = false;
+                        }
+                    }
+                }
+
+                // Filter by thread_id if specified
+                if let Some(expected_thread) = &thread_filter {
+                    if let Some(event_thread) = parsed_event.get("thread_id").and_then(|v| v.as_str()) {
+                        if event_thread != expected_thread {
+                            should_send = false;
+                        }
+                    }
+                }
+
+                if should_send {
+                    yield Ok::<_, std::convert::Infallible>(sse::Data::new(event).into());
+                }
+            } else {
+                // If we can't parse the event, send it anyway (backward compatibility)
+                yield Ok::<_, std::convert::Infallible>(sse::Data::new(event).into());
+            }
         }
     };
 
@@ -174,15 +225,30 @@ async fn handle_message_send(
         data: None,
     })?;
 
-    // Create a new task
-    let context_id = params
+    let run_id = params
         .message
-        .context_id
+        .task_id
         .clone()
-        .unwrap_or_else(|| Uuid::new_v4().to_string());
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
+    // Check if thread exists, create if not
+    let thread = coordinator
+        .ensure_thread_exists(
+            &agent_id,
+            params.message.context_id.as_deref(),
+            Some(extract_text_from_message(&params.message)),
+        )
+        .await
+        .map_err(|e| JsonRpcError {
+            code: -32603,
+            message: format!("Failed to ensure thread exists: {}", e),
+            data: None,
+        })?;
+
+    let thread_id = thread.id;
+    // Create a new task with run_id
     let task = task_store
-        .create_task(&agent_id, &context_id, "message")
+        .create_task(&agent_id, &thread_id, "message", Some(&run_id))
         .await
         .map_err(|e| JsonRpcError {
             code: -32603,
@@ -211,18 +277,29 @@ async fn handle_message_send(
             data: None,
         })?;
 
-    // Send event
+    // Send event with thread context
     let _ = event_broadcaster.send(
         json!({
             "type": "task_status_changed",
             "task_id": task.id,
+            "thread_id": thread_id,
+            "agent_id": agent_id,
             "status": "working"
         })
         .to_string(),
     );
 
-    // Execute the task using the coordinator
-    let execution_result = coordinator.execute(&agent_id, task_step, None).await;
+    // Execute the task using the coordinator with thread context
+    let coordinator_context = Arc::new(distri::coordinator::CoordinatorContext::new(
+        thread_id.clone(),
+        run_id.clone(),
+        coordinator.context.verbose,
+        coordinator.context.user_id.clone(),
+        coordinator.context.tools_context.clone(),
+    ));
+    let execution_result = coordinator
+        .execute(&agent_id, task_step, None, coordinator_context.clone())
+        .await;
 
     let mut broadcast_status = "completed";
     let final_status = match execution_result {
@@ -232,7 +309,7 @@ async fn handle_message_send(
                 message_id: Uuid::new_v4().to_string(),
                 role: Role::Agent,
                 parts: vec![Part::Text(TextPart { text: response })],
-                context_id: Some(context_id),
+                context_id: Some(thread_id.clone()),
                 task_id: Some(task.id.clone()),
                 reference_task_ids: vec![],
                 extensions: vec![],
@@ -275,11 +352,13 @@ async fn handle_message_send(
             data: None,
         })?;
 
-    // Send completion event
+    // Send completion event with thread context
     let _ = event_broadcaster.send(
         json!({
             "type": "task_status_changed",
             "task_id": task.id,
+            "thread_id": thread_id,
+            "agent_id": agent_id,
             "status": broadcast_status,
         })
         .to_string(),
@@ -316,15 +395,30 @@ async fn handle_message_send_streaming(
         data: None,
     })?;
 
-    // Create a new task
-    let context_id = params
-        .message
-        .context_id
-        .clone()
-        .unwrap_or_else(|| Uuid::new_v4().to_string());
+    // Check if thread exists, create if not
+    let thread = coordinator
+        .ensure_thread_exists(
+            &agent_id,
+            params.message.context_id.as_deref(),
+            Some(extract_text_from_message(&params.message)),
+        )
+        .await
+        .map_err(|e| JsonRpcError {
+            code: -32603,
+            message: format!("Failed to ensure thread exists: {}", e),
+            data: None,
+        })?;
 
+    let thread_id = thread.id;
+    let run_id = params
+        .message
+        .task_id
+        .clone()
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+
+    // Create a new task with run_id
     let task = task_store
-        .create_task(&agent_id, &context_id, "message")
+        .create_task(&agent_id, &thread_id, "message", Some(&run_id))
         .await
         .map_err(|e| JsonRpcError {
             code: -32603,
@@ -356,29 +450,48 @@ async fn handle_message_send_streaming(
     // Create channel for streaming events
     let (event_tx, mut event_rx) = mpsc::channel(100);
     let task_id_clone = task.id.clone();
+
+    let agent_id_clone = agent_id.clone();
     let event_broadcaster_clone = event_broadcaster.clone();
 
     // Spawn task to handle streaming events
     tokio::spawn(async move {
         while let Some(event) = event_rx.recv().await {
             let event_json = match event {
-                AgentEvent::TextMessageContent { delta, .. } => {
+                AgentEvent::TextMessageContent {
+                    delta,
+                    thread_id: evt_thread_id,
+                    ..
+                } => {
                     json!({
                         "type": "text_delta",
                         "task_id": task_id_clone,
+                        "thread_id": evt_thread_id,
+                        "agent_id": agent_id_clone,
                         "delta": delta
                     })
                 }
-                AgentEvent::RunFinished { .. } => {
+                AgentEvent::RunFinished {
+                    thread_id: evt_thread_id,
+                    ..
+                } => {
                     json!({
                         "type": "task_completed",
-                        "task_id": task_id_clone
+                        "task_id": task_id_clone,
+                        "thread_id": evt_thread_id,
+                        "agent_id": agent_id_clone
                     })
                 }
-                AgentEvent::RunError { message, .. } => {
+                AgentEvent::RunError {
+                    message,
+                    thread_id: evt_thread_id,
+                    ..
+                } => {
                     json!({
                         "type": "task_error",
                         "task_id": task_id_clone,
+                        "thread_id": evt_thread_id,
+                        "agent_id": agent_id_clone,
                         "error": message
                     })
                 }
@@ -388,9 +501,22 @@ async fn handle_message_send_streaming(
         }
     });
 
-    // Execute the task using streaming
+    // Execute the task using streaming with thread context
+    let coordinator_context = Arc::new(distri::coordinator::CoordinatorContext::new(
+        thread_id.clone(),
+        run_id.clone(),
+        coordinator.context.verbose,
+        coordinator.context.user_id.clone(),
+        coordinator.context.tools_context.clone(),
+    ));
     let execution_result = coordinator
-        .execute_stream(&agent_id, task_step, None, event_tx)
+        .execute_stream(
+            &agent_id,
+            task_step,
+            None,
+            event_tx,
+            coordinator_context.clone(),
+        )
         .await;
 
     let final_status = match execution_result {
@@ -495,4 +621,124 @@ fn extract_text_from_message(message: &A2aMessage) -> String {
         })
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+// Thread handlers
+#[derive(Deserialize)]
+struct ListThreadsQuery {
+    agent_id: Option<String>,
+    limit: Option<u32>,
+    offset: Option<u32>,
+}
+
+async fn list_threads_handler(
+    query: web::Query<ListThreadsQuery>,
+    coordinator: web::Data<Arc<LocalCoordinator>>,
+) -> HttpResponse {
+    match coordinator
+        .list_threads(query.agent_id.as_deref(), query.limit, query.offset)
+        .await
+    {
+        Ok(threads) => HttpResponse::Ok().json(threads),
+        Err(e) => HttpResponse::InternalServerError().json(json!({
+            "error": format!("Failed to list threads: {}", e)
+        })),
+    }
+}
+
+// create_thread_handler removed - threads are now auto-created from first messages
+
+async fn get_thread_handler(
+    path: web::Path<String>,
+    coordinator: web::Data<Arc<LocalCoordinator>>,
+) -> HttpResponse {
+    let thread_id = path.into_inner();
+    match coordinator.get_thread(&thread_id).await {
+        Ok(Some(thread)) => HttpResponse::Ok().json(thread),
+        Ok(None) => HttpResponse::NotFound().json(json!({
+            "error": "Thread not found"
+        })),
+        Err(e) => HttpResponse::InternalServerError().json(json!({
+            "error": format!("Failed to get thread: {}", e)
+        })),
+    }
+}
+
+async fn update_thread_handler(
+    path: web::Path<String>,
+    request: web::Json<UpdateThreadRequest>,
+    coordinator: web::Data<Arc<LocalCoordinator>>,
+) -> HttpResponse {
+    let thread_id = path.into_inner();
+    match coordinator
+        .update_thread(&thread_id, request.into_inner())
+        .await
+    {
+        Ok(thread) => HttpResponse::Ok().json(thread),
+        Err(e) => HttpResponse::BadRequest().json(json!({
+            "error": format!("Failed to update thread: {}", e)
+        })),
+    }
+}
+
+async fn delete_thread_handler(
+    path: web::Path<String>,
+    coordinator: web::Data<Arc<LocalCoordinator>>,
+) -> HttpResponse {
+    let thread_id = path.into_inner();
+    match coordinator.delete_thread(&thread_id).await {
+        Ok(_) => HttpResponse::NoContent().finish(),
+        Err(e) => HttpResponse::InternalServerError().json(json!({
+            "error": format!("Failed to delete thread: {}", e)
+        })),
+    }
+}
+
+async fn thread_events_handler(
+    path: web::Path<String>,
+    query: web::Query<EventQuery>,
+    event_broadcaster: web::Data<broadcast::Sender<String>>,
+) -> impl Responder {
+    let thread_id = path.into_inner();
+    let mut rx = event_broadcaster.subscribe();
+
+    // For thread events, we filter specifically by thread_id
+    let thread_filter = Some(thread_id);
+    let agent_filter = query.agent_id.clone();
+
+    let stream = async_stream::stream! {
+        while let Ok(event) = rx.recv().await {
+            // Parse event to check if it matches filters
+            if let Ok(parsed_event) = serde_json::from_str::<serde_json::Value>(&event) {
+                let mut should_send = true;
+
+                // Filter by thread_id (required for thread events)
+                if let Some(expected_thread) = &thread_filter {
+                    if let Some(event_thread) = parsed_event.get("thread_id").and_then(|v| v.as_str()) {
+                        if event_thread != expected_thread {
+                            should_send = false;
+                        }
+                    } else {
+                        // No thread_id in event, don't send for thread-specific endpoint
+                        should_send = false;
+                    }
+                }
+
+                // Filter by agent_id if specified
+                if let Some(expected_agent) = &agent_filter {
+                    if let Some(event_agent) = parsed_event.get("agent_id").and_then(|v| v.as_str()) {
+                        if event_agent != expected_agent {
+                            should_send = false;
+                        }
+                    }
+                }
+
+                if should_send {
+                    yield Ok::<_, std::convert::Infallible>(sse::Data::new(event).into());
+                }
+            }
+        }
+    };
+
+    Sse::from_stream(stream)
 }
