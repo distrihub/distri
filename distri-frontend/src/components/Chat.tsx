@@ -176,7 +176,7 @@ const Chat: React.FC<ChatProps> = ({ thread, agent, onThreadUpdate }) => {
             const result = json.result;
             if (!result) continue;
             // Handle streaming updates
-            if (result.status && result.status.message && result.status.message.role === 'agent' && result.status.message.parts) {
+            if (result.status && result.status.message && result.status.message.role === 'agent' && result.status.message.parts && !result.final) {
               const delta = result.status.message.parts.map((p: any) => p.text).join(' ');
               setMessages((prev: Message[]) => {
                 return prev.map(msg => {

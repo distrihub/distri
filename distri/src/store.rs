@@ -427,7 +427,6 @@ impl MemoryStore for FileMemoryStore {
 pub trait TaskStore: Send + Sync {
     async fn create_task(
         &self,
-        agent_id: &str,
         context_id: &str,
         kind: &str,
         task_id: Option<&str>,
@@ -436,7 +435,7 @@ pub trait TaskStore: Send + Sync {
     async fn update_task_status(&self, task_id: &str, status: TaskStatus) -> anyhow::Result<()>;
     async fn cancel_task(&self, task_id: &str) -> anyhow::Result<Task>;
     async fn add_message_to_task(&self, task_id: &str, message: A2aMessage) -> anyhow::Result<()>;
-    async fn list_tasks(&self, agent_id: Option<&str>) -> anyhow::Result<Vec<Task>>;
+    async fn list_tasks(&self, thread_id: Option<&str>) -> anyhow::Result<Vec<Task>>;
 }
 
 // HashMap-based task store implementation
@@ -463,7 +462,6 @@ impl HashMapTaskStore {
 impl TaskStore for HashMapTaskStore {
     async fn create_task(
         &self,
-        _agent_id: &str,
         context_id: &str,
         kind: &str,
         task_id: Option<&str>,
@@ -523,9 +521,14 @@ impl TaskStore for HashMapTaskStore {
         Ok(())
     }
 
-    async fn list_tasks(&self, _agent_id: Option<&str>) -> anyhow::Result<Vec<Task>> {
+    async fn list_tasks(&self, context_id: Option<&str>) -> anyhow::Result<Vec<Task>> {
         let tasks = self.tasks.read().await;
-        Ok(tasks.values().cloned().collect())
+        let tasks = tasks
+            .values()
+            .filter(|task| context_id.map_or(true, |cid| task.context_id == cid))
+            .cloned()
+            .collect();
+        Ok(tasks)
     }
 }
 

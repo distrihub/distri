@@ -144,7 +144,7 @@ async fn handle_message_send_streaming_sse(
         };
         let thread_id = thread.id;
         let run_id = params.message.task_id.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-        let task = match task_store.create_task(&agent_id, &thread_id, "message", Some(&run_id)).await {
+        let task = match task_store.create_task( &thread_id, "message", Some(&run_id)).await {
             Ok(t) => t,
             Err(e) => {
                 let error = JsonRpcResponse {
@@ -162,6 +162,8 @@ async fn handle_message_send_streaming_sse(
             }
         };
         let task_id = task.id.clone();
+        // Add the user's message to the task history
+        let _ = task_store.add_message_to_task(&task_id, params.message.clone()).await;
         let task_step = TaskStep {
             task: extract_text_from_message(&params.message),
             task_images: None,
@@ -199,19 +201,22 @@ async fn handle_message_send_streaming_sse(
         let task_id_clone = task_id.clone();
         let thread_id_clone = thread_id.clone();
         let id_field_clone2 = id_field_clone.clone();
+        let task_store_clone = task_store.clone();
         tokio::spawn(async move {
             let mut completed = false;
+            let mut agent_message_content = String::new();
             while let Some(event) = event_rx.recv().await {
                 // Forward event to sse_tx as a JsonRpcResponse
                 let resp = match &event {
                     AgentEvent::TextMessageContent { delta, .. } => {
+                        agent_message_content.push_str(delta);
                         let update = json!({
                             "id": task_id_clone,
                             "status": {
                                 "state": "working",
                                 "message": {
                                     "role": "agent",
-                                    "parts": [{"type": "text", "text": delta}],
+                                    "parts": [ { "type": "text", "text": delta } ],
                                     "context_id": thread_id_clone,
                                     "task_id": task_id_clone,
                                     "reference_task_ids": [],
@@ -230,13 +235,32 @@ async fn handle_message_send_streaming_sse(
                         }
                     }
                     AgentEvent::RunError { message, .. } => {
+                        completed = true;
+                        // Update task status to failed and add message to history
+                        let agent_message = distri_a2a::Message {
+                            message_id: uuid::Uuid::new_v4().to_string(),
+                            role: Role::Agent,
+                            parts: vec![Part::Text(TextPart { text: message.clone() })],
+                            context_id: Some(thread_id_clone.clone()),
+                            task_id: Some(task_id_clone.clone()),
+                            reference_task_ids: vec![],
+                            extensions: vec![],
+                            metadata: None,
+                        };
+                        let status = TaskStatus {
+                            state: TaskState::Failed,
+                            message: Some(agent_message.clone()),
+                            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+                        };
+                        let _ = task_store_clone.update_task_status(&task_id_clone, status).await;
+                        let _ = task_store_clone.add_message_to_task(&task_id_clone, agent_message.clone()).await;
                         let update = json!({
                             "id": task_id_clone,
                             "status": {
                                 "state": "failed",
                                 "message": {
                                     "role": "agent",
-                                    "parts": [{"type": "text", "text": message}],
+                                    "parts": [ { "type": "text", "text": message.clone() } ],
                                     "context_id": thread_id_clone,
                                     "task_id": task_id_clone,
                                     "reference_task_ids": [],
@@ -255,9 +279,48 @@ async fn handle_message_send_streaming_sse(
                         }
                     }
                     AgentEvent::RunFinished { .. } => {
-                        // Don't send anything, just mark as completed
                         completed = true;
-                        continue;
+                        // Update task status to completed and add message to history
+                        let agent_message = distri_a2a::Message {
+                            message_id: uuid::Uuid::new_v4().to_string(),
+                            role: Role::Agent,
+                            parts: vec![Part::Text(TextPart { text: agent_message_content.clone() })],
+                            context_id: Some(thread_id_clone.clone()),
+                            task_id: Some(task_id_clone.clone()),
+                            reference_task_ids: vec![],
+                            extensions: vec![],
+                            metadata: None,
+                        };
+                        let status = TaskStatus {
+                            state: TaskState::Completed,
+                            message: Some(agent_message.clone()),
+                            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+                        };
+                        let _ = task_store_clone.update_task_status(&task_id_clone, status).await;
+                        let _ = task_store_clone.add_message_to_task(&task_id_clone, agent_message.clone()).await;
+                        let update = json!({
+                            "id": task_id_clone,
+                            "status": {
+                                "state": "completed",
+                                "message": {
+                                    "role": "agent",
+                                    "parts": [ { "type": "text", "text": agent_message_content.clone() } ],
+                                    "context_id": thread_id_clone,
+                                    "task_id": task_id_clone,
+                                    "reference_task_ids": [],
+                                    "extensions": [],
+                                    "metadata": null
+                                },
+                                "timestamp": chrono::Utc::now().to_rfc3339(),
+                            },
+                            "final": true
+                        });
+                        JsonRpcResponse {
+                            jsonrpc: "2.0".to_string(),
+                            result: Some(update),
+                            error: None,
+                            id: id_field_clone2.clone(),
+                        }
                     }
                     _ => {
                         // Ignore unknown events
@@ -418,7 +481,7 @@ async fn handle_message_send(
     let thread_id = thread.id;
     // Create a new task with run_id
     let task = task_store
-        .create_task(&agent_id, &thread_id, "message", Some(&run_id))
+        .create_task(&thread_id, "message", Some(&run_id))
         .await
         .map_err(|e| JsonRpcError {
             code: -32603,
@@ -690,7 +753,7 @@ async fn delete_thread_handler(
 
 #[derive(Deserialize)]
 struct ListTasksQuery {
-    agent_id: Option<String>,
+    thread_id: Option<String>,
     limit: Option<u32>,
     offset: Option<u32>,
 }
@@ -699,7 +762,7 @@ async fn list_tasks(
     query: web::Query<ListTasksQuery>,
     task_store: web::Data<Arc<dyn TaskStore>>,
 ) -> HttpResponse {
-    match task_store.list_tasks(query.agent_id.as_deref()).await {
+    match task_store.list_tasks(query.thread_id.as_deref()).await {
         Ok(mut tasks) => {
             // Apply pagination
             let offset = query.offset.unwrap_or(0) as usize;
@@ -733,7 +796,7 @@ async fn get_thread_messages(
 ) -> HttpResponse {
     let thread_id = path.into_inner();
 
-    match task_store.list_tasks(None).await {
+    match task_store.list_tasks(Some(&thread_id)).await {
         Ok(tasks) => {
             // Filter tasks by thread context and extract messages from history
             let thread_tasks: Vec<_> = tasks
