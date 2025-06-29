@@ -4,9 +4,13 @@ use tokio::sync::RwLock;
 use uuid::Uuid;
 
 use crate::{
+    agent::Agent,
     coordinator::CoordinatorContext,
     memory::{AgentMemory, LocalAgentMemory, MemoryStep},
-    types::{CreateThreadRequest, McpSession, Message, Thread, ThreadSummary, UpdateThreadRequest},
+    types::{
+        CreateThreadRequest, McpSession, Message, ServerTools, Thread, ThreadSummary,
+        UpdateThreadRequest,
+    },
 };
 use distri_a2a::{Message as A2aMessage, Task, TaskState, TaskStatus};
 
@@ -561,17 +565,6 @@ pub trait ThreadStore: Send + Sync {
 #[derive(Clone, Default)]
 pub struct HashMapThreadStore {
     threads: Arc<RwLock<HashMap<String, Thread>>>,
-    agent_definitions: Arc<RwLock<HashMap<String, crate::types::AgentDefinition>>>,
-}
-
-impl HashMapThreadStore {
-    pub async fn set_agent_definitions(
-        &self,
-        agents: HashMap<String, crate::types::AgentDefinition>,
-    ) {
-        let mut agent_defs = self.agent_definitions.write().await;
-        *agent_defs = agents;
-    }
 }
 
 #[async_trait]
@@ -633,26 +626,18 @@ impl ThreadStore for HashMapThreadStore {
         offset: Option<u32>,
     ) -> anyhow::Result<Vec<ThreadSummary>> {
         let threads = self.threads.read().await;
-        let agent_defs = self.agent_definitions.read().await;
 
         let mut thread_list: Vec<ThreadSummary> = threads
             .values()
             .filter(|thread| agent_id.map_or(true, |aid| thread.agent_id == aid))
-            .map(|thread| {
-                let agent_name = agent_defs
-                    .get(&thread.agent_id)
-                    .map(|def| def.name.clone())
-                    .unwrap_or_else(|| thread.agent_id.clone());
-
-                ThreadSummary {
-                    id: thread.id.clone(),
-                    title: thread.title.clone(),
-                    agent_id: thread.agent_id.clone(),
-                    agent_name,
-                    updated_at: thread.updated_at,
-                    message_count: thread.message_count,
-                    last_message: thread.last_message.clone(),
-                }
+            .map(|thread| ThreadSummary {
+                id: thread.id.clone(),
+                title: thread.title.clone(),
+                agent_id: thread.agent_id.clone(),
+                agent_name: thread.agent_id.clone(),
+                updated_at: thread.updated_at,
+                message_count: thread.message_count,
+                last_message: thread.last_message.clone(),
             })
             .collect();
 
@@ -680,6 +665,84 @@ impl ThreadStore for HashMapThreadStore {
         if let Some(thread) = threads.get_mut(thread_id) {
             thread.update_with_message(message);
         }
+        Ok(())
+    }
+}
+
+#[async_trait]
+pub trait AgentStore: Send + Sync {
+    /// Returns a page of agents and an optional next cursor
+    async fn list(
+        &self,
+        cursor: Option<String>,
+        limit: Option<usize>,
+    ) -> (Vec<Agent>, Option<String>);
+    async fn get(&self, name: &str) -> Option<Agent>;
+    async fn get_tools(&self, name: &str) -> Option<Vec<ServerTools>>;
+    async fn register(&self, agent: Agent, tools: Vec<ServerTools>) -> anyhow::Result<()>;
+}
+
+#[derive(Clone, Default)]
+pub struct InMemoryAgentStore {
+    agents: Arc<RwLock<HashMap<String, Agent>>>,
+    agent_tools: Arc<RwLock<HashMap<String, Vec<ServerTools>>>>,
+}
+
+impl InMemoryAgentStore {
+    pub fn new() -> Self {
+        Self {
+            agents: Arc::new(RwLock::new(HashMap::new())),
+            agent_tools: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+    pub async fn insert(&self, name: String, agent: Agent) {
+        let mut agents = self.agents.write().await;
+        agents.insert(name, agent);
+    }
+}
+
+#[async_trait]
+impl AgentStore for InMemoryAgentStore {
+    async fn list(
+        &self,
+        cursor: Option<String>,
+        limit: Option<usize>,
+    ) -> (Vec<Agent>, Option<String>) {
+        let agents = self.agents.read().await;
+        let mut keys: Vec<&String> = agents.keys().collect();
+        keys.sort();
+
+        let start = match cursor {
+            Some(ref c) => keys.iter().position(|k| *k > c).unwrap_or(0),
+            None => 0,
+        };
+        let limit = limit.unwrap_or(30);
+        let mut result = Vec::new();
+        let mut next_cursor = None;
+        for k in keys.iter().skip(start).take(limit) {
+            if let Some(agent) = agents.get(*k) {
+                result.push(agent.clone());
+            }
+        }
+        if start + limit < keys.len() {
+            next_cursor = keys.get(start + limit).map(|k| (*k).clone());
+        }
+        (result, next_cursor)
+    }
+    async fn get(&self, name: &str) -> Option<Agent> {
+        let agents = self.agents.read().await;
+        agents.get(name).cloned()
+    }
+    async fn get_tools(&self, name: &str) -> Option<Vec<ServerTools>> {
+        let agent_tools = self.agent_tools.read().await;
+        agent_tools.get(name).cloned()
+    }
+    async fn register(&self, agent: Agent, tools: Vec<ServerTools>) -> anyhow::Result<()> {
+        let name = agent.definition.name.clone();
+        let mut agents = self.agents.write().await;
+        agents.insert(name.clone(), agent);
+        let mut agent_tools = self.agent_tools.write().await;
+        agent_tools.insert(name, tools);
         Ok(())
     }
 }

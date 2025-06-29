@@ -12,7 +12,7 @@ use serde_json::json;
 
 use crate::{error::AgentError, memory::TaskStep};
 
-use super::{AgentCoordinator, CoordinatorContext, LocalCoordinator};
+use super::{CoordinatorContext, LocalCoordinator};
 
 pub static DISTRI_LOCAL_SERVER: &str = "distri_agents";
 
@@ -32,17 +32,17 @@ pub fn build_server<T: Transport>(
                 let cursor = req.cursor;
                 let (agents, next_cursor) = tokio::time::timeout(
                     std::time::Duration::from_secs(5),
-                    coordinator.list_agents(cursor),
+                    coordinator.agent_store.list(cursor, None),
                 )
                 .await
-                .map_err(|_| AgentError::ToolExecution("list_agents timed out".into()))??;
+                .map_err(|_| AgentError::ToolExecution("list_agents timed out".into()))?;
 
                 let response = ToolsListResponse {
                     tools: agents
                         .iter()
                         .map(|t| Tool {
-                            name: t.name.clone(),
-                            description: Some(t.description.clone()),
+                            name: t.definition.name.clone(),
+                            description: Some(t.definition.description.clone()),
                             input_schema: json!({
                                 "type": "object",
                                 "properties": {
@@ -54,7 +54,7 @@ pub fn build_server<T: Transport>(
                                 "required": ["message"],
                                 "additionalProperties": false
                             }),
-                            output_schema: t.response_format.clone(),
+                            output_schema: t.definition.response_format.clone(),
                         })
                         .collect(),
                     next_cursor,
@@ -72,15 +72,16 @@ pub fn build_server<T: Transport>(
                 let args = req.arguments.unwrap_or_default();
                 let message = args["message"].as_str().unwrap().to_string();
 
-                let agent_handle = coordinator.get_handle(agent_name);
-                let result = agent_handle
-                    .execute(
+                let agent = coordinator.agent_store.get(&agent_name).await.unwrap();
+
+                let result = agent
+                    .invoke(
                         TaskStep {
                             task: message,
                             task_images: None,
                         },
                         None,
-                        context_clone.clone(),
+                        context_clone,
                     )
                     .await
                     .map_err(|e| AgentError::ToolExecution(e.to_string()));
@@ -115,7 +116,7 @@ mod tests {
 
     use crate::{
         coordinator::{CoordinatorContext, LocalCoordinator},
-        store::{LocalSessionStore, SessionStore},
+        store::{AgentStore, InMemoryAgentStore, LocalSessionStore, SessionStore},
         tests::utils::{get_registry, get_tools_session_store},
     };
 
@@ -132,11 +133,13 @@ mod tests {
         let session_store = Some(Arc::new(
             Box::new(LocalSessionStore::new()) as Box<dyn SessionStore>
         ));
+        let agent_store = Arc::new(Box::new(InMemoryAgentStore::new()) as Box<dyn AgentStore>);
         let tool_sessions = get_tools_session_store();
         let coordinator = Arc::new(LocalCoordinator::new(
             registry.clone(),
             tool_sessions,
             session_store,
+            agent_store,
             context.clone(),
         ));
         let server = build_server(transport.clone(), coordinator, context).unwrap();

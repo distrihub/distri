@@ -1,7 +1,4 @@
-use crate::{
-    agent_store::{AgentExecutionContext, CustomAgent},
-    error::AgentError,
-};
+use crate::error::AgentError;
 
 /// MockAgent that demonstrates custom agent behavior using the step() function
 #[derive(Debug)]
@@ -23,11 +20,13 @@ impl MockAgent {
     }
 
     pub fn was_pre_execution_called(&self) -> bool {
-        self.pre_execution_called.load(std::sync::atomic::Ordering::Relaxed)
+        self.pre_execution_called
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     pub fn was_post_execution_called(&self) -> bool {
-        self.post_execution_called.load(std::sync::atomic::Ordering::Relaxed)
+        self.post_execution_called
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     pub fn get_execution_log(&self) -> Vec<String> {
@@ -36,21 +35,21 @@ impl MockAgent {
 
     #[allow(dead_code)]
     pub fn reset(&self) {
-        self.pre_execution_called.store(false, std::sync::atomic::Ordering::Relaxed);
-        self.post_execution_called.store(false, std::sync::atomic::Ordering::Relaxed);
+        self.pre_execution_called
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+        self.post_execution_called
+            .store(false, std::sync::atomic::Ordering::Relaxed);
         self.execution_log.lock().unwrap().clear();
     }
 }
 
 #[async_trait::async_trait]
 impl CustomAgent for MockAgent {
-    async fn step(
-        &self,
-        context: &AgentExecutionContext,
-    ) -> Result<String, AgentError> {
+    async fn step(&self, context: &AgentExecutionContext) -> Result<String, AgentError> {
         // Mark pre-execution as called
-        self.pre_execution_called.store(true, std::sync::atomic::Ordering::Relaxed);
-        
+        self.pre_execution_called
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+
         let log_entry = format!(
             "[{}] STEP-EXECUTION: agent_id={}, task={}, thread_id={}, params={:?}",
             self.name,
@@ -59,25 +58,28 @@ impl CustomAgent for MockAgent {
             context.coordinator_context.thread_id,
             context.params
         );
-        
+
         self.execution_log.lock().unwrap().push(log_entry.clone());
         tracing::info!("{}", log_entry);
-        
+
         // Simulate some async work
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-        
+
         // Mark post-execution as called
-        self.post_execution_called.store(true, std::sync::atomic::Ordering::Relaxed);
-        
+        self.post_execution_called
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+
         let completion_log = format!(
             "[{}] STEP-COMPLETED: agent_id={}",
-            self.name,
-            context.agent_id
+            self.name, context.agent_id
         );
-        
-        self.execution_log.lock().unwrap().push(completion_log.clone());
+
+        self.execution_log
+            .lock()
+            .unwrap()
+            .push(completion_log.clone());
         tracing::info!("{}", completion_log);
-        
+
         Ok(format!("MockAgent {} executed successfully", self.name))
     }
 
@@ -100,13 +102,10 @@ impl FailingMockAgent {
 
 #[async_trait::async_trait]
 impl CustomAgent for FailingMockAgent {
-    async fn step(
-        &self,
-        context: &AgentExecutionContext,
-    ) -> Result<String, AgentError> {
+    async fn step(&self, context: &AgentExecutionContext) -> Result<String, AgentError> {
         if self.fail_in_step {
             return Err(AgentError::ToolExecution(format!(
-                "Mock step execution failure for agent: {}", 
+                "Mock step execution failure for agent: {}",
                 context.agent_id
             )));
         }

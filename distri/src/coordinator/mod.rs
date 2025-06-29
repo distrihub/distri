@@ -7,7 +7,7 @@ mod local;
 pub use local::*;
 mod log;
 pub use log::*;
-mod reason;
+pub mod reason;
 use crate::{
     error::AgentError,
     memory::TaskStep,
@@ -127,12 +127,6 @@ pub struct AgentHandle {
 
 #[async_trait::async_trait]
 pub trait AgentCoordinator {
-    async fn list_agents(
-        &self,
-        cursor: Option<String>,
-    ) -> Result<(Vec<AgentDefinition>, Option<String>), AgentError>;
-    async fn get_agent(&self, agent_name: &str) -> Result<AgentDefinition, AgentError>;
-    async fn get_tools(&self, agent_name: &str) -> Result<Vec<ServerTools>, AgentError>;
     async fn execute(
         &self,
         agent_name: &str,

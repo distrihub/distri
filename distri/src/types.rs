@@ -11,8 +11,7 @@ use std::{collections::HashMap, time::SystemTime};
 use chrono;
 use uuid;
 
-
-use crate::servers::registry::ServerMetadata;
+use crate::{agent::CustomAgent, servers::registry::ServerMetadata};
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub enum _AuthType {
@@ -56,19 +55,11 @@ pub enum TransportAuth {
     JwtSecret(String),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub enum Agent {
+pub enum AgentRecord {
     Local(AgentDefinition),
-    Remote(String),
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
-#[serde(deny_unknown_fields)]
-pub struct RemoteAgent {
-    // A2A agent url
-    pub url: String,
-    pub token: Option<String>,
+    Runnable(AgentDefinition, Box<dyn CustomAgent>),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
@@ -103,6 +94,9 @@ pub struct AgentDefinition {
     /// A2A-specific fields
     #[serde(default)]
     pub icon_url: Option<String>,
+
+    #[serde(default)]
+    pub max_iterations: Option<i32>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, Default)]
