@@ -2,6 +2,7 @@ use actix_web::Either;
 use actix_web::{web, HttpResponse};
 use actix_web_lab::sse::{self, Sse};
 use distri::coordinator::{AgentCoordinator, AgentEvent, LocalCoordinator};
+use distri::store::AgentStore;
 use distri::types::{ServerConfig, UpdateThreadRequest};
 use distri::{memory::TaskStep, TaskStore};
 use distri_a2a::{
@@ -43,15 +44,15 @@ pub fn config(cfg: &mut web::ServiceConfig) {
 }
 
 async fn list_agents(
-    coordinator: web::Data<Arc<LocalCoordinator>>,
+    agent_store: web::Data<Arc<dyn AgentStore>>,
     server_config: web::Data<ServerConfig>,
 ) -> HttpResponse {
-    let agent_defs = coordinator.agent_definitions.read().await;
-    let agent_cards: Vec<AgentCard> = agent_defs
-        .values()
-        .map(|def| {
+    let (agents, _) = agent_store.list(None, None).await;
+    let agent_cards: Vec<AgentCard> = agents
+        .iter()
+        .map(|agent| {
             distri::a2a::agent_def_to_card(
-                def,
+                &agent.definition,
                 server_config.get_ref().clone(),
                 "http://127.0.0.1:8080",
             )
@@ -62,15 +63,16 @@ async fn list_agents(
 
 async fn get_agent_card(
     id: web::Path<String>,
-    coordinator: web::Data<Arc<LocalCoordinator>>,
+    agent_store: web::Data<Arc<dyn AgentStore>>,
     server_config: web::Data<ServerConfig>,
 ) -> HttpResponse {
     let agent_id = id.into_inner();
-    let agents = coordinator.agent_definitions.read().await;
-    match agents.get(&agent_id) {
-        Some(agent_def) => {
+
+    let agent = agent_store.get(&agent_id).await;
+    match agent {
+        Some(agent) => {
             let card = distri::a2a::agent_def_to_card(
-                agent_def,
+                &agent.definition,
                 server_config.get_ref().clone(),
                 "http://127.0.0.1:8080",
             );

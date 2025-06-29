@@ -11,7 +11,8 @@ use distri::{
         kg::FileMemory,
         registry::{init_registry_and_coordinator, ServerRegistry},
     },
-    types::{get_distri_config_schema, Configuration},
+    store::{AgentStore, InMemoryAgentStore},
+    types::{get_distri_config_schema, AgentRecord, Configuration},
 };
 use distri_server::A2AServer;
 use dotenv::dotenv;
@@ -89,15 +90,18 @@ async fn main() -> Result<()> {
             debug!("Available agents:");
             let config = load_config(cli.config.to_str().unwrap())?;
             let (_, coordinator) = init_all(&config).await?;
+            let agent_store = coordinator.agent_store.clone();
             for agent in &config.agents {
-                coordinator.register_agent(agent.definition.clone()).await?;
+                coordinator
+                    .register_agent(AgentRecord::Local(agent.definition.clone()))
+                    .await?;
             }
             let coordinator_clone = coordinator.clone();
             let coordinator_handle = tokio::spawn(async move {
                 coordinator_clone.run().await.unwrap();
             });
 
-            run::list::list(coordinator.clone()).await?;
+            run::list::list(agent_store).await?;
             coordinator_handle.abort();
         }
         Commands::ListTools => {
@@ -121,7 +125,9 @@ async fn main() -> Result<()> {
                 .unwrap_or_else(|| panic!("Agent not found {agent}"));
 
             for agent in &config.agents {
-                coordinator.register_agent(agent.definition.clone()).await?;
+                coordinator
+                    .register_agent(AgentRecord::Local(agent.definition.clone()))
+                    .await?;
             }
 
             let coordinator_handle = tokio::spawn(async move {
@@ -140,7 +146,9 @@ async fn main() -> Result<()> {
             let (_, coordinator) = init_all(&config).await?;
 
             for agent in &config.agents {
-                coordinator.register_agent(agent.definition.clone()).await?;
+                coordinator
+                    .register_agent(AgentRecord::Local(agent.definition.clone()))
+                    .await?;
             }
             let server = A2AServer::new(coordinator);
             tracing::info!("Starting server at http://{}:{}", host, port);
@@ -190,9 +198,11 @@ async fn init_all(
 
     let memory_config = MemoryConfig::File(".distri/memory".to_string());
     let context = Arc::new(CoordinatorContext::default());
+    let agent_store = Arc::new(Box::new(InMemoryAgentStore::new()) as Box<dyn AgentStore>);
     let (registry, coordinator) = init_registry_and_coordinator(
         local_memories,
         tool_sessions.clone(),
+        agent_store.clone(),
         &config.mcp_servers,
         context,
         memory_config,

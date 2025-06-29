@@ -1,25 +1,27 @@
 use std::sync::Arc;
 
-use distri::coordinator::{AgentCoordinator, LocalCoordinator};
+use distri::store::AgentStore;
 
-pub async fn _visualize_agents(coordinator: Arc<LocalCoordinator>) -> anyhow::Result<()> {
-    let (agents, _) = coordinator.list_agents(None).await?;
+pub async fn _visualize_agents(agent_store: Arc<dyn AgentStore>) -> anyhow::Result<()> {
+    let (agents, _) = agent_store.list(None, None).await;
 
     // Create a vector to hold the lines for the ASCII graph
     let mut lines = Vec::new();
 
-    for (agent, server_tools) in agents
-        .iter()
-        .zip(coordinator.agent_tools.read().await.values())
-    {
+    for agent in agents.iter() {
         // Add agent representation
+        let definition = &agent.definition;
         lines.push("┌─────────────────────────────┐".to_string());
-        lines.push(format!("│         {}            │", agent.name));
-        lines.push(format!("│  Description: {} │", agent.description));
+        lines.push(format!("│         {}            │", definition.name));
+        lines.push(format!("│  Description: {} │", definition.description));
         lines.push("└─────────────────────────────┘".to_string());
 
+        let tools = agent_store
+            .get_tools(&agent.definition.name)
+            .await
+            .unwrap_or_default();
         // Connect agent to its tools
-        for tool in server_tools {
+        for tool in tools {
             for tool in &tool.tools {
                 lines.push("         |".to_string());
                 lines.push("         |".to_string());
