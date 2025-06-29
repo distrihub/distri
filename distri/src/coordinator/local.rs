@@ -67,6 +67,14 @@ impl LocalCoordinator {
         }
     }
 
+    pub fn get_handle(&self, agent_id: String) -> AgentHandle {
+        AgentHandle {
+            agent_id,
+            coordinator_tx: self.coordinator_tx.clone(),
+            verbose: self.context.verbose,
+        }
+    }
+
     pub async fn execute_tool(
         &self,
         agent_id: String,
@@ -251,8 +259,28 @@ impl LocalCoordinator {
         params: Option<serde_json::Value>,
         context: Arc<CoordinatorContext>,
     ) -> Result<String, AgentError> {
-        // Use agent store to execute the agent
-        self.execute(agent_id, task, params, context).await
+        // Get agent from store and use invoke method
+        if let Some(agent) = self.agent_store.get(agent_id).await {
+            agent.invoke(task, params, context).await
+        } else {
+            Err(AgentError::NotFound(format!("Agent {} not found", agent_id)))
+        }
+    }
+
+    async fn call_agent_stream(
+        &self,
+        agent_id: &str,
+        task: TaskStep,
+        params: Option<serde_json::Value>,
+        context: Arc<CoordinatorContext>,
+        event_tx: mpsc::Sender<AgentEvent>,
+    ) -> Result<(), AgentError> {
+        // Get agent from store and use invoke_stream method
+        if let Some(agent) = self.agent_store.get(agent_id).await {
+            agent.invoke_stream(task, params, context, event_tx).await
+        } else {
+            Err(AgentError::NotFound(format!("Agent {} not found", agent_id)))
+        }
     }
 
     // Thread management methods
@@ -324,5 +352,52 @@ impl LocalCoordinator {
                 self.create_thread(create_request).await
             }
         }
+    }
+}
+
+#[async_trait::async_trait]
+impl AgentCoordinator for LocalCoordinator {
+    async fn list_agents(
+        &self,
+        cursor: Option<String>,
+    ) -> Result<(Vec<AgentDefinition>, Option<String>), AgentError> {
+        let (agents, next_cursor) = self.agent_store.list(cursor, Some(30)).await;
+        let agent_definitions: Vec<AgentDefinition> = agents.into_iter().map(|a| a.definition).collect();
+        Ok((agent_definitions, next_cursor))
+    }
+
+    async fn get_agent(&self, agent_name: &str) -> Result<AgentDefinition, AgentError> {
+        if let Some(agent) = self.agent_store.get(agent_name).await {
+            Ok(agent.definition)
+        } else {
+            Err(AgentError::NotFound(format!("Agent {} not found", agent_name)))
+        }
+    }
+
+    async fn get_tools(&self, agent_name: &str) -> Result<Vec<ServerTools>, AgentError> {
+        self.agent_store.get_tools(agent_name).await.ok_or_else(|| {
+            AgentError::NotFound(format!("Tools for agent {} not found", agent_name))
+        })
+    }
+
+    async fn execute(
+        &self,
+        agent_name: &str,
+        task: TaskStep,
+        params: Option<serde_json::Value>,
+        context: Arc<CoordinatorContext>,
+    ) -> Result<String, AgentError> {
+        self.call_agent(agent_name, task, params, context).await
+    }
+
+    async fn execute_stream(
+        &self,
+        agent_name: &str,
+        task: TaskStep,
+        params: Option<serde_json::Value>,
+        event_tx: mpsc::Sender<AgentEvent>,
+        context: Arc<CoordinatorContext>,
+    ) -> Result<(), AgentError> {
+        self.call_agent_stream(agent_name, task, params, context, event_tx).await
     }
 }
