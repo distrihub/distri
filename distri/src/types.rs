@@ -10,7 +10,7 @@ use std::{collections::HashMap, time::SystemTime};
 // Removed unused A2A imports
 use chrono;
 use uuid;
-use async_trait;
+
 
 use crate::servers::registry::ServerMetadata;
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -56,51 +56,11 @@ pub enum TransportAuth {
     JwtSecret(String),
 }
 
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub enum Agent {
     Local(AgentDefinition),
     Remote(String),
-    #[serde(skip)]
-    Runnable(AgentDefinition, Box<dyn BaseAgent>),
-}
-
-impl Clone for Agent {
-    fn clone(&self) -> Self {
-        match self {
-            Agent::Local(def) => Agent::Local(def.clone()),
-            Agent::Remote(url) => Agent::Remote(url.clone()),
-            Agent::Runnable(_, _) => {
-                panic!("Runnable agents cannot be cloned - they contain trait objects")
-            }
-        }
-    }
-}
-
-// BaseAgent trait for custom agent implementations
-#[async_trait::async_trait]
-pub trait BaseAgent: Send + Sync + std::fmt::Debug {
-    /// Called before the main agent execution starts
-    async fn pre_execution(
-        &self,
-        agent_id: &str,
-        task: &crate::memory::TaskStep,
-        params: Option<&serde_json::Value>,
-        context: std::sync::Arc<crate::coordinator::CoordinatorContext>,
-    ) -> Result<(), crate::error::AgentError>;
-
-    /// Called after the main agent execution completes
-    async fn post_execution(
-        &self,
-        agent_id: &str,
-        task: &crate::memory::TaskStep,
-        params: Option<&serde_json::Value>,
-        context: std::sync::Arc<crate::coordinator::CoordinatorContext>,
-        result: &Result<String, crate::error::AgentError>,
-    ) -> Result<(), crate::error::AgentError>;
-
-    /// Support for downcasting (useful for testing)
-    fn as_any(&self) -> &dyn std::any::Any;
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]

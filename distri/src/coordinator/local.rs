@@ -23,14 +23,12 @@ use crate::memory::{ActionStep, MemoryStep, PlanningStep, TaskStep};
 
 #[derive(Clone)]
 pub struct LocalCoordinator {
-    pub agent_definitions: Arc<RwLock<HashMap<String, AgentDefinition>>>,
-    pub agent_tools: Arc<RwLock<HashMap<String, Vec<ServerTools>>>>,
-    pub runnable_agents: Arc<RwLock<HashMap<String, Box<dyn crate::types::BaseAgent>>>>,
+    pub agent_store: crate::agent_store::AgentStore,
     pub tool_sessions: Option<Arc<Box<dyn ToolSessionStore>>>,
     pub registry: Arc<RwLock<ServerRegistry>>,
     pub coordinator_rx: Arc<Mutex<mpsc::Receiver<CoordinatorMessage>>>,
     pub coordinator_tx: mpsc::Sender<CoordinatorMessage>,
-    session_store: Arc<Box<dyn SessionStore>>,
+    pub session_store: Arc<Box<dyn SessionStore>>,
     thread_store: Arc<Box<dyn ThreadStore>>,
     logger: StepLogger,
     iterations: Arc<RwLock<HashMap<String, i32>>>,
@@ -50,9 +48,34 @@ impl LocalCoordinator {
 
         let logger = StepLogger::new(context.verbose);
         Self {
-            agent_definitions: Arc::new(RwLock::new(HashMap::new())),
-            agent_tools: Arc::new(RwLock::new(HashMap::new())),
-            runnable_agents: Arc::new(RwLock::new(HashMap::new())),
+            agent_store: crate::agent_store::AgentStore::new(),
+            tool_sessions,
+            registry,
+            coordinator_rx: Arc::new(Mutex::new(coordinator_rx)),
+            coordinator_tx,
+            session_store: session_store
+                .unwrap_or_else(|| Arc::new(Box::new(LocalSessionStore::new()))),
+            thread_store,
+            iterations: Arc::new(RwLock::new(HashMap::new())),
+            context: context,
+            logger,
+        }
+    }
+
+    pub fn new_with_agent_store(
+        registry: Arc<RwLock<ServerRegistry>>,
+        tool_sessions: Option<Arc<Box<dyn ToolSessionStore>>>,
+        session_store: Option<Arc<Box<dyn SessionStore>>>,
+        context: Arc<CoordinatorContext>,
+        agent_store: crate::agent_store::AgentStore,
+    ) -> Self {
+        let (coordinator_tx, coordinator_rx) = mpsc::channel(100);
+        let thread_store =
+            Arc::new(Box::new(HashMapThreadStore::default()) as Box<dyn ThreadStore>);
+
+        let logger = StepLogger::new(context.verbose);
+        Self {
+            agent_store,
             tool_sessions,
             registry,
             coordinator_rx: Arc::new(Mutex::new(coordinator_rx)),
@@ -74,49 +97,6 @@ impl LocalCoordinator {
         }
     }
 
-    pub async fn register_runnable_agent(
-        &self,
-        definition: AgentDefinition,
-        base_agent: Box<dyn crate::types::BaseAgent>,
-    ) -> anyhow::Result<()> {
-        let (name, resolved_tools) = {
-            let name = definition.name.clone();
-            let server_tools = get_tools(&definition.mcp_servers, self.registry.clone()).await?;
-
-            (name, server_tools)
-        };
-
-        tracing::debug!(
-            "Registering runnable agent: {name} with {:?}",
-            resolved_tools
-                .iter()
-                .map(
-                    |r| serde_json::json!({"name": r.definition.name, "type": r.definition.r#type, "tools": r.tools.len()})
-                )
-                .collect::<Vec<_>>()
-        );
-
-        // Store the definition
-        {
-            let mut definitions = self.agent_definitions.write().await;
-            definitions.insert(name.clone(), definition);
-        }
-
-        // Store the resolved tools
-        {
-            let mut tools = self.agent_tools.write().await;
-            tools.insert(name.clone(), resolved_tools);
-        }
-
-        // Store the runnable agent
-        {
-            let mut runnable_agents = self.runnable_agents.write().await;
-            runnable_agents.insert(name, base_agent);
-        }
-
-        Ok(())
-    }
-
     pub async fn register_agent(&self, definition: AgentDefinition) -> anyhow::Result<()> {
         let (name, resolved_tools) = {
             let name = definition.name.clone();
@@ -136,14 +116,7 @@ impl LocalCoordinator {
                 .collect::<Vec<_>>()
         );
 
-        {
-            let mut definitions = self.agent_definitions.write().await;
-            definitions.insert(name.clone(), definition);
-        }
-
-        // Store the resolved tools
-        let mut tools = self.agent_tools.write().await;
-        tools.insert(name, resolved_tools);
+        self.agent_store.register_local_agent(definition, resolved_tools).await.map_err(|e| anyhow::anyhow!(e))?;
         Ok(())
     }
 
@@ -155,41 +128,8 @@ impl LocalCoordinator {
         context: Arc<CoordinatorContext>,
         event_tx: mpsc::Sender<AgentEvent>,
     ) -> Result<(), AgentError> {
-        // Check if this is a runnable agent
-        let base_agent = {
-            let runnable_agents = self.runnable_agents.read().await;
-            runnable_agents.get(agent_id).is_some()
-        };
-
-        // Call pre_execution hook if this is a runnable agent
-        if base_agent {
-            let runnable_agents = self.runnable_agents.read().await;
-            if let Some(agent) = runnable_agents.get(agent_id) {
-                agent
-                    .pre_execution(agent_id, &task, params.as_ref(), context.clone())
-                    .await?;
-            }
-        }
-
-        // Execute the main agent logic
-        let result = self.call_agent_stream_core(agent_id, task.clone(), params.clone(), context.clone(), event_tx).await;
-
-        // Call post_execution hook if this is a runnable agent
-        if base_agent {
-            let runnable_agents = self.runnable_agents.read().await;
-            if let Some(agent) = runnable_agents.get(agent_id) {
-                            // Convert Result<(), AgentError> to Result<String, AgentError> for the hook
-            let string_result = match &result {
-                Ok(_) => Ok(String::new()),
-                Err(e) => Err(e.clone()),
-            };
-                agent
-                    .post_execution(agent_id, &task, params.as_ref(), context.clone(), &string_result)
-                    .await?;
-            }
-        }
-
-        result
+        // Use agent store to execute the agent with streaming
+        self.agent_store.execute_agent_stream(agent_id, task, params, context, event_tx, Arc::new(self.clone())).await
     }
 
     async fn call_agent_stream_core(
@@ -402,16 +342,13 @@ impl LocalCoordinator {
                 } => {
                     tracing::info!("Handling ExecuteTool for agent: {}", agent_id);
                     let registry = self.registry.clone();
-                    let agent_tools = self.agent_tools.clone();
+                    let agent_store = self.agent_store.clone();
                     let tool_sessions = self.tool_sessions.clone();
                     let context = self.context.clone();
                     tokio::spawn(async move {
                         let result = async {
-                            // Get the server tools in a separate scope to release the lock quickly
-                            let server_tools = {
-                                let tools = agent_tools.read().await;
-                                tools.get(&agent_id).cloned()
-                            };
+                            // Get the server tools for the agent
+                            let server_tools = agent_store.get_agent_tools(&agent_id).await.ok();
 
                             match server_tools {
                                 Some(server_tools) => {
@@ -504,36 +441,8 @@ impl LocalCoordinator {
         params: Option<serde_json::Value>,
         context: Arc<CoordinatorContext>,
     ) -> Result<String, AgentError> {
-        // Check if this is a runnable agent
-        let base_agent = {
-            let runnable_agents = self.runnable_agents.read().await;
-            runnable_agents.get(agent_id).is_some()
-        };
-
-        // Call pre_execution hook if this is a runnable agent
-        if base_agent {
-            let runnable_agents = self.runnable_agents.read().await;
-            if let Some(agent) = runnable_agents.get(agent_id) {
-                agent
-                    .pre_execution(agent_id, &task, params.as_ref(), context.clone())
-                    .await?;
-            }
-        }
-
-        // Execute the main agent logic
-        let result = self.call_agent_core(agent_id, task.clone(), params.clone(), context.clone()).await;
-
-        // Call post_execution hook if this is a runnable agent
-        if base_agent {
-            let runnable_agents = self.runnable_agents.read().await;
-            if let Some(agent) = runnable_agents.get(agent_id) {
-                agent
-                    .post_execution(agent_id, &task, params.as_ref(), context.clone(), &result)
-                    .await?;
-            }
-        }
-
-        result
+        // Use agent store to execute the agent
+        self.agent_store.execute_agent(agent_id, task, params, context, Arc::new(self.clone())).await
     }
 
     async fn call_agent_core(
@@ -834,14 +743,12 @@ impl LocalCoordinator {
     // Thread management methods
     pub async fn create_thread(&self, request: CreateThreadRequest) -> Result<Thread, AgentError> {
         // Validate that the agent exists
-        let agent_definitions = self.agent_definitions.read().await;
-        if !agent_definitions.contains_key(&request.agent_id) {
+        if self.agent_store.get_agent_definition(&request.agent_id).await.is_err() {
             return Err(AgentError::NotFound(format!(
                 "Agent '{}' not found",
                 request.agent_id
             )));
         }
-        drop(agent_definitions);
 
         self.thread_store
             .create_thread(request)
@@ -919,32 +826,16 @@ impl AgentCoordinator for LocalCoordinator {
         &self,
         _cursor: Option<String>,
     ) -> Result<(Vec<AgentDefinition>, Option<String>), AgentError> {
-        let definitions = self.agent_definitions.read().await;
-        let agents: Vec<AgentDefinition> = definitions.values().take(30).cloned().collect();
-        Ok((agents, None))
+        let agents = self.agent_store.list_all_agents().await;
+        Ok((agents.into_iter().take(30).collect(), None))
     }
 
     async fn get_agent(&self, agent_name: &str) -> Result<AgentDefinition, AgentError> {
-        let definitions = tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            self.agent_definitions.read(),
-        )
-        .await
-        .map_err(|_| AgentError::ToolExecution("get_agent timed out".into()))?;
-
-        definitions
-            .get(agent_name)
-            .cloned()
-            .ok_or_else(|| AgentError::ToolExecution(format!("Agent {} not found", agent_name)))
+        self.agent_store.get_agent_definition(agent_name).await
     }
 
     async fn get_tools(&self, agent_name: &str) -> Result<Vec<ServerTools>, AgentError> {
-        let tools =
-            tokio::time::timeout(std::time::Duration::from_secs(5), self.agent_tools.read())
-                .await
-                .map_err(|_| AgentError::ToolExecution("get_tools timed out".into()))?;
-
-        Ok(tools.get(agent_name).cloned().unwrap_or_default())
+        self.agent_store.get_agent_tools(agent_name).await
     }
 
     async fn execute(
@@ -957,7 +848,7 @@ impl AgentCoordinator for LocalCoordinator {
         let result = self.call_agent(agent_name, task, params, context).await?;
 
         // Update thread store with agent definitions for thread listing
-        let agent_definitions = self.agent_definitions.read().await;
+        let local_agents = self.agent_store.local_agents.read().await;
         if let Some(thread_store) = self
             .thread_store
             .as_ref()
@@ -965,7 +856,7 @@ impl AgentCoordinator for LocalCoordinator {
             .downcast_ref::<HashMapThreadStore>()
         {
             thread_store
-                .set_agent_definitions(agent_definitions.clone())
+                .set_agent_definitions(local_agents.clone())
                 .await;
         }
 
@@ -984,7 +875,7 @@ impl AgentCoordinator for LocalCoordinator {
             .await?;
 
         // Update thread store with agent definitions for thread listing
-        let agent_definitions = self.agent_definitions.read().await;
+        let local_agents = self.agent_store.local_agents.read().await;
         if let Some(thread_store) = self
             .thread_store
             .as_ref()
@@ -992,7 +883,7 @@ impl AgentCoordinator for LocalCoordinator {
             .downcast_ref::<HashMapThreadStore>()
         {
             thread_store
-                .set_agent_definitions(agent_definitions.clone())
+                .set_agent_definitions(local_agents.clone())
                 .await;
         }
 

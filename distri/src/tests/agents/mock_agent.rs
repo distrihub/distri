@@ -1,12 +1,9 @@
-use std::sync::Arc;
 use crate::{
-    coordinator::CoordinatorContext,
+    agent_store::{AgentExecutionContext, CustomAgent},
     error::AgentError,
-    memory::TaskStep,
-    types::BaseAgent,
 };
 
-/// MockAgent that demonstrates custom agent behavior with pre/post execution hooks
+/// MockAgent that demonstrates custom agent behavior using the step() function
 #[derive(Debug)]
 pub struct MockAgent {
     pub name: String,
@@ -46,23 +43,21 @@ impl MockAgent {
 }
 
 #[async_trait::async_trait]
-impl BaseAgent for MockAgent {
-    async fn pre_execution(
+impl CustomAgent for MockAgent {
+    async fn step(
         &self,
-        agent_id: &str,
-        task: &TaskStep,
-        params: Option<&serde_json::Value>,
-        context: Arc<CoordinatorContext>,
-    ) -> Result<(), AgentError> {
+        context: &AgentExecutionContext,
+    ) -> Result<String, AgentError> {
+        // Mark pre-execution as called
         self.pre_execution_called.store(true, std::sync::atomic::Ordering::Relaxed);
         
         let log_entry = format!(
-            "[{}] PRE-EXECUTION: agent_id={}, task={}, thread_id={}, params={:?}",
+            "[{}] STEP-EXECUTION: agent_id={}, task={}, thread_id={}, params={:?}",
             self.name,
-            agent_id,
-            task.task,
-            context.thread_id,
-            params
+            context.agent_id,
+            context.task.task,
+            context.coordinator_context.thread_id,
+            context.params
         );
         
         self.execution_log.lock().unwrap().push(log_entry.clone());
@@ -71,41 +66,19 @@ impl BaseAgent for MockAgent {
         // Simulate some async work
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
         
-        Ok(())
-    }
-
-    async fn post_execution(
-        &self,
-        agent_id: &str,
-        task: &TaskStep,
-        params: Option<&serde_json::Value>,
-        context: Arc<CoordinatorContext>,
-        result: &Result<String, AgentError>,
-    ) -> Result<(), AgentError> {
+        // Mark post-execution as called
         self.post_execution_called.store(true, std::sync::atomic::Ordering::Relaxed);
         
-        let result_summary = match result {
-            Ok(response) => format!("SUCCESS ({}chars)", response.len()),
-            Err(e) => format!("ERROR: {}", e),
-        };
-        
-        let log_entry = format!(
-            "[{}] POST-EXECUTION: agent_id={}, task={}, thread_id={}, result={}, params={:?}",
+        let completion_log = format!(
+            "[{}] STEP-COMPLETED: agent_id={}",
             self.name,
-            agent_id,
-            task.task,
-            context.thread_id,
-            result_summary,
-            params
+            context.agent_id
         );
         
-        self.execution_log.lock().unwrap().push(log_entry.clone());
-        tracing::info!("{}", log_entry);
+        self.execution_log.lock().unwrap().push(completion_log.clone());
+        tracing::info!("{}", completion_log);
         
-        // Simulate some async work
-        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-        
-        Ok(())
+        Ok(format!("MockAgent {} executed successfully", self.name))
     }
 
     fn as_any(&self) -> &dyn std::any::Any {
@@ -116,49 +89,28 @@ impl BaseAgent for MockAgent {
 /// A mock agent that can simulate failures
 #[derive(Debug)]
 pub struct FailingMockAgent {
-    pub fail_pre: bool,
-    pub fail_post: bool,
+    pub fail_in_step: bool,
 }
 
 impl FailingMockAgent {
-    pub fn new(fail_pre: bool, fail_post: bool) -> Self {
-        Self { fail_pre, fail_post }
+    pub fn new(fail_in_step: bool) -> Self {
+        Self { fail_in_step }
     }
 }
 
 #[async_trait::async_trait]
-impl BaseAgent for FailingMockAgent {
-    async fn pre_execution(
+impl CustomAgent for FailingMockAgent {
+    async fn step(
         &self,
-        agent_id: &str,
-        _task: &TaskStep,
-        _params: Option<&serde_json::Value>,
-        _context: Arc<CoordinatorContext>,
-    ) -> Result<(), AgentError> {
-        if self.fail_pre {
+        context: &AgentExecutionContext,
+    ) -> Result<String, AgentError> {
+        if self.fail_in_step {
             return Err(AgentError::ToolExecution(format!(
-                "Mock pre-execution failure for agent: {}", 
-                agent_id
+                "Mock step execution failure for agent: {}", 
+                context.agent_id
             )));
         }
-        Ok(())
-    }
-
-    async fn post_execution(
-        &self,
-        agent_id: &str,
-        _task: &TaskStep,
-        _params: Option<&serde_json::Value>,
-        _context: Arc<CoordinatorContext>,
-        _result: &Result<String, AgentError>,
-    ) -> Result<(), AgentError> {
-        if self.fail_post {
-            return Err(AgentError::ToolExecution(format!(
-                "Mock post-execution failure for agent: {}", 
-                agent_id
-            )));
-        }
-        Ok(())
+        Ok(format!("FailingMockAgent executed successfully"))
     }
 
     fn as_any(&self) -> &dyn std::any::Any {
