@@ -55,18 +55,21 @@ pub enum TransportAuth {
     JwtSecret(String),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub enum Agent {
+#[derive(Debug)]
+pub enum AgentRecord {
     Local(AgentDefinition),
-    Remote(String),
+    Runnable(AgentDefinition, Box<dyn crate::agent::CustomAgent>),
 }
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
-#[serde(deny_unknown_fields)]
-pub struct RemoteAgent {
-    // A2A agent url
-    pub url: String,
-    pub token: Option<String>,
+
+impl Clone for AgentRecord {
+    fn clone(&self) -> Self {
+        match self {
+            AgentRecord::Local(def) => AgentRecord::Local(def.clone()),
+            AgentRecord::Runnable(def, agent) => {
+                AgentRecord::Runnable(def.clone(), agent.clone_box())
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
@@ -101,6 +104,9 @@ pub struct AgentDefinition {
     /// A2A-specific fields
     #[serde(default)]
     pub icon_url: Option<String>,
+
+    #[serde(default)]
+    pub max_iterations: Option<i32>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, Default)]

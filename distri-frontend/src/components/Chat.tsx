@@ -131,17 +131,6 @@ const Chat: React.FC<ChatProps> = ({ thread, agent, onThreadUpdate }) => {
 
       if (!response.body) throw new Error('No response body');
 
-      // Create initial empty agent message for streaming
-      const agentMessageId = `${Date.now()}-agent`;
-      const agentMessage: Message = {
-        id: agentMessageId,
-        role: 'agent',
-        content: '',
-        timestamp: new Date(),
-        taskId: uuidv4(),
-      };
-      setMessages((prev: Message[]) => [...prev, agentMessage]);
-
       // Set up streaming reader for SSE/JSON-RPC
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
@@ -174,21 +163,36 @@ const Chat: React.FC<ChatProps> = ({ thread, agent, onThreadUpdate }) => {
               throw new Error(json.error.message);
             }
             const result = json.result;
+            console.log(result);
             if (!result) continue;
             // Handle streaming updates
-            if (result.status && result.status.message && result.status.message.role === 'agent' && result.status.message.parts && !result.final) {
+            if (result.status && result.status.message && result.status.message.role === 'agent' && result.status.message.parts) {
               const delta = result.status.message.parts.map((p: any) => p.text).join(' ');
-              setMessages((prev: Message[]) => {
-                return prev.map(msg => {
-                  if (msg.id === agentMessageId) {
-                    return {
-                      ...msg,
-                      content: msg.content + delta,
-                    };
-                  }
-                  return msg;
+
+              const messageId = result.status.message.messageId;
+              const isPreviousMessage = messages.find(msg => msg.id === messageId);
+              if (!isPreviousMessage) {
+                const agentMessage: Message = {
+                  id: messageId,
+                  role: 'agent',
+                  content: delta,
+                  timestamp: new Date(),
+                  taskId: messageId,
+                };
+                setMessages((prev: Message[]) => [...prev, agentMessage]);
+              } else {
+                setMessages((prev: Message[]) => {
+                  return prev.map(msg => {
+                    if (msg.id === messageId) {
+                      return {
+                        ...msg,
+                        content: msg.content + delta,
+                      };
+                    }
+                    return msg;
+                  });
                 });
-              });
+              }
             }
 
             if (result.final) {
@@ -197,19 +201,10 @@ const Chat: React.FC<ChatProps> = ({ thread, agent, onThreadUpdate }) => {
               if (onThreadUpdate) {
                 onThreadUpdate();
               }
+              console.log(messages);
             }
           } catch (err) {
-            setMessages((prev: Message[]) => {
-              return prev.map(msg => {
-                if (msg.id === agentMessageId) {
-                  return {
-                    ...msg,
-                    content: `Error: ${err instanceof Error ? err.message : 'Failed to parse stream'}`,
-                  };
-                }
-                return msg;
-              });
-            });
+
             done = true;
           }
         }
@@ -264,45 +259,52 @@ const Chat: React.FC<ChatProps> = ({ thread, agent, onThreadUpdate }) => {
           </div>
         )}
 
-        {messages.filter(message => message.content.length > 0).map((message) => (
-          <div
-            key={message.id}
-            className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
-          >
+        {messages.filter(message => message.content.length > 0).map((message) => {
+          // Determine if this is an error message (starts with 'Error:')
+          const isError = message.content.startsWith('Error:');
+          return (
             <div
-              className={`max-w-[70%] rounded-lg px-4 py-2 ${message.role === 'user'
-                ? 'bg-blue-600 text-white'
-                : message.type === 'thinking'
-                  ? 'bg-yellow-50 text-yellow-800 border border-yellow-200'
-                  : 'bg-gray-100 text-gray-900'
-                }`}
+              key={message.id}
+              className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
             >
-              <div className="flex items-start space-x-2">
-                {message.role === 'agent' && (
-                  <Bot className={`h-4 w-4 mt-0.5 flex-shrink-0 ${message.type === 'thinking' ? 'text-yellow-600' : ''
-                    }`} />
-                )}
-                {message.role === 'user' && (
-                  <User className="h-4 w-4 mt-0.5 flex-shrink-0" />
-                )}
-                <div className="flex-1">
-                  <p className={`whitespace-pre-wrap ${message.type === 'thinking' ? 'italic' : ''
-                    }`}>
-                    {message.content}
-                  </p>
-                  <p className={`text-xs mt-1 ${message.role === 'user'
-                    ? 'text-blue-200'
+              <div
+                className={`max-w-[70%] rounded-lg px-4 py-2 ${message.role === 'user'
+                  ? 'bg-blue-600 text-white'
+                  : isError
+                    ? 'bg-red-100 text-red-800 border border-red-300'
                     : message.type === 'thinking'
-                      ? 'text-yellow-600'
-                      : 'text-gray-500'
-                    }`}>
-                    {message.timestamp.toLocaleTimeString()}
-                  </p>
+                      ? 'bg-yellow-50 text-yellow-800 border border-yellow-200'
+                      : 'bg-gray-100 text-gray-900'
+                  }`}
+              >
+                <div className="flex items-start space-x-2">
+                  {message.role === 'agent' && (
+                    <Bot className={`h-4 w-4 mt-0.5 flex-shrink-0 ${message.type === 'thinking' ? 'text-yellow-600' : isError ? 'text-red-600' : ''}`}
+                    />
+                  )}
+                  {message.role === 'user' && (
+                    <User className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                  )}
+                  <div className="flex-1">
+                    <p className={`whitespace-pre-wrap ${message.type === 'thinking' ? 'italic' : ''} ${isError ? 'font-semibold' : ''}`}>
+                      {message.content}
+                    </p>
+                    <p className={`text-xs mt-1 ${message.role === 'user'
+                      ? 'text-blue-200'
+                      : message.type === 'thinking'
+                        ? 'text-yellow-600'
+                        : isError
+                          ? 'text-red-600'
+                          : 'text-gray-500'
+                      }`}>
+                      {message.timestamp.toLocaleTimeString()}
+                    </p>
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
 
         {isLoading && (
           <div className="flex justify-start">

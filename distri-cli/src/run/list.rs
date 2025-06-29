@@ -1,7 +1,7 @@
 use comfy_table::{modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL, ContentArrangement, Table};
 use distri::{
-    coordinator::{AgentCoordinator, LocalCoordinator},
     servers::registry::ServerRegistry,
+    store::AgentStore,
     tools::get_tools,
     types::{McpServerType, ToolsFilter},
     McpDefinition,
@@ -9,8 +9,8 @@ use distri::{
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
 
-pub async fn list(coordinator: Arc<LocalCoordinator>) -> anyhow::Result<()> {
-    let (agents, _) = coordinator.list_agents(None).await?;
+pub async fn list(agent_store: Arc<dyn AgentStore>) -> anyhow::Result<()> {
+    let (agents, _) = agent_store.list(None, None).await;
     let mut table = Table::new()
         .load_preset(UTF8_FULL)
         .apply_modifier(UTF8_ROUND_CORNERS)
@@ -23,14 +23,15 @@ pub async fn list(coordinator: Arc<LocalCoordinator>) -> anyhow::Result<()> {
         .set_content_arrangement(ContentArrangement::Dynamic)
         .to_owned();
     table.add_row(vec!["Agent", "Description", "Servers"]);
-    for (agent, server_tools) in agents
-        .iter()
-        .zip(coordinator.agent_tools.read().await.values())
-    {
+    for agent in agents.iter() {
+        let tools = agent_store
+            .get_tools(&agent.definition.name)
+            .await
+            .unwrap_or_default();
         table.add_row(vec![
-            agent.name.clone(),
-            agent.description.clone(),
-            server_tools
+            agent.definition.name.clone(),
+            agent.definition.description.clone(),
+            tools
                 .iter()
                 .map(|t| t.definition.name.clone())
                 .collect::<Vec<String>>()

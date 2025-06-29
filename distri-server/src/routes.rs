@@ -2,6 +2,7 @@ use actix_web::Either;
 use actix_web::{web, HttpResponse};
 use actix_web_lab::sse::{self, Sse};
 use distri::coordinator::{AgentCoordinator, AgentEvent, LocalCoordinator};
+use distri::store::AgentStore;
 use distri::types::{ServerConfig, UpdateThreadRequest};
 use distri::{memory::TaskStep, TaskStore};
 use distri_a2a::{
@@ -43,15 +44,15 @@ pub fn config(cfg: &mut web::ServiceConfig) {
 }
 
 async fn list_agents(
-    coordinator: web::Data<Arc<LocalCoordinator>>,
+    agent_store: web::Data<Arc<dyn AgentStore>>,
     server_config: web::Data<ServerConfig>,
 ) -> HttpResponse {
-    let agent_defs = coordinator.agent_definitions.read().await;
-    let agent_cards: Vec<AgentCard> = agent_defs
-        .values()
-        .map(|def| {
+    let (agents, _) = agent_store.list(None, None).await;
+    let agent_cards: Vec<AgentCard> = agents
+        .iter()
+        .map(|agent| {
             distri::a2a::agent_def_to_card(
-                def,
+                &agent.definition,
                 server_config.get_ref().clone(),
                 "http://127.0.0.1:8080",
             )
@@ -62,15 +63,16 @@ async fn list_agents(
 
 async fn get_agent_card(
     id: web::Path<String>,
-    coordinator: web::Data<Arc<LocalCoordinator>>,
+    agent_store: web::Data<Arc<dyn AgentStore>>,
     server_config: web::Data<ServerConfig>,
 ) -> HttpResponse {
     let agent_id = id.into_inner();
-    let agents = coordinator.agent_definitions.read().await;
-    match agents.get(&agent_id) {
-        Some(agent_def) => {
+
+    let agent = agent_store.get(&agent_id).await;
+    match agent {
+        Some(agent) => {
             let card = distri::a2a::agent_def_to_card(
-                agent_def,
+                &agent.definition,
                 server_config.get_ref().clone(),
                 "http://127.0.0.1:8080",
             );
@@ -205,11 +207,13 @@ async fn handle_message_send_streaming_sse(
         tokio::spawn(async move {
             let mut completed = false;
             let mut agent_message_content = String::new();
+            let mut msg_id = None;
             while let Some(event) = event_rx.recv().await {
                 // Forward event to sse_tx as a JsonRpcResponse
                 let resp = match &event {
-                    AgentEvent::TextMessageContent { delta, .. } => {
+                    AgentEvent::TextMessageContent { delta, message_id, .. } => {
                         agent_message_content.push_str(delta);
+                        msg_id = Some(message_id.clone());
                         let update = json!({
                             "id": task_id_clone,
                             "status": {
@@ -220,6 +224,33 @@ async fn handle_message_send_streaming_sse(
                                     "context_id": thread_id_clone,
                                     "task_id": task_id_clone,
                                     "reference_task_ids": [],
+                                    "message_id": message_id.clone(),
+                                    "extensions": [],
+                                    "metadata": null
+                                },
+                                "timestamp": chrono::Utc::now().to_rfc3339(),
+                            },
+                            "final": false
+                        });
+                        JsonRpcResponse {
+                            jsonrpc: "2.0".to_string(),
+                            result: Some(update),
+                            error: None,
+                            id: id_field_clone2.clone(),
+                        }
+                    }
+                    AgentEvent::TextMessageEnd { message_id, .. } => {
+                        let update = json!({
+                            "id": task_id_clone,
+                            "status": {
+                                "state": "completed",
+                                "message": {
+                                    "role": "agent",
+                                    "parts": [],
+                                    "context_id": thread_id_clone,
+                                    "task_id": task_id_clone,
+                                    "reference_task_ids": [],
+                                    "message_id": message_id.clone(),
                                     "extensions": [],
                                     "metadata": null
                                 },
@@ -265,7 +296,8 @@ async fn handle_message_send_streaming_sse(
                                     "task_id": task_id_clone,
                                     "reference_task_ids": [],
                                     "extensions": [],
-                                    "metadata": null
+                                    "metadata": null,
+                                    "message_id": msg_id.clone()
                                 },
                                 "timestamp": chrono::Utc::now().to_rfc3339(),
                             },
@@ -309,7 +341,8 @@ async fn handle_message_send_streaming_sse(
                                     "task_id": task_id_clone,
                                     "reference_task_ids": [],
                                     "extensions": [],
-                                    "metadata": null
+                                    "metadata": null,
+                                    "message_id": msg_id.clone()
                                 },
                                 "timestamp": chrono::Utc::now().to_rfc3339(),
                             },
@@ -531,7 +564,13 @@ async fn handle_message_send(
         coordinator.context.tools_context.clone(),
     ));
     let execution_result = coordinator
-        .execute(&agent_id, task_step, None, coordinator_context.clone())
+        .execute(
+            &agent_id,
+            task_step,
+            None,
+            coordinator_context.clone(),
+            None,
+        )
         .await;
 
     let mut broadcast_status = "completed";

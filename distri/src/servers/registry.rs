@@ -1,7 +1,7 @@
 use crate::{
     coordinator::{self, CoordinatorContext, LocalCoordinator, DISTRI_LOCAL_SERVER},
     memory::{AgentMemory, MemoryConfig},
-    store::{FileSessionStore, LocalSessionStore, SessionStore},
+    store::{AgentStore, FileSessionStore, LocalSessionStore, SessionStore},
     types::{ExternalMcpServer, TransportType},
     ToolSessionStore,
 };
@@ -93,6 +93,7 @@ impl<T: Transport> ServerTrait for Server<T> {
 pub async fn init_registry_and_coordinator(
     local_memories: HashMap<String, Arc<Mutex<dyn AgentMemory>>>,
     tool_sessions: Option<Arc<Box<dyn ToolSessionStore>>>,
+    agent_store: Arc<dyn AgentStore>,
     external_servers: &[ExternalMcpServer],
     context: Arc<CoordinatorContext>,
     memory_config: MemoryConfig,
@@ -114,6 +115,7 @@ pub async fn init_registry_and_coordinator(
         server_registry.clone(),
         tool_sessions,
         session_store,
+        agent_store,
         context.clone(),
     ));
 

@@ -40,12 +40,14 @@ impl A2AServer {
         let coordinator = self.coordinator.clone();
         let task_store = self.task_store.clone();
         let event_broadcaster = self.event_broadcaster.clone();
+        let agent_store = coordinator.agent_store.clone();
 
         HttpServer::new(move || {
             App::new()
                 .wrap(Logger::default())
                 .wrap(Cors::permissive())
                 .app_data(web::Data::new(coordinator.clone()))
+                .app_data(web::Data::new(agent_store.clone()))
                 .app_data(web::Data::new(task_store.clone()))
                 .app_data(web::Data::new(event_broadcaster.clone()))
                 .app_data(web::Data::new(server_config.clone()))

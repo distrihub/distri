@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone)]
 pub enum AgentError {
     #[error("LLMError: {0}")]
     LLMError(String),

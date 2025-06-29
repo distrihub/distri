@@ -7,12 +7,8 @@ mod local;
 pub use local::*;
 mod log;
 pub use log::*;
-mod reason;
-use crate::{
-    error::AgentError,
-    memory::TaskStep,
-    types::{AgentDefinition, ServerTools, ToolCall},
-};
+pub mod reason;
+use crate::{error::AgentError, memory::TaskStep, types::ToolCall};
 use tokio::sync::{mpsc, oneshot, Mutex};
 
 // Event types for streaming responses
@@ -107,6 +103,7 @@ pub enum CoordinatorMessage {
         task: TaskStep,
         params: Option<serde_json::Value>,
         context: std::sync::Arc<CoordinatorContext>,
+        event_tx: Option<tokio::sync::mpsc::Sender<AgentEvent>>,
         response_tx: oneshot::Sender<Result<String, AgentError>>,
     },
     ExecuteStream {
@@ -127,18 +124,13 @@ pub struct AgentHandle {
 
 #[async_trait::async_trait]
 pub trait AgentCoordinator {
-    async fn list_agents(
-        &self,
-        cursor: Option<String>,
-    ) -> Result<(Vec<AgentDefinition>, Option<String>), AgentError>;
-    async fn get_agent(&self, agent_name: &str) -> Result<AgentDefinition, AgentError>;
-    async fn get_tools(&self, agent_name: &str) -> Result<Vec<ServerTools>, AgentError>;
     async fn execute(
         &self,
         agent_name: &str,
         task: TaskStep,
         params: Option<serde_json::Value>,
         context: std::sync::Arc<CoordinatorContext>,
+        event_tx: Option<tokio::sync::mpsc::Sender<AgentEvent>>,
     ) -> Result<String, AgentError>;
     async fn execute_stream(
         &self,
@@ -174,6 +166,7 @@ impl AgentHandle {
         task: TaskStep,
         params: Option<serde_json::Value>,
         context: std::sync::Arc<CoordinatorContext>,
+        event_tx: Option<tokio::sync::mpsc::Sender<AgentEvent>>,
     ) -> Result<String, AgentError> {
         let (response_tx, response_rx) = oneshot::channel();
         self.coordinator_tx
@@ -182,6 +175,7 @@ impl AgentHandle {
                 task,
                 params,
                 context,
+                event_tx,
                 response_tx,
             })
             .await

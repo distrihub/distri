@@ -1,4 +1,3 @@
-mod agents;
 mod coordinator_test;
 mod tools;
 

@@ -10,6 +10,7 @@ pub use store::{
 };
 pub use types::{AgentDefinition, McpDefinition, McpSession, ModelSettings};
 pub mod a2a;
+pub mod agent;
 pub mod coordinator;
 pub mod langdb;
 pub mod memory;

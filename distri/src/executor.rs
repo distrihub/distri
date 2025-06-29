@@ -148,6 +148,8 @@ impl LLMExecutor {
         );
         let llm_messages = self.map_messages(messages);
         let mut request = self.build_request(llm_messages);
+        tracing::info!("Request: {:#?}", request);
+        tracing::info!("Request: {}", serde_json::to_string(&request).unwrap());
         request.stream = Some(true);
         let message_count = request.messages.len();
 
@@ -299,7 +301,7 @@ impl LLMExecutor {
                     }
                 }
                 Err(e) => {
-                    tracing::error!("Error in stream: {}", e);
+                    tracing::error!("OpenAI error: {}", e);
                     // Send RunError event
                     event_tx
                         .send(crate::coordinator::AgentEvent::RunError {
