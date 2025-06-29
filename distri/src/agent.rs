@@ -22,170 +22,10 @@ pub trait CustomAgent: Send + Sync + std::fmt::Debug {
     /// Main execution step - custom agents implement their logic here
     /// This is called after system prompt, task, and planning (if enabled) have been handled
     /// The context provides access to history, LLM, session writer, and other utilities
-    async fn step(&self, context: &mut AgentExecutionContext) -> Result<String, AgentError>;
-    
+    async fn step(&self) -> Result<String, AgentError>;
+
     /// Clone the custom agent (required for object safety)
     fn clone_box(&self) -> Box<dyn CustomAgent>;
-}
-
-/// Session writer for custom agents to write steps to memory
-pub struct SessionWriter {
-    session_store: Arc<Box<dyn SessionStore>>,
-    thread_id: String,
-    agent_id: String,
-}
-
-impl SessionWriter {
-    pub fn new(session_store: Arc<Box<dyn SessionStore>>, thread_id: String, agent_id: String) -> Self {
-        Self {
-            session_store,
-            thread_id,
-            agent_id,
-        }
-    }
-
-    /// Write a step to the session memory
-    pub async fn write_step(&self, step: MemoryStep) -> Result<(), AgentError> {
-        self.session_store
-            .store_step(&self.thread_id, step)
-            .await
-            .map_err(|e| AgentError::Session(e.to_string()))
-    }
-
-    /// Get all messages from the session
-    pub async fn get_messages(&self) -> Result<Vec<Message>, AgentError> {
-        self.session_store
-            .get_messages(&self.thread_id)
-            .await
-            .map_err(|e| AgentError::Session(e.to_string()))
-    }
-
-    /// Write a simple text message to the session
-    pub async fn write_message(&self, content: &str) -> Result<(), AgentError> {
-        let action_step = MemoryStep::Action(ActionStep {
-            model_input_messages: None,
-            model_output: Some(content.to_string()),
-            ..Default::default()
-        });
-        self.write_step(action_step).await
-    }
-}
-
-/// LLM executor wrapper for easy access to LLM functions
-pub struct LLMExecutorWrapper {
-    executor: LLMExecutor,
-}
-
-impl LLMExecutorWrapper {
-    pub fn new(executor: LLMExecutor) -> Self {
-        Self { executor }
-    }
-
-    /// Simple LLM call with messages
-    pub async fn llm(&self, messages: &[Message], params: Option<serde_json::Value>) -> Result<String, AgentError> {
-        let response = self.executor.execute(messages, params).await?;
-        Ok(LLMExecutor::extract_first_choice(&response))
-    }
-
-    /// Streaming LLM call
-    pub async fn llm_stream(&self, messages: &[Message], params: Option<serde_json::Value>, event_tx: mpsc::Sender<AgentEvent>) -> Result<(), AgentError> {
-        self.executor.execute_stream(messages, params, event_tx).await
-    }
-}
-
-/// Execution context provided to custom agents
-pub struct AgentExecutionContext {
-    pub agent_id: String,
-    pub task: TaskStep,
-    pub params: Option<serde_json::Value>,
-    pub coordinator_context: Arc<CoordinatorContext>,
-    pub session_writer: SessionWriter,
-    pub llm_executor: LLMExecutorWrapper,
-    history: Option<Vec<Message>>,
-}
-
-impl AgentExecutionContext {
-    pub fn new(
-        agent_id: String,
-        task: TaskStep,
-        params: Option<serde_json::Value>,
-        coordinator_context: Arc<CoordinatorContext>,
-        session_store: Arc<Box<dyn SessionStore>>,
-        executor: LLMExecutor,
-    ) -> Self {
-        let session_writer = SessionWriter::new(
-            session_store,
-            coordinator_context.thread_id.clone(),
-            agent_id.clone(),
-        );
-        let llm_executor = LLMExecutorWrapper::new(executor);
-
-        Self {
-            agent_id,
-            task,
-            params,
-            coordinator_context,
-            session_writer,
-            llm_executor,
-            history: None,
-        }
-    }
-
-    /// Load conversation history (lazy loaded)
-    pub async fn load_history(&mut self) -> Result<&Vec<Message>, AgentError> {
-        if self.history.is_none() {
-            self.history = Some(self.session_writer.get_messages().await?);
-        }
-        Ok(self.history.as_ref().unwrap())
-    }
-
-    /// Get the current conversation history (if already loaded)
-    pub fn get_history(&self) -> Option<&Vec<Message>> {
-        self.history.as_ref()
-    }
-
-    /// Refresh the history from the session store
-    pub async fn refresh_history(&mut self) -> Result<&Vec<Message>, AgentError> {
-        self.history = Some(self.session_writer.get_messages().await?);
-        Ok(self.history.as_ref().unwrap())
-    }
-
-    /// Simple LLM call using current history
-    pub async fn llm_with_history(&mut self, additional_message: Option<&str>) -> Result<String, AgentError> {
-        let mut messages = self.load_history().await?.clone();
-        
-        if let Some(msg) = additional_message {
-            messages.push(Message {
-                role: MessageRole::User,
-                name: Some("user".to_string()),
-                content: vec![MessageContent {
-                    content_type: "text".to_string(),
-                    text: Some(msg.to_string()),
-                    image: None,
-                }],
-                tool_calls: vec![],
-            });
-        }
-
-        self.llm_executor.llm(&messages, self.params.clone()).await
-    }
-
-    /// Simple LLM call with custom messages
-    pub async fn llm(&self, messages: &[Message]) -> Result<String, AgentError> {
-        self.llm_executor.llm(messages, self.params.clone()).await
-    }
-
-    /// Write a message to the session
-    pub async fn write_message(&self, content: &str) -> Result<(), AgentError> {
-        self.session_writer.write_message(content).await
-    }
-
-    /// Log a message (for debugging)
-    pub fn log(&self, message: &str) {
-        if self.coordinator_context.verbose {
-            tracing::info!("[{}] {}", self.agent_id, message);
-        }
-    }
 }
 
 pub struct Agent {
@@ -240,7 +80,14 @@ impl Agent {
         context: Arc<CoordinatorContext>,
         session_store: Arc<Box<dyn SessionStore>>,
     ) -> Self {
-        Self::new(definition, server_tools, coordinator, context, session_store, None)
+        Self::new(
+            definition,
+            server_tools,
+            coordinator,
+            context,
+            session_store,
+            None,
+        )
     }
 
     /// Create a runnable (CustomAgent-based) agent
@@ -252,7 +99,14 @@ impl Agent {
         session_store: Arc<Box<dyn SessionStore>>,
         custom_agent: Box<dyn CustomAgent>,
     ) -> Self {
-        Self::new(definition, server_tools, coordinator, context, session_store, Some(custom_agent))
+        Self::new(
+            definition,
+            server_tools,
+            coordinator,
+            context,
+            session_store,
+            Some(custom_agent),
+        )
     }
 
     pub async fn plan_step(
@@ -473,46 +327,8 @@ impl Agent {
 
         // Handle planning if enabled
         if let Some(plan_config) = &self.definition.plan {
-            self.plan_step(task.clone(), plan_config, context.clone()).await?;
-        }
-
-        // Check if this is a custom agent
-        if let Some(custom_agent) = &self.custom_agent {
-            // Create executor for the custom agent
-            let executor = LLMExecutor::new(
-                self.definition.clone(),
-                self.server_tools.clone(),
-                context.clone(),
-                None,
-                Some(format!("{}:{}", agent_id, "custom")),
-            );
-
-            // Create execution context for the custom agent
-            let mut agent_context = AgentExecutionContext::new(
-                agent_id.clone(),
-                task,
-                params,
-                context.clone(),
-                self.session_store.clone(),
-                executor,
-            );
-
-            // Execute custom agent's step method
-            let result = custom_agent.step(&mut agent_context).await?;
-
-            // Store the custom agent's result as an action step
-            let action_step = MemoryStep::Action(ActionStep {
-                model_input_messages: agent_context.get_history().cloned(),
-                model_output: Some(result.clone()),
-                ..Default::default()
-            });
-            self.session_store
-                .store_step(&context.thread_id, action_step.clone())
-                .await
-                .map_err(|e| AgentError::Session(e.to_string()))?;
-            self.logger.log_step(agent_id, &action_step);
-
-            return Ok(result);
+            self.plan_step(task.clone(), plan_config, context.clone())
+                .await?;
         }
 
         // Default LLM execution for local agents

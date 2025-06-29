@@ -67,8 +67,6 @@ impl LocalCoordinator {
         }
     }
 
-
-
     pub async fn execute_tool(
         &self,
         agent_id: String,
@@ -91,7 +89,7 @@ impl LocalCoordinator {
         })
     }
 
-    pub async fn register_agent(&self, record: AgentRecord) -> anyhow::Result<()> {
+    pub async fn register_agent(&self, record: AgentRecord) -> anyhow::Result<Agent> {
         let (definition, agent) = match record.clone() {
             AgentRecord::Local(definition) => (
                 definition.clone(),
@@ -136,10 +134,10 @@ impl LocalCoordinator {
         );
 
         self.agent_store
-            .register(agent, resolved_tools)
+            .register(agent.clone(), resolved_tools)
             .await
             .map_err(|e| anyhow::anyhow!(e))?;
-        Ok(())
+        Ok(agent)
     }
 
     pub async fn run(&self) -> anyhow::Result<()> {
@@ -258,7 +256,10 @@ impl LocalCoordinator {
         if let Some(agent) = self.agent_store.get(agent_id).await {
             agent.invoke(task, params, context).await
         } else {
-            Err(AgentError::NotFound(format!("Agent {} not found", agent_id)))
+            Err(AgentError::NotFound(format!(
+                "Agent {} not found",
+                agent_id
+            )))
         }
     }
 
@@ -274,7 +275,10 @@ impl LocalCoordinator {
         if let Some(agent) = self.agent_store.get(agent_id).await {
             agent.invoke_stream(task, params, context, event_tx).await
         } else {
-            Err(AgentError::NotFound(format!("Agent {} not found", agent_id)))
+            Err(AgentError::NotFound(format!(
+                "Agent {} not found",
+                agent_id
+            )))
         }
     }
 
@@ -370,6 +374,7 @@ impl AgentCoordinator for LocalCoordinator {
         event_tx: mpsc::Sender<AgentEvent>,
         context: Arc<CoordinatorContext>,
     ) -> Result<(), AgentError> {
-        self.call_agent_stream(agent_name, task, params, context, event_tx).await
+        self.call_agent_stream(agent_name, task, params, context, event_tx)
+            .await
     }
 }

@@ -6,8 +6,11 @@ use crate::{
     coordinator::{AgentEvent, CoordinatorContext, LocalCoordinator, DISTRI_LOCAL_SERVER},
     init_logging,
     memory::TaskStep,
+    store::InMemoryAgentStore,
     tests::utils::{get_registry, get_tools_session_store, get_twitter_tool, register_coordinator},
-    types::{AgentDefinition, McpDefinition, ModelSettings, ToolSelector, ToolsFilter},
+    types::{
+        AgentDefinition, AgentRecord, McpDefinition, ModelSettings, ToolSelector, ToolsFilter,
+    },
 };
 
 #[tokio::test(flavor = "multi_thread")]
@@ -46,6 +49,8 @@ async fn test_agent_coordination() -> anyhow::Result<()> {
         ..Default::default()
     };
 
+    let local_agent_store =
+        Arc::new(Box::new(InMemoryAgentStore::new()) as Box<dyn crate::store::AgentStore>);
     // Initialize coordinator with session stores
     let registry = get_registry().await;
 
@@ -55,6 +60,7 @@ async fn test_agent_coordination() -> anyhow::Result<()> {
         registry.clone(),
         tool_sessions,
         None,
+        local_agent_store,
         Arc::new(CoordinatorContext::default()),
     ));
 
@@ -62,17 +68,21 @@ async fn test_agent_coordination() -> anyhow::Result<()> {
     register_coordinator(registry, coordinator.clone()).await;
 
     // Register agent definitions
-    coordinator.register_agent(agent1_def.clone()).await?;
+    let _agent1_handle = coordinator
+        .register_agent(AgentRecord::Local(agent1_def.clone()))
+        .await?;
 
-    coordinator.register_agent(agent2_def.clone()).await?;
+    let agent2_handle = coordinator
+        .register_agent(AgentRecord::Local(agent2_def.clone()))
+        .await?;
     let coordinator_clone = coordinator.clone();
     // Start coordinator in background
     let coordinator_handle = tokio::spawn(async move {
         coordinator_clone.run().await.unwrap();
     });
-    let agent2_handle = coordinator.get_handle("agent2".to_string());
+
     let agent2_result = agent2_handle
-        .execute(
+        .invoke(
             TaskStep {
                 task: "Ask twitter_agent for the summary of my timeline".to_string(),
                 task_images: None,
