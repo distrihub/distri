@@ -67,13 +67,7 @@ impl LocalCoordinator {
         }
     }
 
-    pub fn get_handle(&self, agent_id: String) -> AgentHandle {
-        AgentHandle {
-            agent_id,
-            coordinator_tx: self.coordinator_tx.clone(),
-            verbose: self.context.verbose,
-        }
-    }
+
 
     pub async fn execute_tool(
         &self,
@@ -101,7 +95,7 @@ impl LocalCoordinator {
         let (definition, agent) = match record.clone() {
             AgentRecord::Local(definition) => (
                 definition.clone(),
-                Agent::new(
+                Agent::new_local(
                     definition,
                     vec![],
                     Arc::new(self.clone()),
@@ -112,12 +106,13 @@ impl LocalCoordinator {
 
             AgentRecord::Runnable(definition, custom_agent) => (
                 definition.clone(),
-                Agent::new(
+                Agent::new_runnable(
                     definition,
                     vec![],
                     Arc::new(self.clone()),
                     self.context.clone(),
                     self.session_store.clone(),
+                    custom_agent,
                 ),
             ),
         };
@@ -357,29 +352,6 @@ impl LocalCoordinator {
 
 #[async_trait::async_trait]
 impl AgentCoordinator for LocalCoordinator {
-    async fn list_agents(
-        &self,
-        cursor: Option<String>,
-    ) -> Result<(Vec<AgentDefinition>, Option<String>), AgentError> {
-        let (agents, next_cursor) = self.agent_store.list(cursor, Some(30)).await;
-        let agent_definitions: Vec<AgentDefinition> = agents.into_iter().map(|a| a.definition).collect();
-        Ok((agent_definitions, next_cursor))
-    }
-
-    async fn get_agent(&self, agent_name: &str) -> Result<AgentDefinition, AgentError> {
-        if let Some(agent) = self.agent_store.get(agent_name).await {
-            Ok(agent.definition)
-        } else {
-            Err(AgentError::NotFound(format!("Agent {} not found", agent_name)))
-        }
-    }
-
-    async fn get_tools(&self, agent_name: &str) -> Result<Vec<ServerTools>, AgentError> {
-        self.agent_store.get_tools(agent_name).await.ok_or_else(|| {
-            AgentError::NotFound(format!("Tools for agent {} not found", agent_name))
-        })
-    }
-
     async fn execute(
         &self,
         agent_name: &str,

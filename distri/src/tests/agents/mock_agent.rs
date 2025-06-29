@@ -1,21 +1,24 @@
-use crate::error::AgentError;
+use crate::{
+    agent::{AgentExecutionContext, CustomAgent},
+    error::AgentError,
+};
 
 /// MockAgent that demonstrates custom agent behavior using the step() function
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MockAgent {
     pub name: String,
-    pub pre_execution_called: std::sync::atomic::AtomicBool,
-    pub post_execution_called: std::sync::atomic::AtomicBool,
-    pub execution_log: std::sync::Mutex<Vec<String>>,
+    pub pre_execution_called: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    pub post_execution_called: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    pub execution_log: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
 }
 
 impl MockAgent {
     pub fn new(name: String) -> Self {
         Self {
             name,
-            pre_execution_called: std::sync::atomic::AtomicBool::new(false),
-            post_execution_called: std::sync::atomic::AtomicBool::new(false),
-            execution_log: std::sync::Mutex::new(Vec::new()),
+            pre_execution_called: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            post_execution_called: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            execution_log: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
         }
     }
 
@@ -45,7 +48,7 @@ impl MockAgent {
 
 #[async_trait::async_trait]
 impl CustomAgent for MockAgent {
-    async fn step(&self, context: &AgentExecutionContext) -> Result<String, AgentError> {
+    async fn step(&self, context: &mut AgentExecutionContext) -> Result<String, AgentError> {
         // Mark pre-execution as called
         self.pre_execution_called
             .store(true, std::sync::atomic::Ordering::Relaxed);
@@ -83,13 +86,13 @@ impl CustomAgent for MockAgent {
         Ok(format!("MockAgent {} executed successfully", self.name))
     }
 
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
+    fn clone_box(&self) -> Box<dyn CustomAgent> {
+        Box::new(self.clone())
     }
 }
 
 /// A mock agent that can simulate failures
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FailingMockAgent {
     pub fail_in_step: bool,
 }
@@ -102,7 +105,7 @@ impl FailingMockAgent {
 
 #[async_trait::async_trait]
 impl CustomAgent for FailingMockAgent {
-    async fn step(&self, context: &AgentExecutionContext) -> Result<String, AgentError> {
+    async fn step(&self, context: &mut AgentExecutionContext) -> Result<String, AgentError> {
         if self.fail_in_step {
             return Err(AgentError::ToolExecution(format!(
                 "Mock step execution failure for agent: {}",
@@ -112,7 +115,7 @@ impl CustomAgent for FailingMockAgent {
         Ok(format!("FailingMockAgent executed successfully"))
     }
 
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
+    fn clone_box(&self) -> Box<dyn CustomAgent> {
+        Box::new(self.clone())
     }
 }

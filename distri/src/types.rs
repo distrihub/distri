@@ -55,11 +55,19 @@ pub enum TransportAuth {
     JwtSecret(String),
 }
 
-#[derive(Debug, Clone, JsonSchema)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug)]
 pub enum AgentRecord {
     Local(AgentDefinition),
-    Runnable(AgentDefinition, Box<dyn CustomAgent>),
+    Runnable(AgentDefinition, Box<dyn crate::agent::CustomAgent>),
+}
+
+impl Clone for AgentRecord {
+    fn clone(&self) -> Self {
+        match self {
+            AgentRecord::Local(def) => AgentRecord::Local(def.clone()),
+            AgentRecord::Runnable(def, agent) => AgentRecord::Runnable(def.clone(), agent.clone_box()),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
