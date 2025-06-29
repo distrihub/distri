@@ -19,13 +19,29 @@ pub const MAX_ITERATIONS: i32 = 10;
 
 #[async_trait::async_trait]
 pub trait CustomAgent: Send + Sync + std::fmt::Debug {
-    /// Main execution step - custom agents implement their logic here
-    /// This is called after system prompt, task, and planning (if enabled) have been handled
-    /// The context provides access to history, LLM, session writer, and other utilities
-    async fn step(&self) -> Result<String, AgentError>;
+    /// Execute one step in the agent execution loop
+    /// This is called for each iteration and should implement the agent's custom logic
+    async fn step(
+        &self,
+        messages: &[Message],
+        params: Option<serde_json::Value>,
+        context: Arc<CoordinatorContext>,
+        session_store: Arc<Box<dyn SessionStore>>,
+    ) -> Result<StepResult, AgentError>;
 
     /// Clone the custom agent (required for object safety)
     fn clone_box(&self) -> Box<dyn CustomAgent>;
+}
+
+/// Result of a single step execution
+#[derive(Debug)]
+pub enum StepResult {
+    /// Continue with more iterations, with new messages to add
+    Continue(Vec<Message>),
+    /// Finish execution with this final response
+    Finish(String),
+    /// Handle tool calls (for custom agents that want to manage tools)
+    ToolCalls(Vec<crate::types::ToolCall>),
 }
 
 pub struct Agent {
@@ -284,6 +300,110 @@ impl Agent {
             .map_err(|e| AgentError::Session(e.to_string()))
     }
 
+    /// Execute one step in the execution loop
+    /// For Local agents: executes LLM call with tool handling
+    /// For Runnable agents: calls CustomAgent::step
+    async fn step(
+        &self,
+        messages: &[Message],
+        params: Option<serde_json::Value>,
+        context: Arc<CoordinatorContext>,
+    ) -> Result<StepResult, AgentError> {
+        if let Some(custom_agent) = &self.custom_agent {
+            // For runnable agents, delegate to CustomAgent::step
+            custom_agent.step(messages, params, context, self.session_store.clone()).await
+        } else {
+            // For local agents, execute standard LLM call with tool handling
+            self.local_step(messages, params, context).await
+        }
+    }
+
+    /// Execute one step for local (YAML-based) agents
+    async fn local_step(
+        &self,
+        messages: &[Message],
+        params: Option<serde_json::Value>,
+        context: Arc<CoordinatorContext>,
+    ) -> Result<StepResult, AgentError> {
+        let agent_id = &self.definition.name;
+
+        // Create executor for LLM call
+        let executor = LLMExecutor::new(
+            self.definition.clone(),
+            self.server_tools.clone(),
+            context.clone(),
+            None,
+            Some(format!("{}:{}", agent_id, "step")),
+        );
+
+        // Execute LLM call
+        let response = executor.execute(messages, params).await?;
+
+        // Get the first choice
+        let choice = &response.choices[0];
+        let finish_reason = choice
+            .finish_reason
+            .unwrap_or(async_openai::types::FinishReason::Stop);
+        let content = choice.message.content.clone().unwrap_or_default();
+        let tool_calls = choice.message.tool_calls.clone();
+
+        match finish_reason {
+            async_openai::types::FinishReason::Stop => {
+                // Return finish result
+                Ok(StepResult::Finish(content))
+            }
+            async_openai::types::FinishReason::ToolCalls => {
+                if let Some(tool_calls) = tool_calls {
+                    // Convert and add assistant message with tool calls
+                    let mut new_messages = vec![Message {
+                        role: MessageRole::Assistant,
+                        name: Some(agent_id.to_string()),
+                        content: vec![MessageContent {
+                            content_type: "text".to_string(),
+                            text: Some(content),
+                            image: None,
+                        }],
+                        tool_calls: tool_calls.iter().map(LLMExecutor::map_tool_call).collect(),
+                    }];
+
+                    // Process all tool calls in parallel
+                    let tool_responses = futures::future::join_all(tool_calls.iter().map(
+                        |tool_call| async move {
+                            let mapped_tool_call = LLMExecutor::map_tool_call(tool_call);
+
+                            let content = self
+                                .coordinator
+                                .execute_tool(agent_id.clone(), mapped_tool_call.clone())
+                                .await
+                                .unwrap_or_else(|err| format!("Error: {}", err));
+
+                            Message {
+                                role: MessageRole::ToolResponse,
+                                name: Some(tool_call.function.name.clone()),
+                                content: vec![MessageContent {
+                                    content_type: "text".to_string(),
+                                    text: Some(content),
+                                    image: None,
+                                }],
+                                tool_calls: vec![mapped_tool_call],
+                            }
+                        },
+                    ))
+                    .await;
+
+                    // Add tool responses
+                    new_messages.extend(tool_responses);
+                    Ok(StepResult::Continue(new_messages))
+                } else {
+                    Err(AgentError::LLMError("Tool calls finish reason but no tool calls".to_string()))
+                }
+            }
+            x => {
+                Err(AgentError::LLMError(format!("Unexpected finish reason: {:?}", x)))
+            }
+        }
+    }
+
     pub async fn invoke_stream(
         &self,
         task: TaskStep,
@@ -291,17 +411,21 @@ impl Agent {
         context: Arc<CoordinatorContext>,
         event_tx: mpsc::Sender<AgentEvent>,
     ) -> Result<(), AgentError> {
-        // Get agent definition and tools
-
         let agent_id = &self.definition.name;
 
+        // Setup: system prompt, task, and planning
         self.system_step(context.clone()).await?;
-
         self.task_step(&task, context.clone()).await?;
+
+        // Handle planning if enabled
+        if let Some(plan_config) = &self.definition.plan {
+            self.plan_step(task.clone(), plan_config, context.clone()).await?;
+        }
 
         let messages = self.get_history(context.clone()).await?;
 
-        // Create executor as a thin wrapper for LLM calls
+        // For streaming, we use the executor directly for now
+        // TODO: Implement step-based streaming in the future
         let executor = LLMExecutor::new(
             self.definition.clone(),
             self.server_tools.clone(),
@@ -321,51 +445,29 @@ impl Agent {
         context: Arc<CoordinatorContext>,
     ) -> Result<String, AgentError> {
         let agent_id = &self.definition.name;
+        
+        // Setup: system prompt, task, and planning
         self.system_step(context.clone()).await?;
-
         self.task_step(&task, context.clone()).await?;
 
         // Handle planning if enabled
         if let Some(plan_config) = &self.definition.plan {
-            self.plan_step(task.clone(), plan_config, context.clone())
-                .await?;
+            self.plan_step(task.clone(), plan_config, context.clone()).await?;
         }
 
-        // Default LLM execution for local agents
-        // Get all messages from memory steps
-        let messages = self
+        // Get initial messages from memory steps
+        let mut current_messages = self
             .session_store
             .get_messages(&context.thread_id)
             .await
             .map_err(|e| AgentError::Session(e.to_string()))?;
 
-        // Create executor as a thin wrapper for LLM calls
-        let executor = LLMExecutor::new(
-            self.definition.clone(),
-            self.server_tools.clone(),
-            context.clone(),
-            None,
-            Some(format!("{}:{}", agent_id, "execute")),
-        );
-
-        // Execute the main execution loop that was previously in AgentExecutor
-        let mut token_usage = 0;
+        // Execute step-based loop
         let mut iterations = 0;
-        let mut current_messages = messages;
-
-        let max_tokens = self.definition.model_settings.max_tokens;
         let max_iterations = self.definition.model_settings.max_iterations;
-        tracing::debug!("Max tokens limit set to: {}", max_tokens);
         tracing::debug!("Max iterations per run set to: {}", max_iterations);
 
         loop {
-            if token_usage > max_tokens {
-                tracing::warn!("Max tokens limit reached: {}", max_tokens);
-                return Err(AgentError::LLMError(format!(
-                    "Max tokens reached: {max_tokens}",
-                )));
-            }
-
             if iterations >= max_iterations {
                 tracing::warn!("Max iterations limit reached: {}", max_iterations);
                 return Err(AgentError::LLMError(format!(
@@ -374,24 +476,11 @@ impl Agent {
             }
             iterations += 1;
 
-            // Execute a single LLM call through the executor
-            let response = executor.execute(&current_messages, params.clone()).await?;
+            // Execute one step
+            let step_result = self.step(&current_messages, params.clone(), context.clone()).await?;
 
-            // Update token usage
-            let new_token_usage = response.usage.as_ref().map(|a| a.total_tokens).unwrap_or(0);
-            token_usage += new_token_usage;
-            tracing::debug!("Current token usage: {}", token_usage);
-
-            // Get the first choice
-            let choice = &response.choices[0];
-            let finish_reason = choice
-                .finish_reason
-                .unwrap_or(async_openai::types::FinishReason::Stop);
-            let content = choice.message.content.clone().unwrap_or_default();
-            let tool_calls = choice.message.tool_calls.clone();
-
-            match finish_reason {
-                async_openai::types::FinishReason::Stop => {
+            match step_result {
+                StepResult::Finish(content) => {
                     tracing::info!("Agent execution completed successfully");
 
                     // Store final response as action step
@@ -408,61 +497,14 @@ impl Agent {
 
                     return Ok(content);
                 }
-
-                async_openai::types::FinishReason::ToolCalls => {
-                    if let Some(tool_calls) = tool_calls {
-                        tracing::info!("Processing {} tool calls", tool_calls.len());
-
-                        // Convert assistant message with tool calls
-                        let mut new_messages = current_messages.clone();
-                        let assistant_message = Message {
-                            role: MessageRole::Assistant,
-                            name: Some(agent_id.to_string()),
-                            content: vec![MessageContent {
-                                content_type: "text".to_string(),
-                                text: Some(content.clone()),
-                                image: None,
-                            }],
-                            tool_calls: tool_calls.iter().map(LLMExecutor::map_tool_call).collect(),
-                        };
-                        new_messages.push(assistant_message);
-
-                        // Process all tool calls in parallel
-                        let tool_responses = futures::future::join_all(tool_calls.iter().map(
-                            |tool_call| async move {
-                                let mapped_tool_call = LLMExecutor::map_tool_call(tool_call);
-
-                                let content = self
-                                    .coordinator
-                                    .execute_tool(agent_id.clone(), mapped_tool_call.clone())
-                                    .await
-                                    .unwrap_or_else(|err| format!("Error: {}", err));
-
-                                Message {
-                                    role: MessageRole::ToolResponse,
-                                    name: Some(tool_call.function.name.clone()),
-                                    content: vec![MessageContent {
-                                        content_type: "text".to_string(),
-                                        text: Some(content),
-                                        image: None,
-                                    }],
-                                    tool_calls: vec![mapped_tool_call],
-                                }
-                            },
-                        ))
-                        .await;
-
-                        // Add tool responses to messages
-                        new_messages.extend(tool_responses);
-                        current_messages = new_messages;
-                        continue;
-                    }
+                StepResult::Continue(new_messages) => {
+                    // Add new messages and continue
+                    current_messages.extend(new_messages);
+                    continue;
                 }
-                x => {
-                    tracing::error!("Agent stopped unexpectedly with reason: {:?}", x);
-                    return Err(AgentError::LLMError(format!(
-                        "Agent stopped with the reason {x:?}"
-                    )));
+                StepResult::ToolCalls(_tool_calls) => {
+                    // This should be handled by local_step, but custom agents might use it
+                    return Err(AgentError::LLMError("ToolCalls result not properly handled".to_string()));
                 }
             }
         }
