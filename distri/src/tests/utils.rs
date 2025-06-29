@@ -11,7 +11,8 @@ use crate::{
 
 pub fn get_tools_session_store() -> Option<Arc<Box<dyn ToolSessionStore>>> {
     dotenv::dotenv().ok();
-    let session_key = std::env::var("X_USER_SESSION").unwrap_or_else(|_| "test_session_key".to_string());
+    let session_key =
+        std::env::var("X_USER_SESSION").unwrap_or_else(|_| "test_session_key".to_string());
     // Create executor with static session store
 
     Some(Arc::new(
@@ -130,5 +131,6 @@ pub fn get_twitter_summarizer(
             },
         }),
         icon_url: None,
+        ..Default::default()
     }
 }

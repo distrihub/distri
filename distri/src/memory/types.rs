@@ -73,6 +73,7 @@ pub trait AgentMemory: Send + Sync {
 pub struct LocalAgentMemory {
     pub thread_id: String,
     pub steps: Vec<MemoryStep>,
+    pub iteration: i32,
 }
 
 impl LocalAgentMemory {
@@ -105,11 +106,13 @@ impl AgentMemory for LocalAgentMemory {
         Self {
             thread_id,
             steps: Vec::new(),
+            iteration: 1,
         }
     }
 
     fn reset(&mut self) {
         self.steps.clear();
+        self.iteration = 1;
     }
 
     fn get_succinct_steps(&self) -> Vec<serde_json::Value> {

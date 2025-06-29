@@ -207,11 +207,13 @@ async fn handle_message_send_streaming_sse(
         tokio::spawn(async move {
             let mut completed = false;
             let mut agent_message_content = String::new();
+            let mut msg_id = None;
             while let Some(event) = event_rx.recv().await {
                 // Forward event to sse_tx as a JsonRpcResponse
                 let resp = match &event {
-                    AgentEvent::TextMessageContent { delta, .. } => {
+                    AgentEvent::TextMessageContent { delta, message_id, .. } => {
                         agent_message_content.push_str(delta);
+                        msg_id = Some(message_id.clone());
                         let update = json!({
                             "id": task_id_clone,
                             "status": {
@@ -222,6 +224,33 @@ async fn handle_message_send_streaming_sse(
                                     "context_id": thread_id_clone,
                                     "task_id": task_id_clone,
                                     "reference_task_ids": [],
+                                    "message_id": message_id.clone(),
+                                    "extensions": [],
+                                    "metadata": null
+                                },
+                                "timestamp": chrono::Utc::now().to_rfc3339(),
+                            },
+                            "final": false
+                        });
+                        JsonRpcResponse {
+                            jsonrpc: "2.0".to_string(),
+                            result: Some(update),
+                            error: None,
+                            id: id_field_clone2.clone(),
+                        }
+                    }
+                    AgentEvent::TextMessageEnd { message_id, .. } => {
+                        let update = json!({
+                            "id": task_id_clone,
+                            "status": {
+                                "state": "completed",
+                                "message": {
+                                    "role": "agent",
+                                    "parts": [],
+                                    "context_id": thread_id_clone,
+                                    "task_id": task_id_clone,
+                                    "reference_task_ids": [],
+                                    "message_id": message_id.clone(),
                                     "extensions": [],
                                     "metadata": null
                                 },
@@ -267,7 +296,8 @@ async fn handle_message_send_streaming_sse(
                                     "task_id": task_id_clone,
                                     "reference_task_ids": [],
                                     "extensions": [],
-                                    "metadata": null
+                                    "metadata": null,
+                                    "message_id": msg_id.clone()
                                 },
                                 "timestamp": chrono::Utc::now().to_rfc3339(),
                             },
@@ -311,7 +341,8 @@ async fn handle_message_send_streaming_sse(
                                     "task_id": task_id_clone,
                                     "reference_task_ids": [],
                                     "extensions": [],
-                                    "metadata": null
+                                    "metadata": null,
+                                    "message_id": msg_id.clone()
                                 },
                                 "timestamp": chrono::Utc::now().to_rfc3339(),
                             },
@@ -533,7 +564,13 @@ async fn handle_message_send(
         coordinator.context.tools_context.clone(),
     ));
     let execution_result = coordinator
-        .execute(&agent_id, task_step, None, coordinator_context.clone())
+        .execute(
+            &agent_id,
+            task_step,
+            None,
+            coordinator_context.clone(),
+            None,
+        )
         .await;
 
     let mut broadcast_status = "completed";

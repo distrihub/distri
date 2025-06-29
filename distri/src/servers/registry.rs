@@ -93,7 +93,7 @@ impl<T: Transport> ServerTrait for Server<T> {
 pub async fn init_registry_and_coordinator(
     local_memories: HashMap<String, Arc<Mutex<dyn AgentMemory>>>,
     tool_sessions: Option<Arc<Box<dyn ToolSessionStore>>>,
-    agent_store: Arc<Box<dyn AgentStore>>,
+    agent_store: Arc<dyn AgentStore>,
     external_servers: &[ExternalMcpServer],
     context: Arc<CoordinatorContext>,
     memory_config: MemoryConfig,

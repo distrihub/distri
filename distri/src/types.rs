@@ -11,7 +11,7 @@ use std::{collections::HashMap, time::SystemTime};
 use chrono;
 use uuid;
 
-use crate::{agent::CustomAgent, servers::registry::ServerMetadata};
+use crate::servers::registry::ServerMetadata;
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub enum _AuthType {
@@ -65,7 +65,9 @@ impl Clone for AgentRecord {
     fn clone(&self) -> Self {
         match self {
             AgentRecord::Local(def) => AgentRecord::Local(def.clone()),
-            AgentRecord::Runnable(def, agent) => AgentRecord::Runnable(def.clone(), agent.clone_box()),
+            AgentRecord::Runnable(def, agent) => {
+                AgentRecord::Runnable(def.clone(), agent.clone_box())
+            }
         }
     }
 }

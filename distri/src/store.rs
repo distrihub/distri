@@ -63,6 +63,10 @@ pub trait SessionStore: Send + Sync {
     async fn store_step(&self, thread_id: &str, step: MemoryStep) -> anyhow::Result<()>;
 
     async fn clear_session(&self, thread_id: &str) -> anyhow::Result<()>;
+
+    async fn inc_iteration(&self, run_id: &str) -> anyhow::Result<i32>;
+
+    async fn get_iteration(&self, run_id: &str) -> anyhow::Result<i32>;
 }
 
 // Higher-level MemoryStore trait - manages cross-session permanent memory using user_id
@@ -104,6 +108,7 @@ pub struct SessionMemory {
 #[derive(Clone)]
 pub struct LocalSessionStore {
     sessions: Arc<RwLock<HashMap<String, LocalAgentMemory>>>,
+    iterations: Arc<RwLock<HashMap<String, i32>>>,
 }
 
 impl Default for LocalSessionStore {
@@ -116,6 +121,7 @@ impl LocalSessionStore {
     pub fn new() -> Self {
         Self {
             sessions: Arc::new(RwLock::new(HashMap::new())),
+            iterations: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 }
@@ -144,6 +150,23 @@ impl SessionStore for LocalSessionStore {
         let mut sessions = self.sessions.write().await;
         sessions.remove(thread_id);
         Ok(())
+    }
+
+    async fn inc_iteration(&self, thread_id: &str) -> anyhow::Result<i32> {
+        let mut iterations = self.iterations.write().await;
+        tracing::debug!(
+            "Incrementing iteration for thread: {}, iterations: {:#?}",
+            thread_id,
+            iterations
+        );
+        let count = iterations.entry(thread_id.to_string()).or_insert(0);
+        *count += 1;
+        Ok(*count)
+    }
+
+    async fn get_iteration(&self, thread_id: &str) -> anyhow::Result<i32> {
+        let iterations = self.iterations.read().await;
+        Ok(*iterations.get(thread_id).unwrap_or(&0))
     }
 }
 
@@ -227,6 +250,28 @@ impl SessionStore for FileSessionStore {
             tokio::fs::remove_file(&path).await?;
         }
         Ok(())
+    }
+
+    async fn inc_iteration(&self, run_id: &str) -> anyhow::Result<i32> {
+        let iteration = {
+            let mut sessions = self.sessions.write().await;
+            let memory = sessions
+                .entry(run_id.to_string())
+                .or_insert_with(|| LocalAgentMemory::new(run_id.to_string()));
+            memory.iteration += 1;
+            memory.iteration
+        };
+        self.save_to_file(run_id).await?;
+        Ok(iteration)
+    }
+
+    async fn get_iteration(&self, run_id: &str) -> anyhow::Result<i32> {
+        let sessions = self.sessions.read().await;
+        let memory = sessions
+            .get(run_id)
+            .cloned()
+            .unwrap_or_else(LocalAgentMemory::default);
+        Ok(memory.iteration)
     }
 }
 

@@ -1,8 +1,6 @@
 use crate::{
     agent::Agent,
     error::AgentError,
-    executor::LLMExecutor,
-    memory::SystemStep,
     servers::registry::ServerRegistry,
     store::{
         AgentStore, HashMapThreadStore, LocalSessionStore, SessionStore, ThreadStore,
@@ -10,32 +8,28 @@ use crate::{
     },
     tools::{execute_tool, get_tools},
     types::{
-        get_tool_descriptions, AgentDefinition, AgentRecord, CreateThreadRequest, Message,
-        MessageContent, MessageRole, ServerTools, Thread, ThreadSummary, ToolCall,
-        UpdateThreadRequest, DEFAULT_TOOL_DESCRIPTION_TEMPLATE,
+        AgentRecord, CreateThreadRequest, Thread, ThreadSummary, ToolCall, UpdateThreadRequest,
     },
 };
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
 
-use super::{log::StepLogger, CoordinatorContext};
-use super::{reason::create_initial_plan, AgentEvent};
-use super::{AgentCoordinator, AgentHandle, CoordinatorMessage};
-use crate::memory::{ActionStep, MemoryStep, PlanningStep, TaskStep};
+use super::AgentEvent;
+use super::CoordinatorContext;
+use super::{AgentCoordinator, CoordinatorMessage};
+use crate::memory::TaskStep;
 
 // Message types for coordinator communication
 
 #[derive(Clone)]
 pub struct LocalCoordinator {
-    pub agent_store: Arc<Box<dyn AgentStore>>,
+    pub agent_store: Arc<dyn AgentStore>,
     pub tool_sessions: Option<Arc<Box<dyn ToolSessionStore>>>,
     pub registry: Arc<RwLock<ServerRegistry>>,
     pub coordinator_rx: Arc<Mutex<mpsc::Receiver<CoordinatorMessage>>>,
     pub coordinator_tx: mpsc::Sender<CoordinatorMessage>,
     pub session_store: Arc<Box<dyn SessionStore>>,
     thread_store: Arc<Box<dyn ThreadStore>>,
-    logger: StepLogger,
-    iterations: Arc<RwLock<HashMap<String, i32>>>,
     pub context: Arc<CoordinatorContext>,
 }
 
@@ -44,14 +38,13 @@ impl LocalCoordinator {
         registry: Arc<RwLock<ServerRegistry>>,
         tool_sessions: Option<Arc<Box<dyn ToolSessionStore>>>,
         session_store: Option<Arc<Box<dyn SessionStore>>>,
-        agent_store: Arc<Box<dyn AgentStore>>,
+        agent_store: Arc<dyn AgentStore>,
         context: Arc<CoordinatorContext>,
     ) -> Self {
         let (coordinator_tx, coordinator_rx) = mpsc::channel(100);
         let thread_store =
             Arc::new(Box::new(HashMapThreadStore::default()) as Box<dyn ThreadStore>);
 
-        let logger = StepLogger::new(context.verbose);
         Self {
             agent_store: agent_store,
             tool_sessions,
@@ -61,9 +54,7 @@ impl LocalCoordinator {
             session_store: session_store
                 .unwrap_or_else(|| Arc::new(Box::new(LocalSessionStore::new()))),
             thread_store,
-            iterations: Arc::new(RwLock::new(HashMap::new())),
             context: context,
-            logger,
         }
     }
 
@@ -199,6 +190,7 @@ impl LocalCoordinator {
                     task,
                     params,
                     context,
+                    event_tx,
                     response_tx,
                 } => {
                     tracing::info!(
@@ -208,8 +200,11 @@ impl LocalCoordinator {
                     );
                     let this = self.clone();
                     tokio::spawn(async move {
-                        let result =
-                            async { this.call_agent(&agent_id, task, params, context).await }.await;
+                        let result = async {
+                            this.call_agent(&agent_id, task, params, context, event_tx)
+                                .await
+                        }
+                        .await;
 
                         let _ = response_tx.send(result);
                     });
@@ -235,7 +230,7 @@ impl LocalCoordinator {
                         .await;
 
                         if let Err(e) = result {
-                            tracing::error!("Error in streaming execution: {}", e);
+                            tracing::error!("Error in Coordinator:ExecuteStream: {}", e);
                         }
                     });
                 }
@@ -251,10 +246,11 @@ impl LocalCoordinator {
         task: TaskStep,
         params: Option<serde_json::Value>,
         context: Arc<CoordinatorContext>,
+        event_tx: Option<tokio::sync::mpsc::Sender<AgentEvent>>,
     ) -> Result<String, AgentError> {
         // Get agent from store and use invoke method
         if let Some(agent) = self.agent_store.get(agent_id).await {
-            agent.invoke(task, params, context).await
+            agent.invoke(task, params, context, event_tx).await
         } else {
             Err(AgentError::NotFound(format!(
                 "Agent {} not found",
@@ -362,8 +358,10 @@ impl AgentCoordinator for LocalCoordinator {
         task: TaskStep,
         params: Option<serde_json::Value>,
         context: Arc<CoordinatorContext>,
+        event_tx: Option<tokio::sync::mpsc::Sender<AgentEvent>>,
     ) -> Result<String, AgentError> {
-        self.call_agent(agent_name, task, params, context).await
+        self.call_agent(agent_name, task, params, context, event_tx)
+            .await
     }
 
     async fn execute_stream(

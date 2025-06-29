@@ -82,6 +82,7 @@ pub fn build_server<T: Transport>(
                         },
                         None,
                         context_clone,
+                        None,
                     )
                     .await
                     .map_err(|e| AgentError::ToolExecution(e.to_string()));
@@ -133,7 +134,7 @@ mod tests {
         let session_store = Some(Arc::new(
             Box::new(LocalSessionStore::new()) as Box<dyn SessionStore>
         ));
-        let agent_store = Arc::new(Box::new(InMemoryAgentStore::new()) as Box<dyn AgentStore>);
+        let agent_store = Arc::new(InMemoryAgentStore::new());
         let tool_sessions = get_tools_session_store();
         let coordinator = Arc::new(LocalCoordinator::new(
             registry.clone(),

@@ -11,6 +11,7 @@ use crate::{
 };
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{mpsc, RwLock};
+use uuid::Uuid;
 
 use crate::coordinator::{reason::create_initial_plan, CoordinatorContext, StepLogger};
 use crate::memory::{ActionStep, MemoryStep, PlanningStep, TaskStep};
@@ -129,28 +130,12 @@ impl Agent {
         &self,
         task: TaskStep,
         plan_config: &PlanConfig,
+        iteration: i32,
         context: Arc<CoordinatorContext>,
     ) -> Result<(), AgentError> {
         let agent_id = &self.definition.name;
         let tools_desc =
             get_tool_descriptions(&self.server_tools, Some(DEFAULT_TOOL_DESCRIPTION_TEMPLATE));
-        // Get current iteration count
-        let iteration = {
-            let mut iterations = self.iterations.write().await;
-            let count = iterations.entry(agent_id.to_string()).or_insert(0);
-            // Update count based on the number of messages for subsequent iterations
-            if *count > 0 {
-                let previous_messages = self
-                    .session_store
-                    .get_messages(&context.thread_id)
-                    .await
-                    .map_err(|e| AgentError::Session(e.to_string()))?;
-                *count = previous_messages.len() as i32; // Set count to number of messages
-            } else {
-                *count += 1; // Increment for the first iteration
-            }
-            *count
-        };
 
         if (iteration - 1) % plan_config.interval == 0 {
             // Run either initial planning or planning update
@@ -289,17 +274,6 @@ impl Agent {
         self.logger.log_step(agent_id, &task_step);
         Ok(())
     }
-
-    async fn get_history(
-        &self,
-        context: Arc<CoordinatorContext>,
-    ) -> Result<Vec<Message>, AgentError> {
-        self.session_store
-            .get_messages(&context.thread_id)
-            .await
-            .map_err(|e| AgentError::Session(e.to_string()))
-    }
-
     /// Execute one step in the execution loop
     /// For Local agents: executes LLM call with tool handling
     /// For Runnable agents: calls CustomAgent::step
@@ -311,7 +285,9 @@ impl Agent {
     ) -> Result<StepResult, AgentError> {
         if let Some(custom_agent) = &self.custom_agent {
             // For runnable agents, delegate to CustomAgent::step
-            custom_agent.step(messages, params, context, self.session_store.clone()).await
+            custom_agent
+                .step(messages, params, context, self.session_store.clone())
+                .await
         } else {
             // For local agents, execute standard LLM call with tool handling
             self.local_step(messages, params, context).await
@@ -367,8 +343,8 @@ impl Agent {
                     }];
 
                     // Process all tool calls in parallel
-                    let tool_responses = futures::future::join_all(tool_calls.iter().map(
-                        |tool_call| async move {
+                    let tool_responses =
+                        futures::future::join_all(tool_calls.iter().map(|tool_call| async move {
                             let mapped_tool_call = LLMExecutor::map_tool_call(tool_call);
 
                             let content = self
@@ -387,21 +363,59 @@ impl Agent {
                                 }],
                                 tool_calls: vec![mapped_tool_call],
                             }
-                        },
-                    ))
-                    .await;
+                        }))
+                        .await;
 
                     // Add tool responses
                     new_messages.extend(tool_responses);
                     Ok(StepResult::Continue(new_messages))
                 } else {
-                    Err(AgentError::LLMError("Tool calls finish reason but no tool calls".to_string()))
+                    Err(AgentError::LLMError(
+                        "Tool calls finish reason but no tool calls".to_string(),
+                    ))
                 }
             }
-            x => {
-                Err(AgentError::LLMError(format!("Unexpected finish reason: {:?}", x)))
-            }
+            x => Err(AgentError::LLMError(format!(
+                "Unexpected finish reason: {:?}",
+                x
+            ))),
         }
+    }
+
+    /// Helper to emit TextMessage* events for a message
+    async fn emit_text_message_events(
+        &self,
+        event_tx: &mpsc::Sender<AgentEvent>,
+        context: &CoordinatorContext,
+        content: &str,
+        role: &str,
+    ) {
+        let run_id = context.run_id.lock().await.clone();
+        let thread_id = context.thread_id.clone();
+        let message_id = Uuid::new_v4().to_string();
+        let _ = event_tx
+            .send(AgentEvent::TextMessageStart {
+                thread_id: thread_id.clone(),
+                run_id: run_id.clone(),
+                message_id: message_id.clone(),
+                role: role.to_string(),
+            })
+            .await;
+        let _ = event_tx
+            .send(AgentEvent::TextMessageContent {
+                thread_id: thread_id.clone(),
+                run_id: run_id.clone(),
+                message_id: message_id.clone(),
+                delta: content.to_string(),
+            })
+            .await;
+        let _ = event_tx
+            .send(AgentEvent::TextMessageEnd {
+                thread_id,
+                run_id,
+                message_id,
+            })
+            .await;
     }
 
     pub async fn invoke_stream(
@@ -412,30 +426,132 @@ impl Agent {
         event_tx: mpsc::Sender<AgentEvent>,
     ) -> Result<(), AgentError> {
         let agent_id = &self.definition.name;
+        let run_id = context.run_id.lock().await.clone();
+        let thread_id = context.thread_id.clone();
+        let max_iterations = self.definition.max_iterations.unwrap_or(MAX_ITERATIONS);
+        let mut iterations = self
+            .session_store
+            .get_iteration(&run_id)
+            .await
+            .map_err(|e| AgentError::Session(e.to_string()))?;
 
-        // Setup: system prompt, task, and planning
-        self.system_step(context.clone()).await?;
-        self.task_step(&task, context.clone()).await?;
+        // Send RunStarted event
+        let _ = event_tx
+            .send(AgentEvent::RunStarted {
+                thread_id: thread_id.clone(),
+                run_id: run_id.clone(),
+            })
+            .await;
 
-        // Handle planning if enabled
-        if let Some(plan_config) = &self.definition.plan {
-            self.plan_step(task.clone(), plan_config, context.clone()).await?;
+        let result = async {
+            tracing::info!(
+                "Invoking stream for agent: {}, Iterations: {}",
+                agent_id,
+                iterations
+            );
+            if iterations == 0 {
+                self.system_step(context.clone()).await?;
+                self.task_step(&task, context.clone()).await?;
+            }
+            let mut current_messages = self
+                .session_store
+                .get_messages(&context.thread_id)
+                .await
+                .map_err(|e| AgentError::Session(e.to_string()))?;
+            loop {
+                if iterations > max_iterations {
+                    return Err(AgentError::LLMError(format!(
+                        "Max iterations reached: {max_iterations}",
+                    )));
+                }
+                // Handle planning if enabled
+                if let Some(plan_config) = &self.definition.plan {
+                    self.plan_step(task.clone(), plan_config, iterations, context.clone())
+                        .await?;
+                }
+                // Decide if this step should be streaming (LLM step) or not
+                let is_llm_step = true; // For now, always stream LLM step
+                if is_llm_step {
+                    let executor = LLMExecutor::new(
+                        self.definition.clone(),
+                        self.server_tools.clone(),
+                        context.clone(),
+                        None,
+                        Some(agent_id.to_string()),
+                    );
+                    // Streaming LLM step: propagate deltas via event_tx
+                    executor
+                        .execute_stream(&current_messages, params.clone(), event_tx.clone())
+                        .await?;
+                    // After streaming, break (one streaming step per invoke_stream)
+                    break Ok(());
+                } else {
+                    // Non-streaming step (e.g., tool calls)
+                    let step_result = self
+                        .step(&current_messages, params.clone(), context.clone())
+                        .await?;
+                    match step_result {
+                        StepResult::Finish(content) => {
+                            // Store final response as action step
+                            let action_step = MemoryStep::Action(ActionStep {
+                                model_input_messages: Some(current_messages),
+                                model_output: Some(content.clone()),
+                                ..Default::default()
+                            });
+                            self.session_store
+                                .store_step(&context.thread_id, action_step.clone())
+                                .await
+                                .map_err(|e| AgentError::Session(e.to_string()))?;
+                            self.logger.log_step(agent_id, &action_step);
+                            // Emit text message events
+                            self.emit_text_message_events(
+                                &event_tx,
+                                &context,
+                                &content,
+                                "assistant",
+                            )
+                            .await;
+                            break Ok(());
+                        }
+                        StepResult::Continue(new_messages) => {
+                            current_messages.extend(new_messages);
+                            iterations = self
+                                .session_store
+                                .inc_iteration(&run_id)
+                                .await
+                                .map_err(|e| AgentError::Session(e.to_string()))?;
+                            continue;
+                        }
+                        StepResult::ToolCalls(_tool_calls) => {
+                            return Err(AgentError::LLMError(
+                                "ToolCalls result not properly handled".to_string(),
+                            ));
+                        }
+                    }
+                }
+            }
         }
+        .await;
 
-        let messages = self.get_history(context.clone()).await?;
-
-        // For streaming, we use the executor directly for now
-        // TODO: Implement step-based streaming in the future
-        let executor = LLMExecutor::new(
-            self.definition.clone(),
-            self.server_tools.clone(),
-            context.clone(),
-            None,
-            Some(agent_id.to_string()),
-        );
-
-        // Execute the streaming LLM call
-        executor.execute_stream(&messages, params, event_tx).await
+        // Send RunFinished or RunError event
+        match &result {
+            Ok(_) => {
+                let _ = event_tx
+                    .send(AgentEvent::RunFinished { thread_id, run_id })
+                    .await;
+            }
+            Err(e) => {
+                let _ = event_tx
+                    .send(AgentEvent::RunError {
+                        thread_id,
+                        run_id,
+                        message: e.to_string(),
+                        code: None,
+                    })
+                    .await;
+            }
+        }
+        result
     }
 
     pub async fn invoke(
@@ -443,70 +559,110 @@ impl Agent {
         task: TaskStep,
         params: Option<serde_json::Value>,
         context: Arc<CoordinatorContext>,
+        event_tx: Option<mpsc::Sender<AgentEvent>>,
     ) -> Result<String, AgentError> {
         let agent_id = &self.definition.name;
-        
-        // Setup: system prompt, task, and planning
-        self.system_step(context.clone()).await?;
-        self.task_step(&task, context.clone()).await?;
-
-        // Handle planning if enabled
-        if let Some(plan_config) = &self.definition.plan {
-            self.plan_step(task.clone(), plan_config, context.clone()).await?;
-        }
-
-        // Get initial messages from memory steps
-        let mut current_messages = self
+        let run_id = context.run_id.lock().await.clone();
+        let thread_id = context.thread_id.clone();
+        let mut iterations = self
             .session_store
-            .get_messages(&context.thread_id)
+            .get_iteration(&run_id)
             .await
             .map_err(|e| AgentError::Session(e.to_string()))?;
-
-        // Execute step-based loop
-        let mut iterations = 0;
-        let max_iterations = self.definition.model_settings.max_iterations;
-        tracing::debug!("Max iterations per run set to: {}", max_iterations);
-
-        loop {
-            if iterations >= max_iterations {
-                tracing::warn!("Max iterations limit reached: {}", max_iterations);
-                return Err(AgentError::LLMError(format!(
-                    "Max iterations reached: {max_iterations}",
-                )));
+        // Send RunStarted event if event_tx is provided
+        if let Some(event_tx) = &event_tx {
+            let _ = event_tx
+                .send(AgentEvent::RunStarted {
+                    thread_id: thread_id.clone(),
+                    run_id: run_id.clone(),
+                })
+                .await;
+        }
+        let result = async {
+            if iterations == 0 {
+                self.system_step(context.clone()).await?;
+                self.task_step(&task, context.clone()).await?;
             }
-            iterations += 1;
-
-            // Execute one step
-            let step_result = self.step(&current_messages, params.clone(), context.clone()).await?;
-
-            match step_result {
-                StepResult::Finish(content) => {
-                    tracing::info!("Agent execution completed successfully");
-
-                    // Store final response as action step
-                    let action_step = MemoryStep::Action(ActionStep {
-                        model_input_messages: Some(current_messages),
-                        model_output: Some(content.clone()),
-                        ..Default::default()
-                    });
-                    self.session_store
-                        .store_step(&context.thread_id, action_step.clone())
-                        .await
-                        .map_err(|e| AgentError::Session(e.to_string()))?;
-                    self.logger.log_step(agent_id, &action_step);
-
-                    return Ok(content);
+            let mut current_messages = self
+                .session_store
+                .get_messages(&context.thread_id)
+                .await
+                .map_err(|e| AgentError::Session(e.to_string()))?;
+            let max_iterations = self.definition.max_iterations.unwrap_or(MAX_ITERATIONS);
+            tracing::debug!("Max iterations per run set to: {}", max_iterations);
+            loop {
+                if iterations >= max_iterations {
+                    tracing::warn!("Max iterations limit reached: {}", max_iterations);
+                    return Err(AgentError::LLMError(format!(
+                        "Max iterations reached: {max_iterations}",
+                    )));
                 }
-                StepResult::Continue(new_messages) => {
-                    // Add new messages and continue
-                    current_messages.extend(new_messages);
-                    continue;
-                }
-                StepResult::ToolCalls(_tool_calls) => {
-                    // This should be handled by local_step, but custom agents might use it
-                    return Err(AgentError::LLMError("ToolCalls result not properly handled".to_string()));
+                iterations = self
+                    .session_store
+                    .inc_iteration(&run_id)
+                    .await
+                    .map_err(|e| AgentError::Session(e.to_string()))?;
+                let step_result = self
+                    .step(&current_messages, params.clone(), context.clone())
+                    .await?;
+                match step_result {
+                    StepResult::Finish(content) => {
+                        tracing::info!("Agent execution completed successfully");
+                        let action_step = MemoryStep::Action(ActionStep {
+                            model_input_messages: Some(current_messages),
+                            model_output: Some(content.clone()),
+                            ..Default::default()
+                        });
+                        self.session_store
+                            .store_step(&context.thread_id, action_step.clone())
+                            .await
+                            .map_err(|e| AgentError::Session(e.to_string()))?;
+                        self.logger.log_step(agent_id, &action_step);
+                        // Emit text message events if event_tx is provided
+                        if let Some(event_tx) = &event_tx {
+                            self.emit_text_message_events(
+                                event_tx,
+                                &context,
+                                &content,
+                                "assistant",
+                            )
+                            .await;
+                        }
+                        return Ok(content);
+                    }
+                    StepResult::Continue(new_messages) => {
+                        current_messages.extend(new_messages);
+                        continue;
+                    }
+                    StepResult::ToolCalls(_tool_calls) => {
+                        return Err(AgentError::LLMError(
+                            "ToolCalls result not properly handled".to_string(),
+                        ));
+                    }
                 }
             }
         }
+        .await;
+        // Send RunFinished or RunError event if event_tx is provided
+        if let Some(event_tx) = &event_tx {
+            match &result {
+                Ok(_) => {
+                    let _ = event_tx
+                        .send(AgentEvent::RunFinished { thread_id, run_id })
+                        .await;
+                }
+                Err(e) => {
+                    let _ = event_tx
+                        .send(AgentEvent::RunError {
+                            thread_id,
+                            run_id,
+                            message: e.to_string(),
+                            code: None,
+                        })
+                        .await;
+                }
+            }
+        }
+        result
     }
 }

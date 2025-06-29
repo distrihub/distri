@@ -9,7 +9,7 @@ use distri::{
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
 
-pub async fn list(agent_store: Arc<Box<dyn AgentStore>>) -> anyhow::Result<()> {
+pub async fn list(agent_store: Arc<dyn AgentStore>) -> anyhow::Result<()> {
     let (agents, _) = agent_store.list(None, None).await;
     let mut table = Table::new()
         .load_preset(UTF8_FULL)

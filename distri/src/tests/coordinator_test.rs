@@ -49,8 +49,7 @@ async fn test_agent_coordination() -> anyhow::Result<()> {
         ..Default::default()
     };
 
-    let local_agent_store =
-        Arc::new(Box::new(InMemoryAgentStore::new()) as Box<dyn crate::store::AgentStore>);
+    let local_agent_store = Arc::new(InMemoryAgentStore::new());
     // Initialize coordinator with session stores
     let registry = get_registry().await;
 
@@ -89,6 +88,7 @@ async fn test_agent_coordination() -> anyhow::Result<()> {
             },
             None,
             Arc::default(),
+            None,
         )
         .await?;
     info!("Agent 2 result: {}", agent2_result);
@@ -109,13 +109,7 @@ async fn test_agent_coordination_streaming() -> anyhow::Result<()> {
         system_prompt: Some(
             "You are a streaming test agent. When you receive a message, respond with a stream of text that counts from 1 to 5.".to_string(),
         ),
-        mcp_servers: vec![],
-        model_settings: ModelSettings::default(),
-        parameters: Default::default(),
-        response_format: None,
-        history_size: None,
-        plan: None,
-        icon_url: None,
+        ..Default::default()
     };
 
     // Initialize coordinator
@@ -125,6 +119,7 @@ async fn test_agent_coordination_streaming() -> anyhow::Result<()> {
         registry.clone(),
         tool_sessions,
         None,
+        Arc::new(InMemoryAgentStore::new()),
         Arc::new(CoordinatorContext::default()),
     ));
 
@@ -132,7 +127,10 @@ async fn test_agent_coordination_streaming() -> anyhow::Result<()> {
     register_coordinator(registry, coordinator.clone()).await;
 
     // Register agent definition
-    coordinator.register_agent(agent_def.clone()).await?;
+    let agent_handle = coordinator
+        .register_agent(AgentRecord::Local(agent_def.clone()))
+        .await?;
+    let agent_handle = agent_handle.clone();
 
     // Start coordinator in background
     let coordinator_clone = coordinator.clone();
@@ -144,7 +142,7 @@ async fn test_agent_coordination_streaming() -> anyhow::Result<()> {
     let (event_tx, mut event_rx) = tokio::sync::mpsc::channel(100);
 
     // Get agent handle and execute streaming task
-    let agent_handle = coordinator.get_handle("streaming_agent".to_string());
+
     let task = TaskStep {
         task: "Count from 1 to 5".to_string(),
         task_images: None,
@@ -170,7 +168,7 @@ async fn test_agent_coordination_streaming() -> anyhow::Result<()> {
 
     // Execute streaming task
     agent_handle
-        .execute_stream(task, None, event_tx, Arc::default())
+        .invoke_stream(task, None, Arc::default(), event_tx)
         .await?;
 
     // Wait for event handling to complete

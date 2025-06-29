@@ -21,6 +21,7 @@ pub async fn run(
             },
             None,
             Arc::default(), // No thread context for event execution
+            None,
         )
         .await
     {

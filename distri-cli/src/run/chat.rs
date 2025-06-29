@@ -78,6 +78,7 @@ pub async fn run(
                 },
                 None,
                 Arc::default(), // No thread context for CLI chat
+                None,
             )
             .await
         {

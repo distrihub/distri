@@ -11,7 +11,7 @@ use distri::{
         kg::FileMemory,
         registry::{init_registry_and_coordinator, ServerRegistry},
     },
-    store::{AgentStore, InMemoryAgentStore},
+    store::InMemoryAgentStore,
     types::{get_distri_config_schema, AgentRecord, Configuration},
 };
 use distri_server::A2AServer;
@@ -198,7 +198,7 @@ async fn init_all(
 
     let memory_config = MemoryConfig::File(".distri/memory".to_string());
     let context = Arc::new(CoordinatorContext::default());
-    let agent_store = Arc::new(Box::new(InMemoryAgentStore::new()) as Box<dyn AgentStore>);
+    let agent_store = Arc::new(InMemoryAgentStore::new());
     let (registry, coordinator) = init_registry_and_coordinator(
         local_memories,
         tool_sessions.clone(),
