@@ -64,7 +64,7 @@ const Chat: React.FC<ChatProps> = ({ thread, agent, onThreadUpdate }) => {
 
         // Convert A2A messages to our Message format
         const convertedMessages: Message[] = threadMessages.map((msg: any, index: number) => ({
-          id: msg.messageId || `msg-${index}`,
+          id: msg.messageId || msg.message_id || `msg-${index}`,
           role: msg.role === 'user' ? 'user' : 'agent',
           content: msg.parts
             ?.filter((part: any) => part.kind === 'text')
@@ -169,7 +169,7 @@ const Chat: React.FC<ChatProps> = ({ thread, agent, onThreadUpdate }) => {
             if (result.status && result.status.message && result.status.message.role === 'agent' && result.status.message.parts) {
               const delta = result.status.message.parts.map((p: any) => p.text).join(' ');
 
-              const messageId = result.status.message.messageId;
+              const messageId = result.status.message.messageId || result.status.message.message_id;
               const isPreviousMessage = messages.find(msg => msg.id === messageId);
               if (!isPreviousMessage) {
                 const agentMessage: Message = {
@@ -195,7 +195,7 @@ const Chat: React.FC<ChatProps> = ({ thread, agent, onThreadUpdate }) => {
               }
             }
 
-            if (result.final) {
+            if (result.finalUpdate || result.final) {
               done = true;
               // Optionally update thread in parent component
               if (onThreadUpdate) {

@@ -424,3 +424,81 @@ pub struct Artifact {
     #[serde(default)]
     pub description: Option<String>,
 }
+
+// Streaming Response Types
+
+/// Response for streaming task updates
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskUpdateResponse {
+    pub id: String,
+    pub status: TaskStatus,
+    pub final_update: bool,
+}
+
+/// Event update for text message streaming
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct TextDeltaUpdate {
+    pub id: String,
+    pub status: StreamingTaskStatus,
+    pub final_update: bool,
+}
+
+/// Task status for streaming responses
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct StreamingTaskStatus {
+    pub state: TaskState,
+    #[serde(default)]
+    pub message: Option<StreamingMessage>,
+    #[serde(default)]
+    pub timestamp: Option<String>,
+}
+
+/// Message for streaming responses with delta text
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct StreamingMessage {
+    pub role: Role,
+    pub parts: Vec<StreamingPart>,
+    #[serde(default)]
+    pub context_id: Option<String>,
+    #[serde(default)]
+    pub task_id: Option<String>,
+    #[serde(default)]
+    pub reference_task_ids: Vec<String>,
+    #[serde(default)]
+    pub extensions: Vec<String>,
+    #[serde(default)]
+    pub metadata: Option<serde_json::Value>,
+    #[serde(default)]
+    pub message_id: Option<String>,
+}
+
+/// Part for streaming messages
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(tag = "kind")]
+pub enum StreamingPart {
+    #[serde(rename = "text")]
+    Text(StreamingTextPart),
+}
+
+/// Text part for streaming with delta content
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct StreamingTextPart {
+    pub text: String,
+}
+
+// Event Broadcasting Types
+
+/// Event for broadcasting task status changes
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskStatusBroadcastEvent {
+    pub r#type: String,
+    pub task_id: String,
+    pub thread_id: String,
+    pub agent_id: String,
+    pub status: String,
+}
