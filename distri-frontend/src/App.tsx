@@ -196,9 +196,9 @@ function App() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gray-50 flex flex-col">
       {/* Header */}
-      <header className="bg-white shadow-sm border-b">
+      <header className="bg-white shadow-sm border-b flex-shrink-0">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center py-4">
             <div className="flex items-center space-x-4">
@@ -266,13 +266,13 @@ function App() {
       </header>
 
       {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className={`grid gap-8 ${activeTab === 'chat' ? 'grid-cols-1 lg:grid-cols-4' : 'grid-cols-1'}`}>
+      <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
+        <div className={`h-full flex gap-8 ${activeTab === 'chat' ? '' : 'justify-center'}`}>
           {/* Sidebar - Threads (only show on chat tab) */}
           {activeTab === 'chat' && (
-            <div className="lg:col-span-1">
-              <div className="bg-white rounded-lg shadow p-4">
-                <div className="flex items-center justify-between mb-4">
+            <div className="w-80 flex-shrink-0">
+              <div className="bg-white rounded-lg shadow p-4 h-full flex flex-col">
+                <div className="flex items-center justify-between mb-4 flex-shrink-0">
                   <h2 className="text-lg font-medium text-gray-900">Conversations</h2>
                   <button
                     onClick={createNewThread}
@@ -288,64 +288,68 @@ function App() {
                   </button>
                 </div>
 
-                {threads.length === 0 ? (
-                  <div className="text-center py-8">
-                    <MessageSquare className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-                    <p className="text-gray-500 text-sm">No conversations yet</p>
-                    <p className="text-gray-400 text-xs mt-1">
-                      {selectedAgent ? 'Click "New" to start' : 'Select an agent first'}
-                    </p>
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    {threads.map((thread) => (
-                      <div
-                        key={thread.id}
-                        onClick={() => setSelectedThread(thread)}
-                        className={`p-3 rounded-lg cursor-pointer transition-colors border ${selectedThread?.id === thread.id
-                          ? 'bg-blue-50 border-blue-200'
-                          : 'hover:bg-gray-50 border-transparent'
-                          }`}
-                      >
-                        <div className="flex items-start justify-between">
-                          <div className="flex-1 min-w-0">
-                            <h3 className="font-medium text-gray-900 text-sm truncate">
-                              {thread.title}
-                            </h3>
-                            <p className="text-xs text-gray-500 mt-1">
-                              with {thread.agent_name}
-                            </p>
-                            {thread.last_message && (
-                              <p className="text-xs text-gray-400 mt-1 truncate">
-                                {thread.last_message}
+                <div className="flex-1 overflow-y-auto">
+                  {threads.length === 0 ? (
+                    <div className="text-center py-8">
+                      <MessageSquare className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+                      <p className="text-gray-500 text-sm">No conversations yet</p>
+                      <p className="text-gray-400 text-xs mt-1">
+                        {selectedAgent ? 'Click "New" to start' : 'Select an agent first'}
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {threads.map((thread) => (
+                        <div
+                          key={thread.id}
+                          onClick={() => setSelectedThread(thread)}
+                          className={`p-3 rounded-lg cursor-pointer transition-colors border ${selectedThread?.id === thread.id
+                            ? 'bg-blue-50 border-blue-200'
+                            : 'hover:bg-gray-50 border-transparent'
+                            }`}
+                        >
+                          <div className="flex items-start justify-between">
+                            <div className="flex-1 min-w-0">
+                              <h3 className="font-medium text-gray-900 text-sm truncate">
+                                {thread.title}
+                              </h3>
+                              <p className="text-xs text-gray-500 mt-1">
+                                with {thread.agent_name}
                               </p>
-                            )}
-                          </div>
-                          <div className="flex flex-col items-end text-xs text-gray-400">
-                            <span>{new Date(thread.updated_at).toLocaleDateString()}</span>
-                            <span className="mt-1">{thread.message_count} msgs</span>
+                              {thread.last_message && (
+                                <p className="text-xs text-gray-400 mt-1 truncate">
+                                  {thread.last_message}
+                                </p>
+                              )}
+                            </div>
+                            <div className="flex flex-col items-end text-xs text-gray-400">
+                              <span>{new Date(thread.updated_at).toLocaleDateString()}</span>
+                              <span className="mt-1">{thread.message_count} msgs</span>
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           )}
 
           {/* Main Content Area */}
-          <div className={`${activeTab === 'chat' ? 'lg:col-span-3' : 'col-span-1'}`}>
+          <div className={`flex-1 h-full ${activeTab === 'chat' ? '' : 'max-w-6xl'}`}>
             {activeTab === 'chat' && selectedThread && selectedAgent && (
-              <Chat
-                thread={selectedThread}
-                agent={selectedAgent}
-                onThreadUpdate={() => updateSpecificThread(selectedThread.id)}
-              />
+              <div className="h-full">
+                <Chat
+                  thread={selectedThread}
+                  agent={selectedAgent}
+                  onThreadUpdate={() => updateSpecificThread(selectedThread.id)}
+                />
+              </div>
             )}
 
             {activeTab === 'chat' && !selectedThread && (
-              <div className="bg-white rounded-lg shadow p-12 text-center">
+              <div className="bg-white rounded-lg shadow p-12 text-center h-full flex flex-col justify-center">
                 <MessageSquare className="h-16 w-16 text-gray-400 mx-auto mb-4" />
                 <h3 className="text-lg font-medium text-gray-900 mb-2">
                   {selectedAgent ? 'Start a conversation' : 'Select an agent'}
@@ -360,15 +364,19 @@ function App() {
             )}
 
             {activeTab === 'agents' && (
-              <AgentList 
-                agents={agents} 
-                onRefresh={fetchAgents} 
-                onStartChat={startChatWithAgent}
-              />
+              <div className="h-full">
+                <AgentList 
+                  agents={agents} 
+                  onRefresh={fetchAgents} 
+                  onStartChat={startChatWithAgent}
+                />
+              </div>
             )}
 
             {activeTab === 'tasks' && (
-              <TaskMonitor />
+              <div className="h-full">
+                <TaskMonitor />
+              </div>
             )}
           </div>
         </div>
