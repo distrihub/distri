@@ -14,7 +14,6 @@ tracing = "0.1"
 tracing-subscriber = "0.3"
 chrono = { version = "0.4", features = ["serde"] }
 
-# Note: distri dependencies commented out until compilation issues are resolved
-# distri-server = { path = "../../distri-server" }
-# distri = { path = "../../distri" }
-# distri-a2a = { path = "../../distri-a2a" }
+distri-server = { path = "../../distri-server" }
+distri = { path = "../../distri" }
+distri-a2a = { path = "../../distri-a2a" }

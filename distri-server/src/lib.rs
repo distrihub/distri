@@ -75,12 +75,10 @@ pub fn configure_distri_service(cfg: &mut web::ServiceConfig, config: DistriServ
 /// Simple helper to create a LocalCoordinator from a YAML config file
 /// This is a convenience function for quick setup
 pub async fn create_coordinator_from_config(
-    config_path: &str,
+    config_str: &str,
 ) -> Result<(Arc<LocalCoordinator>, ServerConfig)> {
     use std::collections::HashMap;
-    use std::fs;
 
-    let config_str = fs::read_to_string(config_path)?;
     let config: Configuration = serde_yaml::from_str(&config_str)?;
 
     // Create default components
