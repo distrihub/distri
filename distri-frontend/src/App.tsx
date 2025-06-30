@@ -115,10 +115,10 @@ function App() {
   const startChatWithAgent = async (agent: Agent) => {
     // Set the selected agent
     setSelectedAgent(agent);
-    
+
     // Switch to chat tab
     setActiveTab('chat');
-    
+
     // Create a new thread for this agent
     const newThreadId = uuidv4();
     const threadSummary: Thread = {
@@ -202,7 +202,7 @@ function App() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center py-4">
             <div className="flex items-center space-x-4">
-              <button 
+              <button
                 onClick={() => setActiveTab('chat')}
                 className="flex items-center space-x-4 hover:opacity-80 transition-opacity"
               >
@@ -271,8 +271,8 @@ function App() {
       </header>
 
       {/* Main Content */}
-      <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
-        <div className={`h-full flex gap-8 ${activeTab === 'chat' ? '' : 'justify-center'}`}>
+      <main className="flex-1 flex max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
+        <div className={`flex-1 flex gap-8 ${activeTab === 'chat' ? '' : 'justify-center'}`}>
           {/* Sidebar - Threads (only show on chat tab) */}
           {activeTab === 'chat' && (
             <div className="w-80 flex-shrink-0">
@@ -369,9 +369,9 @@ function App() {
 
             {activeTab === 'agents' && (
               <div className="h-full">
-                <AgentList 
-                  agents={agents} 
-                  onRefresh={fetchAgents} 
+                <AgentList
+                  agents={agents}
+                  onRefresh={fetchAgents}
                   onStartChat={startChatWithAgent}
                 />
               </div>

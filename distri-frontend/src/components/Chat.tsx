@@ -206,7 +206,7 @@ const Chat: React.FC<ChatProps> = ({ thread, agent, onThreadUpdate }) => {
   };
 
   return (
-    <div className="bg-white rounded-lg shadow h-[600px] flex flex-col">
+    <div className="bg-white rounded-lg shadow h-full flex flex-col">
       {/* Chat Header */}
       <div className="flex items-center justify-between p-4 border-b">
         <div className="flex items-center space-x-3">
