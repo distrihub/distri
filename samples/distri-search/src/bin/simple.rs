@@ -1,74 +1,21 @@
 use anyhow::Result;
-use distri::{
-    coordinator::{CoordinatorContext, LocalCoordinator},
-    memory::{MemoryConfig, TaskStep},
-    servers::registry::{init_registry_and_coordinator, ServerRegistry},
-    store::InMemoryAgentStore,
-    types::{AgentRecord, Configuration},
-    SessionStore,
-};
-use dotenv::dotenv;
-use std::{collections::HashMap, sync::Arc};
-use tokio::sync::RwLock;
+use distri::{coordinator::CoordinatorContext, memory::TaskStep, types::AgentRecord};
+use distri_search::{init_infrastructure, load_config};
+use std::sync::Arc;
 use tracing::info;
-
-fn load_config(config_path: &str) -> Result<Configuration> {
-    // Load .env file if it exists
-    dotenv().ok();
-
-    // Read the config file
-    let config_str = std::fs::read_to_string(config_path)?;
-
-    // Parse the YAML
-    let config: Configuration = serde_yaml::from_str(&config_str)?;
-    Ok(config)
-}
-
-async fn init_infrastructure(
-    config: &Configuration,
-) -> Result<(Arc<RwLock<ServerRegistry>>, Arc<LocalCoordinator>)> {
-    let sessions = config.sessions.clone();
-    let local_memories = HashMap::new();
-
-    // Simple session store for this example
-    let tool_sessions: Arc<Box<dyn SessionStore>> = Arc::new(Box::new(
-        distri::store::LocalSessionStore::new()
-    ));
-
-    let memory_config = MemoryConfig::InMemory;
-    let context = Arc::new(CoordinatorContext::default());
-    let agent_store = Arc::new(InMemoryAgentStore::new());
-
-    let (registry, coordinator) = init_registry_and_coordinator(
-        local_memories,
-        tool_sessions,
-        agent_store.clone(),
-        &config.mcp_servers,
-        context,
-        memory_config,
-    )
-    .await;
-
-    Ok((registry, coordinator))
-}
 
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize logging
     tracing_subscriber::fmt::init();
-    
+
     println!("🔍 DeepSearch Agent - YAML Configuration Example");
     println!("================================================\n");
 
-    // Load configuration
-    let config_path = "deep-search-agent.yaml";
-    
-    info!("Loading configuration from: {}", config_path);
-    let config = match load_config(config_path) {
+    let config = match load_config() {
         Ok(config) => config,
         Err(e) => {
             eprintln!("❌ Failed to load config: {}", e);
-            eprintln!("Make sure {} exists in the current directory", config_path);
             std::process::exit(1);
         }
     };
@@ -77,7 +24,7 @@ async fn main() -> Result<()> {
 
     // Initialize the distri infrastructure
     info!("Initializing distri infrastructure...");
-    let (registry, coordinator) = init_infrastructure(&config).await?;
+    let (_, coordinator) = init_infrastructure().await?;
     info!("✅ Infrastructure initialized");
 
     // Register the DeepSearch agent from YAML config
@@ -113,10 +60,10 @@ async fn main() -> Result<()> {
     };
 
     println!("\n🔄 Executing task...");
-    
+
     // Create context for this execution
     let context = Arc::new(CoordinatorContext::default());
-    
+
     match agent_handle.invoke(task, None, context.clone(), None).await {
         Ok(result) => {
             println!("\n✅ Task completed successfully!");
@@ -134,13 +81,6 @@ async fn main() -> Result<()> {
 
     // Clean up
     coordinator_handle.abort();
-    
-    println!("\n🎉 Example completed!");
-    println!("\nThis example demonstrates:");
-    println!("• Loading agent configuration from YAML");
-    println!("• Using the standard distri Agent (not CustomAgent)");
-    println!("• Integration with MCP servers (mcp-tavily, mcp-spider)");
-    println!("• The agent handles search + scrape workflow automatically");
 
     Ok(())
 }

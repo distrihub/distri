@@ -133,33 +133,6 @@ pub async fn init_registry_and_coordinator(
         },
     );
 
-    // registry.register(
-    //     "file_knowledge_graph".to_string(),
-    //     ServerMetadata {
-    //         auth_session_key: None,
-    //         mcp_transport: TransportType::Async,
-    //         kg_memory: Some(kg_memory),
-    //         builder: Some(Arc::new(|metadata, transport| {
-    //             let server = kg::build::build(metadata, transport)?;
-    //             Ok(Box::new(server) as Box<dyn ServerTrait>)
-    //         })),
-    //         memories: HashMap::new(),
-    //     },
-    // );
-
-    // registry.register(
-    //     "local_memory".to_string(),
-    //     ServerMetadata {
-    //         auth_session_key: None,
-    //         mcp_transport: TransportType::Async,
-    //         memories: local_memories,
-    //         builder: Some(Arc::new(|metadata, transport| {
-    //             let server = kg::build::build(metadata, transport)?;
-    //             Ok(Box::new(server) as Box<dyn ServerTrait>)
-    //         })),
-    //         kg_memory: None,
-    //     },
-    // );
     registry.register(
         "file_memory".to_string(),
         ServerMetadata {
