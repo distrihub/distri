@@ -107,9 +107,10 @@ const Chat: React.FC<ChatProps> = ({ thread, agent, onThreadUpdate }) => {
         },
         body: JSON.stringify({
           jsonrpc: '2.0',
-          method: 'message/send_streaming',
+          method: 'message/stream',
           params: {
             message: {
+              kind: 'message',
               messageId: userMessage.id,
               role: 'user',
               parts: [
@@ -165,11 +166,12 @@ const Chat: React.FC<ChatProps> = ({ thread, agent, onThreadUpdate }) => {
             const result = json.result;
             console.log(result);
             if (!result) continue;
-            // Handle streaming updates
-            if (result.status && result.status.message && result.status.message.role === 'agent' && result.status.message.parts) {
-              const delta = result.status.message.parts.map((p: any) => p.text).join(' ');
+            // Handle A2A streaming responses
+            if (result.kind === 'message' && result.role === 'agent' && result.parts) {
+              // This is a Message object with streaming text delta
+              const delta = result.parts.map((p: any) => p.text).join(' ');
 
-              const messageId = result.status.message.messageId || result.status.message.message_id;
+              const messageId = result.messageId;
               const isPreviousMessage = messages.find(msg => msg.id === messageId);
               if (!isPreviousMessage) {
                 const agentMessage: Message = {
@@ -177,7 +179,7 @@ const Chat: React.FC<ChatProps> = ({ thread, agent, onThreadUpdate }) => {
                   role: 'agent',
                   content: delta,
                   timestamp: new Date(),
-                  taskId: messageId,
+                  taskId: result.taskId,
                 };
                 setMessages((prev: Message[]) => [...prev, agentMessage]);
               } else {
@@ -195,7 +197,7 @@ const Chat: React.FC<ChatProps> = ({ thread, agent, onThreadUpdate }) => {
               }
             }
 
-            if (result.finalUpdate || result.final) {
+            if (result.kind === 'status-update' && result.final) {
               done = true;
               // Optionally update thread in parent component
               if (onThreadUpdate) {

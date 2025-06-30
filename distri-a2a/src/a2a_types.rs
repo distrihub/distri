@@ -292,6 +292,7 @@ pub struct MessageSendConfiguration {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Message {
+    pub kind: String, // "message"
     pub message_id: String,
     pub role: Role,
     pub parts: Vec<Part>,
@@ -376,15 +377,16 @@ pub struct TaskIdParams {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Task {
+    pub kind: String, // "task"
     pub id: String,
-    pub kind: String,
-    #[serde(rename = "contextId")]
     pub context_id: String,
     pub status: TaskStatus,
     #[serde(default)]
     pub artifacts: Vec<Artifact>,
     #[serde(default)]
     pub history: Vec<Message>,
+    #[serde(default)]
+    pub metadata: Option<serde_json::Value>,
 }
 
 /// The status of a task.
@@ -425,69 +427,35 @@ pub struct Artifact {
     pub description: Option<String>,
 }
 
-// Streaming Response Types
+// A2A Streaming Response Types
 
-/// Response for streaming task updates
+/// Task Status Update Event - sent during streaming
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct TaskUpdateResponse {
-    pub id: String,
+pub struct TaskStatusUpdateEvent {
+    pub kind: String, // "status-update"
+    pub task_id: String,
+    pub context_id: String,
     pub status: TaskStatus,
-    pub final_update: bool,
-}
-
-/// Event update for text message streaming
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct TextDeltaUpdate {
-    pub id: String,
-    pub status: StreamingTaskStatus,
-    pub final_update: bool,
-}
-
-/// Task status for streaming responses
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct StreamingTaskStatus {
-    pub state: TaskState,
-    #[serde(default)]
-    pub message: Option<StreamingMessage>,
-    #[serde(default)]
-    pub timestamp: Option<String>,
-}
-
-/// Message for streaming responses with delta text
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct StreamingMessage {
-    pub role: Role,
-    pub parts: Vec<StreamingPart>,
-    #[serde(default)]
-    pub context_id: Option<String>,
-    #[serde(default)]
-    pub task_id: Option<String>,
-    #[serde(default)]
-    pub reference_task_ids: Vec<String>,
-    #[serde(default)]
-    pub extensions: Vec<String>,
+    pub r#final: bool,
     #[serde(default)]
     pub metadata: Option<serde_json::Value>,
+}
+
+/// Task Artifact Update Event - sent during streaming
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskArtifactUpdateEvent {
+    pub kind: String, // "artifact-update"
+    pub task_id: String,
+    pub context_id: String,
+    pub artifact: Artifact,
     #[serde(default)]
-    pub message_id: Option<String>,
-}
-
-/// Part for streaming messages
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(tag = "kind")]
-pub enum StreamingPart {
-    #[serde(rename = "text")]
-    Text(StreamingTextPart),
-}
-
-/// Text part for streaming with delta content
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct StreamingTextPart {
-    pub text: String,
+    pub append: Option<bool>,
+    #[serde(default)]
+    pub last_chunk: Option<bool>,
+    #[serde(default)]
+    pub metadata: Option<serde_json::Value>,
 }
 
 // Event Broadcasting Types

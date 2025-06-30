@@ -7,9 +7,8 @@ use distri::types::{ServerConfig, UpdateThreadRequest};
 use distri::{memory::TaskStep, TaskStore};
 use distri_a2a::{
     AgentCard, JsonRpcError, JsonRpcRequest, JsonRpcResponse, Message as A2aMessage,
-    MessageSendParams, Part, Role, StreamingMessage, StreamingPart, StreamingTaskStatus,
-    StreamingTextPart, TaskIdParams, TaskState, TaskStatus, TaskStatusBroadcastEvent,
-    TaskUpdateResponse, TextDeltaUpdate, TextPart,
+    MessageSendParams, Part, Role, TaskIdParams, TaskState, TaskStatus, TaskStatusBroadcastEvent,
+    TaskStatusUpdateEvent, TaskArtifactUpdateEvent, TextPart,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -216,53 +215,40 @@ async fn handle_message_send_streaming_sse(
                     AgentEvent::TextMessageContent { delta, message_id, .. } => {
                         agent_message_content.push_str(delta);
                         msg_id = Some(message_id.clone());
-                        let update = TextDeltaUpdate {
-                            id: task_id_clone.clone(),
-                            status: StreamingTaskStatus {
-                                state: TaskState::Working,
-                                message: Some(StreamingMessage {
-                                    role: Role::Agent,
-                                    parts: vec![StreamingPart::Text(StreamingTextPart { text: delta.clone() })],
-                                    context_id: Some(thread_id_clone.clone()),
-                                    task_id: Some(task_id_clone.clone()),
-                                    reference_task_ids: vec![],
-                                    extensions: vec![],
-                                    metadata: None,
-                                    message_id: Some(message_id.clone()),
-                                }),
-                                timestamp: Some(chrono::Utc::now().to_rfc3339()),
-                            },
-                            final_update: false,
+                        let message = A2aMessage {
+                            kind: "message".to_string(),
+                            message_id: message_id.clone(),
+                            role: Role::Agent,
+                            parts: vec![Part::Text(TextPart { text: delta.clone() })],
+                            context_id: Some(thread_id_clone.clone()),
+                            task_id: Some(task_id_clone.clone()),
+                            reference_task_ids: vec![],
+                            extensions: vec![],
+                            metadata: None,
                         };
                         JsonRpcResponse {
                             jsonrpc: "2.0".to_string(),
-                            result: Some(serde_json::to_value(update).unwrap()),
+                            result: Some(serde_json::to_value(message).unwrap()),
                             error: None,
                             id: id_field_clone2.clone(),
                         }
                     }
                     AgentEvent::TextMessageEnd { message_id, .. } => {
-                        let update = TextDeltaUpdate {
-                            id: task_id_clone.clone(),
-                            status: StreamingTaskStatus {
-                                state: TaskState::Completed,
-                                message: Some(StreamingMessage {
-                                    role: Role::Agent,
-                                    parts: vec![],
-                                    context_id: Some(thread_id_clone.clone()),
-                                    task_id: Some(task_id_clone.clone()),
-                                    reference_task_ids: vec![],
-                                    extensions: vec![],
-                                    metadata: None,
-                                    message_id: Some(message_id.clone()),
-                                }),
+                        let status_update = TaskStatusUpdateEvent {
+                            kind: "status-update".to_string(),
+                            task_id: task_id_clone.clone(),
+                            context_id: thread_id_clone.clone(),
+                            status: TaskStatus {
+                                state: TaskState::Working,
+                                message: None,
                                 timestamp: Some(chrono::Utc::now().to_rfc3339()),
                             },
-                            final_update: false,
+                            r#final: false,
+                            metadata: None,
                         };
                         JsonRpcResponse {
                             jsonrpc: "2.0".to_string(),
-                            result: Some(serde_json::to_value(update).unwrap()),
+                            result: Some(serde_json::to_value(status_update).unwrap()),
                             error: None,
                             id: id_field_clone2.clone(),
                         }
@@ -271,6 +257,7 @@ async fn handle_message_send_streaming_sse(
                         completed = true;
                         // Update task status to failed and add message to history
                         let agent_message = distri_a2a::Message {
+                            kind: "message".to_string(),
                             message_id: uuid::Uuid::new_v4().to_string(),
                             role: Role::Agent,
                             parts: vec![Part::Text(TextPart { text: message.clone() })],
@@ -285,29 +272,19 @@ async fn handle_message_send_streaming_sse(
                             message: Some(agent_message.clone()),
                             timestamp: Some(chrono::Utc::now().to_rfc3339()),
                         };
-                        let _ = task_store_clone.update_task_status(&task_id_clone, status).await;
+                        let _ = task_store_clone.update_task_status(&task_id_clone, status.clone()).await;
                         let _ = task_store_clone.add_message_to_task(&task_id_clone, agent_message.clone()).await;
-                        let update = TextDeltaUpdate {
-                            id: task_id_clone.clone(),
-                            status: StreamingTaskStatus {
-                                state: TaskState::Failed,
-                                message: Some(StreamingMessage {
-                                    role: Role::Agent,
-                                    parts: vec![StreamingPart::Text(StreamingTextPart { text: message.clone() })],
-                                    context_id: Some(thread_id_clone.clone()),
-                                    task_id: Some(task_id_clone.clone()),
-                                    reference_task_ids: vec![],
-                                    extensions: vec![],
-                                    metadata: None,
-                                    message_id: msg_id.clone(),
-                                }),
-                                timestamp: Some(chrono::Utc::now().to_rfc3339()),
-                            },
-                            final_update: true,
+                        let status_update = TaskStatusUpdateEvent {
+                            kind: "status-update".to_string(),
+                            task_id: task_id_clone.clone(),
+                            context_id: thread_id_clone.clone(),
+                            status,
+                            r#final: true,
+                            metadata: None,
                         };
                         JsonRpcResponse {
                             jsonrpc: "2.0".to_string(),
-                            result: Some(serde_json::to_value(update).unwrap()),
+                            result: Some(serde_json::to_value(status_update).unwrap()),
                             error: None,
                             id: id_field_clone2.clone(),
                         }
@@ -316,6 +293,7 @@ async fn handle_message_send_streaming_sse(
                         completed = true;
                         // Update task status to completed and add message to history
                         let agent_message = distri_a2a::Message {
+                            kind: "message".to_string(),
                             message_id: uuid::Uuid::new_v4().to_string(),
                             role: Role::Agent,
                             parts: vec![Part::Text(TextPart { text: agent_message_content.clone() })],
@@ -330,29 +308,19 @@ async fn handle_message_send_streaming_sse(
                             message: Some(agent_message.clone()),
                             timestamp: Some(chrono::Utc::now().to_rfc3339()),
                         };
-                        let _ = task_store_clone.update_task_status(&task_id_clone, status).await;
+                        let _ = task_store_clone.update_task_status(&task_id_clone, status.clone()).await;
                         let _ = task_store_clone.add_message_to_task(&task_id_clone, agent_message.clone()).await;
-                        let update = TextDeltaUpdate {
-                            id: task_id_clone.clone(),
-                            status: StreamingTaskStatus {
-                                state: TaskState::Completed,
-                                message: Some(StreamingMessage {
-                                    role: Role::Agent,
-                                    parts: vec![StreamingPart::Text(StreamingTextPart { text: agent_message_content.clone() })],
-                                    context_id: Some(thread_id_clone.clone()),
-                                    task_id: Some(task_id_clone.clone()),
-                                    reference_task_ids: vec![],
-                                    extensions: vec![],
-                                    metadata: None,
-                                    message_id: msg_id.clone(),
-                                }),
-                                timestamp: Some(chrono::Utc::now().to_rfc3339()),
-                            },
-                            final_update: true,
+                        let status_update = TaskStatusUpdateEvent {
+                            kind: "status-update".to_string(),
+                            task_id: task_id_clone.clone(),
+                            context_id: thread_id_clone.clone(),
+                            status,
+                            r#final: true,
+                            metadata: None,
                         };
                         JsonRpcResponse {
                             jsonrpc: "2.0".to_string(),
-                            result: Some(serde_json::to_value(update).unwrap()),
+                            result: Some(serde_json::to_value(status_update).unwrap()),
                             error: None,
                             id: id_field_clone2.clone(),
                         }
@@ -367,14 +335,17 @@ async fn handle_message_send_streaming_sse(
             }
         });
         // SSE stream yields status update first, then events from sse_rx
-        let status_update = TaskUpdateResponse {
-            id: task_id.clone(),
+        let status_update = TaskStatusUpdateEvent {
+            kind: "status-update".to_string(),
+            task_id: task_id.clone(),
+            context_id: thread_id.clone(),
             status: TaskStatus {
                 state: TaskState::Working,
                 message: Some(params.message.clone()),
                 timestamp: Some(chrono::Utc::now().to_rfc3339()),
             },
-            final_update: false,
+            r#final: false,
+            metadata: None,
         };
         let resp = JsonRpcResponse {
             jsonrpc: "2.0".to_string(),
@@ -389,20 +360,26 @@ async fn handle_message_send_streaming_sse(
         // After all events, yield the final status
         let final_task = task_store.get_task(&task_id).await.ok().flatten();
         let final_status = if let Some(task) = final_task {
-            TaskUpdateResponse {
-                id: task_id.clone(),
+            TaskStatusUpdateEvent {
+                kind: "status-update".to_string(),
+                task_id: task_id.clone(),
+                context_id: task.context_id,
                 status: task.status,
-                final_update: true,
+                r#final: true,
+                metadata: None,
             }
         } else {
-            TaskUpdateResponse {
-                id: task_id.clone(),
+            TaskStatusUpdateEvent {
+                kind: "status-update".to_string(),
+                task_id: task_id.clone(),
+                context_id: thread_id.clone(),
                 status: TaskStatus {
                     state: TaskState::Completed,
                     message: None,
                     timestamp: Some(chrono::Utc::now().to_rfc3339()),
                 },
-                final_update: true,
+                r#final: true,
+                metadata: None,
             }
         };
         let resp = JsonRpcResponse {
@@ -431,7 +408,7 @@ async fn jsonrpc_handler(
     let coordinator = coordinator.get_ref();
     let task_store = task_store.get_ref();
 
-    if req.method == "message/send_streaming" {
+    if req.method == "message/stream" {
         return Either::Left(
             handle_message_send_streaming_sse(
                 agent_id,
@@ -582,6 +559,7 @@ async fn handle_message_send(
         Ok(response) => {
             // Create response message
             let response_message = A2aMessage {
+                kind: "message".to_string(),
                 message_id: Uuid::new_v4().to_string(),
                 role: Role::Agent,
                 parts: vec![Part::Text(TextPart { text: response })],

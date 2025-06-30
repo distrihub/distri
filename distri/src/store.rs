@@ -519,8 +519,8 @@ impl TaskStore for HashMapTaskStore {
             .map(|s| s.to_string())
             .unwrap_or_else(|| Uuid::new_v4().to_string());
         let task = Task {
+            kind: "task".to_string(),
             id: task_id.clone(),
-            kind: kind.to_string(),
             context_id: context_id.to_string(),
             status: TaskStatus {
                 state: TaskState::Submitted,
@@ -529,6 +529,7 @@ impl TaskStore for HashMapTaskStore {
             },
             artifacts: vec![],
             history: vec![],
+            metadata: None,
         };
         let mut tasks = self.tasks.write().await;
         tasks.insert(task_id, task.clone());

@@ -1,5 +1,13 @@
 # Type Safety Refactor Summary
 
+## **⚠️ SUPERSEDED BY A2A COMPLIANCE FIX**
+
+**This refactor was superseded by proper A2A protocol compliance fixes. See `A2A_COMPLIANCE_FIX.md` for the complete solution.**
+
+The original approach in this document focused on type safety but didn't properly implement the A2A specification. The new implementation ensures both type safety AND A2A compliance.
+
+---
+
 ## Overview
 Refactored the backend to use proper typed structs instead of raw JSON objects for better type checking and consistency between frontend and backend.
 
