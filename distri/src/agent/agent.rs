@@ -9,8 +9,8 @@ use crate::{
     },
     SessionStore,
 };
-use std::{collections::HashMap, sync::Arc};
-use tokio::sync::{mpsc, RwLock};
+use std::sync::Arc;
+use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::agent::{reason::create_initial_plan, ExecutorContext, StepLogger};
@@ -140,7 +140,6 @@ pub struct DefaultAgent {
     coordinator: Arc<AgentExecutor>,
     logger: StepLogger,
     session_store: Arc<Box<dyn SessionStore>>,
-    iterations: Arc<RwLock<HashMap<String, i32>>>,
 }
 
 impl std::fmt::Debug for DefaultAgent {
@@ -166,7 +165,6 @@ impl DefaultAgent {
             coordinator,
             logger,
             session_store,
-            iterations: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 

@@ -714,7 +714,11 @@ pub trait AgentStore: Send + Sync {
     ) -> (Vec<Box<dyn crate::agent::BaseAgent>>, Option<String>);
     async fn get(&self, name: &str) -> Option<Box<dyn crate::agent::BaseAgent>>;
     async fn get_tools(&self, name: &str) -> Option<Vec<ServerTools>>;
-    async fn register(&self, agent: Box<dyn crate::agent::BaseAgent>, tools: Vec<ServerTools>) -> anyhow::Result<()>;
+    async fn register(
+        &self,
+        agent: Box<dyn crate::agent::BaseAgent>,
+        tools: Vec<ServerTools>,
+    ) -> anyhow::Result<()>;
 }
 
 #[derive(Clone, Default)]
@@ -772,7 +776,11 @@ impl AgentStore for InMemoryAgentStore {
         let agent_tools = self.agent_tools.read().await;
         agent_tools.get(name).cloned()
     }
-    async fn register(&self, agent: Box<dyn crate::agent::BaseAgent>, tools: Vec<ServerTools>) -> anyhow::Result<()> {
+    async fn register(
+        &self,
+        agent: Box<dyn crate::agent::BaseAgent>,
+        tools: Vec<ServerTools>,
+    ) -> anyhow::Result<()> {
         let name = agent.get_name().to_string();
         let mut agents = self.agents.write().await;
         agents.insert(name.clone(), agent);

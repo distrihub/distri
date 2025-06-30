@@ -5,7 +5,7 @@ use clap::Parser;
 use cli::{Cli, Commands};
 mod logging;
 use distri::{
-    agent::{AgentExecutor, DefaultAgent, ExecutorContext},
+    agent::{AgentExecutor, ExecutorContext},
     memory::MemoryConfig,
     servers::{
         kg::FileMemory,
@@ -13,7 +13,6 @@ use distri::{
     },
     store::InMemoryAgentStore,
     types::{get_distri_config_schema, AgentRecord, Configuration},
-    LocalSessionStore,
 };
 use distri_server::A2AServer;
 use dotenv::dotenv;
