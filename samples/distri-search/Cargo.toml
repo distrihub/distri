@@ -16,3 +16,9 @@ tracing-subscriber = "0.3"
 uuid = { version = "1.0", features = ["v4"] }
 async-trait = "0.1"
 dotenv = "0.15"
+mcp-spider = { git = "https://github.com/distrihub/mcp-servers.git" }
+mcp-tavily = { git = "https://github.com/distrihub/mcp-servers.git" }
+
+[[bin]]
+name = "simple-search"
+path = "src/bin/simple.rs"
