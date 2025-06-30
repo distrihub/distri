@@ -1186,6 +1186,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "distri-search"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "distri",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "distri-server"
 version = "0.1.0"
 dependencies = [

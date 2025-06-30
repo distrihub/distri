@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["distri", "proxy", "code-mcp", "distri-server", "distri-cli", "distri-a2a"]
+members = ["distri", "proxy", "code-mcp", "distri-server", "distri-cli", "distri-a2a", "samples/distri-search"]
 default-members = ["distri-cli"]
 
 [workspace.dependencies]
