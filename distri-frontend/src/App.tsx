@@ -202,8 +202,13 @@ function App() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center py-4">
             <div className="flex items-center space-x-4">
-              <h1 className="text-2xl font-bold text-gray-900">Distri</h1>
-              <span className="text-sm text-gray-500">AI Agent Platform</span>
+              <button 
+                onClick={() => setActiveTab('chat')}
+                className="flex items-center space-x-4 hover:opacity-80 transition-opacity"
+              >
+                <h1 className="text-2xl font-bold text-gray-900">Distri</h1>
+                <span className="text-sm text-gray-500">AI Agent Platform</span>
+              </button>
             </div>
 
             {/* Agent Selector - only show on chat tab */}
@@ -291,7 +296,6 @@ function App() {
                 <div className="flex-1 overflow-y-auto">
                   {threads.length === 0 ? (
                     <div className="text-center py-8">
-                      <MessageSquare className="h-12 w-12 text-gray-400 mx-auto mb-4" />
                       <p className="text-gray-500 text-sm">No conversations yet</p>
                       <p className="text-gray-400 text-xs mt-1">
                         {selectedAgent ? 'Click "New" to start' : 'Select an agent first'}
