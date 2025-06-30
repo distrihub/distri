@@ -8,12 +8,11 @@ pub use agent::{
     AgentInvoke, AgentInvokeStream, BaseAgent, DefaultAgent, StepResult, TestCustomAgent,
     MAX_ITERATIONS,
 };
-pub use executor::{AgentExecutor, CoordinatorMessage, ExecutorContext};
-pub use log::StepLogger;
-pub use server::DISTRI_LOCAL_SERVER;
+pub use executor::AgentExecutor;
+pub use log::{ModelLogger, StepLogger};
+pub use server::{build_server, DISTRI_LOCAL_SERVER};
 
-use crate::types::{Message, MessageContent, MessageRole, ToolCall};
-use async_openai::types::CreateChatCompletionResponse;
+use crate::types::ToolCall;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
@@ -57,13 +56,14 @@ pub enum AgentEvent {
         thread_id: String,
         run_id: String,
         tool_call_id: String,
-        tool_name: String,
+        tool_call_name: String,
+        parent_message_id: Option<String>,
     },
-    ToolCallContent {
+    ToolCallArgs {
         thread_id: String,
         run_id: String,
         tool_call_id: String,
-        content: String,
+        delta: String,
     },
     ToolCallEnd {
         thread_id: String,
@@ -102,6 +102,18 @@ pub struct ExecutorContext {
     pub run_id: Arc<tokio::sync::Mutex<String>>,
     pub verbose: bool,
     pub user_id: Option<String>,
+    /// Add additional context for tools to use passed as meta in MCP calls
+    pub tools_context: std::collections::HashMap<String, std::collections::HashMap<String, serde_json::Value>>,
+}
+
+impl Default for ExecutorContext {
+    fn default() -> Self {
+        Self::new(
+            Uuid::new_v4().to_string(),
+            true,
+            None,
+        )
+    }
 }
 
 impl ExecutorContext {
@@ -111,6 +123,7 @@ impl ExecutorContext {
             run_id: Arc::new(tokio::sync::Mutex::new(Uuid::new_v4().to_string())),
             verbose,
             user_id,
+            tools_context: std::collections::HashMap::new(),
         }
     }
 
@@ -118,5 +131,10 @@ impl ExecutorContext {
         let new_run_id = Uuid::new_v4().to_string();
         *self.run_id.lock().await = new_run_id.clone();
         new_run_id
+    }
+
+    pub async fn update_run_id(&self, run_id: String) {
+        let mut run_id_guard = self.run_id.lock().await;
+        *run_id_guard = run_id;
     }
 }
