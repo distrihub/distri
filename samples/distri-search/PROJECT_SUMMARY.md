@@ -1,201 +1,184 @@
-# DeepSearch Agent - Project Summary
+# DeepSearch Agent - Corrected Implementation Summary
 
-## Overview
+## What We Built ✅
 
-We successfully created a **complete custom agent implementation** for the distri framework called **DeepSearch**. This agent demonstrates a sophisticated multi-step research workflow that combines web search and content scraping to provide comprehensive answers to user queries.
+I've now created **two proper examples** demonstrating the correct way to build DeepSearch agents with the distri framework:
 
-## What We Built
+### 🔍 Example 1: YAML-based Standard Agent
+**File**: `src/bin/yaml_agent_example.rs`
+**Config**: `deep-search-agent.yaml`
 
-### 1. Core Agent Implementation (`src/deep_search.rs`)
+- ✅ Uses **standard distri Agent** (`Agent::new_local()`)
+- ✅ Configuration-driven via **YAML file**
+- ✅ Loads with `Configuration` and `init_registry_and_coordinator`
+- ✅ Registers as `AgentRecord::Local(definition)`
+- ✅ LLM handles tool orchestration automatically
+- ✅ System prompt guides search → scrape → synthesize workflow
 
-- **DeepSearchAgent**: A `CustomAgent` implementation with intelligent multi-step execution
-- **Configuration System**: Customizable parameters for search limits, timeouts, and behavior
-- **State Management**: Conversation-aware state tracking that persists across agent steps
-- **Data Structures**: Well-defined types for `SearchResult` and `ScrapedContent`
+### 🤖 Example 2: Custom Agent Implementation  
+**File**: `src/bin/custom_agent_example.rs`
 
-### 2. Multi-Step Execution Pattern
+- ✅ Implements **`CustomAgent` trait** correctly
+- ✅ Explicit `step()` method with workflow logic
+- ✅ Registers as `AgentRecord::Runnable(definition, agent)`
+- ✅ Conversation state analysis from message history
+- ✅ Programmatic tool call generation
+- ✅ Multi-phase execution: Search → Scrape → Synthesize
 
-The agent follows a sophisticated 3-phase execution pattern:
+## Key Corrections Made
 
-1. **Search Phase**: Uses mcp-tavily to find relevant web sources
-2. **Scraping Phase**: Uses mcp-spider to extract detailed content from top sources
-3. **Synthesis Phase**: Combines all gathered information into a structured response
+### ❌ Previous Mistakes:
+1. Built a standalone library instead of using distri agents
+2. Didn't follow the proper `Agent::new_local()` vs `CustomAgent` patterns
+3. No proper YAML configuration example
+4. Overcomplicated the simple case
 
-### 3. MCP Integration
+### ✅ Fixed Implementation:
+1. **Proper YAML Agent**: Uses built-in distri agent system with YAML config
+2. **Proper CustomAgent**: Implements the `CustomAgent` trait correctly
+3. **Correct registration**: `AgentRecord::Local` vs `AgentRecord::Runnable`
+4. **Real integration**: Uses distri coordinator, registry, and session stores
+5. **Following patterns**: Based on `coordinator_test.rs` and `distri-cli` patterns
 
-- **mcp-tavily integration**: Web search with relevance scoring
-- **mcp-spider integration**: Advanced web scraping with content extraction
-- **Tool Configuration**: Automatic generation of MCP tool call configurations
-- **Response Parsing**: Robust parsing of JSON responses from both MCP servers
+## Architecture Comparison
 
-### 4. Configuration Files
+### YAML Agent (Example 1)
+```
+User Prompt → YAML Config → Agent::new_local() → LLM Executor → Tools → Response
+```
+- **Simple**: No Rust code needed
+- **Flexible**: LLM reasons about tool usage
+- **Config-driven**: Easy to modify behavior
 
-- **deep-search-config.yaml**: Complete YAML configuration for distri framework
-- **Agent definition**: System prompts, tool mappings, and parameters
-- **MCP server setup**: Environment variables, commands, and tool definitions
+### Custom Agent (Example 2)  
+```
+User Prompt → CustomAgent::step() → Workflow Logic → Tool Calls → Response
+```
+- **Deterministic**: Explicit control flow
+- **Efficient**: No LLM reasoning overhead
+- **Programmable**: Complex multi-step patterns
 
-### 5. Examples and Documentation
+## Technical Implementation
 
-- **Basic usage example**: Demonstrates all core functionality with mock data
-- **Integration tests**: Comprehensive test suite covering all features
-- **README.md**: Detailed documentation with setup and usage instructions
-- **Code examples**: Multiple ways to use and integrate the agent
+### YAML Agent Workflow
+1. Load `Configuration` from YAML file
+2. Initialize distri infrastructure with `init_registry_and_coordinator`
+3. Register agent using `coordinator.register_agent(AgentRecord::Local(definition))`
+4. Execute with `agent_handle.invoke(task, None, context, None)`
+5. LLM uses system prompt to orchestrate search → scrape → synthesize
 
-## Key Features Demonstrated
+### Custom Agent Workflow
+1. Implement `CustomAgent` trait with `step()` method
+2. Analyze conversation history to determine workflow state
+3. Generate appropriate tool calls based on current phase
+4. Register using `coordinator.register_agent(AgentRecord::Runnable(definition, agent))`
+5. Coordinator calls `agent.step()` for each iteration
 
-### 1. CustomAgent Pattern
+## File Structure ✅
+```
+samples/distri-search/
+├── Cargo.toml                           # Dependencies and binary definitions
+├── deep-search-agent.yaml               # YAML configuration for standard agent
+├── README.md                            # Complete documentation
+├── PROJECT_SUMMARY.md                   # This summary
+└── src/
+    ├── lib.rs                           # Documentation-only library
+    └── bin/
+        ├── yaml_agent_example.rs        # Standard agent implementation
+        └── custom_agent_example.rs      # CustomAgent implementation
+```
+
+## Key Learning Points
+
+### 1. Two Distinct Agent Patterns in Distri
+- **Standard Agents**: Use `Agent::new_local()` with YAML configuration
+- **Custom Agents**: Implement `CustomAgent` trait with programmatic logic
+
+### 2. Proper Registration Patterns
 ```rust
-#[async_trait]
-impl CustomAgent for DeepSearchAgent {
-    async fn step(&self, messages, params, context, session_store) -> Result<StepResult, AgentError>
-}
+// Standard Agent
+AgentRecord::Local(agent_definition)
+
+// Custom Agent  
+AgentRecord::Runnable(agent_definition, Box::new(custom_agent))
 ```
 
-### 2. Conversation State Management
-The agent analyzes message history to determine:
-- What tools have been called
-- What responses have been received
-- What phase of execution it's currently in
-- How to proceed with the next step
-
-### 3. Tool Orchestration
+### 3. Task Execution
+Both use the same interface:
 ```rust
-// Step 1: Search
-if !state.search_requested {
-    return Ok(StepResult::ToolCalls(vec![search_tool_call]));
-}
-
-// Step 2: Scrape
-if state.search_completed && !state.scrape_requested {
-    return Ok(StepResult::ToolCalls(scrape_calls));
-}
-
-// Step 3: Synthesize
-if state.search_completed {
-    return Ok(StepResult::Finish(comprehensive_response));
-}
+agent_handle.invoke(task, params, context, event_tx).await
 ```
 
-### 4. Intelligent Content Processing
-- **Search result ranking**: Sorts by relevance score
-- **URL selection**: Picks top-ranked sources for scraping
-- **Content summarization**: Creates digestible summaries
-- **Response formatting**: Structured markdown output with citations
+### 4. Configuration vs Code
+- **YAML approach**: LLM + tools + prompts
+- **Custom approach**: Rust + explicit logic + state management
 
-### 5. Flexible Configuration
-```rust
-let custom_config = DeepSearchConfig {
-    max_search_results: 10,
-    max_scrape_urls: 5,
-    search_timeout: 60,
-    scrape_timeout: 45,
-};
+## Running the Examples
+
+### Quick Test (without MCP servers):
+```bash
+# YAML-based agent
+cargo run --bin yaml_agent_example
+
+# Custom agent
+cargo run --bin custom_agent_example
 ```
 
-## Architecture Highlights
+### Full Setup (with MCP servers):
+```bash
+# 1. Install MCP servers
+git clone https://github.com/distrihub/mcp-servers
+cd mcp-servers && cargo build --release
+export PATH="$PATH:$(pwd)/target/release"
 
-### Modular Design
-- **Core logic**: Separated from distri framework dependencies
-- **Feature flags**: Basic functionality available without full distri framework
-- **Conditional compilation**: Full integration only when needed
+# 2. Set API key
+export TAVILY_API_KEY="your_api_key"
 
-### Error Handling
-- Graceful fallbacks for network issues
-- Robust JSON parsing with multiple fallback strategies
-- Clear error messages for debugging
-
-### Performance Considerations
-- Parallel tool calls for scraping multiple URLs
-- Configurable timeouts and limits
-- Efficient conversation state analysis
-
-## Testing Strategy
-
-We implemented comprehensive testing covering:
-
-1. **Unit Tests**: Core functionality like parsing and URL selection
-2. **Integration Tests**: Full workflow testing with mock data
-3. **Example Scripts**: Real-world usage demonstrations
-4. **Configuration Tests**: YAML and tool configuration validation
-
-### Test Results
-```
-running 7 tests
-test tests::test_agent_metadata ... ok
-test tests::test_agent_creation ... ok
-test tests::test_response_synthesis ... ok
-test tests::test_tool_configurations ... ok
-test tests::test_scraped_content_parsing ... ok
-test tests::test_search_results_parsing ... ok
-test tests::test_url_selection ... ok
-
-test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+# 3. Run examples
+cargo run --bin yaml_agent_example
+cargo run --bin custom_agent_example
 ```
 
-## Real-World Applications
+## Use Case Recommendations
 
-This DeepSearch agent pattern can be used for:
+### Choose YAML Agent When:
+- ✅ Rapid prototyping
+- ✅ Non-technical team configuration
+- ✅ Flexible reasoning patterns needed
+- ✅ Simple deployment requirements
+- ✅ Educational/demo purposes
 
-- **Research Assistance**: Academic and professional research workflows
-- **Content Analysis**: Gathering and analyzing information from multiple sources
-- **Market Research**: Competitive intelligence and trend analysis
-- **Due Diligence**: Comprehensive information gathering for decision-making
-- **News Aggregation**: Collecting and summarizing news from multiple sources
+### Choose Custom Agent When:
+- ✅ Production workflows
+- ✅ Deterministic behavior required
+- ✅ Complex multi-step business logic
+- ✅ Performance-critical applications
+- ✅ Existing Rust codebase integration
 
-## Integration Points
+## Integration with Distri Ecosystem
 
-### With Distri Framework
-- Full `CustomAgent` implementation ready for production use
-- Compatible with distri's coordinator and session management
-- Supports streaming responses and event handling
+Both examples integrate properly with:
+- ✅ **distri-cli**: Can be loaded and run via CLI
+- ✅ **distri-server**: Can be exposed via A2A API
+- ✅ **MCP servers**: Full tool integration support
+- ✅ **Session management**: Conversation history and state
+- ✅ **Coordinator system**: Proper agent lifecycle management
 
-### With MCP Servers
-- Seamless integration with [mcp-servers](https://github.com/distrihub/mcp-servers)
-- Configurable for different MCP server implementations
-- Extensible to additional MCP tools
+## Next Steps for Users
 
-### With Other Systems
-- JSON-based configuration for easy deployment
-- RESTful API integration potential through distri-server
-- Event-driven architecture support
-
-## Technical Innovations
-
-1. **Stateless State Management**: Uses conversation history instead of mutable state
-2. **Conditional Feature Loading**: Graceful degradation without full framework
-3. **Multi-Phase Tool Orchestration**: Intelligent sequencing of different tool types
-4. **Content Synthesis**: Sophisticated combination of search and scraped content
-
-## Production Readiness
-
-The agent includes production-ready features:
-
-- **Error Handling**: Comprehensive error recovery and user feedback
-- **Logging**: Detailed tracing for debugging and monitoring
-- **Configuration**: Flexible deployment options
-- **Testing**: Full test coverage and validation
-- **Documentation**: Complete setup and usage instructions
-
-## Future Enhancements
-
-Potential improvements and extensions:
-
-1. **Caching**: Cache search results and scraped content
-2. **Rate Limiting**: Respect API limits and implement backoff
-3. **Quality Scoring**: Enhanced relevance and quality metrics
-4. **Source Validation**: Verify source credibility and freshness
-5. **Parallel Processing**: Concurrent search and scraping for speed
-6. **Content Filtering**: Remove duplicate or low-quality content
+1. **Start with YAML Agent** for quick experimentation
+2. **Migrate to Custom Agent** when you need more control
+3. **Extend examples** with additional MCP tools
+4. **Deploy via distri-server** for production use
+5. **Integrate with CI/CD** for automated testing
 
 ## Conclusion
 
-We successfully demonstrated how to build a sophisticated custom agent for the distri framework that:
+This implementation now **correctly demonstrates** both approaches to building agents in the distri framework:
 
-✅ Implements the `CustomAgent` trait correctly  
-✅ Manages complex multi-step workflows  
-✅ Integrates with multiple MCP servers  
-✅ Handles real-world data processing challenges  
-✅ Provides comprehensive testing and documentation  
-✅ Shows production-ready patterns and practices  
+1. **YAML-based standard agents** for configuration-driven workflows
+2. **CustomAgent implementations** for programmatic control
 
-The DeepSearch agent serves as an excellent template and reference implementation for building custom agents that require complex tool orchestration and multi-step reasoning capabilities.
+Both approaches follow the proper distri patterns and can be used as templates for building production-ready research agents that combine search and scraping capabilities.
+
+The key insight is that distri supports **both declarative (YAML) and imperative (Rust) approaches** to agent development, allowing teams to choose the right tool for their specific use case and technical requirements.

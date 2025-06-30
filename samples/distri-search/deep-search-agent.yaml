@@ -1,6 +1,5 @@
-# DeepSearch Agent Configuration
-# This file demonstrates the agent setup for the DeepSearch research agent
-# that combines web search (mcp-tavily) and web scraping (mcp-spider)
+# DeepSearch Agent Configuration - Using Standard Distri Agent
+# This demonstrates how to create a research agent using YAML configuration
 
 server:
   host: "127.0.0.1"
@@ -8,14 +7,12 @@ server:
   documentation_url: "https://github.com/distrihub/distri"
   preferred_transport: "JSONRPC"
 
-  # A2A capabilities
   capabilities:
     streaming: true
     push_notifications: true
     state_transition_history: true
     extensions: []
 
-  # Default input/output modes
   default_input_modes:
     - "text/plain"
     - "text/markdown"
@@ -24,7 +21,6 @@ server:
     - "text/plain"
     - "text/markdown"
 
-  # Security configuration (optional)
   security_schemes: {}
   security: []
 
@@ -34,13 +30,22 @@ agents:
     description: "An intelligent research agent that combines web search and scraping for comprehensive answers"
     model: "gpt-4o-mini"
     system_prompt: |
-      You are DeepSearch, an intelligent research agent. When given a query, you should:
-      1. First search for relevant information using web search
-      2. Then scrape detailed content from the most relevant sources
-      3. Synthesize the information to provide comprehensive, well-sourced answers
+      You are DeepSearch, an intelligent research agent with access to web search and scraping tools.
       
-      Focus on accuracy and providing multiple perspectives when relevant.
-      Always cite your sources and provide structured, easy-to-read responses.
+      When a user asks a question:
+      1. First, use the 'search' tool to find relevant web sources related to their query
+      2. Then, use the 'scrape' tool to extract detailed content from the most promising URLs
+      3. Finally, synthesize all the information into a comprehensive, well-structured response
+      
+      Always:
+      - Cite your sources with URLs
+      - Provide multiple perspectives when relevant
+      - Structure your response with clear headings
+      - Focus on accuracy and completeness
+      
+      Available tools:
+      - search: Search the web using Tavily API
+      - scrape: Extract content from specific URLs using spider
     icon_url: "https://example.com/deep-search-icon.png"
     mcp_servers:
       - name: "mcp-tavily"
@@ -50,10 +55,9 @@ agents:
         filter: "all"
         type: "tool"
     parameters:
-      search_depth: "comprehensive"
-      max_sources: 5
-      scrape_timeout: 30
-    max_iterations: 5
+      max_search_results: 5
+      max_scrape_sources: 3
+    max_iterations: 8
 
 # MCP server configurations
 mcp_servers:
@@ -65,13 +69,9 @@ mcp_servers:
         args: []
         env_vars:
           TAVILY_API_KEY: "${TAVILY_API_KEY}"
-      tools:
-        - name: "search"
-          description: "Search the web using Tavily API"
-        - name: "search_news"
-          description: "Search for recent news using Tavily API"
-        - name: "get_extract"
-          description: "Extract content from a specific URL"
+      metadata:
+        description: "Web search using Tavily API"
+        version: "1.0.0"
 
   - name: "mcp-spider"
     config:
@@ -80,9 +80,9 @@ mcp_servers:
         command: "mcp-spider"
         args: ["--stealth-mode"]
         env_vars: {}
-      tools:
-        - name: "scrape"
-          description: "Scrape content from a URL using spider-rs"
+      metadata:
+        description: "Web scraping using spider-rs"
+        version: "1.0.0"
 
 # Logging configuration
 logging:

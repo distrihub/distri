@@ -1192,10 +1192,13 @@ dependencies = [
  "anyhow",
  "async-trait",
  "distri",
+ "dotenv",
  "serde",
  "serde_json",
+ "serde_yaml",
  "tokio",
  "tracing",
+ "tracing-subscriber",
  "uuid",
 ]
 

@@ -1,197 +1,317 @@
-# DeepSearch Agent
+# DeepSearch Agent Examples
 
-An intelligent research agent that combines web search and scraping capabilities to provide comprehensive answers to user queries.
+This directory contains **two complete examples** demonstrating different approaches to building intelligent research agents with the distri framework.
 
 ## Overview
 
-DeepSearch is a custom agent built on the distri framework that demonstrates how to:
-- Implement a `CustomAgent` that uses multiple MCP tools
-- Coordinate between search and scraping operations
-- Maintain state across agent execution steps
-- Parse and synthesize information from multiple sources
+Both examples implement a **DeepSearch agent** that combines web search and content scraping to provide comprehensive research answers. The key difference is **how** they implement the multi-step workflow:
 
-## Features
+| Example | Type | Orchestration | Configuration | Best For |
+|---------|------|--------------|---------------|----------|
+| **YAML Agent** | Standard Agent | LLM-driven | YAML file | Quick prototypes, flexible reasoning |
+| **Custom Agent** | CustomAgent | Code-driven | Rust implementation | Complex workflows, deterministic logic |
 
-- **Web Search Integration**: Uses mcp-tavily for intelligent web search
-- **Content Scraping**: Uses mcp-spider for detailed content extraction
-- **Multi-step Processing**: Automatically searches first, then scrapes top results
-- **Structured Output**: Provides organized, well-formatted responses with source citations
+## Examples
 
-## Architecture
+### 1. 🔍 YAML-based Standard Agent (`yaml_agent_example`)
 
-The DeepSearch agent follows a multi-step execution pattern:
+Uses the **built-in distri Agent** (`Agent::new_local`) with YAML configuration.
 
-1. **Search Phase**: Uses Tavily API to find relevant web sources
-2. **Scraping Phase**: Extracts detailed content from top-ranked sources  
-3. **Synthesis Phase**: Combines search results and scraped content into comprehensive response
+**How it works:**
+- Agent loads configuration from `deep-search-agent.yaml`
+- LLM receives system prompt with tool descriptions
+- LLM decides when and how to call search/scrape tools
+- Built-in executor handles tool orchestration automatically
+
+**Key files:**
+- `deep-search-agent.yaml` - Agent configuration
+- `src/bin/yaml_agent_example.rs` - Example runner
+
+**Run:**
+```bash
+cargo run --bin yaml_agent_example
+```
+
+**Features:**
+- ✅ YAML-driven configuration
+- ✅ LLM-powered tool decision making
+- ✅ Built-in tool execution handling
+- ✅ No custom code required
+- ✅ Flexible reasoning patterns
+
+### 2. 🤖 Custom Agent Implementation (`custom_agent_example`)
+
+Implements the **CustomAgent trait** with explicit workflow logic.
+
+**How it works:**
+- Agent implements `CustomAgent::step()` method
+- Explicit 3-phase workflow: Search → Scrape → Synthesize
+- Analyzes conversation history to track state
+- Programmatically generates tool calls
+- Full control over execution flow
+
+**Key files:**
+- `src/bin/custom_agent_example.rs` - Complete implementation
+
+**Run:**
+```bash
+cargo run --bin custom_agent_example
+```
+
+**Features:**
+- ✅ Implements `CustomAgent` trait
+- ✅ Multi-step workflow management
+- ✅ Conversation state analysis
+- ✅ Dynamic tool call generation
+- ✅ Deterministic execution logic
+- ✅ Full programmatic control
 
 ## Prerequisites
 
-To run DeepSearch, you need:
+### For Full Functionality (with live MCP servers):
 
-1. **MCP Servers**: 
-   - `mcp-tavily` (for web search)
-   - `mcp-spider` (for web scraping)
-
-2. **API Keys**:
-   - Tavily API key (set as `TAVILY_API_KEY` environment variable)
-
-3. **MCP Server Binaries**:
-   - Build or install the mcp-tavily and mcp-spider servers from the [mcp-servers repository](https://github.com/distrihub/mcp-servers)
-
-## Installation
-
-1. **Clone and build the mcp-servers**:
+1. **Install MCP servers:**
    ```bash
+   # Clone and build mcp-servers
    git clone https://github.com/distrihub/mcp-servers
    cd mcp-servers
    cargo build --release
-   ```
-
-2. **Set environment variables**:
-   ```bash
-   export TAVILY_API_KEY="your_tavily_api_key"
+   
+   # Add to PATH
    export PATH="$PATH:/path/to/mcp-servers/target/release"
    ```
 
-3. **Build the DeepSearch sample**:
+2. **Set API keys:**
    ```bash
-   cd samples/distri-search
-   cargo build --release
+   export TAVILY_API_KEY="your_tavily_api_key"
    ```
 
-## Usage
+3. **Update YAML config** (for YAML example):
+   - Ensure `deep-search-agent.yaml` points to correct MCP server binaries
+   - Verify environment variable placeholders
 
-### Running as Standalone
+### For Testing/Demo (without MCP servers):
 
-```bash
-cd samples/distri-search
-cargo run
+Both examples include **mock implementations** that demonstrate the workflow patterns without requiring external dependencies.
+
+## Architecture Comparison
+
+### YAML Agent Architecture
+```
+User Query → YAML Config → Standard Agent → LLM Executor → Tool Calls → Response
+                ↑                           ↓
+            System Prompt              Tool Responses
 ```
 
-This will run a test scenario with a predefined query.
+**Advantages:**
+- Simple configuration
+- No Rust code required
+- LLM handles complex reasoning
+- Easy to modify prompts
 
-### Using with Configuration File
+**Limitations:**
+- Less predictable execution
+- Limited workflow control
+- Dependent on LLM reasoning quality
 
-```bash
-# Start with the configuration file
-distri-cli run --config deep-search-config.yaml
+### Custom Agent Architecture
+```
+User Query → CustomAgent::step() → Workflow State Analysis → Tool Calls → Response
+                ↑                        ↓
+            Rust Logic              Phase Management
 ```
 
-### Integrating in Code
+**Advantages:**
+- Deterministic workflow execution
+- Full programmatic control
+- Complex multi-step patterns
+- Efficient state management
+
+**Limitations:**
+- Requires Rust implementation
+- More complex to build
+- Less flexible than LLM reasoning
+
+## Technical Implementation Details
+
+### YAML Agent Implementation
+
+```yaml
+agents:
+  - name: "deep_search"
+    system_prompt: |
+      You are DeepSearch with access to web search and scraping tools.
+      1. First, use 'search' to find relevant sources
+      2. Then, use 'scrape' to extract detailed content  
+      3. Finally, synthesize comprehensive answers
+    mcp_servers:
+      - name: "mcp-tavily"
+      - name: "mcp-spider"
+```
+
+The agent uses `Agent::new_local()` and relies on the built-in `LLMExecutor` for tool orchestration.
+
+### Custom Agent Implementation
 
 ```rust
-use distri_search::DeepSearchAgent;
-use distri::types::{AgentDefinition, AgentRecord, McpDefinition};
+#[async_trait]
+impl CustomAgent for DeepSearchCustomAgent {
+    async fn step(&self, messages, params, context, session_store) -> Result<StepResult, AgentError> {
+        let state = self.analyze_workflow_state(messages);
+        let query = self.extract_user_query(messages)?;
 
-// Create the agent
-let deep_search_agent = DeepSearchAgent::new();
+        // Phase 1: Search
+        if !state.search_requested {
+            return Ok(StepResult::ToolCalls(vec![self.create_search_tool_call(&query)]));
+        }
 
-// Create agent definition
-let agent_def = AgentDefinition {
-    name: "deep_search".to_string(),
-    description: "Research agent with search and scrape".to_string(),
-    mcp_servers: vec![
-        McpDefinition {
-            name: "mcp-tavily".to_string(),
-            filter: ToolsFilter::All,
-            r#type: McpServerType::Tool,
-        },
-        McpDefinition {
-            name: "mcp-spider".to_string(),
-            filter: ToolsFilter::All,
-            r#type: McpServerType::Tool,
-        },
-    ],
-    // ... other configuration
-};
+        // Phase 2: Scrape  
+        if state.search_completed && !state.scrape_requested {
+            let urls = self.extract_urls_from_search(&state.search_results);
+            return Ok(StepResult::ToolCalls(self.create_scrape_tool_calls(&urls)));
+        }
 
-// Register as runnable agent
-let agent_record = AgentRecord::Runnable(agent_def, Box::new(deep_search_agent));
+        // Phase 3: Synthesize
+        if state.search_completed {
+            return Ok(StepResult::Finish(self.synthesize_response(&query, &state)));
+        }
+
+        Ok(StepResult::Continue(vec![]))
+    }
+}
 ```
 
-## Configuration
+The agent implements explicit workflow logic and uses `AgentRecord::Runnable()` for registration.
 
-The `deep-search-config.yaml` file demonstrates how to configure:
+## Running the Examples
 
-- Agent definition with system prompts
-- MCP server connections (mcp-tavily and mcp-spider)
-- Environment variables for API keys
-- Tool filtering and parameters
-
-## Agent Behavior
-
-When given a query, DeepSearch:
-
-1. **Extracts the search query** from user messages
-2. **Performs web search** using Tavily API to find relevant sources
-3. **Ranks results** by relevance score
-4. **Scrapes top sources** (configurable, default 3) for detailed content
-5. **Synthesizes information** into a structured response with:
-   - Search overview with source summaries
-   - Detailed analysis from scraped content
-   - Source citations and relevance scores
-
-## Example Output
-
-```markdown
-# DeepSearch Results for: What are the latest developments in AI model alignment?
-
-## Search Overview
-Found 5 relevant sources:
-
-1. **AI Alignment Research Progress 2024** (Score: 0.95)
-   - Latest research on constitutional AI and RLHF improvements
-   - Source: https://example.com/ai-alignment-2024
-
-2. **Constitutional AI Advances** (Score: 0.87)
-   - New techniques for training helpful, harmless, and honest AI systems
-   - Source: https://anthropic.com/research/constitutional-ai
-
-## Detailed Analysis
-
-### AI Alignment Research Progress 2024
-**Source:** https://example.com/ai-alignment-2024
-
-Recent advances in AI alignment include improved constitutional AI methods,
-better reward modeling techniques, and novel approaches to scalable oversight...
-
----
-
-## Summary
-
-Based on the search results and detailed content analysis above, I've provided
-a comprehensive overview of the latest AI alignment developments...
+### YAML Agent Example
+```bash
+cd samples/distri-search
+cargo run --bin yaml_agent_example
 ```
 
-## Customization
+**Expected output:**
+```
+🔍 DeepSearch Agent - YAML Configuration Example
+================================================
 
-You can customize DeepSearch by:
+✅ Configuration loaded successfully
+✅ Infrastructure initialized  
+✅ DeepSearch agent registered
 
-- **Modifying search parameters**: Adjust `max_sources` in the configuration
-- **Changing scraping behavior**: Modify `select_urls_for_scraping` logic
-- **Customizing output format**: Update `generate_comprehensive_response`
-- **Adding filters**: Implement content filtering or source validation
-- **Extending tool usage**: Add support for additional MCP tools
+🤖 Testing DeepSearch Agent
+==========================
+Query: What are the latest developments in artificial intelligence safety research?
+
+🔄 Executing task...
+✅ Task completed successfully!
+```
+
+### Custom Agent Example  
+```bash
+cd samples/distri-search
+cargo run --bin custom_agent_example
+```
+
+**Expected output:**
+```
+🤖 DeepSearch Agent - Custom Agent Example
+==========================================
+
+✅ Infrastructure initialized
+✅ Custom agent registered
+
+🔬 Testing Custom DeepSearch Agent
+=================================  
+Query: What are the key challenges in AI alignment research?
+
+🚀 Executing custom agent workflow...
+✅ Custom agent execution completed!
+
+🎯 Example Summary
+=================
+• ✅ Implementing the CustomAgent trait
+• ✅ Multi-step workflow management
+• ✅ Conversation state analysis
+• ✅ Dynamic tool call generation
+```
+
+## Configuration Files
+
+### deep-search-agent.yaml
+
+Complete YAML configuration for the standard agent approach:
+
+- **Agent definition** with system prompt and tool mappings
+- **MCP server configurations** for mcp-tavily and mcp-spider
+- **Environment variable** placeholders for API keys
+- **Server settings** for distri infrastructure
+
+## Use Cases
+
+### YAML Agent is ideal for:
+- **Rapid prototyping** of research workflows
+- **Non-technical configuration** by domain experts
+- **Flexible reasoning** patterns that adapt to different queries
+- **Educational examples** and demonstrations
+- **Simple deployment** scenarios
+
+### Custom Agent is ideal for:
+- **Production workflows** requiring deterministic behavior
+- **Complex multi-step processes** with specific business logic
+- **Performance-critical** applications
+- **Integration** with existing Rust codebases
+- **Advanced state management** requirements
+
+## Extending the Examples
+
+### Adding New Tools
+1. **YAML approach**: Add to `mcp_servers` section in YAML
+2. **Custom approach**: Extend tool call creation methods
+
+### Modifying Workflow
+1. **YAML approach**: Update system prompt instructions
+2. **Custom approach**: Modify `step()` method logic
+
+### Adding State Persistence
+1. **YAML approach**: Configure session store in YAML
+2. **Custom approach**: Use `session_store` parameter in `step()`
 
 ## Troubleshooting
 
-Common issues:
+**Common issues:**
 
-1. **MCP servers not found**: Ensure mcp-tavily and mcp-spider are in PATH
-2. **API key errors**: Verify TAVILY_API_KEY is set correctly
-3. **Search failures**: Check network connectivity and API quotas
-4. **Scraping timeouts**: Some sites may block or slow down scraping requests
+1. **"deep_search agent not found"**: Ensure YAML file is in working directory
+2. **"Tool execution failed"**: Check MCP server installation and API keys
+3. **"Max iterations reached"**: Increase `max_iterations` in configuration
+4. **Compilation errors**: Verify distri framework dependency versions
 
-## Contributing
+**For YAML Agent:**
+- Check YAML syntax and agent name matching
+- Verify MCP server binary paths
+- Ensure environment variables are set
 
-This is a sample implementation. To contribute:
+**For Custom Agent:**
+- Verify CustomAgent trait implementation
+- Check tool call JSON format
+- Debug state analysis logic
 
-1. Fork the repository
-2. Create your feature branch
-3. Add tests for new functionality
-4. Submit a pull request
+## Performance Considerations
 
-## License
+### YAML Agent
+- **Pros**: Fast to develop and modify
+- **Cons**: LLM overhead for each decision
 
-This sample follows the same license as the main distri project.
+### Custom Agent  
+- **Pros**: Efficient execution, predictable performance
+- **Cons**: Development overhead for complex logic
+
+## Conclusion
+
+These examples demonstrate the **flexibility of the distri framework** in supporting both configuration-driven and code-driven agent development approaches. Choose the approach that best fits your use case:
+
+- **YAML Agent** for rapid development and flexible reasoning
+- **Custom Agent** for production workflows and deterministic control
+
+Both approaches integrate seamlessly with the distri ecosystem and can be deployed using the same infrastructure.
