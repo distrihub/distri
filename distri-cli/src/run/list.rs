@@ -24,13 +24,14 @@ pub async fn list(agent_store: Arc<dyn AgentStore>) -> anyhow::Result<()> {
         .to_owned();
     table.add_row(vec!["Agent", "Description", "Servers"]);
     for agent in agents.iter() {
+        let definition = agent.get_definition();
         let tools = agent_store
-            .get_tools(&agent.definition.name)
+            .get_tools(&definition.name)
             .await
             .unwrap_or_default();
         table.add_row(vec![
-            agent.definition.name.clone(),
-            agent.definition.description.clone(),
+            definition.name.clone(),
+            definition.description.clone(),
             tools
                 .iter()
                 .map(|t| t.definition.name.clone())

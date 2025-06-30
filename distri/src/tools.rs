@@ -17,7 +17,7 @@ use serde_json::{json, Value};
 use tokio::sync::RwLock;
 use tracing::debug;
 
-use crate::coordinator::CoordinatorContext;
+use crate::agent::ExecutorContext;
 use crate::servers::registry::{ServerMetadata, ServerRegistry};
 use crate::types::TransportType;
 use crate::types::{McpDefinition, ToolCall};
@@ -204,7 +204,7 @@ pub async fn execute_tool(
     tool_def: &McpDefinition,
     registry: Arc<RwLock<ServerRegistry>>,
     tool_sessions: Option<Arc<Box<dyn ToolSessionStore>>>,
-    context: Arc<CoordinatorContext>,
+    context: Arc<ExecutorContext>,
 ) -> Result<String> {
     tracing::info!(
         "Executing tool '{}' with ID: {}",
@@ -232,11 +232,11 @@ pub async fn execute_tool(
 
 pub struct ToolExecutor<T: Transport> {
     client: Client<T>,
-    context: Arc<CoordinatorContext>,
+    context: Arc<ExecutorContext>,
 }
 
 impl<T: Transport + Clone> ToolExecutor<T> {
-    pub fn new(transport: T, context: Arc<CoordinatorContext>) -> Self {
+    pub fn new(transport: T, context: Arc<ExecutorContext>) -> Self {
         tracing::debug!("Creating new ToolExecutor");
         Self {
             client: ClientBuilder::new(transport).build(),

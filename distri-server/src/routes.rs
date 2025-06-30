@@ -1,7 +1,7 @@
 use actix_web::Either;
 use actix_web::{web, HttpResponse};
 use actix_web_lab::sse::{self, Sse};
-use distri::coordinator::{AgentCoordinator, AgentEvent, LocalCoordinator};
+use distri::agent::{AgentEvent, AgentExecutor};
 use distri::store::AgentStore;
 use distri::types::{ServerConfig, UpdateThreadRequest};
 use distri::{memory::TaskStep, TaskStore};
@@ -53,7 +53,7 @@ async fn list_agents(
         .iter()
         .map(|agent| {
             distri::a2a::agent_def_to_card(
-                &agent.definition,
+                &agent.get_definition(),
                 server_config.get_ref().clone(),
                 "http://127.0.0.1:8080",
             )
@@ -73,7 +73,7 @@ async fn get_agent_card(
     match agent {
         Some(agent) => {
             let card = distri::a2a::agent_def_to_card(
-                &agent.definition,
+                &agent.get_definition(),
                 server_config.get_ref().clone(),
                 "http://127.0.0.1:8080",
             );
@@ -102,7 +102,7 @@ async fn get_task(
 async fn handle_message_send_streaming_sse(
     agent_id: String,
     params: serde_json::Value,
-    coordinator: Arc<LocalCoordinator>,
+    coordinator: Arc<AgentExecutor>,
     task_store: Arc<dyn TaskStore>,
     req_id: Option<serde_json::Value>,
 ) -> Sse<impl futures_util::stream::Stream<Item = Result<sse::Event, std::convert::Infallible>>> {
@@ -179,12 +179,12 @@ async fn handle_message_send_streaming_sse(
         let _ = task_store.update_task_status(&task_id, working_status).await;
         let (event_tx, mut event_rx) = mpsc::channel(100);
         let (sse_tx, mut sse_rx) = mpsc::channel(100);
-        let coordinator_context = Arc::new(distri::coordinator::CoordinatorContext::new(
+        let coordinator_context = Arc::new(distri::agent::ExecutorContext::new(
             thread_id.clone(),
-            run_id.clone(),
+            Some(run_id.clone()),
             coordinator.context.verbose,
             coordinator.context.user_id.clone(),
-            coordinator.context.tools_context.clone(),
+            Some(coordinator.context.tools_context.clone()),
         ));
         // Spawn execute_stream in the background
         let agent_id_clone = agent_id.clone();
@@ -386,7 +386,7 @@ async fn handle_message_send_streaming_sse(
 async fn jsonrpc_handler(
     id: web::Path<String>,
     req: web::Json<JsonRpcRequest>,
-    coordinator: web::Data<Arc<LocalCoordinator>>,
+    coordinator: web::Data<Arc<AgentExecutor>>,
     task_store: web::Data<Arc<dyn TaskStore>>,
     event_broadcaster: web::Data<broadcast::Sender<String>>,
 ) -> Either<
@@ -454,7 +454,7 @@ async fn jsonrpc_handler(
 async fn handle_message_send(
     agent_id: String,
     params: serde_json::Value,
-    coordinator: &Arc<LocalCoordinator>,
+    coordinator: &Arc<AgentExecutor>,
     task_store: &Arc<dyn TaskStore>,
     event_broadcaster: &broadcast::Sender<String>,
 ) -> Result<serde_json::Value, JsonRpcError> {
@@ -527,12 +527,12 @@ async fn handle_message_send(
     let _ = event_broadcaster.send(serde_json::to_string(&broadcast_event).unwrap());
 
     // Execute the task using the coordinator with thread context
-    let coordinator_context = Arc::new(distri::coordinator::CoordinatorContext::new(
+    let coordinator_context = Arc::new(distri::agent::ExecutorContext::new(
         thread_id.clone(),
-        run_id.clone(),
+        Some(run_id.clone()),
         coordinator.context.verbose,
         coordinator.context.user_id.clone(),
-        coordinator.context.tools_context.clone(),
+        Some(coordinator.context.tools_context.clone()),
     ));
     let execution_result = coordinator
         .execute(
@@ -694,7 +694,7 @@ struct ListThreadsQuery {
 
 async fn list_threads_handler(
     query: web::Query<ListThreadsQuery>,
-    coordinator: web::Data<Arc<LocalCoordinator>>,
+    coordinator: web::Data<Arc<AgentExecutor>>,
 ) -> HttpResponse {
     match coordinator
         .list_threads(query.agent_id.as_deref(), query.limit, query.offset)
@@ -711,7 +711,7 @@ async fn list_threads_handler(
 
 async fn get_thread_handler(
     path: web::Path<String>,
-    coordinator: web::Data<Arc<LocalCoordinator>>,
+    coordinator: web::Data<Arc<AgentExecutor>>,
 ) -> HttpResponse {
     let thread_id = path.into_inner();
     match coordinator.get_thread(&thread_id).await {
@@ -728,7 +728,7 @@ async fn get_thread_handler(
 async fn update_thread_handler(
     path: web::Path<String>,
     request: web::Json<UpdateThreadRequest>,
-    coordinator: web::Data<Arc<LocalCoordinator>>,
+    coordinator: web::Data<Arc<AgentExecutor>>,
 ) -> HttpResponse {
     let thread_id = path.into_inner();
     match coordinator
@@ -744,7 +744,7 @@ async fn update_thread_handler(
 
 async fn delete_thread_handler(
     path: web::Path<String>,
-    coordinator: web::Data<Arc<LocalCoordinator>>,
+    coordinator: web::Data<Arc<AgentExecutor>>,
 ) -> HttpResponse {
     let thread_id = path.into_inner();
     match coordinator.delete_thread(&thread_id).await {

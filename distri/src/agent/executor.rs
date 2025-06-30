@@ -1,5 +1,5 @@
 use crate::{
-    agent::Agent,
+    agent::{BaseAgent, DefaultAgent},
     error::AgentError,
     servers::registry::ServerRegistry,
     store::{
@@ -15,14 +15,14 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
 
 use super::AgentEvent;
-use super::CoordinatorContext;
-use super::{AgentCoordinator, CoordinatorMessage};
+use super::CoordinatorMessage;
+use super::ExecutorContext;
 use crate::memory::TaskStep;
 
 // Message types for coordinator communication
 
 #[derive(Clone)]
-pub struct LocalCoordinator {
+pub struct AgentExecutor {
     pub agent_store: Arc<dyn AgentStore>,
     pub tool_sessions: Option<Arc<Box<dyn ToolSessionStore>>>,
     pub registry: Arc<RwLock<ServerRegistry>>,
@@ -30,16 +30,16 @@ pub struct LocalCoordinator {
     pub coordinator_tx: mpsc::Sender<CoordinatorMessage>,
     pub session_store: Arc<Box<dyn SessionStore>>,
     thread_store: Arc<Box<dyn ThreadStore>>,
-    pub context: Arc<CoordinatorContext>,
+    pub context: Arc<ExecutorContext>,
 }
 
-impl LocalCoordinator {
+impl AgentExecutor {
     pub fn new(
         registry: Arc<RwLock<ServerRegistry>>,
         tool_sessions: Option<Arc<Box<dyn ToolSessionStore>>>,
         session_store: Option<Arc<Box<dyn SessionStore>>>,
         agent_store: Arc<dyn AgentStore>,
-        context: Arc<CoordinatorContext>,
+        context: Arc<ExecutorContext>,
     ) -> Self {
         let (coordinator_tx, coordinator_rx) = mpsc::channel(100);
         let thread_store =
@@ -80,39 +80,12 @@ impl LocalCoordinator {
         })
     }
 
-    pub async fn register_agent(&self, record: AgentRecord) -> anyhow::Result<Agent> {
-        let (definition, agent) = match record.clone() {
-            AgentRecord::Local(definition) => (
-                definition.clone(),
-                Agent::new_local(
-                    definition,
-                    vec![],
-                    Arc::new(self.clone()),
-                    self.context.clone(),
-                    self.session_store.clone(),
-                ),
-            ),
+    pub async fn register_agent(&self, record: AgentRecord) -> anyhow::Result<Box<dyn BaseAgent>> {
+        let definition = record.definition.clone();
+        let agent = record.agent;
 
-            AgentRecord::Runnable(definition, custom_agent) => (
-                definition.clone(),
-                Agent::new_runnable(
-                    definition,
-                    vec![],
-                    Arc::new(self.clone()),
-                    self.context.clone(),
-                    self.session_store.clone(),
-                    custom_agent,
-                ),
-            ),
-        };
-
-        let (name, resolved_tools) = {
-            let name = definition.name.clone();
-            let server_tools = get_tools(&definition.mcp_servers, self.registry.clone()).await?;
-
-            (name, server_tools)
-        };
-        // Store both the definition and its tools
+        let resolved_tools = get_tools(&definition.mcp_servers, self.registry.clone()).await?;
+        let name = definition.name.clone();
 
         tracing::debug!(
             "Registering agent: {name} with {:?}",
@@ -124,11 +97,27 @@ impl LocalCoordinator {
                 .collect::<Vec<_>>()
         );
 
+        // Clone the agent before registering
+        let agent_clone = agent.clone_box();
         self.agent_store
-            .register(agent.clone(), resolved_tools)
+            .register(agent, resolved_tools)
             .await
             .map_err(|e| anyhow::anyhow!(e))?;
-        Ok(agent)
+        Ok(agent_clone)
+    }
+
+    /// Helper method to create a DefaultAgent from an AgentDefinition
+    pub fn create_default_agent(
+        &self,
+        definition: crate::types::AgentDefinition,
+    ) -> Box<dyn BaseAgent> {
+        Box::new(DefaultAgent::new(
+            definition,
+            vec![],
+            Arc::new(self.clone()),
+            self.context.clone(),
+            self.session_store.clone(),
+        ))
     }
 
     pub async fn run(&self) -> anyhow::Result<()> {
@@ -245,7 +234,7 @@ impl LocalCoordinator {
         agent_id: &str,
         task: TaskStep,
         params: Option<serde_json::Value>,
-        context: Arc<CoordinatorContext>,
+        context: Arc<ExecutorContext>,
         event_tx: Option<tokio::sync::mpsc::Sender<AgentEvent>>,
     ) -> Result<String, AgentError> {
         // Get agent from store and use invoke method
@@ -264,7 +253,7 @@ impl LocalCoordinator {
         agent_id: &str,
         task: TaskStep,
         params: Option<serde_json::Value>,
-        context: Arc<CoordinatorContext>,
+        context: Arc<ExecutorContext>,
         event_tx: mpsc::Sender<AgentEvent>,
     ) -> Result<(), AgentError> {
         // Get agent from store and use invoke_stream method
@@ -348,29 +337,26 @@ impl LocalCoordinator {
             }
         }
     }
-}
 
-#[async_trait::async_trait]
-impl AgentCoordinator for LocalCoordinator {
-    async fn execute(
+    pub async fn execute(
         &self,
         agent_name: &str,
         task: TaskStep,
         params: Option<serde_json::Value>,
-        context: Arc<CoordinatorContext>,
+        context: Arc<ExecutorContext>,
         event_tx: Option<tokio::sync::mpsc::Sender<AgentEvent>>,
     ) -> Result<String, AgentError> {
         self.call_agent(agent_name, task, params, context, event_tx)
             .await
     }
 
-    async fn execute_stream(
+    pub async fn execute_stream(
         &self,
         agent_name: &str,
         task: TaskStep,
         params: Option<serde_json::Value>,
         event_tx: mpsc::Sender<AgentEvent>,
-        context: Arc<CoordinatorContext>,
+        context: Arc<ExecutorContext>,
     ) -> Result<(), AgentError> {
         self.call_agent_stream(agent_name, task, params, context, event_tx)
             .await

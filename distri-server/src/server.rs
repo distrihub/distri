@@ -2,20 +2,20 @@ use actix_cors::Cors;
 use actix_web::middleware::Logger;
 use actix_web::{web, App, HttpServer};
 use anyhow::Result;
-use distri::{coordinator::LocalCoordinator, types::ServerConfig, HashMapTaskStore, TaskStore};
+use distri::{agent::AgentExecutor, types::ServerConfig, HashMapTaskStore, TaskStore};
 use std::sync::Arc;
 use tokio::sync::broadcast;
 
 use crate::routes;
 
 pub struct A2AServer {
-    coordinator: Arc<LocalCoordinator>,
+    coordinator: Arc<AgentExecutor>,
     task_store: Arc<dyn TaskStore>,
     event_broadcaster: broadcast::Sender<String>,
 }
 
 impl A2AServer {
-    pub fn new(coordinator: Arc<LocalCoordinator>) -> Self {
+    pub fn new(coordinator: Arc<AgentExecutor>) -> Self {
         let (event_broadcaster, _) = broadcast::channel(1000);
         Self {
             coordinator,
@@ -25,7 +25,7 @@ impl A2AServer {
     }
 
     pub fn with_task_store(
-        coordinator: Arc<LocalCoordinator>,
+        coordinator: Arc<AgentExecutor>,
         task_store: Arc<dyn TaskStore>,
     ) -> Self {
         let (event_broadcaster, _) = broadcast::channel(1000);
