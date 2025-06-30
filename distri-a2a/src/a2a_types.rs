@@ -289,10 +289,10 @@ pub struct MessageSendConfiguration {
 }
 
 /// A message exchanged between a user and an agent.
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Message {
-    pub kind: String, // "message"
+    pub kind: EventKind,
     pub message_id: String,
     pub role: Role,
     pub parts: Vec<Part>,
@@ -307,12 +307,22 @@ pub struct Message {
     #[serde(default)]
     pub metadata: Option<serde_json::Value>,
 }
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum EventKind {
+    #[default]
+    Message,
+    Task,
+    TaskStatusUpdate,
+    TaskArtifactUpdate,
+}
 
 /// The role of the message sender.
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub enum Role {
     User,
+    #[default]
     Agent,
 }
 
@@ -377,7 +387,7 @@ pub struct TaskIdParams {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Task {
-    pub kind: String, // "task"
+    pub kind: EventKind,
     pub id: String,
     pub context_id: String,
     pub status: TaskStatus,
@@ -433,7 +443,7 @@ pub struct Artifact {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskStatusUpdateEvent {
-    pub kind: String, // "status-update"
+    pub kind: EventKind,
     pub task_id: String,
     pub context_id: String,
     pub status: TaskStatus,
@@ -446,7 +456,7 @@ pub struct TaskStatusUpdateEvent {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskArtifactUpdateEvent {
-    pub kind: String, // "artifact-update"
+    pub kind: EventKind,
     pub task_id: String,
     pub context_id: String,
     pub artifact: Artifact,

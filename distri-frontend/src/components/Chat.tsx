@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Send, Loader2, User, Bot } from 'lucide-react';
-import { v4 as uuidv4 } from 'uuid';
+import { Message, TaskStatusUpdateEvent, TextPart } from '@a2a-js/sdk';
 
 const apiUrl = 'http://localhost:8080';
 interface Agent {
@@ -24,15 +24,6 @@ interface ChatProps {
   thread: Thread;
   agent: Agent;
   onThreadUpdate?: () => void;
-}
-
-interface Message {
-  id: string;
-  role: 'user' | 'agent';
-  content: string;
-  timestamp: Date;
-  taskId?: string;
-  type?: 'normal' | 'thinking';
 }
 
 const Chat: React.FC<ChatProps> = ({ thread, agent, onThreadUpdate }) => {
@@ -61,21 +52,8 @@ const Chat: React.FC<ChatProps> = ({ thread, agent, onThreadUpdate }) => {
       const response = await fetch(`${apiUrl}/api/v1/threads/${thread.id}/messages`);
       if (response.ok) {
         const threadMessages = await response.json();
-
-        // Convert A2A messages to our Message format
-        const convertedMessages: Message[] = threadMessages.map((msg: any, index: number) => ({
-          id: msg.messageId || msg.message_id || `msg-${index}`,
-          role: msg.role === 'user' ? 'user' : 'agent',
-          content: msg.parts
-            ?.filter((part: any) => part.kind === 'text')
-            ?.map((part: any) => part.text)
-            ?.join(' ') || '',
-          timestamp: new Date(msg.metadata?.timestamp || Date.now()),
-        }));
-
-        setMessages(convertedMessages);
+        setMessages(threadMessages);
       } else {
-        // If we can't load messages, start with empty state
         setMessages([]);
       }
     } catch (error) {
@@ -88,16 +66,22 @@ const Chat: React.FC<ChatProps> = ({ thread, agent, onThreadUpdate }) => {
     if (!input.trim() || isLoading) return;
 
     const userMessage: Message = {
-      id: Date.now().toString(),
+      kind: 'message',
+      messageId: Date.now().toString(),
       role: 'user',
-      content: input.trim(),
-      timestamp: new Date(),
+      parts: [{ kind: 'text', text: input.trim() }],
+      contextId: thread.id,
+      taskId: undefined,
+      referenceTaskIds: [],
+      extensions: [],
+      metadata: undefined,
     };
 
     setMessages((prev: Message[]) => [...prev, userMessage]);
     setInput('');
     setIsLoading(true);
 
+    console.log("messages", messages)
     try {
       // Send message using A2A protocol with message/send_streaming method and thread.id as contextId
       const response = await fetch(`${apiUrl}/api/v1/agents/${agent.id}`, {
@@ -109,24 +93,13 @@ const Chat: React.FC<ChatProps> = ({ thread, agent, onThreadUpdate }) => {
           jsonrpc: '2.0',
           method: 'message/stream',
           params: {
-            message: {
-              kind: 'message',
-              messageId: userMessage.id,
-              role: 'user',
-              parts: [
-                {
-                  kind: 'text',
-                  text: userMessage.content,
-                }
-              ],
-              contextId: thread.id, // Use thread ID as context ID
-            },
+            message: userMessage,
             configuration: {
               acceptedOutputModes: ['text/plain'],
               blocking: false, // Use non-blocking for streaming
             },
           },
-          id: userMessage.id,
+          id: userMessage.messageId,
         }),
       });
 
@@ -164,40 +137,34 @@ const Chat: React.FC<ChatProps> = ({ thread, agent, onThreadUpdate }) => {
               throw new Error(json.error.message);
             }
             const result = json.result;
-            console.log(result);
             if (!result) continue;
-            // Handle A2A streaming responses
-            if (result.kind === 'message' && result.role === 'agent' && result.parts) {
-              // This is a Message object with streaming text delta
-              const delta = result.parts.map((p: any) => p.text).join(' ');
 
-              const messageId = result.messageId;
-              const isPreviousMessage = messages.find(msg => msg.id === messageId);
-              if (!isPreviousMessage) {
-                const agentMessage: Message = {
-                  id: messageId,
-                  role: 'agent',
-                  content: delta,
-                  timestamp: new Date(),
-                  taskId: result.taskId,
-                };
-                setMessages((prev: Message[]) => [...prev, agentMessage]);
-              } else {
-                setMessages((prev: Message[]) => {
-                  return prev.map(msg => {
-                    if (msg.id === messageId) {
-                      return {
-                        ...msg,
-                        content: msg.content + delta,
-                      };
-                    }
-                    return msg;
-                  });
-                });
-              }
+            // Handle A2A streaming responses
+
+            let message = undefined;
+            if (result.kind === 'message') {
+              message = (result as Message);
+            } else if (result.kind === 'status-update') {
+              message = (result as TaskStatusUpdateEvent).status.message as Message;
             }
 
-            if (result.kind === 'status-update' && result.final) {
+            if (!message) continue;
+            setMessages((prev: Message[]) => {
+              if (prev.find(msg => msg.messageId === message.messageId)) {
+                return prev.map(msg => {
+                  if (msg.messageId === message.messageId) {
+                    return {
+                      ...msg,
+                      parts: [...msg.parts, ...message.parts],
+                    };
+                  }
+                  return msg;
+                });
+              } else {
+                return [...prev, message];
+              }
+            });
+            if (result.final) {
               done = true;
               // Optionally update thread in parent component
               if (onThreadUpdate) {
@@ -214,10 +181,15 @@ const Chat: React.FC<ChatProps> = ({ thread, agent, onThreadUpdate }) => {
     } catch (error) {
       console.error('Failed to send message:', error);
       const errorMessage: Message = {
-        id: `${Date.now()}-error`,
+        kind: 'message',
+        messageId: `${Date.now()}-error`,
         role: 'agent',
-        content: `Error: ${error instanceof Error ? error.message : 'Failed to send message'}`,
-        timestamp: new Date(),
+        parts: [{ kind: 'text', text: `Error: ${error instanceof Error ? error.message : 'Failed to send message'}` }],
+        contextId: thread.id,
+        taskId: undefined,
+        referenceTaskIds: [],
+        extensions: [],
+        metadata: undefined,
       };
       setMessages((prev: Message[]) => [...prev, errorMessage]);
     } finally {
@@ -261,12 +233,12 @@ const Chat: React.FC<ChatProps> = ({ thread, agent, onThreadUpdate }) => {
           </div>
         )}
 
-        {messages.filter(message => message.content.length > 0).map((message) => {
+        {messages.filter(message => message.parts.length > 0).map((message) => {
           // Determine if this is an error message (starts with 'Error:')
-          const isError = message.content.startsWith('Error:');
+          const isError = message.parts[0].kind === 'text' && message.parts[0].text.startsWith('Error:');
           return (
             <div
-              key={message.id}
+              key={message.messageId}
               className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
             >
               <div
@@ -274,32 +246,33 @@ const Chat: React.FC<ChatProps> = ({ thread, agent, onThreadUpdate }) => {
                   ? 'bg-blue-600 text-white'
                   : isError
                     ? 'bg-red-100 text-red-800 border border-red-300'
-                    : message.type === 'thinking'
-                      ? 'bg-yellow-50 text-yellow-800 border border-yellow-200'
-                      : 'bg-gray-100 text-gray-900'
+                    : 'bg-gray-100 text-gray-900'
                   }`}
               >
                 <div className="flex items-start space-x-2">
                   {message.role === 'agent' && (
-                    <Bot className={`h-4 w-4 mt-0.5 flex-shrink-0 ${message.type === 'thinking' ? 'text-yellow-600' : isError ? 'text-red-600' : ''}`}
+                    <Bot className={`h-4 w-4 mt-0.5 flex-shrink-0 ${isError ? 'text-red-600' : ''}`}
                     />
                   )}
                   {message.role === 'user' && (
                     <User className="h-4 w-4 mt-0.5 flex-shrink-0" />
                   )}
                   <div className="flex-1">
-                    <p className={`whitespace-pre-wrap ${message.type === 'thinking' ? 'italic' : ''} ${isError ? 'font-semibold' : ''}`}>
-                      {message.content}
+                    <p className={`whitespace-pre-wrap ${isError ? 'font-semibold' : ''}`}>
+                      {message.parts.map((part) => {
+                        if (part.kind === 'text') {
+                          return part.text;
+                        }
+                        return '';
+                      }).join('')}
                     </p>
                     <p className={`text-xs mt-1 ${message.role === 'user'
                       ? 'text-blue-200'
-                      : message.type === 'thinking'
-                        ? 'text-yellow-600'
-                        : isError
-                          ? 'text-red-600'
-                          : 'text-gray-500'
+                      : isError
+                        ? 'text-red-600'
+                        : 'text-gray-500'
                       }`}>
-                      {message.timestamp.toLocaleTimeString()}
+                      {message.metadata?.timestamp ? new Date(message.metadata.timestamp as string).toLocaleTimeString() : ''}
                     </p>
                   </div>
                 </div>

@@ -6,9 +6,9 @@ use distri::store::AgentStore;
 use distri::types::{ServerConfig, UpdateThreadRequest};
 use distri::{memory::TaskStep, TaskStore};
 use distri_a2a::{
-    AgentCard, JsonRpcError, JsonRpcRequest, JsonRpcResponse, Message as A2aMessage,
+    AgentCard, EventKind, JsonRpcError, JsonRpcRequest, JsonRpcResponse, Message as A2aMessage,
     MessageSendParams, Part, Role, TaskIdParams, TaskState, TaskStatus, TaskStatusBroadcastEvent,
-    TaskStatusUpdateEvent, TaskArtifactUpdateEvent, TextPart,
+    TaskStatusUpdateEvent, TextPart,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -147,7 +147,7 @@ async fn handle_message_send_streaming_sse(
         };
         let thread_id = thread.id;
         let run_id = params.message.task_id.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-        let task = match task_store.create_task( &thread_id, "message", Some(&run_id)).await {
+        let task = match task_store.create_task(&thread_id, Some(&run_id)).await {
             Ok(t) => t,
             Err(e) => {
                 let error = JsonRpcResponse {
@@ -208,23 +208,15 @@ async fn handle_message_send_streaming_sse(
         tokio::spawn(async move {
             let mut completed = false;
             let mut agent_message_content = String::new();
-            let mut msg_id = None;
             while let Some(event) = event_rx.recv().await {
                 // Forward event to sse_tx as a JsonRpcResponse
                 let resp = match &event {
                     AgentEvent::TextMessageContent { delta, message_id, .. } => {
                         agent_message_content.push_str(delta);
-                        msg_id = Some(message_id.clone());
                         let message = A2aMessage {
-                            kind: "message".to_string(),
                             message_id: message_id.clone(),
-                            role: Role::Agent,
                             parts: vec![Part::Text(TextPart { text: delta.clone() })],
-                            context_id: Some(thread_id_clone.clone()),
-                            task_id: Some(task_id_clone.clone()),
-                            reference_task_ids: vec![],
-                            extensions: vec![],
-                            metadata: None,
+                            ..Default::default()
                         };
                         JsonRpcResponse {
                             jsonrpc: "2.0".to_string(),
@@ -234,13 +226,17 @@ async fn handle_message_send_streaming_sse(
                         }
                     }
                     AgentEvent::TextMessageEnd { message_id, .. } => {
+                        let message = A2aMessage {
+                            message_id: message_id.clone(),
+                            ..Default::default()
+                        };
                         let status_update = TaskStatusUpdateEvent {
-                            kind: "status-update".to_string(),
+                            kind: EventKind::TaskStatusUpdate,
                             task_id: task_id_clone.clone(),
                             context_id: thread_id_clone.clone(),
                             status: TaskStatus {
                                 state: TaskState::Working,
-                                message: None,
+                                message: Some(message),
                                 timestamp: Some(chrono::Utc::now().to_rfc3339()),
                             },
                             r#final: false,
@@ -257,15 +253,12 @@ async fn handle_message_send_streaming_sse(
                         completed = true;
                         // Update task status to failed and add message to history
                         let agent_message = distri_a2a::Message {
-                            kind: "message".to_string(),
                             message_id: uuid::Uuid::new_v4().to_string(),
                             role: Role::Agent,
                             parts: vec![Part::Text(TextPart { text: message.clone() })],
                             context_id: Some(thread_id_clone.clone()),
                             task_id: Some(task_id_clone.clone()),
-                            reference_task_ids: vec![],
-                            extensions: vec![],
-                            metadata: None,
+                            ..Default::default()
                         };
                         let status = TaskStatus {
                             state: TaskState::Failed,
@@ -275,7 +268,7 @@ async fn handle_message_send_streaming_sse(
                         let _ = task_store_clone.update_task_status(&task_id_clone, status.clone()).await;
                         let _ = task_store_clone.add_message_to_task(&task_id_clone, agent_message.clone()).await;
                         let status_update = TaskStatusUpdateEvent {
-                            kind: "status-update".to_string(),
+                            kind: EventKind::TaskStatusUpdate,
                             task_id: task_id_clone.clone(),
                             context_id: thread_id_clone.clone(),
                             status,
@@ -293,15 +286,12 @@ async fn handle_message_send_streaming_sse(
                         completed = true;
                         // Update task status to completed and add message to history
                         let agent_message = distri_a2a::Message {
-                            kind: "message".to_string(),
                             message_id: uuid::Uuid::new_v4().to_string(),
                             role: Role::Agent,
                             parts: vec![Part::Text(TextPart { text: agent_message_content.clone() })],
                             context_id: Some(thread_id_clone.clone()),
                             task_id: Some(task_id_clone.clone()),
-                            reference_task_ids: vec![],
-                            extensions: vec![],
-                            metadata: None,
+                            ..Default::default()
                         };
                         let status = TaskStatus {
                             state: TaskState::Completed,
@@ -311,7 +301,7 @@ async fn handle_message_send_streaming_sse(
                         let _ = task_store_clone.update_task_status(&task_id_clone, status.clone()).await;
                         let _ = task_store_clone.add_message_to_task(&task_id_clone, agent_message.clone()).await;
                         let status_update = TaskStatusUpdateEvent {
-                            kind: "status-update".to_string(),
+                            kind: EventKind::TaskStatusUpdate,
                             task_id: task_id_clone.clone(),
                             context_id: thread_id_clone.clone(),
                             status,
@@ -336,7 +326,7 @@ async fn handle_message_send_streaming_sse(
         });
         // SSE stream yields status update first, then events from sse_rx
         let status_update = TaskStatusUpdateEvent {
-            kind: "status-update".to_string(),
+            kind: EventKind::TaskStatusUpdate,
             task_id: task_id.clone(),
             context_id: thread_id.clone(),
             status: TaskStatus {
@@ -361,7 +351,7 @@ async fn handle_message_send_streaming_sse(
         let final_task = task_store.get_task(&task_id).await.ok().flatten();
         let final_status = if let Some(task) = final_task {
             TaskStatusUpdateEvent {
-                kind: "status-update".to_string(),
+                kind: EventKind::TaskStatusUpdate,
                 task_id: task_id.clone(),
                 context_id: task.context_id,
                 status: task.status,
@@ -370,7 +360,7 @@ async fn handle_message_send_streaming_sse(
             }
         } else {
             TaskStatusUpdateEvent {
-                kind: "status-update".to_string(),
+                kind: EventKind::TaskStatusUpdate,
                 task_id: task_id.clone(),
                 context_id: thread_id.clone(),
                 status: TaskStatus {
@@ -497,7 +487,7 @@ async fn handle_message_send(
     let thread_id = thread.id;
     // Create a new task with run_id
     let task = task_store
-        .create_task(&thread_id, "message", Some(&run_id))
+        .create_task(&thread_id, Some(&run_id))
         .await
         .map_err(|e| JsonRpcError {
             code: -32603,
@@ -559,15 +549,12 @@ async fn handle_message_send(
         Ok(response) => {
             // Create response message
             let response_message = A2aMessage {
-                kind: "message".to_string(),
                 message_id: Uuid::new_v4().to_string(),
                 role: Role::Agent,
                 parts: vec![Part::Text(TextPart { text: response })],
                 context_id: Some(thread_id.clone()),
                 task_id: Some(task.id.clone()),
-                reference_task_ids: vec![],
-                extensions: vec![],
-                metadata: None,
+                ..Default::default()
             };
 
             // Add response to task history

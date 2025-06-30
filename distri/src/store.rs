@@ -12,7 +12,7 @@ use crate::{
         UpdateThreadRequest,
     },
 };
-use distri_a2a::{Message as A2aMessage, Task, TaskState, TaskStatus};
+use distri_a2a::{EventKind, Message as A2aMessage, Task, TaskState, TaskStatus};
 
 #[async_trait]
 pub trait ToolSessionStore: Send + Sync {
@@ -474,12 +474,7 @@ impl MemoryStore for FileMemoryStore {
 // Task Store trait for A2A task management
 #[async_trait]
 pub trait TaskStore: Send + Sync {
-    async fn create_task(
-        &self,
-        context_id: &str,
-        kind: &str,
-        task_id: Option<&str>,
-    ) -> anyhow::Result<Task>;
+    async fn create_task(&self, context_id: &str, task_id: Option<&str>) -> anyhow::Result<Task>;
     async fn get_task(&self, task_id: &str) -> anyhow::Result<Option<Task>>;
     async fn update_task_status(&self, task_id: &str, status: TaskStatus) -> anyhow::Result<()>;
     async fn cancel_task(&self, task_id: &str) -> anyhow::Result<Task>;
@@ -509,17 +504,12 @@ impl HashMapTaskStore {
 
 #[async_trait]
 impl TaskStore for HashMapTaskStore {
-    async fn create_task(
-        &self,
-        context_id: &str,
-        kind: &str,
-        task_id: Option<&str>,
-    ) -> anyhow::Result<Task> {
+    async fn create_task(&self, context_id: &str, task_id: Option<&str>) -> anyhow::Result<Task> {
         let task_id = task_id
             .map(|s| s.to_string())
             .unwrap_or_else(|| Uuid::new_v4().to_string());
         let task = Task {
-            kind: "task".to_string(),
+            kind: EventKind::Task,
             id: task_id.clone(),
             context_id: context_id.to_string(),
             status: TaskStatus {
