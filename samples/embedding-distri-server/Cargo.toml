@@ -17,3 +17,5 @@ chrono = { version = "0.4", features = ["serde"] }
 distri-server = { path = "../../distri-server" }
 distri = { path = "../../distri" }
 distri-a2a = { path = "../../distri-a2a" }
+
+dotenv = "0.15"

@@ -1,5 +1,4 @@
 use actix_web::{web, App, HttpServer};
-use actix_web_lab::sse::Event;
 use anyhow::Result;
 use distri::{
     coordinator::{CoordinatorContext, LocalCoordinator},
@@ -61,7 +60,7 @@ impl DistriServiceConfig {
 ///     .route("/", web::get().to(|| async { "Hello World!" }));
 /// ```
 pub fn configure_distri_service(cfg: &mut web::ServiceConfig, config: DistriServiceConfig) {
-    let (event_broadcaster, _) = broadcast::channel::<Event>(1000);
+    let (event_broadcaster, _) = broadcast::channel::<String>(1000);
     let agent_store = config.coordinator.agent_store.clone();
 
     cfg.app_data(web::Data::new(config.coordinator))

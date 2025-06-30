@@ -32,6 +32,7 @@ async fn welcome() -> ActixResult<HttpResponse> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    dotenv::dotenv().ok();
     // Initialize tracing
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)

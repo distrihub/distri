@@ -1247,6 +1247,7 @@ dependencies = [
  "distri",
  "distri-a2a",
  "distri-server",
+ "dotenv",
  "serde",
  "serde_json",
  "tokio",
