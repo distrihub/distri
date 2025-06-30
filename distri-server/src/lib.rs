@@ -1,11 +1,12 @@
 use actix_web::{web, App, HttpServer};
+use actix_web_lab::sse::Event;
 use anyhow::Result;
 use distri::{
-    coordinator::{CoordinatorContext, LocalCoordinator}, 
+    coordinator::{CoordinatorContext, LocalCoordinator},
     servers::registry::ServerRegistry,
     store::{InMemoryAgentStore, LocalSessionStore, SessionStore},
-    types::{Configuration, ServerConfig}, 
-    HashMapTaskStore, TaskStore
+    types::{Configuration, ServerConfig},
+    HashMapTaskStore, TaskStore,
 };
 use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
@@ -48,19 +49,19 @@ impl DistriServiceConfig {
 }
 
 /// Configure distri routes for embedding in another actix-web app
-/// 
+///
 /// # Example
 /// ```rust
 /// use actix_web::{web, App, HttpServer};
 /// use distri_server::{configure_distri_service, DistriServiceConfig};
-/// 
+///
 /// let config = DistriServiceConfig::new(coordinator, server_config);
 /// let app = App::new()
 ///     .configure(|cfg| configure_distri_service(cfg, config))
 ///     .route("/", web::get().to(|| async { "Hello World!" }));
 /// ```
 pub fn configure_distri_service(cfg: &mut web::ServiceConfig, config: DistriServiceConfig) {
-    let (event_broadcaster, _) = broadcast::channel(1000);
+    let (event_broadcaster, _) = broadcast::channel::<Event>(1000);
     let agent_store = config.coordinator.agent_store.clone();
 
     cfg.app_data(web::Data::new(config.coordinator))
@@ -73,20 +74,21 @@ pub fn configure_distri_service(cfg: &mut web::ServiceConfig, config: DistriServ
 
 /// Simple helper to create a LocalCoordinator from a YAML config file
 /// This is a convenience function for quick setup
-pub async fn create_coordinator_from_config(config_path: &str) -> Result<(Arc<LocalCoordinator>, ServerConfig)> {
-    use std::fs;
+pub async fn create_coordinator_from_config(
+    config_path: &str,
+) -> Result<(Arc<LocalCoordinator>, ServerConfig)> {
     use std::collections::HashMap;
+    use std::fs;
 
     let config_str = fs::read_to_string(config_path)?;
     let config: Configuration = serde_yaml::from_str(&config_str)?;
-    
+
     // Create default components
     let registry = Arc::new(RwLock::new(ServerRegistry::new()));
-    let session_store: Option<Arc<Box<dyn SessionStore>>> = Some(Arc::new(
-        Box::new(LocalSessionStore::new())
-    ));
+    let session_store: Option<Arc<Box<dyn SessionStore>>> =
+        Some(Arc::new(Box::new(LocalSessionStore::new())));
     let agent_store = Arc::new(InMemoryAgentStore::new());
-    
+
     // Create context explicitly
     let context = Arc::new(CoordinatorContext::new(
         uuid::Uuid::new_v4().to_string(),
@@ -95,7 +97,7 @@ pub async fn create_coordinator_from_config(config_path: &str) -> Result<(Arc<Lo
         None,
         HashMap::new(),
     ));
-    
+
     // Create coordinator
     let coordinator = LocalCoordinator::new(
         registry,
@@ -113,7 +115,7 @@ pub async fn create_coordinator_from_config(config_path: &str) -> Result<(Arc<Lo
 
     // Get server config or use default
     let server_config = config.server.unwrap_or_default();
-    
+
     Ok((Arc::new(coordinator), server_config))
 }
 
