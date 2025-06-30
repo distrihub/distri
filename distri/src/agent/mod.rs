@@ -103,27 +103,34 @@ pub struct ExecutorContext {
     pub verbose: bool,
     pub user_id: Option<String>,
     /// Add additional context for tools to use passed as meta in MCP calls
-    pub tools_context: std::collections::HashMap<String, std::collections::HashMap<String, serde_json::Value>>,
+    pub tools_context:
+        std::collections::HashMap<String, std::collections::HashMap<String, serde_json::Value>>,
 }
 
 impl Default for ExecutorContext {
     fn default() -> Self {
-        Self::new(
-            Uuid::new_v4().to_string(),
-            true,
-            None,
-        )
+        Self::new(Uuid::new_v4().to_string(), None, true, None, None)
     }
 }
 
 impl ExecutorContext {
-    pub fn new(thread_id: String, verbose: bool, user_id: Option<String>) -> Self {
+    pub fn new(
+        thread_id: String,
+        run_id: Option<String>,
+        verbose: bool,
+        user_id: Option<String>,
+        tools_context: Option<
+            std::collections::HashMap<String, std::collections::HashMap<String, serde_json::Value>>,
+        >,
+    ) -> Self {
         Self {
             thread_id,
-            run_id: Arc::new(tokio::sync::Mutex::new(Uuid::new_v4().to_string())),
+            run_id: Arc::new(tokio::sync::Mutex::new(
+                run_id.unwrap_or_else(|| Uuid::new_v4().to_string()),
+            )),
             verbose,
             user_id,
-            tools_context: std::collections::HashMap::new(),
+            tools_context: tools_context.unwrap_or_default(),
         }
     }
 

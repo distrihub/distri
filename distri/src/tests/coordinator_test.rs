@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tracing::info;
 
 use crate::{
-    agent::{AgentEvent, ExecutorContext, AgentExecutor, DISTRI_LOCAL_SERVER},
+    agent::{AgentEvent, AgentExecutor, ExecutorContext, DISTRI_LOCAL_SERVER},
     init_logging,
     memory::TaskStep,
     store::InMemoryAgentStore,
@@ -67,21 +67,32 @@ async fn test_agent_coordination() -> anyhow::Result<()> {
     register_coordinator(registry, coordinator.clone()).await;
 
     // Register agent definitions
-    let _agent1_handle = coordinator
-        .register_agent(AgentRecord::Local(agent1_def.clone()))
-        .await?;
+    let agent1_handle = coordinator.create_default_agent(agent1_def.clone());
 
-    let agent2_handle = coordinator
-        .register_agent(AgentRecord::Local(agent2_def.clone()))
-        .await?;
+    let agent2_handle = coordinator.create_default_agent(agent2_def.clone());
+
     let coordinator_clone = coordinator.clone();
+
+    coordinator
+        .register_agent(AgentRecord {
+            definition: agent1_def.clone(),
+            agent: agent1_handle,
+        })
+        .await?;
+    coordinator
+        .register_agent(AgentRecord {
+            definition: agent2_def.clone(),
+            agent: agent2_handle,
+        })
+        .await?;
     // Start coordinator in background
     let coordinator_handle = tokio::spawn(async move {
         coordinator_clone.run().await.unwrap();
     });
 
-    let agent2_result = agent2_handle
-        .invoke(
+    let agent2_result = coordinator
+        .execute(
+            "agent2",
             TaskStep {
                 task: "Ask twitter_agent for the summary of my timeline".to_string(),
                 task_images: None,
@@ -127,10 +138,13 @@ async fn test_agent_coordination_streaming() -> anyhow::Result<()> {
     register_coordinator(registry, coordinator.clone()).await;
 
     // Register agent definition
-    let agent_handle = coordinator
-        .register_agent(AgentRecord::Local(agent_def.clone()))
+    let agent_handle = coordinator.create_default_agent(agent_def.clone());
+    coordinator
+        .register_agent(AgentRecord {
+            definition: agent_def.clone(),
+            agent: agent_handle,
+        })
         .await?;
-    let agent_handle = agent_handle.clone();
 
     // Start coordinator in background
     let coordinator_clone = coordinator.clone();
@@ -167,8 +181,8 @@ async fn test_agent_coordination_streaming() -> anyhow::Result<()> {
     });
 
     // Execute streaming task
-    agent_handle
-        .invoke_stream(task, None, Arc::default(), event_tx)
+    coordinator
+        .execute_stream("streaming_agent", task, None, event_tx, Arc::default())
         .await?;
 
     // Wait for event handling to complete

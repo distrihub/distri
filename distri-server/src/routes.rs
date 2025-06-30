@@ -53,7 +53,7 @@ async fn list_agents(
         .iter()
         .map(|agent| {
             distri::a2a::agent_def_to_card(
-                &agent.definition,
+                &agent.get_definition(),
                 server_config.get_ref().clone(),
                 "http://127.0.0.1:8080",
             )
@@ -73,7 +73,7 @@ async fn get_agent_card(
     match agent {
         Some(agent) => {
             let card = distri::a2a::agent_def_to_card(
-                &agent.definition,
+                &agent.get_definition(),
                 server_config.get_ref().clone(),
                 "http://127.0.0.1:8080",
             );
@@ -181,10 +181,10 @@ async fn handle_message_send_streaming_sse(
         let (sse_tx, mut sse_rx) = mpsc::channel(100);
         let coordinator_context = Arc::new(distri::agent::ExecutorContext::new(
             thread_id.clone(),
-            run_id.clone(),
+            Some(run_id.clone()),
             coordinator.context.verbose,
             coordinator.context.user_id.clone(),
-            coordinator.context.tools_context.clone(),
+            Some(coordinator.context.tools_context.clone()),
         ));
         // Spawn execute_stream in the background
         let agent_id_clone = agent_id.clone();
@@ -529,10 +529,10 @@ async fn handle_message_send(
     // Execute the task using the coordinator with thread context
     let coordinator_context = Arc::new(distri::agent::ExecutorContext::new(
         thread_id.clone(),
-        run_id.clone(),
+        Some(run_id.clone()),
         coordinator.context.verbose,
         coordinator.context.user_id.clone(),
-        coordinator.context.tools_context.clone(),
+        Some(coordinator.context.tools_context.clone()),
     ));
     let execution_result = coordinator
         .execute(

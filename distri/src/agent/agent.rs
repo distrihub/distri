@@ -82,6 +82,9 @@ pub trait BaseAgent: Send + Sync + std::fmt::Debug {
 
     /// Get the agent's name/id
     fn get_name(&self) -> &str;
+
+    fn get_description(&self) -> &str;
+    fn get_definition(&self) -> AgentDefinition;
 }
 
 #[async_trait::async_trait]
@@ -95,7 +98,9 @@ pub trait AgentInvoke: BaseAgent {
         _context: Arc<ExecutorContext>,
         _event_tx: Option<mpsc::Sender<AgentEvent>>,
     ) -> Result<String, AgentError> {
-        Err(AgentError::NotImplemented("AgentInvoke::agent_invoke not implemented".to_string()))
+        Err(AgentError::NotImplemented(
+            "AgentInvoke::agent_invoke not implemented".to_string(),
+        ))
     }
 }
 
@@ -110,7 +115,9 @@ pub trait AgentInvokeStream: BaseAgent {
         _context: Arc<ExecutorContext>,
         _event_tx: mpsc::Sender<AgentEvent>,
     ) -> Result<(), AgentError> {
-        Err(AgentError::NotImplemented("AgentInvokeStream::agent_invoke_stream not implemented".to_string()))
+        Err(AgentError::NotImplemented(
+            "AgentInvokeStream::agent_invoke_stream not implemented".to_string(),
+        ))
     }
 }
 
@@ -126,7 +133,7 @@ pub enum StepResult {
 }
 
 /// Default agent implementation that provides the standard LLM-based behavior
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct DefaultAgent {
     pub definition: AgentDefinition,
     server_tools: Vec<ServerTools>,
@@ -134,6 +141,14 @@ pub struct DefaultAgent {
     logger: StepLogger,
     session_store: Arc<Box<dyn SessionStore>>,
     iterations: Arc<RwLock<HashMap<String, i32>>>,
+}
+
+impl std::fmt::Debug for DefaultAgent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DefaultAgent")
+            .field("definition", &self.definition)
+            .finish()
+    }
 }
 
 impl DefaultAgent {
@@ -689,6 +704,14 @@ impl DefaultAgent {
 
 #[async_trait::async_trait]
 impl BaseAgent for DefaultAgent {
+    fn get_definition(&self) -> AgentDefinition {
+        self.definition.clone()
+    }
+
+    fn get_description(&self) -> &str {
+        &self.definition.description
+    }
+
     async fn invoke(
         &self,
         task: TaskStep,
@@ -827,16 +850,32 @@ impl BaseAgent for DefaultAgent {
 #[derive(Debug, Clone)]
 pub struct TestCustomAgent {
     pub name: String,
+    pub description: String,
 }
 
 impl TestCustomAgent {
     pub fn new(name: String) -> Self {
-        Self { name }
+        Self {
+            description: name.clone(),
+            name: name.clone(),
+        }
     }
 }
 
 #[async_trait::async_trait]
 impl BaseAgent for TestCustomAgent {
+    fn get_description(&self) -> &str {
+        &self.description
+    }
+
+    fn get_definition(&self) -> AgentDefinition {
+        AgentDefinition {
+            name: self.name.clone(),
+            description: self.description.clone(),
+            ..Default::default()
+        }
+    }
+
     async fn invoke(
         &self,
         task: TaskStep,
@@ -856,7 +895,8 @@ impl BaseAgent for TestCustomAgent {
         event_tx: mpsc::Sender<AgentEvent>,
     ) -> Result<(), AgentError> {
         // Call the custom agent_invoke_stream implementation
-        self.agent_invoke_stream(task, params, context, event_tx).await
+        self.agent_invoke_stream(task, params, context, event_tx)
+            .await
     }
 
     fn clone_box(&self) -> Box<dyn BaseAgent> {
@@ -879,7 +919,7 @@ impl AgentInvoke for TestCustomAgent {
     ) -> Result<String, AgentError> {
         let run_id = context.run_id.lock().await.clone();
         let thread_id = context.thread_id.clone();
-        
+
         // Send RunStarted event if event_tx is provided
         if let Some(event_tx) = &event_tx {
             let _ = event_tx
@@ -915,7 +955,7 @@ impl AgentInvokeStream for TestCustomAgent {
     ) -> Result<(), AgentError> {
         let run_id = context.run_id.lock().await.clone();
         let thread_id = context.thread_id.clone();
-        
+
         // Send RunStarted event
         let _ = event_tx
             .send(AgentEvent::RunStarted {
@@ -935,15 +975,16 @@ impl AgentInvokeStream for TestCustomAgent {
             })
             .await;
 
+        let str = &format!("'{}' ", self.get_name());
         let parts = vec![
             "Custom ",
             "agent ",
-            &format!("'{}' ", self.name),
+            str,
             "is ",
             "streaming ",
             "response ",
             "for: ",
-            &task.task
+            &task.task,
         ];
 
         for part in parts {
@@ -955,7 +996,7 @@ impl AgentInvokeStream for TestCustomAgent {
                     delta: part.to_string(),
                 })
                 .await;
-            
+
             // Small delay to simulate streaming
             tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
         }

@@ -5,7 +5,7 @@ use clap::Parser;
 use cli::{Cli, Commands};
 mod logging;
 use distri::{
-    agent::{AgentExecutor, ExecutorContext},
+    agent::{AgentExecutor, DefaultAgent, ExecutorContext},
     memory::MemoryConfig,
     servers::{
         kg::FileMemory,
@@ -13,6 +13,7 @@ use distri::{
     },
     store::InMemoryAgentStore,
     types::{get_distri_config_schema, AgentRecord, Configuration},
+    LocalSessionStore,
 };
 use distri_server::A2AServer;
 use dotenv::dotenv;
@@ -92,8 +93,12 @@ async fn main() -> Result<()> {
             let (_, coordinator) = init_all(&config).await?;
             let agent_store = coordinator.agent_store.clone();
             for agent in &config.agents {
+                let default_agent = coordinator.create_default_agent(agent.definition.clone());
                 coordinator
-                    .register_agent(AgentRecord::Local(agent.definition.clone()))
+                    .register_agent(AgentRecord {
+                        definition: agent.definition.clone(),
+                        agent: default_agent,
+                    })
                     .await?;
             }
             let coordinator_clone = coordinator.clone();
@@ -126,7 +131,10 @@ async fn main() -> Result<()> {
 
             for agent in &config.agents {
                 coordinator
-                    .register_agent(AgentRecord::Local(agent.definition.clone()))
+                    .register_agent(AgentRecord {
+                        definition: agent.definition.clone(),
+                        agent: coordinator.create_default_agent(agent.definition.clone()),
+                    })
                     .await?;
             }
 
@@ -146,8 +154,12 @@ async fn main() -> Result<()> {
             let (_, coordinator) = init_all(&config).await?;
 
             for agent in &config.agents {
+                let default_agent = coordinator.create_default_agent(agent.definition.clone());
                 coordinator
-                    .register_agent(AgentRecord::Local(agent.definition.clone()))
+                    .register_agent(AgentRecord {
+                        definition: agent.definition.clone(),
+                        agent: default_agent,
+                    })
                     .await?;
             }
             let server = A2AServer::new(coordinator);

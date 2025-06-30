@@ -12,7 +12,7 @@ use serde_json::json;
 
 use crate::{error::AgentError, memory::TaskStep};
 
-use super::{ExecutorContext, AgentExecutor};
+use super::{AgentExecutor, ExecutorContext};
 
 pub static DISTRI_LOCAL_SERVER: &str = "distri_agents";
 
@@ -40,21 +40,14 @@ pub fn build_server<T: Transport>(
                 let response = ToolsListResponse {
                     tools: agents
                         .iter()
-                        .map(|t| Tool {
-                            name: t.definition.name.clone(),
-                            description: Some(t.definition.description.clone()),
-                            input_schema: json!({
-                                "type": "object",
-                                "properties": {
-                                    "message": {
-                                        "type": "string",
-                                        "description": "The message to send to the agent"
-                                    }
-                                },
-                                "required": ["message"],
-                                "additionalProperties": false
-                            }),
-                            output_schema: t.definition.response_format.clone(),
+                        .map(|t| {
+                            let definition = t.get_definition();
+                            Tool {
+                                name: definition.name.clone(),
+                                description: Some(definition.description.clone()),
+                                input_schema: json!({}),
+                                output_schema: definition.response_format.clone(),
+                            }
                         })
                         .collect(),
                     next_cursor,
@@ -116,7 +109,7 @@ mod tests {
     use anyhow::Result;
 
     use crate::{
-        agent::{ExecutorContext, AgentExecutor},
+        agent::{AgentExecutor, ExecutorContext},
         store::{InMemoryAgentStore, LocalSessionStore, SessionStore},
         tests::utils::{get_registry, get_tools_session_store},
     };

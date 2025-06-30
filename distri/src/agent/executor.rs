@@ -107,7 +107,10 @@ impl AgentExecutor {
     }
 
     /// Helper method to create a DefaultAgent from an AgentDefinition
-    pub fn create_default_agent(&self, definition: crate::types::AgentDefinition) -> Box<dyn BaseAgent> {
+    pub fn create_default_agent(
+        &self,
+        definition: crate::types::AgentDefinition,
+    ) -> Box<dyn BaseAgent> {
         Box::new(DefaultAgent::new(
             definition,
             vec![],
