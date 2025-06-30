@@ -1,34 +1,10 @@
 # DeepSearch Agent Configuration - Using Standard Distri Agent
 # This demonstrates how to create a research agent using YAML configuration
 
-server:
-  host: "127.0.0.1"
-  port: 8080
-  documentation_url: "https://github.com/distrihub/distri"
-  preferred_transport: "JSONRPC"
-
-  capabilities:
-    streaming: true
-    push_notifications: true
-    state_transition_history: true
-    extensions: []
-
-  default_input_modes:
-    - "text/plain"
-    - "text/markdown"
-
-  default_output_modes:
-    - "text/plain"
-    - "text/markdown"
-
-  security_schemes: {}
-  security: []
-
 # Agent definitions
 agents:
   - name: "deep_search"
     description: "An intelligent research agent that combines web search and scraping for comprehensive answers"
-    model: "gpt-4o-mini"
     system_prompt: |
       You are DeepSearch, an intelligent research agent with access to web search and scraping tools.
       
@@ -54,6 +30,11 @@ agents:
       - name: "mcp-spider" 
         filter: "all"
         type: "tool"
+    model_settings:
+      model: "gpt-4o-mini"
+      temperature: 0.7
+      max_tokens: 2000
+      max_iterations: 8
     parameters:
       max_search_results: 5
       max_scrape_sources: 3
@@ -63,26 +44,42 @@ agents:
 mcp_servers:
   - name: "mcp-tavily"
     config:
-      transport:
-        type: "stdio"
+      mcp_transport:
         command: "mcp-tavily"
         args: []
         env_vars:
           TAVILY_API_KEY: "${TAVILY_API_KEY}"
-      metadata:
-        description: "Web search using Tavily API"
-        version: "1.0.0"
+      auth_session_key: null
 
   - name: "mcp-spider"
     config:
-      transport:
-        type: "stdio"
+      mcp_transport:
         command: "mcp-spider"
         args: ["--stealth-mode"]
         env_vars: {}
-      metadata:
-        description: "Web scraping using spider-rs"
-        version: "1.0.0"
+      auth_session_key: null
+
+# Optional server configuration
+server:
+  server_url: "http://127.0.0.1:8080"
+  documentation_url: "https://github.com/distrihub/distri"
+  preferred_transport: "JSONRPC"
+  capabilities:
+    streaming: true
+    push_notifications: true
+    state_transition_history: true
+    extensions: []
+  default_input_modes:
+    - "text/plain"
+    - "text/markdown"
+  default_output_modes:
+    - "text/plain"
+    - "text/markdown"
+  security_schemes: {}
+  security: []
+
+# Optional session configurations
+sessions: {}
 
 # Logging configuration
 logging:

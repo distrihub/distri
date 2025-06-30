@@ -11,7 +11,7 @@ use distri::{
         AgentDefinition, AgentRecord, McpDefinition, McpServerType, Message, MessageContent,
         MessageRole, ModelSettings, ToolCall, ToolsFilter,
     },
-    SessionStore,
+    ToolSessionStore,
 };
 use serde_json::json;
 use std::{collections::HashMap, sync::Arc};
@@ -178,7 +178,7 @@ impl CustomAgent for DeepSearchCustomAgent {
         messages: &[Message],
         _params: Option<serde_json::Value>,
         _context: Arc<CoordinatorContext>,
-        _session_store: Arc<Box<dyn SessionStore>>,
+        _session_store: Arc<Box<dyn ToolSessionStore>>,
     ) -> Result<StepResult, AgentError> {
         debug!("🔍 DeepSearch CustomAgent step");
 
@@ -265,9 +265,7 @@ impl CustomAgent for DeepSearchCustomAgent {
 
 async fn init_infrastructure() -> Result<(Arc<RwLock<ServerRegistry>>, Arc<LocalCoordinator>)> {
     let local_memories = HashMap::new();
-    let tool_sessions: Arc<Box<dyn SessionStore>> = Arc::new(Box::new(
-        distri::store::LocalSessionStore::new()
-    ));
+    let tool_sessions: Option<Arc<Box<dyn distri::ToolSessionStore>>> = None;
 
     let memory_config = MemoryConfig::InMemory;
     let context = Arc::new(CoordinatorContext::default());
@@ -279,7 +277,7 @@ async fn init_infrastructure() -> Result<(Arc<RwLock<ServerRegistry>>, Arc<Local
     let (registry, coordinator) = init_registry_and_coordinator(
         local_memories,
         tool_sessions,
-        agent_store.clone(),
+        agent_store,
         &mcp_servers,
         context,
         memory_config,

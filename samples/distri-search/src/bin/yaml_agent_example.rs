@@ -27,14 +27,12 @@ fn load_config(config_path: &str) -> Result<Configuration> {
 async fn init_infrastructure(
     config: &Configuration,
 ) -> Result<(Arc<RwLock<ServerRegistry>>, Arc<LocalCoordinator>)> {
-    let sessions = config.sessions.clone();
     let local_memories = HashMap::new();
 
-    // Simple session store for this example
-    let tool_sessions: Arc<Box<dyn SessionStore>> = Arc::new(Box::new(
-        distri::store::LocalSessionStore::new()
-    ));
+    // Tool session store for MCP tools
+    let tool_sessions: Option<Arc<Box<dyn distri::ToolSessionStore>>> = None;
 
+    // Memory configuration - use InMemory for this example
     let memory_config = MemoryConfig::InMemory;
     let context = Arc::new(CoordinatorContext::default());
     let agent_store = Arc::new(InMemoryAgentStore::new());
@@ -42,7 +40,7 @@ async fn init_infrastructure(
     let (registry, coordinator) = init_registry_and_coordinator(
         local_memories,
         tool_sessions,
-        agent_store.clone(),
+        agent_store,
         &config.mcp_servers,
         context,
         memory_config,
