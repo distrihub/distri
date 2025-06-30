@@ -6,8 +6,9 @@ use distri::store::AgentStore;
 use distri::types::{ServerConfig, UpdateThreadRequest};
 use distri::{memory::TaskStep, TaskStore};
 use distri_a2a::{
-    AgentCard, JsonRpcError, JsonRpcRequest, JsonRpcResponse, Message as A2aMessage,
-    MessageSendParams, Part, Role, TaskIdParams, TaskState, TaskStatus, TextPart,
+    AgentCard, EventKind, JsonRpcError, JsonRpcRequest, JsonRpcResponse, Message as A2aMessage,
+    MessageSendParams, Part, Role, TaskIdParams, TaskState, TaskStatus, TaskStatusBroadcastEvent,
+    TaskStatusUpdateEvent, TextPart,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -146,7 +147,7 @@ async fn handle_message_send_streaming_sse(
         };
         let thread_id = thread.id;
         let run_id = params.message.task_id.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-        let task = match task_store.create_task( &thread_id, "message", Some(&run_id)).await {
+        let task = match task_store.create_task(&thread_id, Some(&run_id)).await {
             Ok(t) => t,
             Err(e) => {
                 let error = JsonRpcResponse {
@@ -207,60 +208,43 @@ async fn handle_message_send_streaming_sse(
         tokio::spawn(async move {
             let mut completed = false;
             let mut agent_message_content = String::new();
-            let mut msg_id = None;
             while let Some(event) = event_rx.recv().await {
                 // Forward event to sse_tx as a JsonRpcResponse
                 let resp = match &event {
                     AgentEvent::TextMessageContent { delta, message_id, .. } => {
                         agent_message_content.push_str(delta);
-                        msg_id = Some(message_id.clone());
-                        let update = json!({
-                            "id": task_id_clone,
-                            "status": {
-                                "state": "working",
-                                "message": {
-                                    "role": "agent",
-                                    "parts": [ { "type": "text", "text": delta } ],
-                                    "context_id": thread_id_clone,
-                                    "task_id": task_id_clone,
-                                    "reference_task_ids": [],
-                                    "message_id": message_id.clone(),
-                                    "extensions": [],
-                                    "metadata": null
-                                },
-                                "timestamp": chrono::Utc::now().to_rfc3339(),
-                            },
-                            "final": false
-                        });
+                        let message = A2aMessage {
+                            message_id: message_id.clone(),
+                            parts: vec![Part::Text(TextPart { text: delta.clone() })],
+                            ..Default::default()
+                        };
                         JsonRpcResponse {
                             jsonrpc: "2.0".to_string(),
-                            result: Some(update),
+                            result: Some(serde_json::to_value(message).unwrap()),
                             error: None,
                             id: id_field_clone2.clone(),
                         }
                     }
                     AgentEvent::TextMessageEnd { message_id, .. } => {
-                        let update = json!({
-                            "id": task_id_clone,
-                            "status": {
-                                "state": "completed",
-                                "message": {
-                                    "role": "agent",
-                                    "parts": [],
-                                    "context_id": thread_id_clone,
-                                    "task_id": task_id_clone,
-                                    "reference_task_ids": [],
-                                    "message_id": message_id.clone(),
-                                    "extensions": [],
-                                    "metadata": null
-                                },
-                                "timestamp": chrono::Utc::now().to_rfc3339(),
+                        let message = A2aMessage {
+                            message_id: message_id.clone(),
+                            ..Default::default()
+                        };
+                        let status_update = TaskStatusUpdateEvent {
+                            kind: EventKind::TaskStatusUpdate,
+                            task_id: task_id_clone.clone(),
+                            context_id: thread_id_clone.clone(),
+                            status: TaskStatus {
+                                state: TaskState::Working,
+                                message: Some(message),
+                                timestamp: Some(chrono::Utc::now().to_rfc3339()),
                             },
-                            "final": false
-                        });
+                            r#final: false,
+                            metadata: None,
+                        };
                         JsonRpcResponse {
                             jsonrpc: "2.0".to_string(),
-                            result: Some(update),
+                            result: Some(serde_json::to_value(status_update).unwrap()),
                             error: None,
                             id: id_field_clone2.clone(),
                         }
@@ -274,38 +258,26 @@ async fn handle_message_send_streaming_sse(
                             parts: vec![Part::Text(TextPart { text: message.clone() })],
                             context_id: Some(thread_id_clone.clone()),
                             task_id: Some(task_id_clone.clone()),
-                            reference_task_ids: vec![],
-                            extensions: vec![],
-                            metadata: None,
+                            ..Default::default()
                         };
                         let status = TaskStatus {
                             state: TaskState::Failed,
                             message: Some(agent_message.clone()),
                             timestamp: Some(chrono::Utc::now().to_rfc3339()),
                         };
-                        let _ = task_store_clone.update_task_status(&task_id_clone, status).await;
+                        let _ = task_store_clone.update_task_status(&task_id_clone, status.clone()).await;
                         let _ = task_store_clone.add_message_to_task(&task_id_clone, agent_message.clone()).await;
-                        let update = json!({
-                            "id": task_id_clone,
-                            "status": {
-                                "state": "failed",
-                                "message": {
-                                    "role": "agent",
-                                    "parts": [ { "type": "text", "text": message.clone() } ],
-                                    "context_id": thread_id_clone,
-                                    "task_id": task_id_clone,
-                                    "reference_task_ids": [],
-                                    "extensions": [],
-                                    "metadata": null,
-                                    "message_id": msg_id.clone()
-                                },
-                                "timestamp": chrono::Utc::now().to_rfc3339(),
-                            },
-                            "final": true
-                        });
+                        let status_update = TaskStatusUpdateEvent {
+                            kind: EventKind::TaskStatusUpdate,
+                            task_id: task_id_clone.clone(),
+                            context_id: thread_id_clone.clone(),
+                            status,
+                            r#final: true,
+                            metadata: None,
+                        };
                         JsonRpcResponse {
                             jsonrpc: "2.0".to_string(),
-                            result: Some(update),
+                            result: Some(serde_json::to_value(status_update).unwrap()),
                             error: None,
                             id: id_field_clone2.clone(),
                         }
@@ -319,38 +291,26 @@ async fn handle_message_send_streaming_sse(
                             parts: vec![Part::Text(TextPart { text: agent_message_content.clone() })],
                             context_id: Some(thread_id_clone.clone()),
                             task_id: Some(task_id_clone.clone()),
-                            reference_task_ids: vec![],
-                            extensions: vec![],
-                            metadata: None,
+                            ..Default::default()
                         };
                         let status = TaskStatus {
                             state: TaskState::Completed,
                             message: Some(agent_message.clone()),
                             timestamp: Some(chrono::Utc::now().to_rfc3339()),
                         };
-                        let _ = task_store_clone.update_task_status(&task_id_clone, status).await;
+                        let _ = task_store_clone.update_task_status(&task_id_clone, status.clone()).await;
                         let _ = task_store_clone.add_message_to_task(&task_id_clone, agent_message.clone()).await;
-                        let update = json!({
-                            "id": task_id_clone,
-                            "status": {
-                                "state": "completed",
-                                "message": {
-                                    "role": "agent",
-                                    "parts": [ { "type": "text", "text": agent_message_content.clone() } ],
-                                    "context_id": thread_id_clone,
-                                    "task_id": task_id_clone,
-                                    "reference_task_ids": [],
-                                    "extensions": [],
-                                    "metadata": null,
-                                    "message_id": msg_id.clone()
-                                },
-                                "timestamp": chrono::Utc::now().to_rfc3339(),
-                            },
-                            "final": true
-                        });
+                        let status_update = TaskStatusUpdateEvent {
+                            kind: EventKind::TaskStatusUpdate,
+                            task_id: task_id_clone.clone(),
+                            context_id: thread_id_clone.clone(),
+                            status,
+                            r#final: true,
+                            metadata: None,
+                        };
                         JsonRpcResponse {
                             jsonrpc: "2.0".to_string(),
-                            result: Some(update),
+                            result: Some(serde_json::to_value(status_update).unwrap()),
                             error: None,
                             id: id_field_clone2.clone(),
                         }
@@ -365,18 +325,21 @@ async fn handle_message_send_streaming_sse(
             }
         });
         // SSE stream yields status update first, then events from sse_rx
-        let status_update = json!({
-            "id": task_id,
-            "status": {
-                "state": "working",
-                "message": params.message,
-                "timestamp": chrono::Utc::now().to_rfc3339(),
+        let status_update = TaskStatusUpdateEvent {
+            kind: EventKind::TaskStatusUpdate,
+            task_id: task_id.clone(),
+            context_id: thread_id.clone(),
+            status: TaskStatus {
+                state: TaskState::Working,
+                message: Some(params.message.clone()),
+                timestamp: Some(chrono::Utc::now().to_rfc3339()),
             },
-            "final": false
-        });
+            r#final: false,
+            metadata: None,
+        };
         let resp = JsonRpcResponse {
             jsonrpc: "2.0".to_string(),
-            result: Some(status_update),
+            result: Some(serde_json::to_value(status_update).unwrap()),
             error: None,
             id: id_field_clone.clone(),
         };
@@ -387,21 +350,31 @@ async fn handle_message_send_streaming_sse(
         // After all events, yield the final status
         let final_task = task_store.get_task(&task_id).await.ok().flatten();
         let final_status = if let Some(task) = final_task {
-            json!({
-                "id": task_id,
-                "status": task.status,
-                "final": true
-            })
+            TaskStatusUpdateEvent {
+                kind: EventKind::TaskStatusUpdate,
+                task_id: task_id.clone(),
+                context_id: task.context_id,
+                status: task.status,
+                r#final: true,
+                metadata: None,
+            }
         } else {
-            json!({
-                "id": task_id,
-                "status": {"state": "completed"},
-                "final": true
-            })
+            TaskStatusUpdateEvent {
+                kind: EventKind::TaskStatusUpdate,
+                task_id: task_id.clone(),
+                context_id: thread_id.clone(),
+                status: TaskStatus {
+                    state: TaskState::Completed,
+                    message: None,
+                    timestamp: Some(chrono::Utc::now().to_rfc3339()),
+                },
+                r#final: true,
+                metadata: None,
+            }
         };
         let resp = JsonRpcResponse {
             jsonrpc: "2.0".to_string(),
-            result: Some(final_status),
+            result: Some(serde_json::to_value(final_status).unwrap()),
             error: None,
             id: id_field_clone.clone(),
         };
@@ -425,7 +398,7 @@ async fn jsonrpc_handler(
     let coordinator = coordinator.get_ref();
     let task_store = task_store.get_ref();
 
-    if req.method == "message/send_streaming" {
+    if req.method == "message/stream" {
         return Either::Left(
             handle_message_send_streaming_sse(
                 agent_id,
@@ -514,7 +487,7 @@ async fn handle_message_send(
     let thread_id = thread.id;
     // Create a new task with run_id
     let task = task_store
-        .create_task(&thread_id, "message", Some(&run_id))
+        .create_task(&thread_id, Some(&run_id))
         .await
         .map_err(|e| JsonRpcError {
             code: -32603,
@@ -544,16 +517,14 @@ async fn handle_message_send(
         })?;
 
     // Send event with thread context
-    let _ = event_broadcaster.send(
-        json!({
-            "type": "task_status_changed",
-            "task_id": task.id,
-            "thread_id": thread_id,
-            "agent_id": agent_id,
-            "status": "working"
-        })
-        .to_string(),
-    );
+    let broadcast_event = TaskStatusBroadcastEvent {
+        r#type: "task_status_changed".to_string(),
+        task_id: task.id.clone(),
+        thread_id: thread_id.clone(),
+        agent_id: agent_id.clone(),
+        status: "working".to_string(),
+    };
+    let _ = event_broadcaster.send(serde_json::to_string(&broadcast_event).unwrap());
 
     // Execute the task using the coordinator with thread context
     let coordinator_context = Arc::new(distri::coordinator::CoordinatorContext::new(
@@ -583,9 +554,7 @@ async fn handle_message_send(
                 parts: vec![Part::Text(TextPart { text: response })],
                 context_id: Some(thread_id.clone()),
                 task_id: Some(task.id.clone()),
-                reference_task_ids: vec![],
-                extensions: vec![],
-                metadata: None,
+                ..Default::default()
             };
 
             // Add response to task history
@@ -625,16 +594,14 @@ async fn handle_message_send(
         })?;
 
     // Send completion event with thread context
-    let _ = event_broadcaster.send(
-        json!({
-            "type": "task_status_changed",
-            "task_id": task.id,
-            "thread_id": thread_id,
-            "agent_id": agent_id,
-            "status": broadcast_status,
-        })
-        .to_string(),
-    );
+    let completion_event = TaskStatusBroadcastEvent {
+        r#type: "task_status_changed".to_string(),
+        task_id: task.id.clone(),
+        thread_id: thread_id.clone(),
+        agent_id: agent_id.clone(),
+        status: broadcast_status.to_string(),
+    };
+    let _ = event_broadcaster.send(serde_json::to_string(&completion_event).unwrap());
 
     // Get updated task
     let updated_task = task_store

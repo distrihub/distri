@@ -289,9 +289,10 @@ pub struct MessageSendConfiguration {
 }
 
 /// A message exchanged between a user and an agent.
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Message {
+    pub kind: EventKind,
     pub message_id: String,
     pub role: Role,
     pub parts: Vec<Part>,
@@ -306,12 +307,22 @@ pub struct Message {
     #[serde(default)]
     pub metadata: Option<serde_json::Value>,
 }
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum EventKind {
+    #[default]
+    Message,
+    Task,
+    TaskStatusUpdate,
+    TaskArtifactUpdate,
+}
 
 /// The role of the message sender.
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub enum Role {
     User,
+    #[default]
     Agent,
 }
 
@@ -376,15 +387,16 @@ pub struct TaskIdParams {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Task {
+    pub kind: EventKind,
     pub id: String,
-    pub kind: String,
-    #[serde(rename = "contextId")]
     pub context_id: String,
     pub status: TaskStatus,
     #[serde(default)]
     pub artifacts: Vec<Artifact>,
     #[serde(default)]
     pub history: Vec<Message>,
+    #[serde(default)]
+    pub metadata: Option<serde_json::Value>,
 }
 
 /// The status of a task.
@@ -423,4 +435,48 @@ pub struct Artifact {
     pub name: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
+}
+
+// A2A Streaming Response Types
+
+/// Task Status Update Event - sent during streaming
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskStatusUpdateEvent {
+    pub kind: EventKind,
+    pub task_id: String,
+    pub context_id: String,
+    pub status: TaskStatus,
+    pub r#final: bool,
+    #[serde(default)]
+    pub metadata: Option<serde_json::Value>,
+}
+
+/// Task Artifact Update Event - sent during streaming
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskArtifactUpdateEvent {
+    pub kind: EventKind,
+    pub task_id: String,
+    pub context_id: String,
+    pub artifact: Artifact,
+    #[serde(default)]
+    pub append: Option<bool>,
+    #[serde(default)]
+    pub last_chunk: Option<bool>,
+    #[serde(default)]
+    pub metadata: Option<serde_json::Value>,
+}
+
+// Event Broadcasting Types
+
+/// Event for broadcasting task status changes
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskStatusBroadcastEvent {
+    pub r#type: String,
+    pub task_id: String,
+    pub thread_id: String,
+    pub agent_id: String,
+    pub status: String,
 }
