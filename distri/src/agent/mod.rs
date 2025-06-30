@@ -1,20 +1,26 @@
-mod server;
-use std::collections::HashMap;
-
-use serde_json::Value;
-pub use server::{build_server, DISTRI_LOCAL_SERVER};
-mod executor;
-pub use executor::*;
-mod log;
-pub use log::*;
 pub mod agent;
+pub mod executor;
+pub mod log;
 pub mod reason;
-use crate::{error::AgentError, memory::TaskStep, types::ToolCall};
-pub use agent::*;
-use tokio::sync::{mpsc, oneshot, Mutex};
+pub mod server;
 
-// Event types for streaming responses
-#[derive(Debug, Clone)]
+pub use agent::{
+    AgentInvoke, AgentInvokeStream, BaseAgent, DefaultAgent, StepResult, TestCustomAgent,
+    MAX_ITERATIONS,
+};
+pub use executor::{AgentExecutor, CoordinatorMessage, ExecutorContext};
+pub use log::StepLogger;
+pub use server::DISTRI_LOCAL_SERVER;
+
+use crate::types::{Message, MessageContent, MessageRole, ToolCall};
+use async_openai::types::CreateChatCompletionResponse;
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use tokio::sync::{mpsc, oneshot};
+use uuid::Uuid;
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "snake_case")]
 pub enum AgentEvent {
     RunStarted {
         thread_id: String,
@@ -29,16 +35,6 @@ pub enum AgentEvent {
         run_id: String,
         message: String,
         code: Option<String>,
-    },
-    StepStarted {
-        thread_id: String,
-        run_id: String,
-        step_name: String,
-    },
-    StepFinished {
-        thread_id: String,
-        run_id: String,
-        step_name: String,
     },
     TextMessageStart {
         thread_id: String,
@@ -61,38 +57,21 @@ pub enum AgentEvent {
         thread_id: String,
         run_id: String,
         tool_call_id: String,
-        tool_call_name: String,
-        parent_message_id: Option<String>,
+        tool_name: String,
     },
-    ToolCallArgs {
+    ToolCallContent {
         thread_id: String,
         run_id: String,
         tool_call_id: String,
-        delta: String,
+        content: String,
     },
     ToolCallEnd {
         thread_id: String,
         run_id: String,
         tool_call_id: String,
     },
-    StateSnapshot {
-        thread_id: String,
-        run_id: String,
-        snapshot: Value,
-    },
-    StateDelta {
-        thread_id: String,
-        run_id: String,
-        delta: Value,
-    },
-    MessagesSnapshot {
-        thread_id: String,
-        run_id: String,
-        messages: Vec<Value>,
-    },
 }
 
-// Message types for coordinator communication
 #[derive(Debug)]
 pub enum CoordinatorMessage {
     ExecuteTool {
@@ -102,62 +81,42 @@ pub enum CoordinatorMessage {
     },
     Execute {
         agent_id: String,
-        task: TaskStep,
+        task: crate::memory::TaskStep,
         params: Option<serde_json::Value>,
-        context: std::sync::Arc<ExecutorContext>,
-        event_tx: Option<tokio::sync::mpsc::Sender<AgentEvent>>,
-        response_tx: oneshot::Sender<Result<String, AgentError>>,
+        context: Arc<ExecutorContext>,
+        event_tx: Option<mpsc::Sender<AgentEvent>>,
+        response_tx: oneshot::Sender<Result<String, crate::error::AgentError>>,
     },
     ExecuteStream {
         agent_id: String,
-        task: TaskStep,
+        task: crate::memory::TaskStep,
         params: Option<serde_json::Value>,
-        event_tx: tokio::sync::mpsc::Sender<AgentEvent>,
-        context: std::sync::Arc<ExecutorContext>,
+        event_tx: mpsc::Sender<AgentEvent>,
+        context: Arc<ExecutorContext>,
     },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ExecutorContext {
     pub thread_id: String,
-    pub run_id: Mutex<String>,
+    pub run_id: Arc<tokio::sync::Mutex<String>>,
     pub verbose: bool,
     pub user_id: Option<String>,
-    /// Add additional context for tools to use passed as meta in MCP calls
-    pub tools_context: HashMap<String, HashMap<String, Value>>,
-}
-
-impl Default for ExecutorContext {
-    fn default() -> Self {
-        Self::new(
-            uuid::Uuid::new_v4().to_string(),
-            uuid::Uuid::new_v4().to_string(),
-            true,
-            None,
-            HashMap::new(),
-        )
-    }
 }
 
 impl ExecutorContext {
-    pub fn new(
-        thread_id: String,
-        run_id: String,
-        verbose: bool,
-        user_id: Option<String>,
-        tools_context: HashMap<String, HashMap<String, Value>>,
-    ) -> Self {
+    pub fn new(thread_id: String, verbose: bool, user_id: Option<String>) -> Self {
         Self {
             thread_id,
-            run_id: Mutex::new(run_id),
+            run_id: Arc::new(tokio::sync::Mutex::new(Uuid::new_v4().to_string())),
             verbose,
             user_id,
-            tools_context,
         }
     }
 
-    pub async fn update_run_id(&self, run_id: String) {
-        let mut run_id_guard = self.run_id.lock().await;
-        *run_id_guard = run_id;
+    pub async fn new_run(&self) -> String {
+        let new_run_id = Uuid::new_v4().to_string();
+        *self.run_id.lock().await = new_run_id.clone();
+        new_run_id
     }
 }

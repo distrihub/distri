@@ -1,5 +1,5 @@
 use crate::{
-    agent::Agent,
+    agent::{BaseAgent, DefaultAgent},
     error::AgentError,
     servers::registry::ServerRegistry,
     store::{
@@ -80,39 +80,12 @@ impl AgentExecutor {
         })
     }
 
-    pub async fn register_agent(&self, record: AgentRecord) -> anyhow::Result<Agent> {
-        let (definition, agent) = match record.clone() {
-            AgentRecord::Local(definition) => (
-                definition.clone(),
-                Agent::new_local(
-                    definition,
-                    vec![],
-                    Arc::new(self.clone()),
-                    self.context.clone(),
-                    self.session_store.clone(),
-                ),
-            ),
+    pub async fn register_agent(&self, record: AgentRecord) -> anyhow::Result<Box<dyn BaseAgent>> {
+        let definition = record.definition.clone();
+        let agent = record.agent;
 
-            AgentRecord::Runnable(definition, custom_agent) => (
-                definition.clone(),
-                Agent::new_runnable(
-                    definition,
-                    vec![],
-                    Arc::new(self.clone()),
-                    self.context.clone(),
-                    self.session_store.clone(),
-                    custom_agent,
-                ),
-            ),
-        };
-
-        let (name, resolved_tools) = {
-            let name = definition.name.clone();
-            let server_tools = get_tools(&definition.mcp_servers, self.registry.clone()).await?;
-
-            (name, server_tools)
-        };
-        // Store both the definition and its tools
+        let resolved_tools = get_tools(&definition.mcp_servers, self.registry.clone()).await?;
+        let name = definition.name.clone();
 
         tracing::debug!(
             "Registering agent: {name} with {:?}",
@@ -124,11 +97,24 @@ impl AgentExecutor {
                 .collect::<Vec<_>>()
         );
 
+        // Clone the agent before registering
+        let agent_clone = agent.clone_box();
         self.agent_store
-            .register(agent.clone(), resolved_tools)
+            .register(agent, resolved_tools)
             .await
             .map_err(|e| anyhow::anyhow!(e))?;
-        Ok(agent)
+        Ok(agent_clone)
+    }
+
+    /// Helper method to create a DefaultAgent from an AgentDefinition
+    pub fn create_default_agent(&self, definition: crate::types::AgentDefinition) -> Box<dyn BaseAgent> {
+        Box::new(DefaultAgent::new(
+            definition,
+            vec![],
+            Arc::new(self.clone()),
+            self.context.clone(),
+            self.session_store.clone(),
+        ))
     }
 
     pub async fn run(&self) -> anyhow::Result<()> {
