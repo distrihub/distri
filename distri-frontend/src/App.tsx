@@ -112,6 +112,29 @@ function App() {
     }
   };
 
+  const startChatWithAgent = async (agent: Agent) => {
+    // Set the selected agent
+    setSelectedAgent(agent);
+    
+    // Switch to chat tab
+    setActiveTab('chat');
+    
+    // Create a new thread for this agent
+    const newThreadId = uuidv4();
+    const threadSummary: Thread = {
+      id: newThreadId,
+      title: `Chat with ${agent.name}`,
+      agent_id: agent.id,
+      agent_name: agent.name,
+      updated_at: new Date().toISOString(),
+      message_count: 0,
+      last_message: undefined,
+    };
+
+    // Add to local state immediately for better UX
+    setThreads((prev: Thread[]) => [threadSummary, ...prev]);
+    setSelectedThread(threadSummary);
+  };
 
   const deleteThread = async (threadId: string) => {
     try {
@@ -183,25 +206,27 @@ function App() {
               <span className="text-sm text-gray-500">AI Agent Platform</span>
             </div>
 
-            {/* Agent Selector */}
+            {/* Agent Selector - only show on chat tab */}
             <div className="flex items-center space-x-4">
-              <div className="flex items-center space-x-2">
-                <Bot className="h-4 w-4 text-gray-600" />
-                <select
-                  value={selectedAgent?.id || ''}
-                  onChange={(e) => {
-                    const agent = agents.find(a => a.id === e.target.value);
-                    setSelectedAgent(agent || null);
-                  }}
-                  className="border border-gray-300 rounded-md px-3 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  {agents.map((agent) => (
-                    <option key={agent.id} value={agent.id}>
-                      {agent.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              {activeTab === 'chat' && (
+                <div className="flex items-center space-x-2">
+                  <Bot className="h-4 w-4 text-gray-600" />
+                  <select
+                    value={selectedAgent?.id || ''}
+                    onChange={(e) => {
+                      const agent = agents.find(a => a.id === e.target.value);
+                      setSelectedAgent(agent || null);
+                    }}
+                    className="border border-gray-300 rounded-md px-3 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    {agents.map((agent) => (
+                      <option key={agent.id} value={agent.id}>
+                        {agent.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               <div className="flex bg-gray-100 rounded-lg p-1">
                 <button
@@ -242,73 +267,75 @@ function App() {
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
-          {/* Sidebar - Threads */}
-          <div className="lg:col-span-1">
-            <div className="bg-white rounded-lg shadow p-4">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-lg font-medium text-gray-900">Conversations</h2>
-                <button
-                  onClick={createNewThread}
-                  disabled={!selectedAgent || creatingThread}
-                  className="flex items-center space-x-1 px-3 py-1 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {creatingThread ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Plus className="h-4 w-4" />
-                  )}
-                  <span>New</span>
-                </button>
-              </div>
-
-              {threads.length === 0 ? (
-                <div className="text-center py-8">
-                  <MessageSquare className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-                  <p className="text-gray-500 text-sm">No conversations yet</p>
-                  <p className="text-gray-400 text-xs mt-1">
-                    {selectedAgent ? 'Click "New" to start' : 'Select an agent first'}
-                  </p>
+        <div className={`grid gap-8 ${activeTab === 'chat' ? 'grid-cols-1 lg:grid-cols-4' : 'grid-cols-1'}`}>
+          {/* Sidebar - Threads (only show on chat tab) */}
+          {activeTab === 'chat' && (
+            <div className="lg:col-span-1">
+              <div className="bg-white rounded-lg shadow p-4">
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-lg font-medium text-gray-900">Conversations</h2>
+                  <button
+                    onClick={createNewThread}
+                    disabled={!selectedAgent || creatingThread}
+                    className="flex items-center space-x-1 px-3 py-1 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {creatingThread ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Plus className="h-4 w-4" />
+                    )}
+                    <span>New</span>
+                  </button>
                 </div>
-              ) : (
-                <div className="space-y-2">
-                  {threads.map((thread) => (
-                    <div
-                      key={thread.id}
-                      onClick={() => setSelectedThread(thread)}
-                      className={`p-3 rounded-lg cursor-pointer transition-colors border ${selectedThread?.id === thread.id
-                        ? 'bg-blue-50 border-blue-200'
-                        : 'hover:bg-gray-50 border-transparent'
-                        }`}
-                    >
-                      <div className="flex items-start justify-between">
-                        <div className="flex-1 min-w-0">
-                          <h3 className="font-medium text-gray-900 text-sm truncate">
-                            {thread.title}
-                          </h3>
-                          <p className="text-xs text-gray-500 mt-1">
-                            with {thread.agent_name}
-                          </p>
-                          {thread.last_message && (
-                            <p className="text-xs text-gray-400 mt-1 truncate">
-                              {thread.last_message}
+
+                {threads.length === 0 ? (
+                  <div className="text-center py-8">
+                    <MessageSquare className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+                    <p className="text-gray-500 text-sm">No conversations yet</p>
+                    <p className="text-gray-400 text-xs mt-1">
+                      {selectedAgent ? 'Click "New" to start' : 'Select an agent first'}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {threads.map((thread) => (
+                      <div
+                        key={thread.id}
+                        onClick={() => setSelectedThread(thread)}
+                        className={`p-3 rounded-lg cursor-pointer transition-colors border ${selectedThread?.id === thread.id
+                          ? 'bg-blue-50 border-blue-200'
+                          : 'hover:bg-gray-50 border-transparent'
+                          }`}
+                      >
+                        <div className="flex items-start justify-between">
+                          <div className="flex-1 min-w-0">
+                            <h3 className="font-medium text-gray-900 text-sm truncate">
+                              {thread.title}
+                            </h3>
+                            <p className="text-xs text-gray-500 mt-1">
+                              with {thread.agent_name}
                             </p>
-                          )}
-                        </div>
-                        <div className="flex flex-col items-end text-xs text-gray-400">
-                          <span>{new Date(thread.updated_at).toLocaleDateString()}</span>
-                          <span className="mt-1">{thread.message_count} msgs</span>
+                            {thread.last_message && (
+                              <p className="text-xs text-gray-400 mt-1 truncate">
+                                {thread.last_message}
+                              </p>
+                            )}
+                          </div>
+                          <div className="flex flex-col items-end text-xs text-gray-400">
+                            <span>{new Date(thread.updated_at).toLocaleDateString()}</span>
+                            <span className="mt-1">{thread.message_count} msgs</span>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  ))}
-                </div>
-              )}
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Main Content Area */}
-          <div className="lg:col-span-3">
+          <div className={`${activeTab === 'chat' ? 'lg:col-span-3' : 'col-span-1'}`}>
             {activeTab === 'chat' && selectedThread && selectedAgent && (
               <Chat
                 thread={selectedThread}
@@ -333,7 +360,11 @@ function App() {
             )}
 
             {activeTab === 'agents' && (
-              <AgentList agents={agents} onRefresh={fetchAgents} />
+              <AgentList 
+                agents={agents} 
+                onRefresh={fetchAgents} 
+                onStartChat={startChatWithAgent}
+              />
             )}
 
             {activeTab === 'tasks' && (

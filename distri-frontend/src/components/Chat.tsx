@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Send, Loader2, User, Bot } from 'lucide-react';
 import { Message, TaskStatusUpdateEvent, TextPart } from '@a2a-js/sdk';
+import MessageRenderer from './MessageRenderer';
 
 const apiUrl = 'http://localhost:8080';
 interface Agent {
@@ -258,14 +259,15 @@ const Chat: React.FC<ChatProps> = ({ thread, agent, onThreadUpdate }) => {
                     <User className="h-4 w-4 mt-0.5 flex-shrink-0" />
                   )}
                   <div className="flex-1">
-                    <p className={`whitespace-pre-wrap ${isError ? 'font-semibold' : ''}`}>
-                      {message.parts.map((part) => {
+                    <MessageRenderer
+                      content={message.parts.map((part) => {
                         if (part.kind === 'text') {
                           return part.text;
                         }
                         return '';
                       }).join('')}
-                    </p>
+                      className={isError ? 'font-semibold' : ''}
+                    />
                     <p className={`text-xs mt-1 ${message.role === 'user'
                       ? 'text-blue-200'
                       : isError
