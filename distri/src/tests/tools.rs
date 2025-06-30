@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tracing::info;
 
 use crate::{
-    coordinator::CoordinatorContext,
+    agent::ExecutorContext,
     init_logging,
     tests::utils::{get_tools_session_store, get_twitter_tool},
     tools::{execute_tool, get_tools},
@@ -25,7 +25,7 @@ async fn execute_tool_test() {
         &tool_def,
         registry,
         get_tools_session_store(),
-        Arc::new(CoordinatorContext::default()),
+        Arc::new(ExecutorContext::default()),
     )
     .await
     .unwrap();

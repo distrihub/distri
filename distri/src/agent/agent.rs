@@ -1,11 +1,11 @@
 use crate::{
-    coordinator::{AgentEvent, LocalCoordinator},
+    agent::{AgentEvent, AgentExecutor},
     error::AgentError,
-    executor::LLMExecutor,
+    llm::LLMExecutor,
     memory::SystemStep,
     types::{
         get_tool_descriptions, AgentDefinition, Message, MessageContent, MessageRole, PlanConfig,
-        ServerTools, DEFAULT_TOOL_DESCRIPTION_TEMPLATE,
+        ServerTools, ToolCall, DEFAULT_TOOL_DESCRIPTION_TEMPLATE,
     },
     SessionStore,
 };
@@ -13,25 +13,87 @@ use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{mpsc, RwLock};
 use uuid::Uuid;
 
-use crate::coordinator::{reason::create_initial_plan, CoordinatorContext, StepLogger};
+use crate::agent::{reason::create_initial_plan, ExecutorContext, StepLogger};
 use crate::memory::{ActionStep, MemoryStep, PlanningStep, TaskStep};
 
 pub const MAX_ITERATIONS: i32 = 10;
 
 #[async_trait::async_trait]
-pub trait CustomAgent: Send + Sync + std::fmt::Debug {
+pub trait BaseAgent: Send + Sync + std::fmt::Debug {
+    async fn invoke(
+        &self,
+        task: TaskStep,
+        params: Option<serde_json::Value>,
+        context: Arc<ExecutorContext>,
+        event_tx: Option<mpsc::Sender<AgentEvent>>,
+    ) -> Result<String, AgentError>;
+    async fn invoke_stream(
+        &self,
+        task: TaskStep,
+        params: Option<serde_json::Value>,
+        context: Arc<ExecutorContext>,
+        event_tx: mpsc::Sender<AgentEvent>,
+    ) -> Result<(), AgentError>;
+}
+
+#[async_trait::async_trait]
+pub trait CustomAgent: BaseAgent {
+    async fn after_task_step(
+        &self,
+        task: TaskStep,
+        context: Arc<ExecutorContext>,
+    ) -> Result<(), AgentError>;
+
+    async fn after_llm_step(
+        &self,
+        messages: &[Message],
+        params: Option<serde_json::Value>,
+        context: Arc<ExecutorContext>,
+    ) -> Result<Vec<Message>, AgentError>;
+
+    async fn before_tool_calls(
+        &self,
+        tool_calls: &[ToolCall],
+        context: Arc<ExecutorContext>,
+    ) -> Result<Vec<ToolCall>, AgentError>;
+
+    async fn after_tool_calls(
+        &self,
+        tool_responses: &[String],
+        context: Arc<ExecutorContext>,
+    ) -> Result<(), AgentError>;
+
+    async fn after_finish(
+        &self,
+        content: &str,
+        context: Arc<ExecutorContext>,
+    ) -> Result<(), AgentError>;
+
     /// Execute one step in the agent execution loop
     /// This is called for each iteration and should implement the agent's custom logic
     async fn step(
         &self,
         messages: &[Message],
         params: Option<serde_json::Value>,
-        context: Arc<CoordinatorContext>,
+        context: Arc<ExecutorContext>,
         session_store: Arc<Box<dyn SessionStore>>,
     ) -> Result<StepResult, AgentError>;
 
     /// Clone the custom agent (required for object safety)
     fn clone_box(&self) -> Box<dyn CustomAgent>;
+}
+
+#[async_trait::async_trait]
+pub trait AgentInvoke: CustomAgent {
+    /// Execute one step in the agent execution loop
+    /// This is called for each iteration and should implement the agent's custom logic
+    async fn step(
+        &self,
+        messages: &[Message],
+        params: Option<serde_json::Value>,
+        context: Arc<ExecutorContext>,
+        session_store: Arc<Box<dyn SessionStore>>,
+    ) -> Result<StepResult, AgentError>;
 }
 
 /// Result of a single step execution
@@ -48,7 +110,7 @@ pub enum StepResult {
 pub struct Agent {
     pub definition: AgentDefinition,
     server_tools: Vec<ServerTools>,
-    coordinator: Arc<LocalCoordinator>,
+    coordinator: Arc<AgentExecutor>,
     logger: StepLogger,
     session_store: Arc<Box<dyn SessionStore>>,
     iterations: Arc<RwLock<HashMap<String, i32>>>,
@@ -72,8 +134,8 @@ impl Agent {
     pub fn new(
         definition: AgentDefinition,
         server_tools: Vec<ServerTools>,
-        coordinator: Arc<LocalCoordinator>,
-        context: Arc<CoordinatorContext>,
+        coordinator: Arc<AgentExecutor>,
+        context: Arc<ExecutorContext>,
         session_store: Arc<Box<dyn SessionStore>>,
         custom_agent: Option<Box<dyn CustomAgent>>,
     ) -> Self {
@@ -93,8 +155,8 @@ impl Agent {
     pub fn new_local(
         definition: AgentDefinition,
         server_tools: Vec<ServerTools>,
-        coordinator: Arc<LocalCoordinator>,
-        context: Arc<CoordinatorContext>,
+        coordinator: Arc<AgentExecutor>,
+        context: Arc<ExecutorContext>,
         session_store: Arc<Box<dyn SessionStore>>,
     ) -> Self {
         Self::new(
@@ -111,8 +173,8 @@ impl Agent {
     pub fn new_runnable(
         definition: AgentDefinition,
         server_tools: Vec<ServerTools>,
-        coordinator: Arc<LocalCoordinator>,
-        context: Arc<CoordinatorContext>,
+        coordinator: Arc<AgentExecutor>,
+        context: Arc<ExecutorContext>,
         session_store: Arc<Box<dyn SessionStore>>,
         custom_agent: Box<dyn CustomAgent>,
     ) -> Self {
@@ -131,7 +193,7 @@ impl Agent {
         task: TaskStep,
         plan_config: &PlanConfig,
         iteration: i32,
-        context: Arc<CoordinatorContext>,
+        context: Arc<ExecutorContext>,
     ) -> Result<(), AgentError> {
         let agent_id = &self.definition.name;
         let tools_desc =
@@ -142,7 +204,7 @@ impl Agent {
             let (facts, plan) = if iteration == 1 {
                 create_initial_plan(&task, &tools_desc, &|msgs| {
                     let planning_executor = LLMExecutor::new(
-                        crate::coordinator::reason::get_planning_definition(
+                        crate::agent::reason::get_planning_definition(
                             plan_config.model_settings.clone(),
                         ),
                         vec![],
@@ -173,14 +235,14 @@ impl Agent {
                     .get_messages(&context.thread_id)
                     .await
                     .map_err(|e| AgentError::Session(e.to_string()))?;
-                crate::coordinator::reason::update_plan(
+                crate::agent::reason::update_plan(
                     &task.task,
                     &tools_desc,
                     &previous_messages,
                     remaining_steps,
                     &|msgs| {
                         let planning_executor = LLMExecutor::new(
-                            crate::coordinator::reason::get_planning_definition(
+                            crate::agent::reason::get_planning_definition(
                                 plan_config.model_settings.clone(),
                             ),
                             vec![],
@@ -244,7 +306,7 @@ impl Agent {
         Ok(())
     }
 
-    async fn system_step(&self, context: Arc<CoordinatorContext>) -> Result<(), AgentError> {
+    async fn system_step(&self, context: Arc<ExecutorContext>) -> Result<(), AgentError> {
         let agent_id = &self.definition.name;
         // Store system message if present
         if let Some(system_prompt) = &self.definition.system_prompt {
@@ -263,7 +325,7 @@ impl Agent {
     async fn task_step(
         &self,
         task: &TaskStep,
-        context: Arc<CoordinatorContext>,
+        context: Arc<ExecutorContext>,
     ) -> Result<(), AgentError> {
         let task_step = MemoryStep::Task(task.clone());
         let agent_id = &self.definition.name;
@@ -281,7 +343,7 @@ impl Agent {
         &self,
         messages: &[Message],
         params: Option<serde_json::Value>,
-        context: Arc<CoordinatorContext>,
+        context: Arc<ExecutorContext>,
     ) -> Result<StepResult, AgentError> {
         if let Some(custom_agent) = &self.custom_agent {
             // For runnable agents, delegate to CustomAgent::step
@@ -299,7 +361,7 @@ impl Agent {
         &self,
         messages: &[Message],
         params: Option<serde_json::Value>,
-        context: Arc<CoordinatorContext>,
+        context: Arc<ExecutorContext>,
     ) -> Result<StepResult, AgentError> {
         let agent_id = &self.definition.name;
 
@@ -386,7 +448,7 @@ impl Agent {
     async fn emit_text_message_events(
         &self,
         event_tx: &mpsc::Sender<AgentEvent>,
-        context: &CoordinatorContext,
+        context: &ExecutorContext,
         content: &str,
         role: &str,
     ) {
@@ -422,7 +484,7 @@ impl Agent {
         &self,
         task: TaskStep,
         params: Option<serde_json::Value>,
-        context: Arc<CoordinatorContext>,
+        context: Arc<ExecutorContext>,
         event_tx: mpsc::Sender<AgentEvent>,
     ) -> Result<(), AgentError> {
         let agent_id = &self.definition.name;
@@ -558,7 +620,7 @@ impl Agent {
         &self,
         task: TaskStep,
         params: Option<serde_json::Value>,
-        context: Arc<CoordinatorContext>,
+        context: Arc<ExecutorContext>,
         event_tx: Option<mpsc::Sender<AgentEvent>>,
     ) -> Result<String, AgentError> {
         let agent_id = &self.definition.name;

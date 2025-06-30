@@ -12,14 +12,14 @@ use serde_json::json;
 
 use crate::{error::AgentError, memory::TaskStep};
 
-use super::{CoordinatorContext, LocalCoordinator};
+use super::{ExecutorContext, AgentExecutor};
 
 pub static DISTRI_LOCAL_SERVER: &str = "distri_agents";
 
 pub fn build_server<T: Transport>(
     transport: T,
-    coordinator: Arc<LocalCoordinator>,
-    context: Arc<CoordinatorContext>,
+    coordinator: Arc<AgentExecutor>,
+    context: Arc<ExecutorContext>,
 ) -> Result<Server<T>, AgentError> {
     let coordinator_clone = coordinator.clone();
     let coordinator_clone2 = coordinator.clone();
@@ -116,8 +116,8 @@ mod tests {
     use anyhow::Result;
 
     use crate::{
-        coordinator::{CoordinatorContext, LocalCoordinator},
-        store::{AgentStore, InMemoryAgentStore, LocalSessionStore, SessionStore},
+        agent::{ExecutorContext, AgentExecutor},
+        store::{InMemoryAgentStore, LocalSessionStore, SessionStore},
         tests::utils::{get_registry, get_tools_session_store},
     };
 
@@ -129,14 +129,14 @@ mod tests {
     use serde_json::json;
     use tracing::info;
 
-    async fn async_server(transport: ServerInMemoryTransport, context: Arc<CoordinatorContext>) {
+    async fn async_server(transport: ServerInMemoryTransport, context: Arc<ExecutorContext>) {
         let registry = get_registry().await;
         let session_store = Some(Arc::new(
             Box::new(LocalSessionStore::new()) as Box<dyn SessionStore>
         ));
         let agent_store = Arc::new(InMemoryAgentStore::new());
         let tool_sessions = get_tools_session_store();
-        let coordinator = Arc::new(LocalCoordinator::new(
+        let coordinator = Arc::new(AgentExecutor::new(
             registry.clone(),
             tool_sessions,
             session_store,
@@ -155,7 +155,7 @@ mod tests {
             .init();
 
         // Create transports
-        let context = Arc::new(CoordinatorContext::default());
+        let context = Arc::new(ExecutorContext::default());
         let client_transport =
             ClientInMemoryTransport::new(move |t| tokio::spawn(async_server(t, context.clone())));
         client_transport.open().await?;

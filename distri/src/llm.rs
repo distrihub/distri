@@ -1,7 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use crate::{
-    coordinator::{CoordinatorContext, ModelLogger},
+    agent::{ExecutorContext, ModelLogger},
     error::AgentError,
     langdb::GatewayConfig,
     types::{validate_parameters, Message, MessageRole, ModelProvider, ServerTools, ToolCall},
@@ -27,7 +27,7 @@ pub struct LLMExecutor {
     agent_def: AgentDefinition,
     server_tools: Vec<ServerTools>,
     model_logger: ModelLogger,
-    context: Arc<CoordinatorContext>,
+    context: Arc<ExecutorContext>,
     additional_headers: Option<HashMap<String, String>>,
     label: Option<String>,
 }
@@ -39,7 +39,7 @@ impl LLMExecutor {
     pub fn new(
         agent_def: AgentDefinition,
         server_tools: Vec<ServerTools>,
-        context: Arc<CoordinatorContext>,
+        context: Arc<ExecutorContext>,
         additional_headers: Option<HashMap<String, String>>,
         label: Option<String>,
     ) -> Self {
@@ -133,7 +133,7 @@ impl LLMExecutor {
         &self,
         messages: &[Message],
         params: Option<Value>,
-        event_tx: mpsc::Sender<crate::coordinator::AgentEvent>,
+        event_tx: mpsc::Sender<crate::agent::AgentEvent>,
     ) -> Result<(), AgentError> {
         // Create normalized parameters
         if let Some(schema) = self.agent_def.parameters.as_ref() {
@@ -172,7 +172,7 @@ impl LLMExecutor {
 
         // Send RunStarted event
         event_tx
-            .send(crate::coordinator::AgentEvent::RunStarted {
+            .send(crate::agent::AgentEvent::RunStarted {
                 thread_id: thread_id.clone(),
                 run_id: run_id.clone(),
             })
@@ -197,7 +197,7 @@ impl LLMExecutor {
 
         // Send TextMessageStart event
         event_tx
-            .send(crate::coordinator::AgentEvent::TextMessageStart {
+            .send(crate::agent::AgentEvent::TextMessageStart {
                 thread_id: thread_id.clone(),
                 run_id: run_id.clone(),
                 message_id: message_id.clone(),
@@ -218,7 +218,7 @@ impl LLMExecutor {
                             current_content.push_str(content);
                             // Send TextMessageContent event
                             event_tx
-                                .send(crate::coordinator::AgentEvent::TextMessageContent {
+                                .send(crate::agent::AgentEvent::TextMessageContent {
                                     thread_id: thread_id.clone(),
                                     run_id: run_id.clone(),
                                     message_id: message_id.clone(),
@@ -251,7 +251,7 @@ impl LLMExecutor {
 
                                 // Send ToolCallStart event
                                 event_tx
-                                    .send(crate::coordinator::AgentEvent::ToolCallStart {
+                                    .send(crate::agent::AgentEvent::ToolCallStart {
                                         thread_id: thread_id.clone(),
                                         run_id: run_id.clone(),
                                         tool_call_id: tool_call_id.clone(),
@@ -268,7 +268,7 @@ impl LLMExecutor {
 
                                 // Send ToolCallArgs event
                                 event_tx
-                                    .send(crate::coordinator::AgentEvent::ToolCallArgs {
+                                    .send(crate::agent::AgentEvent::ToolCallArgs {
                                         thread_id: thread_id.clone(),
                                         run_id: run_id.clone(),
                                         tool_call_id: tool_call_id.clone(),
@@ -284,7 +284,7 @@ impl LLMExecutor {
 
                                 // Send ToolCallEnd event
                                 event_tx
-                                    .send(crate::coordinator::AgentEvent::ToolCallEnd {
+                                    .send(crate::agent::AgentEvent::ToolCallEnd {
                                         thread_id: thread_id.clone(),
                                         run_id: run_id.clone(),
                                         tool_call_id: tool_call_id.clone(),
@@ -304,7 +304,7 @@ impl LLMExecutor {
                     tracing::error!("OpenAI error: {}", e);
                     // Send RunError event
                     event_tx
-                        .send(crate::coordinator::AgentEvent::RunError {
+                        .send(crate::agent::AgentEvent::RunError {
                             thread_id: thread_id.clone(),
                             run_id: run_id.clone(),
                             message: e.to_string(),
@@ -321,7 +321,7 @@ impl LLMExecutor {
 
         // Send TextMessageEnd event
         event_tx
-            .send(crate::coordinator::AgentEvent::TextMessageEnd {
+            .send(crate::agent::AgentEvent::TextMessageEnd {
                 thread_id: thread_id.clone(),
                 run_id: run_id.clone(),
                 message_id: message_id.clone(),
@@ -333,7 +333,7 @@ impl LLMExecutor {
 
         // Send RunFinished event
         event_tx
-            .send(crate::coordinator::AgentEvent::RunFinished { thread_id, run_id })
+            .send(crate::agent::AgentEvent::RunFinished { thread_id, run_id })
             .await
             .map_err(|e| {
                 AgentError::LLMError(format!("Failed to send RunFinished event: {}", e))
@@ -466,7 +466,7 @@ impl LLMExecutor {
 async fn completion(
     agent_def: &AgentDefinition,
     mut request: CreateChatCompletionRequest,
-    context: Arc<CoordinatorContext>,
+    context: Arc<ExecutorContext>,
     additional_headers: Option<HashMap<String, String>>,
     label: Option<String>,
 ) -> Result<CreateChatCompletionResponse, AgentError> {
@@ -512,7 +512,7 @@ async fn completion(
 async fn completion_stream(
     agent_def: &AgentDefinition,
     mut request: CreateChatCompletionRequest,
-    context: Arc<CoordinatorContext>,
+    context: Arc<ExecutorContext>,
     additional_headers: Option<HashMap<String, String>>,
     label: Option<String>,
 ) -> Result<

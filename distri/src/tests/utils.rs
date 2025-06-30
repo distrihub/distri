@@ -3,7 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
 
 use crate::{
-    coordinator::{CoordinatorContext, LocalCoordinator, DISTRI_LOCAL_SERVER},
+    agent::{ExecutorContext, AgentExecutor, DISTRI_LOCAL_SERVER},
     servers::registry::{ServerMetadata, ServerRegistry, ServerTrait},
     types::{PlanConfig, TransportType},
     AgentDefinition, McpDefinition, McpSession, ModelSettings, ToolSessionStore,
@@ -29,7 +29,7 @@ impl ToolSessionStore for StaticSessionStore {
     async fn get_session(
         &self,
         _tool_name: &str,
-        _context: &CoordinatorContext,
+        _context: &ExecutorContext,
     ) -> anyhow::Result<Option<McpSession>> {
         Ok(Some(McpSession {
             token: self.session_key.clone(),
@@ -69,10 +69,10 @@ pub async fn get_registry() -> Arc<RwLock<ServerRegistry>> {
 
 pub async fn register_coordinator(
     registry: Arc<RwLock<ServerRegistry>>,
-    coordinator: Arc<LocalCoordinator>,
+    coordinator: Arc<AgentExecutor>,
 ) {
     let mut registry = registry.write().await;
-    let context = Arc::new(CoordinatorContext::default());
+    let context = Arc::new(ExecutorContext::default());
     registry.register(
         DISTRI_LOCAL_SERVER.to_string(),
         ServerMetadata {
@@ -82,7 +82,7 @@ pub async fn register_coordinator(
             builder: Some(Arc::new(move |_, transport| {
                 let coordinator = coordinator.clone();
                 let context = context.clone();
-                let server = crate::coordinator::build_server(transport, coordinator, context)?;
+                let server = crate::agent::build_server(transport, coordinator, context)?;
                 Ok(Box::new(server) as Box<dyn ServerTrait>)
             })),
             memories: HashMap::new(),

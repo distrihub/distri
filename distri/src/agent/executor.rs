@@ -15,14 +15,14 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
 
 use super::AgentEvent;
-use super::CoordinatorContext;
-use super::{AgentCoordinator, CoordinatorMessage};
+use super::CoordinatorMessage;
+use super::ExecutorContext;
 use crate::memory::TaskStep;
 
 // Message types for coordinator communication
 
 #[derive(Clone)]
-pub struct LocalCoordinator {
+pub struct AgentExecutor {
     pub agent_store: Arc<dyn AgentStore>,
     pub tool_sessions: Option<Arc<Box<dyn ToolSessionStore>>>,
     pub registry: Arc<RwLock<ServerRegistry>>,
@@ -30,16 +30,16 @@ pub struct LocalCoordinator {
     pub coordinator_tx: mpsc::Sender<CoordinatorMessage>,
     pub session_store: Arc<Box<dyn SessionStore>>,
     thread_store: Arc<Box<dyn ThreadStore>>,
-    pub context: Arc<CoordinatorContext>,
+    pub context: Arc<ExecutorContext>,
 }
 
-impl LocalCoordinator {
+impl AgentExecutor {
     pub fn new(
         registry: Arc<RwLock<ServerRegistry>>,
         tool_sessions: Option<Arc<Box<dyn ToolSessionStore>>>,
         session_store: Option<Arc<Box<dyn SessionStore>>>,
         agent_store: Arc<dyn AgentStore>,
-        context: Arc<CoordinatorContext>,
+        context: Arc<ExecutorContext>,
     ) -> Self {
         let (coordinator_tx, coordinator_rx) = mpsc::channel(100);
         let thread_store =
@@ -245,7 +245,7 @@ impl LocalCoordinator {
         agent_id: &str,
         task: TaskStep,
         params: Option<serde_json::Value>,
-        context: Arc<CoordinatorContext>,
+        context: Arc<ExecutorContext>,
         event_tx: Option<tokio::sync::mpsc::Sender<AgentEvent>>,
     ) -> Result<String, AgentError> {
         // Get agent from store and use invoke method
@@ -264,7 +264,7 @@ impl LocalCoordinator {
         agent_id: &str,
         task: TaskStep,
         params: Option<serde_json::Value>,
-        context: Arc<CoordinatorContext>,
+        context: Arc<ExecutorContext>,
         event_tx: mpsc::Sender<AgentEvent>,
     ) -> Result<(), AgentError> {
         // Get agent from store and use invoke_stream method
@@ -348,29 +348,26 @@ impl LocalCoordinator {
             }
         }
     }
-}
 
-#[async_trait::async_trait]
-impl AgentCoordinator for LocalCoordinator {
-    async fn execute(
+    pub async fn execute(
         &self,
         agent_name: &str,
         task: TaskStep,
         params: Option<serde_json::Value>,
-        context: Arc<CoordinatorContext>,
+        context: Arc<ExecutorContext>,
         event_tx: Option<tokio::sync::mpsc::Sender<AgentEvent>>,
     ) -> Result<String, AgentError> {
         self.call_agent(agent_name, task, params, context, event_tx)
             .await
     }
 
-    async fn execute_stream(
+    pub async fn execute_stream(
         &self,
         agent_name: &str,
         task: TaskStep,
         params: Option<serde_json::Value>,
         event_tx: mpsc::Sender<AgentEvent>,
-        context: Arc<CoordinatorContext>,
+        context: Arc<ExecutorContext>,
     ) -> Result<(), AgentError> {
         self.call_agent_stream(agent_name, task, params, context, event_tx)
             .await

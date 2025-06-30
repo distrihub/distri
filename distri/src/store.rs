@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use crate::{
     agent::Agent,
-    coordinator::CoordinatorContext,
+    agent::ExecutorContext,
     memory::{AgentMemory, LocalAgentMemory, MemoryStep},
     types::{
         CreateThreadRequest, McpSession, Message, ServerTools, Thread, ThreadSummary,
@@ -19,7 +19,7 @@ pub trait ToolSessionStore: Send + Sync {
     async fn get_session(
         &self,
         server_name: &str,
-        context: &CoordinatorContext,
+        context: &ExecutorContext,
     ) -> anyhow::Result<Option<McpSession>>;
 }
 
@@ -40,7 +40,7 @@ impl ToolSessionStore for InMemorySessionStore {
     async fn get_session(
         &self,
         server_name: &str,
-        _context: &CoordinatorContext,
+        _context: &ExecutorContext,
     ) -> anyhow::Result<Option<McpSession>> {
         Ok(self.mcp_sessions.get(server_name).cloned())
     }

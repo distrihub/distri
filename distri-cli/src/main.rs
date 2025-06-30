@@ -5,7 +5,7 @@ use clap::Parser;
 use cli::{Cli, Commands};
 mod logging;
 use distri::{
-    coordinator::{CoordinatorContext, LocalCoordinator},
+    agent::{AgentExecutor, ExecutorContext},
     memory::MemoryConfig,
     servers::{
         kg::FileMemory,
@@ -190,14 +190,14 @@ fn print_schema(pretty: bool) {
 
 async fn init_all(
     config: &Configuration,
-) -> Result<(Arc<RwLock<ServerRegistry>>, Arc<LocalCoordinator>)> {
+) -> Result<(Arc<RwLock<ServerRegistry>>, Arc<AgentExecutor>)> {
     let sessions = config.sessions.clone();
 
     let local_memories = HashMap::new();
     let tool_sessions = get_session_store(sessions);
 
     let memory_config = MemoryConfig::File(".distri/memory".to_string());
-    let context = Arc::new(CoordinatorContext::default());
+    let context = Arc::new(ExecutorContext::default());
     let agent_store = Arc::new(InMemoryAgentStore::new());
     let (registry, coordinator) = init_registry_and_coordinator(
         local_memories,

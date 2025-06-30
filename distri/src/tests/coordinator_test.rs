@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tracing::info;
 
 use crate::{
-    coordinator::{AgentEvent, CoordinatorContext, LocalCoordinator, DISTRI_LOCAL_SERVER},
+    agent::{AgentEvent, ExecutorContext, AgentExecutor, DISTRI_LOCAL_SERVER},
     init_logging,
     memory::TaskStep,
     store::InMemoryAgentStore,
@@ -55,12 +55,12 @@ async fn test_agent_coordination() -> anyhow::Result<()> {
 
     let tool_sessions = get_tools_session_store();
 
-    let coordinator = Arc::new(LocalCoordinator::new(
+    let coordinator = Arc::new(AgentExecutor::new(
         registry.clone(),
         tool_sessions,
         None,
         local_agent_store,
-        Arc::new(CoordinatorContext::default()),
+        Arc::new(ExecutorContext::default()),
     ));
 
     //register coordinator in registry
@@ -115,12 +115,12 @@ async fn test_agent_coordination_streaming() -> anyhow::Result<()> {
     // Initialize coordinator
     let registry = get_registry().await;
     let tool_sessions = get_tools_session_store();
-    let coordinator = Arc::new(LocalCoordinator::new(
+    let coordinator = Arc::new(AgentExecutor::new(
         registry.clone(),
         tool_sessions,
         None,
         Arc::new(InMemoryAgentStore::new()),
-        Arc::new(CoordinatorContext::default()),
+        Arc::new(ExecutorContext::default()),
     ));
 
     // Register coordinator in registry

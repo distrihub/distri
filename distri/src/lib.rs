@@ -1,5 +1,5 @@
 pub mod error;
-pub mod executor;
+pub mod llm;
 pub mod store;
 pub mod tools;
 pub mod types;
@@ -11,7 +11,6 @@ pub use store::{
 pub use types::{AgentDefinition, McpDefinition, McpSession, ModelSettings};
 pub mod a2a;
 pub mod agent;
-pub mod coordinator;
 pub mod langdb;
 pub mod memory;
 pub mod servers;
