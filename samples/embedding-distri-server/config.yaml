@@ -1,0 +1,47 @@
+# Simple Test Configuration for Embedding Sample
+server:
+  host: "127.0.0.1"
+  port: 8080
+  documentation_url: "https://github.com/distrihub/distri"
+  preferred_transport: "JSONRPC"
+  capabilities:
+    streaming: true
+    push_notifications: true
+    state_transition_history: true
+    extensions: []
+  default_input_modes:
+    - "text/plain"
+    - "text/markdown"
+  default_output_modes:
+    - "text/plain"
+    - "text/markdown"
+  security_schemes: {}
+  security: []
+
+# Simple agents for testing
+agents:
+  - name: "assistant"
+    description: "A helpful AI assistant"
+    model: "gpt-4o-mini"
+    system_prompt: |
+      You are a helpful AI assistant. You can answer questions and help with tasks.
+      Be concise but thorough in your responses.
+    icon_url: "https://example.com/assistant-icon.png"
+    mcp_servers: []
+
+  - name: "echo"
+    description: "A simple echo agent for testing"
+    model: "gpt-4o-mini"
+    system_prompt: |
+      You are an echo agent. Simply repeat back what the user says, 
+      but add "Echo: " at the beginning.
+    icon_url: "https://example.com/echo-icon.png"
+    mcp_servers: []
+
+# MCP server configurations (empty for this example)
+mcp_servers: []
+
+# Logging configuration
+logging:
+  level: "info"
+  verbose: true

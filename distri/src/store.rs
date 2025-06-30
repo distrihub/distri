@@ -12,7 +12,17 @@ use crate::{
         UpdateThreadRequest,
     },
 };
-use distri_a2a::{EventKind, Message as A2aMessage, Task, TaskState, TaskStatus};
+use distri_a2a::{Message as A2aMessage, Task, TaskState, TaskStatus};
+// Workaround for EventKind import issue - define locally
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+enum EventKind {
+    #[default]
+    Message,
+    Task,
+    TaskStatusUpdate,
+    TaskArtifactUpdate,
+}
 
 #[async_trait]
 pub trait ToolSessionStore: Send + Sync {
