@@ -1,37 +1,124 @@
 use crate::{
-    coordinator::{AgentEvent, LocalCoordinator},
+    agent::{AgentEvent, AgentExecutor},
     error::AgentError,
-    executor::LLMExecutor,
+    llm::LLMExecutor,
     memory::SystemStep,
     types::{
         get_tool_descriptions, AgentDefinition, Message, MessageContent, MessageRole, PlanConfig,
-        ServerTools, DEFAULT_TOOL_DESCRIPTION_TEMPLATE,
+        ServerTools, ToolCall, DEFAULT_TOOL_DESCRIPTION_TEMPLATE,
     },
     SessionStore,
 };
-use std::{collections::HashMap, sync::Arc};
-use tokio::sync::{mpsc, RwLock};
+use std::sync::Arc;
+use tokio::sync::mpsc;
 use uuid::Uuid;
 
-use crate::coordinator::{reason::create_initial_plan, CoordinatorContext, StepLogger};
+use crate::agent::{reason::create_initial_plan, ExecutorContext, StepLogger};
 use crate::memory::{ActionStep, MemoryStep, PlanningStep, TaskStep};
 
 pub const MAX_ITERATIONS: i32 = 10;
 
 #[async_trait::async_trait]
-pub trait CustomAgent: Send + Sync + std::fmt::Debug {
-    /// Execute one step in the agent execution loop
-    /// This is called for each iteration and should implement the agent's custom logic
-    async fn step(
+pub trait BaseAgent: Send + Sync + std::fmt::Debug {
+    async fn invoke(
+        &self,
+        task: TaskStep,
+        params: Option<serde_json::Value>,
+        context: Arc<ExecutorContext>,
+        event_tx: Option<mpsc::Sender<AgentEvent>>,
+    ) -> Result<String, AgentError>;
+    async fn invoke_stream(
+        &self,
+        task: TaskStep,
+        params: Option<serde_json::Value>,
+        context: Arc<ExecutorContext>,
+        event_tx: mpsc::Sender<AgentEvent>,
+    ) -> Result<(), AgentError>;
+
+    // Default implementation hooks that return values as-is
+    async fn after_task_step(
+        &self,
+        _task: TaskStep,
+        _context: Arc<ExecutorContext>,
+    ) -> Result<(), AgentError> {
+        Ok(())
+    }
+
+    async fn after_llm_step(
         &self,
         messages: &[Message],
-        params: Option<serde_json::Value>,
-        context: Arc<CoordinatorContext>,
-        session_store: Arc<Box<dyn SessionStore>>,
-    ) -> Result<StepResult, AgentError>;
+        _params: Option<serde_json::Value>,
+        _context: Arc<ExecutorContext>,
+    ) -> Result<Vec<Message>, AgentError> {
+        Ok(messages.to_vec())
+    }
 
-    /// Clone the custom agent (required for object safety)
-    fn clone_box(&self) -> Box<dyn CustomAgent>;
+    async fn before_tool_calls(
+        &self,
+        tool_calls: &[ToolCall],
+        _context: Arc<ExecutorContext>,
+    ) -> Result<Vec<ToolCall>, AgentError> {
+        Ok(tool_calls.to_vec())
+    }
+
+    async fn after_tool_calls(
+        &self,
+        _tool_responses: &[String],
+        _context: Arc<ExecutorContext>,
+    ) -> Result<(), AgentError> {
+        Ok(())
+    }
+
+    async fn after_finish(
+        &self,
+        _content: &str,
+        _context: Arc<ExecutorContext>,
+    ) -> Result<(), AgentError> {
+        Ok(())
+    }
+
+    /// Clone the agent (required for object safety)
+    fn clone_box(&self) -> Box<dyn BaseAgent>;
+
+    /// Get the agent's name/id
+    fn get_name(&self) -> &str;
+
+    fn get_description(&self) -> &str;
+    fn get_definition(&self) -> AgentDefinition;
+}
+
+#[async_trait::async_trait]
+pub trait AgentInvoke: BaseAgent {
+    /// Custom invoke implementation
+    /// By default this errors out - implementers must override this
+    async fn agent_invoke(
+        &self,
+        _task: TaskStep,
+        _params: Option<serde_json::Value>,
+        _context: Arc<ExecutorContext>,
+        _event_tx: Option<mpsc::Sender<AgentEvent>>,
+    ) -> Result<String, AgentError> {
+        Err(AgentError::NotImplemented(
+            "AgentInvoke::agent_invoke not implemented".to_string(),
+        ))
+    }
+}
+
+#[async_trait::async_trait]
+pub trait AgentInvokeStream: BaseAgent {
+    /// Custom invoke_stream implementation
+    /// By default this errors out - implementers must override this
+    async fn agent_invoke_stream(
+        &self,
+        _task: TaskStep,
+        _params: Option<serde_json::Value>,
+        _context: Arc<ExecutorContext>,
+        _event_tx: mpsc::Sender<AgentEvent>,
+    ) -> Result<(), AgentError> {
+        Err(AgentError::NotImplemented(
+            "AgentInvokeStream::agent_invoke_stream not implemented".to_string(),
+        ))
+    }
 }
 
 /// Result of a single step execution
@@ -45,37 +132,31 @@ pub enum StepResult {
     ToolCalls(Vec<crate::types::ToolCall>),
 }
 
-pub struct Agent {
+/// Default agent implementation that provides the standard LLM-based behavior
+#[derive(Clone)]
+pub struct DefaultAgent {
     pub definition: AgentDefinition,
     server_tools: Vec<ServerTools>,
-    coordinator: Arc<LocalCoordinator>,
+    coordinator: Arc<AgentExecutor>,
     logger: StepLogger,
     session_store: Arc<Box<dyn SessionStore>>,
-    iterations: Arc<RwLock<HashMap<String, i32>>>,
-    custom_agent: Option<Box<dyn CustomAgent>>,
 }
 
-impl Clone for Agent {
-    fn clone(&self) -> Self {
-        Self {
-            definition: self.definition.clone(),
-            server_tools: self.server_tools.clone(),
-            coordinator: self.coordinator.clone(),
-            logger: self.logger.clone(),
-            session_store: self.session_store.clone(),
-            iterations: self.iterations.clone(),
-            custom_agent: self.custom_agent.as_ref().map(|agent| agent.clone_box()),
-        }
+impl std::fmt::Debug for DefaultAgent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DefaultAgent")
+            .field("definition", &self.definition)
+            .finish()
     }
 }
-impl Agent {
+
+impl DefaultAgent {
     pub fn new(
         definition: AgentDefinition,
         server_tools: Vec<ServerTools>,
-        coordinator: Arc<LocalCoordinator>,
-        context: Arc<CoordinatorContext>,
+        coordinator: Arc<AgentExecutor>,
+        context: Arc<ExecutorContext>,
         session_store: Arc<Box<dyn SessionStore>>,
-        custom_agent: Option<Box<dyn CustomAgent>>,
     ) -> Self {
         let logger = StepLogger::new(context.verbose);
         Self {
@@ -84,46 +165,7 @@ impl Agent {
             coordinator,
             logger,
             session_store,
-            iterations: Arc::new(RwLock::new(HashMap::new())),
-            custom_agent,
         }
-    }
-
-    /// Create a local (YAML-based) agent
-    pub fn new_local(
-        definition: AgentDefinition,
-        server_tools: Vec<ServerTools>,
-        coordinator: Arc<LocalCoordinator>,
-        context: Arc<CoordinatorContext>,
-        session_store: Arc<Box<dyn SessionStore>>,
-    ) -> Self {
-        Self::new(
-            definition,
-            server_tools,
-            coordinator,
-            context,
-            session_store,
-            None,
-        )
-    }
-
-    /// Create a runnable (CustomAgent-based) agent
-    pub fn new_runnable(
-        definition: AgentDefinition,
-        server_tools: Vec<ServerTools>,
-        coordinator: Arc<LocalCoordinator>,
-        context: Arc<CoordinatorContext>,
-        session_store: Arc<Box<dyn SessionStore>>,
-        custom_agent: Box<dyn CustomAgent>,
-    ) -> Self {
-        Self::new(
-            definition,
-            server_tools,
-            coordinator,
-            context,
-            session_store,
-            Some(custom_agent),
-        )
     }
 
     pub async fn plan_step(
@@ -131,7 +173,7 @@ impl Agent {
         task: TaskStep,
         plan_config: &PlanConfig,
         iteration: i32,
-        context: Arc<CoordinatorContext>,
+        context: Arc<ExecutorContext>,
     ) -> Result<(), AgentError> {
         let agent_id = &self.definition.name;
         let tools_desc =
@@ -142,7 +184,7 @@ impl Agent {
             let (facts, plan) = if iteration == 1 {
                 create_initial_plan(&task, &tools_desc, &|msgs| {
                     let planning_executor = LLMExecutor::new(
-                        crate::coordinator::reason::get_planning_definition(
+                        crate::agent::reason::get_planning_definition(
                             plan_config.model_settings.clone(),
                         ),
                         vec![],
@@ -173,14 +215,14 @@ impl Agent {
                     .get_messages(&context.thread_id)
                     .await
                     .map_err(|e| AgentError::Session(e.to_string()))?;
-                crate::coordinator::reason::update_plan(
+                crate::agent::reason::update_plan(
                     &task.task,
                     &tools_desc,
                     &previous_messages,
                     remaining_steps,
                     &|msgs| {
                         let planning_executor = LLMExecutor::new(
-                            crate::coordinator::reason::get_planning_definition(
+                            crate::agent::reason::get_planning_definition(
                                 plan_config.model_settings.clone(),
                             ),
                             vec![],
@@ -244,7 +286,7 @@ impl Agent {
         Ok(())
     }
 
-    async fn system_step(&self, context: Arc<CoordinatorContext>) -> Result<(), AgentError> {
+    async fn system_step(&self, context: Arc<ExecutorContext>) -> Result<(), AgentError> {
         let agent_id = &self.definition.name;
         // Store system message if present
         if let Some(system_prompt) = &self.definition.system_prompt {
@@ -263,7 +305,7 @@ impl Agent {
     async fn task_step(
         &self,
         task: &TaskStep,
-        context: Arc<CoordinatorContext>,
+        context: Arc<ExecutorContext>,
     ) -> Result<(), AgentError> {
         let task_step = MemoryStep::Task(task.clone());
         let agent_id = &self.definition.name;
@@ -275,31 +317,22 @@ impl Agent {
         Ok(())
     }
     /// Execute one step in the execution loop
-    /// For Local agents: executes LLM call with tool handling
-    /// For Runnable agents: calls CustomAgent::step
+    /// Executes standard LLM call with tool handling
     async fn step(
         &self,
         messages: &[Message],
         params: Option<serde_json::Value>,
-        context: Arc<CoordinatorContext>,
+        context: Arc<ExecutorContext>,
     ) -> Result<StepResult, AgentError> {
-        if let Some(custom_agent) = &self.custom_agent {
-            // For runnable agents, delegate to CustomAgent::step
-            custom_agent
-                .step(messages, params, context, self.session_store.clone())
-                .await
-        } else {
-            // For local agents, execute standard LLM call with tool handling
-            self.local_step(messages, params, context).await
-        }
+        self.llm_step(messages, params, context).await
     }
 
-    /// Execute one step for local (YAML-based) agents
-    async fn local_step(
+    /// Execute one step using LLM
+    async fn llm_step(
         &self,
         messages: &[Message],
         params: Option<serde_json::Value>,
-        context: Arc<CoordinatorContext>,
+        context: Arc<ExecutorContext>,
     ) -> Result<StepResult, AgentError> {
         let agent_id = &self.definition.name;
 
@@ -386,7 +419,7 @@ impl Agent {
     async fn emit_text_message_events(
         &self,
         event_tx: &mpsc::Sender<AgentEvent>,
-        context: &CoordinatorContext,
+        context: &ExecutorContext,
         content: &str,
         role: &str,
     ) {
@@ -422,7 +455,7 @@ impl Agent {
         &self,
         task: TaskStep,
         params: Option<serde_json::Value>,
-        context: Arc<CoordinatorContext>,
+        context: Arc<ExecutorContext>,
         event_tx: mpsc::Sender<AgentEvent>,
     ) -> Result<(), AgentError> {
         let agent_id = &self.definition.name;
@@ -558,7 +591,7 @@ impl Agent {
         &self,
         task: TaskStep,
         params: Option<serde_json::Value>,
-        context: Arc<CoordinatorContext>,
+        context: Arc<ExecutorContext>,
         event_tx: Option<mpsc::Sender<AgentEvent>>,
     ) -> Result<String, AgentError> {
         let agent_id = &self.definition.name;
@@ -664,5 +697,321 @@ impl Agent {
             }
         }
         result
+    }
+}
+
+#[async_trait::async_trait]
+impl BaseAgent for DefaultAgent {
+    fn get_definition(&self) -> AgentDefinition {
+        self.definition.clone()
+    }
+
+    fn get_description(&self) -> &str {
+        &self.definition.description
+    }
+
+    async fn invoke(
+        &self,
+        task: TaskStep,
+        params: Option<serde_json::Value>,
+        context: Arc<ExecutorContext>,
+        event_tx: Option<mpsc::Sender<AgentEvent>>,
+    ) -> Result<String, AgentError> {
+        let agent_id = &self.definition.name;
+        let run_id = context.run_id.lock().await.clone();
+        let thread_id = context.thread_id.clone();
+        let mut iterations = self
+            .session_store
+            .get_iteration(&run_id)
+            .await
+            .map_err(|e| AgentError::Session(e.to_string()))?;
+        // Send RunStarted event if event_tx is provided
+        if let Some(event_tx) = &event_tx {
+            let _ = event_tx
+                .send(AgentEvent::RunStarted {
+                    thread_id: thread_id.clone(),
+                    run_id: run_id.clone(),
+                })
+                .await;
+        }
+        let result = async {
+            if iterations == 0 {
+                self.system_step(context.clone()).await?;
+                self.task_step(&task, context.clone()).await?;
+            }
+            let mut current_messages = self
+                .session_store
+                .get_messages(&context.thread_id)
+                .await
+                .map_err(|e| AgentError::Session(e.to_string()))?;
+            let max_iterations = self.definition.max_iterations.unwrap_or(MAX_ITERATIONS);
+            tracing::debug!("Max iterations per run set to: {}", max_iterations);
+            loop {
+                if iterations > max_iterations {
+                    return Err(AgentError::LLMError(format!(
+                        "Max iterations reached: {max_iterations}",
+                    )));
+                }
+                // Handle planning if enabled
+                if let Some(plan_config) = &self.definition.plan {
+                    self.plan_step(task.clone(), plan_config, iterations, context.clone())
+                        .await?;
+                    // Refresh messages after planning
+                    current_messages = self
+                        .session_store
+                        .get_messages(&context.thread_id)
+                        .await
+                        .map_err(|e| AgentError::Session(e.to_string()))?;
+                }
+                let step_result = self
+                    .step(&current_messages, params.clone(), context.clone())
+                    .await?;
+                match step_result {
+                    StepResult::Finish(content) => {
+                        // Store final response as action step
+                        let action_step = MemoryStep::Action(ActionStep {
+                            model_input_messages: Some(current_messages),
+                            model_output: Some(content.clone()),
+                            ..Default::default()
+                        });
+                        self.session_store
+                            .store_step(&context.thread_id, action_step.clone())
+                            .await
+                            .map_err(|e| AgentError::Session(e.to_string()))?;
+                        self.logger.log_step(agent_id, &action_step);
+                        // Call after_finish hook
+                        self.after_finish(&content, context.clone()).await?;
+                        return Ok(content);
+                    }
+                    StepResult::Continue(new_messages) => {
+                        current_messages.extend(new_messages);
+                        iterations = self
+                            .session_store
+                            .inc_iteration(&run_id)
+                            .await
+                            .map_err(|e| AgentError::Session(e.to_string()))?;
+                        continue;
+                    }
+                    StepResult::ToolCalls(_tool_calls) => {
+                        return Err(AgentError::LLMError(
+                            "ToolCalls result not properly handled".to_string(),
+                        ));
+                    }
+                }
+            }
+        }
+        .await;
+        // Send RunFinished or RunError event if event_tx is provided
+        if let Some(event_tx) = &event_tx {
+            match &result {
+                Ok(_) => {
+                    let _ = event_tx
+                        .send(AgentEvent::RunFinished { thread_id, run_id })
+                        .await;
+                }
+                Err(e) => {
+                    let _ = event_tx
+                        .send(AgentEvent::RunError {
+                            thread_id,
+                            run_id,
+                            message: e.to_string(),
+                            code: None,
+                        })
+                        .await;
+                }
+            }
+        }
+        result
+    }
+
+    async fn invoke_stream(
+        &self,
+        task: TaskStep,
+        params: Option<serde_json::Value>,
+        context: Arc<ExecutorContext>,
+        event_tx: mpsc::Sender<AgentEvent>,
+    ) -> Result<(), AgentError> {
+        // Use the actual implementation from DefaultAgent
+        DefaultAgent::invoke_stream(self, task, params, context, event_tx).await
+    }
+
+    fn clone_box(&self) -> Box<dyn BaseAgent> {
+        Box::new(self.clone())
+    }
+
+    fn get_name(&self) -> &str {
+        &self.definition.name
+    }
+}
+
+/// Example custom agent implementation that uses AgentInvoke
+#[derive(Debug, Clone)]
+pub struct TestCustomAgent {
+    pub name: String,
+    pub description: String,
+}
+
+impl TestCustomAgent {
+    pub fn new(name: String) -> Self {
+        Self {
+            description: name.clone(),
+            name: name.clone(),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl BaseAgent for TestCustomAgent {
+    fn get_description(&self) -> &str {
+        &self.description
+    }
+
+    fn get_definition(&self) -> AgentDefinition {
+        AgentDefinition {
+            name: self.name.clone(),
+            description: self.description.clone(),
+            ..Default::default()
+        }
+    }
+
+    async fn invoke(
+        &self,
+        task: TaskStep,
+        params: Option<serde_json::Value>,
+        context: Arc<ExecutorContext>,
+        event_tx: Option<mpsc::Sender<AgentEvent>>,
+    ) -> Result<String, AgentError> {
+        // Call the custom agent_invoke implementation
+        self.agent_invoke(task, params, context, event_tx).await
+    }
+
+    async fn invoke_stream(
+        &self,
+        task: TaskStep,
+        params: Option<serde_json::Value>,
+        context: Arc<ExecutorContext>,
+        event_tx: mpsc::Sender<AgentEvent>,
+    ) -> Result<(), AgentError> {
+        // Call the custom agent_invoke_stream implementation
+        self.agent_invoke_stream(task, params, context, event_tx)
+            .await
+    }
+
+    fn clone_box(&self) -> Box<dyn BaseAgent> {
+        Box::new(self.clone())
+    }
+
+    fn get_name(&self) -> &str {
+        &self.name
+    }
+}
+
+#[async_trait::async_trait]
+impl AgentInvoke for TestCustomAgent {
+    async fn agent_invoke(
+        &self,
+        task: TaskStep,
+        _params: Option<serde_json::Value>,
+        context: Arc<ExecutorContext>,
+        event_tx: Option<mpsc::Sender<AgentEvent>>,
+    ) -> Result<String, AgentError> {
+        let run_id = context.run_id.lock().await.clone();
+        let thread_id = context.thread_id.clone();
+
+        // Send RunStarted event if event_tx is provided
+        if let Some(event_tx) = &event_tx {
+            let _ = event_tx
+                .send(AgentEvent::RunStarted {
+                    thread_id: thread_id.clone(),
+                    run_id: run_id.clone(),
+                })
+                .await;
+        }
+
+        // Custom processing: just return a simple response based on the task
+        let response = format!("Custom agent '{}' processed task: {}", self.name, task.task);
+
+        // Send RunFinished event if event_tx is provided
+        if let Some(event_tx) = &event_tx {
+            let _ = event_tx
+                .send(AgentEvent::RunFinished { thread_id, run_id })
+                .await;
+        }
+
+        Ok(response)
+    }
+}
+
+#[async_trait::async_trait]
+impl AgentInvokeStream for TestCustomAgent {
+    async fn agent_invoke_stream(
+        &self,
+        task: TaskStep,
+        _params: Option<serde_json::Value>,
+        context: Arc<ExecutorContext>,
+        event_tx: mpsc::Sender<AgentEvent>,
+    ) -> Result<(), AgentError> {
+        let run_id = context.run_id.lock().await.clone();
+        let thread_id = context.thread_id.clone();
+
+        // Send RunStarted event
+        let _ = event_tx
+            .send(AgentEvent::RunStarted {
+                thread_id: thread_id.clone(),
+                run_id: run_id.clone(),
+            })
+            .await;
+
+        // Simulate streaming response by sending multiple text events
+        let message_id = uuid::Uuid::new_v4().to_string();
+        let _ = event_tx
+            .send(AgentEvent::TextMessageStart {
+                thread_id: thread_id.clone(),
+                run_id: run_id.clone(),
+                message_id: message_id.clone(),
+                role: "assistant".to_string(),
+            })
+            .await;
+
+        let str = &format!("'{}' ", self.get_name());
+        let parts = vec![
+            "Custom ",
+            "agent ",
+            str,
+            "is ",
+            "streaming ",
+            "response ",
+            "for: ",
+            &task.task,
+        ];
+
+        for part in parts {
+            let _ = event_tx
+                .send(AgentEvent::TextMessageContent {
+                    thread_id: thread_id.clone(),
+                    run_id: run_id.clone(),
+                    message_id: message_id.clone(),
+                    delta: part.to_string(),
+                })
+                .await;
+
+            // Small delay to simulate streaming
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        }
+
+        let _ = event_tx
+            .send(AgentEvent::TextMessageEnd {
+                thread_id: thread_id.clone(),
+                run_id: run_id.clone(),
+                message_id,
+            })
+            .await;
+
+        // Send RunFinished event
+        let _ = event_tx
+            .send(AgentEvent::RunFinished { thread_id, run_id })
+            .await;
+
+        Ok(())
     }
 }

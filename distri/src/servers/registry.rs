@@ -1,5 +1,5 @@
 use crate::{
-    coordinator::{self, CoordinatorContext, LocalCoordinator, DISTRI_LOCAL_SERVER},
+    agent::{self, AgentExecutor, ExecutorContext, DISTRI_LOCAL_SERVER},
     memory::{AgentMemory, MemoryConfig},
     store::{AgentStore, FileSessionStore, LocalSessionStore, SessionStore},
     types::{ExternalMcpServer, TransportType},
@@ -95,9 +95,9 @@ pub async fn init_registry_and_coordinator(
     tool_sessions: Option<Arc<Box<dyn ToolSessionStore>>>,
     agent_store: Arc<dyn AgentStore>,
     external_servers: &[ExternalMcpServer],
-    context: Arc<CoordinatorContext>,
+    context: Arc<ExecutorContext>,
     memory_config: MemoryConfig,
-) -> (Arc<RwLock<ServerRegistry>>, Arc<LocalCoordinator>) {
+) -> (Arc<RwLock<ServerRegistry>>, Arc<AgentExecutor>) {
     let server_registry = Arc::new(RwLock::new(ServerRegistry::new()));
     let reg_clone = server_registry.clone();
     let mut registry = reg_clone.write().await;
@@ -111,7 +111,7 @@ pub async fn init_registry_and_coordinator(
         )),
     };
 
-    let coordinator = Arc::new(LocalCoordinator::new(
+    let coordinator = Arc::new(AgentExecutor::new(
         server_registry.clone(),
         tool_sessions,
         session_store,
@@ -171,7 +171,7 @@ pub async fn init_registry_and_coordinator(
             builder: Some(Arc::new(move |_, transport| {
                 let coordinator = coordinator.clone();
                 let context = context.clone();
-                let server = coordinator::build_server(transport, coordinator, context)?;
+                let server = agent::build_server(transport, coordinator, context)?;
                 Ok(Box::new(server) as Box<dyn ServerTrait>)
             })),
             memories: HashMap::new(),

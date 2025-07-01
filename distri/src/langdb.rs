@@ -5,7 +5,7 @@ use reqwest::header::{HeaderMap, HeaderName, AUTHORIZATION};
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
 
-use crate::coordinator::CoordinatorContext;
+use crate::agent::ExecutorContext;
 /// Using LangDB as a gateway for OpenAI
 /// https://docs.langdb.ai/
 pub const GATEWAY_API_BASE: &str = "https://api.us-east-1.langdb.ai/v1";
@@ -20,7 +20,7 @@ pub struct GatewayConfig {
     api_key: SecretString,
     project_id: String,
     #[serde(skip)]
-    context: Option<Arc<CoordinatorContext>>,
+    context: Option<Arc<ExecutorContext>>,
     additional_headers: Option<HashMap<String, String>>,
 }
 
@@ -63,7 +63,7 @@ impl GatewayConfig {
         self
     }
 
-    pub fn with_context(mut self, context: Arc<CoordinatorContext>) -> Self {
+    pub fn with_context(mut self, context: Arc<ExecutorContext>) -> Self {
         self.context = Some(context);
         self
     }

@@ -1,14 +1,11 @@
-use distri::coordinator::{AgentCoordinator, LocalCoordinator};
+use distri::agent::AgentExecutor;
 use distri::memory::TaskStep;
 use std::sync::Arc;
 use tracing::{error, info};
 
 use distri::AgentDefinition;
 
-pub async fn run(
-    agent: &AgentDefinition,
-    coordinator: Arc<LocalCoordinator>,
-) -> anyhow::Result<()> {
+pub async fn run(agent: &AgentDefinition, coordinator: Arc<AgentExecutor>) -> anyhow::Result<()> {
     let agent_name = &agent.name;
 
     info!("Executing agent run");

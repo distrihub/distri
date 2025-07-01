@@ -1,6 +1,6 @@
 use anyhow::Result;
 use distri::{
-    coordinator::{CoordinatorContext, LocalCoordinator, DISTRI_LOCAL_SERVER},
+    agent::{AgentExecutor, ExecutorContext, DISTRI_LOCAL_SERVER},
     servers::registry::{ServerMetadata, ServerRegistry, ServerTrait},
     store::{AgentStore, InMemoryAgentStore},
     types::{Configuration, TransportType},
@@ -23,13 +23,13 @@ pub fn load_config() -> Result<Configuration> {
 
 pub async fn init_registry_and_coordinator(
     agent_store: Arc<dyn AgentStore>,
-    context: Arc<CoordinatorContext>,
-) -> (Arc<RwLock<ServerRegistry>>, Arc<LocalCoordinator>) {
+    context: Arc<ExecutorContext>,
+) -> (Arc<RwLock<ServerRegistry>>, Arc<AgentExecutor>) {
     let server_registry = Arc::new(RwLock::new(ServerRegistry::new()));
     let reg_clone = server_registry.clone();
     let mut registry = reg_clone.write().await;
 
-    let coordinator = Arc::new(LocalCoordinator::new(
+    let coordinator = Arc::new(AgentExecutor::new(
         server_registry.clone(),
         None,
         None,
@@ -74,7 +74,7 @@ pub async fn init_registry_and_coordinator(
             builder: Some(Arc::new(move |_, transport| {
                 let coordinator = coordinator.clone();
                 let context = context.clone();
-                let server = distri::coordinator::build_server(transport, coordinator, context)?;
+                let server = distri::agent::build_server(transport, coordinator, context)?;
                 Ok(Box::new(server) as Box<dyn ServerTrait>)
             })),
             memories: HashMap::new(),
@@ -84,8 +84,8 @@ pub async fn init_registry_and_coordinator(
     (server_registry, coordinator_clone)
 }
 
-pub async fn init_infrastructure() -> Result<(Arc<RwLock<ServerRegistry>>, Arc<LocalCoordinator>)> {
-    let context = Arc::new(CoordinatorContext::default());
+pub async fn init_infrastructure() -> Result<(Arc<RwLock<ServerRegistry>>, Arc<AgentExecutor>)> {
+    let context = Arc::new(ExecutorContext::default());
     let agent_store = Arc::new(InMemoryAgentStore::new());
     let (registry, coordinator) = init_registry_and_coordinator(agent_store.clone(), context).await;
 

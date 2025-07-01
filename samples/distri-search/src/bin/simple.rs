@@ -1,5 +1,5 @@
 use anyhow::Result;
-use distri::{coordinator::CoordinatorContext, memory::TaskStep, types::AgentRecord};
+use distri::{agent::ExecutorContext, memory::TaskStep, types::AgentRecord};
 use distri_search::{init_infrastructure, load_config};
 use std::sync::Arc;
 use tracing::info;
@@ -29,16 +29,21 @@ async fn main() -> Result<()> {
 
     // Register the DeepSearch agent from YAML config
     info!("Registering DeepSearch agent...");
+
     let deep_search_config = config
         .agents
         .iter()
         .find(|a| a.definition.name == "deep_search")
         .expect("deep_search agent not found in config");
 
-    let agent_handle = coordinator
-        .register_agent(AgentRecord::Local(deep_search_config.definition.clone()))
+    let definition = &deep_search_config.definition;
+    let agent = coordinator.create_default_agent(definition.clone());
+    coordinator
+        .register_agent(AgentRecord {
+            definition: definition.clone(),
+            agent: agent,
+        })
         .await?;
-
     info!("✅ DeepSearch agent registered");
 
     // Start the coordinator in the background
@@ -62,9 +67,12 @@ async fn main() -> Result<()> {
     println!("\n🔄 Executing task...");
 
     // Create context for this execution
-    let context = Arc::new(CoordinatorContext::default());
+    let context = Arc::new(ExecutorContext::default());
 
-    match agent_handle.invoke(task, None, context.clone(), None).await {
+    match coordinator
+        .execute(&definition.name, task, None, context.clone(), None)
+        .await
+    {
         Ok(result) => {
             println!("\n✅ Task completed successfully!");
             println!("\n📋 Result:");

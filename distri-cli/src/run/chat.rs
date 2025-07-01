@@ -1,4 +1,4 @@
-use distri::coordinator::{AgentCoordinator, LocalCoordinator};
+use distri::agent::AgentExecutor;
 use distri::memory::TaskStep;
 use distri::types::AgentConfig;
 use rustyline::DefaultEditor;
@@ -10,7 +10,7 @@ use distri::types::{Message, MessageContent, MessageRole};
 
 pub async fn run(
     agent_config: &AgentConfig,
-    coordinator: Arc<LocalCoordinator>,
+    coordinator: Arc<AgentExecutor>,
 ) -> anyhow::Result<()> {
     let agent = &agent_config.definition;
     let agent_name = &agent.name;

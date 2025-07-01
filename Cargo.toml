@@ -1,5 +1,6 @@
 [workspace]
 resolver = "2"
+
 members = [
   "distri",
   "proxy",
@@ -8,8 +9,9 @@ members = [
   "distri-cli",
   "distri-a2a",
   "samples/distri-search",
+  "samples/embedding-distri-server",
 ]
-default-members = ["distri-cli", "samples/distri-search"]
+default-members = ["distri-cli"]
 
 [workspace.dependencies]
 async-mcp = { version = "0.1.1" }

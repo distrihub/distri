@@ -4,8 +4,7 @@ use tokio::sync::RwLock;
 use uuid::Uuid;
 
 use crate::{
-    agent::Agent,
-    coordinator::CoordinatorContext,
+    agent::ExecutorContext,
     memory::{AgentMemory, LocalAgentMemory, MemoryStep},
     types::{
         CreateThreadRequest, McpSession, Message, ServerTools, Thread, ThreadSummary,
@@ -19,7 +18,7 @@ pub trait ToolSessionStore: Send + Sync {
     async fn get_session(
         &self,
         server_name: &str,
-        context: &CoordinatorContext,
+        context: &ExecutorContext,
     ) -> anyhow::Result<Option<McpSession>>;
 }
 
@@ -40,7 +39,7 @@ impl ToolSessionStore for InMemorySessionStore {
     async fn get_session(
         &self,
         server_name: &str,
-        _context: &CoordinatorContext,
+        _context: &ExecutorContext,
     ) -> anyhow::Result<Option<McpSession>> {
         Ok(self.mcp_sessions.get(server_name).cloned())
     }
@@ -712,15 +711,19 @@ pub trait AgentStore: Send + Sync {
         &self,
         cursor: Option<String>,
         limit: Option<usize>,
-    ) -> (Vec<Agent>, Option<String>);
-    async fn get(&self, name: &str) -> Option<Agent>;
+    ) -> (Vec<Box<dyn crate::agent::BaseAgent>>, Option<String>);
+    async fn get(&self, name: &str) -> Option<Box<dyn crate::agent::BaseAgent>>;
     async fn get_tools(&self, name: &str) -> Option<Vec<ServerTools>>;
-    async fn register(&self, agent: Agent, tools: Vec<ServerTools>) -> anyhow::Result<()>;
+    async fn register(
+        &self,
+        agent: Box<dyn crate::agent::BaseAgent>,
+        tools: Vec<ServerTools>,
+    ) -> anyhow::Result<()>;
 }
 
 #[derive(Clone, Default)]
 pub struct InMemoryAgentStore {
-    agents: Arc<RwLock<HashMap<String, Agent>>>,
+    agents: Arc<RwLock<HashMap<String, Box<dyn crate::agent::BaseAgent>>>>,
     agent_tools: Arc<RwLock<HashMap<String, Vec<ServerTools>>>>,
 }
 
@@ -731,7 +734,7 @@ impl InMemoryAgentStore {
             agent_tools: Arc::new(RwLock::new(HashMap::new())),
         }
     }
-    pub async fn insert(&self, name: String, agent: Agent) {
+    pub async fn insert(&self, name: String, agent: Box<dyn crate::agent::BaseAgent>) {
         let mut agents = self.agents.write().await;
         agents.insert(name, agent);
     }
@@ -743,7 +746,7 @@ impl AgentStore for InMemoryAgentStore {
         &self,
         cursor: Option<String>,
         limit: Option<usize>,
-    ) -> (Vec<Agent>, Option<String>) {
+    ) -> (Vec<Box<dyn crate::agent::BaseAgent>>, Option<String>) {
         let agents = self.agents.read().await;
         let mut keys: Vec<&String> = agents.keys().collect();
         keys.sort();
@@ -757,7 +760,7 @@ impl AgentStore for InMemoryAgentStore {
         let mut next_cursor = None;
         for k in keys.iter().skip(start).take(limit) {
             if let Some(agent) = agents.get(*k) {
-                result.push(agent.clone());
+                result.push(agent.clone_box());
             }
         }
         if start + limit < keys.len() {
@@ -765,16 +768,20 @@ impl AgentStore for InMemoryAgentStore {
         }
         (result, next_cursor)
     }
-    async fn get(&self, name: &str) -> Option<Agent> {
+    async fn get(&self, name: &str) -> Option<Box<dyn crate::agent::BaseAgent>> {
         let agents = self.agents.read().await;
-        agents.get(name).cloned()
+        agents.get(name).map(|agent| agent.clone_box())
     }
     async fn get_tools(&self, name: &str) -> Option<Vec<ServerTools>> {
         let agent_tools = self.agent_tools.read().await;
         agent_tools.get(name).cloned()
     }
-    async fn register(&self, agent: Agent, tools: Vec<ServerTools>) -> anyhow::Result<()> {
-        let name = agent.definition.name.clone();
+    async fn register(
+        &self,
+        agent: Box<dyn crate::agent::BaseAgent>,
+        tools: Vec<ServerTools>,
+    ) -> anyhow::Result<()> {
+        let name = agent.get_name().to_string();
         let mut agents = self.agents.write().await;
         agents.insert(name.clone(), agent);
         let mut agent_tools = self.agent_tools.write().await;

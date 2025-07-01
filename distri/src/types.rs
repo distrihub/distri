@@ -56,18 +56,16 @@ pub enum TransportAuth {
 }
 
 #[derive(Debug)]
-pub enum AgentRecord {
-    Local(AgentDefinition),
-    Runnable(AgentDefinition, Box<dyn crate::agent::CustomAgent>),
+pub struct AgentRecord {
+    pub definition: AgentDefinition,
+    pub agent: Box<dyn crate::agent::BaseAgent>,
 }
 
 impl Clone for AgentRecord {
     fn clone(&self) -> Self {
-        match self {
-            AgentRecord::Local(def) => AgentRecord::Local(def.clone()),
-            AgentRecord::Runnable(def, agent) => {
-                AgentRecord::Runnable(def.clone(), agent.clone_box())
-            }
+        Self {
+            definition: self.definition.clone(),
+            agent: self.agent.clone_box(),
         }
     }
 }

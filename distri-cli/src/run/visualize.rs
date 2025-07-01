@@ -10,14 +10,14 @@ pub async fn _visualize_agents(agent_store: Arc<dyn AgentStore>) -> anyhow::Resu
 
     for agent in agents.iter() {
         // Add agent representation
-        let definition = &agent.definition;
+        let definition = agent.get_definition();
         lines.push("┌─────────────────────────────┐".to_string());
         lines.push(format!("│         {}            │", definition.name));
         lines.push(format!("│  Description: {} │", definition.description));
         lines.push("└─────────────────────────────┘".to_string());
 
         let tools = agent_store
-            .get_tools(&agent.definition.name)
+            .get_tools(&definition.name)
             .await
             .unwrap_or_default();
         // Connect agent to its tools
