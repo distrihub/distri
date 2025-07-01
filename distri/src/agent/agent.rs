@@ -304,6 +304,17 @@ impl DefaultAgent {
         params: Option<serde_json::Value>,
         context: Arc<ExecutorContext>,
     ) -> Result<StepResult, AgentError> {
+        self.llm_with_event_tx(messages, params, context, None).await
+    }
+
+    /// Execute one step using LLM with optional event_tx for handover support
+    async fn llm_with_event_tx(
+        &self,
+        messages: &[Message],
+        params: Option<serde_json::Value>,
+        context: Arc<ExecutorContext>,
+        event_tx: Option<mpsc::Sender<AgentEvent>>,
+    ) -> Result<StepResult, AgentError> {
         let agent_id = &self.definition.name;
 
         // Create executor for LLM call
@@ -347,24 +358,29 @@ impl DefaultAgent {
 
                     // Process all tool calls in parallel
                     let tool_responses =
-                        futures::future::join_all(tool_calls.iter().map(|tool_call| async move {
-                            let mapped_tool_call = LLMExecutor::map_tool_call(tool_call);
+                        futures::future::join_all(tool_calls.iter().map(|tool_call| {
+                            let agent_id = agent_id.clone();
+                            let coordinator = self.coordinator.clone();
+                            let event_tx = event_tx.clone();
+                            let context = context.clone();
+                            async move {
+                                let mapped_tool_call = LLMExecutor::map_tool_call(tool_call);
 
-                            let content = self
-                                .coordinator
-                                .execute_tool(agent_id.clone(), mapped_tool_call.clone())
-                                .await
-                                .unwrap_or_else(|err| format!("Error: {}", err));
+                                let content = coordinator
+                                    .execute_tool(agent_id, mapped_tool_call.clone(), event_tx, context)
+                                    .await
+                                    .unwrap_or_else(|err| format!("Error: {}", err));
 
-                            Message {
-                                role: MessageRole::ToolResponse,
-                                name: Some(tool_call.function.name.clone()),
-                                content: vec![MessageContent {
-                                    content_type: "text".to_string(),
-                                    text: Some(content),
-                                    image: None,
-                                }],
-                                tool_calls: vec![mapped_tool_call],
+                                Message {
+                                    role: MessageRole::ToolResponse,
+                                    name: Some(tool_call.function.name.clone()),
+                                    content: vec![MessageContent {
+                                        content_type: "text".to_string(),
+                                        text: Some(content),
+                                        image: None,
+                                    }],
+                                    tool_calls: vec![mapped_tool_call],
+                                }
                             }
                         }))
                         .await;
@@ -594,7 +610,7 @@ impl DefaultAgent {
                     .await
                     .map_err(|e| AgentError::Session(e.to_string()))?;
                 let step_result = self
-                    .step(&current_messages, params.clone(), context.clone())
+                    .llm_with_event_tx(&current_messages, params.clone(), context.clone(), event_tx.clone())
                     .await?;
                 match step_result {
                     StepResult::Finish(content) => {

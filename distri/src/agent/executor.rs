@@ -15,6 +15,7 @@ use crate::{
 };
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
+use serde_json;
 
 use super::AgentEvent;
 use super::CoordinatorMessage;
@@ -219,7 +220,44 @@ impl AgentExecutor {
         &self,
         agent_id: String,
         tool_call: ToolCall,
+        event_tx: Option<mpsc::Sender<AgentEvent>>,
+        context: Arc<ExecutorContext>,
     ) -> Result<String, AgentError> {
+        // Check if this is the transfer_to_agent tool first
+        if tool_call.tool_name == "transfer_to_agent" {
+            // Parse the tool arguments
+            let args: serde_json::Value = serde_json::from_str(&tool_call.input)
+                .unwrap_or_else(|_| serde_json::json!({}));
+            
+            let target_agent = args.get("agent_name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+            let reason = args.get("reason")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+
+            // Check if target agent exists
+            if let Some(_target_agent) = self.agent_store.get(target_agent).await {
+                // Send handover message through coordinator
+                self.send_handover(
+                    agent_id.clone(),
+                    target_agent.to_string(),
+                    reason.clone(),
+                    context.clone(),
+                    event_tx,
+                ).await?;
+                
+                tracing::info!("Agent handover requested from {} to {}", agent_id, target_agent);
+                return Ok(format!("Transfer initiated to agent '{}'. Reason: {}", 
+                    target_agent, 
+                    reason.unwrap_or_else(|| "No reason provided".to_string())
+                ));
+            } else {
+                return Ok(format!("Error: Target agent '{}' not found", target_agent));
+            }
+        }
+
+        // For non-transfer tools, use the existing mechanism
         let (response_tx, response_rx) = oneshot::channel();
         self.coordinator_tx
             .send(CoordinatorMessage::ExecuteTool {
@@ -373,6 +411,33 @@ impl AgentExecutor {
                         }
                     });
                 }
+                CoordinatorMessage::HandoverAgent {
+                    from_agent,
+                    to_agent,
+                    reason,
+                    context,
+                    event_tx,
+                } => {
+                    tracing::info!("Handling agent handover from {} to {}", from_agent, to_agent);
+                    
+                    // Emit the AgentHandover event if event_tx is available
+                    if let Some(event_tx) = event_tx {
+                        let run_id = context.run_id.lock().await.clone();
+                        let handover_event = AgentEvent::AgentHandover {
+                            thread_id: context.thread_id.clone(),
+                            run_id,
+                            from_agent: from_agent.clone(),
+                            to_agent: to_agent.clone(),
+                            reason,
+                        };
+                        
+                        if let Err(e) = event_tx.send(handover_event).await {
+                            tracing::error!("Failed to send AgentHandover event: {}", e);
+                        } else {
+                            tracing::info!("Successfully emitted AgentHandover event from {} to {}", from_agent, to_agent);
+                        }
+                    }
+                }
             }
         }
         tracing::info!("AgentCoordinator run loop exiting");
@@ -510,5 +575,29 @@ impl AgentExecutor {
     ) -> Result<(), AgentError> {
         self.call_agent_stream(agent_name, task, params, context, event_tx)
             .await
+    }
+
+    /// Send an agent handover message to the coordinator
+    pub async fn send_handover(
+        &self,
+        from_agent: String,
+        to_agent: String,
+        reason: Option<String>,
+        context: Arc<ExecutorContext>,
+        event_tx: Option<mpsc::Sender<AgentEvent>>,
+    ) -> Result<(), AgentError> {
+        self.coordinator_tx
+            .send(CoordinatorMessage::HandoverAgent {
+                from_agent,
+                to_agent,
+                reason,
+                context,
+                event_tx,
+            })
+            .await
+            .map_err(|e| {
+                AgentError::ToolExecution(format!("Failed to send handover message: {}", e))
+            })?;
+        Ok(())
     }
 }

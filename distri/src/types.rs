@@ -130,6 +130,10 @@ pub struct AgentDefinition {
 
     #[serde(default)]
     pub max_iterations: Option<i32>,
+    
+    /// List of sub-agents that this agent can transfer control to
+    #[serde(default)]
+    pub sub_agents: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, Default)]

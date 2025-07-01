@@ -397,6 +397,30 @@ impl LLMExecutor {
             }
         }
 
+        // Add built-in transfer_to_agent tool
+        tools.push(ChatCompletionTool {
+            r#type: async_openai::types::ChatCompletionToolType::Function,
+            function: FunctionObject {
+                name: "transfer_to_agent".to_string(),
+                description: Some("Transfer control to another agent to continue the workflow".to_string()),
+                parameters: Some(serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "agent_name": {
+                            "type": "string",
+                            "description": "The name of the agent to transfer control to"
+                        },
+                        "reason": {
+                            "type": "string",
+                            "description": "Optional reason for the transfer"
+                        }
+                    },
+                    "required": ["agent_name"]
+                })),
+                strict: None,
+            },
+        });
+
         tools
     }
 
