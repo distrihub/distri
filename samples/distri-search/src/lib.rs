@@ -1,175 +1,173 @@
-
 use anyhow::Result;
 use distri::{
-    agent::{AgentExecutor, ExecutorContext, DISTRI_LOCAL_SERVER},
+    agent::{AgentExecutor, ExecutorContext},
     servers::registry::{ServerMetadata, ServerRegistry, ServerTrait},
     store::{AgentStore, InMemoryAgentStore},
     types::{Configuration, TransportType},
 };
 use distri_cli::{load_config as load_config_from_file, initialize_executor};
+use distri_server::reusable_server::{DistriServerBuilder, DistriServerCustomizer};
 use dotenv::dotenv;
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
 
-/// Builder for creating a customized ServerRegistry for distri-search
-pub struct DistriSearchRegistryBuilder {
-    context: Arc<ExecutorContext>,
+/// Custom implementation for distri-search registry customization
+pub struct DistriSearchCustomizer {
+    service_name: String,
+    description: String,
+    capabilities: Vec<String>,
 }
 
-impl DistriSearchRegistryBuilder {
+impl DistriSearchCustomizer {
     pub fn new() -> Self {
         Self {
-            context: Arc::new(ExecutorContext::default()),
+            service_name: "distri-search-server".to_string(),
+            description: "AI-powered search service using Tavily and Spider".to_string(),
+            capabilities: vec![
+                "web_search".to_string(),
+                "web_scraping".to_string(), 
+                "deep_research".to_string(),
+                "agent_execution".to_string(),
+                "task_management".to_string(),
+            ],
         }
-    }
-
-    pub fn with_context(mut self, context: Arc<ExecutorContext>) -> Self {
-        self.context = context;
-        self
-    }
-
-    /// Build the registry with distri-search specific servers
-    pub async fn build(&self, executor: Arc<AgentExecutor>) -> Arc<RwLock<ServerRegistry>> {
-        let server_registry = Arc::new(RwLock::new(ServerRegistry::new()));
-        let reg_clone = server_registry.clone();
-        let mut registry = reg_clone.write().await;
-
-        // Register search server (Tavily)
-        registry.register(
-            "search".to_string(),
-            ServerMetadata {
-                auth_session_key: None,
-                mcp_transport: TransportType::InMemory,
-                kg_memory: None,
-                builder: Some(Arc::new(|_, transport| {
-                    let server = mcp_tavily::build(transport)?;
-                    Ok(Box::new(server) as Box<dyn ServerTrait>)
-                })),
-                memories: HashMap::new(),
-            },
-        );
-
-        // Register scrape server (Spider)
-        registry.register(
-            "scrape".to_string(),
-            ServerMetadata {
-                auth_session_key: None,
-                mcp_transport: TransportType::InMemory,
-                kg_memory: None,
-                builder: Some(Arc::new(|_, transport| {
-                    let server = mcp_spider::build(transport)?;
-                    Ok(Box::new(server) as Box<dyn ServerTrait>)
-                })),
-                memories: HashMap::new(),
-            },
-        );
-
-        // Register local distri server
-        let executor_clone = executor.clone();
-        let context_clone = self.context.clone();
-        registry.register(
-            DISTRI_LOCAL_SERVER.to_string(),
-            ServerMetadata {
-                auth_session_key: None,
-                mcp_transport: TransportType::InMemory,
-                kg_memory: None,
-                builder: Some(Arc::new(move |_, transport| {
-                    let executor = executor_clone.clone();
-                    let context = context_clone.clone();
-                    let server = distri::agent::build_server(transport, executor, context)?;
-                    Ok(Box::new(server) as Box<dyn ServerTrait>)
-                })),
-                memories: HashMap::new(),
-            },
-        );
-
-        server_registry
     }
 }
 
-/// Load configuration from the embedded definition.yaml
+impl DistriServerCustomizer for DistriSearchCustomizer {
+    fn customize_registry(&self, registry: &mut ServerRegistry) -> Result<()> {
+        // Add search-specific MCP servers
+        
+        // Add Tavily search server
+        registry.register_server(
+            "tavily".to_string(),
+            Box::new(ServerMetadata {
+                name: "tavily".to_string(),
+                transport: TransportType::Stdio,
+                command: "mcp-server-tavily".to_string(),
+                args: vec![],
+                env: HashMap::new(),
+            }),
+        );
+
+        // Add Spider web scraping server  
+        registry.register_server(
+            "spider".to_string(),
+            Box::new(ServerMetadata {
+                name: "spider".to_string(),
+                transport: TransportType::Stdio,
+                command: "mcp-server-spider".to_string(),
+                args: vec![],
+                env: HashMap::new(),
+            }),
+        );
+
+        Ok(())
+    }
+
+    fn service_name(&self) -> &str {
+        &self.service_name
+    }
+
+    fn service_description(&self) -> &str {
+        &self.description
+    }
+
+    fn service_capabilities(&self) -> Vec<String> {
+        self.capabilities.clone()
+    }
+
+    fn configure_routes(&self, _cfg: &mut actix_web::web::ServiceConfig) {
+        // No additional routes for now
+    }
+}
+
+/// Load embedded configuration for distri-search
 pub fn load_config() -> Result<Configuration> {
     dotenv().ok();
-    let config_str = include_str!("../definition.yaml");
-    let config: Configuration = serde_yaml::from_str(&config_str)?;
+
+    let yaml_content = r#"
+agents:
+  deep_search:
+    model: gpt-4o-mini
+    system_prompt: |
+      You are a deep research assistant that provides comprehensive analysis.
+      When given a search query, use the available tools to:
+      1. Search for relevant information using web search
+      2. Scrape detailed content from promising URLs
+      3. Synthesize findings into a comprehensive report
+      
+      Always cite your sources and provide multiple perspectives when available.
+    tools:
+      - tavily_search
+      - spider_scrape
+
+servers:
+  tavily:
+    transport: stdio
+    command: mcp-server-tavily
+    args: []
+    env: {}
+  spider:
+    transport: stdio  
+    command: mcp-server-spider
+    args: []
+    env: {}
+
+llm:
+  provider: openai
+  api_key: ${OPENAI_API_KEY}
+  model: gpt-4o-mini
+"#;
+
+    let config: Configuration = serde_yaml::from_str(yaml_content)?;
     Ok(config)
 }
 
-/// Run the distri-search agent as a CLI application
-pub async fn run_cli(config: Configuration, agent_name: &str, task: &str) -> Result<()> {
-    tracing::info!("Running distri-search agent '{}' with task: {}", agent_name, task);
+/// Run CLI with the given configuration
+pub async fn run_cli(config: Configuration, agent: &str, task: &str) -> Result<()> {
+    tracing::info!("Running Distri Search CLI...");
     
-    // Initialize executor using the centralized function
     let executor = initialize_executor(&config).await?;
     
-    // Find the agent
-    let agent = executor.agent_store.get(agent_name).await
-        .ok_or_else(|| anyhow::anyhow!("Agent '{}' not found", agent_name))?;
-    
-    // Execute the task
-    let context = std::sync::Arc::new(distri::agent::ExecutorContext::default());
+    let context = Arc::new(ExecutorContext::default());
     let task_step = distri::memory::TaskStep {
         task: task.to_string(),
         task_images: None,
     };
     
-    let result = agent.invoke(task_step, None, context, None).await?;
-    println!("Result: {}", result);
+    let result = executor.execute(agent, task_step, None, context, None).await
+        .map_err(|e| anyhow::anyhow!("Execution failed: {}", e))?;
+    
+    println!("Search Result:\n{}", result);
     
     Ok(())
 }
 
-/// List available agents in the configuration
-pub async fn list_agents(config: Configuration) -> Result<()> {
-    let executor = initialize_executor(&config).await?;
-    let (agents, _) = executor.agent_store.list(None, None).await;
-    
-    println!("Available agents:");
-    for agent in agents {
-        println!("  - {}: {}", agent.get_name(), agent.get_description());
-    }
-    
-    Ok(())
-}
-
-/// Run the distri-search server
+/// Run the distri-search server with customized registry
 pub async fn run_server(config: Configuration, host: &str, port: u16) -> Result<()> {
-    use embedding_distri_server::reusable_server::DistribServerBuilder;
-    
-    DistribServerBuilder::new()
-        .with_service_name("distri-search-server")
-        .with_description("This server provides AI-powered search capabilities using Tavily and Spider services")
-        .with_capabilities(vec!["web_search", "web_scraping", "deep_research"])
+    DistriServerBuilder::new()
+        .with_customizer(Box::new(DistriSearchCustomizer::new()))
         .start(config, host, port)
         .await
 }
 
-
-
-/// Legacy functions for backward compatibility
-pub async fn init_registry_and_coordinator(
-    agent_store: Arc<dyn AgentStore>,
-    context: Arc<ExecutorContext>,
-) -> (Arc<RwLock<ServerRegistry>>, Arc<AgentExecutor>) {
-    let server_registry = Arc::new(RwLock::new(ServerRegistry::new()));
-    let coordinator = Arc::new(AgentExecutor::new(
-        server_registry.clone(),
-        None,
-        None,
-        agent_store,
-        context.clone(),
-    ));
+/// List available agents
+pub async fn list_agents(config: Configuration) -> Result<()> {
+    tracing::info!("Available Distri Search Agents:");
     
-    let builder = DistriSearchRegistryBuilder::new().with_context(context);
-    let registry = builder.build(coordinator.clone()).await;
+    for agent_config in &config.agents {
+        let agent = &agent_config.definition;
+        println!("  - {}: {}", agent.name, agent.model_settings.model);
+        if let Some(prompt) = &agent.system_prompt {
+            let preview = if prompt.len() > 100 {
+                format!("{}...", &prompt[..97])
+            } else {
+                prompt.clone()
+            };
+            println!("    Description: {}", preview);
+        }
+    }
     
-    (registry, coordinator)
-}
-
-pub async fn init_infrastructure() -> Result<(Arc<RwLock<ServerRegistry>>, Arc<AgentExecutor>)> {
-    let context = Arc::new(ExecutorContext::default());
-    let agent_store = Arc::new(InMemoryAgentStore::new());
-    let (registry, coordinator) = init_registry_and_coordinator(agent_store.clone(), context).await;
-
-    Ok((registry, coordinator))
+    Ok(())
 }

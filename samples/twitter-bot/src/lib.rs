@@ -1,4 +1,3 @@
-
 use anyhow::Result;
 use distri::{
     agent::{AgentExecutor, ExecutorContext},
@@ -7,116 +6,178 @@ use distri::{
     types::{Configuration, TransportType},
 };
 use distri_cli::{load_config as load_config_from_file, initialize_executor};
+use distri_server::reusable_server::{DistriServerBuilder, DistriServerCustomizer};
 use dotenv::dotenv;
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
 mod store;
 
-/// Builder for creating a customized ServerRegistry for twitter-bot
-pub struct TwitterBotRegistryBuilder {
-    context: Arc<ExecutorContext>,
+/// Custom implementation for twitter-bot registry customization
+pub struct TwitterBotCustomizer {
+    service_name: String,
+    description: String,
+    capabilities: Vec<String>,
 }
 
-impl TwitterBotRegistryBuilder {
+impl TwitterBotCustomizer {
     pub fn new() -> Self {
         Self {
-            context: Arc::new(ExecutorContext::default()),
+            service_name: "twitter-bot-server".to_string(),
+            description: "AI-powered Twitter bot with social media capabilities".to_string(),
+            capabilities: vec![
+                "twitter_search".to_string(),
+                "twitter_posting".to_string(),
+                "social_analysis".to_string(),
+                "agent_execution".to_string(),
+                "task_management".to_string(),
+            ],
         }
-    }
-
-    pub fn with_context(mut self, context: Arc<ExecutorContext>) -> Self {
-        self.context = context;
-        self
-    }
-
-    /// Build the registry with twitter-bot specific servers
-    pub async fn build(&self, executor: Arc<AgentExecutor>) -> Arc<RwLock<ServerRegistry>> {
-        let server_registry = Arc::new(RwLock::new(ServerRegistry::new()));
-        let reg_clone = server_registry.clone();
-        let mut registry = reg_clone.write().await;
-
-        // Register twitter server
-        registry.register(
-            "twitter".to_string(),
-            ServerMetadata {
-                auth_session_key: Some("session_string".to_string()),
-                mcp_transport: TransportType::InMemory,
-                builder: Some(Arc::new(|_, transport| {
-                    let server = mcp_twitter::build(transport)?;
-                    Ok(Box::new(server) as Box<dyn ServerTrait>)
-                })),
-                kg_memory: None,
-                memories: HashMap::new(),
-            },
-        );
-
-        server_registry
     }
 }
 
-/// Load configuration from the embedded definition.yaml
+impl DistriServerCustomizer for TwitterBotCustomizer {
+    fn customize_registry(&self, registry: &mut ServerRegistry) -> Result<()> {
+        // Add Twitter-specific MCP servers
+        
+        // Add Twitter API server
+        registry.register_server(
+            "twitter".to_string(),
+            Box::new(ServerMetadata {
+                name: "twitter".to_string(),
+                transport: TransportType::Stdio,
+                command: "mcp-server-twitter".to_string(),
+                args: vec![],
+                env: HashMap::new(),
+            }),
+        );
+
+        // Add social media analysis server  
+        registry.register_server(
+            "social_analysis".to_string(),
+            Box::new(ServerMetadata {
+                name: "social_analysis".to_string(),
+                transport: TransportType::Stdio,
+                command: "mcp-server-social-analysis".to_string(),
+                args: vec![],
+                env: HashMap::new(),
+            }),
+        );
+
+        Ok(())
+    }
+
+    fn service_name(&self) -> &str {
+        &self.service_name
+    }
+
+    fn service_description(&self) -> &str {
+        &self.description
+    }
+
+    fn service_capabilities(&self) -> Vec<String> {
+        self.capabilities.clone()
+    }
+
+    fn configure_routes(&self, _cfg: &mut actix_web::web::ServiceConfig) {
+        // No additional routes for now
+    }
+}
+
+/// Load embedded configuration for twitter-bot
 pub fn load_config() -> Result<Configuration> {
-    // Load .env file if it exists
     dotenv().ok();
 
-    // Read the config file
-    let config_str = include_str!("../definition.yaml");
+    let yaml_content = r#"
+agents:
+  twitter_bot:
+    model: gpt-4o-mini
+    system_prompt: |
+      You are a Twitter bot assistant that helps with social media engagement.
+      Your capabilities include:
+      1. Searching Twitter for relevant content and trends
+      2. Creating engaging tweets and responses
+      3. Analyzing social media sentiment and metrics
+      4. Managing social media campaigns
+      
+      Always follow Twitter's community guidelines and best practices for engagement.
+    tools:
+      - twitter_search
+      - twitter_post
+      - social_analysis
 
-    // Parse the YAML
-    let config: Configuration = serde_yaml::from_str(&config_str)?;
+servers:
+  twitter:
+    transport: stdio
+    command: mcp-server-twitter
+    args: []
+    env:
+      TWITTER_API_KEY: ${TWITTER_API_KEY}
+      TWITTER_API_SECRET: ${TWITTER_API_SECRET}
+      TWITTER_ACCESS_TOKEN: ${TWITTER_ACCESS_TOKEN}
+      TWITTER_ACCESS_TOKEN_SECRET: ${TWITTER_ACCESS_TOKEN_SECRET}
+  social_analysis:
+    transport: stdio  
+    command: mcp-server-social-analysis
+    args: []
+    env: {}
+
+llm:
+  provider: openai
+  api_key: ${OPENAI_API_KEY}
+  model: gpt-4o-mini
+"#;
+
+    let config: Configuration = serde_yaml::from_str(yaml_content)?;
     Ok(config)
 }
 
-/// Run the twitter-bot agent as a CLI application
-pub async fn run_cli(config: Configuration, agent_name: &str, task: &str) -> Result<()> {
-    tracing::info!("Running twitter-bot agent '{}' with task: {}", agent_name, task);
+/// Run CLI with the given configuration
+pub async fn run_cli(config: Configuration, agent: &str, task: &str) -> Result<()> {
+    tracing::info!("Running Twitter Bot CLI...");
     
-    // Initialize executor using the centralized function
     let executor = initialize_executor(&config).await?;
     
-    // Find the agent
-    let agent = executor.agent_store.get(agent_name).await
-        .ok_or_else(|| anyhow::anyhow!("Agent '{}' not found", agent_name))?;
-    
-    // Execute the task
-    let context = std::sync::Arc::new(distri::agent::ExecutorContext::default());
+    let context = Arc::new(ExecutorContext::default());
     let task_step = distri::memory::TaskStep {
         task: task.to_string(),
         task_images: None,
     };
     
-    let result = agent.invoke(task_step, None, context, None).await?;
-    println!("Result: {}", result);
+    let result = executor.execute(agent, task_step, None, context, None).await
+        .map_err(|e| anyhow::anyhow!("Execution failed: {}", e))?;
+    
+    println!("Twitter Bot Result:\n{}", result);
     
     Ok(())
 }
 
-/// List available agents in the configuration
-pub async fn list_agents(config: Configuration) -> Result<()> {
-    let executor = initialize_executor(&config).await?;
-    let (agents, _) = executor.agent_store.list(None, None).await;
-    
-    println!("Available agents:");
-    for agent in agents {
-        println!("  - {}: {}", agent.get_name(), agent.get_description());
-    }
-    
-    Ok(())
-}
-
-/// Run the twitter-bot server
+/// Run the twitter-bot server with customized registry
 pub async fn run_server(config: Configuration, host: &str, port: u16) -> Result<()> {
-    use embedding_distri_server::reusable_server::DistribServerBuilder;
-    
-    DistribServerBuilder::new()
-        .with_service_name("twitter-bot-server")
-        .with_description("This server provides AI-powered Twitter interaction capabilities")
-        .with_capabilities(vec!["twitter_search", "twitter_posting", "social_analysis"])
+    DistriServerBuilder::new()
+        .with_customizer(Box::new(TwitterBotCustomizer::new()))
         .start(config, host, port)
         .await
 }
 
-
+/// List available agents
+pub async fn list_agents(config: Configuration) -> Result<()> {
+    tracing::info!("Available Twitter Bot Agents:");
+    
+    for agent_config in &config.agents {
+        let agent = &agent_config.definition;
+        println!("  - {}: {}", agent.name, agent.model_settings.model);
+        if let Some(prompt) = &agent.system_prompt {
+            let preview = if prompt.len() > 100 {
+                format!("{}...", &prompt[..97])
+            } else {
+                prompt.clone()
+            };
+            println!("    Description: {}", preview);
+        }
+    }
+    
+    Ok(())
+}
 
 /// Legacy functions for backward compatibility
 pub async fn init_registry_and_coordinator(
@@ -132,10 +193,10 @@ pub async fn init_registry_and_coordinator(
         context.clone(),
     ));
     
-    let builder = TwitterBotRegistryBuilder::new().with_context(context);
-    let registry = builder.build(coordinator.clone()).await;
+    let builder = TwitterBotCustomizer::new();
+    let registry = builder.customize_registry(&mut server_registry.write().await)?;
     
-    (registry, coordinator)
+    (server_registry, coordinator)
 }
 
 pub async fn init_infrastructure() -> Result<(Arc<RwLock<ServerRegistry>>, Arc<AgentExecutor>)> {

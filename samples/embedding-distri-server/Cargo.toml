@@ -3,9 +3,7 @@ name = "embedding-distri-server"
 version = "0.1.0"
 edition = "2021"
 
-[lib]
-name = "embedding_distri_server"
-path = "src/lib.rs"
+
 
 [dependencies]
 actix-web = "4.4"
@@ -21,7 +19,7 @@ chrono = { version = "0.4", features = ["serde"] }
 regex = "1.5"
 clap = { version = "4.5", features = ["derive"] }
 
-distri-server = { path = "../../distri-server" }
+distri-server = { path = "../../distri-server", features = ["reusable"] }
 distri = { path = "../../distri" }
 distri-cli = { path = "../../distri-cli" }
 distri-a2a = { path = "../../distri-a2a" }

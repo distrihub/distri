@@ -3,11 +3,11 @@ use actix_web::middleware::Logger;
 use actix_web::{web, App, HttpResponse, HttpServer, Result as ActixResult};
 use anyhow::Result;
 use distri_cli::{load_config, initialize_executor, Cli, Commands};
-use distri_server::{configure_distri_service, DistriServer, DistriServiceConfig};
+use distri_server::{configure_distri_service, DistriServer, DistriServiceConfig, reusable_server::DistriServerBuilder};
 use clap::Parser;
 use serde_json::json;
 
-pub mod reusable_server;
+
 
 // Simple version without distri integration for now to demonstrate the pattern
 // This will work while we resolve the distri compilation issues
@@ -104,9 +104,7 @@ async fn list_agents(config: distri::types::Configuration) -> Result<()> {
 }
 
 async fn run_server(config: distri::types::Configuration, host: &str, port: u16) -> Result<()> {
-    use reusable_server::DistribServerBuilder;
-    
-    DistribServerBuilder::new()
+    DistriServerBuilder::new()
         .with_service_name("embedding-distri-server")
         .with_description("This server demonstrates how to embed distri-server in your own actix-web application")
         .with_capabilities(vec!["agent_execution", "task_management"])

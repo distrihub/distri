@@ -13,6 +13,10 @@ use tokio::sync::{broadcast, RwLock};
 pub mod routes;
 pub mod server;
 
+// Conditionally export reusable_server module based on feature flag
+#[cfg(feature = "reusable")]
+pub mod reusable_server;
+
 pub use server::A2AServer;
 
 /// Configuration for embedding distri in other actix-web apps

@@ -1325,7 +1325,6 @@ dependencies = [
  "distri-cli",
  "distri-server",
  "dotenv",
- "embedding-distri-server",
  "mcp-spider",
  "mcp-tavily",
  "serde",
@@ -1358,6 +1357,7 @@ dependencies = [
  "serde_yaml",
  "tokio",
  "tracing",
+ "tracing-subscriber",
  "uuid",
 ]
 
@@ -4627,7 +4627,6 @@ dependencies = [
  "distri-cli",
  "distri-server",
  "dotenv",
- "embedding-distri-server",
  "mcp-spider",
  "mcp-tavily",
  "mcp-twitter",

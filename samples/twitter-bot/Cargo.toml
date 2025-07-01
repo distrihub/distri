@@ -7,8 +7,8 @@ edition = "2021"
 # Core dependencies
 distri = { path = "../../distri" }
 distri-cli = { path = "../../distri-cli" }
-distri-server = { path = "../../distri-server" }
-embedding-distri-server = { path = "../embedding-distri-server" }
+distri-server = { path = "../../distri-server", features = ["reusable"] }
+
 
 # Web server dependencies
 actix-web = "4.4"
