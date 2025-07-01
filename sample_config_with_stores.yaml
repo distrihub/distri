@@ -13,22 +13,13 @@ agents:
         max_tokens: 1000
     max_history: 10
 
-# Store configuration - choose between memory, redis, or file storage
+# Store configuration - grouped by entity and session stores
 stores:
-  # Session store for conversation history
-  session_store: "memory"  # Options: "memory", "redis", {"file": {"path": "/path/to/sessions"}}
+  # Entity stores (agents, tasks, threads) - always use same type
+  entity: "memory"  # Options: "memory", "redis"
   
-  # Agent store for agent registry
-  agent_store: "memory"    # Options: "memory", "redis"
-  
-  # Task store for A2A task management
-  task_store: "memory"     # Options: "memory", "redis"
-  
-  # Thread store for conversation threads
-  thread_store: "memory"   # Options: "memory", "redis"
-  
-  # Memory store for cross-session permanent memory
-  memory_store: "memory"   # Options: "memory", "redis"
+  # Session stores (conversation sessions, tool sessions) - always use same type
+  session: "memory"  # Options: "memory", "redis", {"file": {"path": "/path/to/sessions"}}
   
   # Redis configuration (required when using redis stores)
   # redis:
@@ -38,25 +29,21 @@ stores:
 
 # Example Redis configuration (uncomment to use Redis stores)
 # stores:
-#   session_store: "redis"
-#   agent_store: "redis"
-#   task_store: "redis"
-#   thread_store: "redis"
-#   memory_store: "redis"
+#   entity: "redis"
+#   session: "redis" 
 #   redis:
 #     url: "redis://localhost:6379"
 #     pool_size: 10
 #     timeout_seconds: 5
 
-# Example file-based session storage
+# Example file-based session storage with Redis entities
 # stores:
-#   session_store:
+#   entity: "redis"
+#   session:
 #     file:
 #       path: "/tmp/distri-sessions"
-#   agent_store: "memory"
-#   task_store: "memory"
-#   thread_store: "memory"
-#   memory_store: "memory"
+#   redis:
+#     url: "redis://localhost:6379"
 
 # MCP server definitions
 mcp_servers:

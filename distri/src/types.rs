@@ -425,23 +425,27 @@ pub struct Configuration {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 pub struct StoreConfig {
+    /// Storage for entities (agents, tasks, threads) - always use the same store type
     #[serde(default)]
-    pub session_store: Option<StoreType>,
+    pub entity: Option<EntityStoreType>,
+    /// Storage for sessions (conversation sessions, tool sessions) - always use the same store type  
     #[serde(default)]
-    pub agent_store: Option<StoreType>,
-    #[serde(default)]
-    pub task_store: Option<StoreType>,
-    #[serde(default)]
-    pub thread_store: Option<StoreType>,
-    #[serde(default)]
-    pub memory_store: Option<StoreType>,
+    pub session: Option<SessionStoreType>,
+    /// Redis configuration (required when using Redis stores)
     #[serde(default)]
     pub redis: Option<RedisConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
-pub enum StoreType {
+pub enum EntityStoreType {
+    Memory,
+    Redis,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum SessionStoreType {
     Memory,
     Redis,
     File { path: String },
