@@ -1,6 +1,6 @@
 use anyhow::Result;
 use distri::{
-    agent::{AgentExecutor, ExecutorContext, DISTRI_LOCAL_SERVER},
+    agent::{AgentExecutor, ExecutorContext},
     servers::registry::{ServerMetadata, ServerRegistry, ServerTrait},
     store::{AgentStore, InMemoryAgentStore},
     types::{Configuration, TransportType},
@@ -8,6 +8,7 @@ use distri::{
 use dotenv::dotenv;
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
+mod store;
 
 pub fn load_config() -> Result<Configuration> {
     // Load .env file if it exists
@@ -31,57 +32,27 @@ pub async fn init_registry_and_coordinator(
 
     let coordinator = Arc::new(AgentExecutor::new(
         server_registry.clone(),
-        None,
+        store::get_tools_session_store(),
         None,
         agent_store,
         context.clone(),
     ));
 
     registry.register(
-        "search".to_string(),
+        "twitter".to_string(),
         ServerMetadata {
-            auth_session_key: None,
+            auth_session_key: Some("session_string".to_string()),
             mcp_transport: TransportType::InMemory,
-            kg_memory: None,
             builder: Some(Arc::new(|_, transport| {
-                let server = mcp_tavily::build(transport)?;
+                let server = mcp_twitter::build(transport)?;
                 Ok(Box::new(server) as Box<dyn ServerTrait>)
             })),
-            memories: HashMap::new(),
-        },
-    );
-    registry.register(
-        "scrape".to_string(),
-        ServerMetadata {
-            auth_session_key: None,
-            mcp_transport: TransportType::InMemory,
             kg_memory: None,
-            builder: Some(Arc::new(|_, transport| {
-                let server = mcp_spider::build(transport)?;
-                Ok(Box::new(server) as Box<dyn ServerTrait>)
-            })),
             memories: HashMap::new(),
         },
     );
 
-    let coordinator_clone = coordinator.clone();
-    registry.register(
-        DISTRI_LOCAL_SERVER.to_string(),
-        ServerMetadata {
-            auth_session_key: None,
-            mcp_transport: TransportType::InMemory,
-            kg_memory: None,
-            builder: Some(Arc::new(move |_, transport| {
-                let coordinator = coordinator.clone();
-                let context = context.clone();
-                let server = distri::agent::build_server(transport, coordinator, context)?;
-                Ok(Box::new(server) as Box<dyn ServerTrait>)
-            })),
-            memories: HashMap::new(),
-        },
-    );
-
-    (server_registry, coordinator_clone)
+    (server_registry, coordinator)
 }
 
 pub async fn init_infrastructure() -> Result<(Arc<RwLock<ServerRegistry>>, Arc<AgentExecutor>)> {

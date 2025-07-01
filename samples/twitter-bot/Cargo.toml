@@ -1,5 +1,5 @@
 [package]
-name = "distri-search"
+name = "twitter-bot"
 version = "0.1.0"
 edition = "2021"
 
@@ -18,7 +18,8 @@ async-trait = "0.1"
 dotenv = "0.15"
 mcp-spider = { git = "https://github.com/distrihub/mcp-servers.git", rev = "f427eaa" }
 mcp-tavily = { git = "https://github.com/distrihub/mcp-servers.git", rev = "f427eaa" }
+mcp-twitter = { git = "https://github.com/distrihub/mcp-servers.git", rev = "f427eaa" }
 
 [[bin]]
-name = "simple-search"
-path = "src/bin/simple.rs"
+name = "twitter-bot"
+path = "src/bin/twitter-bot.rs"

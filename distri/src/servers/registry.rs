@@ -91,7 +91,7 @@ impl<T: Transport> ServerTrait for Server<T> {
 }
 
 pub async fn init_registry_and_coordinator(
-    local_memories: HashMap<String, Arc<Mutex<dyn AgentMemory>>>,
+    _local_memories: HashMap<String, Arc<Mutex<dyn AgentMemory>>>,
     tool_sessions: Option<Arc<Box<dyn ToolSessionStore>>>,
     agent_store: Arc<dyn AgentStore>,
     external_servers: &[ExternalMcpServer],
@@ -118,34 +118,6 @@ pub async fn init_registry_and_coordinator(
         agent_store,
         context.clone(),
     ));
-
-    registry.register(
-        "twitter".to_string(),
-        ServerMetadata {
-            auth_session_key: Some("session_string".to_string()),
-            mcp_transport: TransportType::InMemory,
-            kg_memory: None,
-            builder: Some(Arc::new(|_, transport| {
-                let server = twitter_mcp::build(transport)?;
-                Ok(Box::new(server) as Box<dyn ServerTrait>)
-            })),
-            memories: HashMap::new(),
-        },
-    );
-
-    registry.register(
-        "file_memory".to_string(),
-        ServerMetadata {
-            auth_session_key: None,
-            mcp_transport: TransportType::InMemory,
-            memories: local_memories,
-            builder: Some(Arc::new(|metadata, transport| {
-                let server = crate::memory::build::build(metadata, transport)?;
-                Ok(Box::new(server) as Box<dyn ServerTrait>)
-            })),
-            kg_memory: None,
-        },
-    );
 
     registry.register(
         "web_search".to_string(),

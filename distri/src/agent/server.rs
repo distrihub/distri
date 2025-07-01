@@ -61,9 +61,12 @@ pub fn build_server<T: Transport>(
             let coordinator = coordinator_clone2.clone();
             let context_clone = context_clone.clone();
             Box::pin(async move {
+                println!("req: {:?}", req);
                 let agent_name = req.name.clone();
                 let args = req.arguments.unwrap_or_default();
                 let message = args["message"].as_str().unwrap().to_string();
+
+                println!("agent_name: {}", agent_name);
 
                 let agent = coordinator.agent_store.get(&agent_name).await.unwrap();
 

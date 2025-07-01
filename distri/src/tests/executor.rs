@@ -7,7 +7,7 @@ use crate::{
     init_logging,
     memory::TaskStep,
     store::InMemoryAgentStore,
-    tests::utils::{get_registry, get_search_tool, register_coordinator},
+    tests::utils::{get_registry, get_search_tool, get_tools_session_store, register_coordinator},
     types::{AgentDefinition, McpDefinition, ModelSettings, ToolSelector, ToolsFilter},
 };
 
@@ -18,10 +18,10 @@ async fn test_agent_coordination() -> anyhow::Result<()> {
     // Create test agent definitions
     let tool_defs = vec![get_search_tool()];
     let agent1_def = AgentDefinition {
-        name: "search_agent".to_string(),
+        name: "twitter_agent".to_string(),
         description: "Test agent 1".to_string(),
         system_prompt: Some(
-            "You are agent 1. When you receive a message, call search_agent and summarize the profile!"
+            "You are agent 1. When you receive a message, call twitter and summarize the profile!"
                 .to_string(),
         ),
         mcp_servers: tool_defs.clone(),
@@ -36,8 +36,8 @@ async fn test_agent_coordination() -> anyhow::Result<()> {
         system_prompt: Some("You are agent 2. When you receive a message about twitter, use the twitter_agent tool to get information.".to_string()),
         mcp_servers: vec![McpDefinition {
             filter: ToolsFilter::Selected(vec![ToolSelector {
-                name: "search_agent".to_string(),
-                description: Some("Execute the search agent to get information".to_string()),
+                name: "twitter_agent".to_string(),
+                description: Some("Execute the twitter agent to get twitter information".to_string()),
             }]),
             name: DISTRI_LOCAL_SERVER.to_string(),
             r#type: crate::types::McpServerType::Agent,
@@ -51,9 +51,11 @@ async fn test_agent_coordination() -> anyhow::Result<()> {
     // Initialize coordinator with session stores
     let registry = get_registry().await;
 
+    let tool_sessions = get_tools_session_store();
+
     let coordinator = Arc::new(AgentExecutor::new(
         registry.clone(),
-        None,
+        tool_sessions,
         None,
         local_agent_store,
         Arc::new(ExecutorContext::default()),
@@ -62,7 +64,10 @@ async fn test_agent_coordination() -> anyhow::Result<()> {
     //register coordinator in registry
     register_coordinator(registry, coordinator.clone()).await;
 
+    // Register agent definitions
+
     let coordinator_clone = coordinator.clone();
+
     coordinator
         .register_default_agent(agent1_def.clone())
         .await?;
@@ -70,7 +75,9 @@ async fn test_agent_coordination() -> anyhow::Result<()> {
         .register_default_agent(agent2_def.clone())
         .await?;
     // Start coordinator in background
-    let coordinator_handle = tokio::spawn(async move { coordinator_clone.run().await.unwrap() });
+    let coordinator_handle = tokio::spawn(async move {
+        coordinator_clone.run().await.unwrap();
+    });
 
     let agent2_result = coordinator
         .execute(
@@ -107,10 +114,10 @@ async fn test_agent_coordination_streaming() -> anyhow::Result<()> {
 
     // Initialize coordinator
     let registry = get_registry().await;
-
+    let tool_sessions = get_tools_session_store();
     let coordinator = Arc::new(AgentExecutor::new(
         registry.clone(),
-        None,
+        tool_sessions,
         None,
         Arc::new(InMemoryAgentStore::new()),
         Arc::new(ExecutorContext::default()),

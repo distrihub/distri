@@ -25,10 +25,7 @@ pub async fn list(agent_store: Arc<dyn AgentStore>) -> anyhow::Result<()> {
     table.add_row(vec!["Agent", "Description", "Servers"]);
     for agent in agents.iter() {
         let definition = agent.get_definition();
-        let tools = agent_store
-            .get_tools(&definition.name)
-            .await
-            .unwrap_or_default();
+        let tools = agent.get_tools();
         table.add_row(vec![
             definition.name.clone(),
             definition.description.clone(),

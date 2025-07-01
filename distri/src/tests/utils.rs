@@ -5,6 +5,7 @@ use tokio::sync::RwLock;
 use crate::{
     agent::{AgentExecutor, ExecutorContext, DISTRI_LOCAL_SERVER},
     servers::registry::{ServerMetadata, ServerRegistry, ServerTrait},
+    tests::tools::build_mock_search_tool,
     types::{PlanConfig, TransportType},
     AgentDefinition, McpDefinition, McpSession, ModelSettings, ToolSessionStore,
 };
@@ -39,7 +40,7 @@ impl ToolSessionStore for StaticSessionStore {
 }
 
 // Comment out the simple version
-pub fn get_twitter_tool() -> McpDefinition {
+pub fn get_search_tool() -> McpDefinition {
     McpDefinition {
         filter: crate::types::ToolsFilter::All,
         name: "twitter".to_string(),
@@ -51,12 +52,12 @@ pub async fn get_registry() -> Arc<RwLock<ServerRegistry>> {
     let mut server_registry = ServerRegistry::new();
 
     server_registry.register(
-        "twitter".to_string(),
+        "mock_search".to_string(),
         ServerMetadata {
-            auth_session_key: Some("session_string".to_string()),
+            auth_session_key: None,
             mcp_transport: TransportType::InMemory,
             builder: Some(Arc::new(|_, transport| {
-                let server = twitter_mcp::build(transport)?;
+                let server = build_mock_search_tool(transport)?;
                 Ok(Box::new(server) as Box<dyn ServerTrait>)
             })),
             kg_memory: None,
@@ -90,18 +91,18 @@ pub async fn register_coordinator(
     );
 }
 
-pub static SYSTEM_PROMPT: &str = r#"You are a helpful AI assistant that can access Twitter and summarize information.
-When asked about tweets, you will:
-1. Get the timeline using the Twitter tool
-2. Format the tweets in a clean markdown format
+pub static SYSTEM_PROMPT: &str = r#"You are a helpful AI assistant that can access the web and summarize information.
+When asked about information, you will:
+1. Get the information using the search tool
+2. Format the information in a clean markdown format
 3. Add brief summaries and insights
-4. Group similar tweets together by theme
-5. Highlight particularly interesting or important tweets
+4. Group similar information together by theme
+5. Highlight particularly interesting or important information
 6. You dont need to login; Session is already available. 
 
 Keep your summaries concise but informative. Use markdown formatting to make the output readable."#;
 
-pub fn get_twitter_summarizer(
+pub fn get_search_summarizer(
     planning_interval: Option<i32>,
     max_iterations: Option<u32>,
     max_tokens: Option<u32>,
@@ -109,8 +110,8 @@ pub fn get_twitter_summarizer(
     // Create agent definition with Twitter tool
 
     AgentDefinition {
-        name: "Twitter Agent".to_string(),
-        description: "Agent that can access Twitter".to_string(),
+        name: "Search Agent".to_string(),
+        description: "Agent that can make mock web searches".to_string(),
         system_prompt: Some(SYSTEM_PROMPT.to_string()),
         model_settings: ModelSettings {
             max_iterations: max_iterations.unwrap_or(10),
@@ -118,7 +119,7 @@ pub fn get_twitter_summarizer(
             model: "openai/gpt-4.1".to_string(),
             ..Default::default()
         },
-        mcp_servers: vec![get_twitter_tool()],
+        mcp_servers: vec![get_search_tool()],
         parameters: Default::default(),
         response_format: None,
         history_size: None,

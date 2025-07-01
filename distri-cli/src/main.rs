@@ -12,7 +12,7 @@ use distri::{
         registry::{init_registry_and_coordinator, ServerRegistry},
     },
     store::InMemoryAgentStore,
-    types::{get_distri_config_schema, AgentRecord, Configuration},
+    types::{get_distri_config_schema, Configuration},
 };
 use distri_server::A2AServer;
 use dotenv::dotenv;
@@ -92,12 +92,8 @@ async fn main() -> Result<()> {
             let (_, coordinator) = init_all(&config).await?;
             let agent_store = coordinator.agent_store.clone();
             for agent in &config.agents {
-                let default_agent = coordinator.create_default_agent(agent.definition.clone());
                 coordinator
-                    .register_agent(AgentRecord {
-                        definition: agent.definition.clone(),
-                        agent: default_agent,
-                    })
+                    .register_default_agent(agent.definition.clone())
                     .await?;
             }
             let coordinator_clone = coordinator.clone();
@@ -130,10 +126,7 @@ async fn main() -> Result<()> {
 
             for agent in &config.agents {
                 coordinator
-                    .register_agent(AgentRecord {
-                        definition: agent.definition.clone(),
-                        agent: coordinator.create_default_agent(agent.definition.clone()),
-                    })
+                    .register_default_agent(agent.definition.clone())
                     .await?;
             }
 
@@ -153,12 +146,8 @@ async fn main() -> Result<()> {
             let (_, coordinator) = init_all(&config).await?;
 
             for agent in &config.agents {
-                let default_agent = coordinator.create_default_agent(agent.definition.clone());
                 coordinator
-                    .register_agent(AgentRecord {
-                        definition: agent.definition.clone(),
-                        agent: default_agent,
-                    })
+                    .register_default_agent(agent.definition.clone())
                     .await?;
             }
             let server = A2AServer::new(coordinator);

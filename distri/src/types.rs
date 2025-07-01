@@ -55,21 +55,6 @@ pub enum TransportAuth {
     JwtSecret(String),
 }
 
-#[derive(Debug)]
-pub struct AgentRecord {
-    pub definition: AgentDefinition,
-    pub agent: Box<dyn crate::agent::BaseAgent>,
-}
-
-impl Clone for AgentRecord {
-    fn clone(&self) -> Self {
-        Self {
-            definition: self.definition.clone(),
-            agent: self.agent.clone_box(),
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 #[serde(deny_unknown_fields)]
 pub struct LlmDefinition {

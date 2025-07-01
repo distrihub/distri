@@ -9,7 +9,6 @@ use distri::{
 };
 use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
-use uuid;
 
 pub mod routes;
 pub mod server;
@@ -99,11 +98,7 @@ pub async fn create_coordinator_from_config(
     // Register agents from config
     for agent_config in config.agents {
         let definition = agent_config.definition.clone();
-        let agent_record = distri::types::AgentRecord {
-            definition: agent_config.definition,
-            agent: coordinator.create_default_agent(definition),
-        };
-        coordinator.register_agent(agent_record).await?;
+        coordinator.register_default_agent(definition).await?;
     }
 
     // Get server config or use default

@@ -8,7 +8,6 @@ use crate::{
         validate_parameters, LlmDefinition, Message, MessageRole, ModelProvider, ServerTools,
         ToolCall,
     },
-    AgentDefinition,
 };
 use async_openai::{
     config::OpenAIConfig,
@@ -53,10 +52,13 @@ impl LLMExecutor {
             server_tools.len()
         );
 
+        let model_logger = ModelLogger::new(context.verbose);
+        model_logger.log_llm_definition(&llm_def, &server_tools);
+
         Self {
             llm_def,
             server_tools,
-            model_logger: ModelLogger::new(context.verbose),
+            model_logger,
             context,
             additional_headers,
             label,
@@ -91,7 +93,6 @@ impl LLMExecutor {
         let request = self.build_request(llm_messages);
         let message_count = request.messages.len();
 
-        tracing::info!("Executing LLM call with {:#?} messages", request.messages);
         let settings = format!(
             "Max Tokens: {}\nMax Iterations: {}",
             self.llm_def.model_settings.max_tokens, self.llm_def.model_settings.max_iterations

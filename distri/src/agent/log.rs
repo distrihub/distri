@@ -1,7 +1,10 @@
 use comfy_table::{modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL, ContentArrangement, Table};
 use tracing::info;
 
-use crate::memory::MemoryStep;
+use crate::{
+    memory::MemoryStep,
+    types::{LlmDefinition, ServerTools},
+};
 
 #[derive(Debug, Clone)]
 pub struct StepLogger {
@@ -59,6 +62,25 @@ impl ModelLogger {
         Self { verbose }
     }
 
+    pub fn log_llm_definition(&self, llm_def: &LlmDefinition, server_tools: &[ServerTools]) {
+        if !self.verbose {
+            return;
+        }
+
+        let mut table = Table::new()
+            .load_preset(UTF8_FULL)
+            .apply_modifier(UTF8_ROUND_CORNERS)
+            .set_content_arrangement(ContentArrangement::Dynamic)
+            .to_owned();
+        table.set_header(vec!["Model", "Settings", "Tools"]);
+
+        let settings_str = format!("{:#?}", llm_def);
+        let tools_str = tools_table(server_tools).to_string();
+
+        table.add_row(vec![llm_def.name.clone(), settings_str, tools_str]);
+        tracing::debug!("\n{}", table);
+    }
+
     pub fn log_model_execution(
         &self,
         agent_name: &str,
@@ -97,4 +119,34 @@ impl ModelLogger {
 
         info!("\n{}", table);
     }
+}
+
+pub fn tools_table(server_tools: &[ServerTools]) -> Table {
+    let mut table = Table::new()
+        .load_preset(UTF8_FULL)
+        .apply_modifier(UTF8_ROUND_CORNERS)
+        .set_content_arrangement(ContentArrangement::Dynamic)
+        .to_owned();
+
+    table.add_row(vec!["Server", "Tools"]);
+    for tools in server_tools {
+        let mut inner_table = Table::new()
+            .load_preset(UTF8_FULL)
+            .apply_modifier(UTF8_ROUND_CORNERS)
+            .set_width(60)
+            .set_content_arrangement(ContentArrangement::Dynamic)
+            .to_owned();
+        inner_table.add_row(vec!["Tool", "Description"]);
+        tools.tools.iter().for_each(|t| {
+            let description = t.description.clone().unwrap_or_default();
+            let description = if description.len() > 60 {
+                &description[..60]
+            } else {
+                &description
+            };
+            inner_table.add_row(vec![t.name.clone(), description.to_string()]);
+        });
+        table.add_row(vec![tools.definition.name.clone(), inner_table.to_string()]);
+    }
+    table
 }

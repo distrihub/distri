@@ -1,15 +1,15 @@
 use anyhow::Result;
 use distri::{agent::ExecutorContext, memory::TaskStep};
-use distri_search::{init_infrastructure, load_config};
 use std::sync::Arc;
 use tracing::info;
+use twitter_bot::{init_infrastructure, load_config};
 
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize logging
     tracing_subscriber::fmt::init();
 
-    println!("🔍 DeepSearch Agent - YAML Configuration Example");
+    println!("🔍 Twitter Bot - YAML Configuration Example");
     println!("================================================\n");
 
     let config = match load_config() {
@@ -27,20 +27,19 @@ async fn main() -> Result<()> {
     let (_, coordinator) = init_infrastructure().await?;
     info!("✅ Infrastructure initialized");
 
-    // Register the DeepSearch agent from YAML config
-    info!("Registering DeepSearch agent...");
+    // Register the Twitter agent from YAML config
+    info!("Registering Twitter agent...");
 
     let deep_search_config = config
         .agents
         .iter()
-        .find(|a| a.definition.name == "deep_search")
-        .expect("deep_search agent not found in config");
+        .find(|a| a.definition.name == "twitter_bot")
+        .expect("twitter_bot agent not found in config");
 
     let definition = &deep_search_config.definition;
     coordinator
         .register_default_agent(definition.clone())
         .await?;
-    info!("✅ DeepSearch agent registered");
 
     // Start the coordinator in the background
     let coordinator_clone = coordinator.clone();
@@ -49,10 +48,10 @@ async fn main() -> Result<()> {
     });
 
     // Run a test query
-    println!("\n🤖 Testing DeepSearch Agent");
-    println!("==========================");
+    println!("\n🤖 Testing Twitter Bot");
+    println!("=====================");
 
-    let test_query = "What are the latest developments in artificial intelligence safety research?";
+    let test_query = "What are the latest tweets about the latest developments in artificial intelligence safety research?";
     println!("Query: {}", test_query);
 
     let task = TaskStep {
@@ -77,9 +76,7 @@ async fn main() -> Result<()> {
         Err(e) => {
             eprintln!("\n❌ Task failed: {}", e);
             eprintln!("This might be because:");
-            eprintln!("1. TAVILY_API_KEY environment variable is not set");
-            eprintln!("2. mcp-tavily or mcp-spider servers are not installed");
-            eprintln!("3. Network connectivity issues");
+            eprintln!("1. Twitter API key is not set");
         }
     }
 
