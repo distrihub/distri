@@ -2,23 +2,17 @@ use actix_cors::Cors;
 use actix_web::middleware::Logger;
 use actix_web::{web, App, HttpResponse, HttpServer, Result as ActixResult};
 use anyhow::Result;
+use distri::agent::{AgentExecutor, ExecutorContext};
+use distri::servers::registry::ServerMetadata;
 use serde_json::json;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::{configure_distri_service, DistriServer, DistriServiceConfig};
-use distri::{
-    servers::registry::ServerRegistry,
-    types::Configuration,
-};
+use distri::types::Configuration;
 
 /// Trait for customizing Distri server instances
 pub trait DistriServerCustomizer: Send + Sync {
-    /// Customize the server registry by adding or modifying MCP servers
-    fn customize_registry(&self, registry: &mut ServerRegistry) -> Result<()> {
-        // Default implementation does nothing
-        Ok(())
-    }
-
     /// Get service name for logging and responses
     fn service_name(&self) -> &str;
 
@@ -30,16 +24,21 @@ pub trait DistriServerCustomizer: Send + Sync {
 
     /// Configure additional actix-web routes (optional)
     fn configure_routes(&self, cfg: &mut web::ServiceConfig);
+
+    /// Customize the servers to be registered
+    fn custom_servers(&self) -> HashMap<String, ServerMetadata> {
+        HashMap::new()
+    }
 }
 
 /// Default implementation of DistriServerCustomizer
-pub struct DefaultCustomizer {
+pub struct DefaultCustomServer {
     service_name: String,
     description: String,
     capabilities: Vec<String>,
 }
 
-impl DefaultCustomizer {
+impl DefaultCustomServer {
     pub fn new() -> Self {
         Self {
             service_name: "distri-server".to_string(),
@@ -64,12 +63,7 @@ impl DefaultCustomizer {
     }
 }
 
-impl DistriServerCustomizer for DefaultCustomizer {
-    fn customize_registry(&self, registry: &mut ServerRegistry) -> Result<()> {
-        // Default implementation does nothing
-        Ok(())
-    }
-
+impl DistriServerCustomizer for DefaultCustomServer {
     fn service_name(&self) -> &str {
         &self.service_name
     }
@@ -86,6 +80,10 @@ impl DistriServerCustomizer for DefaultCustomizer {
         // Default implementation adds no additional routes
         let _ = cfg;
     }
+
+    fn custom_servers(&self) -> HashMap<String, ServerMetadata> {
+        HashMap::new()
+    }
 }
 
 /// Builder for creating reusable distri servers with customization
@@ -96,7 +94,7 @@ pub struct DistriServerBuilder {
 impl DistriServerBuilder {
     pub fn new() -> Self {
         Self {
-            customizer: Box::new(DefaultCustomizer::new()),
+            customizer: Box::new(DefaultCustomServer::new()),
         }
     }
 
@@ -106,28 +104,24 @@ impl DistriServerBuilder {
     }
 
     pub fn with_service_name(self, name: &str) -> Self {
-        self.with_customizer(Box::new(
-            DefaultCustomizer::new().with_service_name(name)
-        ))
+        self.with_customizer(Box::new(DefaultCustomServer::new().with_service_name(name)))
     }
 
     pub fn with_description(self, description: &str) -> Self {
         self.with_customizer(Box::new(
-            DefaultCustomizer::new().with_description(description)
+            DefaultCustomServer::new().with_description(description),
         ))
     }
 
     pub fn with_capabilities(self, capabilities: Vec<&str>) -> Self {
         self.with_customizer(Box::new(
-            DefaultCustomizer::new().with_capabilities(capabilities)
+            DefaultCustomServer::new().with_capabilities(capabilities),
         ))
     }
 
     /// Start the server with the configured settings
-    pub async fn start(self, mut config: Configuration, host: &str, port: u16) -> Result<()> {
+    pub async fn start(self, config: Configuration, host: &str, port: u16) -> Result<()> {
         let service_name = self.customizer.service_name();
-        let service_description = self.customizer.service_description();
-        let service_capabilities = self.customizer.service_capabilities();
 
         tracing::info!("Starting {}...", service_name);
         tracing::info!("Starting server on http://{}:{}", host, port);
@@ -136,19 +130,16 @@ impl DistriServerBuilder {
         tracing::info!("  - http://{}:{}/health      - Health check", host, port);
         tracing::info!("  - http://{}:{}/api/v1/agents - List agents", host, port);
 
-        // Create a new server registry for customization
-        let mut registry = distri::servers::registry::ServerRegistry::new();
-        self.customizer.customize_registry(&mut registry)?;
-        
         // For now, we don't have direct access to the DistriServer's registry
         // The customizer pattern will be used more directly when we integrate
         // with the full agent system initialization
 
         // Initialize the DistriServer with the customized config
-        let distri_server = DistriServer::initialize(&config).await?;
+        let distri_server =
+            DistriServer::initialize(&config, self.customizer.custom_servers()).await?;
         let executor = distri_server.executor();
         let server_config = config.server.unwrap_or_default();
-        
+
         // Create and configure the HTTP server
         let customizer = Arc::new(self.customizer);
         HttpServer::new(move || {
@@ -167,28 +158,37 @@ impl DistriServerBuilder {
                         .allow_any_header()
                         .max_age(3600),
                 )
-                .route("/", web::get().to({
-                    let service_name = service_name.clone();
-                    let service_description = service_description.clone();
-                    let service_capabilities = service_capabilities.clone();
-                    move || {
+                .route(
+                    "/",
+                    web::get().to({
                         let service_name = service_name.clone();
                         let service_description = service_description.clone();
                         let service_capabilities = service_capabilities.clone();
-                        async move {
-                            default_welcome(&service_name, &service_description, &service_capabilities).await
+                        move || {
+                            let service_name = service_name.clone();
+                            let service_description = service_description.clone();
+                            let service_capabilities = service_capabilities.clone();
+                            async move {
+                                default_welcome(
+                                    &service_name,
+                                    &service_description,
+                                    &service_capabilities,
+                                )
+                                .await
+                            }
                         }
-                    }
-                }))
-                .route("/health", web::get().to({
-                    let service_name = service_name.clone();
-                    move || {
+                    }),
+                )
+                .route(
+                    "/health",
+                    web::get().to({
                         let service_name = service_name.clone();
-                        async move {
-                            default_health_check(&service_name).await
+                        move || {
+                            let service_name = service_name.clone();
+                            async move { default_health_check(&service_name).await }
                         }
-                    }
-                }))
+                    }),
+                )
                 .configure(|cfg| {
                     let config = DistriServiceConfig::new(executor.clone(), server_config.clone());
                     configure_distri_service(cfg, config);
@@ -206,7 +206,11 @@ impl DistriServerBuilder {
     }
 }
 
-async fn default_welcome(service_name: &str, description: &str, capabilities: &[String]) -> ActixResult<HttpResponse> {
+async fn default_welcome(
+    service_name: &str,
+    description: &str,
+    capabilities: &[String],
+) -> ActixResult<HttpResponse> {
     Ok(HttpResponse::Ok().json(json!({
         "message": format!("Welcome to {}!", service_name),
         "description": description,
@@ -224,4 +228,60 @@ async fn default_health_check(service_name: &str) -> ActixResult<HttpResponse> {
         "service": service_name,
         "timestamp": chrono::Utc::now().to_rfc3339()
     })))
+}
+
+/// Run CLI with the given configuration
+pub async fn run_cli(executor: Arc<AgentExecutor>, agent: &str, task: &str) -> Result<()> {
+    tracing::info!("Running Distri Search CLI...");
+
+    let context = Arc::new(ExecutorContext::default());
+    let task_step = distri::memory::TaskStep {
+        task: task.to_string(),
+        task_images: None,
+    };
+
+    let result = executor
+        .execute(agent, task_step, None, context, None)
+        .await
+        .map_err(|e| anyhow::anyhow!("Execution failed: {}", e))?;
+
+    println!("Search Result:\n{}", result);
+
+    Ok(())
+}
+
+/// Run the distri-search server with customized registry
+pub async fn run_server(
+    config: Configuration,
+    customizer: Box<dyn DistriServerCustomizer>,
+    host: &str,
+    port: u16,
+) -> Result<()> {
+    DistriServerBuilder::new()
+        .with_customizer(customizer)
+        .start(config, host, port)
+        .await
+}
+
+/// List available agents
+pub async fn list_agents(executor: Arc<AgentExecutor>) -> Result<()> {
+    tracing::info!("Available Agents:");
+
+    let (agents, _) = executor.agent_store.list(None, None).await;
+
+    for agent in agents {
+        let definition = agent.get_definition();
+        println!("  - {}: {}", definition.name, definition.description);
+
+        if let Some(prompt) = &definition.system_prompt {
+            let preview = if prompt.len() > 100 {
+                format!("{}...", &prompt[..97])
+            } else {
+                prompt.clone()
+            };
+            println!("    Description: {}", preview);
+        }
+    }
+
+    Ok(())
 }

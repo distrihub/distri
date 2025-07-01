@@ -1,14 +1,13 @@
 use actix_web::{web, App, HttpServer};
 use anyhow::Result;
 use distri::{
-    agent::{AgentExecutor, ExecutorContext},
-    servers::registry::ServerRegistry,
-    store::{InMemoryAgentStore, LocalSessionStore, SessionStore},
+    agent::AgentExecutor,
+    servers::registry::ServerMetadata,
     types::{Configuration, ServerConfig},
     HashMapTaskStore, TaskStore,
 };
-use std::sync::Arc;
-use tokio::sync::{broadcast, RwLock};
+use std::{collections::HashMap, sync::Arc};
+use tokio::sync::broadcast;
 
 pub mod routes;
 pub mod server;
@@ -65,10 +64,13 @@ impl DistriServer {
     }
 
     /// Initialize DistriServer from configuration
-    pub async fn initialize(config: &Configuration) -> anyhow::Result<Self> {
-        let executor = Arc::new(AgentExecutor::initialize(config).await?);
+    pub async fn initialize(
+        config: &Configuration,
+        servers: HashMap<String, ServerMetadata>,
+    ) -> anyhow::Result<Self> {
+        let executor = AgentExecutor::initialize(config, servers).await?;
         let server_config = config.server.clone().unwrap_or_default();
-        
+
         Ok(Self {
             executor,
             server_config,
@@ -76,7 +78,10 @@ impl DistriServer {
     }
 
     /// Initialize DistriServer from configuration string or file path
-    pub async fn initialize_from_config(config_source: &str) -> anyhow::Result<Self> {
+    pub async fn initialize_from_config(
+        config_source: &str,
+        servers: HashMap<String, ServerMetadata>,
+    ) -> anyhow::Result<Self> {
         let config = if std::path::Path::new(config_source).exists() {
             // It's a file path
             let config_str = std::fs::read_to_string(config_source)?;
@@ -86,7 +91,7 @@ impl DistriServer {
             serde_yaml::from_str::<Configuration>(config_source)?
         };
 
-        Self::initialize(&config).await
+        Self::initialize(&config, servers).await
     }
 
     /// Get access to the executor
@@ -123,19 +128,6 @@ pub fn configure_distri_service(cfg: &mut web::ServiceConfig, config: DistriServ
         .app_data(web::Data::new(event_broadcaster))
         .app_data(web::Data::new(config.server_config))
         .configure(routes::config);
-}
-
-/// Simple helper to create a AgentExecutor from a YAML config file
-/// This is a convenience function for quick setup
-pub async fn create_coordinator_from_config(
-    config_str: &str,
-) -> Result<(Arc<AgentExecutor>, ServerConfig)> {
-    let config: Configuration = serde_yaml::from_str(&config_str)?;
-
-    let executor = AgentExecutor::initialize(&config).await?;
-    let server_config = config.server.unwrap_or_default();
-
-    Ok((Arc::new(executor), server_config))
 }
 
 /// Starts the HTTP server (for backward compatibility)

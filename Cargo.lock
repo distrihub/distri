@@ -1425,29 +1425,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "embedding-distri-server"
-version = "0.1.0"
-dependencies = [
- "actix-cors",
- "actix-web",
- "anyhow",
- "chrono",
- "clap",
- "distri",
- "distri-a2a",
- "distri-cli",
- "distri-server",
- "dotenv",
- "regex",
- "serde",
- "serde_json",
- "serde_yaml",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "encoding_rs"
 version = "0.8.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"

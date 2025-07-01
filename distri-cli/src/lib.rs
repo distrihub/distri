@@ -1,11 +1,8 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use distri::{
-    agent::AgentExecutor,
-    types::Configuration,
-};
+use distri::types::Configuration;
 use dotenv::dotenv;
-use std::{env, sync::Arc};
+use std::env;
 use tracing::debug;
 
 /// CLI commands for Distri
@@ -15,15 +12,15 @@ use tracing::debug;
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
+    /// Configuration file path
+    #[arg(short, long, global = true)]
+    pub config: Option<String>,
 }
 
 #[derive(Subcommand)]
 pub enum Commands {
     /// Run an agent with a given task
     Run {
-        /// Configuration file path
-        #[arg(short, long)]
-        config: String,
         /// Agent name to run
         #[arg(short, long)]
         agent: String,
@@ -41,16 +38,9 @@ pub enum Commands {
         port: u16,
     },
     /// List available agents
-    List {
-        /// Configuration file path
-        #[arg(short, long)]
-        config: String,
-    },
+    List {},
     /// Start the server
     Serve {
-        /// Configuration file path
-        #[arg(short, long)]
-        config: String,
         /// Server host
         #[arg(long, default_value = "localhost")]
         host: String,
@@ -103,33 +93,4 @@ pub fn replace_env_vars(content: &str) -> String {
     }
 
     result
-}
-
-/// Initialize AgentExecutor from configuration using builder pattern
-pub async fn initialize_executor(config: &Configuration) -> Result<Arc<AgentExecutor>> {
-    use distri::agent::AgentExecutorBuilder;
-    
-    let executor = AgentExecutorBuilder::new()
-        .initialize_stores_from_config(config.stores.as_ref())
-        .await?
-        .build()?;
-    
-    // Register agents from configuration
-    for agent_config in &config.agents {
-        executor.register_default_agent(agent_config.definition.clone()).await?;
-    }
-    
-    Ok(Arc::new(executor))
-}
-
-/// Initialize AgentExecutor from config file path (recommended)
-pub async fn initialize_executor_from_file(config_path: &str) -> Result<Arc<AgentExecutor>> {
-    let config = load_config(config_path)?;
-    initialize_executor(&config).await
-}
-
-/// Initialize AgentExecutor from config string (recommended)  
-pub async fn initialize_executor_from_str(config_str: &str) -> Result<Arc<AgentExecutor>> {
-    let config = load_config_from_str(config_str)?;
-    initialize_executor(&config).await
 }

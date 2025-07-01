@@ -6,11 +6,11 @@ use uuid::Uuid;
 use crate::{
     agent::ExecutorContext,
     memory::{LocalAgentMemory, MemoryStep},
-    types::{CreateThreadRequest, McpSession, Thread, ThreadSummary, UpdateThreadRequest},
     store::{
-        AgentStore, MemoryStore, SessionMemory, SessionStore, TaskStore, ThreadStore, 
+        AgentStore, MemoryStore, SessionMemory, SessionStore, TaskStore, ThreadStore,
         ToolSessionStore,
     },
+    types::{CreateThreadRequest, McpSession, Thread, ThreadSummary, UpdateThreadRequest},
 };
 use distri_a2a::{EventKind, Message as A2aMessage, Task, TaskState, TaskStatus};
 
@@ -237,16 +237,16 @@ impl TaskStore for HashMapTaskStore {
 
     async fn cancel_task(&self, task_id: &str) -> anyhow::Result<Task> {
         let mut tasks = self.tasks.write().await;
-        let task = tasks.get_mut(task_id).ok_or_else(|| {
-            anyhow::anyhow!("Task not found")
-        })?;
-        
+        let task = tasks
+            .get_mut(task_id)
+            .ok_or_else(|| anyhow::anyhow!("Task not found"))?;
+
         task.status = TaskStatus {
             state: TaskState::Canceled,
             message: None,
             timestamp: Some(chrono::Utc::now().to_rfc3339()),
         };
-        
+
         Ok(task.clone())
     }
 
@@ -293,11 +293,7 @@ impl ThreadStore for HashMapThreadStore {
     }
 
     async fn create_thread(&self, request: CreateThreadRequest) -> anyhow::Result<Thread> {
-        let thread = Thread::new(
-            request.agent_id,
-            request.title,
-            request.thread_id,
-        );
+        let thread = Thread::new(request.agent_id, request.title, request.thread_id);
 
         if let Some(initial_message) = request.initial_message {
             // Here you might want to update the thread with the initial message
@@ -321,14 +317,14 @@ impl ThreadStore for HashMapThreadStore {
         request: UpdateThreadRequest,
     ) -> anyhow::Result<Thread> {
         let mut threads = self.threads.write().await;
-        let thread = threads.get_mut(thread_id).ok_or_else(|| {
-            anyhow::anyhow!("Thread not found")
-        })?;
+        let thread = threads
+            .get_mut(thread_id)
+            .ok_or_else(|| anyhow::anyhow!("Thread not found"))?;
 
         if let Some(title) = request.title {
             thread.title = title;
         }
-        
+
         if let Some(metadata) = request.metadata {
             thread.metadata.extend(metadata);
         }
@@ -425,7 +421,7 @@ impl AgentStore for InMemoryAgentStore {
     ) -> (Vec<Box<dyn crate::agent::BaseAgent>>, Option<String>) {
         let agents = self.agents.read().await;
         let limit = limit.unwrap_or(100);
-        
+
         let start_index = if let Some(cursor) = cursor {
             agents
                 .keys()
