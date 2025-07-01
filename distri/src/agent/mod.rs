@@ -5,7 +5,7 @@ pub mod reason;
 pub mod server;
 
 pub use agent::{BaseAgent, DefaultAgent, StepResult, MAX_ITERATIONS};
-pub use executor::AgentExecutor;
+pub use executor::{AgentExecutor, AgentExecutorBuilder};
 pub use log::{ModelLogger, StepLogger};
 pub use server::{build_server, DISTRI_LOCAL_SERVER};
 

@@ -1,19 +1,12 @@
-mod run;
-
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use distri::{
-    agent::{AgentExecutor, ExecutorContext},
-    memory::MemoryConfig,
-    servers::{
-        kg::FileMemory,
-        registry::{init_registry_and_coordinator, ServerRegistry},
-    },
-    store::InMemoryAgentStore,
-    types::{Configuration},
+    agent::AgentExecutor,
+    types::Configuration,
 };
-use std::{collections::HashMap, sync::Arc};
-use tokio::sync::{Mutex, RwLock};
+use dotenv::dotenv;
+use std::{env, sync::Arc};
+use tracing::debug;
 
 /// CLI commands for Distri
 #[derive(Parser)]
@@ -67,35 +60,76 @@ pub enum Commands {
     },
 }
 
-/// Initialize all infrastructure from configuration (backward compatibility)
-pub async fn init_all(
-    config: &Configuration,
-) -> Result<(Arc<RwLock<ServerRegistry>>, Arc<AgentExecutor>)> {
-    let sessions = config.sessions.clone();
+/// Load configuration from file path with environment variable substitution
+pub fn load_config(config_path: &str) -> Result<Configuration> {
+    // Load .env file if it exists
+    dotenv().ok();
 
-    let local_memories = HashMap::new();
-    let tool_sessions = run::session::get_session_store(sessions);
+    // Read the config file
+    let config_str = std::fs::read_to_string(config_path)?;
 
-    let memory_config = MemoryConfig::File(".distri/memory".to_string());
-    let context = Arc::new(ExecutorContext::default());
-    let agent_store = Arc::new(InMemoryAgentStore::new());
-    let (registry, coordinator) = init_registry_and_coordinator(
-        local_memories,
-        tool_sessions.clone(),
-        agent_store.clone(),
-        &config.mcp_servers,
-        context,
-        memory_config,
-    )
-    .await;
+    // Replace environment variables in the config string
+    let config_str = replace_env_vars(&config_str);
 
-    Ok((registry, coordinator))
+    // Parse the YAML
+    let config: Configuration = serde_yaml::from_str(&config_str)?;
+    debug!("config: {config:?}");
+    Ok(config)
 }
 
-/// Initialize KG memory (if needed for specific agents)
-pub async fn init_kg_memory(agent: &str) -> Result<Arc<Mutex<FileMemory>>> {
-    let mut memory_path = std::path::PathBuf::from(".distri");
-    memory_path.push(format!("{agent}.memory"));
-    let memory = FileMemory::new(memory_path).await?;
-    Ok(Arc::new(Mutex::new(memory)))
+/// Load configuration from string with environment variable substitution
+pub fn load_config_from_str(config_str: &str) -> Result<Configuration> {
+    dotenv().ok();
+    let config_str = replace_env_vars(config_str);
+    let config: Configuration = serde_yaml::from_str(&config_str)?;
+    debug!("config: {config:?}");
+    Ok(config)
+}
+
+/// Replace environment variables in config string ({{ENV_VAR}} format)
+pub fn replace_env_vars(content: &str) -> String {
+    let mut result = content.to_string();
+
+    // Find all patterns matching {{ENV_VAR}}
+    let re = regex::Regex::new(r"\{\{(\w+)\}\}").unwrap();
+
+    for cap in re.captures_iter(content) {
+        let full_match = cap.get(0).unwrap().as_str();
+        let env_var_name = cap.get(1).unwrap().as_str();
+
+        if let Ok(env_value) = env::var(env_var_name) {
+            result = result.replace(full_match, &env_value);
+        }
+    }
+
+    result
+}
+
+/// Initialize AgentExecutor from configuration using builder pattern
+pub async fn initialize_executor(config: &Configuration) -> Result<Arc<AgentExecutor>> {
+    use distri::agent::AgentExecutorBuilder;
+    
+    let executor = AgentExecutorBuilder::new()
+        .initialize_stores_from_config(config.stores.as_ref())
+        .await?
+        .build()?;
+    
+    // Register agents from configuration
+    for agent_config in &config.agents {
+        executor.register_default_agent(agent_config.definition.clone()).await?;
+    }
+    
+    Ok(Arc::new(executor))
+}
+
+/// Initialize AgentExecutor from config file path (recommended)
+pub async fn initialize_executor_from_file(config_path: &str) -> Result<Arc<AgentExecutor>> {
+    let config = load_config(config_path)?;
+    initialize_executor(&config).await
+}
+
+/// Initialize AgentExecutor from config string (recommended)  
+pub async fn initialize_executor_from_str(config_str: &str) -> Result<Arc<AgentExecutor>> {
+    let config = load_config_from_str(config_str)?;
+    initialize_executor(&config).await
 }

@@ -2,8 +2,7 @@ use actix_cors::Cors;
 use actix_web::middleware::Logger;
 use actix_web::{web, App, HttpResponse, HttpServer, Result as ActixResult};
 use anyhow::Result;
-use distri::{agent::AgentExecutor, types::Configuration};
-use distri_cli::{Cli, Commands};
+use distri_cli::{load_config, initialize_executor, Cli, Commands};
 use distri_server::{configure_distri_service, DistriServer, DistriServiceConfig};
 use clap::Parser;
 use serde_json::json;
@@ -67,46 +66,11 @@ async fn main() -> Result<()> {
     }
 }
 
-/// Load configuration from file path with environment variable substitution
-fn load_config(config_path: &str) -> Result<Configuration> {
-    // Load .env file if it exists
-    dotenv::dotenv().ok();
-
-    // Read the config file
-    let config_str = std::fs::read_to_string(config_path)?;
-
-    // Replace environment variables in the config string
-    let config_str = replace_env_vars(&config_str);
-
-    // Parse the YAML
-    let config: Configuration = serde_yaml::from_str(&config_str)?;
-    Ok(config)
-}
-
-/// Replace environment variables in config string ({{ENV_VAR}} format)
-fn replace_env_vars(content: &str) -> String {
-    let mut result = content.to_string();
-
-    // Find all patterns matching {{ENV_VAR}}
-    let re = regex::Regex::new(r"\{\{(\w+)\}\}").unwrap();
-
-    for cap in re.captures_iter(content) {
-        let full_match = cap.get(0).unwrap().as_str();
-        let env_var_name = cap.get(1).unwrap().as_str();
-
-        if let Ok(env_value) = std::env::var(env_var_name) {
-            result = result.replace(full_match, &env_value);
-        }
-    }
-
-    result
-}
-
-async fn run_cli(config: Configuration, agent_name: &str, task: &str) -> Result<()> {
+async fn run_cli(config: distri::types::Configuration, agent_name: &str, task: &str) -> Result<()> {
     tracing::info!("Running agent '{}' with task: {}", agent_name, task);
     
-    // Initialize executor
-    let executor = AgentExecutor::initialize(&config).await?;
+    // Initialize executor using the centralized function
+    let executor = initialize_executor(&config).await?;
     
     // Find the agent
     let agent = executor.agent_store.get(agent_name).await
@@ -125,8 +89,8 @@ async fn run_cli(config: Configuration, agent_name: &str, task: &str) -> Result<
     Ok(())
 }
 
-async fn list_agents(config: Configuration) -> Result<()> {
-    let executor = AgentExecutor::initialize(&config).await?;
+async fn list_agents(config: distri::types::Configuration) -> Result<()> {
+    let executor = initialize_executor(&config).await?;
     let (agents, _) = executor.agent_store.list(None, None).await;
     
     println!("Available agents:");
@@ -137,7 +101,7 @@ async fn list_agents(config: Configuration) -> Result<()> {
     Ok(())
 }
 
-async fn run_server(config: Configuration, host: &str, port: u16) -> Result<()> {
+async fn run_server(config: distri::types::Configuration, host: &str, port: u16) -> Result<()> {
     tracing::info!("Starting Distri Embedding Example Server...");
 
     tracing::info!("Starting server on http://{}:{}", host, port);
