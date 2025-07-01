@@ -1,90 +1,52 @@
 use anyhow::Result;
-use distri::{agent::ExecutorContext, memory::TaskStep};
-use distri_search::{init_infrastructure, load_config};
-use std::sync::Arc;
-use tracing::info;
+use clap::Parser;
+use distri_cli::{load_config, Cli, Commands};
+use distri_search::{load_config as load_embedded_config, run_cli, run_server, list_agents};
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Initialize logging
-    tracing_subscriber::fmt::init();
+    dotenv::dotenv().ok();
+    
+    // Parse CLI arguments
+    let cli = Cli::parse();
+    
+    // Initialize tracing
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .init();
 
-    println!("🔍 DeepSearch Agent - YAML Configuration Example");
-    println!("================================================\n");
-
-    let config = match load_config() {
-        Ok(config) => config,
-        Err(e) => {
-            eprintln!("❌ Failed to load config: {}", e);
-            std::process::exit(1);
+    match cli.command {
+        Commands::Run { config, agent, task, server, host, port } => {
+            // Load configuration - prefer command line config, fallback to embedded
+            let config = if !config.is_empty() {
+                load_config(&config)?
+            } else {
+                load_embedded_config()?
+            };
+            
+            if server {
+                // Run as server
+                run_server(config, &host, port).await
+            } else {
+                // Run as CLI
+                run_cli(config, &agent, &task).await
+            }
         }
-    };
-
-    info!("✅ Configuration loaded successfully");
-
-    // Initialize the distri infrastructure
-    info!("Initializing distri infrastructure...");
-    let (_, coordinator) = init_infrastructure().await?;
-    info!("✅ Infrastructure initialized");
-
-    // Register the DeepSearch agent from YAML config
-    info!("Registering DeepSearch agent...");
-
-    let deep_search_config = config
-        .agents
-        .iter()
-        .find(|a| a.definition.name == "deep_search")
-        .expect("deep_search agent not found in config");
-
-    let definition = &deep_search_config.definition;
-    coordinator
-        .register_default_agent(definition.clone())
-        .await?;
-    info!("✅ DeepSearch agent registered");
-
-    // Start the coordinator in the background
-    let coordinator_clone = coordinator.clone();
-    let coordinator_handle = tokio::spawn(async move {
-        coordinator_clone.run().await.unwrap();
-    });
-
-    // Run a test query
-    println!("\n🤖 Testing DeepSearch Agent");
-    println!("==========================");
-
-    let test_query = "What are the latest developments in artificial intelligence safety research?";
-    println!("Query: {}", test_query);
-
-    let task = TaskStep {
-        task: test_query.to_string(),
-        task_images: None,
-    };
-
-    println!("\n🔄 Executing task...");
-
-    // Create context for this execution
-    let context = Arc::new(ExecutorContext::default());
-
-    match coordinator
-        .execute(&definition.name, task, None, context.clone(), None)
-        .await
-    {
-        Ok(result) => {
-            println!("\n✅ Task completed successfully!");
-            println!("\n📋 Result:");
-            println!("{}", result);
+        Commands::List { config } => {
+            let config = if !config.is_empty() {
+                load_config(&config)?
+            } else {
+                load_embedded_config()?
+            };
+            list_agents(config).await
         }
-        Err(e) => {
-            eprintln!("\n❌ Task failed: {}", e);
-            eprintln!("This might be because:");
-            eprintln!("1. TAVILY_API_KEY environment variable is not set");
-            eprintln!("2. mcp-tavily or mcp-spider servers are not installed");
-            eprintln!("3. Network connectivity issues");
+        Commands::Serve { config, host, port } => {
+            let config = if !config.is_empty() {
+                load_config(&config)?
+            } else {
+                load_embedded_config()?
+            };
+            run_server(config, &host, port).await
         }
     }
-
-    // Clean up
-    coordinator_handle.abort();
-
-    Ok(())
 }

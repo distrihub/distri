@@ -1315,10 +1315,17 @@ dependencies = [
 name = "distri-search"
 version = "0.1.0"
 dependencies = [
+ "actix-cors",
+ "actix-web",
  "anyhow",
  "async-trait",
+ "chrono",
+ "clap",
  "distri",
+ "distri-cli",
+ "distri-server",
  "dotenv",
+ "embedding-distri-server",
  "mcp-spider",
  "mcp-tavily",
  "serde",
@@ -4610,10 +4617,17 @@ dependencies = [
 name = "twitter-bot"
 version = "0.1.0"
 dependencies = [
+ "actix-cors",
+ "actix-web",
  "anyhow",
  "async-trait",
+ "chrono",
+ "clap",
  "distri",
+ "distri-cli",
+ "distri-server",
  "dotenv",
+ "embedding-distri-server",
  "mcp-spider",
  "mcp-tavily",
  "mcp-twitter",

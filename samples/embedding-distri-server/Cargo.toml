@@ -3,6 +3,10 @@ name = "embedding-distri-server"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "embedding_distri_server"
+path = "src/lib.rs"
+
 [dependencies]
 actix-web = "4.4"
 actix-cors = "0.7"
