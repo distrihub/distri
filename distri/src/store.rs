@@ -6,10 +6,7 @@ use uuid::Uuid;
 use crate::{
     agent::ExecutorContext,
     memory::{AgentMemory, LocalAgentMemory, MemoryStep},
-    types::{
-        CreateThreadRequest, McpSession, Message, ServerTools, Thread, ThreadSummary,
-        UpdateThreadRequest,
-    },
+    types::{CreateThreadRequest, McpSession, Message, Thread, ThreadSummary, UpdateThreadRequest},
 };
 use distri_a2a::{EventKind, Message as A2aMessage, Task, TaskState, TaskStatus};
 
@@ -713,25 +710,18 @@ pub trait AgentStore: Send + Sync {
         limit: Option<usize>,
     ) -> (Vec<Box<dyn crate::agent::BaseAgent>>, Option<String>);
     async fn get(&self, name: &str) -> Option<Box<dyn crate::agent::BaseAgent>>;
-    async fn get_tools(&self, name: &str) -> Option<Vec<ServerTools>>;
-    async fn register(
-        &self,
-        agent: Box<dyn crate::agent::BaseAgent>,
-        tools: Vec<ServerTools>,
-    ) -> anyhow::Result<()>;
+    async fn register(&self, agent: Box<dyn crate::agent::BaseAgent>) -> anyhow::Result<()>;
 }
 
 #[derive(Clone, Default)]
 pub struct InMemoryAgentStore {
     agents: Arc<RwLock<HashMap<String, Box<dyn crate::agent::BaseAgent>>>>,
-    agent_tools: Arc<RwLock<HashMap<String, Vec<ServerTools>>>>,
 }
 
 impl InMemoryAgentStore {
     pub fn new() -> Self {
         Self {
             agents: Arc::new(RwLock::new(HashMap::new())),
-            agent_tools: Arc::new(RwLock::new(HashMap::new())),
         }
     }
     pub async fn insert(&self, name: String, agent: Box<dyn crate::agent::BaseAgent>) {
@@ -772,20 +762,12 @@ impl AgentStore for InMemoryAgentStore {
         let agents = self.agents.read().await;
         agents.get(name).map(|agent| agent.clone_box())
     }
-    async fn get_tools(&self, name: &str) -> Option<Vec<ServerTools>> {
-        let agent_tools = self.agent_tools.read().await;
-        agent_tools.get(name).cloned()
-    }
-    async fn register(
-        &self,
-        agent: Box<dyn crate::agent::BaseAgent>,
-        tools: Vec<ServerTools>,
-    ) -> anyhow::Result<()> {
+
+    async fn register(&self, agent: Box<dyn crate::agent::BaseAgent>) -> anyhow::Result<()> {
         let name = agent.get_name().to_string();
         let mut agents = self.agents.write().await;
         agents.insert(name.clone(), agent);
-        let mut agent_tools = self.agent_tools.write().await;
-        agent_tools.insert(name, tools);
+
         Ok(())
     }
 }

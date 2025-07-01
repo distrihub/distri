@@ -1,7 +1,7 @@
 use actix_web::{web, App, HttpServer};
 use anyhow::Result;
 use distri::{
-    coordinator::{CoordinatorContext, LocalCoordinator},
+    agent::{AgentExecutor, ExecutorContext},
     servers::registry::ServerRegistry,
     store::{InMemoryAgentStore, LocalSessionStore, SessionStore},
     types::{Configuration, ServerConfig},
@@ -9,7 +9,6 @@ use distri::{
 };
 use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
-use uuid;
 
 pub mod routes;
 pub mod server;
@@ -18,14 +17,14 @@ pub use server::A2AServer;
 
 /// Configuration for embedding distri in other actix-web apps
 pub struct DistriServiceConfig {
-    pub coordinator: Arc<LocalCoordinator>,
+    pub coordinator: Arc<AgentExecutor>,
     pub task_store: Arc<dyn TaskStore>,
     pub server_config: ServerConfig,
 }
 
 impl DistriServiceConfig {
     /// Create a new configuration with default task store
-    pub fn new(coordinator: Arc<LocalCoordinator>, server_config: ServerConfig) -> Self {
+    pub fn new(coordinator: Arc<AgentExecutor>, server_config: ServerConfig) -> Self {
         Self {
             coordinator,
             task_store: Arc::new(HashMapTaskStore::new()),
@@ -35,7 +34,7 @@ impl DistriServiceConfig {
 
     /// Create a new configuration with custom task store
     pub fn with_task_store(
-        coordinator: Arc<LocalCoordinator>,
+        coordinator: Arc<AgentExecutor>,
         task_store: Arc<dyn TaskStore>,
         server_config: ServerConfig,
     ) -> Self {
@@ -71,13 +70,11 @@ pub fn configure_distri_service(cfg: &mut web::ServiceConfig, config: DistriServ
         .configure(routes::config);
 }
 
-/// Simple helper to create a LocalCoordinator from a YAML config file
+/// Simple helper to create a AgentExecutor from a YAML config file
 /// This is a convenience function for quick setup
 pub async fn create_coordinator_from_config(
     config_str: &str,
-) -> Result<(Arc<LocalCoordinator>, ServerConfig)> {
-    use std::collections::HashMap;
-
+) -> Result<(Arc<AgentExecutor>, ServerConfig)> {
     let config: Configuration = serde_yaml::from_str(&config_str)?;
 
     // Create default components
@@ -87,16 +84,10 @@ pub async fn create_coordinator_from_config(
     let agent_store = Arc::new(InMemoryAgentStore::new());
 
     // Create context explicitly
-    let context = Arc::new(CoordinatorContext::new(
-        uuid::Uuid::new_v4().to_string(),
-        uuid::Uuid::new_v4().to_string(),
-        true,
-        None,
-        HashMap::new(),
-    ));
+    let context = Arc::new(ExecutorContext::default());
 
     // Create coordinator
-    let coordinator = LocalCoordinator::new(
+    let coordinator = AgentExecutor::new(
         registry,
         None, // tool_sessions
         session_store,
@@ -106,8 +97,8 @@ pub async fn create_coordinator_from_config(
 
     // Register agents from config
     for agent_config in config.agents {
-        let agent_record = distri::types::AgentRecord::Local(agent_config.definition);
-        coordinator.register_agent(agent_record).await?;
+        let definition = agent_config.definition.clone();
+        coordinator.register_default_agent(definition).await?;
     }
 
     // Get server config or use default

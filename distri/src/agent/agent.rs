@@ -27,13 +27,18 @@ pub trait BaseAgent: Send + Sync + std::fmt::Debug {
         context: Arc<ExecutorContext>,
         event_tx: Option<mpsc::Sender<AgentEvent>>,
     ) -> Result<String, AgentError>;
+
     async fn invoke_stream(
         &self,
-        task: TaskStep,
-        params: Option<serde_json::Value>,
-        context: Arc<ExecutorContext>,
-        event_tx: mpsc::Sender<AgentEvent>,
-    ) -> Result<(), AgentError>;
+        _task: TaskStep,
+        _params: Option<serde_json::Value>,
+        _context: Arc<ExecutorContext>,
+        _event_tx: mpsc::Sender<AgentEvent>,
+    ) -> Result<(), AgentError> {
+        Err(AgentError::NotImplemented(
+            "BaseAgent::invoke_stream not implemented".to_string(),
+        ))
+    }
 
     // Default implementation hooks that return values as-is
     async fn after_task_step(
@@ -85,40 +90,7 @@ pub trait BaseAgent: Send + Sync + std::fmt::Debug {
 
     fn get_description(&self) -> &str;
     fn get_definition(&self) -> AgentDefinition;
-}
-
-#[async_trait::async_trait]
-pub trait AgentInvoke: BaseAgent {
-    /// Custom invoke implementation
-    /// By default this errors out - implementers must override this
-    async fn agent_invoke(
-        &self,
-        _task: TaskStep,
-        _params: Option<serde_json::Value>,
-        _context: Arc<ExecutorContext>,
-        _event_tx: Option<mpsc::Sender<AgentEvent>>,
-    ) -> Result<String, AgentError> {
-        Err(AgentError::NotImplemented(
-            "AgentInvoke::agent_invoke not implemented".to_string(),
-        ))
-    }
-}
-
-#[async_trait::async_trait]
-pub trait AgentInvokeStream: BaseAgent {
-    /// Custom invoke_stream implementation
-    /// By default this errors out - implementers must override this
-    async fn agent_invoke_stream(
-        &self,
-        _task: TaskStep,
-        _params: Option<serde_json::Value>,
-        _context: Arc<ExecutorContext>,
-        _event_tx: mpsc::Sender<AgentEvent>,
-    ) -> Result<(), AgentError> {
-        Err(AgentError::NotImplemented(
-            "AgentInvokeStream::agent_invoke_stream not implemented".to_string(),
-        ))
-    }
+    fn get_tools(&self) -> Vec<ServerTools>;
 }
 
 /// Result of a single step execution
@@ -128,8 +100,6 @@ pub enum StepResult {
     Continue(Vec<Message>),
     /// Finish execution with this final response
     Finish(String),
-    /// Handle tool calls (for custom agents that want to manage tools)
-    ToolCalls(Vec<crate::types::ToolCall>),
 }
 
 /// Default agent implementation that provides the standard LLM-based behavior
@@ -324,11 +294,11 @@ impl DefaultAgent {
         params: Option<serde_json::Value>,
         context: Arc<ExecutorContext>,
     ) -> Result<StepResult, AgentError> {
-        self.llm_step(messages, params, context).await
+        self.llm(messages, params, context).await
     }
 
     /// Execute one step using LLM
-    async fn llm_step(
+    async fn llm(
         &self,
         messages: &[Message],
         params: Option<serde_json::Value>,
@@ -338,7 +308,7 @@ impl DefaultAgent {
 
         // Create executor for LLM call
         let executor = LLMExecutor::new(
-            self.definition.clone(),
+            self.definition.clone().into(),
             self.server_tools.clone(),
             context.clone(),
             None,
@@ -506,7 +476,7 @@ impl DefaultAgent {
                 let is_llm_step = true; // For now, always stream LLM step
                 if is_llm_step {
                     let executor = LLMExecutor::new(
-                        self.definition.clone(),
+                        self.definition.clone().into(),
                         self.server_tools.clone(),
                         context.clone(),
                         None,
@@ -536,14 +506,7 @@ impl DefaultAgent {
                                 .await
                                 .map_err(|e| AgentError::Session(e.to_string()))?;
                             self.logger.log_step(agent_id, &action_step);
-                            // Emit text message events
-                            self.emit_text_message_events(
-                                &event_tx,
-                                &context,
-                                &content,
-                                "assistant",
-                            )
-                            .await;
+
                             break Ok(());
                         }
                         StepResult::Continue(new_messages) => {
@@ -554,11 +517,6 @@ impl DefaultAgent {
                                 .await
                                 .map_err(|e| AgentError::Session(e.to_string()))?;
                             continue;
-                        }
-                        StepResult::ToolCalls(_tool_calls) => {
-                            return Err(AgentError::LLMError(
-                                "ToolCalls result not properly handled".to_string(),
-                            ));
                         }
                     }
                 }
@@ -667,11 +625,6 @@ impl DefaultAgent {
                         current_messages.extend(new_messages);
                         continue;
                     }
-                    StepResult::ToolCalls(_tool_calls) => {
-                        return Err(AgentError::LLMError(
-                            "ToolCalls result not properly handled".to_string(),
-                        ));
-                    }
                 }
             }
         }
@@ -710,6 +663,10 @@ impl BaseAgent for DefaultAgent {
         &self.definition.description
     }
 
+    fn get_tools(&self) -> Vec<ServerTools> {
+        self.server_tools.clone()
+    }
+
     async fn invoke(
         &self,
         task: TaskStep,
@@ -717,122 +674,7 @@ impl BaseAgent for DefaultAgent {
         context: Arc<ExecutorContext>,
         event_tx: Option<mpsc::Sender<AgentEvent>>,
     ) -> Result<String, AgentError> {
-        let agent_id = &self.definition.name;
-        let run_id = context.run_id.lock().await.clone();
-        let thread_id = context.thread_id.clone();
-        let mut iterations = self
-            .session_store
-            .get_iteration(&run_id)
-            .await
-            .map_err(|e| AgentError::Session(e.to_string()))?;
-        // Send RunStarted event if event_tx is provided
-        if let Some(event_tx) = &event_tx {
-            let _ = event_tx
-                .send(AgentEvent::RunStarted {
-                    thread_id: thread_id.clone(),
-                    run_id: run_id.clone(),
-                })
-                .await;
-        }
-        let result = async {
-            if iterations == 0 {
-                self.system_step(context.clone()).await?;
-                self.task_step(&task, context.clone()).await?;
-            }
-            let mut current_messages = self
-                .session_store
-                .get_messages(&context.thread_id)
-                .await
-                .map_err(|e| AgentError::Session(e.to_string()))?;
-            let max_iterations = self.definition.max_iterations.unwrap_or(MAX_ITERATIONS);
-            tracing::debug!("Max iterations per run set to: {}", max_iterations);
-            loop {
-                if iterations > max_iterations {
-                    return Err(AgentError::LLMError(format!(
-                        "Max iterations reached: {max_iterations}",
-                    )));
-                }
-                // Handle planning if enabled
-                if let Some(plan_config) = &self.definition.plan {
-                    self.plan_step(task.clone(), plan_config, iterations, context.clone())
-                        .await?;
-                    // Refresh messages after planning
-                    current_messages = self
-                        .session_store
-                        .get_messages(&context.thread_id)
-                        .await
-                        .map_err(|e| AgentError::Session(e.to_string()))?;
-                }
-                let step_result = self
-                    .step(&current_messages, params.clone(), context.clone())
-                    .await?;
-                match step_result {
-                    StepResult::Finish(content) => {
-                        // Store final response as action step
-                        let action_step = MemoryStep::Action(ActionStep {
-                            model_input_messages: Some(current_messages),
-                            model_output: Some(content.clone()),
-                            ..Default::default()
-                        });
-                        self.session_store
-                            .store_step(&context.thread_id, action_step.clone())
-                            .await
-                            .map_err(|e| AgentError::Session(e.to_string()))?;
-                        self.logger.log_step(agent_id, &action_step);
-                        // Call after_finish hook
-                        self.after_finish(&content, context.clone()).await?;
-                        return Ok(content);
-                    }
-                    StepResult::Continue(new_messages) => {
-                        current_messages.extend(new_messages);
-                        iterations = self
-                            .session_store
-                            .inc_iteration(&run_id)
-                            .await
-                            .map_err(|e| AgentError::Session(e.to_string()))?;
-                        continue;
-                    }
-                    StepResult::ToolCalls(_tool_calls) => {
-                        return Err(AgentError::LLMError(
-                            "ToolCalls result not properly handled".to_string(),
-                        ));
-                    }
-                }
-            }
-        }
-        .await;
-        // Send RunFinished or RunError event if event_tx is provided
-        if let Some(event_tx) = &event_tx {
-            match &result {
-                Ok(_) => {
-                    let _ = event_tx
-                        .send(AgentEvent::RunFinished { thread_id, run_id })
-                        .await;
-                }
-                Err(e) => {
-                    let _ = event_tx
-                        .send(AgentEvent::RunError {
-                            thread_id,
-                            run_id,
-                            message: e.to_string(),
-                            code: None,
-                        })
-                        .await;
-                }
-            }
-        }
-        result
-    }
-
-    async fn invoke_stream(
-        &self,
-        task: TaskStep,
-        params: Option<serde_json::Value>,
-        context: Arc<ExecutorContext>,
-        event_tx: mpsc::Sender<AgentEvent>,
-    ) -> Result<(), AgentError> {
-        // Use the actual implementation from DefaultAgent
-        DefaultAgent::invoke_stream(self, task, params, context, event_tx).await
+        DefaultAgent::invoke(self, task, params, context, event_tx).await
     }
 
     fn clone_box(&self) -> Box<dyn BaseAgent> {
@@ -842,48 +684,6 @@ impl BaseAgent for DefaultAgent {
     fn get_name(&self) -> &str {
         &self.definition.name
     }
-}
-
-/// Example custom agent implementation that uses AgentInvoke
-#[derive(Debug, Clone)]
-pub struct TestCustomAgent {
-    pub name: String,
-    pub description: String,
-}
-
-impl TestCustomAgent {
-    pub fn new(name: String) -> Self {
-        Self {
-            description: name.clone(),
-            name: name.clone(),
-        }
-    }
-}
-
-#[async_trait::async_trait]
-impl BaseAgent for TestCustomAgent {
-    fn get_description(&self) -> &str {
-        &self.description
-    }
-
-    fn get_definition(&self) -> AgentDefinition {
-        AgentDefinition {
-            name: self.name.clone(),
-            description: self.description.clone(),
-            ..Default::default()
-        }
-    }
-
-    async fn invoke(
-        &self,
-        task: TaskStep,
-        params: Option<serde_json::Value>,
-        context: Arc<ExecutorContext>,
-        event_tx: Option<mpsc::Sender<AgentEvent>>,
-    ) -> Result<String, AgentError> {
-        // Call the custom agent_invoke implementation
-        self.agent_invoke(task, params, context, event_tx).await
-    }
 
     async fn invoke_stream(
         &self,
@@ -892,126 +692,6 @@ impl BaseAgent for TestCustomAgent {
         context: Arc<ExecutorContext>,
         event_tx: mpsc::Sender<AgentEvent>,
     ) -> Result<(), AgentError> {
-        // Call the custom agent_invoke_stream implementation
-        self.agent_invoke_stream(task, params, context, event_tx)
-            .await
-    }
-
-    fn clone_box(&self) -> Box<dyn BaseAgent> {
-        Box::new(self.clone())
-    }
-
-    fn get_name(&self) -> &str {
-        &self.name
-    }
-}
-
-#[async_trait::async_trait]
-impl AgentInvoke for TestCustomAgent {
-    async fn agent_invoke(
-        &self,
-        task: TaskStep,
-        _params: Option<serde_json::Value>,
-        context: Arc<ExecutorContext>,
-        event_tx: Option<mpsc::Sender<AgentEvent>>,
-    ) -> Result<String, AgentError> {
-        let run_id = context.run_id.lock().await.clone();
-        let thread_id = context.thread_id.clone();
-
-        // Send RunStarted event if event_tx is provided
-        if let Some(event_tx) = &event_tx {
-            let _ = event_tx
-                .send(AgentEvent::RunStarted {
-                    thread_id: thread_id.clone(),
-                    run_id: run_id.clone(),
-                })
-                .await;
-        }
-
-        // Custom processing: just return a simple response based on the task
-        let response = format!("Custom agent '{}' processed task: {}", self.name, task.task);
-
-        // Send RunFinished event if event_tx is provided
-        if let Some(event_tx) = &event_tx {
-            let _ = event_tx
-                .send(AgentEvent::RunFinished { thread_id, run_id })
-                .await;
-        }
-
-        Ok(response)
-    }
-}
-
-#[async_trait::async_trait]
-impl AgentInvokeStream for TestCustomAgent {
-    async fn agent_invoke_stream(
-        &self,
-        task: TaskStep,
-        _params: Option<serde_json::Value>,
-        context: Arc<ExecutorContext>,
-        event_tx: mpsc::Sender<AgentEvent>,
-    ) -> Result<(), AgentError> {
-        let run_id = context.run_id.lock().await.clone();
-        let thread_id = context.thread_id.clone();
-
-        // Send RunStarted event
-        let _ = event_tx
-            .send(AgentEvent::RunStarted {
-                thread_id: thread_id.clone(),
-                run_id: run_id.clone(),
-            })
-            .await;
-
-        // Simulate streaming response by sending multiple text events
-        let message_id = uuid::Uuid::new_v4().to_string();
-        let _ = event_tx
-            .send(AgentEvent::TextMessageStart {
-                thread_id: thread_id.clone(),
-                run_id: run_id.clone(),
-                message_id: message_id.clone(),
-                role: "assistant".to_string(),
-            })
-            .await;
-
-        let str = &format!("'{}' ", self.get_name());
-        let parts = vec![
-            "Custom ",
-            "agent ",
-            str,
-            "is ",
-            "streaming ",
-            "response ",
-            "for: ",
-            &task.task,
-        ];
-
-        for part in parts {
-            let _ = event_tx
-                .send(AgentEvent::TextMessageContent {
-                    thread_id: thread_id.clone(),
-                    run_id: run_id.clone(),
-                    message_id: message_id.clone(),
-                    delta: part.to_string(),
-                })
-                .await;
-
-            // Small delay to simulate streaming
-            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-        }
-
-        let _ = event_tx
-            .send(AgentEvent::TextMessageEnd {
-                thread_id: thread_id.clone(),
-                run_id: run_id.clone(),
-                message_id,
-            })
-            .await;
-
-        // Send RunFinished event
-        let _ = event_tx
-            .send(AgentEvent::RunFinished { thread_id, run_id })
-            .await;
-
-        Ok(())
+        DefaultAgent::invoke_stream(self, task, params, context, event_tx).await
     }
 }

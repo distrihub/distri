@@ -7,9 +7,7 @@ use crate::{
         ToolSessionStore,
     },
     tools::{execute_tool, get_tools},
-    types::{
-        AgentRecord, CreateThreadRequest, Thread, ThreadSummary, ToolCall, UpdateThreadRequest,
-    },
+    types::{CreateThreadRequest, Thread, ThreadSummary, ToolCall, UpdateThreadRequest},
 };
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
@@ -80,44 +78,31 @@ impl AgentExecutor {
         })
     }
 
-    pub async fn register_agent(&self, record: AgentRecord) -> anyhow::Result<Box<dyn BaseAgent>> {
-        let definition = record.definition.clone();
-        let agent = record.agent;
+    pub async fn register_agent(&self, agent: Box<dyn BaseAgent>) -> anyhow::Result<()> {
+        tracing::info!("Registering agent: {}", agent.get_name());
 
-        let resolved_tools = get_tools(&definition.mcp_servers, self.registry.clone()).await?;
-        let name = definition.name.clone();
-
-        tracing::debug!(
-            "Registering agent: {name} with {:?}",
-            resolved_tools
-                .iter()
-                .map(
-                    |r| serde_json::json!({"name": r.definition.name, "type": r.definition.r#type, "tools": r.tools.len()})
-                )
-                .collect::<Vec<_>>()
-        );
-
-        // Clone the agent before registering
-        let agent_clone = agent.clone_box();
         self.agent_store
-            .register(agent, resolved_tools)
+            .register(agent)
             .await
             .map_err(|e| anyhow::anyhow!(e))?;
-        Ok(agent_clone)
+        Ok(())
     }
 
     /// Helper method to create a DefaultAgent from an AgentDefinition
-    pub fn create_default_agent(
+    pub async fn register_default_agent(
         &self,
         definition: crate::types::AgentDefinition,
-    ) -> Box<dyn BaseAgent> {
-        Box::new(DefaultAgent::new(
+    ) -> anyhow::Result<Box<dyn BaseAgent>> {
+        let resolved_tools = get_tools(&definition.mcp_servers, self.registry.clone()).await?;
+        let agent = Box::new(DefaultAgent::new(
             definition,
-            vec![],
+            resolved_tools,
             Arc::new(self.clone()),
             self.context.clone(),
             self.session_store.clone(),
-        ))
+        ));
+        self.register_agent(agent.clone_box()).await?;
+        Ok(agent)
     }
 
     pub async fn run(&self) -> anyhow::Result<()> {
@@ -139,14 +124,20 @@ impl AgentExecutor {
                     tokio::spawn(async move {
                         let result = async {
                             // Get the server tools for the agent
-                            let server_tools = agent_store.get_tools(&agent_id).await;
+                            let agent = agent_store.get(&agent_id).await;
 
-                            match server_tools {
-                                Some(server_tools) => {
+                            match agent {
+                                Some(agent) => {
                                     // Execute the tool
-                                    let tool_def = server_tools.iter().find(|t| {
-                                        t.tools.iter().any(|tool| tool.name == tool_call.tool_name)
-                                    });
+                                    let server_tools = agent.get_tools();
+                                    let tool_def = server_tools
+                                        .iter()
+                                        .find(|t| {
+                                            t.tools
+                                                .iter()
+                                                .any(|tool| tool.name == tool_call.tool_name)
+                                        })
+                                        .cloned();
 
                                     let content = match tool_def {
                                         Some(server_tool) => execute_tool(

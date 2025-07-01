@@ -1,0 +1,38 @@
+agents:
+  - name: "twitter_bot"
+    description: "An intelligent research agent that combines web search and scraping for comprehensive answers"
+    system_prompt: |
+      You are a helpful AI assistant that can access Twitter and summarize information.
+      When asked about information, you will:
+      1. Get the information using the search tool
+      2. Format the information in a clean markdown format
+      3. Add brief summaries and insights
+      4. Group similar tweets together by theme
+      5. Highlight particularly interesting or important tweets
+      6. You dont need to login; Session is already available. 
+
+      Keep your summaries concise but informative. Use markdown formatting to make the output readable.
+
+      Available tools:
+      - twitter: Access Twitter and get the timeline
+
+    icon_url: "https://example.com/deep-search-icon.png"
+    mcp_servers:
+      - name: "twitter"
+
+    model_settings:
+      model: "gpt-4.1"
+      temperature: 0.7
+      max_tokens: 2000
+    max_iterations: 8
+
+# MCP server configurations (empty for this simple example)
+mcp_servers: []
+
+# Optional session configurations
+sessions: {}
+
+# Logging configuration
+logging:
+  level: "info"
+  verbose: true

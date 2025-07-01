@@ -1,12 +1,21 @@
 [workspace]
 resolver = "2"
-members = ["distri", "proxy", "code-mcp", "distri-server", "distri-cli", "distri-a2a", "samples/embedding-distri-server"]
+
+members = [
+  "distri",
+  "proxy",
+  "distri-server",
+  "distri-cli",
+  "distri-a2a",
+  "samples/distri-search",
+  "samples/embedding-distri-server",
+  "samples/twitter-bot",
+]
 default-members = ["distri-cli"]
 
 [workspace.dependencies]
 async-mcp = { version = "0.1.1" }
 anyhow = "1.0"
-agent-twitter-client = { git = "https://github.com/distrihub/agent-twitter-client.git", rev = "019a59829af72c9410233529b098e67bb4a568f9" }
 tracing = "0.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
