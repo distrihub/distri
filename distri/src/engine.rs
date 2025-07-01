@@ -1,25 +1,29 @@
 use crate::{
-    coordinator::{AgentCoordinator, LocalCoordinator},
+    agent::{AgentExecutor},
     types::{AgentDefinition, Configuration},
 };
 use anyhow::Result;
 use std::sync::Arc;
 
 pub struct DistriEngine {
-    pub coordinator: Arc<LocalCoordinator>,
+    pub executor: Arc<AgentExecutor>,
     pub config: Arc<Configuration>,
 }
 
 impl DistriEngine {
-    pub fn new(coordinator: Arc<LocalCoordinator>, config: Arc<Configuration>) -> Self {
+    pub fn new(executor: Arc<AgentExecutor>, config: Arc<Configuration>) -> Self {
         Self {
-            coordinator,
+            executor,
             config,
         }
     }
 
     pub async fn list_agents(&self) -> Result<Vec<AgentDefinition>> {
-        let (agents, _) = self.coordinator.list_agents(None).await?;
-        Ok(agents)
+        let (agents, _) = self.executor.agent_store.list(None, None).await;
+        let agent_definitions = agents
+            .into_iter()
+            .map(|agent| agent.get_definition())
+            .collect();
+        Ok(agent_definitions)
     }
 }

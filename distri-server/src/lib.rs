@@ -46,6 +46,57 @@ impl DistriServiceConfig {
     }
 }
 
+/// DistriServer with access to the executor and initialize method
+pub struct DistriServer {
+    executor: Arc<AgentExecutor>,
+    server_config: ServerConfig,
+}
+
+impl DistriServer {
+    pub fn new(executor: Arc<AgentExecutor>, server_config: ServerConfig) -> Self {
+        Self {
+            executor,
+            server_config,
+        }
+    }
+
+    /// Initialize DistriServer from configuration
+    pub async fn initialize(config: &Configuration) -> anyhow::Result<Self> {
+        let executor = Arc::new(AgentExecutor::initialize(config).await?);
+        let server_config = config.server.clone().unwrap_or_default();
+        
+        Ok(Self {
+            executor,
+            server_config,
+        })
+    }
+
+    /// Initialize DistriServer from configuration string or file path
+    pub async fn initialize_from_config(config_source: &str) -> anyhow::Result<Self> {
+        let config = if std::path::Path::new(config_source).exists() {
+            // It's a file path
+            let config_str = std::fs::read_to_string(config_source)?;
+            serde_yaml::from_str::<Configuration>(&config_str)?
+        } else {
+            // It's a config string
+            serde_yaml::from_str::<Configuration>(config_source)?
+        };
+
+        Self::initialize(&config).await
+    }
+
+    /// Get access to the executor
+    pub fn executor(&self) -> Arc<AgentExecutor> {
+        self.executor.clone()
+    }
+
+    /// Start the server
+    pub async fn start(&self, host: &str, port: u16) -> Result<()> {
+        let server = A2AServer::new(self.executor.clone());
+        server.start(host, port, self.server_config.clone()).await
+    }
+}
+
 /// Configure distri routes for embedding in another actix-web app
 ///
 /// # Example
@@ -77,34 +128,10 @@ pub async fn create_coordinator_from_config(
 ) -> Result<(Arc<AgentExecutor>, ServerConfig)> {
     let config: Configuration = serde_yaml::from_str(&config_str)?;
 
-    // Create default components
-    let registry = Arc::new(RwLock::new(ServerRegistry::new()));
-    let session_store: Option<Arc<Box<dyn SessionStore>>> =
-        Some(Arc::new(Box::new(LocalSessionStore::new())));
-    let agent_store = Arc::new(InMemoryAgentStore::new());
-
-    // Create context explicitly
-    let context = Arc::new(ExecutorContext::default());
-
-    // Create coordinator
-    let coordinator = AgentExecutor::new(
-        registry,
-        None, // tool_sessions
-        session_store,
-        agent_store,
-        context,
-    );
-
-    // Register agents from config
-    for agent_config in config.agents {
-        let definition = agent_config.definition.clone();
-        coordinator.register_default_agent(definition).await?;
-    }
-
-    // Get server config or use default
+    let executor = AgentExecutor::initialize(&config).await?;
     let server_config = config.server.unwrap_or_default();
 
-    Ok((Arc::new(coordinator), server_config))
+    Ok((Arc::new(executor), server_config))
 }
 
 /// Starts the HTTP server (for backward compatibility)

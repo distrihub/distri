@@ -1,0 +1,63 @@
+# Sample configuration demonstrating store configuration options
+agents:
+  - definition:
+      name: "example-agent"
+      description: "An example agent with tool access"
+      system_prompt: "You are a helpful assistant."
+      mcp_servers:
+        - name: "filesystem"
+          filter: "All"
+      model_settings:
+        model: "gpt-4o-mini"
+        temperature: 0.7
+        max_tokens: 1000
+    max_history: 10
+
+# Store configuration - grouped by entity and session stores
+stores:
+  # Entity stores (agents, tasks, threads) - always use same type
+  entity: "memory"  # Options: "memory", "redis"
+  
+  # Session stores (conversation sessions, tool sessions) - always use same type
+  session: "memory"  # Options: "memory", "redis", {"file": {"path": "/path/to/sessions"}}
+  
+  # Redis configuration (required when using redis stores)
+  # redis:
+  #   url: "redis://localhost:6379"
+  #   pool_size: 10
+  #   timeout_seconds: 5
+
+# Example Redis configuration (uncomment to use Redis stores)
+# stores:
+#   entity: "redis"
+#   session: "redis" 
+#   redis:
+#     url: "redis://localhost:6379"
+#     pool_size: 10
+#     timeout_seconds: 5
+
+# Example file-based session storage with Redis entities
+# stores:
+#   entity: "redis"
+#   session:
+#     file:
+#       path: "/tmp/distri-sessions"
+#   redis:
+#     url: "redis://localhost:6379"
+
+# MCP server definitions
+mcp_servers:
+  - name: "filesystem"
+    config:
+      command: "npx"
+      args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+      env_vars: {}
+
+# Server configuration
+server:
+  server_url: "http://localhost:8000"
+  default_input_modes: ["text"]
+  default_output_modes: ["text"]
+  capabilities:
+    streaming: true
+    push_notifications: false

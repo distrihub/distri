@@ -1,6 +1,12 @@
 # Test Configuration for Distri A2A Integration
 # This file demonstrates the agent setup for testing the A2A protocol implementation
 
+# Store configuration
+stores:
+  # Use memory stores for this example
+  entity: "memory"
+  session: "memory"
+
 server:
   host: "127.0.0.1"
   port: 8080

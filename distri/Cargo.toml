@@ -3,11 +3,17 @@ name = "distri"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = ["inmemory"]
+inmemory = []
+redis = ["dep:redis", "dep:bb8", "dep:bb8-redis"]
+
 [dependencies]
 distri-a2a = { path = "../distri-a2a" }
 async-trait = "0.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+serde_yaml = "0.9"
 tokio = { version = "1.0", features = ["full"] }
 thiserror = "1.0"
 async-openai = "0.27.2"
@@ -15,6 +21,7 @@ reqwest = { version = "0.12", features = ["json"] }
 async-mcp = { workspace = true }
 regex = "1.5"
 tracing = "0.1"
+tracing-subscriber = { workspace = true }
 anyhow = { workspace = true }
 futures = "0.3.31"
 jsonschema = "0.28.3"
@@ -24,6 +31,11 @@ secrecy = { version = "0.10.3", features = ["serde"] }
 uuid = "1.13.1"
 chrono = { version = "0.4", features = ["serde"] }
 comfy-table = "7.0"
+
+# Redis dependencies (optional)
+redis = { version = "0.24", optional = true }
+bb8 = { version = "0.8", optional = true }
+bb8-redis = { version = "0.14", optional = true }
 
 [dev-dependencies]
 dotenv = "0.15"

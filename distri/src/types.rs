@@ -419,6 +419,53 @@ pub struct Configuration {
     pub proxy: Option<ProxyServerConfig>,
     #[serde(default)]
     pub server: Option<ServerConfig>,
+    #[serde(default)]
+    pub stores: Option<StoreConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
+pub struct StoreConfig {
+    /// Storage for entities (agents, tasks, threads) - always use the same store type
+    #[serde(default)]
+    pub entity: Option<EntityStoreType>,
+    /// Storage for sessions (conversation sessions, tool sessions) - always use the same store type  
+    #[serde(default)]
+    pub session: Option<SessionStoreType>,
+    /// Redis configuration (required when using Redis stores)
+    #[serde(default)]
+    pub redis: Option<RedisConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum EntityStoreType {
+    Memory,
+    Redis,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum SessionStoreType {
+    Memory,
+    Redis,
+    File { path: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct RedisConfig {
+    pub url: String,
+    #[serde(default = "default_redis_pool_size")]
+    pub pool_size: u32,
+    #[serde(default = "default_redis_timeout")]
+    pub timeout_seconds: u64,
+}
+
+fn default_redis_pool_size() -> u32 {
+    10
+}
+
+fn default_redis_timeout() -> u64 {
+    5
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
