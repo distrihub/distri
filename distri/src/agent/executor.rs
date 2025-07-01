@@ -6,8 +6,12 @@ use crate::{
         AgentStore, HashMapThreadStore, LocalSessionStore, SessionStore, ThreadStore,
         ToolSessionStore,
     },
+    stores::{
+        HashMapTaskStore, InMemoryAgentStore, // Import from new stores module
+    },
     tools::{execute_tool, get_tools},
-    types::{CreateThreadRequest, Thread, ThreadSummary, ToolCall, UpdateThreadRequest},
+    types::{CreateThreadRequest, Thread, ThreadSummary, ToolCall, UpdateThreadRequest, Configuration},
+    TaskStore,
 };
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
@@ -28,7 +32,119 @@ pub struct AgentExecutor {
     pub coordinator_tx: mpsc::Sender<CoordinatorMessage>,
     pub session_store: Arc<Box<dyn SessionStore>>,
     thread_store: Arc<Box<dyn ThreadStore>>,
+    task_store: Arc<dyn TaskStore>,
     pub context: Arc<ExecutorContext>,
+}
+
+pub struct AgentExecutorBuilder {
+    registry: Option<Arc<RwLock<ServerRegistry>>>,
+    tool_sessions: Option<Arc<Box<dyn ToolSessionStore>>>,
+    session_store: Option<Arc<Box<dyn SessionStore>>>,
+    agent_store: Option<Arc<dyn AgentStore>>,
+    task_store: Option<Arc<dyn TaskStore>>,
+    thread_store: Option<Arc<Box<dyn ThreadStore>>>,
+    context: Option<Arc<ExecutorContext>>,
+}
+
+impl AgentExecutorBuilder {
+    pub fn new() -> Self {
+        Self {
+            registry: None,
+            tool_sessions: None,
+            session_store: None,
+            agent_store: None,
+            task_store: None,
+            thread_store: None,
+            context: None,
+        }
+    }
+
+    pub fn with_registry(mut self, registry: Arc<RwLock<ServerRegistry>>) -> Self {
+        self.registry = Some(registry);
+        self
+    }
+
+    pub fn with_tool_sessions(mut self, tool_sessions: Arc<Box<dyn ToolSessionStore>>) -> Self {
+        self.tool_sessions = Some(tool_sessions);
+        self
+    }
+
+    pub fn with_session_store(mut self, session_store: Arc<Box<dyn SessionStore>>) -> Self {
+        self.session_store = Some(session_store);
+        self
+    }
+
+    pub fn with_agent_store(mut self, agent_store: Arc<dyn AgentStore>) -> Self {
+        self.agent_store = Some(agent_store);
+        self
+    }
+
+    pub fn with_task_store(mut self, task_store: Arc<dyn TaskStore>) -> Self {
+        self.task_store = Some(task_store);
+        self
+    }
+
+    pub fn with_thread_store(mut self, thread_store: Arc<Box<dyn ThreadStore>>) -> Self {
+        self.thread_store = Some(thread_store);
+        self
+    }
+
+    pub fn with_context(mut self, context: Arc<ExecutorContext>) -> Self {
+        self.context = Some(context);
+        self
+    }
+
+    #[cfg(feature = "initialize_stores")]
+    pub fn initialize_stores(mut self) -> anyhow::Result<Self> {
+        // This is feature flagged as requested
+        if self.session_store.is_none() {
+            self.session_store = Some(Arc::new(Box::new(LocalSessionStore::new())));
+        }
+        if self.agent_store.is_none() {
+            self.agent_store = Some(Arc::new(InMemoryAgentStore::new()));
+        }
+        if self.task_store.is_none() {
+            self.task_store = Some(Arc::new(HashMapTaskStore::new()));
+        }
+        if self.thread_store.is_none() {
+            self.thread_store = Some(Arc::new(Box::new(HashMapThreadStore::default()) as Box<dyn ThreadStore>));
+        }
+        if self.context.is_none() {
+            self.context = Some(Arc::new(ExecutorContext::default()));
+        }
+        if self.registry.is_none() {
+            self.registry = Some(Arc::new(RwLock::new(ServerRegistry::new())));
+        }
+        Ok(self)
+    }
+
+    pub fn build(self) -> anyhow::Result<AgentExecutor> {
+        let (coordinator_tx, coordinator_rx) = mpsc::channel(100);
+
+        let registry = self.registry.ok_or_else(|| anyhow::anyhow!("Registry is required"))?;
+        let session_store = self.session_store
+            .unwrap_or_else(|| Arc::new(Box::new(LocalSessionStore::new())));
+        let agent_store = self.agent_store
+            .ok_or_else(|| anyhow::anyhow!("Agent store is required"))?;
+        let task_store = self.task_store
+            .unwrap_or_else(|| Arc::new(HashMapTaskStore::new()));
+        let thread_store = self.thread_store
+            .unwrap_or_else(|| Arc::new(Box::new(HashMapThreadStore::default()) as Box<dyn ThreadStore>));
+        let context = self.context
+            .unwrap_or_else(|| Arc::new(ExecutorContext::default()));
+
+        Ok(AgentExecutor {
+            agent_store,
+            tool_sessions: self.tool_sessions,
+            registry,
+            coordinator_rx: Arc::new(Mutex::new(coordinator_rx)),
+            coordinator_tx,
+            session_store,
+            thread_store,
+            task_store,
+            context,
+        })
+    }
 }
 
 impl AgentExecutor {
@@ -52,8 +168,46 @@ impl AgentExecutor {
             session_store: session_store
                 .unwrap_or_else(|| Arc::new(Box::new(LocalSessionStore::new()))),
             thread_store,
+            task_store: Arc::new(HashMapTaskStore::new()),
             context: context,
         }
+    }
+
+    /// Initialize AgentExecutor from configuration
+    pub async fn initialize(config: &Configuration) -> anyhow::Result<Self> {
+        let mut builder = AgentExecutorBuilder::new();
+
+        // Create default stores (in-memory by default)
+        builder = builder
+            .with_agent_store(Arc::new(InMemoryAgentStore::new()))
+            .with_session_store(Arc::new(Box::new(LocalSessionStore::new())))
+            .with_task_store(Arc::new(HashMapTaskStore::new()))
+            .with_thread_store(Arc::new(Box::new(HashMapThreadStore::default()) as Box<dyn ThreadStore>))
+            .with_registry(Arc::new(RwLock::new(ServerRegistry::new())))
+            .with_context(Arc::new(ExecutorContext::default()));
+
+        let executor = builder.build()?;
+
+        // Register agents from configuration
+        for agent_config in &config.agents {
+            executor.register_default_agent(agent_config.definition.clone()).await?;
+        }
+
+        Ok(executor)
+    }
+
+    /// Initialize AgentExecutor from configuration string or file path
+    pub async fn initialize_from_config(config_source: &str) -> anyhow::Result<Self> {
+        let config = if std::path::Path::new(config_source).exists() {
+            // It's a file path
+            let config_str = std::fs::read_to_string(config_source)?;
+            serde_yaml::from_str::<Configuration>(&config_str)?
+        } else {
+            // It's a config string
+            serde_yaml::from_str::<Configuration>(config_source)?
+        };
+
+        Self::initialize(&config).await
     }
 
     pub async fn execute_tool(
