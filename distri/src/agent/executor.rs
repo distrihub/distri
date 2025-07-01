@@ -9,7 +9,7 @@ use crate::{
     stores::{
         HashMapTaskStore, InMemoryAgentStore, // Import from new stores module
     },
-    tools::{execute_tool, get_tools},
+    tools::{execute_tool, get_tools, BuiltInToolContext, BuiltInToolRegistry},
     types::{CreateThreadRequest, Thread, ThreadSummary, ToolCall, UpdateThreadRequest, Configuration},
     TaskStore,
 };
@@ -34,6 +34,7 @@ pub struct AgentExecutor {
     pub session_store: Arc<Box<dyn SessionStore>>,
     thread_store: Arc<Box<dyn ThreadStore>>,
     task_store: Arc<dyn TaskStore>,
+    built_in_tools: Arc<BuiltInToolRegistry>,
     pub context: Arc<ExecutorContext>,
 }
 
@@ -154,6 +155,7 @@ impl AgentExecutorBuilder {
             session_store,
             thread_store,
             task_store,
+            built_in_tools: Arc::new(BuiltInToolRegistry::new()),
             context,
         })
     }
@@ -181,6 +183,7 @@ impl AgentExecutor {
                 .unwrap_or_else(|| Arc::new(Box::new(LocalSessionStore::new()))),
             thread_store,
             task_store: Arc::new(HashMapTaskStore::new()),
+            built_in_tools: Arc::new(BuiltInToolRegistry::new()),
             context: context,
         }
     }
@@ -223,41 +226,26 @@ impl AgentExecutor {
         event_tx: Option<mpsc::Sender<AgentEvent>>,
         context: Arc<ExecutorContext>,
     ) -> Result<String, AgentError> {
-        // Check if this is the transfer_to_agent tool first
-        if tool_call.tool_name == "transfer_to_agent" {
-            // Parse the tool arguments
+        // Check if this is a built-in tool first
+        if self.built_in_tools.is_built_in_tool(&tool_call.tool_name) {
             let args: serde_json::Value = serde_json::from_str(&tool_call.input)
                 .unwrap_or_else(|_| serde_json::json!({}));
             
-            let target_agent = args.get("agent_name")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown");
-            let reason = args.get("reason")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
-
-            // Check if target agent exists
-            if let Some(_target_agent) = self.agent_store.get(target_agent).await {
-                // Send handover message through coordinator
-                self.send_handover(
-                    agent_id.clone(),
-                    target_agent.to_string(),
-                    reason.clone(),
-                    context.clone(),
-                    event_tx,
-                ).await?;
-                
-                tracing::info!("Agent handover requested from {} to {}", agent_id, target_agent);
-                return Ok(format!("Transfer initiated to agent '{}'. Reason: {}", 
-                    target_agent, 
-                    reason.unwrap_or_else(|| "No reason provided".to_string())
-                ));
-            } else {
-                return Ok(format!("Error: Target agent '{}' not found", target_agent));
+            let tool_context = BuiltInToolContext {
+                agent_id: agent_id.clone(),
+                agent_store: self.agent_store.clone(),
+                context: context.clone(),
+                event_tx,
+                coordinator_tx: self.coordinator_tx.clone(),
+            };
+            
+            if let Some(tool) = self.built_in_tools.get_tool(&tool_call.tool_name) {
+                tracing::info!("Executing built-in tool: {}", tool_call.tool_name);
+                return tool.execute(args, tool_context).await;
             }
         }
 
-        // For non-transfer tools, use the existing mechanism
+        // For non-built-in tools, use the existing mechanism
         let (response_tx, response_rx) = oneshot::channel();
         self.coordinator_tx
             .send(CoordinatorMessage::ExecuteTool {

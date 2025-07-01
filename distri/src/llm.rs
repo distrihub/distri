@@ -4,6 +4,7 @@ use crate::{
     agent::{ExecutorContext, ModelLogger},
     error::AgentError,
     langdb::GatewayConfig,
+    tools::BuiltInToolRegistry,
     types::{
         validate_parameters, LlmDefinition, Message, MessageRole, ModelProvider, ServerTools,
         ToolCall,
@@ -28,6 +29,7 @@ use tokio::sync::mpsc;
 pub struct LLMExecutor {
     llm_def: LlmDefinition,
     server_tools: Vec<ServerTools>,
+    built_in_tools: BuiltInToolRegistry,
     model_logger: ModelLogger,
     context: Arc<ExecutorContext>,
     additional_headers: Option<HashMap<String, String>>,
@@ -58,6 +60,7 @@ impl LLMExecutor {
         Self {
             llm_def,
             server_tools,
+            built_in_tools: BuiltInToolRegistry::new(),
             model_logger,
             context,
             additional_headers,
@@ -397,29 +400,8 @@ impl LLMExecutor {
             }
         }
 
-        // Add built-in transfer_to_agent tool
-        tools.push(ChatCompletionTool {
-            r#type: async_openai::types::ChatCompletionToolType::Function,
-            function: FunctionObject {
-                name: "transfer_to_agent".to_string(),
-                description: Some("Transfer control to another agent to continue the workflow".to_string()),
-                parameters: Some(serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "agent_name": {
-                            "type": "string",
-                            "description": "The name of the agent to transfer control to"
-                        },
-                        "reason": {
-                            "type": "string",
-                            "description": "Optional reason for the transfer"
-                        }
-                    },
-                    "required": ["agent_name"]
-                })),
-                strict: None,
-            },
-        });
+        // Add all built-in tools from the registry
+        tools.extend(self.built_in_tools.get_all_tool_definitions());
 
         tools
     }

@@ -293,22 +293,13 @@ impl DefaultAgent {
         messages: &[Message],
         params: Option<serde_json::Value>,
         context: Arc<ExecutorContext>,
+        event_tx: Option<mpsc::Sender<AgentEvent>>,
     ) -> Result<StepResult, AgentError> {
-        self.llm(messages, params, context).await
+        self.llm(messages, params, context, event_tx).await
     }
 
     /// Execute one step using LLM
     async fn llm(
-        &self,
-        messages: &[Message],
-        params: Option<serde_json::Value>,
-        context: Arc<ExecutorContext>,
-    ) -> Result<StepResult, AgentError> {
-        self.llm_with_event_tx(messages, params, context, None).await
-    }
-
-    /// Execute one step using LLM with optional event_tx for handover support
-    async fn llm_with_event_tx(
         &self,
         messages: &[Message],
         params: Option<serde_json::Value>,
@@ -507,7 +498,7 @@ impl DefaultAgent {
                 } else {
                     // Non-streaming step (e.g., tool calls)
                     let step_result = self
-                        .step(&current_messages, params.clone(), context.clone())
+                        .step(&current_messages, params.clone(), context.clone(), Some(event_tx.clone()))
                         .await?;
                     match step_result {
                         StepResult::Finish(content) => {
@@ -610,7 +601,12 @@ impl DefaultAgent {
                     .await
                     .map_err(|e| AgentError::Session(e.to_string()))?;
                 let step_result = self
-                    .llm_with_event_tx(&current_messages, params.clone(), context.clone(), event_tx.clone())
+                    .llm(
+                        &current_messages,
+                        params.clone(),
+                        context.clone(),
+                        event_tx.clone(),
+                    )
                     .await?;
                 match step_result {
                     StepResult::Finish(content) => {

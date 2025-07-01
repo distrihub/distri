@@ -12,17 +12,20 @@ use async_mcp::{
     transport::Transport,
     types::{CallToolRequest, CallToolResponse, ToolResponseContent},
 };
+use async_openai::types::ChatCompletionTool;
+use async_trait::async_trait;
 use regex::Regex;
 use serde_json::{json, Value};
-use tokio::sync::RwLock;
+use tokio::sync::{mpsc, RwLock};
 use tracing::debug;
 
-use crate::agent::ExecutorContext;
-use crate::servers::registry::{ServerMetadata, ServerRegistry};
-use crate::types::TransportType;
-use crate::types::{McpDefinition, ToolCall};
-use crate::types::{ServerTools, ToolsFilter};
-use crate::ToolSessionStore;
+use crate::{
+    agent::ExecutorContext,
+    error::AgentError,
+    servers::registry::{ServerMetadata, ServerRegistry},
+    store::{AgentStore, ToolSessionStore},
+    types::{McpDefinition, ServerTools, ToolCall, ToolsFilter, TransportType},
+};
 
 async fn async_server(metadata: ServerMetadata, transport: ServerInMemoryTransport) -> Result<()> {
     let builder = metadata
@@ -336,5 +339,131 @@ impl<T: Transport + Clone> ToolExecutor<T> {
         client_handle.abort();
         tracing::debug!("Tool {name}: execution completed successfully");
         Ok(text)
+    }
+}
+
+/// Trait for built-in tools that can be resolved directly by the agent executor
+#[async_trait::async_trait]
+pub trait BuiltInTool: Send + Sync {
+    /// Get the tool definition for the LLM
+    fn get_tool_definition(&self) -> async_openai::types::ChatCompletionTool;
+    
+    /// Execute the tool with given arguments
+    async fn execute(
+        &self,
+        args: Value,
+        context: BuiltInToolContext,
+    ) -> Result<String, AgentError>;
+}
+
+/// Context passed to built-in tools during execution
+#[derive(Clone)]
+pub struct BuiltInToolContext {
+    pub agent_id: String,
+    pub agent_store: Arc<dyn AgentStore>,
+    pub context: Arc<ExecutorContext>,
+    pub event_tx: Option<mpsc::Sender<crate::agent::AgentEvent>>,
+    pub coordinator_tx: mpsc::Sender<crate::agent::CoordinatorMessage>,
+}
+
+/// Built-in tool registry
+pub struct BuiltInToolRegistry {
+    tools: HashMap<String, Box<dyn BuiltInTool>>,
+}
+
+impl BuiltInToolRegistry {
+    pub fn new() -> Self {
+        let mut registry = Self {
+            tools: HashMap::new(),
+        };
+        
+        // Register default built-in tools
+        registry.register("transfer_to_agent", Box::new(TransferToAgentTool));
+        
+        registry
+    }
+    
+    pub fn register(&mut self, name: &str, tool: Box<dyn BuiltInTool>) {
+        self.tools.insert(name.to_string(), tool);
+    }
+    
+    pub fn get_tool(&self, name: &str) -> Option<&dyn BuiltInTool> {
+        self.tools.get(name).map(|t| t.as_ref())
+    }
+    
+    pub fn get_all_tool_definitions(&self) -> Vec<async_openai::types::ChatCompletionTool> {
+        self.tools.values().map(|tool| tool.get_tool_definition()).collect()
+    }
+    
+    pub fn is_built_in_tool(&self, name: &str) -> bool {
+        self.tools.contains_key(name)
+    }
+}
+
+/// Implementation of the transfer_to_agent built-in tool
+pub struct TransferToAgentTool;
+
+#[async_trait::async_trait]
+impl BuiltInTool for TransferToAgentTool {
+    fn get_tool_definition(&self) -> async_openai::types::ChatCompletionTool {
+        async_openai::types::ChatCompletionTool {
+            r#type: async_openai::types::ChatCompletionToolType::Function,
+            function: async_openai::types::FunctionObject {
+                name: "transfer_to_agent".to_string(),
+                description: Some("Transfer control to another agent to continue the workflow".to_string()),
+                parameters: Some(json!({
+                    "type": "object",
+                    "properties": {
+                        "agent_name": {
+                            "type": "string",
+                            "description": "The name of the agent to transfer control to"
+                        },
+                        "reason": {
+                            "type": "string",
+                            "description": "Optional reason for the transfer"
+                        }
+                    },
+                    "required": ["agent_name"]
+                })),
+                strict: None,
+            },
+        }
+    }
+    
+    async fn execute(
+        &self,
+        args: Value,
+        context: BuiltInToolContext,
+    ) -> Result<String, AgentError> {
+        let target_agent = args.get("agent_name")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| AgentError::ToolExecution("Missing agent_name parameter".to_string()))?;
+        
+        let reason = args.get("reason")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        // Check if target agent exists
+        if let Some(_target_agent) = context.agent_store.get(target_agent).await {
+            // Send handover message through coordinator
+            if let Err(e) = context.coordinator_tx.send(crate::agent::CoordinatorMessage::HandoverAgent {
+                from_agent: context.agent_id.clone(),
+                to_agent: target_agent.to_string(),
+                reason: reason.clone(),
+                context: context.context.clone(),
+                event_tx: context.event_tx,
+            }).await {
+                tracing::error!("Failed to send handover message: {}", e);
+                return Err(AgentError::ToolExecution(format!("Failed to send handover message: {}", e)));
+            }
+            
+            tracing::info!("Agent handover requested from {} to {}", context.agent_id, target_agent);
+            Ok(format!("Transfer initiated to agent '{}'. Reason: {}", 
+                target_agent, 
+                reason.unwrap_or_else(|| "No reason provided".to_string())
+            ))
+        } else {
+            Err(AgentError::ToolExecution(format!("Target agent '{}' not found", target_agent)))
+        }
     }
 }
