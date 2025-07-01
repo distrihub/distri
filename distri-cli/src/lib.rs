@@ -27,15 +27,6 @@ pub enum Commands {
         /// Task to execute
         #[arg(short, long)]
         task: String,
-        /// Run as server instead of CLI
-        #[arg(long)]
-        server: bool,
-        /// Server host (when running as server)
-        #[arg(long, default_value = "localhost")]
-        host: String,
-        /// Server port (when running as server)
-        #[arg(long, default_value = "8000")]
-        port: u16,
     },
     /// List available agents
     List {},

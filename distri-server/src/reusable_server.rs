@@ -3,39 +3,16 @@ use actix_web::middleware::Logger;
 use actix_web::{web, App, HttpResponse, HttpServer, Result as ActixResult};
 use anyhow::Result;
 use distri::agent::{AgentExecutor, ExecutorContext};
-use distri::servers::registry::ServerMetadata;
 use serde_json::json;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::{configure_distri_service, DistriServer, DistriServiceConfig};
 use distri::types::Configuration;
 
-/// Trait for customizing Distri server instances
-pub trait DistriServerCustomizer: Send + Sync {
-    /// Get service name for logging and responses
-    fn service_name(&self) -> &str;
-
-    /// Get service description
-    fn service_description(&self) -> &str;
-
-    /// Get service capabilities list
-    fn service_capabilities(&self) -> Vec<String>;
-
-    /// Configure additional actix-web routes (optional)
-    fn configure_routes(&self, cfg: &mut web::ServiceConfig);
-
-    /// Customize the servers to be registered
-    fn custom_servers(&self) -> HashMap<String, ServerMetadata> {
-        HashMap::new()
-    }
-}
-
-/// Default implementation of DistriServerCustomizer
 pub struct DefaultCustomServer {
-    service_name: String,
-    description: String,
-    capabilities: Vec<String>,
+    pub service_name: String,
+    pub description: String,
+    pub capabilities: Vec<String>,
 }
 
 impl DefaultCustomServer {
@@ -47,81 +24,15 @@ impl DefaultCustomServer {
         }
     }
 
-    pub fn with_service_name(mut self, name: &str) -> Self {
-        self.service_name = name.to_string();
-        self
-    }
-
-    pub fn with_description(mut self, description: &str) -> Self {
-        self.description = description.to_string();
-        self
-    }
-
-    pub fn with_capabilities(mut self, capabilities: Vec<&str>) -> Self {
-        self.capabilities = capabilities.into_iter().map(|s| s.to_string()).collect();
-        self
-    }
-}
-
-impl DistriServerCustomizer for DefaultCustomServer {
-    fn service_name(&self) -> &str {
-        &self.service_name
-    }
-
-    fn service_description(&self) -> &str {
-        &self.description
-    }
-
-    fn service_capabilities(&self) -> Vec<String> {
-        self.capabilities.clone()
-    }
-
-    fn configure_routes(&self, cfg: &mut web::ServiceConfig) {
-        // Default implementation adds no additional routes
-        let _ = cfg;
-    }
-
-    fn custom_servers(&self) -> HashMap<String, ServerMetadata> {
-        HashMap::new()
-    }
-}
-
-/// Builder for creating reusable distri servers with customization
-pub struct DistriServerBuilder {
-    customizer: Box<dyn DistriServerCustomizer>,
-}
-
-impl DistriServerBuilder {
-    pub fn new() -> Self {
-        Self {
-            customizer: Box::new(DefaultCustomServer::new()),
-        }
-    }
-
-    pub fn with_customizer(mut self, customizer: Box<dyn DistriServerCustomizer>) -> Self {
-        self.customizer = customizer;
-        self
-    }
-
-    pub fn with_service_name(self, name: &str) -> Self {
-        self.with_customizer(Box::new(DefaultCustomServer::new().with_service_name(name)))
-    }
-
-    pub fn with_description(self, description: &str) -> Self {
-        self.with_customizer(Box::new(
-            DefaultCustomServer::new().with_description(description),
-        ))
-    }
-
-    pub fn with_capabilities(self, capabilities: Vec<&str>) -> Self {
-        self.with_customizer(Box::new(
-            DefaultCustomServer::new().with_capabilities(capabilities),
-        ))
-    }
-
     /// Start the server with the configured settings
-    pub async fn start(self, config: Configuration, host: &str, port: u16) -> Result<()> {
-        let service_name = self.customizer.service_name();
+    pub async fn start(
+        self,
+        config: Configuration,
+        executor: Arc<AgentExecutor>,
+        host: &str,
+        port: u16,
+    ) -> Result<()> {
+        let service_name = self.service_name.clone();
 
         tracing::info!("Starting {}...", service_name);
         tracing::info!("Starting server on http://{}:{}", host, port);
@@ -135,19 +46,15 @@ impl DistriServerBuilder {
         // with the full agent system initialization
 
         // Initialize the DistriServer with the customized config
-        let distri_server =
-            DistriServer::initialize(&config, self.customizer.custom_servers()).await?;
+        let distri_server = DistriServer::initialize(&config, executor.clone()).await?;
         let executor = distri_server.executor();
         let server_config = config.server.unwrap_or_default();
 
-        // Create and configure the HTTP server
-        let customizer = Arc::new(self.customizer);
         HttpServer::new(move || {
             let executor = executor.clone();
-            let customizer = customizer.clone();
-            let service_name = customizer.service_name().to_string();
-            let service_description = customizer.service_description().to_string();
-            let service_capabilities = customizer.service_capabilities();
+            let service_name = self.service_name.clone();
+            let service_description = self.description.clone();
+            let service_capabilities = self.capabilities.clone();
 
             let mut app = App::new()
                 .wrap(Logger::default())
@@ -194,8 +101,6 @@ impl DistriServerBuilder {
                     configure_distri_service(cfg, config);
                 });
 
-            // Allow customizer to add additional routes
-            app = app.configure(|cfg| customizer.configure_routes(cfg));
             app
         })
         .bind((host, port))?
@@ -203,6 +108,49 @@ impl DistriServerBuilder {
         .await?;
 
         Ok(())
+    }
+}
+
+/// Builder for creating reusable distri servers with customization
+pub struct DistriServerBuilder {
+    executor: Option<Arc<AgentExecutor>>,
+    config: Option<Configuration>,
+    server: Option<DefaultCustomServer>,
+}
+impl DistriServerBuilder {
+    pub fn new() -> Self {
+        Self {
+            executor: None,
+            config: None,
+            server: None,
+        }
+    }
+}
+impl DistriServerBuilder {
+    pub fn with_server(mut self, server: DefaultCustomServer) -> Self {
+        self.server = Some(server);
+        self
+    }
+
+    pub fn with_executor(mut self, executor: Arc<AgentExecutor>) -> Self {
+        self.executor = Some(executor);
+        self
+    }
+
+    pub fn with_config(mut self, config: Configuration) -> Self {
+        self.config = Some(config);
+        self
+    }
+
+    pub async fn build(self) -> Result<DistriServer> {
+        let executor = self
+            .executor
+            .ok_or(anyhow::anyhow!("Executor is required"))?;
+        let config = self.config.ok_or(anyhow::anyhow!("Config is required"))?;
+
+        let distri_server = DistriServer::initialize(&config, executor).await?;
+
+        Ok(distri_server)
     }
 }
 
@@ -252,15 +200,13 @@ pub async fn run_cli(executor: Arc<AgentExecutor>, agent: &str, task: &str) -> R
 
 /// Run the distri-search server with customized registry
 pub async fn run_server(
+    server: DefaultCustomServer,
+    executor: Arc<AgentExecutor>,
     config: Configuration,
-    customizer: Box<dyn DistriServerCustomizer>,
     host: &str,
     port: u16,
 ) -> Result<()> {
-    DistriServerBuilder::new()
-        .with_customizer(customizer)
-        .start(config, host, port)
-        .await
+    server.start(config, executor, host, port).await
 }
 
 /// List available agents

@@ -1,9 +1,8 @@
 use anyhow::Result;
 use clap::Parser;
-use distri::agent::AgentExecutor;
 use distri_cli::{load_config, Cli, Commands};
-use distri_search::{load_config as load_embedded_config, DistriSearchCustomizer};
-use distri_server::reusable_server::{list_agents, run_cli, run_server, DistriServerCustomizer};
+use distri_search::{get_server, init_executor, load_config as load_embedded_config};
+use distri_server::reusable_server::{list_agents, run_cli, run_server};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -23,28 +22,14 @@ async fn main() -> Result<()> {
         load_embedded_config()?
     };
 
-    let customizer = Box::new(DistriSearchCustomizer::new());
-    let executor = AgentExecutor::initialize(&config, customizer.custom_servers()).await?;
+    let executor = init_executor(&config).await?;
 
     match cli.command {
-        Commands::Run {
-            agent,
-            task,
-            server,
-            host,
-            port,
-        } => {
-            // Load configuration - prefer command line config, fallback to embedded
-
-            if server {
-                // Run as server
-                run_server(config, customizer, &host, port).await
-            } else {
-                // Run as CLI
-                run_cli(executor, &agent, &task).await
-            }
-        }
+        Commands::Run { agent, task } => run_cli(executor, &agent, &task).await,
         Commands::List {} => list_agents(executor).await,
-        Commands::Serve { host, port } => run_server(config, customizer, &host, port).await,
+        Commands::Serve { host, port } => {
+            let server = get_server();
+            run_server(server, executor, config, &host, port).await
+        }
     }
 }

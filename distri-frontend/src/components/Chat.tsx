@@ -2,8 +2,8 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Send, Loader2, User, Bot } from 'lucide-react';
 import { Message, TaskStatusUpdateEvent, TextPart } from '@a2a-js/sdk';
 import MessageRenderer from './MessageRenderer';
+import { apiUrl } from '../constants';
 
-const apiUrl = 'http://localhost:8080';
 interface Agent {
   id: string;
   name: string;

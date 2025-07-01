@@ -2,11 +2,10 @@ use actix_web::{web, App, HttpServer};
 use anyhow::Result;
 use distri::{
     agent::AgentExecutor,
-    servers::registry::ServerMetadata,
     types::{Configuration, ServerConfig},
     HashMapTaskStore, TaskStore,
 };
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 use tokio::sync::broadcast;
 
 pub mod routes;
@@ -66,32 +65,14 @@ impl DistriServer {
     /// Initialize DistriServer from configuration
     pub async fn initialize(
         config: &Configuration,
-        servers: HashMap<String, ServerMetadata>,
+        executor: Arc<AgentExecutor>,
     ) -> anyhow::Result<Self> {
-        let executor = AgentExecutor::initialize(config, servers).await?;
         let server_config = config.server.clone().unwrap_or_default();
 
         Ok(Self {
             executor,
             server_config,
         })
-    }
-
-    /// Initialize DistriServer from configuration string or file path
-    pub async fn initialize_from_config(
-        config_source: &str,
-        servers: HashMap<String, ServerMetadata>,
-    ) -> anyhow::Result<Self> {
-        let config = if std::path::Path::new(config_source).exists() {
-            // It's a file path
-            let config_str = std::fs::read_to_string(config_source)?;
-            serde_yaml::from_str::<Configuration>(&config_str)?
-        } else {
-            // It's a config string
-            serde_yaml::from_str::<Configuration>(config_source)?
-        };
-
-        Self::initialize(&config, servers).await
     }
 
     /// Get access to the executor

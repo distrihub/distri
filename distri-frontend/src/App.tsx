@@ -4,6 +4,7 @@ import Chat from './components/Chat';
 import AgentList from './components/AgentList';
 import TaskMonitor from './components/TaskMonitor';
 import { v4 as uuidv4 } from 'uuid';
+import { apiUrl } from './constants';
 
 interface Agent {
   id: string;
@@ -37,7 +38,7 @@ function App() {
 
   const fetchAgents = async () => {
     try {
-      const response = await fetch('/api/v1/agents');
+      const response = await fetch(`${apiUrl}/api/v1/agents`);
       const agentCards = await response.json();
 
       const formattedAgents: Agent[] = agentCards.map((card: any) => ({
@@ -58,7 +59,7 @@ function App() {
 
   const fetchThreads = async () => {
     try {
-      const response = await fetch('/api/v1/threads');
+      const response = await fetch(`${apiUrl}/api/v1/threads`);
       if (response.ok) {
         const threadList = await response.json();
 
@@ -138,7 +139,7 @@ function App() {
 
   const deleteThread = async (threadId: string) => {
     try {
-      const response = await fetch(`/api/v1/threads/${threadId}`, {
+      const response = await fetch(`${apiUrl}/api/v1/threads/${threadId}`, {
         method: 'DELETE',
       });
 
@@ -156,7 +157,7 @@ function App() {
 
   const updateSpecificThread = async (threadId: string) => {
     try {
-      const response = await fetch(`/api/v1/threads/${threadId}`);
+      const response = await fetch(`${apiUrl}/api/v1/threads/${threadId}`);
       if (response.ok) {
         const updatedThread = await response.json();
         const threadSummary: Thread = {
