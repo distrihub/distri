@@ -419,6 +419,49 @@ pub struct Configuration {
     pub proxy: Option<ProxyServerConfig>,
     #[serde(default)]
     pub server: Option<ServerConfig>,
+    #[serde(default)]
+    pub stores: Option<StoreConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
+pub struct StoreConfig {
+    #[serde(default)]
+    pub session_store: Option<StoreType>,
+    #[serde(default)]
+    pub agent_store: Option<StoreType>,
+    #[serde(default)]
+    pub task_store: Option<StoreType>,
+    #[serde(default)]
+    pub thread_store: Option<StoreType>,
+    #[serde(default)]
+    pub memory_store: Option<StoreType>,
+    #[serde(default)]
+    pub redis: Option<RedisConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum StoreType {
+    Memory,
+    Redis,
+    File { path: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct RedisConfig {
+    pub url: String,
+    #[serde(default = "default_redis_pool_size")]
+    pub pool_size: u32,
+    #[serde(default = "default_redis_timeout")]
+    pub timeout_seconds: u64,
+}
+
+fn default_redis_pool_size() -> u32 {
+    10
+}
+
+fn default_redis_timeout() -> u64 {
+    5
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]

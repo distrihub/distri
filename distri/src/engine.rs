@@ -22,12 +22,7 @@ impl DistriEngine {
         let (agents, _) = self.executor.agent_store.list(None, None).await;
         let agent_definitions = agents
             .into_iter()
-            .map(|agent| AgentDefinition {
-                name: agent.get_name().to_string(),
-                description: agent.get_description().unwrap_or_default(),
-                mcp_servers: agent.get_servers(),
-                ..Default::default()
-            })
+            .map(|agent| agent.get_definition())
             .collect();
         Ok(agent_definitions)
     }

@@ -94,27 +94,109 @@ impl AgentExecutorBuilder {
         self
     }
 
-    #[cfg(feature = "initialize_stores")]
-    pub fn initialize_stores(mut self) -> anyhow::Result<Self> {
-        // This is feature flagged as requested
+    pub async fn initialize_stores_from_config(mut self, store_config: Option<&crate::types::StoreConfig>) -> anyhow::Result<Self> {
+        use crate::types::{StoreConfig, StoreType};
+        
+        let default_config = StoreConfig::default();
+        let config = store_config.unwrap_or(&default_config);
+        
+        // Initialize session store
         if self.session_store.is_none() {
-            self.session_store = Some(Arc::new(Box::new(LocalSessionStore::new())));
+            let session_store = match config.session_store.as_ref().unwrap_or(&StoreType::Memory) {
+                StoreType::Memory => Arc::new(Box::new(LocalSessionStore::new()) as Box<dyn SessionStore>),
+                StoreType::File { path } => {
+                    let file_store = crate::store::FileSessionStore::new(path.clone());
+                    Arc::new(Box::new(file_store) as Box<dyn SessionStore>)
+                }
+                #[cfg(feature = "redis")]
+                StoreType::Redis => {
+                    let redis_config = config.redis.as_ref()
+                        .ok_or_else(|| anyhow::anyhow!("Redis config required when using Redis stores"))?;
+                    let redis_store = crate::stores::redis::RedisSessionStore::new(&redis_config.url).await?;
+                    Arc::new(Box::new(redis_store) as Box<dyn SessionStore>)
+                }
+                #[cfg(not(feature = "redis"))]
+                StoreType::Redis => {
+                    return Err(anyhow::anyhow!("Redis feature not enabled. Compile with --features redis"));
+                }
+            };
+            self.session_store = Some(session_store);
         }
+
+        // Initialize agent store
         if self.agent_store.is_none() {
-            self.agent_store = Some(Arc::new(InMemoryAgentStore::new()));
+            let agent_store = match config.agent_store.as_ref().unwrap_or(&StoreType::Memory) {
+                StoreType::Memory => Arc::new(InMemoryAgentStore::new()) as Arc<dyn AgentStore>,
+                #[cfg(feature = "redis")]
+                StoreType::Redis => {
+                    let redis_config = config.redis.as_ref()
+                        .ok_or_else(|| anyhow::anyhow!("Redis config required when using Redis stores"))?;
+                    let redis_store = crate::stores::redis::RedisAgentStore::new(&redis_config.url).await?;
+                    Arc::new(redis_store) as Arc<dyn AgentStore>
+                }
+                #[cfg(not(feature = "redis"))]
+                StoreType::Redis => {
+                    return Err(anyhow::anyhow!("Redis feature not enabled. Compile with --features redis"));
+                }
+                StoreType::File { .. } => {
+                    return Err(anyhow::anyhow!("File storage not supported for agent store"));
+                }
+            };
+            self.agent_store = Some(agent_store);
         }
+
+        // Initialize task store
         if self.task_store.is_none() {
-            self.task_store = Some(Arc::new(HashMapTaskStore::new()));
+            let task_store = match config.task_store.as_ref().unwrap_or(&StoreType::Memory) {
+                StoreType::Memory => Arc::new(HashMapTaskStore::new()) as Arc<dyn TaskStore>,
+                #[cfg(feature = "redis")]
+                StoreType::Redis => {
+                    let redis_config = config.redis.as_ref()
+                        .ok_or_else(|| anyhow::anyhow!("Redis config required when using Redis stores"))?;
+                    let redis_store = crate::stores::redis::RedisTaskStore::new(&redis_config.url).await?;
+                    Arc::new(redis_store) as Arc<dyn TaskStore>
+                }
+                #[cfg(not(feature = "redis"))]
+                StoreType::Redis => {
+                    return Err(anyhow::anyhow!("Redis feature not enabled. Compile with --features redis"));
+                }
+                StoreType::File { .. } => {
+                    return Err(anyhow::anyhow!("File storage not supported for task store"));
+                }
+            };
+            self.task_store = Some(task_store);
         }
+
+        // Initialize thread store
         if self.thread_store.is_none() {
-            self.thread_store = Some(Arc::new(Box::new(HashMapThreadStore::default()) as Box<dyn ThreadStore>));
+            let thread_store = match config.thread_store.as_ref().unwrap_or(&StoreType::Memory) {
+                StoreType::Memory => Arc::new(Box::new(HashMapThreadStore::default()) as Box<dyn ThreadStore>),
+                #[cfg(feature = "redis")]
+                StoreType::Redis => {
+                    let redis_config = config.redis.as_ref()
+                        .ok_or_else(|| anyhow::anyhow!("Redis config required when using Redis stores"))?;
+                    let redis_store = crate::stores::redis::RedisThreadStore::new(&redis_config.url).await?;
+                    Arc::new(Box::new(redis_store) as Box<dyn ThreadStore>)
+                }
+                #[cfg(not(feature = "redis"))]
+                StoreType::Redis => {
+                    return Err(anyhow::anyhow!("Redis feature not enabled. Compile with --features redis"));
+                }
+                StoreType::File { .. } => {
+                    return Err(anyhow::anyhow!("File storage not supported for thread store"));
+                }
+            };
+            self.thread_store = Some(thread_store);
         }
+
+        // Initialize defaults for remaining fields
         if self.context.is_none() {
             self.context = Some(Arc::new(ExecutorContext::default()));
         }
         if self.registry.is_none() {
             self.registry = Some(Arc::new(RwLock::new(ServerRegistry::new())));
         }
+        
         Ok(self)
     }
 
@@ -175,16 +257,10 @@ impl AgentExecutor {
 
     /// Initialize AgentExecutor from configuration
     pub async fn initialize(config: &Configuration) -> anyhow::Result<Self> {
-        let mut builder = AgentExecutorBuilder::new();
+        let builder = AgentExecutorBuilder::new();
 
-        // Create default stores (in-memory by default)
-        builder = builder
-            .with_agent_store(Arc::new(InMemoryAgentStore::new()))
-            .with_session_store(Arc::new(Box::new(LocalSessionStore::new())))
-            .with_task_store(Arc::new(HashMapTaskStore::new()))
-            .with_thread_store(Arc::new(Box::new(HashMapThreadStore::default()) as Box<dyn ThreadStore>))
-            .with_registry(Arc::new(RwLock::new(ServerRegistry::new())))
-            .with_context(Arc::new(ExecutorContext::default()));
+        // Initialize stores from configuration
+        let builder = builder.initialize_stores_from_config(config.stores.as_ref()).await?;
 
         let executor = builder.build()?;
 

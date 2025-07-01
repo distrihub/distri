@@ -1,0 +1,76 @@
+# Sample configuration demonstrating store configuration options
+agents:
+  - definition:
+      name: "example-agent"
+      description: "An example agent with tool access"
+      system_prompt: "You are a helpful assistant."
+      mcp_servers:
+        - name: "filesystem"
+          filter: "All"
+      model_settings:
+        model: "gpt-4o-mini"
+        temperature: 0.7
+        max_tokens: 1000
+    max_history: 10
+
+# Store configuration - choose between memory, redis, or file storage
+stores:
+  # Session store for conversation history
+  session_store: "memory"  # Options: "memory", "redis", {"file": {"path": "/path/to/sessions"}}
+  
+  # Agent store for agent registry
+  agent_store: "memory"    # Options: "memory", "redis"
+  
+  # Task store for A2A task management
+  task_store: "memory"     # Options: "memory", "redis"
+  
+  # Thread store for conversation threads
+  thread_store: "memory"   # Options: "memory", "redis"
+  
+  # Memory store for cross-session permanent memory
+  memory_store: "memory"   # Options: "memory", "redis"
+  
+  # Redis configuration (required when using redis stores)
+  # redis:
+  #   url: "redis://localhost:6379"
+  #   pool_size: 10
+  #   timeout_seconds: 5
+
+# Example Redis configuration (uncomment to use Redis stores)
+# stores:
+#   session_store: "redis"
+#   agent_store: "redis"
+#   task_store: "redis"
+#   thread_store: "redis"
+#   memory_store: "redis"
+#   redis:
+#     url: "redis://localhost:6379"
+#     pool_size: 10
+#     timeout_seconds: 5
+
+# Example file-based session storage
+# stores:
+#   session_store:
+#     file:
+#       path: "/tmp/distri-sessions"
+#   agent_store: "memory"
+#   task_store: "memory"
+#   thread_store: "memory"
+#   memory_store: "memory"
+
+# MCP server definitions
+mcp_servers:
+  - name: "filesystem"
+    config:
+      command: "npx"
+      args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+      env_vars: {}
+
+# Server configuration
+server:
+  server_url: "http://localhost:8000"
+  default_input_modes: ["text"]
+  default_output_modes: ["text"]
+  capabilities:
+    streaming: true
+    push_notifications: false

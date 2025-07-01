@@ -5,8 +5,8 @@ use uuid::Uuid;
 
 use crate::{
     agent::ExecutorContext,
-    memory::{AgentMemory, LocalAgentMemory, MemoryStep},
-    types::{CreateThreadRequest, McpSession, Message, Thread, ThreadSummary, UpdateThreadRequest},
+    memory::{LocalAgentMemory, MemoryStep},
+    types::{CreateThreadRequest, McpSession, Thread, ThreadSummary, UpdateThreadRequest},
     store::{
         AgentStore, MemoryStore, SessionMemory, SessionStore, TaskStore, ThreadStore, 
         ToolSessionStore,
@@ -204,14 +204,17 @@ impl TaskStore for HashMapTaskStore {
     async fn create_task(&self, context_id: &str, task_id: Option<&str>) -> anyhow::Result<Task> {
         let task_id = task_id.unwrap_or(&Uuid::new_v4().to_string()).to_string();
         let task = Task {
+            kind: EventKind::Task,
             id: task_id.clone(),
             context_id: context_id.to_string(),
             status: TaskStatus {
-                state: TaskState::Created,
+                state: TaskState::Submitted,
                 message: None,
                 timestamp: Some(chrono::Utc::now().to_rfc3339()),
             },
-            messages: vec![],
+            artifacts: vec![],
+            history: vec![],
+            metadata: None,
         };
 
         let mut tasks = self.tasks.write().await;
@@ -239,7 +242,7 @@ impl TaskStore for HashMapTaskStore {
         })?;
         
         task.status = TaskStatus {
-            state: TaskState::Cancelled,
+            state: TaskState::Canceled,
             message: None,
             timestamp: Some(chrono::Utc::now().to_rfc3339()),
         };
@@ -250,7 +253,7 @@ impl TaskStore for HashMapTaskStore {
     async fn add_message_to_task(&self, task_id: &str, message: A2aMessage) -> anyhow::Result<()> {
         let mut tasks = self.tasks.write().await;
         if let Some(task) = tasks.get_mut(task_id) {
-            task.messages.push(message);
+            task.history.push(message);
         }
         Ok(())
     }
@@ -456,7 +459,7 @@ impl AgentStore for InMemoryAgentStore {
 
     async fn register(&self, agent: Box<dyn crate::agent::BaseAgent>) -> anyhow::Result<()> {
         let mut agents = self.agents.write().await;
-        agents.insert(agent.get_name(), agent);
+        agents.insert(agent.get_name().to_string(), agent);
         Ok(())
     }
 }
