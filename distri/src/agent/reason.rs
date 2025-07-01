@@ -1,6 +1,6 @@
 use crate::{
     memory::TaskStep,
-    types::{AgentDefinition, Message, MessageContent, MessageRole, ModelSettings},
+    types::{LlmDefinition, Message, MessageContent, MessageRole, ModelSettings},
 };
 
 pub async fn create_initial_plan(
@@ -132,11 +132,9 @@ pub async fn update_plan(
     Ok((updated_facts, updated_plan))
 }
 
-pub fn get_planning_definition(model_settings: ModelSettings) -> AgentDefinition {
-    AgentDefinition {
+pub fn get_planning_definition(model_settings: ModelSettings) -> LlmDefinition {
+    LlmDefinition {
         name: "planner".to_string(),
-        description: "A planning agent that breaks down tasks and creates execution plans"
-            .to_string(),
         system_prompt: Some(
             concat!(
                 "You are a planning assistant that helps break down tasks into clear steps.\n",

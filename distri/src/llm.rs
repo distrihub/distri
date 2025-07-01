@@ -4,7 +4,10 @@ use crate::{
     agent::{ExecutorContext, ModelLogger},
     error::AgentError,
     langdb::GatewayConfig,
-    types::{validate_parameters, Message, MessageRole, ModelProvider, ServerTools, ToolCall},
+    types::{
+        validate_parameters, LlmDefinition, Message, MessageRole, ModelProvider, ServerTools,
+        ToolCall,
+    },
     AgentDefinition,
 };
 use async_openai::{
@@ -24,7 +27,7 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 
 pub struct LLMExecutor {
-    agent_def: AgentDefinition,
+    llm_def: LlmDefinition,
     server_tools: Vec<ServerTools>,
     model_logger: ModelLogger,
     context: Arc<ExecutorContext>,
@@ -37,21 +40,21 @@ pub const DEFAULT_MODEL: &str = "gpt-4o-mini";
 
 impl LLMExecutor {
     pub fn new(
-        agent_def: AgentDefinition,
+        llm_def: LlmDefinition,
         server_tools: Vec<ServerTools>,
         context: Arc<ExecutorContext>,
         additional_headers: Option<HashMap<String, String>>,
         label: Option<String>,
     ) -> Self {
-        let name = &agent_def.name;
+        let name = &llm_def.name;
         // Log the number of tools being passed
         tracing::debug!(
-            "Initializing AgentExecutor {name} with {} server tools",
+            "Initializing LLM {name} with {} server tools",
             server_tools.len()
         );
 
         Self {
-            agent_def,
+            llm_def,
             server_tools,
             model_logger: ModelLogger::new(context.verbose),
             context,
@@ -77,7 +80,7 @@ impl LLMExecutor {
         params: Option<Value>,
     ) -> Result<CreateChatCompletionResponse, AgentError> {
         // Create normalized parameters
-        if let Some(schema) = self.agent_def.parameters.as_ref() {
+        if let Some(schema) = self.llm_def.parameters.as_ref() {
             let mut schema = schema.clone();
             validate_parameters(&mut schema, params.clone())
                 .map_err(|e| AgentError::Parameter(e.to_string()))?;
@@ -91,12 +94,12 @@ impl LLMExecutor {
         tracing::info!("Executing LLM call with {:#?} messages", request.messages);
         let settings = format!(
             "Max Tokens: {}\nMax Iterations: {}",
-            self.agent_def.model_settings.max_tokens, self.agent_def.model_settings.max_iterations
+            self.llm_def.model_settings.max_tokens, self.llm_def.model_settings.max_iterations
         );
 
         self.model_logger.log_model_execution(
-            &self.agent_def.name,
-            &self.agent_def.model_settings.model,
+            &self.llm_def.name,
+            &self.llm_def.model_settings.model,
             message_count,
             Some(&settings),
             None,
@@ -104,7 +107,7 @@ impl LLMExecutor {
 
         tracing::debug!("Sending chat completion request");
         let response = completion(
-            &self.agent_def,
+            &self.llm_def,
             request,
             self.context.clone(),
             self.additional_headers.clone(),
@@ -118,8 +121,8 @@ impl LLMExecutor {
 
         let token_usage = response.usage.as_ref().map(|a| a.total_tokens).unwrap_or(0);
         self.model_logger.log_model_execution(
-            &self.agent_def.name,
-            &self.agent_def.model_settings.model,
+            &self.llm_def.name,
+            &self.llm_def.model_settings.model,
             message_count,
             None,
             Some(token_usage),
@@ -136,7 +139,7 @@ impl LLMExecutor {
         event_tx: mpsc::Sender<crate::agent::AgentEvent>,
     ) -> Result<(), AgentError> {
         // Create normalized parameters
-        if let Some(schema) = self.agent_def.parameters.as_ref() {
+        if let Some(schema) = self.llm_def.parameters.as_ref() {
             let mut schema = schema.clone();
             validate_parameters(&mut schema, params.clone())
                 .map_err(|e| AgentError::Parameter(e.to_string()))?;
@@ -155,12 +158,12 @@ impl LLMExecutor {
 
         let settings = format!(
             "Max Tokens: {}\nMax Iterations: {}",
-            self.agent_def.model_settings.max_tokens, self.agent_def.model_settings.max_iterations
+            self.llm_def.model_settings.max_tokens, self.llm_def.model_settings.max_iterations
         );
 
         self.model_logger.log_model_execution(
-            &self.agent_def.name,
-            &self.agent_def.model_settings.model,
+            &self.llm_def.name,
+            &self.llm_def.model_settings.model,
             message_count,
             Some(&settings),
             None,
@@ -180,7 +183,7 @@ impl LLMExecutor {
             .map_err(|e| AgentError::LLMError(format!("Failed to send RunStarted event: {}", e)))?;
 
         let stream = completion_stream(
-            &self.agent_def,
+            &self.llm_def,
             request,
             self.context.clone(),
             self.additional_headers.clone(),
@@ -346,7 +349,7 @@ impl LLMExecutor {
         &self,
         messages: Vec<ChatCompletionRequestMessage>,
     ) -> CreateChatCompletionRequest {
-        let settings = &self.agent_def.model_settings;
+        let settings = &self.llm_def.model_settings;
         tracing::debug!(
             "Building chat completion request with model: {}",
             settings.model
@@ -355,12 +358,12 @@ impl LLMExecutor {
         let tools = self.build_tools();
         tracing::debug!("Tools: {tools:?}",);
 
-        let name = format!("{}_schema", self.agent_def.name);
+        let name = format!("{}_schema", self.llm_def.name);
         CreateChatCompletionRequest {
             model: settings.model.clone(),
             messages,
             tools: if !tools.is_empty() { Some(tools) } else { None },
-            response_format: self.agent_def.response_format.clone().map(|r| {
+            response_format: self.llm_def.response_format.clone().map(|r| {
                 async_openai::types::ResponseFormat::JsonSchema {
                     json_schema: ResponseFormatJsonSchema {
                         description: None,
@@ -464,13 +467,13 @@ impl LLMExecutor {
 }
 
 async fn completion(
-    agent_def: &AgentDefinition,
+    llm_def: &LlmDefinition,
     mut request: CreateChatCompletionRequest,
     context: Arc<ExecutorContext>,
     additional_headers: Option<HashMap<String, String>>,
     label: Option<String>,
 ) -> Result<CreateChatCompletionResponse, AgentError> {
-    let response = match &agent_def.model_settings.model_provider {
+    let response = match &llm_def.model_settings.model_provider {
         ModelProvider::AIGateway {
             base_url,
             api_key,
@@ -480,7 +483,7 @@ async fn completion(
                 request.user = Some(user_id.clone());
             }
 
-            let additional_headers = get_headers(agent_def, additional_headers, label);
+            let additional_headers = get_headers(llm_def, additional_headers, label);
             let mut config = GatewayConfig::default()
                 .with_context(context)
                 .with_additional_headers(additional_headers);
@@ -510,7 +513,7 @@ async fn completion(
 }
 
 async fn completion_stream(
-    agent_def: &AgentDefinition,
+    llm_def: &LlmDefinition,
     mut request: CreateChatCompletionRequest,
     context: Arc<ExecutorContext>,
     additional_headers: Option<HashMap<String, String>>,
@@ -519,7 +522,7 @@ async fn completion_stream(
     impl Stream<Item = Result<CreateChatCompletionStreamResponse, async_openai::error::OpenAIError>>,
     AgentError,
 > {
-    let stream = match &agent_def.model_settings.model_provider {
+    let stream = match &llm_def.model_settings.model_provider {
         ModelProvider::AIGateway {
             base_url,
             api_key,
@@ -529,7 +532,7 @@ async fn completion_stream(
                 request.user = Some(user_id.clone());
             }
 
-            let additional_headers = get_headers(agent_def, additional_headers, label);
+            let additional_headers = get_headers(llm_def, additional_headers, label);
 
             let mut config = GatewayConfig::default()
                 .with_context(context)
@@ -560,7 +563,7 @@ async fn completion_stream(
 }
 
 fn get_headers(
-    agent_def: &AgentDefinition,
+    llm_def: &LlmDefinition,
     additional_headers: Option<HashMap<String, String>>,
     label: Option<String>,
 ) -> HashMap<String, String> {
@@ -569,7 +572,7 @@ fn get_headers(
     if let Some(label) = label {
         headers.insert("X-Label".to_string(), label);
     } else {
-        headers.insert("X-Label".to_string(), agent_def.name.clone());
+        headers.insert("X-Label".to_string(), llm_def.name.clone());
     }
     headers
 }

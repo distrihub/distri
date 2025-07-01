@@ -338,7 +338,7 @@ impl DefaultAgent {
 
         // Create executor for LLM call
         let executor = LLMExecutor::new(
-            self.definition.clone(),
+            self.definition.clone().into(),
             self.server_tools.clone(),
             context.clone(),
             None,
@@ -506,7 +506,7 @@ impl DefaultAgent {
                 let is_llm_step = true; // For now, always stream LLM step
                 if is_llm_step {
                     let executor = LLMExecutor::new(
-                        self.definition.clone(),
+                        self.definition.clone().into(),
                         self.server_tools.clone(),
                         context.clone(),
                         None,

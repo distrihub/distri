@@ -72,6 +72,46 @@ impl Clone for AgentRecord {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 #[serde(deny_unknown_fields)]
+pub struct LlmDefinition {
+    /// The name of the agent.
+    pub name: String,
+
+    /// The system prompt for the agent, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system_prompt: Option<String>,
+    /// A list of MCP server definitions associated with the agent.
+    #[serde(default)]
+    pub mcp_servers: Vec<McpDefinition>,
+    /// Settings related to the model used by the agent.
+    #[serde(default)]
+    pub model_settings: ModelSettings,
+    /// Additional parameters for the agent, if any.
+    #[serde(default)]
+    pub parameters: Option<serde_json::Value>,
+    /// The format of the response, if specified.
+    #[serde(default)]
+    pub response_format: Option<serde_json::Value>,
+    /// The size of the history to maintain for the agent.
+    #[serde(default = "default_history_size")]
+    pub history_size: Option<usize>,
+}
+
+impl From<AgentDefinition> for LlmDefinition {
+    fn from(definition: AgentDefinition) -> Self {
+        Self {
+            name: definition.name,
+            system_prompt: definition.system_prompt,
+            mcp_servers: definition.mcp_servers,
+            model_settings: definition.model_settings,
+            parameters: definition.parameters,
+            response_format: definition.response_format,
+            history_size: definition.history_size,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
+#[serde(deny_unknown_fields)]
 pub struct AgentDefinition {
     /// The name of the agent.
     pub name: String,

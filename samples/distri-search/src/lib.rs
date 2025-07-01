@@ -38,7 +38,7 @@ pub async fn init_registry_and_coordinator(
     ));
 
     registry.register(
-        "web_search".to_string(),
+        "search".to_string(),
         ServerMetadata {
             auth_session_key: None,
             mcp_transport: TransportType::InMemory,
@@ -51,7 +51,7 @@ pub async fn init_registry_and_coordinator(
         },
     );
     registry.register(
-        "crawl".to_string(),
+        "scrape".to_string(),
         ServerMetadata {
             auth_session_key: None,
             mcp_transport: TransportType::InMemory,
