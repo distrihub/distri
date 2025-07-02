@@ -1315,15 +1315,9 @@ dependencies = [
 name = "distri-search"
 version = "0.1.0"
 dependencies = [
- "actix-cors",
- "actix-web",
  "anyhow",
  "async-trait",
- "chrono",
- "clap",
  "distri",
- "distri-cli",
- "distri-server",
  "dotenv",
  "mcp-spider",
  "mcp-tavily",
@@ -1357,7 +1351,6 @@ dependencies = [
  "serde_yaml",
  "tokio",
  "tracing",
- "tracing-subscriber",
  "uuid",
 ]
 
@@ -1422,6 +1415,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e079f19b08ca6239f47f8ba8509c11cf3ea30095831f7fed61441475edd8c449"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "embedding-distri-server"
+version = "0.1.0"
+dependencies = [
+ "actix-cors",
+ "actix-web",
+ "anyhow",
+ "chrono",
+ "clap",
+ "distri",
+ "distri-a2a",
+ "distri-cli",
+ "distri-server",
+ "dotenv",
+ "regex",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -4594,15 +4610,9 @@ dependencies = [
 name = "twitter-bot"
 version = "0.1.0"
 dependencies = [
- "actix-cors",
- "actix-web",
  "anyhow",
  "async-trait",
- "chrono",
- "clap",
  "distri",
- "distri-cli",
- "distri-server",
  "dotenv",
  "mcp-spider",
  "mcp-tavily",

@@ -13,11 +13,11 @@ use uuid::Uuid;
 use crate::{
     agent::ExecutorContext,
     memory::{LocalAgentMemory, MemoryStep},
+    types::{CreateThreadRequest, McpSession, Thread, ThreadSummary, UpdateThreadRequest},
     store::{
-        AgentStore, MemoryStore, SessionMemory, SessionStore, TaskStore, ThreadStore,
+        AgentStore, MemoryStore, SessionMemory, SessionStore, TaskStore, ThreadStore, 
         ToolSessionStore,
     },
-    types::{CreateThreadRequest, McpSession, Thread, ThreadSummary, UpdateThreadRequest},
 };
 #[cfg(feature = "redis")]
 use distri_a2a::{Message as A2aMessage, Task, TaskState, TaskStatus};
@@ -54,7 +54,7 @@ impl SessionStore for RedisSessionStore {
     async fn get_steps(&self, thread_id: &str) -> anyhow::Result<Vec<MemoryStep>> {
         let mut conn = self.client.get_async_connection().await?;
         let key = self.session_key(thread_id);
-
+        
         let data: Option<String> = conn.get(&key).await?;
         match data {
             Some(json_data) => {
@@ -68,17 +68,17 @@ impl SessionStore for RedisSessionStore {
     async fn store_step(&self, thread_id: &str, step: MemoryStep) -> anyhow::Result<()> {
         let mut conn = self.client.get_async_connection().await?;
         let key = self.session_key(thread_id);
-
+        
         // Get existing memory or create new
         let mut memory = match conn.get::<_, Option<String>>(&key).await? {
             Some(json_data) => serde_json::from_str::<LocalAgentMemory>(&json_data)?,
             None => LocalAgentMemory::new(thread_id.to_string()),
         };
-
+        
         memory.add_step(step);
         let serialized = serde_json::to_string(&memory)?;
         conn.set(&key, serialized).await?;
-
+        
         Ok(())
     }
 
@@ -86,7 +86,7 @@ impl SessionStore for RedisSessionStore {
         let mut conn = self.client.get_async_connection().await?;
         let key = self.session_key(thread_id);
         let iteration_key = self.iteration_key(thread_id);
-
+        
         conn.del(&[&key, &iteration_key]).await?;
         Ok(())
     }
@@ -94,7 +94,7 @@ impl SessionStore for RedisSessionStore {
     async fn inc_iteration(&self, thread_id: &str) -> anyhow::Result<i32> {
         let mut conn = self.client.get_async_connection().await?;
         let key = self.iteration_key(thread_id);
-
+        
         let count: i32 = conn.incr(&key, 1).await?;
         Ok(count)
     }
@@ -102,7 +102,7 @@ impl SessionStore for RedisSessionStore {
     async fn get_iteration(&self, thread_id: &str) -> anyhow::Result<i32> {
         let mut conn = self.client.get_async_connection().await?;
         let key = self.iteration_key(thread_id);
-
+        
         let count: Option<i32> = conn.get(&key).await?;
         Ok(count.unwrap_or(0))
     }
@@ -140,7 +140,7 @@ impl MemoryStore for RedisMemoryStore {
     ) -> anyhow::Result<()> {
         let mut conn = self.client.get_async_connection().await?;
         let key = self.memory_key(user_id);
-
+        
         let memory_entry = format!(
             "Agent: {} | Session: {} ({})\nSummary: {}\nInsights: {}\nFacts: {}",
             session_memory.agent_id,
@@ -163,7 +163,7 @@ impl MemoryStore for RedisMemoryStore {
     ) -> anyhow::Result<Vec<String>> {
         let mut conn = self.client.get_async_connection().await?;
         let key = self.memory_key(user_id);
-
+        
         let memories: Vec<String> = conn.lrange(&key, 0, -1).await?;
         let query_lower = query.to_lowercase();
         let mut relevant_memories: Vec<String> = memories
@@ -181,7 +181,7 @@ impl MemoryStore for RedisMemoryStore {
     async fn get_user_memories(&self, user_id: &str) -> anyhow::Result<Vec<String>> {
         let mut conn = self.client.get_async_connection().await?;
         let key = self.memory_key(user_id);
-
+        
         let memories: Vec<String> = conn.lrange(&key, 0, -1).await?;
         Ok(memories)
     }
@@ -189,7 +189,7 @@ impl MemoryStore for RedisMemoryStore {
     async fn clear_user_memories(&self, user_id: &str) -> anyhow::Result<()> {
         let mut conn = self.client.get_async_connection().await?;
         let key = self.memory_key(user_id);
-
+        
         conn.del(&key).await?;
         Ok(())
     }
@@ -227,7 +227,7 @@ impl TaskStore for RedisTaskStore {
     async fn create_task(&self, context_id: &str, task_id: Option<&str>) -> anyhow::Result<Task> {
         let mut conn = self.client.get_async_connection().await?;
         let task_id = task_id.unwrap_or(&Uuid::new_v4().to_string()).to_string();
-
+        
         let task = Task {
             id: task_id.clone(),
             context_id: context_id.to_string(),
@@ -242,17 +242,17 @@ impl TaskStore for RedisTaskStore {
         let serialized = serde_json::to_string(&task)?;
         let task_key = self.task_key(&task_id);
         let context_key = self.context_tasks_key(context_id);
-
+        
         conn.set(&task_key, &serialized).await?;
         conn.sadd(&context_key, &task_id).await?;
-
+        
         Ok(task)
     }
 
     async fn get_task(&self, task_id: &str) -> anyhow::Result<Option<Task>> {
         let mut conn = self.client.get_async_connection().await?;
         let key = self.task_key(task_id);
-
+        
         let data: Option<String> = conn.get(&key).await?;
         match data {
             Some(json_data) => {
@@ -266,57 +266,55 @@ impl TaskStore for RedisTaskStore {
     async fn update_task_status(&self, task_id: &str, status: TaskStatus) -> anyhow::Result<()> {
         let mut conn = self.client.get_async_connection().await?;
         let key = self.task_key(task_id);
-
+        
         if let Some(mut task) = self.get_task(task_id).await? {
             task.status = status;
             let serialized = serde_json::to_string(&task)?;
             conn.set(&key, serialized).await?;
         }
-
+        
         Ok(())
     }
 
     async fn cancel_task(&self, task_id: &str) -> anyhow::Result<Task> {
         let mut conn = self.client.get_async_connection().await?;
         let key = self.task_key(task_id);
-
-        let mut task = self
-            .get_task(task_id)
-            .await?
+        
+        let mut task = self.get_task(task_id).await?
             .ok_or_else(|| anyhow::anyhow!("Task not found"))?;
-
+        
         task.status = TaskStatus {
             state: TaskState::Cancelled,
             message: None,
             timestamp: Some(chrono::Utc::now().to_rfc3339()),
         };
-
+        
         let serialized = serde_json::to_string(&task)?;
         conn.set(&key, serialized).await?;
-
+        
         Ok(task)
     }
 
     async fn add_message_to_task(&self, task_id: &str, message: A2aMessage) -> anyhow::Result<()> {
         let mut conn = self.client.get_async_connection().await?;
         let key = self.task_key(task_id);
-
+        
         if let Some(mut task) = self.get_task(task_id).await? {
             task.messages.push(message);
             let serialized = serde_json::to_string(&task)?;
             conn.set(&key, serialized).await?;
         }
-
+        
         Ok(())
     }
 
     async fn list_tasks(&self, context_id: Option<&str>) -> anyhow::Result<Vec<Task>> {
         let mut conn = self.client.get_async_connection().await?;
-
+        
         if let Some(context_id) = context_id {
             let context_key = self.context_tasks_key(context_id);
             let task_ids: Vec<String> = conn.smembers(&context_key).await?;
-
+            
             let mut tasks = Vec::new();
             for task_id in task_ids {
                 if let Some(task) = self.get_task(&task_id).await? {
@@ -371,25 +369,29 @@ impl ThreadStore for RedisThreadStore {
 
     async fn create_thread(&self, request: CreateThreadRequest) -> anyhow::Result<Thread> {
         let mut conn = self.client.get_async_connection().await?;
-
-        let thread = Thread::new(request.agent_id.clone(), request.title, request.thread_id);
+        
+        let thread = Thread::new(
+            request.agent_id.clone(),
+            request.title,
+            request.thread_id,
+        );
 
         let serialized = serde_json::to_string(&thread)?;
         let thread_key = self.thread_key(&thread.id);
         let agent_key = self.agent_threads_key(&request.agent_id);
         let all_key = self.all_threads_key();
-
+        
         conn.set(&thread_key, &serialized).await?;
         conn.sadd(&agent_key, &thread.id).await?;
         conn.sadd(&all_key, &thread.id).await?;
-
+        
         Ok(thread)
     }
 
     async fn get_thread(&self, thread_id: &str) -> anyhow::Result<Option<Thread>> {
         let mut conn = self.client.get_async_connection().await?;
         let key = self.thread_key(thread_id);
-
+        
         let data: Option<String> = conn.get(&key).await?;
         match data {
             Some(json_data) => {
@@ -407,41 +409,39 @@ impl ThreadStore for RedisThreadStore {
     ) -> anyhow::Result<Thread> {
         let mut conn = self.client.get_async_connection().await?;
         let key = self.thread_key(thread_id);
-
-        let mut thread = self
-            .get_thread(thread_id)
-            .await?
+        
+        let mut thread = self.get_thread(thread_id).await?
             .ok_or_else(|| anyhow::anyhow!("Thread not found"))?;
 
         if let Some(title) = request.title {
             thread.title = title;
         }
-
+        
         if let Some(metadata) = request.metadata {
             thread.metadata.extend(metadata);
         }
 
         thread.updated_at = chrono::Utc::now();
-
+        
         let serialized = serde_json::to_string(&thread)?;
         conn.set(&key, serialized).await?;
-
+        
         Ok(thread)
     }
 
     async fn delete_thread(&self, thread_id: &str) -> anyhow::Result<()> {
         let mut conn = self.client.get_async_connection().await?;
-
+        
         if let Some(thread) = self.get_thread(thread_id).await? {
             let thread_key = self.thread_key(thread_id);
             let agent_key = self.agent_threads_key(&thread.agent_id);
             let all_key = self.all_threads_key();
-
+            
             conn.del(&thread_key).await?;
             conn.srem(&agent_key, thread_id).await?;
             conn.srem(&all_key, thread_id).await?;
         }
-
+        
         Ok(())
     }
 
@@ -452,7 +452,7 @@ impl ThreadStore for RedisThreadStore {
         offset: Option<u32>,
     ) -> anyhow::Result<Vec<ThreadSummary>> {
         let mut conn = self.client.get_async_connection().await?;
-
+        
         let thread_ids: Vec<String> = if let Some(agent_id) = agent_id {
             let agent_key = self.agent_threads_key(agent_id);
             conn.smembers(&agent_key).await?
@@ -499,13 +499,13 @@ impl ThreadStore for RedisThreadStore {
     ) -> anyhow::Result<()> {
         let mut conn = self.client.get_async_connection().await?;
         let key = self.thread_key(thread_id);
-
+        
         if let Some(mut thread) = self.get_thread(thread_id).await? {
             thread.update_with_message(message);
             let serialized = serde_json::to_string(&thread)?;
             conn.set(&key, serialized).await?;
         }
-
+        
         Ok(())
     }
 }
@@ -543,7 +543,7 @@ impl ToolSessionStore for RedisToolSessionStore {
         let mut conn = self.client.get_async_connection().await?;
         let user_id = context.user_id.as_deref().unwrap_or("default");
         let key = self.session_key(server_name, user_id);
-
+        
         let data: Option<String> = conn.get(&key).await?;
         match data {
             Some(json_data) => {

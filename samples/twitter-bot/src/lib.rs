@@ -1,77 +1,64 @@
 use anyhow::Result;
 use distri::{
-    agent::{AgentExecutor, AgentExecutorBuilder},
-    servers::registry::{register_servers, ServerMetadata, ServerRegistry, ServerTrait},
+    agent::{AgentExecutor, ExecutorContext},
+    servers::registry::{ServerMetadata, ServerRegistry, ServerTrait},
+    store::{AgentStore, InMemoryAgentStore},
     types::{Configuration, TransportType},
 };
-
-use distri_server::reusable_server::DefaultCustomServer;
 use dotenv::dotenv;
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
-
-use crate::store::get_tools_session_store;
 mod store;
 
-pub fn get_server() -> DefaultCustomServer {
-    DefaultCustomServer {
-        service_name: "twitter-bot-server".to_string(),
-        description: "AI-powered Twitter bot with social media capabilities".to_string(),
-        capabilities: vec![
-            "twitter_search".to_string(),
-            "twitter_posting".to_string(),
-            "social_analysis".to_string(),
-            "agent_execution".to_string(),
-            "task_management".to_string(),
-        ],
-    }
+pub fn load_config() -> Result<Configuration> {
+    // Load .env file if it exists
+    dotenv().ok();
+
+    // Read the config file
+    let config_str = include_str!("../definition.yaml");
+
+    // Parse the YAML
+    let config: Configuration = serde_yaml::from_str(&config_str)?;
+    Ok(config)
 }
 
-fn custom_servers() -> HashMap<String, ServerMetadata> {
-    let mut servers = HashMap::new();
-    // Add Twitter API server
-    servers.insert(
+pub async fn init_registry_and_coordinator(
+    agent_store: Arc<dyn AgentStore>,
+    context: Arc<ExecutorContext>,
+) -> (Arc<RwLock<ServerRegistry>>, Arc<AgentExecutor>) {
+    let server_registry = Arc::new(RwLock::new(ServerRegistry::new()));
+    let reg_clone = server_registry.clone();
+    let mut registry = reg_clone.write().await;
+
+    let coordinator = Arc::new(AgentExecutor::new(
+        server_registry.clone(),
+        store::get_tools_session_store(),
+        None,
+        agent_store,
+        context.clone(),
+    ));
+
+    registry.register(
         "twitter".to_string(),
         ServerMetadata {
-            auth_session_key: None,
+            auth_session_key: Some("session_string".to_string()),
             mcp_transport: TransportType::InMemory,
-            kg_memory: None,
             builder: Some(Arc::new(|_, transport| {
                 let server = mcp_twitter::build(transport)?;
                 Ok(Box::new(server) as Box<dyn ServerTrait>)
             })),
+            kg_memory: None,
             memories: HashMap::new(),
         },
     );
 
-    servers
+    (server_registry, coordinator)
 }
 
-/// Load embedded configuration for distri-search
-pub fn load_config() -> Result<Configuration> {
-    dotenv().ok();
+pub async fn init_infrastructure() -> Result<(Arc<RwLock<ServerRegistry>>, Arc<AgentExecutor>)> {
+    let context = Arc::new(ExecutorContext::default());
+    let agent_store = Arc::new(InMemoryAgentStore::new());
+    let (registry, coordinator) = init_registry_and_coordinator(agent_store.clone(), context).await;
 
-    let yaml_content = include_str!("../definition.yaml");
-    let config: Configuration = serde_yaml::from_str(yaml_content)?;
-    Ok(config)
-}
-
-pub async fn init_executor(config: &Configuration) -> anyhow::Result<Arc<AgentExecutor>> {
-    let registry = Arc::new(RwLock::new(ServerRegistry::new()));
-    let executor = AgentExecutorBuilder::new()
-        .initialize_stores_from_config(config.stores.as_ref())
-        .await?
-        .with_registry(registry.clone())
-        .with_tool_sessions(get_tools_session_store());
-    let executor = Arc::new(executor.build()?);
-
-    register_servers(registry, executor.clone(), custom_servers()).await?;
-
-    // Register agents from configuration
-    for agent_config in &config.agents {
-        executor
-            .register_default_agent(agent_config.definition.clone())
-            .await?;
-    }
-    Ok(executor)
+    Ok((registry, coordinator))
 }

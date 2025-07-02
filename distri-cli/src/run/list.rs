@@ -1,12 +1,13 @@
 use comfy_table::{modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL, ContentArrangement, Table};
 use distri::{
-    agent::AgentExecutor,
+    servers::registry::ServerRegistry,
     store::AgentStore,
     tools::get_tools,
     types::{McpServerType, ToolsFilter},
     McpDefinition,
 };
 use std::{collections::HashMap, sync::Arc};
+use tokio::sync::RwLock;
 
 pub async fn list(agent_store: Arc<dyn AgentStore>) -> anyhow::Result<()> {
     let (agents, _) = agent_store.list(None, None).await;
@@ -39,14 +40,13 @@ pub async fn list(agent_store: Arc<dyn AgentStore>) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub async fn list_tools(executor: Arc<AgentExecutor>) -> anyhow::Result<()> {
+pub async fn list_tools(registry: Arc<RwLock<ServerRegistry>>) -> anyhow::Result<()> {
     let mut table = Table::new()
         .load_preset(UTF8_FULL)
         .apply_modifier(UTF8_ROUND_CORNERS)
         .set_content_arrangement(ContentArrangement::Dynamic)
         .to_owned();
 
-    let registry = executor.registry.clone();
     let mut map = HashMap::new();
     {
         let servers = registry.read().await;

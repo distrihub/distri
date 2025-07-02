@@ -19,10 +19,11 @@ pub static DISTRI_LOCAL_SERVER: &str = "distri_agents";
 pub fn build_server<T: Transport>(
     transport: T,
     coordinator: Arc<AgentExecutor>,
+    context: Arc<ExecutorContext>,
 ) -> Result<Server<T>, AgentError> {
     let coordinator_clone = coordinator.clone();
     let coordinator_clone2 = coordinator.clone();
-
+    let context_clone = context.clone();
     let server = Server::builder(transport)
         .capabilities(ServerCapabilities::default())
         .request_handler("tools/list", move |req: ListRequest| {
@@ -58,7 +59,7 @@ pub fn build_server<T: Transport>(
         })
         .request_handler("tools/call", move |req: CallToolRequest| {
             let coordinator = coordinator_clone2.clone();
-
+            let context_clone = context_clone.clone();
             Box::pin(async move {
                 println!("req: {:?}", req);
                 let agent_name = req.name.clone();
@@ -66,7 +67,6 @@ pub fn build_server<T: Transport>(
                 let message = args["message"].as_str().unwrap().to_string();
 
                 println!("agent_name: {}", agent_name);
-                let context = Arc::new(ExecutorContext::default());
 
                 let agent = coordinator.agent_store.get(&agent_name).await.unwrap();
 
@@ -77,7 +77,7 @@ pub fn build_server<T: Transport>(
                             task_images: None,
                         },
                         None,
-                        context,
+                        context_clone,
                         None,
                     )
                     .await
@@ -139,7 +139,7 @@ mod tests {
             agent_store,
             context.clone(),
         ));
-        let server = build_server(transport.clone(), coordinator).unwrap();
+        let server = build_server(transport.clone(), coordinator, context).unwrap();
         server.listen().await.unwrap();
     }
 

@@ -1,7 +1,9 @@
 use crate::{
-    agent::{self, AgentExecutor, DISTRI_LOCAL_SERVER},
-    memory::AgentMemory,
-    types::TransportType,
+    agent::{self, AgentExecutor, ExecutorContext, DISTRI_LOCAL_SERVER},
+    memory::{AgentMemory, MemoryConfig},
+    store::{AgentStore, FileSessionStore, LocalSessionStore, SessionStore},
+    types::{ExternalMcpServer, TransportType},
+    ToolSessionStore,
 };
 use anyhow::Result;
 use async_mcp::{server::Server, transport::Transport};
@@ -88,12 +90,34 @@ impl<T: Transport> ServerTrait for Server<T> {
     }
 }
 
-pub async fn register_servers(
-    server_registry: Arc<RwLock<ServerRegistry>>,
-    coordinator: Arc<AgentExecutor>,
-    servers: HashMap<String, ServerMetadata>,
-) -> Result<()> {
-    let mut registry = server_registry.write().await;
+pub async fn init_registry_and_coordinator(
+    _local_memories: HashMap<String, Arc<Mutex<dyn AgentMemory>>>,
+    tool_sessions: Option<Arc<Box<dyn ToolSessionStore>>>,
+    agent_store: Arc<dyn AgentStore>,
+    external_servers: &[ExternalMcpServer],
+    context: Arc<ExecutorContext>,
+    memory_config: MemoryConfig,
+) -> (Arc<RwLock<ServerRegistry>>, Arc<AgentExecutor>) {
+    let server_registry = Arc::new(RwLock::new(ServerRegistry::new()));
+    let reg_clone = server_registry.clone();
+    let mut registry = reg_clone.write().await;
+
+    let session_store = match memory_config {
+        MemoryConfig::InMemory => Some(Arc::new(
+            Box::new(LocalSessionStore::new()) as Box<dyn SessionStore>
+        )),
+        MemoryConfig::File(path) => Some(Arc::new(
+            Box::new(FileSessionStore::new(path)) as Box<dyn SessionStore>
+        )),
+    };
+
+    let coordinator = Arc::new(AgentExecutor::new(
+        server_registry.clone(),
+        tool_sessions,
+        session_store,
+        agent_store,
+        context.clone(),
+    ));
 
     registry.register(
         "web_search".to_string(),
@@ -109,6 +133,7 @@ pub async fn register_servers(
         },
     );
 
+    let coordinator_clone = coordinator.clone();
     registry.register(
         DISTRI_LOCAL_SERVER.to_string(),
         ServerMetadata {
@@ -117,7 +142,8 @@ pub async fn register_servers(
             kg_memory: None,
             builder: Some(Arc::new(move |_, transport| {
                 let coordinator = coordinator.clone();
-                let server = agent::build_server(transport, coordinator)?;
+                let context = context.clone();
+                let server = agent::build_server(transport, coordinator, context)?;
                 Ok(Box::new(server) as Box<dyn ServerTrait>)
             })),
             memories: HashMap::new(),
@@ -125,9 +151,9 @@ pub async fn register_servers(
     );
 
     // Register external servers
-    for (name, metadata) in servers {
-        registry.register(name, metadata);
+    for server in external_servers {
+        registry.register(server.name.clone(), server.config.clone());
     }
 
-    Ok(())
+    (server_registry, coordinator_clone)
 }

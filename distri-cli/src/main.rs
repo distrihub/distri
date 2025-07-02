@@ -5,20 +5,23 @@ use clap::Parser;
 use cli::{Cli, Commands};
 mod logging;
 use distri::{
-    agent::{AgentExecutor, AgentExecutorBuilder},
-    servers::kg::FileMemory,
+    agent::{AgentExecutor, ExecutorContext},
+    memory::MemoryConfig,
+    servers::{
+        kg::FileMemory,
+        registry::{init_registry_and_coordinator, ServerRegistry},
+    },
+    store::InMemoryAgentStore,
     types::{get_distri_config_schema, Configuration},
 };
 use distri_server::A2AServer;
 use dotenv::dotenv;
 use logging::init_logging;
 use mcp_proxy::McpProxy;
-use run::{chat, event};
-use std::{env, sync::Arc};
-use tokio::sync::Mutex;
+use run::{chat, event, session::get_session_store};
+use std::{collections::HashMap, env, sync::Arc};
+use tokio::sync::{Mutex, RwLock};
 use tracing::debug;
-
-use crate::run::session::get_session_store;
 
 fn load_config(config_path: &str) -> Result<Configuration> {
     // Load .env file if it exists
@@ -86,7 +89,7 @@ async fn main() -> Result<()> {
         Commands::List => {
             debug!("Available agents:");
             let config = load_config(cli.config.to_str().unwrap())?;
-            let coordinator = init_all(&config).await?;
+            let (_, coordinator) = init_all(&config).await?;
             let agent_store = coordinator.agent_store.clone();
             for agent in &config.agents {
                 coordinator
@@ -104,14 +107,14 @@ async fn main() -> Result<()> {
         Commands::ListTools => {
             debug!("Available tools:");
             let config = load_config(cli.config.to_str().unwrap())?;
-            let executor = init_all(&config).await?;
+            let (registry, _) = init_all(&config).await?;
 
-            run::list::list_tools(executor.clone()).await?;
+            run::list::list_tools(registry.clone()).await?;
         }
         Commands::ConfigSchema { pretty } => print_schema(pretty),
         Commands::Run { agent, background } => {
             let config = load_config(cli.config.to_str().unwrap())?;
-            let coordinator = init_all(&config).await?;
+            let (_, coordinator) = init_all(&config).await?;
             let coordinator_clone = coordinator.clone();
 
             debug!("Running agent: {:?}", agent);
@@ -140,7 +143,7 @@ async fn main() -> Result<()> {
         }
         Commands::Serve { host, port } => {
             let config = load_config(cli.config.to_str().unwrap())?;
-            let coordinator = init_all(&config).await?;
+            let (_, coordinator) = init_all(&config).await?;
 
             for agent in &config.agents {
                 coordinator
@@ -185,12 +188,26 @@ fn print_schema(pretty: bool) {
     println!("{schemas}");
 }
 
-async fn init_all(config: &Configuration) -> Result<Arc<AgentExecutor>> {
-    let executor = AgentExecutorBuilder::new()
-        .initialize_stores_from_config(config.stores.as_ref())
-        .await?;
+async fn init_all(
+    config: &Configuration,
+) -> Result<(Arc<RwLock<ServerRegistry>>, Arc<AgentExecutor>)> {
+    let sessions = config.sessions.clone();
 
-    let executor = executor.with_tool_sessions(get_session_store(config.sessions.clone()));
-    let executor = Arc::new(executor.build()?);
-    Ok(executor)
+    let local_memories = HashMap::new();
+    let tool_sessions = get_session_store(sessions);
+
+    let memory_config = MemoryConfig::File(".distri/memory".to_string());
+    let context = Arc::new(ExecutorContext::default());
+    let agent_store = Arc::new(InMemoryAgentStore::new());
+    let (registry, coordinator) = init_registry_and_coordinator(
+        local_memories,
+        tool_sessions.clone(),
+        agent_store.clone(),
+        &config.mcp_servers,
+        context,
+        memory_config,
+    )
+    .await;
+
+    Ok((registry, coordinator))
 }

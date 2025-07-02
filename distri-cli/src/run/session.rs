@@ -2,8 +2,12 @@ use std::{collections::HashMap, sync::Arc};
 
 use distri::{agent::ExecutorContext, McpSession, ToolSessionStore};
 
-pub fn get_session_store(sessions: HashMap<String, String>) -> Arc<Box<dyn ToolSessionStore>> {
-    Arc::new(Box::new(ConfigSessionStore { sessions }))
+pub fn get_session_store(
+    sessions: HashMap<String, String>,
+) -> Option<Arc<Box<dyn ToolSessionStore>>> {
+    Some(Arc::new(
+        Box::new(ConfigSessionStore { sessions }) as Box<dyn ToolSessionStore>
+    ))
 }
 
 pub struct ConfigSessionStore {
