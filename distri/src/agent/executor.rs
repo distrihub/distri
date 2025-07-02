@@ -1,5 +1,5 @@
 use crate::{
-    agent::{BaseAgent, DefaultAgent},
+    agent::{BaseAgent, StandardAgent},
     error::AgentError,
     servers::registry::{register_servers, ServerMetadata, ServerRegistry},
     store::{
@@ -276,7 +276,7 @@ impl AgentExecutor {
         definition: crate::types::AgentDefinition,
     ) -> anyhow::Result<Box<dyn BaseAgent>> {
         let resolved_tools = get_tools(&definition.mcp_servers, self.registry.clone()).await?;
-        let agent = Box::new(DefaultAgent::new(
+        let agent = Box::new(StandardAgent::new(
             definition,
             resolved_tools,
             Arc::new(self.clone()),

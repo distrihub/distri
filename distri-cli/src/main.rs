@@ -6,6 +6,7 @@ use cli::{Cli, Commands};
 mod logging;
 use distri::{
     agent::{AgentExecutor, AgentExecutorBuilder},
+    memory::TaskStep,
     servers::kg::FileMemory,
     types::{get_distri_config_schema, Configuration},
 };
@@ -157,7 +158,7 @@ async fn main() -> Result<()> {
             }
             coordinator_handle.abort();
         }
-        Commands::Serve { host, port } => {
+        Commands::StartServer { host, port } => {
             let config = load_config(cli.config.to_str().unwrap())?;
             let coordinator = init_all(&config).await?;
 

@@ -24,34 +24,36 @@ pub enum Commands {
     /// List available tools
     ListTools,
 
+    /// Start MCP proxy server
     Proxy,
 
-    /// Run specified agents
+    /// Run agent in interactive chat mode or execute a single task
     Run {
-        /// Agent name
+        /// Agent name (uses first agent if not specified)
         #[clap(help = "The name of the agent to run")]
         agent: Option<String>,
 
         #[clap(
             long,
             short,
-            help = "Run the agent in the background",
+            help = "Run a single task in the background (non-interactive)",
             default_value = "false"
         )]
         background: bool,
 
-        #[clap(long, help = "Task to run")]
+        #[clap(long, help = "Single task to execute (required when using --background)")]
         task: Option<String>,
     },
 
-    /// Generate config schema
+    /// Generate config schema for validation
     ConfigSchema {
         /// Whether to pretty print the schema
         #[clap(long, help = "pretty print json")]
         pretty: bool,
     },
 
-    Serve {
+    /// Start the A2A server to serve agents via HTTP API
+    StartServer {
         #[clap(long, default_value = "127.0.0.1")]
         host: String,
         #[clap(long, default_value = "8080")]

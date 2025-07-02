@@ -1,11 +1,13 @@
 pub mod agent;
 pub mod executor;
+pub mod extensible_example;
 pub mod log;
 pub mod reason;
 pub mod server;
 
-pub use agent::{BaseAgent, DefaultAgent, StepResult, MAX_ITERATIONS};
+pub use agent::{BaseAgent, DefaultAgent, StandardAgent, StepResult, MAX_ITERATIONS};
 pub use executor::{AgentExecutor, AgentExecutorBuilder};
+pub use extensible_example::{LoggingAgent, FilteringAgent};
 pub use log::{ModelLogger, StepLogger};
 pub use server::{build_server, DISTRI_LOCAL_SERVER};
 

@@ -5,41 +5,12 @@ use dotenv::dotenv;
 use std::env;
 use tracing::debug;
 
-/// CLI commands for Distri
-#[derive(Parser)]
-#[command(name = "distri")]
-#[command(about = "A distributed agent execution platform")]
-pub struct Cli {
-    #[command(subcommand)]
-    pub command: Commands,
-    /// Configuration file path
-    #[arg(short, long, global = true)]
-    pub config: Option<String>,
-}
+pub mod cli;
+pub mod logging;
+pub mod run;
 
-#[derive(Subcommand)]
-pub enum Commands {
-    /// Run an agent with a given task
-    Run {
-        /// Agent name to run
-        #[arg(short, long)]
-        agent: String,
-        /// Task to execute
-        #[arg(short, long)]
-        task: String,
-    },
-    /// List available agents
-    List {},
-    /// Start the server
-    Serve {
-        /// Server host
-        #[arg(long, default_value = "localhost")]
-        host: String,
-        /// Server port
-        #[arg(long, default_value = "8000")]
-        port: u16,
-    },
-}
+// Re-export CLI types
+pub use cli::{Cli, Commands};
 
 /// Load configuration from file path with environment variable substitution
 pub fn load_config(config_path: &str) -> Result<Configuration> {
@@ -84,4 +55,23 @@ pub fn replace_env_vars(content: &str) -> String {
     }
 
     result
+}
+
+/// Initialize AgentExecutor from configuration
+pub async fn init_all(config: &Configuration) -> Result<std::sync::Arc<distri::agent::AgentExecutor>> {
+    let executor = distri::agent::AgentExecutorBuilder::new()
+        .initialize_stores_from_config(config.stores.as_ref())
+        .await?;
+
+    let executor = executor.with_tool_sessions(crate::run::session::get_session_store(config.sessions.clone()));
+    let executor = std::sync::Arc::new(executor.build()?);
+    Ok(executor)
+}
+
+/// Initialize KG memory for an agent
+pub async fn init_kg_memory(agent: &str) -> Result<std::sync::Arc<tokio::sync::Mutex<distri::servers::kg::FileMemory>>> {
+    let mut memory_path = std::path::PathBuf::from(".distri");
+    memory_path.push(format!("{agent}.memory"));
+    let memory = distri::servers::kg::FileMemory::new(memory_path).await?;
+    Ok(std::sync::Arc::new(tokio::sync::Mutex::new(memory)))
 }
