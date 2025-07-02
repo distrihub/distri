@@ -30,7 +30,7 @@ pub enum Commands {
     Run {
         /// Agent name
         #[clap(help = "The name of the agent to run")]
-        agent: String,
+        agent: Option<String>,
 
         #[clap(
             long,
@@ -39,6 +39,9 @@ pub enum Commands {
             default_value = "false"
         )]
         background: bool,
+
+        #[clap(long, help = "Task to run")]
+        task: Option<String>,
     },
 
     /// Generate config schema

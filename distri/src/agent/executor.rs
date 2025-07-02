@@ -1,19 +1,19 @@
 use crate::{
     agent::{BaseAgent, DefaultAgent},
     error::AgentError,
-    servers::registry::ServerRegistry,
+    servers::registry::{register_servers, ServerMetadata, ServerRegistry},
     store::{
         AgentStore, HashMapThreadStore, LocalSessionStore, SessionStore, ThreadStore,
         ToolSessionStore,
     },
-    stores::{
-        HashMapTaskStore, InMemoryAgentStore, // Import from new stores module
-    },
+    stores::HashMapTaskStore,
     tools::{execute_tool, get_tools},
-    types::{CreateThreadRequest, Thread, ThreadSummary, ToolCall, UpdateThreadRequest, Configuration},
+    types::{
+        Configuration, CreateThreadRequest, Thread, ThreadSummary, ToolCall, UpdateThreadRequest,
+    },
     TaskStore,
 };
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
 
 use super::AgentEvent;
@@ -23,6 +23,7 @@ use crate::memory::TaskStep;
 
 // Message types for coordinator communication
 
+#[allow(dead_code)]
 #[derive(Clone)]
 pub struct AgentExecutor {
     pub agent_store: Arc<dyn AgentStore>,
@@ -94,13 +95,16 @@ impl AgentExecutorBuilder {
         self
     }
 
-    pub async fn initialize_stores_from_config(mut self, store_config: Option<&crate::types::StoreConfig>) -> anyhow::Result<Self> {
+    pub async fn initialize_stores_from_config(
+        mut self,
+        store_config: Option<&crate::types::StoreConfig>,
+    ) -> anyhow::Result<Self> {
         let default_config = crate::types::StoreConfig::default();
         let config = store_config.unwrap_or(&default_config);
-        
+
         // Initialize all stores using the StoreConfig::initialize method
         let stores = config.initialize().await?;
-        
+
         // Set the stores if not already provided
         if self.session_store.is_none() {
             self.session_store = Some(stores.session_store);
@@ -125,23 +129,30 @@ impl AgentExecutorBuilder {
         if self.registry.is_none() {
             self.registry = Some(Arc::new(RwLock::new(ServerRegistry::new())));
         }
-        
+
         Ok(self)
     }
 
     pub fn build(self) -> anyhow::Result<AgentExecutor> {
         let (coordinator_tx, coordinator_rx) = mpsc::channel(100);
 
-        let registry = self.registry.ok_or_else(|| anyhow::anyhow!("Registry is required"))?;
-        let session_store = self.session_store
+        let registry = self
+            .registry
+            .ok_or_else(|| anyhow::anyhow!("Registry is required"))?;
+        let session_store = self
+            .session_store
             .unwrap_or_else(|| Arc::new(Box::new(LocalSessionStore::new())));
-        let agent_store = self.agent_store
+        let agent_store = self
+            .agent_store
             .ok_or_else(|| anyhow::anyhow!("Agent store is required"))?;
-        let task_store = self.task_store
+        let task_store = self
+            .task_store
             .unwrap_or_else(|| Arc::new(HashMapTaskStore::new()));
-        let thread_store = self.thread_store
-            .unwrap_or_else(|| Arc::new(Box::new(HashMapThreadStore::default()) as Box<dyn ThreadStore>));
-        let context = self.context
+        let thread_store = self.thread_store.unwrap_or_else(|| {
+            Arc::new(Box::new(HashMapThreadStore::default()) as Box<dyn ThreadStore>)
+        });
+        let context = self
+            .context
             .unwrap_or_else(|| Arc::new(ExecutorContext::default()));
 
         Ok(AgentExecutor {
@@ -185,24 +196,36 @@ impl AgentExecutor {
     }
 
     /// Initialize AgentExecutor from configuration
-    pub async fn initialize(config: &Configuration) -> anyhow::Result<Self> {
-        let builder = AgentExecutorBuilder::new();
+    pub async fn initialize(
+        config: &Configuration,
+        servers: HashMap<String, ServerMetadata>,
+    ) -> anyhow::Result<Arc<AgentExecutor>> {
+        let mut builder = AgentExecutorBuilder::new();
 
+        let registry = Arc::new(RwLock::new(ServerRegistry::new()));
         // Initialize stores from configuration
-        let builder = builder.initialize_stores_from_config(config.stores.as_ref()).await?;
+        builder = builder
+            .initialize_stores_from_config(config.stores.as_ref())
+            .await?;
 
-        let executor = builder.build()?;
+        let executor = Arc::new(builder.build()?);
+        register_servers(registry, executor.clone(), servers).await?;
 
         // Register agents from configuration
         for agent_config in &config.agents {
-            executor.register_default_agent(agent_config.definition.clone()).await?;
+            executor
+                .register_default_agent(agent_config.definition.clone())
+                .await?;
         }
 
         Ok(executor)
     }
 
     /// Initialize AgentExecutor from configuration string or file path
-    pub async fn initialize_from_config(config_source: &str) -> anyhow::Result<Self> {
+    pub async fn initialize_from_config(
+        config_source: &str,
+        servers: HashMap<String, ServerMetadata>,
+    ) -> anyhow::Result<Arc<AgentExecutor>> {
         let config = if std::path::Path::new(config_source).exists() {
             // It's a file path
             let config_str = std::fs::read_to_string(config_source)?;
@@ -212,18 +235,18 @@ impl AgentExecutor {
             serde_yaml::from_str::<Configuration>(config_source)?
         };
 
-        Self::initialize(&config).await
+        Self::initialize(&config, servers).await
     }
 
     pub async fn execute_tool(
         &self,
-        agent_id: String,
+        agent_id: &str,
         tool_call: ToolCall,
     ) -> Result<String, AgentError> {
         let (response_tx, response_rx) = oneshot::channel();
         self.coordinator_tx
             .send(CoordinatorMessage::ExecuteTool {
-                agent_id: agent_id.clone(),
+                agent_id: agent_id.to_string(),
                 tool_call,
                 response_tx,
             })

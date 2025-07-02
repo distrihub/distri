@@ -1,8 +1,9 @@
 use anyhow::Result;
 use clap::Parser;
 use distri_cli::{load_config, Cli, Commands};
+use distri_search::{get_server, init_executor, load_config as load_embedded_config};
 use distri_server::reusable_server::{list_agents, run_cli, run_server};
-use twitter_bot::{get_server, init_executor, load_config as load_embedded_config};
+
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenv::dotenv().ok();

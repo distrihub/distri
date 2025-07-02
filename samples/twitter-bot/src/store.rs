@@ -20,13 +20,11 @@ impl ToolSessionStore for StaticSessionStore {
     }
 }
 
-pub fn get_tools_session_store() -> Option<Arc<Box<dyn ToolSessionStore>>> {
+pub fn get_tools_session_store() -> Arc<Box<dyn ToolSessionStore>> {
     dotenv::dotenv().ok();
     let session_key =
         std::env::var("X_USER_SESSION").unwrap_or_else(|_| "test_session_key".to_string());
     // Create executor with static session store
 
-    Some(Arc::new(
-        Box::new(StaticSessionStore { session_key }) as Box<dyn ToolSessionStore>
-    ))
+    Arc::new(Box::new(StaticSessionStore { session_key }))
 }

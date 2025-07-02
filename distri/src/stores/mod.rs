@@ -1,15 +1,14 @@
 pub mod memory;
 pub mod redis;
 
+use crate::types::{EntityStoreType, SessionStoreType, StoreConfig};
 use std::sync::Arc;
-use crate::types::{StoreConfig, EntityStoreType, SessionStoreType};
 // Re-export the main store traits and types
 pub use crate::store::{
-    AgentStore, MemoryStore, SessionStore, TaskStore, ThreadStore, ToolSessionStore,
-    SessionMemory,
+    AgentStore, MemoryStore, SessionMemory, SessionStore, TaskStore, ThreadStore, ToolSessionStore,
 };
 
-// Re-export memory implementations  
+// Re-export memory implementations
 pub use memory::*;
 
 // Re-export redis implementations
@@ -36,50 +35,73 @@ impl StoreConfig {
             EntityStoreType::Memory => {
                 let agent_store = Arc::new(InMemoryAgentStore::new()) as Arc<dyn AgentStore>;
                 let task_store = Arc::new(HashMapTaskStore::new()) as Arc<dyn TaskStore>;
-                let thread_store = Arc::new(Box::new(HashMapThreadStore::default()) as Box<dyn ThreadStore>);
+                let thread_store =
+                    Arc::new(Box::new(HashMapThreadStore::default()) as Box<dyn ThreadStore>);
                 (agent_store, task_store, thread_store)
             }
             #[cfg(feature = "redis")]
             EntityStoreType::Redis => {
-                let redis_config = self.redis.as_ref()
-                    .ok_or_else(|| anyhow::anyhow!("Redis config required when using Redis stores"))?;
-                
-                let agent_store = Arc::new(redis::RedisAgentStore::new(&redis_config.url).await?) as Arc<dyn AgentStore>;
-                let task_store = Arc::new(redis::RedisTaskStore::new(&redis_config.url).await?) as Arc<dyn TaskStore>;
-                let thread_store = Arc::new(Box::new(redis::RedisThreadStore::new(&redis_config.url).await?) as Box<dyn ThreadStore>);
+                let redis_config = self.redis.as_ref().ok_or_else(|| {
+                    anyhow::anyhow!("Redis config required when using Redis stores")
+                })?;
+
+                let agent_store = Arc::new(redis::RedisAgentStore::new(&redis_config.url).await?)
+                    as Arc<dyn AgentStore>;
+                let task_store = Arc::new(redis::RedisTaskStore::new(&redis_config.url).await?)
+                    as Arc<dyn TaskStore>;
+                let thread_store = Arc::new(Box::new(
+                    redis::RedisThreadStore::new(&redis_config.url).await?,
+                ) as Box<dyn ThreadStore>);
                 (agent_store, task_store, thread_store)
             }
             #[cfg(not(feature = "redis"))]
             EntityStoreType::Redis => {
-                return Err(anyhow::anyhow!("Redis feature not enabled. Compile with --features redis"));
+                return Err(anyhow::anyhow!(
+                    "Redis feature not enabled. Compile with --features redis"
+                ));
             }
         };
 
         // Initialize session stores (conversation sessions, tool sessions)
         let (session_store, tool_session_store) = match session_type {
             SessionStoreType::Memory => {
-                let session_store = Arc::new(Box::new(LocalSessionStore::new()) as Box<dyn SessionStore>);
-                let tool_session_store = Some(Arc::new(Box::new(InMemorySessionStore::new(std::collections::HashMap::new())) as Box<dyn ToolSessionStore>));
+                let session_store =
+                    Arc::new(Box::new(LocalSessionStore::new()) as Box<dyn SessionStore>);
+                let tool_session_store = Some(Arc::new(Box::new(InMemorySessionStore::new(
+                    std::collections::HashMap::new(),
+                ))
+                    as Box<dyn ToolSessionStore>));
                 (session_store, tool_session_store)
             }
             SessionStoreType::File { path } => {
                 let file_store = crate::store::FileSessionStore::new(path.clone());
                 let session_store = Arc::new(Box::new(file_store) as Box<dyn SessionStore>);
-                let tool_session_store = Some(Arc::new(Box::new(InMemorySessionStore::new(std::collections::HashMap::new())) as Box<dyn ToolSessionStore>));
+                let tool_session_store = Some(Arc::new(Box::new(InMemorySessionStore::new(
+                    std::collections::HashMap::new(),
+                ))
+                    as Box<dyn ToolSessionStore>));
                 (session_store, tool_session_store)
             }
             #[cfg(feature = "redis")]
             SessionStoreType::Redis => {
-                let redis_config = self.redis.as_ref()
-                    .ok_or_else(|| anyhow::anyhow!("Redis config required when using Redis stores"))?;
-                
-                let session_store = Arc::new(Box::new(redis::RedisSessionStore::new(&redis_config.url).await?) as Box<dyn SessionStore>);
-                let tool_session_store = Some(Arc::new(Box::new(redis::RedisToolSessionStore::new(&redis_config.url).await?) as Box<dyn ToolSessionStore>));
+                let redis_config = self.redis.as_ref().ok_or_else(|| {
+                    anyhow::anyhow!("Redis config required when using Redis stores")
+                })?;
+
+                let session_store = Arc::new(Box::new(
+                    redis::RedisSessionStore::new(&redis_config.url).await?,
+                ) as Box<dyn SessionStore>);
+                let tool_session_store = Some(Arc::new(Box::new(
+                    redis::RedisToolSessionStore::new(&redis_config.url).await?,
+                )
+                    as Box<dyn ToolSessionStore>));
                 (session_store, tool_session_store)
             }
             #[cfg(not(feature = "redis"))]
             SessionStoreType::Redis => {
-                return Err(anyhow::anyhow!("Redis feature not enabled. Compile with --features redis"));
+                return Err(anyhow::anyhow!(
+                    "Redis feature not enabled. Compile with --features redis"
+                ));
             }
         };
 
