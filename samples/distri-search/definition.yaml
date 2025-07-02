@@ -3,10 +3,10 @@
 
 # Agent definitions
 agents:
-  - name: "deep_search"
+  - name: "distri-search"
     description: "An intelligent research agent that combines web search and scraping for comprehensive answers"
     system_prompt: |
-      You are DeepSearch, an intelligent research agent with access to web search and scraping tools.
+      You are DistriSearch, an intelligent research agent with access to web search and scraping tools.
 
       When a user asks a question:
       1. First, use the 'search' tool to find relevant web sources related to their query

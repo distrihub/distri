@@ -5,17 +5,18 @@ use tracing::{error, info};
 
 use distri::AgentDefinition;
 
-pub async fn run(agent: &AgentDefinition, coordinator: Arc<AgentExecutor>) -> anyhow::Result<()> {
+pub async fn run(
+    agent: &AgentDefinition,
+    coordinator: Arc<AgentExecutor>,
+    task: TaskStep,
+) -> anyhow::Result<()> {
     let agent_name = &agent.name;
 
     info!("Executing agent run");
     match coordinator
         .execute(
             agent_name,
-            TaskStep {
-                task: "Run this workflow".to_string(),
-                task_images: None,
-            },
+            task,
             None,
             Arc::default(), // No thread context for event execution
             None,

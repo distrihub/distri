@@ -29,7 +29,7 @@ pub fn custom_servers() -> HashMap<String, ServerMetadata> {
     // Add search-specific MCP servers
     // Add Tavily search server
     servers.insert(
-        "tavily".to_string(),
+        "search".to_string(),
         ServerMetadata {
             auth_session_key: None,
             mcp_transport: TransportType::InMemory,

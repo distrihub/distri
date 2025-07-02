@@ -56,7 +56,7 @@ impl DefaultCustomServer {
             let service_description = self.description.clone();
             let service_capabilities = self.capabilities.clone();
 
-            let mut app = App::new()
+            let app = App::new()
                 .wrap(Logger::default())
                 .wrap(
                     Cors::default()

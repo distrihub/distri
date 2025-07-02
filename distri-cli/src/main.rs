@@ -109,17 +109,30 @@ async fn main() -> Result<()> {
             run::list::list_tools(executor.clone()).await?;
         }
         Commands::ConfigSchema { pretty } => print_schema(pretty),
-        Commands::Run { agent, background } => {
+        Commands::Run {
+            agent,
+            background,
+            task,
+        } => {
             let config = load_config(cli.config.to_str().unwrap())?;
             let coordinator = init_all(&config).await?;
             let coordinator_clone = coordinator.clone();
 
+            let agent_config = if let Some(agent) = agent {
+                config
+                    .agents
+                    .iter()
+                    .find(|a| a.definition.name == agent)
+                    .unwrap_or_else(|| panic!("Agent not found {agent}"))
+            } else {
+                config
+                    .agents
+                    .first()
+                    .unwrap_or_else(|| panic!("No agents found"))
+            };
+            let agent = agent_config.definition.clone();
+
             debug!("Running agent: {:?}", agent);
-            let agent_config = config
-                .agents
-                .iter()
-                .find(|a| a.definition.name == agent)
-                .unwrap_or_else(|| panic!("Agent not found {agent}"));
 
             for agent in &config.agents {
                 coordinator
@@ -132,7 +145,13 @@ async fn main() -> Result<()> {
             });
 
             if background {
-                event::run(&agent_config.definition, coordinator).await?;
+                let task = task
+                    .map(|t| TaskStep {
+                        task: t,
+                        task_images: None,
+                    })
+                    .unwrap_or_else(|| panic!("Task is needed for background mode"));
+                event::run(&agent, coordinator, task).await?;
             } else {
                 chat::run(agent_config, coordinator).await?;
             }

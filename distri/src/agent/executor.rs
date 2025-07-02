@@ -240,13 +240,13 @@ impl AgentExecutor {
 
     pub async fn execute_tool(
         &self,
-        agent_id: String,
+        agent_id: &str,
         tool_call: ToolCall,
     ) -> Result<String, AgentError> {
         let (response_tx, response_rx) = oneshot::channel();
         self.coordinator_tx
             .send(CoordinatorMessage::ExecuteTool {
-                agent_id: agent_id.clone(),
+                agent_id: agent_id.to_string(),
                 tool_call,
                 response_tx,
             })

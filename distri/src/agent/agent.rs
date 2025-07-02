@@ -11,6 +11,7 @@ use crate::{
 };
 use std::sync::Arc;
 use tokio::sync::mpsc;
+use tracing::info;
 use uuid::Uuid;
 
 use crate::agent::{reason::create_initial_plan, ExecutorContext, StepLogger};
@@ -49,10 +50,10 @@ pub trait BaseAgent: Send + Sync + std::fmt::Debug {
         Ok(())
     }
 
-    async fn after_llm_step(
+    async fn before_llm_step(
         &self,
         messages: &[Message],
-        _params: Option<serde_json::Value>,
+        _params: &Option<serde_json::Value>,
         _context: Arc<ExecutorContext>,
     ) -> Result<Vec<Message>, AgentError> {
         Ok(messages.to_vec())
@@ -167,7 +168,7 @@ impl DefaultAgent {
                         match response {
                             Ok(response) => {
                                 // Extract just the content string
-                                let content = LLMExecutor::extract_first_choice(&response);
+                                let content = response.content.clone();
                                 Ok(content)
                             }
                             Err(e) => {
@@ -205,7 +206,7 @@ impl DefaultAgent {
                             match response {
                                 Ok(response) => {
                                     // Extract just the content string
-                                    let content = LLMExecutor::extract_first_choice(&response);
+                                    let content = response.content.clone();
                                     Ok(content)
                                 }
                                 Err(e) => {
@@ -286,22 +287,12 @@ impl DefaultAgent {
         self.logger.log_step(agent_id, &task_step);
         Ok(())
     }
-    /// Execute one step in the execution loop
-    /// Executes standard LLM call with tool handling
-    async fn step(
-        &self,
-        messages: &[Message],
-        params: Option<serde_json::Value>,
-        context: Arc<ExecutorContext>,
-    ) -> Result<StepResult, AgentError> {
-        self.llm(messages, params, context).await
-    }
 
     /// Execute one step using LLM
-    async fn llm(
+    async fn llm_step(
         &self,
         messages: &[Message],
-        params: Option<serde_json::Value>,
+        params: &Option<serde_json::Value>,
         context: Arc<ExecutorContext>,
     ) -> Result<StepResult, AgentError> {
         let agent_id = &self.definition.name;
@@ -316,73 +307,54 @@ impl DefaultAgent {
         );
 
         // Execute LLM call
-        let response = executor.execute(messages, params).await?;
+        let response = executor.execute(messages, params.clone()).await?;
 
-        // Get the first choice
-        let choice = &response.choices[0];
-        let finish_reason = choice
-            .finish_reason
-            .unwrap_or(async_openai::types::FinishReason::Stop);
-        let content = choice.message.content.clone().unwrap_or_default();
-        let tool_calls = choice.message.tool_calls.clone();
+        let step_result = self
+            .handle_finish_reason(
+                response.finish_reason,
+                response.content,
+                response.tool_calls,
+                agent_id,
+                context.clone(),
+            )
+            .await?;
 
-        match finish_reason {
-            async_openai::types::FinishReason::Stop => {
-                // Return finish result
-                Ok(StepResult::Finish(content))
-            }
-            async_openai::types::FinishReason::ToolCalls => {
-                if let Some(tool_calls) = tool_calls {
-                    // Convert and add assistant message with tool calls
-                    let mut new_messages = vec![Message {
-                        role: MessageRole::Assistant,
-                        name: Some(agent_id.to_string()),
-                        content: vec![MessageContent {
-                            content_type: "text".to_string(),
-                            text: Some(content),
-                            image: None,
-                        }],
-                        tool_calls: tool_calls.iter().map(LLMExecutor::map_tool_call).collect(),
-                    }];
+        Ok(step_result)
+    }
 
-                    // Process all tool calls in parallel
-                    let tool_responses =
-                        futures::future::join_all(tool_calls.iter().map(|tool_call| async move {
-                            let mapped_tool_call = LLMExecutor::map_tool_call(tool_call);
+    /// Execute one step using LLM
+    async fn llm_step_stream(
+        &self,
+        messages: &[Message],
+        params: &Option<serde_json::Value>,
+        context: Arc<ExecutorContext>,
+        event_tx: mpsc::Sender<AgentEvent>,
+    ) -> Result<StepResult, AgentError> {
+        let agent_id = &self.definition.name;
 
-                            let content = self
-                                .coordinator
-                                .execute_tool(agent_id.clone(), mapped_tool_call.clone())
-                                .await
-                                .unwrap_or_else(|err| format!("Error: {}", err));
+        let executor = LLMExecutor::new(
+            self.definition.clone().into(),
+            self.server_tools.clone(),
+            context.clone(),
+            None,
+            Some(agent_id.to_string()),
+        );
+        // Streaming LLM step: propagate deltas via event_tx
+        let stream_result = executor
+            .execute_stream(&messages, params.clone(), event_tx.clone())
+            .await?;
 
-                            Message {
-                                role: MessageRole::ToolResponse,
-                                name: Some(tool_call.function.name.clone()),
-                                content: vec![MessageContent {
-                                    content_type: "text".to_string(),
-                                    text: Some(content),
-                                    image: None,
-                                }],
-                                tool_calls: vec![mapped_tool_call],
-                            }
-                        }))
-                        .await;
+        let step_result = self
+            .handle_finish_reason(
+                stream_result.finish_reason,
+                stream_result.content,
+                stream_result.tool_calls,
+                agent_id,
+                context.clone(),
+            )
+            .await?;
 
-                    // Add tool responses
-                    new_messages.extend(tool_responses);
-                    Ok(StepResult::Continue(new_messages))
-                } else {
-                    Err(AgentError::LLMError(
-                        "Tool calls finish reason but no tool calls".to_string(),
-                    ))
-                }
-            }
-            x => Err(AgentError::LLMError(format!(
-                "Unexpected finish reason: {:?}",
-                x
-            ))),
-        }
+        Ok(step_result)
     }
 
     /// Helper to emit TextMessage* events for a message
@@ -472,52 +444,36 @@ impl DefaultAgent {
                     self.plan_step(task.clone(), plan_config, iterations, context.clone())
                         .await?;
                 }
-                // Decide if this step should be streaming (LLM step) or not
-                let is_llm_step = true; // For now, always stream LLM step
-                if is_llm_step {
-                    let executor = LLMExecutor::new(
-                        self.definition.clone().into(),
-                        self.server_tools.clone(),
-                        context.clone(),
-                        None,
-                        Some(agent_id.to_string()),
-                    );
-                    // Streaming LLM step: propagate deltas via event_tx
-                    executor
-                        .execute_stream(&current_messages, params.clone(), event_tx.clone())
-                        .await?;
-                    // After streaming, break (one streaming step per invoke_stream)
-                    break Ok(());
-                } else {
-                    // Non-streaming step (e.g., tool calls)
-                    let step_result = self
-                        .step(&current_messages, params.clone(), context.clone())
-                        .await?;
-                    match step_result {
-                        StepResult::Finish(content) => {
-                            // Store final response as action step
-                            let action_step = MemoryStep::Action(ActionStep {
-                                model_input_messages: Some(current_messages),
-                                model_output: Some(content.clone()),
-                                ..Default::default()
-                            });
-                            self.session_store
-                                .store_step(&context.thread_id, action_step.clone())
-                                .await
-                                .map_err(|e| AgentError::Session(e.to_string()))?;
-                            self.logger.log_step(agent_id, &action_step);
+                let messages = self
+                    .before_llm_step(&current_messages, &params, context.clone())
+                    .await?;
+                let step_result = self
+                    .llm_step_stream(&messages, &params, context.clone(), event_tx.clone())
+                    .await?;
+                match step_result {
+                    StepResult::Finish(content) => {
+                        // Store final response as action step
+                        let action_step = MemoryStep::Action(ActionStep {
+                            model_input_messages: Some(current_messages),
+                            model_output: Some(content.clone()),
+                            ..Default::default()
+                        });
+                        self.session_store
+                            .store_step(&context.thread_id, action_step.clone())
+                            .await
+                            .map_err(|e| AgentError::Session(e.to_string()))?;
+                        self.logger.log_step(agent_id, &action_step);
 
-                            break Ok(());
-                        }
-                        StepResult::Continue(new_messages) => {
-                            current_messages.extend(new_messages);
-                            iterations = self
-                                .session_store
-                                .inc_iteration(&run_id)
-                                .await
-                                .map_err(|e| AgentError::Session(e.to_string()))?;
-                            continue;
-                        }
+                        break Ok(());
+                    }
+                    StepResult::Continue(new_messages) => {
+                        current_messages.extend(new_messages);
+                        iterations = self
+                            .session_store
+                            .inc_iteration(&run_id)
+                            .await
+                            .map_err(|e| AgentError::Session(e.to_string()))?;
+                        continue;
                     }
                 }
             }
@@ -593,9 +549,12 @@ impl DefaultAgent {
                     .inc_iteration(&run_id)
                     .await
                     .map_err(|e| AgentError::Session(e.to_string()))?;
-                let step_result = self
-                    .step(&current_messages, params.clone(), context.clone())
+
+                let messages = self
+                    .before_llm_step(&current_messages, &params, context.clone())
                     .await?;
+                let step_result = self.llm_step(&messages, &params, context.clone()).await?;
+
                 match step_result {
                     StepResult::Finish(content) => {
                         tracing::info!("Agent execution completed successfully");
@@ -650,6 +609,78 @@ impl DefaultAgent {
             }
         }
         result
+    }
+
+    async fn handle_finish_reason(
+        &self,
+        finish_reason: async_openai::types::FinishReason,
+        content: String,
+        tool_calls: Vec<ToolCall>,
+        agent_id: &str,
+        context: Arc<ExecutorContext>,
+    ) -> Result<StepResult, AgentError> {
+        match finish_reason {
+            async_openai::types::FinishReason::Stop => {
+                // Return finish result
+                Ok(StepResult::Finish(content))
+            }
+            async_openai::types::FinishReason::ToolCalls => {
+                if !tool_calls.is_empty() {
+                    // Convert and add assistant message with tool calls
+                    let mut new_messages = vec![Message {
+                        role: MessageRole::Assistant,
+                        name: Some(agent_id.to_string()),
+                        content: vec![MessageContent {
+                            content_type: "text".to_string(),
+                            text: Some(content),
+                            image: None,
+                        }],
+                        tool_calls: tool_calls.to_vec(),
+                    }];
+
+                    let tool_calls = self.before_tool_calls(&tool_calls, context).await?;
+
+                    info!("Agent: Tool calls: {:#?}", tool_calls);
+                    // Process all tool calls in parallel
+                    let tool_responses =
+                        futures::future::join_all(tool_calls.iter().map(|mapped_tool_call| {
+                            let coordinator = self.coordinator.clone();
+                            async move {
+                                info!("Agent: Executing tool call: {:#?}", mapped_tool_call);
+                                let content = coordinator
+                                    .execute_tool(agent_id, mapped_tool_call.clone())
+                                    .await
+                                    .unwrap_or_else(|err| format!("Error: {}", err));
+                                info!("Agent: Tool response: {}", content);
+
+                                Message {
+                                    role: MessageRole::ToolResponse,
+                                    name: Some(mapped_tool_call.tool_name.clone()),
+                                    content: vec![MessageContent {
+                                        content_type: "text".to_string(),
+                                        text: Some(content),
+                                        image: None,
+                                    }],
+                                    tool_calls: vec![mapped_tool_call.to_owned()],
+                                }
+                            }
+                        }))
+                        .await;
+
+                    // Add tool responses
+                    new_messages.extend(tool_responses);
+                    Ok(StepResult::Continue(new_messages))
+                } else {
+                    Err(AgentError::LLMError(
+                        "Tool calls finish reason but no tool calls".to_string(),
+                    ))
+                }
+            }
+            x => Err(AgentError::LLMError(format!(
+                "Unexpected finish reason: {:?}",
+                x
+            ))),
+        }
     }
 }
 

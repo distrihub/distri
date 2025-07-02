@@ -33,5 +33,5 @@ mcp-spider = { git = "https://github.com/distrihub/mcp-servers.git", rev = "f427
 mcp-tavily = { git = "https://github.com/distrihub/mcp-servers.git", rev = "f427eaa" }
 
 [[bin]]
-name = "simple-search"
-path = "src/bin/simple.rs"
+name = "distri-search"
+path = "src/bin/search.rs"
