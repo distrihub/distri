@@ -417,10 +417,13 @@ pub struct Configuration {
     pub mcp_servers: Vec<ExternalMcpServer>,
     #[serde(default)]
     pub proxy: Option<ProxyServerConfig>,
-    #[serde(default)]
+    #[serde(default = "default_server_config")]
     pub server: Option<ServerConfig>,
     #[serde(default)]
     pub stores: Option<StoreConfig>,
+}
+fn default_server_config() -> Option<ServerConfig> {
+    Some(ServerConfig::default())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
@@ -468,11 +471,11 @@ fn default_redis_timeout() -> u64 {
     5
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ServerConfig {
-    #[serde(default)]
+    #[serde(default = "default_server_url")]
     pub server_url: String,
-    #[serde(default)]
+    #[serde(default = "default_provider")]
     pub provider: Option<AgentProvider>,
     #[serde(default)]
     pub default_input_modes: Vec<String>,
@@ -484,10 +487,50 @@ pub struct ServerConfig {
     pub security: Vec<HashMap<String, Vec<String>>>,
     #[serde(default)]
     pub capabilities: AgentCapabilities,
-    #[serde(default)]
+    #[serde(default = "default_preferred_transport")]
     pub preferred_transport: Option<String>,
-    #[serde(default)]
+    #[serde(default = "default_documentation_url")]
     pub documentation_url: Option<String>,
+}
+
+impl Default for ServerConfig {
+    fn default() -> Self {
+        Self {
+            server_url: default_server_url(),
+            provider: default_provider(),
+            default_input_modes: vec![],
+            default_output_modes: vec![],
+            security_schemes: HashMap::new(),
+            security: vec![],
+            capabilities: AgentCapabilities {
+                streaming: true,
+                push_notifications: false,
+                state_transition_history: true,
+                extensions: vec![],
+            },
+            preferred_transport: default_preferred_transport(),
+            documentation_url: default_documentation_url(),
+        }
+    }
+}
+
+fn default_provider() -> Option<AgentProvider> {
+    Some(AgentProvider {
+        organization: "Distri".to_string(),
+        url: "https://distri.ai".to_string(),
+    })
+}
+
+fn default_server_url() -> String {
+    "http://localhost:8080".to_string()
+}
+
+fn default_documentation_url() -> Option<String> {
+    Some("https://github.com/distrihub/distri".to_string())
+}
+
+fn default_preferred_transport() -> Option<String> {
+    Some("JSONRPC".to_string())
 }
 
 #[derive(serde::Deserialize, JsonSchema)]

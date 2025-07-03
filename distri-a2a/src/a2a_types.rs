@@ -60,18 +60,21 @@ pub struct AgentProvider {
 #[derive(Serialize, Deserialize, Debug, JsonSchema, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentCapabilities {
-    /// Whether the agent supports streaming responses.
-    #[serde(default)]
+    /// Whether the agent supports streaming responses. Default is true.
+    #[serde(default = "default_true")]
     pub streaming: bool,
-    /// Whether the agent can send push notifications.
+    /// Whether the agent can send push notifications. Default is false.
     #[serde(default)]
     pub push_notifications: bool,
     /// Whether the agent can provide a history of state transitions.
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub state_transition_history: bool,
     /// Any extensions the agent supports.
     #[serde(default)]
     pub extensions: Vec<AgentExtension>,
+}
+fn default_true() -> bool {
+    true
 }
 
 /// Describes a custom extension supported by the agent.

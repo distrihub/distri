@@ -50,6 +50,8 @@ impl DistriAgentServer {
         let executor = distri_server.executor();
         let server_config = config.server.clone().unwrap_or_default();
 
+        tracing::info!("Server config: {:#?}", server_config);
+
         HttpServer::new(move || {
             let executor = executor.clone();
             let service_name = self.service_name.clone();
