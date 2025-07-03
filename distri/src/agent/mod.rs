@@ -7,7 +7,7 @@ pub mod server;
 
 pub use agent::{BaseAgent, DefaultAgent, StandardAgent, StepResult, MAX_ITERATIONS};
 pub use executor::{AgentExecutor, AgentExecutorBuilder};
-pub use extensible_example::{LoggingAgent, FilteringAgent};
+pub use extensible_example::{FilteringAgent, LoggingAgent};
 pub use log::{ModelLogger, StepLogger};
 pub use server::{build_server, DISTRI_LOCAL_SERVER};
 

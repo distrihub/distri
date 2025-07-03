@@ -1,5 +1,5 @@
 use crate::{
-    agent::{AgentEvent, StandardAgent, AgentExecutor, BaseAgent, ExecutorContext},
+    agent::{AgentEvent, AgentExecutor, BaseAgent, ExecutorContext, StandardAgent},
     error::AgentError,
     memory::TaskStep,
     types::{AgentDefinition, Message, ServerTools, ToolCall},
@@ -32,7 +32,13 @@ impl LoggingAgent {
         context: Arc<ExecutorContext>,
         session_store: Arc<Box<dyn SessionStore>>,
     ) -> Self {
-        let inner = StandardAgent::new(definition, server_tools, coordinator, context, session_store);
+        let inner = StandardAgent::new(
+            definition,
+            server_tools,
+            coordinator,
+            context,
+            session_store,
+        );
         Self { inner }
     }
 }
@@ -76,7 +82,9 @@ impl BaseAgent for LoggingAgent {
         context: Arc<ExecutorContext>,
         event_tx: mpsc::Sender<AgentEvent>,
     ) -> Result<(), AgentError> {
-        self.inner.invoke_stream(task, params, context, event_tx).await
+        self.inner
+            .invoke_stream(task, params, context, event_tx)
+            .await
     }
 
     // Custom hook implementations demonstrating extensibility
@@ -97,16 +105,23 @@ impl BaseAgent for LoggingAgent {
         params: &Option<serde_json::Value>,
         context: Arc<ExecutorContext>,
     ) -> Result<Vec<Message>, AgentError> {
-        info!("🤖 LoggingAgent: About to call LLM with {} messages", messages.len());
-        
+        info!(
+            "🤖 LoggingAgent: About to call LLM with {} messages",
+            messages.len()
+        );
+
         // Add a custom system message to enhance the agent's behavior
         let mut enhanced_messages = messages.to_vec();
-        
+
         // Only add if we don't already have a system message for this
-        if !enhanced_messages.iter().any(|m| 
-            m.role == crate::types::MessageRole::System && 
-            m.content.iter().any(|c| c.text.as_ref().map_or(false, |t| t.contains("Enhanced logging agent")))
-        ) {
+        if !enhanced_messages.iter().any(|m| {
+            m.role == crate::types::MessageRole::System
+                && m.content.iter().any(|c| {
+                    c.text
+                        .as_ref()
+                        .map_or(false, |t| t.contains("Enhanced logging agent"))
+                })
+        }) {
             enhanced_messages.insert(0, Message {
                 role: crate::types::MessageRole::System,
                 name: Some("logging_agent".to_string()),
@@ -120,7 +135,9 @@ impl BaseAgent for LoggingAgent {
         }
 
         // Call the parent implementation with enhanced messages
-        self.inner.before_llm_step(&enhanced_messages, params, context).await
+        self.inner
+            .before_llm_step(&enhanced_messages, params, context)
+            .await
     }
 
     async fn before_tool_calls(
@@ -128,11 +145,19 @@ impl BaseAgent for LoggingAgent {
         tool_calls: &[ToolCall],
         context: Arc<ExecutorContext>,
     ) -> Result<Vec<ToolCall>, AgentError> {
-        info!("🔧 LoggingAgent: About to execute {} tool calls", tool_calls.len());
+        info!(
+            "🔧 LoggingAgent: About to execute {} tool calls",
+            tool_calls.len()
+        );
         for (i, tool_call) in tool_calls.iter().enumerate() {
-            info!("  Tool {}: {} ({})", i + 1, tool_call.tool_name, tool_call.tool_id);
+            info!(
+                "  Tool {}: {} ({})",
+                i + 1,
+                tool_call.tool_name,
+                tool_call.tool_id
+            );
         }
-        
+
         // Call the parent implementation
         self.inner.before_tool_calls(tool_calls, context).await
     }
@@ -142,7 +167,10 @@ impl BaseAgent for LoggingAgent {
         tool_responses: &[String],
         context: Arc<ExecutorContext>,
     ) -> Result<(), AgentError> {
-        info!("✅ LoggingAgent: Received {} tool responses", tool_responses.len());
+        info!(
+            "✅ LoggingAgent: Received {} tool responses",
+            tool_responses.len()
+        );
         for (i, response) in tool_responses.iter().enumerate() {
             let preview = if response.len() > 100 {
                 format!("{}...", &response[..100])
@@ -151,7 +179,7 @@ impl BaseAgent for LoggingAgent {
             };
             info!("  Response {}: {}", i + 1, preview);
         }
-        
+
         // Call the parent implementation
         self.inner.after_tool_calls(tool_responses, context).await
     }
@@ -161,8 +189,11 @@ impl BaseAgent for LoggingAgent {
         content: &str,
         context: Arc<ExecutorContext>,
     ) -> Result<(), AgentError> {
-        info!("🏁 LoggingAgent: Task completed! Response length: {} characters", content.len());
-        
+        info!(
+            "🏁 LoggingAgent: Task completed! Response length: {} characters",
+            content.len()
+        );
+
         // Call the parent implementation
         self.inner.after_finish(content, context).await
     }
@@ -193,8 +224,17 @@ impl FilteringAgent {
         session_store: Arc<Box<dyn SessionStore>>,
         banned_words: Vec<String>,
     ) -> Self {
-        let inner = StandardAgent::new(definition, server_tools, coordinator, context, session_store);
-        Self { inner, banned_words }
+        let inner = StandardAgent::new(
+            definition,
+            server_tools,
+            coordinator,
+            context,
+            session_store,
+        );
+        Self {
+            inner,
+            banned_words,
+        }
     }
 
     fn filter_content(&self, content: &str) -> String {
@@ -246,7 +286,9 @@ impl BaseAgent for FilteringAgent {
         context: Arc<ExecutorContext>,
         event_tx: mpsc::Sender<AgentEvent>,
     ) -> Result<(), AgentError> {
-        self.inner.invoke_stream(task, params, context, event_tx).await
+        self.inner
+            .invoke_stream(task, params, context, event_tx)
+            .await
     }
 
     async fn before_llm_step(
@@ -256,25 +298,34 @@ impl BaseAgent for FilteringAgent {
         context: Arc<ExecutorContext>,
     ) -> Result<Vec<Message>, AgentError> {
         // Filter input messages
-        let filtered_messages: Vec<Message> = messages.iter().map(|msg| {
-            let filtered_content: Vec<_> = msg.content.iter().map(|content| {
-                let mut filtered_content = content.clone();
-                if let Some(text) = &content.text {
-                    filtered_content.text = Some(self.filter_content(text));
+        let filtered_messages: Vec<Message> = messages
+            .iter()
+            .map(|msg| {
+                let filtered_content: Vec<_> = msg
+                    .content
+                    .iter()
+                    .map(|content| {
+                        let mut filtered_content = content.clone();
+                        if let Some(text) = &content.text {
+                            filtered_content.text = Some(self.filter_content(text));
+                        }
+                        filtered_content
+                    })
+                    .collect();
+
+                Message {
+                    role: msg.role.clone(),
+                    name: msg.name.clone(),
+                    content: filtered_content,
+                    tool_calls: msg.tool_calls.clone(),
                 }
-                filtered_content
-            }).collect();
-            
-            Message {
-                role: msg.role.clone(),
-                name: msg.name.clone(),
-                content: filtered_content,
-                tool_calls: msg.tool_calls.clone(),
-            }
-        }).collect();
+            })
+            .collect();
 
         // Call the parent implementation with filtered messages
-        self.inner.before_llm_step(&filtered_messages, params, context).await
+        self.inner
+            .before_llm_step(&filtered_messages, params, context)
+            .await
     }
 
     async fn after_finish(
@@ -283,9 +334,12 @@ impl BaseAgent for FilteringAgent {
         context: Arc<ExecutorContext>,
     ) -> Result<(), AgentError> {
         let filtered_content = self.filter_content(content);
-        info!("FilteringAgent: Content filtered - original: {} chars, filtered: {} chars", 
-              content.len(), filtered_content.len());
-        
+        info!(
+            "FilteringAgent: Content filtered - original: {} chars, filtered: {} chars",
+            content.len(),
+            filtered_content.len()
+        );
+
         // Call the parent implementation with original content (filtering happens at invoke level)
         self.inner.after_finish(content, context).await
     }

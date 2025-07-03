@@ -11,8 +11,6 @@ use tokio::sync::broadcast;
 pub mod routes;
 pub mod server;
 
-// Conditionally export reusable_server module based on feature flag
-#[cfg(feature = "reusable")]
 pub mod reusable_server;
 
 #[cfg(test)]

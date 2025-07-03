@@ -3,17 +3,13 @@ use distri::memory::TaskStep;
 use std::sync::Arc;
 use tracing::{error, info};
 
-use distri::AgentDefinition;
-
 pub async fn run(
-    agent: &AgentDefinition,
-    coordinator: Arc<AgentExecutor>,
+    agent_name: &str,
+    executor: Arc<AgentExecutor>,
     task: TaskStep,
 ) -> anyhow::Result<()> {
-    let agent_name = &agent.name;
-
     info!("Executing agent run");
-    match coordinator
+    match executor
         .execute(
             agent_name,
             task,

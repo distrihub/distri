@@ -1,4 +1,4 @@
-use actix_web::{test, App, web};
+use actix_web::{test, web, App};
 use distri::{
     agent::{AgentExecutor, AgentExecutorBuilder},
     store::InMemoryAgentStore,
@@ -14,11 +14,13 @@ use crate::routes;
 // Helper function to create test executor with agents
 async fn create_test_executor() -> Arc<AgentExecutor> {
     let agent_store = Arc::new(InMemoryAgentStore::new());
-    let registry = Arc::new(tokio::sync::RwLock::new(distri::servers::registry::ServerRegistry::new()));
+    let registry = Arc::new(tokio::sync::RwLock::new(
+        distri::servers::registry::ServerRegistry::new(),
+    ));
     let builder = AgentExecutorBuilder::new()
         .with_agent_store(agent_store.clone())
         .with_registry(registry);
-    
+
     let executor = Arc::new(builder.build().unwrap());
 
     // Register test agents
@@ -109,9 +111,18 @@ async fn test_agent_json_endpoint() {
     assert_eq!(body.description, "A test agent for A2A discovery");
     assert_eq!(body.version, distri_a2a::A2A_VERSION);
     assert!(body.url.contains("/api/v1/agents/test-agent-1"));
-    assert_eq!(body.icon_url, Some("https://example.com/agent1.png".to_string()));
-    assert_eq!(body.default_input_modes, vec!["text/plain", "text/markdown"]);
-    assert_eq!(body.default_output_modes, vec!["text/plain", "text/markdown"]);
+    assert_eq!(
+        body.icon_url,
+        Some("https://example.com/agent1.png".to_string())
+    );
+    assert_eq!(
+        body.default_input_modes,
+        vec!["text/plain", "text/markdown"]
+    );
+    assert_eq!(
+        body.default_output_modes,
+        vec!["text/plain", "text/markdown"]
+    );
     assert!(body.capabilities.streaming);
     assert!(body.capabilities.push_notifications);
 
@@ -163,21 +174,27 @@ async fn test_well_known_a2a_info() {
     assert!(resp.status().is_success());
 
     let body: serde_json::Value = test::read_body_json(resp).await;
-    
+
     // Verify discovery info structure
     assert_eq!(body["a2a_version"], distri_a2a::A2A_VERSION);
     assert_eq!(body["server"], "Distri");
     assert_eq!(body["transport"], "JSONRPC");
-    
+
     // Verify endpoints are present
     let endpoints = &body["endpoints"];
-    assert!(endpoints["agents"].as_str().unwrap().contains("/api/v1/agents"));
-    assert!(endpoints["agent_json"].as_str().unwrap().contains("/agents/{agent_name}.json"));
-    
+    assert!(endpoints["agents"]
+        .as_str()
+        .unwrap()
+        .contains("/api/v1/agents"));
+    assert!(endpoints["agent_json"]
+        .as_str()
+        .unwrap()
+        .contains("/agents/{agent_name}.json"));
+
     // Verify agents array
     let agents = body["agents"].as_array().unwrap();
     assert_eq!(agents.len(), 2);
-    
+
     // Verify capabilities
     let capabilities = &body["capabilities"];
     assert_eq!(capabilities["streaming"], true);

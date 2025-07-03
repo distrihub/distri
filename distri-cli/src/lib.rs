@@ -1,19 +1,19 @@
 use anyhow::Result;
-use clap::{Parser, Subcommand};
-use distri::types::Configuration;
+use distri::{agent::AgentExecutor, memory::TaskStep, types::Configuration};
+use distri_server::reusable_server::{list_agents, run_server, DefaultCustomServer};
 use dotenv::dotenv;
-use std::env;
+use std::{env, path::PathBuf, sync::Arc};
 use tracing::debug;
 
-pub mod cli;
+mod cli;
 pub mod logging;
 pub mod run;
+use run::{chat, event};
 
-// Re-export CLI types
-pub use cli::{Cli, Commands};
+pub use cli::{Cli, Commands, EmbeddedCli, EmbeddedCommands};
 
 /// Load configuration from file path with environment variable substitution
-pub fn load_config(config_path: &str) -> Result<Configuration> {
+pub fn load_config(config_path: PathBuf) -> Result<Configuration> {
     // Load .env file if it exists
     dotenv().ok();
 
@@ -58,20 +58,111 @@ pub fn replace_env_vars(content: &str) -> String {
 }
 
 /// Initialize AgentExecutor from configuration
-pub async fn init_all(config: &Configuration) -> Result<std::sync::Arc<distri::agent::AgentExecutor>> {
+pub async fn init_all(
+    config: &Configuration,
+) -> Result<std::sync::Arc<distri::agent::AgentExecutor>> {
     let executor = distri::agent::AgentExecutorBuilder::new()
         .initialize_stores_from_config(config.stores.as_ref())
         .await?;
 
-    let executor = executor.with_tool_sessions(crate::run::session::get_session_store(config.sessions.clone()));
+    let executor = executor.with_tool_sessions(crate::run::session::get_session_store(
+        config.sessions.clone(),
+    ));
     let executor = std::sync::Arc::new(executor.build()?);
     Ok(executor)
 }
 
 /// Initialize KG memory for an agent
-pub async fn init_kg_memory(agent: &str) -> Result<std::sync::Arc<tokio::sync::Mutex<distri::servers::kg::FileMemory>>> {
+pub async fn init_kg_memory(
+    agent: &str,
+) -> Result<std::sync::Arc<tokio::sync::Mutex<distri::servers::kg::FileMemory>>> {
     let mut memory_path = std::path::PathBuf::from(".distri");
     memory_path.push(format!("{agent}.memory"));
     let memory = distri::servers::kg::FileMemory::new(memory_path).await?;
     Ok(std::sync::Arc::new(tokio::sync::Mutex::new(memory)))
+}
+
+/// Run CLI with the given configuration
+pub async fn run_cli(
+    executor: Arc<AgentExecutor>,
+    agent: Option<String>,
+    config: &Configuration,
+    task: Option<String>,
+    background: bool,
+) -> Result<()> {
+    debug!("Running agent: {:?}", agent);
+
+    register_agents(executor.clone(), config).await?;
+
+    let agent_name = get_agent_name(config, agent).await?;
+
+    let executor_clone = executor.clone();
+    let executor_handle = tokio::spawn(async move {
+        executor_clone.run().await.unwrap();
+    });
+
+    if background {
+        let task = task
+            .map(|t| TaskStep {
+                task: t,
+                task_images: None,
+            })
+            .unwrap_or_else(|| panic!("Task is needed for background mode"));
+        event::run(&agent_name, executor, task).await?;
+    } else {
+        chat::run(&agent_name, executor).await?;
+    }
+    executor_handle.abort();
+
+    Ok(())
+}
+
+pub async fn register_agents(executor: Arc<AgentExecutor>, config: &Configuration) -> Result<()> {
+    for agent in &config.agents {
+        executor
+            .register_default_agent(agent.definition.clone())
+            .await?;
+    }
+    Ok(())
+}
+
+pub async fn get_agent_name(config: &Configuration, agent_name: Option<String>) -> Result<String> {
+    let agent_name = match agent_name {
+        Some(name) => name,
+        None => config
+            .agents
+            .iter()
+            .map(|a| a.definition.name.clone())
+            .next()
+            .unwrap_or_else(|| panic!("No agents found")),
+    };
+    Ok(agent_name)
+}
+
+pub async fn run_embedded(
+    executor: Arc<AgentExecutor>,
+    server: DefaultCustomServer,
+    command: EmbeddedCommands,
+    config: &Configuration,
+) -> Result<()> {
+    // Parse CLI arguments
+
+    let executor_clone = executor.clone();
+    let executor_handle = tokio::spawn(async move { executor_clone.run().await.unwrap() });
+
+    match command {
+        EmbeddedCommands::Run {
+            agent,
+            task,
+            background,
+        } => run_cli(executor, agent, config, task, background).await,
+        EmbeddedCommands::List => list_agents(executor).await,
+        EmbeddedCommands::StartServer { host, port } => {
+            run_server(server, executor, config, &host, port).await
+        }
+        _ => todo!(),
+    }?;
+
+    executor_handle.abort();
+    Ok(())
 }

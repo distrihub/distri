@@ -456,7 +456,7 @@ impl StandardAgent {
                     StepResult::Finish(content) => {
                         // Call after_finish hook
                         self.after_finish(&content, context.clone()).await?;
-                        
+
                         // Store final response as action step
                         let action_step = MemoryStep::Action(ActionStep {
                             model_input_messages: Some(current_messages),
@@ -566,7 +566,7 @@ impl StandardAgent {
                     StepResult::Finish(content) => {
                         // Call after_finish hook
                         self.after_finish(&content, context.clone()).await?;
-                        
+
                         tracing::info!("Agent execution completed successfully");
                         let action_step = MemoryStep::Action(ActionStep {
                             model_input_messages: Some(current_messages),
@@ -677,12 +677,19 @@ impl StandardAgent {
                         }))
                         .await;
 
-                    let tool_response_contents: Vec<String> = tool_responses.iter()
-                        .map(|msg| msg.content.first().and_then(|c| c.text.clone()).unwrap_or_default())
+                    let tool_response_contents: Vec<String> = tool_responses
+                        .iter()
+                        .map(|msg| {
+                            msg.content
+                                .first()
+                                .and_then(|c| c.text.clone())
+                                .unwrap_or_default()
+                        })
                         .collect();
-                    
+
                     // Call after_tool_calls hook
-                    self.after_tool_calls(&tool_response_contents, context).await?;
+                    self.after_tool_calls(&tool_response_contents, context)
+                        .await?;
 
                     // Add tool responses
                     new_messages.extend(tool_responses);

@@ -1,15 +1,14 @@
 use std::sync::Arc;
 
 use crate::{
-    agent::{LoggingAgent, FilteringAgent, BaseAgent, StandardAgent},
+    agent::{BaseAgent, FilteringAgent, LoggingAgent, StandardAgent},
     memory::TaskStep,
-    types::{AgentDefinition, ModelSettings, ServerTools},
-
     tests::utils::{get_registry, get_tools_session_store},
+    types::{AgentDefinition, ModelSettings, ServerTools},
 };
 use anyhow::Result;
-use tracing::info;
 use tokio::sync::Mutex;
+use tracing::info;
 
 #[tokio::test]
 async fn test_agent_creation_and_metadata() -> Result<()> {
@@ -144,7 +143,10 @@ async fn test_standard_agent_hook_mechanism() -> Result<()> {
             task: TaskStep,
             context: Arc<crate::agent::ExecutorContext>,
         ) -> Result<(), crate::error::AgentError> {
-            self.hook_calls.lock().await.push("after_task_step".to_string());
+            self.hook_calls
+                .lock()
+                .await
+                .push("after_task_step".to_string());
             info!("🎯 after_task_step called for task: {}", task.task);
             self.inner.after_task_step(task, context).await
         }
@@ -155,7 +157,10 @@ async fn test_standard_agent_hook_mechanism() -> Result<()> {
             params: &Option<serde_json::Value>,
             context: Arc<crate::agent::ExecutorContext>,
         ) -> Result<Vec<crate::types::Message>, crate::error::AgentError> {
-            self.hook_calls.lock().await.push("before_llm_step".to_string());
+            self.hook_calls
+                .lock()
+                .await
+                .push("before_llm_step".to_string());
             info!("🎯 before_llm_step called with {} messages", messages.len());
             self.inner.before_llm_step(messages, params, context).await
         }
@@ -165,8 +170,14 @@ async fn test_standard_agent_hook_mechanism() -> Result<()> {
             tool_calls: &[crate::types::ToolCall],
             context: Arc<crate::agent::ExecutorContext>,
         ) -> Result<Vec<crate::types::ToolCall>, crate::error::AgentError> {
-            self.hook_calls.lock().await.push("before_tool_calls".to_string());
-            info!("🎯 before_tool_calls called with {} tool calls", tool_calls.len());
+            self.hook_calls
+                .lock()
+                .await
+                .push("before_tool_calls".to_string());
+            info!(
+                "🎯 before_tool_calls called with {} tool calls",
+                tool_calls.len()
+            );
             self.inner.before_tool_calls(tool_calls, context).await
         }
 
@@ -175,8 +186,14 @@ async fn test_standard_agent_hook_mechanism() -> Result<()> {
             tool_responses: &[String],
             context: Arc<crate::agent::ExecutorContext>,
         ) -> Result<(), crate::error::AgentError> {
-            self.hook_calls.lock().await.push("after_tool_calls".to_string());
-            info!("🎯 after_tool_calls called with {} responses", tool_responses.len());
+            self.hook_calls
+                .lock()
+                .await
+                .push("after_tool_calls".to_string());
+            info!(
+                "🎯 after_tool_calls called with {} responses",
+                tool_responses.len()
+            );
             self.inner.after_tool_calls(tool_responses, context).await
         }
 
@@ -185,8 +202,14 @@ async fn test_standard_agent_hook_mechanism() -> Result<()> {
             content: &str,
             context: Arc<crate::agent::ExecutorContext>,
         ) -> Result<(), crate::error::AgentError> {
-            self.hook_calls.lock().await.push("after_finish".to_string());
-            info!("🎯 after_finish called with content length: {}", content.len());
+            self.hook_calls
+                .lock()
+                .await
+                .push("after_finish".to_string());
+            info!(
+                "🎯 after_finish called with content length: {}",
+                content.len()
+            );
             self.inner.after_finish(content, context).await
         }
     }
@@ -239,17 +262,23 @@ async fn test_standard_agent_hook_mechanism() -> Result<()> {
     };
 
     // Test after_task_step hook
-    tracking_agent.after_task_step(task.clone(), context.clone()).await?;
-    
+    tracking_agent
+        .after_task_step(task.clone(), context.clone())
+        .await?;
+
     // Test before_llm_step hook
-    tracking_agent.before_llm_step(&[], &None, context.clone()).await?;
-    
+    tracking_agent
+        .before_llm_step(&[], &None, context.clone())
+        .await?;
+
     // Test after_finish hook
-    tracking_agent.after_finish("Test content", context.clone()).await?;
+    tracking_agent
+        .after_finish("Test content", context.clone())
+        .await?;
 
     let hooks_called = hook_calls.lock().await.clone();
     info!("Hooks called: {:?}", hooks_called);
-    
+
     // Verify that our hooks were called
     assert!(hooks_called.contains(&"after_task_step".to_string()));
     assert!(hooks_called.contains(&"before_llm_step".to_string()));
@@ -304,7 +333,7 @@ async fn test_filtering_agent_content_filtering() -> Result<()> {
 
     // Test the filtering logic by accessing the filter_content method
     // Note: We can't directly access private methods, so we test through the public interface
-    
+
     info!("✅ FilteringAgent created with banned words");
 
     // Test message filtering through before_llm_step
@@ -320,13 +349,18 @@ async fn test_filtering_agent_content_filtering() -> Result<()> {
     };
 
     let context = Arc::new(crate::agent::ExecutorContext::default());
-    let filtered_messages = filtering_agent.before_llm_step(&[test_message], &None, context).await?;
+    let filtered_messages = filtering_agent
+        .before_llm_step(&[test_message], &None, context)
+        .await?;
 
     // Check that the content was filtered
     if let Some(first_message) = filtered_messages.first() {
         if let Some(first_content) = first_message.content.first() {
             if let Some(text) = &first_content.text {
-                info!("Original vs Filtered: 'This is a badword and inappropriate content' -> '{}'", text);
+                info!(
+                    "Original vs Filtered: 'This is a badword and inappropriate content' -> '{}'",
+                    text
+                );
                 assert!(text.contains("*******")); // Should contain asterisks where badword was
                 assert!(!text.contains("badword")); // Should not contain the original word
                 assert!(!text.contains("inappropriate")); // Should not contain the original word

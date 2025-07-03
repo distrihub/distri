@@ -1,11 +1,10 @@
-use anyhow::Result;
 use distri::{
     agent::{AgentExecutor, AgentExecutorBuilder},
     servers::registry::{register_servers, ServerMetadata, ServerRegistry, ServerTrait},
     types::{Configuration, TransportType},
 };
 use distri_server::reusable_server::DefaultCustomServer;
-use dotenv::dotenv;
+
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
 
@@ -58,15 +57,6 @@ pub fn custom_servers() -> HashMap<String, ServerMetadata> {
     );
 
     servers
-}
-
-/// Load embedded configuration for distri-search
-pub fn load_config() -> Result<Configuration> {
-    dotenv().ok();
-
-    let yaml_content = include_str!("../definition.yaml");
-    let config: Configuration = serde_yaml::from_str(yaml_content)?;
-    Ok(config)
 }
 
 pub async fn init_executor(config: &Configuration) -> anyhow::Result<Arc<AgentExecutor>> {

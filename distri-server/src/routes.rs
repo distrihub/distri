@@ -27,6 +27,10 @@ pub fn config(cfg: &mut web::ServiceConfig) {
                     .route(web::get().to(get_agent_card))
                     .route(web::post().to(jsonrpc_handler)),
             )
+            .service(
+                web::resource("/agents/{agent_name}/.well-known/agent.json")
+                    .route(web::get().to(get_agent_json)),
+            )
             .service(web::resource("/tasks/{id}").route(web::get().to(get_task)))
             .service(web::resource("/tasks").route(web::get().to(list_tasks)))
             // Thread endpoints
@@ -41,12 +45,6 @@ pub fn config(cfg: &mut web::ServiceConfig) {
                 web::resource("/threads/{thread_id}/messages")
                     .route(web::get().to(get_thread_messages)),
             ),
-    )
-    .service(web::resource("/agents/{agent_name}.json").route(web::get().to(get_agent_json)))
-    // Well-known endpoints for A2A discovery
-    .service(
-        web::scope("/.well-known")
-            .service(web::resource("/a2a").route(web::get().to(well_known_a2a_info))),
     );
 }
 
@@ -875,53 +873,6 @@ async fn get_thread_messages(
             "error": format!("Failed to get thread messages: {}", e)
         })),
     }
-}
-
-// Well-known agent discovery endpoints
-
-
-async fn well_known_a2a_info(
-    agent_store: web::Data<Arc<dyn AgentStore>>,
-    server_config: web::Data<ServerConfig>,
-    req: actix_web::HttpRequest,
-) -> HttpResponse {
-    let base_url = get_base_url(&req);
-    let (agents, _) = agent_store.list(None, None).await;
-    
-    let agent_cards: Vec<AgentCard> = agents
-        .iter()
-        .map(|agent| {
-            distri::a2a::agent_def_to_card(
-                &agent.get_definition(),
-                server_config.get_ref().clone(),
-                &base_url,
-            )
-        })
-        .collect();
-    
-    // A2A discovery information
-    let discovery_info = json!({
-        "a2a_version": distri_a2a::A2A_VERSION,
-        "server": "Distri",
-        "agents": agent_cards,
-        "endpoints": {
-            "agents": format!("{}/api/v1/agents", base_url),
-            "agent_by_id": format!("{}/api/v1/agents/{{id}}", base_url),
-            "agent_json": format!("{}/agents/{{agent_name}}.json", base_url),
-            "tasks": format!("{}/api/v1/tasks", base_url),
-            "task_by_id": format!("{}/api/v1/tasks/{{id}}", base_url),
-            "threads": format!("{}/api/v1/threads", base_url)
-        },
-        "capabilities": server_config.capabilities,
-        "default_input_modes": server_config.default_input_modes,
-        "default_output_modes": server_config.default_output_modes,
-        "security_schemes": server_config.security_schemes,
-        "transport": "JSONRPC"
-    });
-    
-    HttpResponse::Ok()
-        .content_type("application/json")
-        .json(discovery_info)
 }
 
 // Helper function to extract base URL from request
