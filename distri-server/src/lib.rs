@@ -15,6 +15,11 @@ pub mod server;
 #[cfg(feature = "reusable")]
 pub mod reusable_server;
 
+#[cfg(test)]
+mod tests {
+    mod well_known_test;
+}
+
 pub use server::A2AServer;
 
 /// Configuration for embedding distri in other actix-web apps
