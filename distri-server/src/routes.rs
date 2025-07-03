@@ -42,11 +42,10 @@ pub fn config(cfg: &mut web::ServiceConfig) {
                     .route(web::get().to(get_thread_messages)),
             ),
     )
+    .service(web::resource("/agents/{agent_name}.json").route(web::get().to(get_agent_json)))
     // Well-known endpoints for A2A discovery
     .service(
         web::scope("/.well-known")
-            .service(web::resource("/agent").route(web::get().to(well_known_agent)))
-            .service(web::resource("/agents").route(web::get().to(well_known_agents)))
             .service(web::resource("/a2a").route(web::get().to(well_known_a2a_info))),
     );
 }
@@ -81,6 +80,29 @@ async fn get_agent_card(
     let base_url = get_base_url(&req);
 
     let agent = agent_store.get(&agent_id).await;
+    match agent {
+        Some(agent) => {
+            let card = distri::a2a::agent_def_to_card(
+                &agent.get_definition(),
+                server_config.get_ref().clone(),
+                &base_url,
+            );
+            HttpResponse::Ok().json(card)
+        }
+        None => HttpResponse::NotFound().finish(),
+    }
+}
+
+async fn get_agent_json(
+    agent_name: web::Path<String>,
+    agent_store: web::Data<Arc<dyn AgentStore>>,
+    server_config: web::Data<ServerConfig>,
+    req: actix_web::HttpRequest,
+) -> HttpResponse {
+    let agent_name = agent_name.into_inner();
+    let base_url = get_base_url(&req);
+
+    let agent = agent_store.get(&agent_name).await;
     match agent {
         Some(agent) => {
             let card = distri::a2a::agent_def_to_card(
@@ -856,73 +878,7 @@ async fn get_thread_messages(
 }
 
 // Well-known agent discovery endpoints
-async fn well_known_agent(
-    query: web::Query<std::collections::HashMap<String, String>>,
-    agent_store: web::Data<Arc<dyn AgentStore>>,
-    server_config: web::Data<ServerConfig>,
-    req: actix_web::HttpRequest,
-) -> HttpResponse {
-    let base_url = get_base_url(&req);
-    
-    // Get agent by name from query parameter, or return the first agent
-    let agent_name = query.get("agent").or_else(|| query.get("name"));
-    
-    let (agents, _) = agent_store.list(None, None).await;
-    
-    let agent = if let Some(name) = agent_name {
-        agents.iter().find(|a| a.get_name() == name)
-    } else {
-        agents.first()
-    };
 
-    match agent {
-        Some(agent) => {
-            let card = distri::a2a::agent_def_to_card(
-                &agent.get_definition(),
-                server_config.get_ref().clone(),
-                &base_url,
-            );
-            HttpResponse::Ok()
-                .content_type("application/json")
-                .json(card)
-        }
-        None => {
-            if agent_name.is_some() {
-                HttpResponse::NotFound().json(json!({
-                    "error": "Agent not found"
-                }))
-            } else {
-                HttpResponse::NotFound().json(json!({
-                    "error": "No agents available"
-                }))
-            }
-        }
-    }
-}
-
-async fn well_known_agents(
-    agent_store: web::Data<Arc<dyn AgentStore>>,
-    server_config: web::Data<ServerConfig>,
-    req: actix_web::HttpRequest,
-) -> HttpResponse {
-    let base_url = get_base_url(&req);
-    let (agents, _) = agent_store.list(None, None).await;
-    
-    let agent_cards: Vec<AgentCard> = agents
-        .iter()
-        .map(|agent| {
-            distri::a2a::agent_def_to_card(
-                &agent.get_definition(),
-                server_config.get_ref().clone(),
-                &base_url,
-            )
-        })
-        .collect();
-    
-    HttpResponse::Ok()
-        .content_type("application/json")
-        .json(agent_cards)
-}
 
 async fn well_known_a2a_info(
     agent_store: web::Data<Arc<dyn AgentStore>>,
@@ -951,11 +907,10 @@ async fn well_known_a2a_info(
         "endpoints": {
             "agents": format!("{}/api/v1/agents", base_url),
             "agent_by_id": format!("{}/api/v1/agents/{{id}}", base_url),
+            "agent_json": format!("{}/agents/{{agent_name}}.json", base_url),
             "tasks": format!("{}/api/v1/tasks", base_url),
             "task_by_id": format!("{}/api/v1/tasks/{{id}}", base_url),
-            "threads": format!("{}/api/v1/threads", base_url),
-            "well_known_agent": format!("{}/.well-known/agent", base_url),
-            "well_known_agents": format!("{}/.well-known/agents", base_url)
+            "threads": format!("{}/api/v1/threads", base_url)
         },
         "capabilities": server_config.capabilities,
         "default_input_modes": server_config.default_input_modes,

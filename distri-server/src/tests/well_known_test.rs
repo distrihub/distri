@@ -79,7 +79,7 @@ fn create_test_server_config() -> ServerConfig {
 }
 
 #[actix_web::test]
-async fn test_well_known_agents() {
+async fn test_agent_json_endpoint() {
     let executor = create_test_executor().await;
     let server_config = create_test_server_config();
     let task_store = Arc::new(HashMapTaskStore::new());
@@ -96,54 +96,9 @@ async fn test_well_known_agents() {
     )
     .await;
 
+    // Test specific agent via /agents/{agent_name}.json
     let req = test::TestRequest::get()
-        .uri("/.well-known/agents")
-        .to_request();
-
-    let resp = test::call_service(&app, req).await;
-    assert!(resp.status().is_success());
-
-    let body: Vec<AgentCard> = test::read_body_json(resp).await;
-    assert_eq!(body.len(), 2);
-
-    // Verify agent cards have proper structure
-    let agent1 = body.iter().find(|a| a.name == "test-agent-1").unwrap();
-    assert_eq!(agent1.description, "A test agent for A2A discovery");
-    assert_eq!(agent1.version, distri_a2a::A2A_VERSION);
-    assert!(agent1.url.contains("/api/v1/agents/test-agent-1"));
-    assert_eq!(agent1.icon_url, Some("https://example.com/agent1.png".to_string()));
-    assert_eq!(agent1.default_input_modes, vec!["text/plain", "text/markdown"]);
-    assert_eq!(agent1.default_output_modes, vec!["text/plain", "text/markdown"]);
-    assert!(agent1.capabilities.streaming);
-    assert!(agent1.capabilities.push_notifications);
-
-    let agent2 = body.iter().find(|a| a.name == "test-agent-2").unwrap();
-    assert_eq!(agent2.description, "Another test agent for A2A discovery");
-    assert_eq!(agent2.version, distri_a2a::A2A_VERSION);
-    assert!(agent2.url.contains("/api/v1/agents/test-agent-2"));
-}
-
-#[actix_web::test]
-async fn test_well_known_agent_specific() {
-    let executor = create_test_executor().await;
-    let server_config = create_test_server_config();
-    let task_store = Arc::new(HashMapTaskStore::new());
-    let (event_broadcaster, _) = broadcast::channel::<String>(1000);
-
-    let app = test::init_service(
-        App::new()
-            .app_data(web::Data::new(executor.clone()))
-            .app_data(web::Data::new(executor.agent_store.clone()))
-            .app_data(web::Data::new(task_store))
-            .app_data(web::Data::new(event_broadcaster))
-            .app_data(web::Data::new(server_config))
-            .configure(routes::config),
-    )
-    .await;
-
-    // Test specific agent by name parameter
-    let req = test::TestRequest::get()
-        .uri("/.well-known/agent?agent=test-agent-1")
+        .uri("/agents/test-agent-1.json")
         .to_request();
 
     let resp = test::call_service(&app, req).await;
@@ -152,47 +107,34 @@ async fn test_well_known_agent_specific() {
     let body: AgentCard = test::read_body_json(resp).await;
     assert_eq!(body.name, "test-agent-1");
     assert_eq!(body.description, "A test agent for A2A discovery");
+    assert_eq!(body.version, distri_a2a::A2A_VERSION);
     assert!(body.url.contains("/api/v1/agents/test-agent-1"));
+    assert_eq!(body.icon_url, Some("https://example.com/agent1.png".to_string()));
+    assert_eq!(body.default_input_modes, vec!["text/plain", "text/markdown"]);
+    assert_eq!(body.default_output_modes, vec!["text/plain", "text/markdown"]);
+    assert!(body.capabilities.streaming);
+    assert!(body.capabilities.push_notifications);
 
-    // Test non-existent agent
+    // Test second agent
     let req = test::TestRequest::get()
-        .uri("/.well-known/agent?agent=non-existent")
-        .to_request();
-
-    let resp = test::call_service(&app, req).await;
-    assert_eq!(resp.status(), 404);
-}
-
-#[actix_web::test]
-async fn test_well_known_agent_default() {
-    let executor = create_test_executor().await;
-    let server_config = create_test_server_config();
-    let task_store = Arc::new(HashMapTaskStore::new());
-    let (event_broadcaster, _) = broadcast::channel::<String>(1000);
-
-    let app = test::init_service(
-        App::new()
-            .app_data(web::Data::new(executor.clone()))
-            .app_data(web::Data::new(executor.agent_store.clone()))
-            .app_data(web::Data::new(task_store))
-            .app_data(web::Data::new(event_broadcaster))
-            .app_data(web::Data::new(server_config))
-            .configure(routes::config),
-    )
-    .await;
-
-    // Test default agent (should return first agent)
-    let req = test::TestRequest::get()
-        .uri("/.well-known/agent")
+        .uri("/agents/test-agent-2.json")
         .to_request();
 
     let resp = test::call_service(&app, req).await;
     assert!(resp.status().is_success());
 
     let body: AgentCard = test::read_body_json(resp).await;
-    // Should return one of the registered agents
-    assert!(body.name == "test-agent-1" || body.name == "test-agent-2");
-    assert!(body.url.contains("/api/v1/agents/"));
+    assert_eq!(body.name, "test-agent-2");
+    assert_eq!(body.description, "Another test agent for A2A discovery");
+    assert!(body.url.contains("/api/v1/agents/test-agent-2"));
+
+    // Test non-existent agent
+    let req = test::TestRequest::get()
+        .uri("/agents/non-existent.json")
+        .to_request();
+
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), 404);
 }
 
 #[actix_web::test]
@@ -230,8 +172,7 @@ async fn test_well_known_a2a_info() {
     // Verify endpoints are present
     let endpoints = &body["endpoints"];
     assert!(endpoints["agents"].as_str().unwrap().contains("/api/v1/agents"));
-    assert!(endpoints["well_known_agent"].as_str().unwrap().contains("/.well-known/agent"));
-    assert!(endpoints["well_known_agents"].as_str().unwrap().contains("/.well-known/agents"));
+    assert!(endpoints["agent_json"].as_str().unwrap().contains("/agents/{agent_name}.json"));
     
     // Verify agents array
     let agents = body["agents"].as_array().unwrap();
@@ -261,9 +202,9 @@ async fn test_base_url_extraction() {
     )
     .await;
 
-    // Test with custom host header
+    // Test with custom host header using the new agent JSON endpoint
     let req = test::TestRequest::get()
-        .uri("/.well-known/agent")
+        .uri("/agents/test-agent-1.json")
         .insert_header(("host", "example.com:8080"))
         .to_request();
 

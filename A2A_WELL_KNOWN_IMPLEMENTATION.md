@@ -1,26 +1,18 @@
 # A2A Well-Known Agent Discovery Implementation
 
 ## Overview
-This implementation adds A2A (Agent-to-Agent) compliant well-known discovery endpoints to the Distri server, enabling proper agent discovery according to A2A standards.
+This implementation adds A2A (Agent-to-Agent) compliant discovery endpoints to the Distri server, enabling proper agent discovery according to A2A standards.
 
 ## Implemented Endpoints
 
-### 1. `/.well-known/agents`
-- **Purpose**: Lists all available agents as AgentCard objects
+### 1. `/agents/{agent_name}.json`
+- **Purpose**: Returns a specific agent's AgentCard by name
 - **Method**: GET
-- **Response**: Array of AgentCard objects compliant with A2A specification
-- **Use Case**: Clients can discover all available agents in the system
+- **Path Parameter**: `agent_name` - Name of the agent to retrieve
+- **Response**: Single AgentCard object compliant with A2A specification
+- **Use Case**: Direct access to agent information via standardized path structure
 
-### 2. `/.well-known/agent`
-- **Purpose**: Returns a specific agent or the default agent
-- **Method**: GET
-- **Query Parameters**:
-  - `agent=<name>` or `name=<name>`: Request specific agent by name
-  - No parameters: Returns the first available agent (default behavior)
-- **Response**: Single AgentCard object
-- **Use Case**: Clients can get information about a specific agent or discover the default agent
-
-### 3. `/.well-known/a2a`
+### 2. `/.well-known/a2a`
 - **Purpose**: Provides comprehensive A2A discovery information
 - **Method**: GET
 - **Response**: JSON object containing:
@@ -37,8 +29,9 @@ This implementation adds A2A (Agent-to-Agent) compliant well-known discovery end
 ### Core Changes Made
 
 1. **Routes Enhancement** (`distri-server/src/routes.rs`):
-   - Added `/.well-known` scope with three endpoints
-   - Implemented handlers for each well-known endpoint
+   - Added `/agents/{agent_name}.json` endpoint for direct agent access
+   - Added `/.well-known/a2a` endpoint for comprehensive A2A discovery
+   - Implemented handlers with dynamic URL generation
    - Added `get_base_url()` helper function for dynamic URL generation
    - Updated existing agent handlers to use dynamic base URLs
 
@@ -58,36 +51,17 @@ This implementation adds A2A (Agent-to-Agent) compliant well-known discovery end
 2. **Dynamic Configuration**: Base URLs adapt to deployment environment
 3. **Error Handling**: Proper HTTP status codes (404 for missing agents, 200 for success)
 4. **Comprehensive Discovery**: The `/.well-known/a2a` endpoint provides complete service information
+5. **Standardized Agent Access**: Direct agent access via `/agents/{agent_name}.json` pattern
 
 ### API Response Examples
 
-#### `/.well-known/agents`
-```json
-[
-  {
-    "version": "0.10.0",
-    "name": "agent-1",
-    "description": "Description of agent 1",
-    "url": "https://example.com/api/v1/agents/agent-1",
-    "capabilities": {
-      "streaming": true,
-      "pushNotifications": true,
-      "stateTransitionHistory": true
-    },
-    "defaultInputModes": ["text/plain", "text/markdown"],
-    "defaultOutputModes": ["text/plain", "text/markdown"],
-    "skills": []
-  }
-]
-```
-
-#### `/.well-known/agent?agent=agent-1`
+#### `/agents/my-agent.json`
 ```json
 {
   "version": "0.10.0",
-  "name": "agent-1",
-  "description": "Description of agent 1",
-  "url": "https://example.com/api/v1/agents/agent-1",
+  "name": "my-agent",
+  "description": "Description of my agent",
+  "url": "https://example.com/api/v1/agents/my-agent",
   "capabilities": {
     "streaming": true,
     "pushNotifications": true,
@@ -109,11 +83,10 @@ This implementation adds A2A (Agent-to-Agent) compliant well-known discovery end
   "endpoints": {
     "agents": "https://example.com/api/v1/agents",
     "agent_by_id": "https://example.com/api/v1/agents/{id}",
+    "agent_json": "https://example.com/agents/{agent_name}.json",
     "tasks": "https://example.com/api/v1/tasks",
     "task_by_id": "https://example.com/api/v1/tasks/{id}",
-    "threads": "https://example.com/api/v1/threads",
-    "well_known_agent": "https://example.com/.well-known/agent",
-    "well_known_agents": "https://example.com/.well-known/agents"
+    "threads": "https://example.com/api/v1/threads"
   },
   "capabilities": {
     "streaming": true,
@@ -130,32 +103,28 @@ This implementation adds A2A (Agent-to-Agent) compliant well-known discovery end
 
 Comprehensive test suite added in `distri-server/src/tests/well_known_test.rs`:
 
-1. **`test_well_known_agents`**: Tests listing all agents
-2. **`test_well_known_agent_specific`**: Tests getting specific agent by name
-3. **`test_well_known_agent_default`**: Tests getting default agent
-4. **`test_well_known_a2a_info`**: Tests comprehensive A2A discovery
-5. **`test_base_url_extraction`**: Tests dynamic base URL generation
+1. **`test_agent_json_endpoint`**: Tests direct agent access via `/agents/{agent_name}.json`
+2. **`test_well_known_a2a_info`**: Tests comprehensive A2A discovery
+3. **`test_base_url_extraction`**: Tests dynamic base URL generation
 
 All tests pass and verify:
 - Proper AgentCard structure
-- Correct HTTP status codes
+- Correct HTTP status codes (200 for success, 404 for missing agents)
 - Dynamic URL generation
 - A2A specification compliance
 
 ## Usage
 
 ### Client Discovery Flow
-1. Client requests `/.well-known/a2a` to discover service capabilities
-2. Client lists available agents via `/.well-known/agents`
-3. Client gets specific agent information via `/.well-known/agent?agent=<name>`
-4. Client interacts with agent via the URLs provided in AgentCard
+1. Client requests `/.well-known/a2a` to discover service capabilities and available agents
+2. Client accesses specific agents directly via `/agents/{agent_name}.json`
+3. Client interacts with agent via the URLs provided in AgentCard
 
 ### Integration with Existing API
-The well-known endpoints complement existing A2A endpoints:
+The new endpoints complement existing A2A endpoints:
 - `/api/v1/agents` - Lists agents (existing)
 - `/api/v1/agents/{id}` - Get specific agent (existing)
-- `/.well-known/agents` - A2A discovery for agents (new)
-- `/.well-known/agent` - A2A discovery for single agent (new)
+- `/agents/{agent_name}.json` - Direct agent access by name (new)
 - `/.well-known/a2a` - Complete A2A service discovery (new)
 
 ## Standards Compliance
