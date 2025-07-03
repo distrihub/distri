@@ -104,7 +104,7 @@ pub enum EmbeddedCommands {
     },
 
     /// Start the A2A server to serve agents via HTTP API
-    StartServer {
+    Serve {
         #[clap(long, default_value = "127.0.0.1")]
         host: String,
         #[clap(long, default_value = "8080")]

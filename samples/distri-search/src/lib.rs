@@ -1,15 +1,15 @@
 use distri::{
     agent::{AgentExecutor, AgentExecutorBuilder},
-    servers::registry::{register_servers, ServerMetadata, ServerRegistry, ServerTrait},
+    servers::registry::{register_mcp_servers, McpServerRegistry, ServerMetadata, ServerTrait},
     types::{Configuration, TransportType},
 };
-use distri_server::reusable_server::DefaultCustomServer;
+use distri_server::agent_server::DistriAgentServer;
 
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
 
-pub fn get_server() -> DefaultCustomServer {
-    DefaultCustomServer {
+pub fn get_server() -> DistriAgentServer {
+    DistriAgentServer {
         service_name: "distri-search-server".to_string(),
         description: "AI-powered search service using Tavily and Spider".to_string(),
         capabilities: vec![
@@ -22,7 +22,7 @@ pub fn get_server() -> DefaultCustomServer {
     }
 }
 
-pub fn custom_servers() -> HashMap<String, ServerMetadata> {
+pub fn custom_mcp_servers() -> HashMap<String, ServerMetadata> {
     let mut servers = HashMap::new();
 
     // Add search-specific MCP servers
@@ -59,8 +59,8 @@ pub fn custom_servers() -> HashMap<String, ServerMetadata> {
     servers
 }
 
-pub async fn init_executor(config: &Configuration) -> anyhow::Result<Arc<AgentExecutor>> {
-    let registry = Arc::new(RwLock::new(ServerRegistry::new()));
+pub async fn init_agent_executor(config: &Configuration) -> anyhow::Result<Arc<AgentExecutor>> {
+    let registry = Arc::new(RwLock::new(McpServerRegistry::new()));
     let executor = AgentExecutorBuilder::new()
         .initialize_stores_from_config(config.stores.as_ref())
         .await?
@@ -68,7 +68,7 @@ pub async fn init_executor(config: &Configuration) -> anyhow::Result<Arc<AgentEx
 
     let executor = Arc::new(executor.build()?);
 
-    register_servers(registry, executor.clone(), custom_servers()).await?;
+    register_mcp_servers(registry, executor.clone(), custom_mcp_servers()).await?;
 
     // Register agents from configuration
     for agent_config in &config.agents {

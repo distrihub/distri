@@ -1,6 +1,6 @@
 use anyhow::Result;
 use distri::{agent::AgentExecutor, memory::TaskStep, types::Configuration};
-use distri_server::reusable_server::{list_agents, run_server, DefaultCustomServer};
+use distri_server::agent_server::{run_agent_server, DistriAgentServer};
 use dotenv::dotenv;
 use std::{env, path::PathBuf, sync::Arc};
 use tracing::debug;
@@ -83,7 +83,7 @@ pub async fn init_kg_memory(
 }
 
 /// Run CLI with the given configuration
-pub async fn run_cli(
+pub async fn run_agent_cli(
     executor: Arc<AgentExecutor>,
     agent: Option<String>,
     config: &Configuration,
@@ -139,9 +139,9 @@ pub async fn get_agent_name(config: &Configuration, agent_name: Option<String>) 
     Ok(agent_name)
 }
 
-pub async fn run_embedded(
+pub async fn run_agent(
     executor: Arc<AgentExecutor>,
-    server: DefaultCustomServer,
+    server: DistriAgentServer,
     command: EmbeddedCommands,
     config: &Configuration,
 ) -> Result<()> {
@@ -155,14 +155,25 @@ pub async fn run_embedded(
             agent,
             task,
             background,
-        } => run_cli(executor, agent, config, task, background).await,
-        EmbeddedCommands::List => list_agents(executor).await,
-        EmbeddedCommands::StartServer { host, port } => {
-            run_server(server, executor, config, &host, port).await
+        } => run_agent_cli(executor, agent, config, task, background).await,
+        EmbeddedCommands::List => list_agents(executor, config).await,
+        EmbeddedCommands::Serve { host, port } => {
+            run_agent_server(server, executor, config, &host, port).await
         }
         _ => todo!(),
     }?;
 
     executor_handle.abort();
+    Ok(())
+}
+
+/// List available agents
+pub async fn list_agents(executor: Arc<AgentExecutor>, config: &Configuration) -> Result<()> {
+    tracing::info!("Available Agents:");
+
+    register_agents(executor.clone(), config).await?;
+
+    run::list::list(executor).await?;
+
     Ok(())
 }

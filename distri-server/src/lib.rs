@@ -11,7 +11,7 @@ use tokio::sync::broadcast;
 pub mod routes;
 pub mod server;
 
-pub mod reusable_server;
+pub mod agent_server;
 
 #[cfg(test)]
 mod tests {

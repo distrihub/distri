@@ -41,17 +41,17 @@ impl std::fmt::Debug for ServerMetadata {
 }
 
 // This registry is only really for local running agents using async methos
-pub struct ServerRegistry {
+pub struct McpServerRegistry {
     pub servers: HashMap<String, ServerMetadata>,
 }
 
-impl Default for ServerRegistry {
+impl Default for McpServerRegistry {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl ServerRegistry {
+impl McpServerRegistry {
     pub fn new() -> Self {
         Self {
             servers: HashMap::new(),
@@ -88,8 +88,8 @@ impl<T: Transport> ServerTrait for Server<T> {
     }
 }
 
-pub async fn register_servers(
-    server_registry: Arc<RwLock<ServerRegistry>>,
+pub async fn register_mcp_servers(
+    server_registry: Arc<RwLock<McpServerRegistry>>,
     coordinator: Arc<AgentExecutor>,
     servers: HashMap<String, ServerMetadata>,
 ) -> Result<()> {

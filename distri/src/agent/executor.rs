@@ -1,7 +1,7 @@
 use crate::{
     agent::{BaseAgent, StandardAgent},
     error::AgentError,
-    servers::registry::{register_servers, ServerMetadata, ServerRegistry},
+    servers::registry::{register_mcp_servers, McpServerRegistry, ServerMetadata},
     store::{
         AgentStore, HashMapThreadStore, LocalSessionStore, SessionStore, ThreadStore,
         ToolSessionStore,
@@ -28,7 +28,7 @@ use crate::memory::TaskStep;
 pub struct AgentExecutor {
     pub agent_store: Arc<dyn AgentStore>,
     pub tool_sessions: Option<Arc<Box<dyn ToolSessionStore>>>,
-    pub registry: Arc<RwLock<ServerRegistry>>,
+    pub registry: Arc<RwLock<McpServerRegistry>>,
     pub coordinator_rx: Arc<Mutex<mpsc::Receiver<CoordinatorMessage>>>,
     pub coordinator_tx: mpsc::Sender<CoordinatorMessage>,
     pub session_store: Arc<Box<dyn SessionStore>>,
@@ -38,7 +38,7 @@ pub struct AgentExecutor {
 }
 
 pub struct AgentExecutorBuilder {
-    registry: Option<Arc<RwLock<ServerRegistry>>>,
+    registry: Option<Arc<RwLock<McpServerRegistry>>>,
     tool_sessions: Option<Arc<Box<dyn ToolSessionStore>>>,
     session_store: Option<Arc<Box<dyn SessionStore>>>,
     agent_store: Option<Arc<dyn AgentStore>>,
@@ -60,7 +60,7 @@ impl AgentExecutorBuilder {
         }
     }
 
-    pub fn with_registry(mut self, registry: Arc<RwLock<ServerRegistry>>) -> Self {
+    pub fn with_registry(mut self, registry: Arc<RwLock<McpServerRegistry>>) -> Self {
         self.registry = Some(registry);
         self
     }
@@ -127,7 +127,7 @@ impl AgentExecutorBuilder {
             self.context = Some(Arc::new(ExecutorContext::default()));
         }
         if self.registry.is_none() {
-            self.registry = Some(Arc::new(RwLock::new(ServerRegistry::new())));
+            self.registry = Some(Arc::new(RwLock::new(McpServerRegistry::new())));
         }
 
         Ok(self)
@@ -171,7 +171,7 @@ impl AgentExecutorBuilder {
 
 impl AgentExecutor {
     pub fn new(
-        registry: Arc<RwLock<ServerRegistry>>,
+        registry: Arc<RwLock<McpServerRegistry>>,
         tool_sessions: Option<Arc<Box<dyn ToolSessionStore>>>,
         session_store: Option<Arc<Box<dyn SessionStore>>>,
         agent_store: Arc<dyn AgentStore>,
@@ -202,14 +202,14 @@ impl AgentExecutor {
     ) -> anyhow::Result<Arc<AgentExecutor>> {
         let mut builder = AgentExecutorBuilder::new();
 
-        let registry = Arc::new(RwLock::new(ServerRegistry::new()));
+        let registry = Arc::new(RwLock::new(McpServerRegistry::new()));
         // Initialize stores from configuration
         builder = builder
             .initialize_stores_from_config(config.stores.as_ref())
             .await?;
 
         let executor = Arc::new(builder.build()?);
-        register_servers(registry, executor.clone(), servers).await?;
+        register_mcp_servers(registry, executor.clone(), servers).await?;
 
         // Register agents from configuration
         for agent_config in &config.agents {

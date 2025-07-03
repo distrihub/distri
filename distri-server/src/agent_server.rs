@@ -9,13 +9,13 @@ use std::sync::Arc;
 use crate::{configure_distri_service, DistriServer, DistriServiceConfig};
 use distri::types::Configuration;
 
-pub struct DefaultCustomServer {
+pub struct DistriAgentServer {
     pub service_name: String,
     pub description: String,
     pub capabilities: Vec<String>,
 }
 
-impl DefaultCustomServer {
+impl DistriAgentServer {
     pub fn new() -> Self {
         Self {
             service_name: "distri-server".to_string(),
@@ -115,7 +115,7 @@ impl DefaultCustomServer {
 pub struct DistriServerBuilder {
     executor: Option<Arc<AgentExecutor>>,
     config: Option<Configuration>,
-    server: Option<DefaultCustomServer>,
+    server: Option<DistriAgentServer>,
 }
 impl DistriServerBuilder {
     pub fn new() -> Self {
@@ -127,7 +127,7 @@ impl DistriServerBuilder {
     }
 }
 impl DistriServerBuilder {
-    pub fn with_server(mut self, server: DefaultCustomServer) -> Self {
+    pub fn with_server(mut self, server: DistriAgentServer) -> Self {
         self.server = Some(server);
         self
     }
@@ -179,35 +179,12 @@ async fn default_health_check(service_name: &str) -> ActixResult<HttpResponse> {
 }
 
 /// Run the distri-search server with customized registry
-pub async fn run_server(
-    server: DefaultCustomServer,
+pub async fn run_agent_server(
+    server: DistriAgentServer,
     executor: Arc<AgentExecutor>,
     config: &Configuration,
     host: &str,
     port: u16,
 ) -> Result<()> {
     server.start(config, executor, host, port).await
-}
-
-/// List available agents
-pub async fn list_agents(executor: Arc<AgentExecutor>) -> Result<()> {
-    tracing::info!("Available Agents:");
-
-    let (agents, _) = executor.agent_store.list(None, None).await;
-
-    for agent in agents {
-        let definition = agent.get_definition();
-        println!("  - {}: {}", definition.name, definition.description);
-
-        if let Some(prompt) = &definition.system_prompt {
-            let preview = if prompt.len() > 100 {
-                format!("{}...", &prompt[..97])
-            } else {
-                prompt.clone()
-            };
-            println!("    Description: {}", preview);
-        }
-    }
-
-    Ok(())
 }

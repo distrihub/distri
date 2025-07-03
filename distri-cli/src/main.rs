@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
-use distri_cli::{run, Cli, Commands};
+use distri_cli::{list_agents, run, Cli, Commands};
 mod logging;
 use distri::{
     agent::{AgentExecutor, AgentExecutorBuilder},
@@ -8,7 +8,7 @@ use distri::{
     types::{get_distri_config_schema, Configuration},
 };
 use distri_cli::run::session::get_session_store;
-use distri_cli::{register_agents, run_cli};
+use distri_cli::{register_agents, run_agent_cli};
 use distri_server::A2AServer;
 use dotenv::dotenv;
 use logging::init_logging;
@@ -83,20 +83,9 @@ async fn main() -> Result<()> {
         Commands::List => {
             debug!("Available agents:");
             let config = load_config(cli.config.to_str().unwrap())?;
-            let coordinator = init_all(&config).await?;
-            let agent_store = coordinator.agent_store.clone();
-            for agent in &config.agents {
-                coordinator
-                    .register_default_agent(agent.definition.clone())
-                    .await?;
-            }
-            let coordinator_clone = coordinator.clone();
-            let coordinator_handle = tokio::spawn(async move {
-                coordinator_clone.run().await.unwrap();
-            });
+            let executor = init_all(&config).await?;
 
-            run::list::list(agent_store).await?;
-            coordinator_handle.abort();
+            list_agents(executor, &config).await?;
         }
         Commands::ListTools => {
             debug!("Available tools:");
@@ -114,7 +103,7 @@ async fn main() -> Result<()> {
             let config = load_config(cli.config.to_str().unwrap())?;
             let executor = init_all(&config).await?;
 
-            run_cli(executor, agent, &config, task, background).await?;
+            run_agent_cli(executor, agent, &config, task, background).await?;
         }
         Commands::Serve { host, port } => {
             let config = load_config(cli.config.to_str().unwrap())?;

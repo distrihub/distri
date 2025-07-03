@@ -4,7 +4,7 @@ use tokio::sync::RwLock;
 
 use crate::{
     agent::{AgentExecutor, ExecutorContext, DISTRI_LOCAL_SERVER},
-    servers::registry::{ServerMetadata, ServerRegistry, ServerTrait},
+    servers::registry::{McpServerRegistry, ServerMetadata, ServerTrait},
     tests::tools::build_mock_search_tool,
     types::TransportType,
     McpDefinition, McpSession, ToolSessionStore,
@@ -48,8 +48,8 @@ pub fn get_search_tool() -> McpDefinition {
     }
 }
 
-pub async fn get_registry() -> Arc<RwLock<ServerRegistry>> {
-    let mut server_registry = ServerRegistry::new();
+pub async fn get_registry() -> Arc<RwLock<McpServerRegistry>> {
+    let mut server_registry = McpServerRegistry::new();
 
     server_registry.register(
         "mock_search".to_string(),
@@ -69,7 +69,7 @@ pub async fn get_registry() -> Arc<RwLock<ServerRegistry>> {
 }
 
 pub async fn register_coordinator(
-    registry: Arc<RwLock<ServerRegistry>>,
+    registry: Arc<RwLock<McpServerRegistry>>,
     coordinator: Arc<AgentExecutor>,
 ) {
     let mut registry = registry.write().await;

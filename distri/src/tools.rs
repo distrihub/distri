@@ -18,7 +18,7 @@ use tokio::sync::RwLock;
 use tracing::debug;
 
 use crate::agent::ExecutorContext;
-use crate::servers::registry::{ServerMetadata, ServerRegistry};
+use crate::servers::registry::{McpServerRegistry, ServerMetadata};
 use crate::types::TransportType;
 use crate::types::{McpDefinition, ToolCall};
 use crate::types::{ServerTools, ToolsFilter};
@@ -109,7 +109,7 @@ macro_rules! with_transport {
 }
 pub async fn get_tools(
     definitions: &[McpDefinition],
-    registry: Arc<RwLock<ServerRegistry>>,
+    registry: Arc<RwLock<McpServerRegistry>>,
 ) -> Result<Vec<ServerTools>> {
     let mut all_tools = Vec::new();
 
@@ -202,7 +202,7 @@ pub async fn get_tools(
 pub async fn execute_tool(
     tool_call: &ToolCall,
     tool_def: &McpDefinition,
-    registry: Arc<RwLock<ServerRegistry>>,
+    registry: Arc<RwLock<McpServerRegistry>>,
     tool_sessions: Option<Arc<Box<dyn ToolSessionStore>>>,
     context: Arc<ExecutorContext>,
 ) -> Result<String> {

@@ -15,7 +15,7 @@ use crate::routes;
 async fn create_test_executor() -> Arc<AgentExecutor> {
     let agent_store = Arc::new(InMemoryAgentStore::new());
     let registry = Arc::new(tokio::sync::RwLock::new(
-        distri::servers::registry::ServerRegistry::new(),
+        distri::servers::registry::McpServerRegistry::new(),
     ));
     let builder = AgentExecutorBuilder::new()
         .with_agent_store(agent_store.clone())
