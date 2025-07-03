@@ -154,7 +154,7 @@ impl PlanConfig {
         }
     }
 }
-#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum MessageRole {
     /// Represents a system message.

@@ -1,24 +1,21 @@
-mod cli;
-mod run;
 use anyhow::Result;
 use clap::Parser;
-use cli::{Cli, Commands};
+use distri_cli::{run, Cli, Commands};
 mod logging;
 use distri::{
     agent::{AgentExecutor, AgentExecutorBuilder},
     servers::kg::FileMemory,
     types::{get_distri_config_schema, Configuration},
 };
+use distri_cli::run::session::get_session_store;
+use distri_cli::{register_agents, run_cli};
 use distri_server::A2AServer;
 use dotenv::dotenv;
 use logging::init_logging;
 use mcp_proxy::McpProxy;
-use run::{chat, event};
 use std::{env, sync::Arc};
 use tokio::sync::Mutex;
 use tracing::debug;
-
-use crate::run::session::get_session_store;
 
 fn load_config(config_path: &str) -> Result<Configuration> {
     // Load .env file if it exists
@@ -115,58 +112,17 @@ async fn main() -> Result<()> {
             task,
         } => {
             let config = load_config(cli.config.to_str().unwrap())?;
-            let coordinator = init_all(&config).await?;
-            let coordinator_clone = coordinator.clone();
+            let executor = init_all(&config).await?;
 
-            let agent_config = if let Some(agent) = agent {
-                config
-                    .agents
-                    .iter()
-                    .find(|a| a.definition.name == agent)
-                    .unwrap_or_else(|| panic!("Agent not found {agent}"))
-            } else {
-                config
-                    .agents
-                    .first()
-                    .unwrap_or_else(|| panic!("No agents found"))
-            };
-            let agent = agent_config.definition.clone();
-
-            debug!("Running agent: {:?}", agent);
-
-            for agent in &config.agents {
-                coordinator
-                    .register_default_agent(agent.definition.clone())
-                    .await?;
-            }
-
-            let coordinator_handle = tokio::spawn(async move {
-                coordinator_clone.run().await.unwrap();
-            });
-
-            if background {
-                let task = task
-                    .map(|t| TaskStep {
-                        task: t,
-                        task_images: None,
-                    })
-                    .unwrap_or_else(|| panic!("Task is needed for background mode"));
-                event::run(&agent, coordinator, task).await?;
-            } else {
-                chat::run(agent_config, coordinator).await?;
-            }
-            coordinator_handle.abort();
+            run_cli(executor, agent, &config, task, background).await?;
         }
         Commands::Serve { host, port } => {
             let config = load_config(cli.config.to_str().unwrap())?;
-            let coordinator = init_all(&config).await?;
+            let executor = init_all(&config).await?;
 
-            for agent in &config.agents {
-                coordinator
-                    .register_default_agent(agent.definition.clone())
-                    .await?;
-            }
-            let server = A2AServer::new(coordinator);
+            register_agents(executor.clone(), &config).await?;
+
+            let server = A2AServer::new(executor);
             tracing::info!("Starting server at http://{}:{}", host, port);
             server
                 .start(&host, port, config.server.unwrap_or_default())

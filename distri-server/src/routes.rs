@@ -27,6 +27,10 @@ pub fn config(cfg: &mut web::ServiceConfig) {
                     .route(web::get().to(get_agent_card))
                     .route(web::post().to(jsonrpc_handler)),
             )
+            .service(
+                web::resource("/agents/{agent_name}/.well-known/agent.json")
+                    .route(web::get().to(get_agent_json)),
+            )
             .service(web::resource("/tasks/{id}").route(web::get().to(get_task)))
             .service(web::resource("/tasks").route(web::get().to(list_tasks)))
             // Thread endpoints
@@ -47,7 +51,9 @@ pub fn config(cfg: &mut web::ServiceConfig) {
 async fn list_agents(
     agent_store: web::Data<Arc<dyn AgentStore>>,
     server_config: web::Data<ServerConfig>,
+    req: actix_web::HttpRequest,
 ) -> HttpResponse {
+    let base_url = get_base_url(&req);
     let (agents, _) = agent_store.list(None, None).await;
     let agent_cards: Vec<AgentCard> = agents
         .iter()
@@ -55,7 +61,7 @@ async fn list_agents(
             distri::a2a::agent_def_to_card(
                 &agent.get_definition(),
                 server_config.get_ref().clone(),
-                "http://127.0.0.1:8080",
+                &base_url,
             )
         })
         .collect();
@@ -66,8 +72,10 @@ async fn get_agent_card(
     id: web::Path<String>,
     agent_store: web::Data<Arc<dyn AgentStore>>,
     server_config: web::Data<ServerConfig>,
+    req: actix_web::HttpRequest,
 ) -> HttpResponse {
     let agent_id = id.into_inner();
+    let base_url = get_base_url(&req);
 
     let agent = agent_store.get(&agent_id).await;
     match agent {
@@ -75,7 +83,30 @@ async fn get_agent_card(
             let card = distri::a2a::agent_def_to_card(
                 &agent.get_definition(),
                 server_config.get_ref().clone(),
-                "http://127.0.0.1:8080",
+                &base_url,
+            );
+            HttpResponse::Ok().json(card)
+        }
+        None => HttpResponse::NotFound().finish(),
+    }
+}
+
+async fn get_agent_json(
+    agent_name: web::Path<String>,
+    agent_store: web::Data<Arc<dyn AgentStore>>,
+    server_config: web::Data<ServerConfig>,
+    req: actix_web::HttpRequest,
+) -> HttpResponse {
+    let agent_name = agent_name.into_inner();
+    let base_url = get_base_url(&req);
+
+    let agent = agent_store.get(&agent_name).await;
+    match agent {
+        Some(agent) => {
+            let card = distri::a2a::agent_def_to_card(
+                &agent.get_definition(),
+                server_config.get_ref().clone(),
+                &base_url,
             );
             HttpResponse::Ok().json(card)
         }
@@ -842,4 +873,12 @@ async fn get_thread_messages(
             "error": format!("Failed to get thread messages: {}", e)
         })),
     }
+}
+
+// Helper function to extract base URL from request
+fn get_base_url(req: &actix_web::HttpRequest) -> String {
+    let connection_info = req.connection_info();
+    let scheme = connection_info.scheme();
+    let host = connection_info.host();
+    format!("{}://{}", scheme, host)
 }

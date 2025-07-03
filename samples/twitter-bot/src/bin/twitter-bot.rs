@@ -1,40 +1,28 @@
 use anyhow::Result;
 use clap::Parser;
-use distri_cli::{load_config, Cli, Commands};
-use distri_server::reusable_server::{list_agents, run_cli, run_server};
-use twitter_bot::{get_server, init_executor, load_config as load_embedded_config};
+use distri_cli::{load_config, load_config_from_str, run_embedded, EmbeddedCli};
+use twitter_bot::{get_server, init_executor};
+
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenv::dotenv().ok();
-
-    // Parse CLI arguments
-    let cli = Cli::parse();
 
     // Initialize tracing
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)
         .init();
 
+    let cli = EmbeddedCli::parse();
+
     let config = if let Some(config) = cli.config {
-        load_config(&config)?
+        load_config(config)?
     } else {
-        load_embedded_config()?
+        let config_str = include_str!("../../definition.yaml");
+        load_config_from_str(&config_str)?
     };
 
     let executor = init_executor(&config).await?;
-
-    let executor_clone = executor.clone();
-    let executor_handle = tokio::spawn(async move { executor_clone.run().await.unwrap() });
-
-    match cli.command {
-        Commands::Run { agent, task } => run_cli(executor, &agent, &task).await,
-        Commands::List {} => list_agents(executor).await,
-        Commands::Serve { host, port } => {
-            let server = get_server();
-            run_server(server, executor, config, &host, port).await
-        }
-    }?;
-
-    executor_handle.abort();
+    let server = get_server();
+    run_embedded(executor, server, cli.command, &config).await?;
     Ok(())
 }

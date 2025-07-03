@@ -2,7 +2,7 @@ use actix_cors::Cors;
 use actix_web::middleware::Logger;
 use actix_web::{web, App, HttpResponse, HttpServer, Result as ActixResult};
 use anyhow::Result;
-use distri::agent::{AgentExecutor, ExecutorContext};
+use distri::agent::AgentExecutor;
 use serde_json::json;
 use std::sync::Arc;
 
@@ -27,7 +27,7 @@ impl DefaultCustomServer {
     /// Start the server with the configured settings
     pub async fn start(
         self,
-        config: Configuration,
+        config: &Configuration,
         executor: Arc<AgentExecutor>,
         host: &str,
         port: u16,
@@ -48,7 +48,7 @@ impl DefaultCustomServer {
         // Initialize the DistriServer with the customized config
         let distri_server = DistriServer::initialize(&config, executor.clone()).await?;
         let executor = distri_server.executor();
-        let server_config = config.server.unwrap_or_default();
+        let server_config = config.server.clone().unwrap_or_default();
 
         HttpServer::new(move || {
             let executor = executor.clone();
@@ -178,31 +178,11 @@ async fn default_health_check(service_name: &str) -> ActixResult<HttpResponse> {
     })))
 }
 
-/// Run CLI with the given configuration
-pub async fn run_cli(executor: Arc<AgentExecutor>, agent: &str, task: &str) -> Result<()> {
-    tracing::info!("Running Distri Search CLI...");
-
-    let context = Arc::new(ExecutorContext::default());
-    let task_step = distri::memory::TaskStep {
-        task: task.to_string(),
-        task_images: None,
-    };
-
-    let result = executor
-        .execute(agent, task_step, None, context, None)
-        .await
-        .map_err(|e| anyhow::anyhow!("Execution failed: {}", e))?;
-
-    println!("Search Result:\n{}", result);
-
-    Ok(())
-}
-
 /// Run the distri-search server with customized registry
 pub async fn run_server(
     server: DefaultCustomServer,
     executor: Arc<AgentExecutor>,
-    config: Configuration,
+    config: &Configuration,
     host: &str,
     port: u16,
 ) -> Result<()> {

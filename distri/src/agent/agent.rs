@@ -103,9 +103,9 @@ pub enum StepResult {
     Finish(String),
 }
 
-/// Default agent implementation that provides the standard LLM-based behavior
+/// Standard agent implementation that provides the full LLM-based behavior with extensible hooks
 #[derive(Clone)]
-pub struct DefaultAgent {
+pub struct StandardAgent {
     pub definition: AgentDefinition,
     server_tools: Vec<ServerTools>,
     coordinator: Arc<AgentExecutor>,
@@ -113,15 +113,15 @@ pub struct DefaultAgent {
     session_store: Arc<Box<dyn SessionStore>>,
 }
 
-impl std::fmt::Debug for DefaultAgent {
+impl std::fmt::Debug for StandardAgent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("DefaultAgent")
+        f.debug_struct("StandardAgent")
             .field("definition", &self.definition)
             .finish()
     }
 }
 
-impl DefaultAgent {
+impl StandardAgent {
     pub fn new(
         definition: AgentDefinition,
         server_tools: Vec<ServerTools>,
@@ -427,6 +427,8 @@ impl DefaultAgent {
             if iterations == 0 {
                 self.system_step(context.clone()).await?;
                 self.task_step(&task, context.clone()).await?;
+                // Call after_task_step hook
+                self.after_task_step(task.clone(), context.clone()).await?;
             }
             let mut current_messages = self
                 .session_store
@@ -452,6 +454,9 @@ impl DefaultAgent {
                     .await?;
                 match step_result {
                     StepResult::Finish(content) => {
+                        // Call after_finish hook
+                        self.after_finish(&content, context.clone()).await?;
+
                         // Store final response as action step
                         let action_step = MemoryStep::Action(ActionStep {
                             model_input_messages: Some(current_messages),
@@ -529,6 +534,8 @@ impl DefaultAgent {
             if iterations == 0 {
                 self.system_step(context.clone()).await?;
                 self.task_step(&task, context.clone()).await?;
+                // Call after_task_step hook
+                self.after_task_step(task.clone(), context.clone()).await?;
             }
             let mut current_messages = self
                 .session_store
@@ -557,6 +564,9 @@ impl DefaultAgent {
 
                 match step_result {
                     StepResult::Finish(content) => {
+                        // Call after_finish hook
+                        self.after_finish(&content, context.clone()).await?;
+
                         tracing::info!("Agent execution completed successfully");
                         let action_step = MemoryStep::Action(ActionStep {
                             model_input_messages: Some(current_messages),
@@ -638,7 +648,7 @@ impl DefaultAgent {
                         tool_calls: tool_calls.to_vec(),
                     }];
 
-                    let tool_calls = self.before_tool_calls(&tool_calls, context).await?;
+                    let tool_calls = self.before_tool_calls(&tool_calls, context.clone()).await?;
 
                     info!("Agent: Tool calls: {:#?}", tool_calls);
                     // Process all tool calls in parallel
@@ -658,7 +668,7 @@ impl DefaultAgent {
                                     name: Some(mapped_tool_call.tool_name.clone()),
                                     content: vec![MessageContent {
                                         content_type: "text".to_string(),
-                                        text: Some(content),
+                                        text: Some(content.clone()),
                                         image: None,
                                     }],
                                     tool_calls: vec![mapped_tool_call.to_owned()],
@@ -666,6 +676,20 @@ impl DefaultAgent {
                             }
                         }))
                         .await;
+
+                    let tool_response_contents: Vec<String> = tool_responses
+                        .iter()
+                        .map(|msg| {
+                            msg.content
+                                .first()
+                                .and_then(|c| c.text.clone())
+                                .unwrap_or_default()
+                        })
+                        .collect();
+
+                    // Call after_tool_calls hook
+                    self.after_tool_calls(&tool_response_contents, context)
+                        .await?;
 
                     // Add tool responses
                     new_messages.extend(tool_responses);
@@ -685,7 +709,7 @@ impl DefaultAgent {
 }
 
 #[async_trait::async_trait]
-impl BaseAgent for DefaultAgent {
+impl BaseAgent for StandardAgent {
     fn get_definition(&self) -> AgentDefinition {
         self.definition.clone()
     }
@@ -705,7 +729,7 @@ impl BaseAgent for DefaultAgent {
         context: Arc<ExecutorContext>,
         event_tx: Option<mpsc::Sender<AgentEvent>>,
     ) -> Result<String, AgentError> {
-        DefaultAgent::invoke(self, task, params, context, event_tx).await
+        StandardAgent::invoke(self, task, params, context, event_tx).await
     }
 
     fn clone_box(&self) -> Box<dyn BaseAgent> {
@@ -723,6 +747,9 @@ impl BaseAgent for DefaultAgent {
         context: Arc<ExecutorContext>,
         event_tx: mpsc::Sender<AgentEvent>,
     ) -> Result<(), AgentError> {
-        DefaultAgent::invoke_stream(self, task, params, context, event_tx).await
+        StandardAgent::invoke_stream(self, task, params, context, event_tx).await
     }
 }
+
+// Keep DefaultAgent as an alias for backward compatibility
+pub type DefaultAgent = StandardAgent;
