@@ -6,7 +6,7 @@ use distri::agent::AgentExecutor;
 use serde_json::json;
 use std::sync::Arc;
 
-use crate::{configure_distri_service, DistriServer, DistriServiceConfig};
+use crate::{configure_distri_service, DistriServer};
 use distri::types::Configuration;
 
 pub struct DistriAgentServer {
@@ -99,8 +99,7 @@ impl DistriAgentServer {
                     }),
                 )
                 .configure(|cfg| {
-                    let config = DistriServiceConfig::new(executor.clone(), server_config.clone());
-                    configure_distri_service(cfg, config);
+                    configure_distri_service(cfg, executor.clone(), server_config.clone());
                 });
 
             app

@@ -3,10 +3,8 @@ use anyhow::Result;
 use distri::{
     agent::AgentExecutor,
     types::{Configuration, ServerConfig},
-    HashMapTaskStore, TaskStore,
 };
 use std::sync::Arc;
-use tokio::sync::broadcast;
 
 pub mod routes;
 pub mod server;
@@ -19,38 +17,6 @@ mod tests {
 }
 
 pub use server::A2AServer;
-
-/// Configuration for embedding distri in other actix-web apps
-pub struct DistriServiceConfig {
-    pub coordinator: Arc<AgentExecutor>,
-    pub task_store: Arc<dyn TaskStore>,
-    pub server_config: ServerConfig,
-}
-
-impl DistriServiceConfig {
-    /// Create a new configuration with default task store
-    pub fn new(coordinator: Arc<AgentExecutor>, server_config: ServerConfig) -> Self {
-        Self {
-            coordinator,
-            task_store: Arc::new(HashMapTaskStore::new()),
-            server_config,
-        }
-    }
-
-    /// Create a new configuration with custom task store
-    pub fn with_task_store(
-        coordinator: Arc<AgentExecutor>,
-        task_store: Arc<dyn TaskStore>,
-        server_config: ServerConfig,
-    ) -> Self {
-        Self {
-            coordinator,
-            task_store,
-            server_config,
-        }
-    }
-}
-
 /// DistriServer with access to the executor and initialize method
 pub struct DistriServer {
     executor: Arc<AgentExecutor>,
@@ -90,27 +56,13 @@ impl DistriServer {
     }
 }
 
-/// Configure distri routes for embedding in another actix-web app
-///
-/// # Example
-/// ```rust
-/// use actix_web::{web, App, HttpServer};
-/// use distri_server::{configure_distri_service, DistriServiceConfig};
-///
-/// let config = DistriServiceConfig::new(coordinator, server_config);
-/// let app = App::new()
-///     .configure(|cfg| configure_distri_service(cfg, config))
-///     .route("/", web::get().to(|| async { "Hello World!" }));
-/// ```
-pub fn configure_distri_service(cfg: &mut web::ServiceConfig, config: DistriServiceConfig) {
-    let (event_broadcaster, _) = broadcast::channel::<String>(1000);
-    let agent_store = config.coordinator.agent_store.clone();
-
-    cfg.app_data(web::Data::new(config.coordinator))
-        .app_data(web::Data::new(agent_store))
-        .app_data(web::Data::new(config.task_store))
-        .app_data(web::Data::new(event_broadcaster))
-        .app_data(web::Data::new(config.server_config))
+pub fn configure_distri_service(
+    cfg: &mut web::ServiceConfig,
+    executor: Arc<AgentExecutor>,
+    server_config: ServerConfig,
+) {
+    cfg.app_data(web::Data::new(executor))
+        .app_data(web::Data::new(server_config))
         .configure(routes::config);
 }
 

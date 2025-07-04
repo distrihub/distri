@@ -33,7 +33,7 @@ pub struct AgentExecutor {
     pub coordinator_tx: mpsc::Sender<CoordinatorMessage>,
     pub session_store: Arc<Box<dyn SessionStore>>,
     thread_store: Arc<Box<dyn ThreadStore>>,
-    task_store: Arc<dyn TaskStore>,
+    pub task_store: Arc<dyn TaskStore>,
     pub context: Arc<ExecutorContext>,
 }
 
