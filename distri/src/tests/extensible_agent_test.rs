@@ -31,7 +31,7 @@ async fn test_agent_creation_and_metadata() -> Result<()> {
     // Properly initialize with registry
     let registry = get_registry().await;
     let tool_sessions = get_tools_session_store();
-    let local_agent_store = Arc::new(crate::store::InMemoryAgentStore::new());
+    let local_agent_store = Arc::new(crate::stores::InMemoryAgentStore::new());
 
     let mock_executor = std::sync::Arc::new(crate::agent::AgentExecutor::new(
         registry,
@@ -231,7 +231,7 @@ async fn test_standard_agent_hook_mechanism() -> Result<()> {
     // Properly initialize with registry
     let registry = get_registry().await;
     let tool_sessions = get_tools_session_store();
-    let local_agent_store = Arc::new(crate::store::InMemoryAgentStore::new());
+    let local_agent_store = Arc::new(crate::stores::InMemoryAgentStore::new());
 
     let mock_executor = std::sync::Arc::new(crate::agent::AgentExecutor::new(
         registry,
@@ -310,7 +310,7 @@ async fn test_filtering_agent_content_filtering() -> Result<()> {
     // Properly initialize with registry
     let registry = get_registry().await;
     let tool_sessions = get_tools_session_store();
-    let local_agent_store = Arc::new(crate::store::InMemoryAgentStore::new());
+    let local_agent_store = Arc::new(crate::stores::InMemoryAgentStore::new());
 
     let mock_executor = std::sync::Arc::new(crate::agent::AgentExecutor::new(
         registry,

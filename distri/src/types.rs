@@ -449,7 +449,7 @@ pub enum EntityStoreType {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum SessionStoreType {
-    Memory,
+    InMemory,
     Redis,
     File { path: String },
 }

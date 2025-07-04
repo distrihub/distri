@@ -2,11 +2,10 @@ use crate::{
     agent::{BaseAgent, StandardAgent},
     error::AgentError,
     servers::registry::{register_mcp_servers, McpServerRegistry, ServerMetadata},
-    store::{
-        AgentStore, HashMapThreadStore, LocalSessionStore, SessionStore, ThreadStore,
-        ToolSessionStore,
+    stores::{
+        AgentStore, HashMapTaskStore, HashMapThreadStore, LocalSessionStore, SessionStore,
+        ThreadStore, ToolSessionStore,
     },
-    stores::HashMapTaskStore,
     tools::{execute_tool, get_tools},
     types::{
         Configuration, CreateThreadRequest, Thread, ThreadSummary, ToolCall, UpdateThreadRequest,

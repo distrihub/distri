@@ -6,11 +6,8 @@ use uuid::Uuid;
 use crate::{
     agent::ExecutorContext,
     memory::{LocalAgentMemory, MemoryStep},
-    store::{
-        AgentStore, MemoryStore, SessionMemory, SessionStore, TaskStore, ThreadStore,
-        ToolSessionStore,
-    },
     types::{CreateThreadRequest, McpSession, Thread, ThreadSummary, UpdateThreadRequest},
+    AgentStore, MemoryStore, SessionMemory, SessionStore, TaskStore, ThreadStore, ToolSessionStore,
 };
 use distri_a2a::{EventKind, Message as A2aMessage, Task, TaskState, TaskStatus};
 

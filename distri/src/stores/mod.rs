@@ -1,13 +1,13 @@
+mod file;
 pub mod memory;
 pub mod redis;
+mod types;
 
 use crate::types::{EntityStoreType, SessionStoreType, StoreConfig};
 use std::sync::Arc;
 // Re-export the main store traits and types
-pub use crate::store::{
-    AgentStore, MemoryStore, SessionMemory, SessionStore, TaskStore, ThreadStore, ToolSessionStore,
-};
-
+pub use file::*;
+pub use types::*;
 // Re-export memory implementations
 pub use memory::*;
 
@@ -28,7 +28,7 @@ impl StoreConfig {
     /// Initialize all stores based on configuration
     pub async fn initialize(&self) -> anyhow::Result<InitializedStores> {
         let entity_type = self.entity.as_ref().unwrap_or(&EntityStoreType::Memory);
-        let session_type = self.session.as_ref().unwrap_or(&SessionStoreType::Memory);
+        let session_type = self.session.as_ref().unwrap_or(&SessionStoreType::InMemory);
 
         // Initialize entity stores (agents, tasks, threads)
         let (agent_store, task_store, thread_store) = match entity_type {
@@ -64,7 +64,7 @@ impl StoreConfig {
 
         // Initialize session stores (conversation sessions, tool sessions)
         let (session_store, tool_session_store) = match session_type {
-            SessionStoreType::Memory => {
+            SessionStoreType::InMemory => {
                 let session_store =
                     Arc::new(Box::new(LocalSessionStore::new()) as Box<dyn SessionStore>);
                 let tool_session_store = Some(Arc::new(Box::new(InMemorySessionStore::new(
@@ -74,7 +74,7 @@ impl StoreConfig {
                 (session_store, tool_session_store)
             }
             SessionStoreType::File { path } => {
-                let file_store = crate::store::FileSessionStore::new(path.clone());
+                let file_store = FileSessionStore::new(path.clone());
                 let session_store = Arc::new(Box::new(file_store) as Box<dyn SessionStore>);
                 let tool_session_store = Some(Arc::new(Box::new(InMemorySessionStore::new(
                     std::collections::HashMap::new(),

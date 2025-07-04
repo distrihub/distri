@@ -1,7 +1,7 @@
 use actix_web::{test, web, App};
 use distri::{
     agent::{AgentExecutor, AgentExecutorBuilder},
-    store::InMemoryAgentStore,
+    stores::InMemoryAgentStore,
     types::{AgentDefinition, ModelSettings, ServerConfig},
     HashMapTaskStore,
 };

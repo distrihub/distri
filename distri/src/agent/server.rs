@@ -113,7 +113,7 @@ mod tests {
 
     use crate::{
         agent::{AgentExecutor, ExecutorContext},
-        store::{InMemoryAgentStore, LocalSessionStore, SessionStore},
+        stores::{InMemoryAgentStore, LocalSessionStore, SessionStore},
         tests::utils::{get_registry, get_tools_session_store},
     };
 

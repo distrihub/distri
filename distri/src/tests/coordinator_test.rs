@@ -6,7 +6,7 @@ use crate::{
     agent::{AgentEvent, AgentExecutor, ExecutorContext, DISTRI_LOCAL_SERVER},
     init_logging,
     memory::TaskStep,
-    store::InMemoryAgentStore,
+    stores::InMemoryAgentStore,
     tests::utils::{get_registry, get_search_tool, register_coordinator},
     types::{AgentDefinition, McpDefinition, ModelSettings, ToolSelector, ToolsFilter},
 };
