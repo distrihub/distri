@@ -9,7 +9,7 @@ use crate::{
     types::{CreateThreadRequest, McpSession, Thread, ThreadSummary, UpdateThreadRequest},
     AgentStore, MemoryStore, SessionMemory, SessionStore, TaskStore, ThreadStore, ToolSessionStore,
 };
-use distri_a2a::{EventKind, Message as A2aMessage, Task, TaskState, TaskStatus};
+use distri_a2a::{Artifact, EventKind, Message as A2aMessage, Task, TaskState, TaskStatus};
 
 // Example in-memory implementation
 #[derive(Default)]
@@ -255,6 +255,13 @@ impl TaskStore for HashMapTaskStore {
         Ok(())
     }
 
+    async fn add_artifact_to_task(&self, task_id: &str, artifact: Artifact) -> anyhow::Result<()> {
+        let mut tasks = self.tasks.write().await;
+        if let Some(task) = tasks.get_mut(task_id) {
+            task.artifacts.push(artifact);
+        }
+        Ok(())
+    }
     async fn list_tasks(&self, context_id: Option<&str>) -> anyhow::Result<Vec<Task>> {
         let tasks = self.tasks.read().await;
         let result = if let Some(context_id) = context_id {

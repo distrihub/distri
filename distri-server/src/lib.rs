@@ -6,10 +6,10 @@ use distri::{
 };
 use std::sync::Arc;
 
+pub mod agent_server;
+pub mod handlers;
 pub mod routes;
 pub mod server;
-
-pub mod agent_server;
 
 #[cfg(test)]
 mod tests {
