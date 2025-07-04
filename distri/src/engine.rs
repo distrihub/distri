@@ -1,5 +1,5 @@
 use crate::{
-    agent::{AgentExecutor},
+    agent::AgentExecutor,
     types::{AgentDefinition, Configuration},
 };
 use anyhow::Result;
@@ -12,10 +12,7 @@ pub struct DistriEngine {
 
 impl DistriEngine {
     pub fn new(executor: Arc<AgentExecutor>, config: Arc<Configuration>) -> Self {
-        Self {
-            executor,
-            config,
-        }
+        Self { executor, config }
     }
 
     pub async fn list_agents(&self) -> Result<Vec<AgentDefinition>> {

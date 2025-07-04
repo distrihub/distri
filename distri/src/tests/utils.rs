@@ -4,10 +4,10 @@ use tokio::sync::RwLock;
 
 use crate::{
     agent::{AgentExecutor, ExecutorContext, DISTRI_LOCAL_SERVER},
-    servers::registry::{ServerMetadata, ServerRegistry, ServerTrait},
+    servers::registry::{McpServerRegistry, ServerMetadata, ServerTrait},
     tests::tools::build_mock_search_tool,
-    types::{PlanConfig, TransportType},
-    AgentDefinition, McpDefinition, McpSession, ModelSettings, ToolSessionStore,
+    types::TransportType,
+    McpDefinition, McpSession, ToolSessionStore,
 };
 
 pub fn get_tools_session_store() -> Option<Arc<Box<dyn ToolSessionStore>>> {
@@ -48,8 +48,8 @@ pub fn get_search_tool() -> McpDefinition {
     }
 }
 
-pub async fn get_registry() -> Arc<RwLock<ServerRegistry>> {
-    let mut server_registry = ServerRegistry::new();
+pub async fn get_registry() -> Arc<RwLock<McpServerRegistry>> {
+    let mut server_registry = McpServerRegistry::new();
 
     server_registry.register(
         "mock_search".to_string(),
@@ -69,11 +69,10 @@ pub async fn get_registry() -> Arc<RwLock<ServerRegistry>> {
 }
 
 pub async fn register_coordinator(
-    registry: Arc<RwLock<ServerRegistry>>,
+    registry: Arc<RwLock<McpServerRegistry>>,
     coordinator: Arc<AgentExecutor>,
 ) {
     let mut registry = registry.write().await;
-    let context = Arc::new(ExecutorContext::default());
     registry.register(
         DISTRI_LOCAL_SERVER.to_string(),
         ServerMetadata {
@@ -82,56 +81,10 @@ pub async fn register_coordinator(
             kg_memory: None,
             builder: Some(Arc::new(move |_, transport| {
                 let coordinator = coordinator.clone();
-                let context = context.clone();
-                let server = crate::agent::build_server(transport, coordinator, context)?;
+                let server = crate::agent::build_server(transport, coordinator)?;
                 Ok(Box::new(server) as Box<dyn ServerTrait>)
             })),
             memories: HashMap::new(),
         },
     );
-}
-
-pub static SYSTEM_PROMPT: &str = r#"You are a helpful AI assistant that can access the web and summarize information.
-When asked about information, you will:
-1. Get the information using the search tool
-2. Format the information in a clean markdown format
-3. Add brief summaries and insights
-4. Group similar information together by theme
-5. Highlight particularly interesting or important information
-6. You dont need to login; Session is already available. 
-
-Keep your summaries concise but informative. Use markdown formatting to make the output readable."#;
-
-pub fn get_search_summarizer(
-    planning_interval: Option<i32>,
-    max_iterations: Option<u32>,
-    max_tokens: Option<u32>,
-) -> AgentDefinition {
-    // Create agent definition with Twitter tool
-
-    AgentDefinition {
-        name: "Search Agent".to_string(),
-        description: "Agent that can make mock web searches".to_string(),
-        system_prompt: Some(SYSTEM_PROMPT.to_string()),
-        model_settings: ModelSettings {
-            max_iterations: max_iterations.unwrap_or(10),
-            max_tokens: max_tokens.unwrap_or(1000),
-            model: "openai/gpt-4.1".to_string(),
-            ..Default::default()
-        },
-        mcp_servers: vec![get_search_tool()],
-        parameters: Default::default(),
-        response_format: None,
-        history_size: None,
-        plan: planning_interval.map(|i| PlanConfig {
-            interval: i,
-            max_iterations: Some(max_iterations.unwrap_or(10) as i32),
-            model_settings: ModelSettings {
-                model: "openai/gpt-4.1-mini".to_string(),
-                ..Default::default()
-            },
-        }),
-        icon_url: None,
-        ..Default::default()
-    }
 }

@@ -3,19 +3,16 @@ use distri::memory::TaskStep;
 use std::sync::Arc;
 use tracing::{error, info};
 
-use distri::AgentDefinition;
-
-pub async fn run(agent: &AgentDefinition, coordinator: Arc<AgentExecutor>) -> anyhow::Result<()> {
-    let agent_name = &agent.name;
-
+pub async fn run(
+    agent_name: &str,
+    executor: Arc<AgentExecutor>,
+    task: TaskStep,
+) -> anyhow::Result<()> {
     info!("Executing agent run");
-    match coordinator
+    match executor
         .execute(
             agent_name,
-            TaskStep {
-                task: "Run this workflow".to_string(),
-                task_images: None,
-            },
+            task,
             None,
             Arc::default(), // No thread context for event execution
             None,

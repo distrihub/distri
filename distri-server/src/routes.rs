@@ -2,18 +2,17 @@ use actix_web::Either;
 use actix_web::{web, HttpResponse};
 use actix_web_lab::sse::{self, Sse};
 use distri::agent::{AgentEvent, AgentExecutor};
-use distri::store::AgentStore;
 use distri::types::{ServerConfig, UpdateThreadRequest};
 use distri::{memory::TaskStep, TaskStore};
 use distri_a2a::{
     AgentCard, EventKind, JsonRpcError, JsonRpcRequest, JsonRpcResponse, Message as A2aMessage,
-    MessageSendParams, Part, Role, TaskIdParams, TaskState, TaskStatus, TaskStatusBroadcastEvent,
-    TaskStatusUpdateEvent, TextPart,
+    MessageSendParams, Part, Role, TaskIdParams, TaskState, TaskStatus, TaskStatusUpdateEvent,
+    TextPart,
 };
 use serde::Deserialize;
 use serde_json::json;
 use std::sync::Arc;
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::mpsc;
 use uuid::Uuid;
 
 // A2A specification
@@ -26,6 +25,10 @@ pub fn config(cfg: &mut web::ServiceConfig) {
                 web::resource("/agents/{id}")
                     .route(web::get().to(get_agent_card))
                     .route(web::post().to(jsonrpc_handler)),
+            )
+            .service(
+                web::resource("/agents/{agent_name}/.well-known/agent.json")
+                    .route(web::get().to(get_agent_json)),
             )
             .service(web::resource("/tasks/{id}").route(web::get().to(get_task)))
             .service(web::resource("/tasks").route(web::get().to(list_tasks)))
@@ -45,17 +48,19 @@ pub fn config(cfg: &mut web::ServiceConfig) {
 }
 
 async fn list_agents(
-    agent_store: web::Data<Arc<dyn AgentStore>>,
+    executor: web::Data<Arc<AgentExecutor>>,
     server_config: web::Data<ServerConfig>,
+    req: actix_web::HttpRequest,
 ) -> HttpResponse {
-    let (agents, _) = agent_store.list(None, None).await;
+    let base_url = get_base_url(&req);
+    let (agents, _) = executor.agent_store.list(None, None).await;
     let agent_cards: Vec<AgentCard> = agents
         .iter()
         .map(|agent| {
             distri::a2a::agent_def_to_card(
                 &agent.get_definition(),
                 server_config.get_ref().clone(),
-                "http://127.0.0.1:8080",
+                &base_url,
             )
         })
         .collect();
@@ -64,31 +69,53 @@ async fn list_agents(
 
 async fn get_agent_card(
     id: web::Path<String>,
-    agent_store: web::Data<Arc<dyn AgentStore>>,
+    executor: web::Data<Arc<AgentExecutor>>,
     server_config: web::Data<ServerConfig>,
+    req: actix_web::HttpRequest,
 ) -> HttpResponse {
     let agent_id = id.into_inner();
+    let base_url = get_base_url(&req);
 
-    let agent = agent_store.get(&agent_id).await;
+    let agent = executor.agent_store.get(&agent_id).await;
     match agent {
         Some(agent) => {
             let card = distri::a2a::agent_def_to_card(
                 &agent.get_definition(),
                 server_config.get_ref().clone(),
-                "http://127.0.0.1:8080",
+                &base_url,
             );
             HttpResponse::Ok().json(card)
         }
         None => HttpResponse::NotFound().finish(),
     }
 }
-async fn get_task(
-    id: web::Path<String>,
-    task_store: web::Data<Arc<dyn TaskStore>>,
+
+async fn get_agent_json(
+    agent_name: web::Path<String>,
+    executor: web::Data<Arc<AgentExecutor>>,
+    server_config: web::Data<ServerConfig>,
+    req: actix_web::HttpRequest,
 ) -> HttpResponse {
+    let agent_name = agent_name.into_inner();
+    let base_url = get_base_url(&req);
+
+    let agent = executor.agent_store.get(&agent_name).await;
+    match agent {
+        Some(agent) => {
+            let card = distri::a2a::agent_def_to_card(
+                &agent.get_definition(),
+                server_config.get_ref().clone(),
+                &base_url,
+            );
+            HttpResponse::Ok().json(card)
+        }
+        None => HttpResponse::NotFound().finish(),
+    }
+}
+async fn get_task(id: web::Path<String>, executor: web::Data<Arc<AgentExecutor>>) -> HttpResponse {
     let task_id = id.into_inner();
 
-    match task_store.get_task(&task_id).await {
+    match executor.task_store.get_task(&task_id).await {
         Ok(Some(task)) => HttpResponse::Ok().json(task),
         Ok(None) => HttpResponse::NotFound().json(json!({
             "error": "Task not found"
@@ -386,24 +413,22 @@ async fn handle_message_send_streaming_sse(
 async fn jsonrpc_handler(
     id: web::Path<String>,
     req: web::Json<JsonRpcRequest>,
-    coordinator: web::Data<Arc<AgentExecutor>>,
-    task_store: web::Data<Arc<dyn TaskStore>>,
-    event_broadcaster: web::Data<broadcast::Sender<String>>,
+    executor: web::Data<Arc<AgentExecutor>>,
 ) -> Either<
     Sse<impl futures_util::stream::Stream<Item = Result<sse::Event, std::convert::Infallible>>>,
     HttpResponse,
 > {
     let agent_id = id.into_inner();
     let req = req.into_inner();
-    let coordinator = coordinator.get_ref();
-    let task_store = task_store.get_ref();
+    let executor = executor.get_ref();
+    let task_store = &executor.task_store.clone();
 
     if req.method == "message/stream" {
         return Either::Left(
             handle_message_send_streaming_sse(
                 agent_id,
                 req.params,
-                coordinator.clone(),
+                executor.clone(),
                 task_store.clone(),
                 req.id.clone(),
             )
@@ -413,16 +438,7 @@ async fn jsonrpc_handler(
 
     // Otherwise, handle as before
     let result = match req.method.as_str() {
-        "message/send" => {
-            handle_message_send(
-                agent_id,
-                req.params,
-                coordinator,
-                task_store,
-                event_broadcaster.get_ref(),
-            )
-            .await
-        }
+        "message/send" => handle_message_send(agent_id, req.params, executor, task_store).await,
         "tasks/get" => handle_task_get(agent_id, req.params, task_store).await,
         "tasks/cancel" => handle_task_cancel(agent_id, req.params, task_store).await,
         _ => Err(JsonRpcError {
@@ -456,7 +472,6 @@ async fn handle_message_send(
     params: serde_json::Value,
     coordinator: &Arc<AgentExecutor>,
     task_store: &Arc<dyn TaskStore>,
-    event_broadcaster: &broadcast::Sender<String>,
 ) -> Result<serde_json::Value, JsonRpcError> {
     let params: MessageSendParams = serde_json::from_value(params).map_err(|e| JsonRpcError {
         code: -32602,
@@ -516,16 +531,6 @@ async fn handle_message_send(
             data: None,
         })?;
 
-    // Send event with thread context
-    let broadcast_event = TaskStatusBroadcastEvent {
-        r#type: "task_status_changed".to_string(),
-        task_id: task.id.clone(),
-        thread_id: thread_id.clone(),
-        agent_id: agent_id.clone(),
-        status: "working".to_string(),
-    };
-    let _ = event_broadcaster.send(serde_json::to_string(&broadcast_event).unwrap());
-
     // Execute the task using the coordinator with thread context
     let coordinator_context = Arc::new(distri::agent::ExecutorContext::new(
         thread_id.clone(),
@@ -543,8 +548,6 @@ async fn handle_message_send(
             None,
         )
         .await;
-
-    let mut broadcast_status = "completed";
     let final_status = match execution_result {
         Ok(response) => {
             // Create response message
@@ -573,14 +576,11 @@ async fn handle_message_send(
                 timestamp: Some(chrono::Utc::now().to_rfc3339()),
             }
         }
-        Err(_) => {
-            broadcast_status = "failed";
-            TaskStatus {
-                state: TaskState::Failed,
-                message: None,
-                timestamp: Some(chrono::Utc::now().to_rfc3339()),
-            }
-        }
+        Err(_) => TaskStatus {
+            state: TaskState::Failed,
+            message: None,
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+        },
     };
 
     // Update final task status
@@ -592,17 +592,6 @@ async fn handle_message_send(
             message: format!("Failed to update final task status: {}", e),
             data: None,
         })?;
-
-    // Send completion event with thread context
-    let completion_event = TaskStatusBroadcastEvent {
-        r#type: "task_status_changed".to_string(),
-        task_id: task.id.clone(),
-        thread_id: thread_id.clone(),
-        agent_id: agent_id.clone(),
-        status: broadcast_status.to_string(),
-    };
-    let _ = event_broadcaster.send(serde_json::to_string(&completion_event).unwrap());
-
     // Get updated task
     let updated_task = task_store
         .get_task(&task.id)
@@ -766,9 +755,13 @@ struct ListTasksQuery {
 
 async fn list_tasks(
     query: web::Query<ListTasksQuery>,
-    task_store: web::Data<Arc<dyn TaskStore>>,
+    executor: web::Data<Arc<AgentExecutor>>,
 ) -> HttpResponse {
-    match task_store.list_tasks(query.thread_id.as_deref()).await {
+    match executor
+        .task_store
+        .list_tasks(query.thread_id.as_deref())
+        .await
+    {
         Ok(mut tasks) => {
             // Apply pagination
             let offset = query.offset.unwrap_or(0) as usize;
@@ -798,11 +791,11 @@ async fn list_tasks(
 // Thread messages endpoint
 async fn get_thread_messages(
     path: web::Path<String>,
-    task_store: web::Data<Arc<dyn TaskStore>>,
+    executor: web::Data<Arc<AgentExecutor>>,
 ) -> HttpResponse {
     let thread_id = path.into_inner();
 
-    match task_store.list_tasks(Some(&thread_id)).await {
+    match executor.task_store.list_tasks(Some(&thread_id)).await {
         Ok(tasks) => {
             // Filter tasks by thread context and extract messages from history
             let thread_tasks: Vec<_> = tasks
@@ -842,4 +835,12 @@ async fn get_thread_messages(
             "error": format!("Failed to get thread messages: {}", e)
         })),
     }
+}
+
+// Helper function to extract base URL from request
+fn get_base_url(req: &actix_web::HttpRequest) -> String {
+    let connection_info = req.connection_info();
+    let scheme = connection_info.scheme();
+    let host = connection_info.host();
+    format!("{}://{}", scheme, host)
 }

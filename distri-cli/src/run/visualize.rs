@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use distri::store::AgentStore;
+use distri::stores::AgentStore;
 
 pub async fn _visualize_agents(agent_store: Arc<dyn AgentStore>) -> anyhow::Result<()> {
     let (agents, _) = agent_store.list(None, None).await;

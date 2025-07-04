@@ -3,6 +3,10 @@ name = "distri-server"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = []
+reusable = []
+
 [dependencies]
 actix-web = "4.4"
 actix-web-lab = "0.22"
@@ -20,7 +24,9 @@ uuid = { version = "1.13", features = ["v4"] }
 
 env_logger = "0.11"
 
-tracing = { workspace = true }
+tracing = "0.1"
+tracing-subscriber = "0.3"
 distri = { path = "../distri" }
 distri-a2a = { path = "../distri-a2a" }
+
 schemars = "0.8.21"

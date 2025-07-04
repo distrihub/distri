@@ -1,6 +1,5 @@
 use distri::agent::AgentExecutor;
 use distri::memory::TaskStep;
-use distri::types::AgentConfig;
 use rustyline::DefaultEditor;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -8,13 +7,7 @@ use tracing::info;
 
 use distri::types::{Message, MessageContent, MessageRole};
 
-pub async fn run(
-    agent_config: &AgentConfig,
-    coordinator: Arc<AgentExecutor>,
-) -> anyhow::Result<()> {
-    let agent = &agent_config.definition;
-    let agent_name = &agent.name;
-
+pub async fn run(agent_name: &str, executor: Arc<AgentExecutor>) -> anyhow::Result<()> {
     // Create readline editor with history
     let mut rl = DefaultEditor::new()?;
 
@@ -69,7 +62,7 @@ pub async fn run(
         };
 
         info!("{agent_name}: {user_message:?}");
-        match coordinator
+        match executor
             .execute(
                 agent_name,
                 TaskStep {
@@ -87,7 +80,7 @@ pub async fn run(
             }
             Err(e) => eprintln!("Error from agent: {}", e),
         }
-        coordinator
+        executor
             .context
             .update_run_id(uuid::Uuid::new_v4().to_string())
             .await;

@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::Parser;
 use distri_cli::{load_config, load_config_from_str, run_agent, EmbeddedCli};
-use twitter_bot::{get_agent_server, init_agent_executor};
+use distri_search::{get_server, init_agent_executor};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -22,7 +22,7 @@ async fn main() -> Result<()> {
     };
 
     let executor = init_agent_executor(&config).await?;
-    let server = get_agent_server();
+    let server = get_server();
     run_agent(executor, server, cli.command, &config).await?;
     Ok(())
 }

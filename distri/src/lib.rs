@@ -7,16 +7,15 @@ pub mod llm;
 pub mod logging;
 pub mod memory;
 pub mod servers;
-pub mod store;
 pub mod stores;
 pub mod tools;
 pub mod types;
 pub use error::AgentError;
-pub use store::{
+pub use stores::*;
+pub use stores::{
     FileMemoryStore, FileSessionStore, HashMapTaskStore, InMemorySessionStore, LocalMemoryStore,
     LocalSessionStore, MemoryStore, SessionMemory, SessionStore, TaskStore, ToolSessionStore,
 };
-pub use stores::*;
 pub use types::{AgentDefinition, McpDefinition, McpSession, ModelSettings};
 
 #[cfg(test)]

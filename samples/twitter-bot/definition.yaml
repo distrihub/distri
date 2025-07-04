@@ -1,5 +1,5 @@
 agents:
-  - name: "twitter_bot"
+  - name: "twitter-bot"
     description: "An intelligent research agent that combines web search and scraping for comprehensive answers"
     system_prompt: |
       You are a helpful AI assistant that can access Twitter and summarize information.

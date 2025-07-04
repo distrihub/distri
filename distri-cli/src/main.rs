@@ -1,26 +1,20 @@
-mod cli;
-mod run;
 use anyhow::Result;
 use clap::Parser;
-use cli::{Cli, Commands};
+use distri_cli::{list_agents, run, Cli, Commands};
 mod logging;
 use distri::{
-    agent::{AgentExecutor, ExecutorContext},
-    memory::MemoryConfig,
-    servers::{
-        kg::FileMemory,
-        registry::{init_registry_and_coordinator, ServerRegistry},
-    },
-    store::InMemoryAgentStore,
+    agent::{AgentExecutor, AgentExecutorBuilder},
+    servers::kg::FileMemory,
     types::{get_distri_config_schema, Configuration},
 };
+use distri_cli::run::session::get_session_store;
+use distri_cli::{register_agents, run_agent_cli};
 use distri_server::A2AServer;
 use dotenv::dotenv;
 use logging::init_logging;
 use mcp_proxy::McpProxy;
-use run::{chat, event, session::get_session_store};
-use std::{collections::HashMap, env, sync::Arc};
-use tokio::sync::{Mutex, RwLock};
+use std::{env, sync::Arc};
+use tokio::sync::Mutex;
 use tracing::debug;
 
 fn load_config(config_path: &str) -> Result<Configuration> {
@@ -89,68 +83,35 @@ async fn main() -> Result<()> {
         Commands::List => {
             debug!("Available agents:");
             let config = load_config(cli.config.to_str().unwrap())?;
-            let (_, coordinator) = init_all(&config).await?;
-            let agent_store = coordinator.agent_store.clone();
-            for agent in &config.agents {
-                coordinator
-                    .register_default_agent(agent.definition.clone())
-                    .await?;
-            }
-            let coordinator_clone = coordinator.clone();
-            let coordinator_handle = tokio::spawn(async move {
-                coordinator_clone.run().await.unwrap();
-            });
+            let executor = init_all(&config).await?;
 
-            run::list::list(agent_store).await?;
-            coordinator_handle.abort();
+            list_agents(executor, &config).await?;
         }
         Commands::ListTools => {
             debug!("Available tools:");
             let config = load_config(cli.config.to_str().unwrap())?;
-            let (registry, _) = init_all(&config).await?;
+            let executor = init_all(&config).await?;
 
-            run::list::list_tools(registry.clone()).await?;
+            run::list::list_tools(executor.clone()).await?;
         }
         Commands::ConfigSchema { pretty } => print_schema(pretty),
-        Commands::Run { agent, background } => {
+        Commands::Run {
+            agent,
+            background,
+            task,
+        } => {
             let config = load_config(cli.config.to_str().unwrap())?;
-            let (_, coordinator) = init_all(&config).await?;
-            let coordinator_clone = coordinator.clone();
+            let executor = init_all(&config).await?;
 
-            debug!("Running agent: {:?}", agent);
-            let agent_config = config
-                .agents
-                .iter()
-                .find(|a| a.definition.name == agent)
-                .unwrap_or_else(|| panic!("Agent not found {agent}"));
-
-            for agent in &config.agents {
-                coordinator
-                    .register_default_agent(agent.definition.clone())
-                    .await?;
-            }
-
-            let coordinator_handle = tokio::spawn(async move {
-                coordinator_clone.run().await.unwrap();
-            });
-
-            if background {
-                event::run(&agent_config.definition, coordinator).await?;
-            } else {
-                chat::run(agent_config, coordinator).await?;
-            }
-            coordinator_handle.abort();
+            run_agent_cli(executor, agent, &config, task, background).await?;
         }
         Commands::Serve { host, port } => {
             let config = load_config(cli.config.to_str().unwrap())?;
-            let (_, coordinator) = init_all(&config).await?;
+            let executor = init_all(&config).await?;
 
-            for agent in &config.agents {
-                coordinator
-                    .register_default_agent(agent.definition.clone())
-                    .await?;
-            }
-            let server = A2AServer::new(coordinator);
+            register_agents(executor.clone(), &config).await?;
+
+            let server = A2AServer::new(executor);
             tracing::info!("Starting server at http://{}:{}", host, port);
             server
                 .start(&host, port, config.server.unwrap_or_default())
@@ -188,26 +149,12 @@ fn print_schema(pretty: bool) {
     println!("{schemas}");
 }
 
-async fn init_all(
-    config: &Configuration,
-) -> Result<(Arc<RwLock<ServerRegistry>>, Arc<AgentExecutor>)> {
-    let sessions = config.sessions.clone();
+async fn init_all(config: &Configuration) -> Result<Arc<AgentExecutor>> {
+    let executor = AgentExecutorBuilder::new()
+        .initialize_stores_from_config(config.stores.as_ref())
+        .await?;
 
-    let local_memories = HashMap::new();
-    let tool_sessions = get_session_store(sessions);
-
-    let memory_config = MemoryConfig::File(".distri/memory".to_string());
-    let context = Arc::new(ExecutorContext::default());
-    let agent_store = Arc::new(InMemoryAgentStore::new());
-    let (registry, coordinator) = init_registry_and_coordinator(
-        local_memories,
-        tool_sessions.clone(),
-        agent_store.clone(),
-        &config.mcp_servers,
-        context,
-        memory_config,
-    )
-    .await;
-
-    Ok((registry, coordinator))
+    let executor = executor.with_tool_sessions(get_session_store(config.sessions.clone()));
+    let executor = Arc::new(executor.build()?);
+    Ok(executor)
 }

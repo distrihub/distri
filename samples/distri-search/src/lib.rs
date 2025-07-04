@@ -1,43 +1,33 @@
-use anyhow::Result;
 use distri::{
-    agent::{AgentExecutor, ExecutorContext, DISTRI_LOCAL_SERVER},
-    servers::registry::{ServerMetadata, ServerRegistry, ServerTrait},
-    store::{AgentStore, InMemoryAgentStore},
+    agent::{AgentExecutor, AgentExecutorBuilder},
+    servers::registry::{register_mcp_servers, McpServerRegistry, ServerMetadata, ServerTrait},
     types::{Configuration, TransportType},
 };
-use dotenv::dotenv;
+use distri_server::agent_server::DistriAgentServer;
+
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
 
-pub fn load_config() -> Result<Configuration> {
-    // Load .env file if it exists
-    dotenv().ok();
-
-    // Read the config file
-    let config_str = include_str!("../definition.yaml");
-
-    // Parse the YAML
-    let config: Configuration = serde_yaml::from_str(&config_str)?;
-    Ok(config)
+pub fn get_server() -> DistriAgentServer {
+    DistriAgentServer {
+        service_name: "distri-search-server".to_string(),
+        description: "AI-powered search service using Tavily and Spider".to_string(),
+        capabilities: vec![
+            "web_search".to_string(),
+            "web_scraping".to_string(),
+            "deep_research".to_string(),
+            "agent_execution".to_string(),
+            "task_management".to_string(),
+        ],
+    }
 }
 
-pub async fn init_registry_and_coordinator(
-    agent_store: Arc<dyn AgentStore>,
-    context: Arc<ExecutorContext>,
-) -> (Arc<RwLock<ServerRegistry>>, Arc<AgentExecutor>) {
-    let server_registry = Arc::new(RwLock::new(ServerRegistry::new()));
-    let reg_clone = server_registry.clone();
-    let mut registry = reg_clone.write().await;
+pub fn custom_mcp_servers() -> HashMap<String, ServerMetadata> {
+    let mut servers = HashMap::new();
 
-    let coordinator = Arc::new(AgentExecutor::new(
-        server_registry.clone(),
-        None,
-        None,
-        agent_store,
-        context.clone(),
-    ));
-
-    registry.register(
+    // Add search-specific MCP servers
+    // Add Tavily search server
+    servers.insert(
         "search".to_string(),
         ServerMetadata {
             auth_session_key: None,
@@ -50,7 +40,9 @@ pub async fn init_registry_and_coordinator(
             memories: HashMap::new(),
         },
     );
-    registry.register(
+
+    // Add Spider web scraping server
+    servers.insert(
         "scrape".to_string(),
         ServerMetadata {
             auth_session_key: None,
@@ -64,30 +56,25 @@ pub async fn init_registry_and_coordinator(
         },
     );
 
-    let coordinator_clone = coordinator.clone();
-    registry.register(
-        DISTRI_LOCAL_SERVER.to_string(),
-        ServerMetadata {
-            auth_session_key: None,
-            mcp_transport: TransportType::InMemory,
-            kg_memory: None,
-            builder: Some(Arc::new(move |_, transport| {
-                let coordinator = coordinator.clone();
-                let context = context.clone();
-                let server = distri::agent::build_server(transport, coordinator, context)?;
-                Ok(Box::new(server) as Box<dyn ServerTrait>)
-            })),
-            memories: HashMap::new(),
-        },
-    );
-
-    (server_registry, coordinator_clone)
+    servers
 }
 
-pub async fn init_infrastructure() -> Result<(Arc<RwLock<ServerRegistry>>, Arc<AgentExecutor>)> {
-    let context = Arc::new(ExecutorContext::default());
-    let agent_store = Arc::new(InMemoryAgentStore::new());
-    let (registry, coordinator) = init_registry_and_coordinator(agent_store.clone(), context).await;
+pub async fn init_agent_executor(config: &Configuration) -> anyhow::Result<Arc<AgentExecutor>> {
+    let registry = Arc::new(RwLock::new(McpServerRegistry::new()));
+    let executor = AgentExecutorBuilder::new()
+        .initialize_stores_from_config(config.stores.as_ref())
+        .await?
+        .with_registry(registry.clone());
 
-    Ok((registry, coordinator))
+    let executor = Arc::new(executor.build()?);
+
+    register_mcp_servers(registry, executor.clone(), custom_mcp_servers()).await?;
+
+    // Register agents from configuration
+    for agent_config in &config.agents {
+        executor
+            .register_default_agent(agent_config.definition.clone())
+            .await?;
+    }
+    Ok(executor)
 }

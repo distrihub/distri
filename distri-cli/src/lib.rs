@@ -1,67 +1,19 @@
 use anyhow::Result;
-use clap::{Parser, Subcommand};
-use distri::{
-    agent::AgentExecutor,
-    types::Configuration,
-};
+use distri::{agent::AgentExecutor, memory::TaskStep, types::Configuration};
+use distri_server::agent_server::{run_agent_server, DistriAgentServer};
 use dotenv::dotenv;
-use std::{env, sync::Arc};
+use std::{env, path::PathBuf, sync::Arc};
 use tracing::debug;
 
-/// CLI commands for Distri
-#[derive(Parser)]
-#[command(name = "distri")]
-#[command(about = "A distributed agent execution platform")]
-pub struct Cli {
-    #[command(subcommand)]
-    pub command: Commands,
-}
+mod cli;
+pub mod logging;
+pub mod run;
+use run::{chat, event};
 
-#[derive(Subcommand)]
-pub enum Commands {
-    /// Run an agent with a given task
-    Run {
-        /// Configuration file path
-        #[arg(short, long)]
-        config: String,
-        /// Agent name to run
-        #[arg(short, long)]
-        agent: String,
-        /// Task to execute
-        #[arg(short, long)]
-        task: String,
-        /// Run as server instead of CLI
-        #[arg(long)]
-        server: bool,
-        /// Server host (when running as server)
-        #[arg(long, default_value = "localhost")]
-        host: String,
-        /// Server port (when running as server)
-        #[arg(long, default_value = "8000")]
-        port: u16,
-    },
-    /// List available agents
-    List {
-        /// Configuration file path
-        #[arg(short, long)]
-        config: String,
-    },
-    /// Start the server
-    Serve {
-        /// Configuration file path
-        #[arg(short, long)]
-        config: String,
-        /// Server host
-        #[arg(long, default_value = "localhost")]
-        host: String,
-        /// Server port
-        #[arg(long, default_value = "8000")]
-        port: u16,
-    },
-}
+pub use cli::{Cli, Commands, EmbeddedCli, EmbeddedCommands};
 
 /// Load configuration from file path with environment variable substitution
-pub fn load_config(config_path: &str) -> Result<Configuration> {
+pub fn load_config(config_path: PathBuf) -> Result<Configuration> {
     // Load .env file if it exists
     dotenv().ok();
 
@@ -105,31 +57,123 @@ pub fn replace_env_vars(content: &str) -> String {
     result
 }
 
-/// Initialize AgentExecutor from configuration using builder pattern
-pub async fn initialize_executor(config: &Configuration) -> Result<Arc<AgentExecutor>> {
-    use distri::agent::AgentExecutorBuilder;
-    
-    let executor = AgentExecutorBuilder::new()
+/// Initialize AgentExecutor from configuration
+pub async fn init_all(
+    config: &Configuration,
+) -> Result<std::sync::Arc<distri::agent::AgentExecutor>> {
+    let executor = distri::agent::AgentExecutorBuilder::new()
         .initialize_stores_from_config(config.stores.as_ref())
-        .await?
-        .build()?;
-    
-    // Register agents from configuration
-    for agent_config in &config.agents {
-        executor.register_default_agent(agent_config.definition.clone()).await?;
+        .await?;
+
+    let executor = executor.with_tool_sessions(crate::run::session::get_session_store(
+        config.sessions.clone(),
+    ));
+    let executor = std::sync::Arc::new(executor.build()?);
+    Ok(executor)
+}
+
+/// Initialize KG memory for an agent
+pub async fn init_kg_memory(
+    agent: &str,
+) -> Result<std::sync::Arc<tokio::sync::Mutex<distri::servers::kg::FileMemory>>> {
+    let mut memory_path = std::path::PathBuf::from(".distri");
+    memory_path.push(format!("{agent}.memory"));
+    let memory = distri::servers::kg::FileMemory::new(memory_path).await?;
+    Ok(std::sync::Arc::new(tokio::sync::Mutex::new(memory)))
+}
+
+/// Run CLI with the given configuration
+pub async fn run_agent_cli(
+    executor: Arc<AgentExecutor>,
+    agent: Option<String>,
+    config: &Configuration,
+    task: Option<String>,
+    background: bool,
+) -> Result<()> {
+    debug!("Running agent: {:?}", agent);
+
+    register_agents(executor.clone(), config).await?;
+
+    let agent_name = get_agent_name(config, agent).await?;
+
+    let executor_clone = executor.clone();
+    let executor_handle = tokio::spawn(async move {
+        executor_clone.run().await.unwrap();
+    });
+
+    if background {
+        let task = task
+            .map(|t| TaskStep {
+                task: t,
+                task_images: None,
+            })
+            .unwrap_or_else(|| panic!("Task is needed for background mode"));
+        event::run(&agent_name, executor, task).await?;
+    } else {
+        chat::run(&agent_name, executor).await?;
     }
-    
-    Ok(Arc::new(executor))
+    executor_handle.abort();
+
+    Ok(())
 }
 
-/// Initialize AgentExecutor from config file path (recommended)
-pub async fn initialize_executor_from_file(config_path: &str) -> Result<Arc<AgentExecutor>> {
-    let config = load_config(config_path)?;
-    initialize_executor(&config).await
+pub async fn register_agents(executor: Arc<AgentExecutor>, config: &Configuration) -> Result<()> {
+    for agent in &config.agents {
+        executor
+            .register_default_agent(agent.definition.clone())
+            .await?;
+    }
+    Ok(())
 }
 
-/// Initialize AgentExecutor from config string (recommended)  
-pub async fn initialize_executor_from_str(config_str: &str) -> Result<Arc<AgentExecutor>> {
-    let config = load_config_from_str(config_str)?;
-    initialize_executor(&config).await
+pub async fn get_agent_name(config: &Configuration, agent_name: Option<String>) -> Result<String> {
+    let agent_name = match agent_name {
+        Some(name) => name,
+        None => config
+            .agents
+            .iter()
+            .map(|a| a.definition.name.clone())
+            .next()
+            .unwrap_or_else(|| panic!("No agents found")),
+    };
+    Ok(agent_name)
+}
+
+pub async fn run_agent(
+    executor: Arc<AgentExecutor>,
+    server: DistriAgentServer,
+    command: EmbeddedCommands,
+    config: &Configuration,
+) -> Result<()> {
+    // Parse CLI arguments
+
+    let executor_clone = executor.clone();
+    let executor_handle = tokio::spawn(async move { executor_clone.run().await.unwrap() });
+
+    match command {
+        EmbeddedCommands::Run {
+            agent,
+            task,
+            background,
+        } => run_agent_cli(executor, agent, config, task, background).await,
+        EmbeddedCommands::List => list_agents(executor, config).await,
+        EmbeddedCommands::Serve { host, port } => {
+            run_agent_server(server, executor, config, &host, port).await
+        }
+        _ => todo!(),
+    }?;
+
+    executor_handle.abort();
+    Ok(())
+}
+
+/// List available agents
+pub async fn list_agents(executor: Arc<AgentExecutor>, config: &Configuration) -> Result<()> {
+    tracing::info!("Available Agents:");
+
+    register_agents(executor.clone(), config).await?;
+
+    run::list::list(executor).await?;
+
+    Ok(())
 }
