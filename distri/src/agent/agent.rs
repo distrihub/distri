@@ -297,6 +297,7 @@ impl StandardAgent {
         messages: &[Message],
         params: &Option<serde_json::Value>,
         context: Arc<ExecutorContext>,
+        event_tx: Option<mpsc::Sender<AgentEvent>>,
     ) -> Result<StepResult, AgentError> {
         let agent_id = &self.definition.name;
 
@@ -319,6 +320,7 @@ impl StandardAgent {
                 response.tool_calls,
                 agent_id,
                 context.clone(),
+                event_tx.clone(),
             )
             .await?;
 
@@ -354,6 +356,7 @@ impl StandardAgent {
                 stream_result.tool_calls,
                 agent_id,
                 context.clone(),
+                Some(event_tx.clone()),
             )
             .await?;
 
@@ -563,7 +566,9 @@ impl StandardAgent {
                 let messages = self
                     .before_llm_step(&current_messages, &params, context.clone())
                     .await?;
-                let step_result = self.llm_step(&messages, &params, context.clone()).await?;
+                let step_result = self
+                    .llm_step(&messages, &params, context.clone(), event_tx.clone())
+                    .await?;
 
                 match step_result {
                     StepResult::Finish(content) => {
@@ -631,6 +636,7 @@ impl StandardAgent {
         tool_calls: Vec<ToolCall>,
         agent_id: &str,
         context: Arc<ExecutorContext>,
+        event_tx: Option<mpsc::Sender<AgentEvent>>,
     ) -> Result<StepResult, AgentError> {
         match finish_reason {
             async_openai::types::FinishReason::Stop => {
@@ -658,10 +664,17 @@ impl StandardAgent {
                         futures::future::join_all(tool_calls.iter().map(|mapped_tool_call| {
                             let executor = self.executor.clone();
                             let agent_id = agent_id.to_string();
+                            let context = context.clone();
+                            let event_tx = event_tx.clone();
                             async move {
                                 info!("Agent: Executing tool call: {:#?}", mapped_tool_call);
                                 let content = executor
-                                    .emit_tool_event(agent_id, mapped_tool_call.clone())
+                                    .emit_tool_event(
+                                        agent_id,
+                                        mapped_tool_call.clone(),
+                                        event_tx.clone(),
+                                        context.clone(),
+                                    )
                                     .await
                                     .unwrap_or_else(|err| format!("Error: {}", err));
                                 info!("Agent: Tool response: {}", content);

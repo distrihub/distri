@@ -234,6 +234,8 @@ impl AgentExecutor {
         &self,
         agent_id: String,
         tool_call: ToolCall,
+        event_tx: Option<mpsc::Sender<AgentEvent>>,
+        context: Arc<ExecutorContext>,
     ) -> Result<String, AgentError> {
         let (response_tx, response_rx) = oneshot::channel();
         self.coordinator_tx
@@ -241,6 +243,8 @@ impl AgentExecutor {
                 agent_id: agent_id.clone(),
                 tool_call,
                 response_tx,
+                event_tx,
+                context: context.clone(),
             })
             .await
             .map_err(|e| {
@@ -285,7 +289,6 @@ impl AgentExecutor {
             };
 
             tracing::info!("Executing tool call: {:#?}", tool_call);
-            tracing::info!("Session: {:#?}", std::env::var("X_USER_SESSION"));
             let res = tool.execute(tool_call, tool_context).await;
             match res {
                 Ok(content) => {
@@ -341,22 +344,48 @@ impl AgentExecutor {
                     agent_id,
                     tool_call,
                     response_tx,
+                    event_tx,
+                    context,
                 } => {
                     tracing::info!("Handling ExecuteTool for agent: {}", agent_id);
 
                     // Use the updated execute_tool method which handles built-in tools
                     let self_clone = self.clone();
-                    let context = self.context.clone();
                     tokio::spawn(async move {
+                        let context = context.clone();
+                        let context_clone = context.clone();
                         let result = self_clone
-                            .execute_tool(agent_id.clone(), tool_call, None, context)
+                            .execute_tool(
+                                agent_id.clone(),
+                                tool_call.clone(),
+                                event_tx.clone(),
+                                context.clone(),
+                            )
                             .await;
+                        let run_id = { context_clone.run_id.lock().await.clone() };
 
                         let response = match result {
                             Ok(content) => content,
                             Err(e) => format!("Error: {}", e),
                         };
 
+                        if let Some(event_tx) = event_tx {
+                            let _ = event_tx
+                                .send(crate::agent::AgentEvent::ToolCallResult {
+                                    thread_id: context.thread_id.clone(),
+                                    run_id: run_id.clone(),
+                                    tool_call_id: tool_call.tool_id.clone(),
+                                    result: response.clone(),
+                                    role: None,
+                                })
+                                .await
+                                .map_err(|e| {
+                                    AgentError::LLMError(format!(
+                                        "Failed to send ToolCallStart event: {}",
+                                        e
+                                    ))
+                                });
+                        }
                         let _ = response_tx.send(response);
                     });
                 }

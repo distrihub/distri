@@ -91,6 +91,8 @@ pub enum CoordinatorMessage {
         agent_id: String,
         tool_call: ToolCall,
         response_tx: oneshot::Sender<String>,
+        event_tx: Option<mpsc::Sender<AgentEvent>>,
+        context: Arc<ExecutorContext>,
     },
     Execute {
         agent_id: String,

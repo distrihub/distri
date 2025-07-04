@@ -253,6 +253,7 @@ pub async fn handle_message_send_streaming_sse(
                             extensions: vec![],
                             metadata: Some(serde_json::json!({
                                 "tool_call": true,
+                                "tool_name": tool_call_name,
                                 "event_type": "start",
                                 "tool_call_id": tool_call_id,
                                 "parent_message_id": parent_message_id,
