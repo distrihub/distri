@@ -4,7 +4,6 @@ use distri_cli::{list_agents, run, Cli, Commands};
 mod logging;
 use distri::{
     agent::{AgentExecutor, AgentExecutorBuilder},
-    servers::kg::FileMemory,
     types::{get_distri_config_schema, Configuration},
 };
 use distri_cli::run::session::get_session_store;
@@ -14,7 +13,6 @@ use dotenv::dotenv;
 use logging::init_logging;
 use mcp_proxy::McpProxy;
 use std::{env, sync::Arc};
-use tokio::sync::Mutex;
 use tracing::debug;
 
 fn load_config(config_path: &str) -> Result<Configuration> {
@@ -135,13 +133,6 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
-}
-
-pub async fn init_kg_memory(agent: &str) -> Result<Arc<Mutex<FileMemory>>> {
-    let mut memory_path = std::path::PathBuf::from(".distri");
-    memory_path.push(format!("{agent}.memory"));
-    let memory = FileMemory::new(memory_path).await?;
-    Ok(Arc::new(Mutex::new(memory)))
 }
 
 fn print_schema(pretty: bool) {

@@ -72,16 +72,6 @@ pub async fn init_all(
     Ok(executor)
 }
 
-/// Initialize KG memory for an agent
-pub async fn init_kg_memory(
-    agent: &str,
-) -> Result<std::sync::Arc<tokio::sync::Mutex<distri::servers::kg::FileMemory>>> {
-    let mut memory_path = std::path::PathBuf::from(".distri");
-    memory_path.push(format!("{agent}.memory"));
-    let memory = distri::servers::kg::FileMemory::new(memory_path).await?;
-    Ok(std::sync::Arc::new(tokio::sync::Mutex::new(memory)))
-}
-
 /// Run CLI with the given configuration
 pub async fn run_agent_cli(
     executor: Arc<AgentExecutor>,

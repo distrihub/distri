@@ -32,7 +32,6 @@ pub fn custom_mcp_servers() -> HashMap<String, ServerMetadata> {
         ServerMetadata {
             auth_session_key: None,
             mcp_transport: TransportType::InMemory,
-            kg_memory: None,
             builder: Some(Arc::new(|_, transport| {
                 let server = mcp_tavily::build(transport)?;
                 Ok(Box::new(server) as Box<dyn ServerTrait>)
@@ -47,7 +46,6 @@ pub fn custom_mcp_servers() -> HashMap<String, ServerMetadata> {
         ServerMetadata {
             auth_session_key: None,
             mcp_transport: TransportType::InMemory,
-            kg_memory: None,
             builder: Some(Arc::new(|_, transport| {
                 let server = mcp_spider::build(transport)?;
                 Ok(Box::new(server) as Box<dyn ServerTrait>)

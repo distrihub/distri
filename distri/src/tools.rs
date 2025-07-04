@@ -252,6 +252,7 @@ pub async fn execute_tool(
         .get(&tool_def.name)
         .cloned()
         .ok_or_else(|| anyhow::anyhow!("MCP Server: {} is not found", mcp_server))?;
+    tracing::info!("Tool Metadata: {:#?}", metadata);
     tracing::debug!("Using transport type: {:?}", metadata.mcp_transport);
 
     with_transport!(metadata, |transport| async move {
@@ -424,7 +425,7 @@ impl Tool for McpTool {
             &tool_call,
             &self.mcp_definition,
             context.registry,
-            None,
+            context.tool_sessions,
             context.context,
         )
         .await

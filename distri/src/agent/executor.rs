@@ -284,8 +284,19 @@ impl AgentExecutor {
                 registry,
             };
 
-            tracing::info!("Executing built-in tool: {}", tool_call.tool_name);
-            return tool.execute(tool_call, tool_context).await;
+            tracing::info!("Executing tool call: {:#?}", tool_call);
+            tracing::info!("Session: {:#?}", std::env::var("X_USER_SESSION"));
+            let res = tool.execute(tool_call, tool_context).await;
+            match res {
+                Ok(content) => {
+                    tracing::info!("Tool response: {}", content);
+                    return Ok(content);
+                }
+                Err(e) => {
+                    tracing::error!("Error executing tool: {}", e);
+                    return Err(e);
+                }
+            }
         }
         Err(AgentError::ToolNotFound(tool_call.tool_name))
     }

@@ -33,9 +33,8 @@ fn custom_mcp_servers() -> HashMap<String, ServerMetadata> {
     servers.insert(
         "twitter".to_string(),
         ServerMetadata {
-            auth_session_key: None,
+            auth_session_key: Some("session_string".to_string()),
             mcp_transport: TransportType::InMemory,
-            kg_memory: None,
             builder: Some(Arc::new(|_, transport| {
                 let server = mcp_twitter::build(transport)?;
                 Ok(Box::new(server) as Box<dyn ServerTrait>)

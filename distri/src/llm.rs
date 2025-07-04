@@ -20,7 +20,20 @@ use async_openai::{
 };
 use futures::{Stream, StreamExt};
 use serde_json::Value;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, RwLock};
+
+pub struct StreamResult {
+    pub finish_reason: async_openai::types::FinishReason,
+    pub tool_calls: Vec<ToolCall>,
+    pub content: String,
+}
+
+pub struct LLMResponse {
+    pub finish_reason: async_openai::types::FinishReason,
+    pub tool_calls: Vec<ToolCall>,
+    pub content: String,
+    pub token_usage: u32,
+}
 
 pub struct LLMExecutor {
     llm_def: LlmDefinition,
@@ -42,6 +55,13 @@ impl LLMExecutor {
         additional_headers: Option<HashMap<String, String>>,
         label: Option<String>,
     ) -> Self {
+        let name = &llm_def.name;
+        // Log the number of tools being passed
+        tracing::debug!(
+            "Initializing LLM {name} with {} server tools",
+            tools_registry.tools.len()
+        );
+
         let model_logger = ModelLogger::new(context.verbose);
         model_logger.log_llm_definition(&llm_def, &tools_registry);
 
@@ -66,7 +86,7 @@ impl LLMExecutor {
         &self,
         messages: &[Message],
         params: Option<Value>,
-    ) -> Result<CreateChatCompletionResponse, AgentError> {
+    ) -> Result<LLMResponse, AgentError> {
         // Create normalized parameters
         if let Some(schema) = self.llm_def.parameters.as_ref() {
             let mut schema = schema.clone();
@@ -115,7 +135,24 @@ impl LLMExecutor {
             Some(token_usage),
         );
 
-        Ok(response)
+        let choice = &response.choices[0];
+        let finish_reason = choice
+            .finish_reason
+            .unwrap_or(async_openai::types::FinishReason::Stop);
+        let content = choice.message.content.clone().unwrap_or_default();
+        let tool_calls = choice.message.tool_calls.as_ref().map(|tool_calls| {
+            tool_calls
+                .iter()
+                .cloned()
+                .map(|tool_call| LLMExecutor::map_tool_call(&tool_call))
+                .collect()
+        });
+        Ok(LLMResponse {
+            finish_reason,
+            tool_calls: tool_calls.unwrap_or_default(),
+            content,
+            token_usage,
+        })
     }
 
     /// Execute a streaming LLM call and send events through the channel
@@ -124,7 +161,7 @@ impl LLMExecutor {
         messages: &[Message],
         params: Option<Value>,
         event_tx: mpsc::Sender<crate::agent::AgentEvent>,
-    ) -> Result<(), AgentError> {
+    ) -> Result<StreamResult, AgentError> {
         // Create normalized parameters
         if let Some(schema) = self.llm_def.parameters.as_ref() {
             let mut schema = schema.clone();
@@ -138,8 +175,7 @@ impl LLMExecutor {
         );
         let llm_messages = self.map_messages(messages);
         let mut request = self.build_request(llm_messages);
-        tracing::info!("Request: {:#?}", request);
-        tracing::info!("Request: {}", serde_json::to_string(&request).unwrap());
+
         request.stream = Some(true);
         let message_count = request.messages.len();
 
@@ -184,6 +220,7 @@ impl LLMExecutor {
 
         let message_id = uuid::Uuid::new_v4().to_string();
         let mut current_content = String::new();
+        let aggregated_tool_calls: RwLock<Vec<ToolCall>> = RwLock::new(Vec::new());
 
         // Send TextMessageStart event
         event_tx
@@ -199,11 +236,17 @@ impl LLMExecutor {
             })?;
 
         tokio::pin!(stream);
+
+        let mut stream_result = None;
         while let Some(chunk) = stream.next().await {
+            let thread_id = thread_id.clone();
+            let run_id = run_id.clone();
+
             match chunk {
                 Ok(chunk) => {
                     if let Some(choice) = chunk.choices.first() {
                         let delta = &choice.delta;
+
                         if let Some(content) = &delta.content {
                             current_content.push_str(content);
                             // Send TextMessageContent event
@@ -236,57 +279,104 @@ impl LLMExecutor {
                                 let arguments = tool_call
                                     .function
                                     .as_ref()
-                                    .map(|f| f.arguments.clone().unwrap_or_default())
-                                    .unwrap_or_default();
+                                    .map(|f| f.arguments.clone())
+                                    .flatten();
 
-                                // Send ToolCallStart event
-                                event_tx
-                                    .send(crate::agent::AgentEvent::ToolCallStart {
-                                        thread_id: thread_id.clone(),
-                                        run_id: run_id.clone(),
-                                        tool_call_id: tool_call_id.clone(),
-                                        tool_call_name: tool_call_name.clone(),
-                                        parent_message_id: Some(message_id.clone()),
-                                    })
-                                    .await
-                                    .map_err(|e| {
-                                        AgentError::LLMError(format!(
-                                            "Failed to send ToolCallStart event: {}",
-                                            e
-                                        ))
-                                    })?;
+                                // Aggregate tool call
+                                if let Some(arguments) = arguments {
+                                    {
+                                        let mut tool_calls = aggregated_tool_calls.write().await;
+                                        tool_calls.push(ToolCall {
+                                            tool_id: tool_call_id.clone(),
+                                            tool_name: tool_call_name.clone(),
+                                            input: arguments.clone(),
+                                        });
+                                        drop(tool_calls);
+                                    }
 
-                                // Send ToolCallArgs event
-                                event_tx
-                                    .send(crate::agent::AgentEvent::ToolCallArgs {
-                                        thread_id: thread_id.clone(),
-                                        run_id: run_id.clone(),
-                                        tool_call_id: tool_call_id.clone(),
-                                        delta: arguments,
-                                    })
-                                    .await
-                                    .map_err(|e| {
-                                        AgentError::LLMError(format!(
-                                            "Failed to send ToolCallArgs event: {}",
-                                            e
-                                        ))
-                                    })?;
+                                    // Send ToolCallStart event
+                                    event_tx
+                                        .send(crate::agent::AgentEvent::ToolCallStart {
+                                            thread_id: thread_id.clone(),
+                                            run_id: run_id.clone(),
+                                            tool_call_id: tool_call_id.clone(),
+                                            tool_call_name: tool_call_name.clone(),
+                                            parent_message_id: Some(message_id.clone()),
+                                        })
+                                        .await
+                                        .map_err(|e| {
+                                            AgentError::LLMError(format!(
+                                                "Failed to send ToolCallStart event: {}",
+                                                e
+                                            ))
+                                        })?;
 
-                                // Send ToolCallEnd event
-                                event_tx
-                                    .send(crate::agent::AgentEvent::ToolCallEnd {
-                                        thread_id: thread_id.clone(),
-                                        run_id: run_id.clone(),
-                                        tool_call_id: tool_call_id.clone(),
-                                    })
-                                    .await
-                                    .map_err(|e| {
-                                        AgentError::LLMError(format!(
-                                            "Failed to send ToolCallEnd event: {}",
-                                            e
-                                        ))
-                                    })?;
+                                    // Send ToolCallArgs event
+                                    event_tx
+                                        .send(crate::agent::AgentEvent::ToolCallArgs {
+                                            thread_id: thread_id.clone(),
+                                            run_id: run_id.clone(),
+                                            tool_call_id: tool_call_id.clone(),
+                                            delta: arguments,
+                                        })
+                                        .await
+                                        .map_err(|e| {
+                                            AgentError::LLMError(format!(
+                                                "Failed to send ToolCallArgs event: {}",
+                                                e
+                                            ))
+                                        })?;
+
+                                    // Send ToolCallEnd event
+                                    event_tx
+                                        .send(crate::agent::AgentEvent::ToolCallEnd {
+                                            thread_id: thread_id.clone(),
+                                            run_id: run_id.clone(),
+                                            tool_call_id: tool_call_id.clone(),
+                                        })
+                                        .await
+                                        .map_err(|e| {
+                                            AgentError::LLMError(format!(
+                                                "Failed to send ToolCallEnd event: {}",
+                                                e
+                                            ))
+                                        })?;
+                                }
                             }
+                        }
+                        if let Some(finish_reason) = choice.finish_reason {
+                            // Send TextMessageEnd event
+                            event_tx
+                                .send(crate::agent::AgentEvent::TextMessageEnd {
+                                    thread_id: thread_id.clone(),
+                                    run_id: run_id.clone(),
+                                    message_id: message_id.clone(),
+                                })
+                                .await
+                                .map_err(|e| {
+                                    AgentError::LLMError(format!(
+                                        "Failed to send TextMessageEnd event: {}",
+                                        e
+                                    ))
+                                })?;
+
+                            // Send RunFinished event
+                            event_tx
+                                .send(crate::agent::AgentEvent::RunFinished { thread_id, run_id })
+                                .await
+                                .map_err(|e| {
+                                    AgentError::LLMError(format!(
+                                        "Failed to send RunFinished event: {}",
+                                        e
+                                    ))
+                                })?;
+
+                            // Determine finish_reason
+                            stream_result = Some(StreamResult {
+                                finish_reason,
+                                tool_calls: aggregated_tool_calls.read().await.clone(),
+                                content: current_content.clone(),
+                            });
                         }
                     }
                 }
@@ -308,28 +398,36 @@ impl LLMExecutor {
                 }
             }
         }
+        // TODO: This is a hack to handle the case where the stream ends without a finish reason
+        match stream_result {
+            Some(stream_result) => Ok(stream_result),
+            None => {
+                tracing::info!("Stream ended without a finish reason");
+                let tool_calls = {
+                    let tool_calls = aggregated_tool_calls.read().await.clone();
+                    tool_calls
+                };
+                let content = current_content.clone();
 
-        // Send TextMessageEnd event
-        event_tx
-            .send(crate::agent::AgentEvent::TextMessageEnd {
-                thread_id: thread_id.clone(),
-                run_id: run_id.clone(),
-                message_id: message_id.clone(),
-            })
-            .await
-            .map_err(|e| {
-                AgentError::LLMError(format!("Failed to send TextMessageEnd event: {}", e))
-            })?;
-
-        // Send RunFinished event
-        event_tx
-            .send(crate::agent::AgentEvent::RunFinished { thread_id, run_id })
-            .await
-            .map_err(|e| {
-                AgentError::LLMError(format!("Failed to send RunFinished event: {}", e))
-            })?;
-
-        Ok(())
+                if !tool_calls.is_empty() {
+                    Ok(StreamResult {
+                        finish_reason: async_openai::types::FinishReason::ToolCalls,
+                        tool_calls,
+                        content,
+                    })
+                } else if !content.is_empty() {
+                    Ok(StreamResult {
+                        finish_reason: async_openai::types::FinishReason::Stop,
+                        tool_calls: tool_calls,
+                        content,
+                    })
+                } else {
+                    Err(AgentError::LLMError(
+                        "Stream ended without a finish reason".to_string(),
+                    ))
+                }
+            }
+        }
     }
 
     pub fn build_request(

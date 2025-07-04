@@ -12,8 +12,6 @@ use tokio::sync::{Mutex, RwLock};
 
 use crate::servers::tavily;
 use async_mcp::transport::ServerInMemoryTransport;
-
-use super::kg::KgMemory;
 pub type BuilderFn =
     dyn Fn(&ServerMetadata, ServerInMemoryTransport) -> Result<Box<dyn ServerTrait>> + Send + Sync;
 #[derive(Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -22,8 +20,6 @@ pub struct ServerMetadata {
     pub auth_session_key: Option<String>,
     #[serde(default = "default_transport_type", flatten)]
     pub mcp_transport: TransportType,
-    #[serde(skip)]
-    pub kg_memory: Option<Arc<Mutex<dyn KgMemory>>>,
     #[serde(skip)]
     pub memories: HashMap<String, Arc<Mutex<dyn AgentMemory>>>,
     #[serde(skip)]
@@ -34,7 +30,6 @@ impl std::fmt::Debug for ServerMetadata {
         f.debug_struct("ServerMetadata")
             .field("auth_session_key", &self.auth_session_key)
             .field("mcp_transport", &self.mcp_transport)
-            .field("memory", &self.kg_memory.is_some())
             .field("builder", &self.builder.is_some())
             .finish()
     }
@@ -100,7 +95,6 @@ pub async fn register_mcp_servers(
         ServerMetadata {
             auth_session_key: None,
             mcp_transport: TransportType::InMemory,
-            kg_memory: None,
             builder: Some(Arc::new(|_, transport| {
                 let server = tavily::build(transport)?;
                 Ok(Box::new(server) as Box<dyn ServerTrait>)
@@ -114,7 +108,6 @@ pub async fn register_mcp_servers(
         ServerMetadata {
             auth_session_key: None,
             mcp_transport: TransportType::InMemory,
-            kg_memory: None,
             builder: Some(Arc::new(move |_, transport| {
                 let coordinator = coordinator.clone();
                 let server = agent::build_server(transport, coordinator)?;
