@@ -1,18 +1,20 @@
 use crate::{
     agent::{BaseAgent, StandardAgent},
     error::AgentError,
-    servers::registry::{register_mcp_servers, McpServerRegistry, ServerMetadata},
+    servers::registry::McpServerRegistry,
+    stores::HashMapTaskStore,
     stores::{
-        AgentStore, HashMapTaskStore, HashMapThreadStore, LocalSessionStore, SessionStore,
-        ThreadStore, ToolSessionStore,
+        AgentStore, HashMapThreadStore, LocalSessionStore, SessionStore, ThreadStore,
+        ToolSessionStore,
     },
-    tools::{execute_tool, get_tools},
+    tools::{get_tools, BuiltInToolContext, LlmToolsRegistry},
     types::{
         Configuration, CreateThreadRequest, Thread, ThreadSummary, ToolCall, UpdateThreadRequest,
     },
     TaskStore,
 };
-use std::{collections::HashMap, sync::Arc};
+use serde_json;
+use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
 
 use super::AgentEvent;
@@ -22,7 +24,6 @@ use crate::memory::TaskStep;
 
 // Message types for coordinator communication
 
-#[allow(dead_code)]
 #[derive(Clone)]
 pub struct AgentExecutor {
     pub agent_store: Arc<dyn AgentStore>,
@@ -163,6 +164,7 @@ impl AgentExecutorBuilder {
             session_store,
             thread_store,
             task_store,
+
             context,
         })
     }
@@ -195,20 +197,15 @@ impl AgentExecutor {
     }
 
     /// Initialize AgentExecutor from configuration
-    pub async fn initialize(
-        config: &Configuration,
-        servers: HashMap<String, ServerMetadata>,
-    ) -> anyhow::Result<Arc<AgentExecutor>> {
-        let mut builder = AgentExecutorBuilder::new();
+    pub async fn initialize(config: &Configuration) -> anyhow::Result<Self> {
+        let builder = AgentExecutorBuilder::new();
 
-        let registry = Arc::new(RwLock::new(McpServerRegistry::new()));
         // Initialize stores from configuration
-        builder = builder
+        let builder = builder
             .initialize_stores_from_config(config.stores.as_ref())
             .await?;
 
-        let executor = Arc::new(builder.build()?);
-        register_mcp_servers(registry, executor.clone(), servers).await?;
+        let executor = builder.build()?;
 
         // Register agents from configuration
         for agent_config in &config.agents {
@@ -221,10 +218,7 @@ impl AgentExecutor {
     }
 
     /// Initialize AgentExecutor from configuration string or file path
-    pub async fn initialize_from_config(
-        config_source: &str,
-        servers: HashMap<String, ServerMetadata>,
-    ) -> anyhow::Result<Arc<AgentExecutor>> {
+    pub async fn initialize_from_config(config_source: &str) -> anyhow::Result<Self> {
         let config = if std::path::Path::new(config_source).exists() {
             // It's a file path
             let config_str = std::fs::read_to_string(config_source)?;
@@ -234,18 +228,17 @@ impl AgentExecutor {
             serde_yaml::from_str::<Configuration>(config_source)?
         };
 
-        Self::initialize(&config, servers).await
+        Self::initialize(&config).await
     }
-
-    pub async fn execute_tool(
+    pub async fn emit_tool_event(
         &self,
-        agent_id: &str,
+        agent_id: String,
         tool_call: ToolCall,
     ) -> Result<String, AgentError> {
         let (response_tx, response_rx) = oneshot::channel();
         self.coordinator_tx
             .send(CoordinatorMessage::ExecuteTool {
-                agent_id: agent_id.to_string(),
+                agent_id: agent_id.clone(),
                 tool_call,
                 response_tx,
             })
@@ -257,6 +250,55 @@ impl AgentExecutor {
         response_rx.await.map_err(|e| {
             AgentError::ToolExecution(format!("Failed to receive tool response: {}", e))
         })
+    }
+
+    pub async fn execute_tool(
+        &self,
+        agent_id: String,
+        tool_call: ToolCall,
+        event_tx: Option<mpsc::Sender<AgentEvent>>,
+        context: Arc<ExecutorContext>,
+    ) -> Result<String, AgentError> {
+        // Check if this is a built-in tool first
+
+        let agent = self
+            .agent_store
+            .get(&agent_id)
+            .await
+            .ok_or_else(|| AgentError::NotFound(format!("Agent {} not found", agent_id)))?;
+
+        let tools = agent.get_tools();
+        if let Some(tool) = tools.iter().find(|t| t.get_name() == tool_call.tool_name) {
+            let registry = self.registry.clone();
+            let tool_sessions = self.tool_sessions.clone();
+            let context = context.clone();
+            let event_tx = event_tx.clone();
+
+            let tool_context = BuiltInToolContext {
+                agent_id: agent_id.clone(),
+                agent_store: self.agent_store.clone(),
+                context: context.clone(),
+                event_tx,
+                coordinator_tx: self.coordinator_tx.clone(),
+                tool_sessions,
+                registry,
+            };
+
+            tracing::info!("Executing tool call: {:#?}", tool_call);
+            tracing::info!("Session: {:#?}", std::env::var("X_USER_SESSION"));
+            let res = tool.execute(tool_call, tool_context).await;
+            match res {
+                Ok(content) => {
+                    tracing::info!("Tool response: {}", content);
+                    return Ok(content);
+                }
+                Err(e) => {
+                    tracing::error!("Error executing tool: {}", e);
+                    return Err(e);
+                }
+            }
+        }
+        Err(AgentError::ToolNotFound(tool_call.tool_name))
     }
 
     pub async fn register_agent(&self, agent: Box<dyn BaseAgent>) -> anyhow::Result<()> {
@@ -274,10 +316,13 @@ impl AgentExecutor {
         &self,
         definition: crate::types::AgentDefinition,
     ) -> anyhow::Result<Box<dyn BaseAgent>> {
-        let resolved_tools = get_tools(&definition.mcp_servers, self.registry.clone()).await?;
+        let tools = get_tools(&definition.mcp_servers, self.registry.clone()).await?;
+
+        let tools_registry = LlmToolsRegistry::new(tools);
+
         let agent = Box::new(StandardAgent::new(
             definition,
-            resolved_tools,
+            Arc::new(tools_registry),
             Arc::new(self.clone()),
             self.context.clone(),
             self.session_store.clone(),
@@ -298,52 +343,21 @@ impl AgentExecutor {
                     response_tx,
                 } => {
                     tracing::info!("Handling ExecuteTool for agent: {}", agent_id);
-                    let registry = self.registry.clone();
-                    let agent_store = self.agent_store.clone();
-                    let tool_sessions = self.tool_sessions.clone();
+
+                    // Use the updated execute_tool method which handles built-in tools
+                    let self_clone = self.clone();
                     let context = self.context.clone();
                     tokio::spawn(async move {
-                        let result = async {
-                            // Get the server tools for the agent
-                            let agent = agent_store.get(&agent_id).await;
+                        let result = self_clone
+                            .execute_tool(agent_id.clone(), tool_call, None, context)
+                            .await;
 
-                            match agent {
-                                Some(agent) => {
-                                    // Execute the tool
-                                    let server_tools = agent.get_tools();
-                                    let tool_def = server_tools
-                                        .iter()
-                                        .find(|t| {
-                                            t.tools
-                                                .iter()
-                                                .any(|tool| tool.name == tool_call.tool_name)
-                                        })
-                                        .cloned();
+                        let response = match result {
+                            Ok(content) => content,
+                            Err(e) => format!("Error: {}", e),
+                        };
 
-                                    let content = match tool_def {
-                                        Some(server_tool) => execute_tool(
-                                            &tool_call,
-                                            &server_tool.definition,
-                                            registry,
-                                            tool_sessions,
-                                            context,
-                                        )
-                                        .await
-                                        .unwrap_or_else(|err| format!("Error: {}", err)),
-                                        None => format!("Tool not found {}", tool_call.tool_name),
-                                    };
-                                    Ok(content)
-                                }
-                                None => Err(AgentError::ToolExecution(format!(
-                                    "Agent {} not found",
-                                    agent_id
-                                ))),
-                            }
-                        }
-                        .await;
-
-                        let _ =
-                            response_tx.send(result.unwrap_or_else(|e| format!("Error: {}", e)));
+                        let _ = response_tx.send(response);
                     });
                 }
                 CoordinatorMessage::Execute {
@@ -394,6 +408,41 @@ impl AgentExecutor {
                             tracing::error!("Error in Coordinator:ExecuteStream: {}", e);
                         }
                     });
+                }
+                CoordinatorMessage::HandoverAgent {
+                    from_agent,
+                    to_agent,
+                    reason,
+                    context,
+                    event_tx,
+                } => {
+                    tracing::info!(
+                        "Handling agent handover from {} to {}",
+                        from_agent,
+                        to_agent
+                    );
+
+                    // Emit the AgentHandover event if event_tx is available
+                    if let Some(event_tx) = event_tx {
+                        let run_id = context.run_id.lock().await.clone();
+                        let handover_event = AgentEvent::AgentHandover {
+                            thread_id: context.thread_id.clone(),
+                            run_id,
+                            from_agent: from_agent.clone(),
+                            to_agent: to_agent.clone(),
+                            reason,
+                        };
+
+                        if let Err(e) = event_tx.send(handover_event).await {
+                            tracing::error!("Failed to send AgentHandover event: {}", e);
+                        } else {
+                            tracing::info!(
+                                "Successfully emitted AgentHandover event from {} to {}",
+                                from_agent,
+                                to_agent
+                            );
+                        }
+                    }
                 }
             }
         }

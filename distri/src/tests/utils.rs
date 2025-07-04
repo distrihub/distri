@@ -60,7 +60,6 @@ pub async fn get_registry() -> Arc<RwLock<McpServerRegistry>> {
                 let server = build_mock_search_tool(transport)?;
                 Ok(Box::new(server) as Box<dyn ServerTrait>)
             })),
-            kg_memory: None,
             memories: HashMap::new(),
         },
     );
@@ -78,7 +77,6 @@ pub async fn register_coordinator(
         ServerMetadata {
             auth_session_key: None,
             mcp_transport: TransportType::InMemory,
-            kg_memory: None,
             builder: Some(Arc::new(move |_, transport| {
                 let coordinator = coordinator.clone();
                 let server = crate::agent::build_server(transport, coordinator)?;

@@ -4,10 +4,8 @@ use crate::{
     agent::{ExecutorContext, ModelLogger},
     error::AgentError,
     langdb::GatewayConfig,
-    types::{
-        validate_parameters, LlmDefinition, Message, MessageRole, ModelProvider, ServerTools,
-        ToolCall,
-    },
+    tools::LlmToolsRegistry,
+    types::{validate_parameters, LlmDefinition, Message, MessageRole, ModelProvider, ToolCall},
 };
 use async_openai::{
     config::OpenAIConfig,
@@ -15,9 +13,8 @@ use async_openai::{
         ChatCompletionMessageToolCall, ChatCompletionRequestAssistantMessageArgs,
         ChatCompletionRequestMessage, ChatCompletionRequestSystemMessageArgs,
         ChatCompletionRequestToolMessage, ChatCompletionRequestToolMessageContent,
-        ChatCompletionRequestUserMessageArgs, ChatCompletionTool, CreateChatCompletionRequest,
-        CreateChatCompletionResponse, CreateChatCompletionStreamResponse, FunctionObject,
-        ResponseFormatJsonSchema,
+        ChatCompletionRequestUserMessageArgs, CreateChatCompletionRequest,
+        CreateChatCompletionResponse, CreateChatCompletionStreamResponse, ResponseFormatJsonSchema,
     },
     Client,
 };
@@ -40,7 +37,7 @@ pub struct LLMResponse {
 
 pub struct LLMExecutor {
     llm_def: LlmDefinition,
-    server_tools: Vec<ServerTools>,
+    tools_registry: Arc<LlmToolsRegistry>,
     model_logger: ModelLogger,
     context: Arc<ExecutorContext>,
     additional_headers: Option<HashMap<String, String>>,
@@ -53,7 +50,7 @@ pub const DEFAULT_MODEL: &str = "gpt-4o-mini";
 impl LLMExecutor {
     pub fn new(
         llm_def: LlmDefinition,
-        server_tools: Vec<ServerTools>,
+        tools_registry: Arc<LlmToolsRegistry>,
         context: Arc<ExecutorContext>,
         additional_headers: Option<HashMap<String, String>>,
         label: Option<String>,
@@ -62,24 +59,20 @@ impl LLMExecutor {
         // Log the number of tools being passed
         tracing::debug!(
             "Initializing LLM {name} with {} server tools",
-            server_tools.len()
+            tools_registry.tools.len()
         );
 
         let model_logger = ModelLogger::new(context.verbose);
-        model_logger.log_llm_definition(&llm_def, &server_tools);
+        model_logger.log_llm_definition(&llm_def, &tools_registry);
 
         Self {
             llm_def,
-            server_tools,
+            tools_registry,
             model_logger,
             context,
             additional_headers,
             label,
         }
-    }
-
-    pub fn get_server_tools(&self) -> Vec<ServerTools> {
-        self.server_tools.clone()
     }
 
     /// Helper function to extract just the content string from the first choice in a response
@@ -182,8 +175,7 @@ impl LLMExecutor {
         );
         let llm_messages = self.map_messages(messages);
         let mut request = self.build_request(llm_messages);
-        tracing::info!("Request: {:#?}", request);
-        tracing::info!("Request: {}", serde_json::to_string(&request).unwrap());
+
         request.stream = Some(true);
         let message_count = request.messages.len();
 
@@ -410,14 +402,13 @@ impl LLMExecutor {
         match stream_result {
             Some(stream_result) => Ok(stream_result),
             None => {
-                println!("Stream ended without a finish reason");
+                tracing::info!("Stream ended without a finish reason");
                 let tool_calls = {
                     let tool_calls = aggregated_tool_calls.read().await.clone();
                     tool_calls
                 };
                 let content = current_content.clone();
 
-                println!("Tool calls: {:#?}", tool_calls);
                 if !tool_calls.is_empty() {
                     Ok(StreamResult {
                         finish_reason: async_openai::types::FinishReason::ToolCalls,
@@ -449,7 +440,7 @@ impl LLMExecutor {
             settings.model
         );
 
-        let tools = self.build_tools();
+        let tools = self.tools_registry.get_definitions();
         tracing::debug!("Tools: {tools:?}",);
 
         let name = format!("{}_schema", self.llm_def.name);
@@ -469,28 +460,6 @@ impl LLMExecutor {
             }),
             ..Default::default()
         }
-    }
-
-    pub fn build_tools(&self) -> Vec<ChatCompletionTool> {
-        let mut tools = Vec::new();
-
-        // Add all server tools
-        for server_tools in &self.server_tools {
-            tracing::debug!("Adding tools from server: {}", server_tools.definition.name);
-            for tool in &server_tools.tools {
-                tools.push(ChatCompletionTool {
-                    r#type: async_openai::types::ChatCompletionToolType::Function,
-                    function: FunctionObject {
-                        name: tool.name.clone(),
-                        description: tool.description.clone(),
-                        parameters: Some(tool.input_schema.clone()),
-                        strict: None,
-                    },
-                });
-            }
-        }
-
-        tools
     }
 
     pub fn map_tool_call(tool_call: &ChatCompletionMessageToolCall) -> ToolCall {

@@ -209,7 +209,6 @@ mod tests {
                     memory as Arc<Mutex<dyn AgentMemory>>,
                 )]),
                 builder: None,
-                kg_memory: None,
             };
             let server = build(&metadata, transport.clone()).unwrap();
             server.listen().await.unwrap();

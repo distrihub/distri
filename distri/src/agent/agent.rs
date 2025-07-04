@@ -3,9 +3,10 @@ use crate::{
     error::AgentError,
     llm::LLMExecutor,
     memory::SystemStep,
+    tools::{LlmToolsRegistry, Tool},
     types::{
         get_tool_descriptions, AgentDefinition, Message, MessageContent, MessageRole, PlanConfig,
-        ServerTools, ToolCall, DEFAULT_TOOL_DESCRIPTION_TEMPLATE,
+        ToolCall, DEFAULT_TOOL_DESCRIPTION_TEMPLATE,
     },
     SessionStore,
 };
@@ -91,7 +92,7 @@ pub trait BaseAgent: Send + Sync + std::fmt::Debug {
 
     fn get_description(&self) -> &str;
     fn get_definition(&self) -> AgentDefinition;
-    fn get_tools(&self) -> Vec<ServerTools>;
+    fn get_tools(&self) -> Vec<&Box<dyn Tool>>;
 }
 
 /// Result of a single step execution
@@ -107,8 +108,8 @@ pub enum StepResult {
 #[derive(Clone)]
 pub struct StandardAgent {
     pub definition: AgentDefinition,
-    server_tools: Vec<ServerTools>,
-    coordinator: Arc<AgentExecutor>,
+    tools_registry: Arc<LlmToolsRegistry>,
+    executor: Arc<AgentExecutor>,
     logger: StepLogger,
     session_store: Arc<Box<dyn SessionStore>>,
 }
@@ -124,16 +125,16 @@ impl std::fmt::Debug for StandardAgent {
 impl StandardAgent {
     pub fn new(
         definition: AgentDefinition,
-        server_tools: Vec<ServerTools>,
-        coordinator: Arc<AgentExecutor>,
+        tools_registry: Arc<LlmToolsRegistry>,
+        executor: Arc<AgentExecutor>,
         context: Arc<ExecutorContext>,
         session_store: Arc<Box<dyn SessionStore>>,
     ) -> Self {
         let logger = StepLogger::new(context.verbose);
         Self {
             definition,
-            server_tools,
-            coordinator,
+            tools_registry,
+            executor,
             logger,
             session_store,
         }
@@ -147,8 +148,10 @@ impl StandardAgent {
         context: Arc<ExecutorContext>,
     ) -> Result<(), AgentError> {
         let agent_id = &self.definition.name;
-        let tools_desc =
-            get_tool_descriptions(&self.server_tools, Some(DEFAULT_TOOL_DESCRIPTION_TEMPLATE));
+        let tools_desc = get_tool_descriptions(
+            &self.tools_registry.tools,
+            Some(DEFAULT_TOOL_DESCRIPTION_TEMPLATE),
+        );
 
         if (iteration - 1) % plan_config.interval == 0 {
             // Run either initial planning or planning update
@@ -158,7 +161,7 @@ impl StandardAgent {
                         crate::agent::reason::get_planning_definition(
                             plan_config.model_settings.clone(),
                         ),
-                        vec![],
+                        Arc::default(),
                         context.clone(),
                         None,
                         Some("initial_plan".to_string()),
@@ -196,7 +199,7 @@ impl StandardAgent {
                             crate::agent::reason::get_planning_definition(
                                 plan_config.model_settings.clone(),
                             ),
-                            vec![],
+                            Arc::default(),
                             context.clone(),
                             None,
                             Some("update_plan".to_string()),
@@ -300,7 +303,7 @@ impl StandardAgent {
         // Create executor for LLM call
         let executor = LLMExecutor::new(
             self.definition.clone().into(),
-            self.server_tools.clone(),
+            self.tools_registry.clone(),
             context.clone(),
             None,
             Some(format!("{}:{}", agent_id, "step")),
@@ -334,7 +337,7 @@ impl StandardAgent {
 
         let executor = LLMExecutor::new(
             self.definition.clone().into(),
-            self.server_tools.clone(),
+            self.tools_registry.clone(),
             context.clone(),
             None,
             Some(agent_id.to_string()),
@@ -650,15 +653,15 @@ impl StandardAgent {
 
                     let tool_calls = self.before_tool_calls(&tool_calls, context.clone()).await?;
 
-                    info!("Agent: Tool calls: {:#?}", tool_calls);
                     // Process all tool calls in parallel
                     let tool_responses =
                         futures::future::join_all(tool_calls.iter().map(|mapped_tool_call| {
-                            let coordinator = self.coordinator.clone();
+                            let executor = self.executor.clone();
+                            let agent_id = agent_id.to_string();
                             async move {
                                 info!("Agent: Executing tool call: {:#?}", mapped_tool_call);
-                                let content = coordinator
-                                    .execute_tool(agent_id, mapped_tool_call.clone())
+                                let content = executor
+                                    .emit_tool_event(agent_id, mapped_tool_call.clone())
                                     .await
                                     .unwrap_or_else(|err| format!("Error: {}", err));
                                 info!("Agent: Tool response: {}", content);
@@ -718,8 +721,8 @@ impl BaseAgent for StandardAgent {
         &self.definition.description
     }
 
-    fn get_tools(&self) -> Vec<ServerTools> {
-        self.server_tools.clone()
+    fn get_tools(&self) -> Vec<&Box<dyn Tool>> {
+        self.tools_registry.tools.values().collect()
     }
 
     async fn invoke(

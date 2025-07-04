@@ -5,7 +5,7 @@ pub mod log;
 pub mod reason;
 pub mod server;
 
-pub use agent::{BaseAgent, DefaultAgent, StandardAgent, StepResult, MAX_ITERATIONS};
+pub use agent::{BaseAgent, StandardAgent, StepResult, MAX_ITERATIONS};
 pub use executor::{AgentExecutor, AgentExecutorBuilder};
 pub use extensible_example::{FilteringAgent, LoggingAgent};
 pub use log::{ModelLogger, StepLogger};
@@ -69,6 +69,13 @@ pub enum AgentEvent {
         run_id: String,
         tool_call_id: String,
     },
+    AgentHandover {
+        thread_id: String,
+        run_id: String,
+        from_agent: String,
+        to_agent: String,
+        reason: Option<String>,
+    },
 }
 
 #[derive(Debug)]
@@ -92,6 +99,13 @@ pub enum CoordinatorMessage {
         params: Option<serde_json::Value>,
         event_tx: mpsc::Sender<AgentEvent>,
         context: Arc<ExecutorContext>,
+    },
+    HandoverAgent {
+        from_agent: String,
+        to_agent: String,
+        reason: Option<String>,
+        context: Arc<ExecutorContext>,
+        event_tx: Option<mpsc::Sender<AgentEvent>>,
     },
 }
 
