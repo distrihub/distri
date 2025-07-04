@@ -2,12 +2,13 @@ use actix_web::Either;
 use actix_web::{web, HttpResponse};
 use actix_web_lab::sse::{self, Sse};
 use distri::agent::AgentExecutor;
-use distri::types::{ServerConfig, UpdateThreadRequest};
+use distri::types::{AgentDefinition, ServerConfig, UpdateThreadRequest};
 use distri::{memory::TaskStep, TaskStore};
 use distri_a2a::{
     AgentCard, JsonRpcError, JsonRpcRequest, JsonRpcResponse, Message as A2aMessage,
     MessageSendParams, Part, Role, TaskIdParams, TaskState, TaskStatus, TextPart,
 };
+use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::json;
 use std::sync::Arc;
@@ -20,16 +21,18 @@ use crate::handlers::{extract_text_from_message, handle_message_send_streaming_s
 pub fn config(cfg: &mut web::ServiceConfig) {
     cfg.service(
         web::scope("/api/v1")
-            .service(web::resource("/agents").route(web::get().to(list_agents)))
+            .service(web::resource("/agents").route(web::get().to(list_agents)).route(web::post().to(create_agent)))
             .service(
                 web::resource("/agents/{id}")
                     .route(web::get().to(get_agent_card))
+                    .route(web::put().to(update_agent))
                     .route(web::post().to(jsonrpc_handler)),
             )
             .service(
                 web::resource("/agents/{agent_name}/.well-known/agent.json")
                     .route(web::get().to(get_agent_json)),
             )
+            .service(web::resource("/schema/agent").route(web::get().to(get_agent_schema)))
             .service(web::resource("/tasks/{id}").route(web::get().to(get_task)))
             .service(web::resource("/tasks").route(web::get().to(list_tasks)))
             // Thread endpoints
@@ -112,6 +115,7 @@ async fn get_agent_json(
         None => HttpResponse::NotFound().finish(),
     }
 }
+
 async fn get_task(id: web::Path<String>, executor: web::Data<Arc<AgentExecutor>>) -> HttpResponse {
     let task_id = id.into_inner();
 
@@ -549,4 +553,49 @@ fn get_base_url(req: &actix_web::HttpRequest) -> String {
     let scheme = connection_info.scheme();
     let host = connection_info.host();
     format!("{}://{}", scheme, host)
+}
+
+async fn create_agent(
+    req: web::Json<AgentDefinition>,
+    executor: web::Data<Arc<AgentExecutor>>,
+) -> HttpResponse {
+    let definition = req.into_inner();
+    
+    match executor.register_default_agent(definition).await {
+        Ok(agent) => {
+            let definition = agent.get_definition();
+            HttpResponse::Ok().json(definition)
+        }
+        Err(e) => HttpResponse::BadRequest().json(json!({
+            "error": format!("Failed to create agent: {}", e)
+        })),
+    }
+}
+
+async fn update_agent(
+    id: web::Path<String>,
+    req: web::Json<AgentDefinition>,
+    executor: web::Data<Arc<AgentExecutor>>,
+) -> HttpResponse {
+    let agent_id = id.into_inner();
+    let mut definition = req.into_inner();
+    
+    // Ensure the name matches the path parameter
+    definition.name = agent_id;
+    
+    match executor.update_agent(definition).await {
+        Ok(agent) => {
+            let definition = agent.get_definition();
+            HttpResponse::Ok().json(definition)
+        }
+        Err(e) => HttpResponse::BadRequest().json(json!({
+            "error": format!("Failed to update agent: {}", e)
+        })),
+    }
+}
+
+async fn get_agent_schema() -> HttpResponse {
+    use schemars::schema_for;
+    let schema = schema_for!(AgentDefinition);
+    HttpResponse::Ok().json(schema)
 }

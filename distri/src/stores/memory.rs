@@ -462,4 +462,15 @@ impl AgentStore for InMemoryAgentStore {
         agents.insert(agent.get_name().to_string(), agent);
         Ok(())
     }
+
+    async fn update(&self, agent: Box<dyn crate::agent::BaseAgent>) -> anyhow::Result<()> {
+        let mut agents = self.agents.write().await;
+        let agent_name = agent.get_name().to_string();
+        if agents.contains_key(&agent_name) {
+            agents.insert(agent_name, agent);
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("Agent '{}' not found", agent_name))
+        }
+    }
 }

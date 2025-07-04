@@ -333,6 +333,26 @@ impl AgentExecutor {
         Ok(agent)
     }
 
+    /// Update an existing agent with new definition
+    pub async fn update_agent(
+        &self,
+        definition: crate::types::AgentDefinition,
+    ) -> anyhow::Result<Box<dyn BaseAgent>> {
+        let tools = get_tools(&definition.mcp_servers, self.registry.clone()).await?;
+
+        let tools_registry = LlmToolsRegistry::new(tools);
+
+        let agent = Box::new(StandardAgent::new(
+            definition,
+            Arc::new(tools_registry),
+            Arc::new(self.clone()),
+            self.context.clone(),
+            self.session_store.clone(),
+        ));
+        self.agent_store.update(agent.clone_box()).await?;
+        Ok(agent)
+    }
+
     pub async fn run(&self) -> anyhow::Result<()> {
         tracing::info!("AgentCoordinator run loop started");
 

@@ -48,6 +48,9 @@ pub enum Commands {
         task: Option<String>,
     },
 
+    /// Update all agent definitions from config
+    UpdateAgents,
+
     /// Generate config schema for validation
     ConfigSchema {
         /// Whether to pretty print the schema
