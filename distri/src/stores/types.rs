@@ -121,4 +121,6 @@ pub trait AgentStore: Send + Sync {
     ) -> (Vec<Box<dyn crate::agent::BaseAgent>>, Option<String>);
     async fn get(&self, name: &str) -> Option<Box<dyn crate::agent::BaseAgent>>;
     async fn register(&self, agent: Box<dyn crate::agent::BaseAgent>) -> anyhow::Result<()>;
+    /// Update an existing agent with new definition
+    async fn update(&self, agent: Box<dyn crate::agent::BaseAgent>) -> anyhow::Result<()>;
 }

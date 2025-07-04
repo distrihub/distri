@@ -103,6 +103,12 @@ async fn main() -> Result<()> {
 
             run_agent_cli(executor, agent, &config, task, background).await?;
         }
+        Commands::UpdateAgents => {
+            let config = load_config(cli.config.to_str().unwrap())?;
+            let executor = init_all(&config).await?;
+
+            update_all_agents(executor, &config).await?;
+        }
         Commands::Serve { host, port } => {
             let config = load_config(cli.config.to_str().unwrap())?;
             let executor = init_all(&config).await?;
@@ -148,4 +154,32 @@ async fn init_all(config: &Configuration) -> Result<Arc<AgentExecutor>> {
     let executor = executor.with_tool_sessions(get_session_store(config.sessions.clone()));
     let executor = Arc::new(executor.build()?);
     Ok(executor)
+}
+
+async fn update_all_agents(executor: Arc<AgentExecutor>, config: &Configuration) -> Result<()> {
+    tracing::info!("Updating all agent definitions from config...");
+
+    for agent_config in &config.agents {
+        let agent_name = &agent_config.definition.name;
+        match executor.update_agent(agent_config.definition.clone()).await {
+            Ok(_) => {
+                tracing::info!("✅ Updated agent: {}", agent_name);
+            }
+            Err(e) => {
+                tracing::warn!("⚠️ Failed to update agent {}: {}", agent_name, e);
+                // Try to register as new agent if update fails
+                match executor.register_default_agent(agent_config.definition.clone()).await {
+                    Ok(_) => {
+                        tracing::info!("✅ Registered new agent: {}", agent_name);
+                    }
+                    Err(e) => {
+                        tracing::error!("❌ Failed to register agent {}: {}", agent_name, e);
+                    }
+                }
+            }
+        }
+    }
+
+    tracing::info!("Agent update process completed.");
+    Ok(())
 }
