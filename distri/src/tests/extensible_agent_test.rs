@@ -152,20 +152,6 @@ async fn test_standard_agent_hook_mechanism() -> Result<()> {
             self.inner.after_task_step(task, context).await
         }
 
-        async fn before_llm_step(
-            &self,
-            messages: &[crate::types::Message],
-            params: &Option<serde_json::Value>,
-            context: Arc<crate::agent::ExecutorContext>,
-        ) -> Result<Vec<crate::types::Message>, crate::error::AgentError> {
-            self.hook_calls
-                .lock()
-                .await
-                .push("before_llm_step".to_string());
-            info!("🎯 before_llm_step called with {} messages", messages.len());
-            self.inner.before_llm_step(messages, params, context).await
-        }
-
         async fn before_tool_calls(
             &self,
             tool_calls: &[crate::types::ToolCall],

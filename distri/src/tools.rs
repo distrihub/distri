@@ -5,26 +5,27 @@ use std::{collections::HashMap, time::Duration};
 
 use anyhow::Result;
 use async_mcp::transport::{ClientInMemoryTransport, ServerInMemoryTransport};
-use async_mcp::types::{Tool, ToolsListResponse};
+use async_mcp::types::{Tool as McpToolDefinition, ToolsListResponse};
 use async_mcp::{
     client::{Client, ClientBuilder},
     protocol::RequestOptions,
     transport::Transport,
     types::{CallToolRequest, CallToolResponse, ToolResponseContent},
 };
+use async_openai::types::ChatCompletionTool;
+use async_trait::async_trait;
 use regex::Regex;
 use serde_json::{json, Value};
 use tokio::sync::{mpsc, RwLock};
 use tracing::debug;
 
-use crate::servers::registry::McpServerRegistry;
-use crate::{
-    agent::ExecutorContext,
-    error::AgentError,
-    servers::registry::ServerMetadata,
-    stores::{AgentStore, ToolSessionStore},
-    types::{McpDefinition, ServerTools, ToolCall, ToolsFilter, TransportType},
-};
+use crate::agent::ExecutorContext;
+use crate::error::AgentError;
+use crate::servers::registry::{ServerMetadata, ServerRegistry};
+use crate::store::{AgentStore, ToolSessionStore};
+use crate::types::TransportType;
+use crate::types::{McpDefinition, ToolCall};
+use crate::types::{ServerTools, ToolsFilter};
 
 async fn async_server(metadata: ServerMetadata, transport: ServerInMemoryTransport) -> Result<()> {
     let builder = metadata
@@ -109,9 +110,33 @@ macro_rules! with_transport {
         }
     };
 }
+
 pub async fn get_tools(
     definitions: &[McpDefinition],
-    registry: Arc<RwLock<McpServerRegistry>>,
+    registry: Arc<RwLock<ServerRegistry>>,
+) -> Result<HashMap<String, Box<dyn Tool>>> {
+    let mut all_tools = HashMap::new();
+    let mcp_tools = get_mcp_tools(definitions, registry).await?;
+
+    for server_tools in mcp_tools {
+        for tool in server_tools.tools {
+            let mcp_tool = Box::new(McpTool {
+                mcp_definition: server_tools.definition.clone(),
+                tool: tool,
+            }) as Box<dyn Tool>;
+            all_tools.insert(mcp_tool.get_name(), mcp_tool);
+        }
+    }
+
+    // Add built-in tools
+    all_tools.insert("transfer_to_agent".to_string(), Box::new(TransferToAgentTool));
+
+    Ok(all_tools)
+}
+
+pub async fn get_mcp_tools(
+    definitions: &[McpDefinition],
+    registry: Arc<RwLock<ServerRegistry>>,
 ) -> Result<Vec<ServerTools>> {
     let mut all_tools = Vec::new();
 
@@ -126,62 +151,67 @@ pub async fn get_tools(
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("MCP Server: {} is not found", mcp_server))?;
         let mcp_server_name = mcp_server.clone();
-        let tools: Result<Vec<Tool>> = with_transport!(metadata, |transport| async move {
-            let client = ClientBuilder::new(transport).build();
+        let tools: Result<Vec<McpToolDefinition>> =
+            with_transport!(metadata, |transport| async move {
+                let client = ClientBuilder::new(transport).build();
 
-            // Start the client
-            let client_clone = client.clone();
-            let _client_handle = tokio::spawn(async move { client_clone.start().await });
+                // Start the client
+                let client_clone = client.clone();
+                let _client_handle = tokio::spawn(async move { client_clone.start().await });
 
-            // Get available tools
-            let response = client
-                .request(
-                    "tools/list",
-                    Some(json!({})),
-                    RequestOptions::default().timeout(Duration::from_secs(10)),
-                )
-                .await?;
-            // Parse response into Vec<Tool>
-            let response: ToolsListResponse = serde_json::from_value(response)?;
-            let mut tools = response.tools;
+                // Get available tools
+                let response = client
+                    .request(
+                        "tools/list",
+                        Some(json!({})),
+                        RequestOptions::default().timeout(Duration::from_secs(10)),
+                    )
+                    .await?;
+                // Parse response into Vec<Tool>
+                let response: ToolsListResponse = serde_json::from_value(response)?;
+                let mut tools = response.tools;
 
-            let total_tools = tools.len();
+                let total_tools = tools.len();
 
-            // Filter tools based on actions_filter if specified
-            match &tool_def.filter {
-                ToolsFilter::All => {
-                    tracing::debug!("Loading all {} tools from {}", total_tools, mcp_server_name);
-                }
-                ToolsFilter::Selected(selected) => {
-                    let before_count = tools.len();
-                    tools.retain_mut(|tool| {
-                        let found = selected.iter().find(|t| {
-                            if tool.name == t.name {
-                                true
-                            } else if let Ok(name_regex) = Regex::new(&t.name) {
-                                debug!("Matching {} against pattern {}", tool.name, t.name);
-                                name_regex.is_match(&tool.name)
-                            } else {
-                                false
+                // Filter tools based on actions_filter if specified
+                match &tool_def.filter {
+                    ToolsFilter::All => {
+                        tracing::debug!(
+                            "Loading all {} tools from {}",
+                            total_tools,
+                            mcp_server_name
+                        );
+                    }
+                    ToolsFilter::Selected(selected) => {
+                        let before_count = tools.len();
+                        tools.retain_mut(|tool| {
+                            let found = selected.iter().find(|t| {
+                                if tool.name == t.name {
+                                    true
+                                } else if let Ok(name_regex) = Regex::new(&t.name) {
+                                    debug!("Matching {} against pattern {}", tool.name, t.name);
+                                    name_regex.is_match(&tool.name)
+                                } else {
+                                    false
+                                }
+                            });
+                            if let Some(Some(d)) = found.as_ref().map(|t| t.description.as_ref()) {
+                                tool.description = Some(d.clone());
                             }
+                            found.is_some()
                         });
-                        if let Some(Some(d)) = found.as_ref().map(|t| t.description.as_ref()) {
-                            tool.description = Some(d.clone());
-                        }
-                        found.is_some()
-                    });
-                    tracing::debug!(
-                        "Filtered tools for {}: {}/{} tools selected",
-                        mcp_server_name,
-                        tools.len(),
-                        before_count
-                    );
+                        tracing::debug!(
+                            "Filtered tools for {}: {}/{} tools selected",
+                            mcp_server_name,
+                            tools.len(),
+                            before_count
+                        );
+                    }
                 }
-            }
 
-            Ok(tools)
-        })
-        .await;
+                Ok(tools)
+            })
+            .await;
 
         match tools {
             Ok(tools) => {
@@ -204,7 +234,7 @@ pub async fn get_tools(
 pub async fn execute_tool(
     tool_call: &ToolCall,
     tool_def: &McpDefinition,
-    registry: Arc<RwLock<McpServerRegistry>>,
+    registry: Arc<RwLock<ServerRegistry>>,
     tool_sessions: Option<Arc<Box<dyn ToolSessionStore>>>,
     context: Arc<ExecutorContext>,
 ) -> Result<String> {
@@ -343,13 +373,62 @@ impl<T: Transport + Clone> ToolExecutor<T> {
 
 /// Trait for built-in tools that can be resolved directly by the agent executor
 #[async_trait::async_trait]
-pub trait BuiltInTool: Send + Sync {
+pub trait Tool: Send + Sync {
+    fn get_name(&self) -> String;
     /// Get the tool definition for the LLM
     fn get_tool_definition(&self) -> async_openai::types::ChatCompletionTool;
 
+    fn get_description(&self) -> String;
+
     /// Execute the tool with given arguments
-    async fn execute(&self, args: Value, context: BuiltInToolContext)
-        -> Result<String, AgentError>;
+    async fn execute(
+        &self,
+        tool_call: ToolCall,
+        context: BuiltInToolContext,
+    ) -> Result<String, AgentError>;
+}
+
+pub struct McpTool {
+    pub mcp_definition: McpDefinition,
+    pub tool: McpToolDefinition,
+}
+
+impl McpTool {}
+
+#[async_trait::async_trait]
+impl Tool for McpTool {
+    fn get_name(&self) -> String {
+        self.tool.name.clone()
+    }
+    fn get_description(&self) -> String {
+        self.tool.description.clone().unwrap_or_default()
+    }
+    fn get_tool_definition(&self) -> async_openai::types::ChatCompletionTool {
+        async_openai::types::ChatCompletionTool {
+            r#type: async_openai::types::ChatCompletionToolType::Function,
+            function: async_openai::types::FunctionObject {
+                name: self.tool.name.clone(),
+                description: self.tool.description.clone(),
+                parameters: Some(self.tool.input_schema.clone()),
+                strict: None,
+            },
+        }
+    }
+    async fn execute(
+        &self,
+        tool_call: ToolCall,
+        context: BuiltInToolContext,
+    ) -> Result<String, AgentError> {
+        execute_tool(
+            &tool_call,
+            &self.mcp_definition,
+            context.registry,
+            None,
+            context.context,
+        )
+        .await
+        .map_err(|e| AgentError::ToolExecution(e.to_string()))
+    }
 }
 
 /// Context passed to built-in tools during execution
@@ -360,34 +439,30 @@ pub struct BuiltInToolContext {
     pub context: Arc<ExecutorContext>,
     pub event_tx: Option<mpsc::Sender<crate::agent::AgentEvent>>,
     pub coordinator_tx: mpsc::Sender<crate::agent::CoordinatorMessage>,
+    pub tool_sessions: Option<Arc<Box<dyn ToolSessionStore>>>,
+    pub registry: Arc<RwLock<ServerRegistry>>,
 }
 
 /// Built-in tool registry
-pub struct BuiltInToolRegistry {
-    tools: HashMap<String, Box<dyn BuiltInTool>>,
+#[derive(Default)]
+pub struct LlmToolsRegistry {
+    pub tools: HashMap<String, Box<dyn Tool>>,
 }
 
-impl BuiltInToolRegistry {
-    pub fn new() -> Self {
-        let mut registry = Self {
-            tools: HashMap::new(),
-        };
-
-        // Register default built-in tools
-        registry.register("transfer_to_agent", Box::new(TransferToAgentTool));
-
-        registry
+impl LlmToolsRegistry {
+    pub fn new(all_tools: HashMap<String, Box<dyn Tool>>) -> Self {
+        Self { tools: all_tools }
     }
 
-    pub fn register(&mut self, name: &str, tool: Box<dyn BuiltInTool>) {
+    pub fn register(&mut self, name: &str, tool: Box<dyn Tool>) {
         self.tools.insert(name.to_string(), tool);
     }
 
-    pub fn get_tool(&self, name: &str) -> Option<&dyn BuiltInTool> {
+    pub fn get_tool(&self, name: &str) -> Option<&dyn Tool> {
         self.tools.get(name).map(|t| t.as_ref())
     }
 
-    pub fn get_all_tool_definitions(&self) -> Vec<async_openai::types::ChatCompletionTool> {
+    pub fn get_definitions(&self) -> Vec<async_openai::types::ChatCompletionTool> {
         self.tools
             .values()
             .map(|tool| tool.get_tool_definition())
@@ -403,15 +478,20 @@ impl BuiltInToolRegistry {
 pub struct TransferToAgentTool;
 
 #[async_trait::async_trait]
-impl BuiltInTool for TransferToAgentTool {
+impl Tool for TransferToAgentTool {
+    fn get_name(&self) -> String {
+        "transfer_to_agent".to_string()
+    }
+    fn get_description(&self) -> String {
+        "Transfer control to another agent to continue the workflow".to_string()
+    }
     fn get_tool_definition(&self) -> async_openai::types::ChatCompletionTool {
+        let description = self.get_description();
         async_openai::types::ChatCompletionTool {
             r#type: async_openai::types::ChatCompletionToolType::Function,
             function: async_openai::types::FunctionObject {
                 name: "transfer_to_agent".to_string(),
-                description: Some(
-                    "Transfer control to another agent to continue the workflow".to_string(),
-                ),
+                description: Some(description),
                 parameters: Some(json!({
                     "type": "object",
                     "properties": {
@@ -430,12 +510,15 @@ impl BuiltInTool for TransferToAgentTool {
             },
         }
     }
+<<<<<<< HEAD
 
     async fn execute(
         &self,
-        args: Value,
+        tool_call: ToolCall,
         context: BuiltInToolContext,
     ) -> Result<String, AgentError> {
+        let args = tool_call.input;
+        let args: HashMap<String, Value> = serde_json::from_str(&args).unwrap_or_default();
         let target_agent = args
             .get("agent_name")
             .and_then(|v| v.as_str())
@@ -443,12 +526,26 @@ impl BuiltInTool for TransferToAgentTool {
 
         let reason = args
             .get("reason")
+=======
+    
+    async fn execute(
+        &self,
+        args: Value,
+        context: BuiltInToolContext,
+    ) -> Result<String, AgentError> {
+        let target_agent = args.get("agent_name")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| AgentError::ToolExecution("Missing agent_name parameter".to_string()))?;
+        
+        let reason = args.get("reason")
+>>>>>>> cc524bd (Refactor agent transfer with built-in tool registry and clean method signatures)
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
         // Check if target agent exists
         if let Some(_target_agent) = context.agent_store.get(target_agent).await {
             // Send handover message through coordinator
+<<<<<<< HEAD
             if let Err(e) = context
                 .coordinator_tx
                 .send(crate::agent::CoordinatorMessage::HandoverAgent {
@@ -482,6 +579,26 @@ impl BuiltInTool for TransferToAgentTool {
                 "Target agent '{}' not found",
                 target_agent
             )))
+=======
+            if let Err(e) = context.coordinator_tx.send(crate::agent::CoordinatorMessage::HandoverAgent {
+                from_agent: context.agent_id.clone(),
+                to_agent: target_agent.to_string(),
+                reason: reason.clone(),
+                context: context.context.clone(),
+                event_tx: context.event_tx,
+            }).await {
+                tracing::error!("Failed to send handover message: {}", e);
+                return Err(AgentError::ToolExecution(format!("Failed to send handover message: {}", e)));
+            }
+            
+            tracing::info!("Agent handover requested from {} to {}", context.agent_id, target_agent);
+            Ok(format!("Transfer initiated to agent '{}'. Reason: {}", 
+                target_agent, 
+                reason.unwrap_or_else(|| "No reason provided".to_string())
+            ))
+        } else {
+            Err(AgentError::ToolExecution(format!("Target agent '{}' not found", target_agent)))
+>>>>>>> cc524bd (Refactor agent transfer with built-in tool registry and clean method signatures)
         }
     }
 }

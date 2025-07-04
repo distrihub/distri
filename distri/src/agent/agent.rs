@@ -3,15 +3,15 @@ use crate::{
     error::AgentError,
     llm::LLMExecutor,
     memory::SystemStep,
+    tools::{LlmToolsRegistry, Tool},
     types::{
         get_tool_descriptions, AgentDefinition, Message, MessageContent, MessageRole, PlanConfig,
-        ServerTools, ToolCall, DEFAULT_TOOL_DESCRIPTION_TEMPLATE,
+        ToolCall, DEFAULT_TOOL_DESCRIPTION_TEMPLATE,
     },
     SessionStore,
 };
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::info;
 use uuid::Uuid;
 
 use crate::agent::{reason::create_initial_plan, ExecutorContext, StepLogger};
@@ -50,10 +50,10 @@ pub trait BaseAgent: Send + Sync + std::fmt::Debug {
         Ok(())
     }
 
-    async fn before_llm_step(
+    async fn after_llm_step(
         &self,
         messages: &[Message],
-        _params: &Option<serde_json::Value>,
+        _params: Option<serde_json::Value>,
         _context: Arc<ExecutorContext>,
     ) -> Result<Vec<Message>, AgentError> {
         Ok(messages.to_vec())
@@ -91,7 +91,7 @@ pub trait BaseAgent: Send + Sync + std::fmt::Debug {
 
     fn get_description(&self) -> &str;
     fn get_definition(&self) -> AgentDefinition;
-    fn get_tools(&self) -> Vec<ServerTools>;
+    fn get_tools(&self) -> Vec<&Box<dyn Tool>>;
 }
 
 /// Result of a single step execution
@@ -103,28 +103,28 @@ pub enum StepResult {
     Finish(String),
 }
 
-/// Standard agent implementation that provides the full LLM-based behavior with extensible hooks
+/// Default agent implementation that provides the standard LLM-based behavior
 #[derive(Clone)]
-pub struct StandardAgent {
+pub struct DefaultAgent {
     pub definition: AgentDefinition,
-    server_tools: Vec<ServerTools>,
+    tool_registry: Arc<LlmToolsRegistry>,
     coordinator: Arc<AgentExecutor>,
     logger: StepLogger,
     session_store: Arc<Box<dyn SessionStore>>,
 }
 
-impl std::fmt::Debug for StandardAgent {
+impl std::fmt::Debug for DefaultAgent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("StandardAgent")
+        f.debug_struct("DefaultAgent")
             .field("definition", &self.definition)
             .finish()
     }
 }
 
-impl StandardAgent {
+impl DefaultAgent {
     pub fn new(
         definition: AgentDefinition,
-        server_tools: Vec<ServerTools>,
+        tool_registry: Arc<LlmToolsRegistry>,
         coordinator: Arc<AgentExecutor>,
         context: Arc<ExecutorContext>,
         session_store: Arc<Box<dyn SessionStore>>,
@@ -132,7 +132,7 @@ impl StandardAgent {
         let logger = StepLogger::new(context.verbose);
         Self {
             definition,
-            server_tools,
+            tool_registry,
             coordinator,
             logger,
             session_store,
@@ -148,7 +148,7 @@ impl StandardAgent {
     ) -> Result<(), AgentError> {
         let agent_id = &self.definition.name;
         let tools_desc =
-            get_tool_descriptions(&self.server_tools, Some(DEFAULT_TOOL_DESCRIPTION_TEMPLATE));
+            get_tool_descriptions(&self.tool_registry, Some(DEFAULT_TOOL_DESCRIPTION_TEMPLATE));
 
         if (iteration - 1) % plan_config.interval == 0 {
             // Run either initial planning or planning update
@@ -158,7 +158,7 @@ impl StandardAgent {
                         crate::agent::reason::get_planning_definition(
                             plan_config.model_settings.clone(),
                         ),
-                        vec![],
+                        Arc::default(),
                         context.clone(),
                         None,
                         Some("initial_plan".to_string()),
@@ -168,7 +168,7 @@ impl StandardAgent {
                         match response {
                             Ok(response) => {
                                 // Extract just the content string
-                                let content = response.content.clone();
+                                let content = LLMExecutor::extract_first_choice(&response);
                                 Ok(content)
                             }
                             Err(e) => {
@@ -196,7 +196,7 @@ impl StandardAgent {
                             crate::agent::reason::get_planning_definition(
                                 plan_config.model_settings.clone(),
                             ),
-                            vec![],
+                            Arc::default(),
                             context.clone(),
                             None,
                             Some("update_plan".to_string()),
@@ -206,7 +206,7 @@ impl StandardAgent {
                             match response {
                                 Ok(response) => {
                                     // Extract just the content string
-                                    let content = response.content.clone();
+                                    let content = LLMExecutor::extract_first_choice(&response);
                                     Ok(content)
                                 }
                                 Err(e) => {
@@ -300,10 +300,10 @@ impl StandardAgent {
     }
 
     /// Execute one step using LLM
-    async fn llm_step(
+    async fn llm(
         &self,
         messages: &[Message],
-        params: &Option<serde_json::Value>,
+        params: Option<serde_json::Value>,
         context: Arc<ExecutorContext>,
         event_tx: Option<mpsc::Sender<AgentEvent>>,
     ) -> Result<StepResult, AgentError> {
@@ -312,61 +312,90 @@ impl StandardAgent {
         // Create executor for LLM call
         let executor = LLMExecutor::new(
             self.definition.clone().into(),
-            self.server_tools.clone(),
+            self.tool_registry.clone(),
             context.clone(),
             None,
             Some(format!("{}:{}", agent_id, "step")),
         );
 
         // Execute LLM call
-        let response = executor.execute(messages, params.clone()).await?;
+        let response = executor.execute(messages, params).await?;
 
-        let step_result = self
-            .handle_finish_reason(
-                response.finish_reason,
-                response.content,
-                response.tool_calls,
-                agent_id,
-                context.clone(),
-            )
-            .await?;
+        // Get the first choice
+        let choice = &response.choices[0];
+        let finish_reason = choice
+            .finish_reason
+            .unwrap_or(async_openai::types::FinishReason::Stop);
+        let content = choice.message.content.clone().unwrap_or_default();
+        let tool_calls = choice.message.tool_calls.clone();
 
-        Ok(step_result)
-    }
+        match finish_reason {
+            async_openai::types::FinishReason::Stop => {
+                // Return finish result
+                Ok(StepResult::Finish(content))
+            }
+            async_openai::types::FinishReason::ToolCalls => {
+                if let Some(tool_calls) = tool_calls {
+                    // Convert and add assistant message with tool calls
+                    let mut new_messages = vec![Message {
+                        role: MessageRole::Assistant,
+                        name: Some(agent_id.to_string()),
+                        content: vec![MessageContent {
+                            content_type: "text".to_string(),
+                            text: Some(content),
+                            image: None,
+                        }],
+                        tool_calls: tool_calls.iter().map(LLMExecutor::map_tool_call).collect(),
+                    }];
 
-    /// Execute one step using LLM
-    async fn llm_step_stream(
-        &self,
-        messages: &[Message],
-        params: &Option<serde_json::Value>,
-        context: Arc<ExecutorContext>,
-        event_tx: mpsc::Sender<AgentEvent>,
-    ) -> Result<StepResult, AgentError> {
-        let agent_id = &self.definition.name;
+                    // Process all tool calls in parallel
+                    let tool_responses =
+                        futures::future::join_all(tool_calls.iter().map(|tool_call| {
+                            let agent_id = agent_id.clone();
+                            let coordinator = self.coordinator.clone();
+                            let event_tx = event_tx.clone();
+                            let context = context.clone();
+                            async move {
+                                let mapped_tool_call = LLMExecutor::map_tool_call(tool_call);
 
-        let executor = LLMExecutor::new(
-            self.definition.clone().into(),
-            self.server_tools.clone(),
-            context.clone(),
-            None,
-            Some(agent_id.to_string()),
-        );
-        // Streaming LLM step: propagate deltas via event_tx
-        let stream_result = executor
-            .execute_stream(&messages, params.clone(), event_tx.clone())
-            .await?;
+                                let content = coordinator
+                                    .execute_tool(
+                                        agent_id,
+                                        mapped_tool_call.clone(),
+                                        event_tx,
+                                        context,
+                                    )
+                                    .await
+                                    .unwrap_or_else(|err| format!("Error: {}", err));
 
-        let step_result = self
-            .handle_finish_reason(
-                stream_result.finish_reason,
-                stream_result.content,
-                stream_result.tool_calls,
-                agent_id,
-                context.clone(),
-            )
-            .await?;
+                                Message {
+                                    role: MessageRole::ToolResponse,
+                                    name: Some(tool_call.function.name.clone()),
+                                    content: vec![MessageContent {
+                                        content_type: "text".to_string(),
+                                        text: Some(content),
+                                        image: None,
+                                    }],
+                                    tool_calls: vec![mapped_tool_call],
+                                }
+                            }
+                        }))
+                        .await;
 
-        Ok(step_result)
+                    // Add tool responses
+                    new_messages.extend(tool_responses);
+                    Ok(StepResult::Continue(new_messages))
+                } else {
+                    Err(AgentError::LLMError(
+                        "Tool calls finish reason but no tool calls".to_string(),
+                    ))
+                }
+            }
+            x => Err(AgentError::LLMError(format!(
+                "Unexpected finish reason: {:?}",
+                x
+            ))),
+        }
     }
 
     /// Helper to emit TextMessage* events for a message
@@ -439,8 +468,6 @@ impl StandardAgent {
             if iterations == 0 {
                 self.system_step(context.clone()).await?;
                 self.task_step(&task, context.clone()).await?;
-                // Call after_task_step hook
-                self.after_task_step(task.clone(), context.clone()).await?;
             }
             let mut current_messages = self
                 .session_store
@@ -458,39 +485,57 @@ impl StandardAgent {
                     self.plan_step(task.clone(), plan_config, iterations, context.clone())
                         .await?;
                 }
-                let messages = self
-                    .before_llm_step(&current_messages, &params, context.clone())
-                    .await?;
-                let step_result = self
-                    .llm_step_stream(&messages, &params, context.clone(), event_tx.clone())
-                    .await?;
-                match step_result {
-                    StepResult::Finish(content) => {
-                        // Call after_finish hook
-                        self.after_finish(&content, context.clone()).await?;
+                // Decide if this step should be streaming (LLM step) or not
+                let is_llm_step = true; // For now, always stream LLM step
+                if is_llm_step {
+                    let executor = LLMExecutor::new(
+                        self.definition.clone().into(),
+                        self.tool_registry.clone(),
+                        context.clone(),
+                        None,
+                        Some(agent_id.to_string()),
+                    );
+                    // Streaming LLM step: propagate deltas via event_tx
+                    executor
+                        .execute_stream(&current_messages, params.clone(), event_tx.clone())
+                        .await?;
+                    // After streaming, break (one streaming step per invoke_stream)
+                    break Ok(());
+                } else {
+                    // Non-streaming step (e.g., tool calls)
+                    let step_result = self
+                        .step(
+                            &current_messages,
+                            params.clone(),
+                            context.clone(),
+                            Some(event_tx.clone()),
+                        )
+                        .await?;
+                    match step_result {
+                        StepResult::Finish(content) => {
+                            // Store final response as action step
+                            let action_step = MemoryStep::Action(ActionStep {
+                                model_input_messages: Some(current_messages),
+                                model_output: Some(content.clone()),
+                                ..Default::default()
+                            });
+                            self.session_store
+                                .store_step(&context.thread_id, action_step.clone())
+                                .await
+                                .map_err(|e| AgentError::Session(e.to_string()))?;
+                            self.logger.log_step(agent_id, &action_step);
 
-                        // Store final response as action step
-                        let action_step = MemoryStep::Action(ActionStep {
-                            model_input_messages: Some(current_messages),
-                            model_output: Some(content.clone()),
-                            ..Default::default()
-                        });
-                        self.session_store
-                            .store_step(&context.thread_id, action_step.clone())
-                            .await
-                            .map_err(|e| AgentError::Session(e.to_string()))?;
-                        self.logger.log_step(agent_id, &action_step);
-
-                        break Ok(());
-                    }
-                    StepResult::Continue(new_messages) => {
-                        current_messages.extend(new_messages);
-                        iterations = self
-                            .session_store
-                            .inc_iteration(&run_id)
-                            .await
-                            .map_err(|e| AgentError::Session(e.to_string()))?;
-                        continue;
+                            break Ok(());
+                        }
+                        StepResult::Continue(new_messages) => {
+                            current_messages.extend(new_messages);
+                            iterations = self
+                                .session_store
+                                .inc_iteration(&run_id)
+                                .await
+                                .map_err(|e| AgentError::Session(e.to_string()))?;
+                            continue;
+                        }
                     }
                 }
             }
@@ -546,8 +591,6 @@ impl StandardAgent {
             if iterations == 0 {
                 self.system_step(context.clone()).await?;
                 self.task_step(&task, context.clone()).await?;
-                // Call after_task_step hook
-                self.after_task_step(task.clone(), context.clone()).await?;
             }
             let mut current_messages = self
                 .session_store
@@ -568,17 +611,16 @@ impl StandardAgent {
                     .inc_iteration(&run_id)
                     .await
                     .map_err(|e| AgentError::Session(e.to_string()))?;
-
-                let messages = self
-                    .before_llm_step(&current_messages, &params, context.clone())
+                let step_result = self
+                    .llm(
+                        &current_messages,
+                        params.clone(),
+                        context.clone(),
+                        event_tx.clone(),
+                    )
                     .await?;
-                let step_result = self.llm_step(&messages, &params, context.clone()).await?;
-
                 match step_result {
                     StepResult::Finish(content) => {
-                        // Call after_finish hook
-                        self.after_finish(&content, context.clone()).await?;
-
                         tracing::info!("Agent execution completed successfully");
                         let action_step = MemoryStep::Action(ActionStep {
                             model_input_messages: Some(current_messages),
@@ -632,96 +674,10 @@ impl StandardAgent {
         }
         result
     }
-
-    async fn handle_finish_reason(
-        &self,
-        finish_reason: async_openai::types::FinishReason,
-        content: String,
-        tool_calls: Vec<ToolCall>,
-        agent_id: &str,
-        context: Arc<ExecutorContext>,
-    ) -> Result<StepResult, AgentError> {
-        match finish_reason {
-            async_openai::types::FinishReason::Stop => {
-                // Return finish result
-                Ok(StepResult::Finish(content))
-            }
-            async_openai::types::FinishReason::ToolCalls => {
-                if !tool_calls.is_empty() {
-                    // Convert and add assistant message with tool calls
-                    let mut new_messages = vec![Message {
-                        role: MessageRole::Assistant,
-                        name: Some(agent_id.to_string()),
-                        content: vec![MessageContent {
-                            content_type: "text".to_string(),
-                            text: Some(content),
-                            image: None,
-                        }],
-                        tool_calls: tool_calls.to_vec(),
-                    }];
-
-                    let tool_calls = self.before_tool_calls(&tool_calls, context.clone()).await?;
-
-                    info!("Agent: Tool calls: {:#?}", tool_calls);
-                    // Process all tool calls in parallel
-                    let tool_responses =
-                        futures::future::join_all(tool_calls.iter().map(|mapped_tool_call| {
-                            let coordinator = self.coordinator.clone();
-                            async move {
-                                info!("Agent: Executing tool call: {:#?}", mapped_tool_call);
-                                let content = coordinator
-                                    .execute_tool(agent_id, mapped_tool_call.clone())
-                                    .await
-                                    .unwrap_or_else(|err| format!("Error: {}", err));
-                                info!("Agent: Tool response: {}", content);
-
-                                Message {
-                                    role: MessageRole::ToolResponse,
-                                    name: Some(mapped_tool_call.tool_name.clone()),
-                                    content: vec![MessageContent {
-                                        content_type: "text".to_string(),
-                                        text: Some(content.clone()),
-                                        image: None,
-                                    }],
-                                    tool_calls: vec![mapped_tool_call.to_owned()],
-                                }
-                            }
-                        }))
-                        .await;
-
-                    let tool_response_contents: Vec<String> = tool_responses
-                        .iter()
-                        .map(|msg| {
-                            msg.content
-                                .first()
-                                .and_then(|c| c.text.clone())
-                                .unwrap_or_default()
-                        })
-                        .collect();
-
-                    // Call after_tool_calls hook
-                    self.after_tool_calls(&tool_response_contents, context)
-                        .await?;
-
-                    // Add tool responses
-                    new_messages.extend(tool_responses);
-                    Ok(StepResult::Continue(new_messages))
-                } else {
-                    Err(AgentError::LLMError(
-                        "Tool calls finish reason but no tool calls".to_string(),
-                    ))
-                }
-            }
-            x => Err(AgentError::LLMError(format!(
-                "Unexpected finish reason: {:?}",
-                x
-            ))),
-        }
-    }
 }
 
 #[async_trait::async_trait]
-impl BaseAgent for StandardAgent {
+impl BaseAgent for DefaultAgent {
     fn get_definition(&self) -> AgentDefinition {
         self.definition.clone()
     }
@@ -730,8 +686,8 @@ impl BaseAgent for StandardAgent {
         &self.definition.description
     }
 
-    fn get_tools(&self) -> Vec<ServerTools> {
-        self.server_tools.clone()
+    fn get_tools(&self) -> Vec<&Box<dyn Tool>> {
+        self.tool_registry.tools.values().collect()
     }
 
     async fn invoke(
@@ -741,7 +697,7 @@ impl BaseAgent for StandardAgent {
         context: Arc<ExecutorContext>,
         event_tx: Option<mpsc::Sender<AgentEvent>>,
     ) -> Result<String, AgentError> {
-        StandardAgent::invoke(self, task, params, context, event_tx).await
+        DefaultAgent::invoke(self, task, params, context, event_tx).await
     }
 
     fn clone_box(&self) -> Box<dyn BaseAgent> {
@@ -759,9 +715,6 @@ impl BaseAgent for StandardAgent {
         context: Arc<ExecutorContext>,
         event_tx: mpsc::Sender<AgentEvent>,
     ) -> Result<(), AgentError> {
-        StandardAgent::invoke_stream(self, task, params, context, event_tx).await
+        DefaultAgent::invoke_stream(self, task, params, context, event_tx).await
     }
 }
-
-// Keep DefaultAgent as an alias for backward compatibility
-pub type DefaultAgent = StandardAgent;
