@@ -1,13 +1,13 @@
 use crate::{
-    agent::{BaseAgent, DefaultAgent},
+    agent::{BaseAgent, StandardAgent},
     error::AgentError,
-    servers::registry::ServerRegistry,
-    store::{
+    servers::registry::McpServerRegistry,
+    stores::HashMapTaskStore,
+    stores::{
         AgentStore, HashMapThreadStore, LocalSessionStore, SessionStore, ThreadStore,
         ToolSessionStore,
     },
-    stores::HashMapTaskStore,
-    tools::{get_tools, BuiltInToolContext, LlmToolsRegistry, Tool},
+    tools::{get_tools, BuiltInToolContext, LlmToolsRegistry},
     types::{
         Configuration, CreateThreadRequest, Thread, ThreadSummary, ToolCall, UpdateThreadRequest,
     },
@@ -28,17 +28,17 @@ use crate::memory::TaskStep;
 pub struct AgentExecutor {
     pub agent_store: Arc<dyn AgentStore>,
     pub tool_sessions: Option<Arc<Box<dyn ToolSessionStore>>>,
-    pub registry: Arc<RwLock<ServerRegistry>>,
+    pub registry: Arc<RwLock<McpServerRegistry>>,
     pub coordinator_rx: Arc<Mutex<mpsc::Receiver<CoordinatorMessage>>>,
     pub coordinator_tx: mpsc::Sender<CoordinatorMessage>,
     pub session_store: Arc<Box<dyn SessionStore>>,
     thread_store: Arc<Box<dyn ThreadStore>>,
-    task_store: Arc<dyn TaskStore>,
+    pub task_store: Arc<dyn TaskStore>,
     pub context: Arc<ExecutorContext>,
 }
 
 pub struct AgentExecutorBuilder {
-    registry: Option<Arc<RwLock<ServerRegistry>>>,
+    registry: Option<Arc<RwLock<McpServerRegistry>>>,
     tool_sessions: Option<Arc<Box<dyn ToolSessionStore>>>,
     session_store: Option<Arc<Box<dyn SessionStore>>>,
     agent_store: Option<Arc<dyn AgentStore>>,
@@ -60,7 +60,7 @@ impl AgentExecutorBuilder {
         }
     }
 
-    pub fn with_registry(mut self, registry: Arc<RwLock<ServerRegistry>>) -> Self {
+    pub fn with_registry(mut self, registry: Arc<RwLock<McpServerRegistry>>) -> Self {
         self.registry = Some(registry);
         self
     }
@@ -127,7 +127,7 @@ impl AgentExecutorBuilder {
             self.context = Some(Arc::new(ExecutorContext::default()));
         }
         if self.registry.is_none() {
-            self.registry = Some(Arc::new(RwLock::new(ServerRegistry::new())));
+            self.registry = Some(Arc::new(RwLock::new(McpServerRegistry::new())));
         }
 
         Ok(self)
@@ -172,7 +172,7 @@ impl AgentExecutorBuilder {
 
 impl AgentExecutor {
     pub fn new(
-        registry: Arc<RwLock<ServerRegistry>>,
+        registry: Arc<RwLock<McpServerRegistry>>,
         tool_sessions: Option<Arc<Box<dyn ToolSessionStore>>>,
         session_store: Option<Arc<Box<dyn SessionStore>>>,
         agent_store: Arc<dyn AgentStore>,
@@ -309,7 +309,7 @@ impl AgentExecutor {
 
         let tools_registry = LlmToolsRegistry::new(tools);
 
-        let agent = Box::new(DefaultAgent::new(
+        let agent = Box::new(StandardAgent::new(
             definition,
             Arc::new(tools_registry),
             Arc::new(self.clone()),

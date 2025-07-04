@@ -36,6 +36,7 @@ async fn create_test_executor() -> Arc<AgentExecutor> {
         plan: None,
         icon_url: Some("https://example.com/agent1.png".to_string()),
         max_iterations: Some(5),
+        sub_agents: vec![],
     };
 
     let agent2 = AgentDefinition {
@@ -50,6 +51,7 @@ async fn create_test_executor() -> Arc<AgentExecutor> {
         plan: None,
         icon_url: Some("https://example.com/agent2.png".to_string()),
         max_iterations: Some(5),
+        sub_agents: vec![],
     };
 
     executor.register_default_agent(agent1).await.unwrap();

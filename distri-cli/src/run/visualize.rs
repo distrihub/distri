@@ -19,21 +19,16 @@ pub async fn _visualize_agents(agent_store: Arc<dyn AgentStore>) -> anyhow::Resu
         let tools = agent.get_tools();
         // Connect agent to its tools
         for tool in tools {
-            for tool in &tool.tools {
-                lines.push("         |".to_string());
-                lines.push("         |".to_string());
-                lines.push("┌───────────────┐".to_string());
-                lines.push(format!("│ {}        │", tool.name));
-                lines.push("│ Description:  │".to_string());
-                lines.push(format!(
-                    "│ {}   │",
-                    tool.description.clone().unwrap_or_default()
-                ));
-                lines.push("└───────────────┘".to_string());
-            }
+            lines.push("         |".to_string());
+            lines.push("         |".to_string());
+            lines.push("┌───────────────┐".to_string());
+            lines.push(format!("│ {}        │", tool.get_name()));
+            lines.push("│ Description:  │".to_string());
+            lines.push(format!("│ {}   │", tool.get_description()));
+            lines.push("└───────────────┘".to_string());
         }
-        lines.push(String::new());
     }
+    lines.push(String::new());
 
     // Print the constructed lines
     for line in lines {

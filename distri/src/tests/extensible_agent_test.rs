@@ -4,6 +4,7 @@ use crate::{
     agent::{BaseAgent, FilteringAgent, LoggingAgent, StandardAgent},
     memory::TaskStep,
     tests::utils::{get_registry, get_tools_session_store},
+    tools::Tool,
     types::{AgentDefinition, ModelSettings, ServerTools},
 };
 use anyhow::Result;
@@ -46,7 +47,7 @@ async fn test_agent_creation_and_metadata() -> Result<()> {
     // Create a LoggingAgent
     let logging_agent = LoggingAgent::new(
         agent_def.clone(),
-        vec![],
+        Arc::default(),
         mock_executor.clone(),
         Arc::new(crate::agent::ExecutorContext::default()),
         session_store.clone(),
@@ -62,7 +63,7 @@ async fn test_agent_creation_and_metadata() -> Result<()> {
     // Create a FilteringAgent
     let filtering_agent = FilteringAgent::new(
         agent_def.clone(),
-        vec![],
+        Arc::default(),
         mock_executor.clone(),
         Arc::new(crate::agent::ExecutorContext::default()),
         session_store.clone(),
@@ -105,7 +106,7 @@ async fn test_standard_agent_hook_mechanism() -> Result<()> {
             self.inner.get_description()
         }
 
-        fn get_tools(&self) -> Vec<ServerTools> {
+        fn get_tools(&self) -> Vec<&Box<dyn Tool>> {
             self.inner.get_tools()
         }
 
@@ -234,7 +235,7 @@ async fn test_standard_agent_hook_mechanism() -> Result<()> {
     let tracking_agent = MockHookTrackingAgent {
         inner: StandardAgent::new(
             agent_def.clone(),
-            vec![],
+            Arc::default(),
             mock_executor.clone(),
             Arc::new(crate::agent::ExecutorContext::default()),
             session_store.clone(),
@@ -313,7 +314,7 @@ async fn test_filtering_agent_content_filtering() -> Result<()> {
     // Create a FilteringAgent with banned words
     let filtering_agent = FilteringAgent::new(
         agent_def.clone(),
-        vec![],
+        Arc::default(),
         mock_executor.clone(),
         Arc::new(crate::agent::ExecutorContext::default()),
         session_store.clone(),

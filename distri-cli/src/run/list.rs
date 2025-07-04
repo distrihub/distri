@@ -1,15 +1,14 @@
 use comfy_table::{modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL, ContentArrangement, Table};
 use distri::{
     agent::AgentExecutor,
-    tools::get_tools,
+    tools::get_mcp_tools,
     types::{McpServerType, ToolsFilter},
     McpDefinition,
 };
 use std::{collections::HashMap, sync::Arc};
 
 pub async fn list(executor: Arc<AgentExecutor>) -> anyhow::Result<()> {
-    let agent_store = executor.agent_store.clone();
-    let (agents, _) = agent_store.list(None, None).await;
+    let (agents, _) = executor.agent_store.list(None, None).await;
     let mut table = Table::new()
         .load_preset(UTF8_FULL)
         .apply_modifier(UTF8_ROUND_CORNERS)
@@ -21,17 +20,16 @@ pub async fn list(executor: Arc<AgentExecutor>) -> anyhow::Result<()> {
         .apply_modifier(UTF8_ROUND_CORNERS)
         .set_content_arrangement(ContentArrangement::Dynamic)
         .to_owned();
-
-    table.add_row(vec!["Agent", "Definition", "MCP Servers"]);
+    table.add_row(vec!["Agent", "Description", "Servers"]);
     for agent in agents.iter() {
         let definition = agent.get_definition();
         let tools = agent.get_tools();
         table.add_row(vec![
             definition.name.clone(),
-            format!("{:#?}", definition),
+            definition.description.clone(),
             tools
                 .iter()
-                .map(|t| t.definition.name.clone())
+                .map(|t| t.get_name())
                 .collect::<Vec<String>>()
                 .join(", "),
         ]);
@@ -47,9 +45,9 @@ pub async fn list_tools(executor: Arc<AgentExecutor>) -> anyhow::Result<()> {
         .set_content_arrangement(ContentArrangement::Dynamic)
         .to_owned();
 
-    let registry = executor.registry.clone();
     let mut map = HashMap::new();
     {
+        let registry = executor.registry.clone();
         let servers = registry.read().await;
         let servers = servers.servers.keys();
         for name in servers {
@@ -58,7 +56,7 @@ pub async fn list_tools(executor: Arc<AgentExecutor>) -> anyhow::Result<()> {
                 r#type: McpServerType::Tool,
                 filter: ToolsFilter::All,
             };
-            let tools = get_tools(&[def], registry.clone()).await?;
+            let tools = get_mcp_tools(&[def], registry.clone()).await?;
             map.insert(name.clone(), tools);
         }
     }
@@ -87,4 +85,29 @@ pub async fn list_tools(executor: Arc<AgentExecutor>) -> anyhow::Result<()> {
     }
     println!("{table}");
     Ok(())
+    //     let mut inner_table = Table::new()
+    //         .load_preset(UTF8_FULL)
+    //         .apply_modifier(UTF8_ROUND_CORNERS)
+    //         .set_width(60)
+    //         .set_content_arrangement(ContentArrangement::Dynamic)
+    //         .to_owned();
+    //     inner_table.add_row(vec!["Server", "Tools", "Description"]);
+    //     let future = tokio::spawn(async move {
+    //         let definition = McpDefinition {
+    //             name: name.clone(),
+    //             r#type: McpServerType::Tool,
+    //             filter: ToolsFilter::All,
+    //         };
+    //         let tools = get_tools(&[definition], registry.clone()).await?;
+    //         inner_table.add_row(vec![
+    //             server.name.clone(),
+    //             tools.len().to_string(),
+    //             server.description.clone(),
+    //         ]);
+    //         Ok(inner_table)
+    //     });
+    //     futures.push(future);
+    //     table.add_row(vec![agent.name.clone(), inner_table.to_string()]);
+    // }
+    // println!("{table}");
 }

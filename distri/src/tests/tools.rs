@@ -52,12 +52,8 @@ async fn get_tools_test() {
         .await
         .expect("failed to fetch tools");
 
-    info!("{server_tools:?}");
     assert!(!server_tools.is_empty(), "Tools list should not be empty");
-    let timeline_tool = server_tools[0]
-        .tools
-        .iter()
-        .find(|t| t.name == "get_timeline");
+    let timeline_tool = server_tools.iter().find(|(n, _)| n == &"get_timeline");
     assert!(timeline_tool.is_some(), "get_timeline should be present");
 }
 

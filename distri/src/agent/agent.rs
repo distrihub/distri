@@ -50,6 +50,15 @@ pub trait BaseAgent: Send + Sync + std::fmt::Debug {
         Ok(())
     }
 
+    async fn before_llm_step(
+        &self,
+        messages: &[Message],
+        _params: &Option<serde_json::Value>,
+        _context: Arc<ExecutorContext>,
+    ) -> Result<Vec<Message>, AgentError> {
+        Ok(messages.to_vec())
+    }
+
     async fn after_llm_step(
         &self,
         messages: &[Message],
@@ -105,7 +114,7 @@ pub enum StepResult {
 
 /// Default agent implementation that provides the standard LLM-based behavior
 #[derive(Clone)]
-pub struct DefaultAgent {
+pub struct StandardAgent {
     pub definition: AgentDefinition,
     tool_registry: Arc<LlmToolsRegistry>,
     coordinator: Arc<AgentExecutor>,
@@ -113,7 +122,7 @@ pub struct DefaultAgent {
     session_store: Arc<Box<dyn SessionStore>>,
 }
 
-impl std::fmt::Debug for DefaultAgent {
+impl std::fmt::Debug for StandardAgent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DefaultAgent")
             .field("definition", &self.definition)
@@ -121,7 +130,7 @@ impl std::fmt::Debug for DefaultAgent {
     }
 }
 
-impl DefaultAgent {
+impl StandardAgent {
     pub fn new(
         definition: AgentDefinition,
         tool_registry: Arc<LlmToolsRegistry>,
@@ -147,8 +156,10 @@ impl DefaultAgent {
         context: Arc<ExecutorContext>,
     ) -> Result<(), AgentError> {
         let agent_id = &self.definition.name;
-        let tools_desc =
-            get_tool_descriptions(&self.tool_registry, Some(DEFAULT_TOOL_DESCRIPTION_TEMPLATE));
+        let tools_desc = get_tool_descriptions(
+            &self.tool_registry.tools,
+            Some(DEFAULT_TOOL_DESCRIPTION_TEMPLATE),
+        );
 
         if (iteration - 1) % plan_config.interval == 0 {
             // Run either initial planning or planning update
@@ -677,7 +688,7 @@ impl DefaultAgent {
 }
 
 #[async_trait::async_trait]
-impl BaseAgent for DefaultAgent {
+impl BaseAgent for StandardAgent {
     fn get_definition(&self) -> AgentDefinition {
         self.definition.clone()
     }
@@ -697,7 +708,7 @@ impl BaseAgent for DefaultAgent {
         context: Arc<ExecutorContext>,
         event_tx: Option<mpsc::Sender<AgentEvent>>,
     ) -> Result<String, AgentError> {
-        DefaultAgent::invoke(self, task, params, context, event_tx).await
+        StandardAgent::invoke(self, task, params, context, event_tx).await
     }
 
     fn clone_box(&self) -> Box<dyn BaseAgent> {
@@ -715,6 +726,6 @@ impl BaseAgent for DefaultAgent {
         context: Arc<ExecutorContext>,
         event_tx: mpsc::Sender<AgentEvent>,
     ) -> Result<(), AgentError> {
-        DefaultAgent::invoke_stream(self, task, params, context, event_tx).await
+        StandardAgent::invoke_stream(self, task, params, context, event_tx).await
     }
 }

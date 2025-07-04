@@ -1,5 +1,5 @@
 use anyhow::Context;
-use async_mcp::types::Tool;
+use async_mcp::types::Tool as McpToolDefinition;
 use distri_a2a::{AgentCapabilities, AgentProvider, SecurityScheme};
 use mcp_proxy::types::ProxyServerConfig;
 use schemars::JsonSchema;
@@ -11,7 +11,7 @@ use std::{collections::HashMap, time::SystemTime};
 use chrono;
 use uuid;
 
-use crate::servers::registry::ServerMetadata;
+use crate::{servers::registry::ServerMetadata, tools::Tool};
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub enum _AuthType {
@@ -246,7 +246,7 @@ fn default_tools_filter() -> ToolsFilter {
 #[serde(deny_unknown_fields)]
 pub struct ServerTools {
     pub definition: McpDefinition,
-    pub tools: Vec<Tool>,
+    pub tools: Vec<McpToolDefinition>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, JsonSchema)]
@@ -384,24 +384,35 @@ pub const DEFAULT_TOOL_DESCRIPTION_TEMPLATE: &str = r#"
     Returns an output of type: {output_type}
 "#;
 
-pub fn get_tool_descriptions(tools: &[ServerTools], template: Option<&str>) -> String {
+pub fn get_tool_descriptions(
+    tools: &HashMap<String, Box<dyn Tool>>,
+    template: Option<&str>,
+) -> String {
     let template = template.unwrap_or(DEFAULT_TOOL_DESCRIPTION_TEMPLATE);
 
     tools
         .iter()
-        .flat_map(|t| t.tools.iter().map(|t| get_tool_description(t, template)))
+        .map(|(_, t)| get_tool_description(t, template))
         .collect::<Vec<String>>()
         .join("\n")
 }
 
-pub fn get_tool_description(tool: &Tool, template: &str) -> String {
+pub fn get_tool_description(tool: &Box<dyn Tool>, template: &str) -> String {
+    let definition = tool.get_tool_definition();
     template
-        .replace("{name}", &tool.name)
+        .replace("{name}", &tool.get_name())
         .replace(
             "{description}",
-            tool.description.as_ref().unwrap_or(&"".to_string()),
+            definition
+                .function
+                .description
+                .as_ref()
+                .unwrap_or(&"".to_string()),
         )
-        .replace("{inputs}", &tool.input_schema.to_string())
+        .replace(
+            "{inputs}",
+            &serde_json::to_string_pretty(&definition.function.parameters).unwrap_or_default(),
+        )
 }
 
 #[derive(Debug, serde::Deserialize, JsonSchema)]

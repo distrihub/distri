@@ -2,7 +2,8 @@ use crate::{
     agent::{AgentEvent, AgentExecutor, BaseAgent, ExecutorContext, StandardAgent},
     error::AgentError,
     memory::TaskStep,
-    types::{AgentDefinition, Message, ServerTools, ToolCall},
+    tools::{LlmToolsRegistry, Tool},
+    types::{AgentDefinition, Message, ToolCall},
     SessionStore,
 };
 use std::sync::Arc;
@@ -27,14 +28,14 @@ impl std::fmt::Debug for LoggingAgent {
 impl LoggingAgent {
     pub fn new(
         definition: AgentDefinition,
-        server_tools: Vec<ServerTools>,
+        tools_registry: Arc<LlmToolsRegistry>,
         coordinator: Arc<AgentExecutor>,
         context: Arc<ExecutorContext>,
         session_store: Arc<Box<dyn SessionStore>>,
     ) -> Self {
         let inner = StandardAgent::new(
             definition,
-            server_tools,
+            tools_registry,
             coordinator,
             context,
             session_store,
@@ -53,7 +54,7 @@ impl BaseAgent for LoggingAgent {
         self.inner.get_description()
     }
 
-    fn get_tools(&self) -> Vec<ServerTools> {
+    fn get_tools(&self) -> Vec<&Box<dyn Tool>> {
         self.inner.get_tools()
     }
 
@@ -218,7 +219,7 @@ impl std::fmt::Debug for FilteringAgent {
 impl FilteringAgent {
     pub fn new(
         definition: AgentDefinition,
-        server_tools: Vec<ServerTools>,
+        tools_registry: Arc<LlmToolsRegistry>,
         coordinator: Arc<AgentExecutor>,
         context: Arc<ExecutorContext>,
         session_store: Arc<Box<dyn SessionStore>>,
@@ -226,7 +227,7 @@ impl FilteringAgent {
     ) -> Self {
         let inner = StandardAgent::new(
             definition,
-            server_tools,
+            tools_registry,
             coordinator,
             context,
             session_store,
@@ -256,7 +257,7 @@ impl BaseAgent for FilteringAgent {
         self.inner.get_description()
     }
 
-    fn get_tools(&self) -> Vec<ServerTools> {
+    fn get_tools(&self) -> Vec<&Box<dyn Tool>> {
         self.inner.get_tools()
     }
 

@@ -10,7 +10,7 @@ use distri::{agent::ExecutorContext, types::McpSession, ToolSessionStore};
 
 use distri_server::agent_server::DistriAgentServer;
 use dotenv::dotenv;
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 use tokio::sync::RwLock;
 
 pub fn get_agent_server() -> DistriAgentServer {

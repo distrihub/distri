@@ -12,8 +12,6 @@ use async_mcp::{
     transport::Transport,
     types::{CallToolRequest, CallToolResponse, ToolResponseContent},
 };
-use async_openai::types::ChatCompletionTool;
-use async_trait::async_trait;
 use regex::Regex;
 use serde_json::{json, Value};
 use tokio::sync::{mpsc, RwLock};
@@ -21,8 +19,8 @@ use tracing::debug;
 
 use crate::agent::ExecutorContext;
 use crate::error::AgentError;
-use crate::servers::registry::{ServerMetadata, ServerRegistry};
-use crate::store::{AgentStore, ToolSessionStore};
+use crate::servers::registry::{McpServerRegistry, ServerMetadata};
+use crate::stores::{AgentStore, ToolSessionStore};
 use crate::types::TransportType;
 use crate::types::{McpDefinition, ToolCall};
 use crate::types::{ServerTools, ToolsFilter};
@@ -113,7 +111,7 @@ macro_rules! with_transport {
 
 pub async fn get_tools(
     definitions: &[McpDefinition],
-    registry: Arc<RwLock<ServerRegistry>>,
+    registry: Arc<RwLock<McpServerRegistry>>,
 ) -> Result<HashMap<String, Box<dyn Tool>>> {
     let mut all_tools = HashMap::new();
     let mcp_tools = get_mcp_tools(definitions, registry).await?;
@@ -129,14 +127,17 @@ pub async fn get_tools(
     }
 
     // Add built-in tools
-    all_tools.insert("transfer_to_agent".to_string(), Box::new(TransferToAgentTool));
+    all_tools.insert(
+        "transfer_to_agent".to_string(),
+        Box::new(TransferToAgentTool),
+    );
 
     Ok(all_tools)
 }
 
 pub async fn get_mcp_tools(
     definitions: &[McpDefinition],
-    registry: Arc<RwLock<ServerRegistry>>,
+    registry: Arc<RwLock<McpServerRegistry>>,
 ) -> Result<Vec<ServerTools>> {
     let mut all_tools = Vec::new();
 
@@ -234,7 +235,7 @@ pub async fn get_mcp_tools(
 pub async fn execute_tool(
     tool_call: &ToolCall,
     tool_def: &McpDefinition,
-    registry: Arc<RwLock<ServerRegistry>>,
+    registry: Arc<RwLock<McpServerRegistry>>,
     tool_sessions: Option<Arc<Box<dyn ToolSessionStore>>>,
     context: Arc<ExecutorContext>,
 ) -> Result<String> {
@@ -440,7 +441,7 @@ pub struct BuiltInToolContext {
     pub event_tx: Option<mpsc::Sender<crate::agent::AgentEvent>>,
     pub coordinator_tx: mpsc::Sender<crate::agent::CoordinatorMessage>,
     pub tool_sessions: Option<Arc<Box<dyn ToolSessionStore>>>,
-    pub registry: Arc<RwLock<ServerRegistry>>,
+    pub registry: Arc<RwLock<McpServerRegistry>>,
 }
 
 /// Built-in tool registry
@@ -510,7 +511,6 @@ impl Tool for TransferToAgentTool {
             },
         }
     }
-<<<<<<< HEAD
 
     async fn execute(
         &self,
@@ -526,26 +526,12 @@ impl Tool for TransferToAgentTool {
 
         let reason = args
             .get("reason")
-=======
-    
-    async fn execute(
-        &self,
-        args: Value,
-        context: BuiltInToolContext,
-    ) -> Result<String, AgentError> {
-        let target_agent = args.get("agent_name")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| AgentError::ToolExecution("Missing agent_name parameter".to_string()))?;
-        
-        let reason = args.get("reason")
->>>>>>> cc524bd (Refactor agent transfer with built-in tool registry and clean method signatures)
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
         // Check if target agent exists
         if let Some(_target_agent) = context.agent_store.get(target_agent).await {
             // Send handover message through coordinator
-<<<<<<< HEAD
             if let Err(e) = context
                 .coordinator_tx
                 .send(crate::agent::CoordinatorMessage::HandoverAgent {
@@ -579,26 +565,6 @@ impl Tool for TransferToAgentTool {
                 "Target agent '{}' not found",
                 target_agent
             )))
-=======
-            if let Err(e) = context.coordinator_tx.send(crate::agent::CoordinatorMessage::HandoverAgent {
-                from_agent: context.agent_id.clone(),
-                to_agent: target_agent.to_string(),
-                reason: reason.clone(),
-                context: context.context.clone(),
-                event_tx: context.event_tx,
-            }).await {
-                tracing::error!("Failed to send handover message: {}", e);
-                return Err(AgentError::ToolExecution(format!("Failed to send handover message: {}", e)));
-            }
-            
-            tracing::info!("Agent handover requested from {} to {}", context.agent_id, target_agent);
-            Ok(format!("Transfer initiated to agent '{}'. Reason: {}", 
-                target_agent, 
-                reason.unwrap_or_else(|| "No reason provided".to_string())
-            ))
-        } else {
-            Err(AgentError::ToolExecution(format!("Target agent '{}' not found", target_agent)))
->>>>>>> cc524bd (Refactor agent transfer with built-in tool registry and clean method signatures)
         }
     }
 }
