@@ -5,7 +5,7 @@ use crate::{
     memory::MemoryStep,
     types::{CreateThreadRequest, McpSession, Message, Thread, ThreadSummary, UpdateThreadRequest},
 };
-use distri_a2a::{Message as A2aMessage, Task, TaskStatus};
+use distri_a2a::{Artifact, Message as A2aMessage, Task, TaskStatus};
 
 #[async_trait]
 pub trait ToolSessionStore: Send + Sync {
@@ -82,6 +82,7 @@ pub trait TaskStore: Send + Sync {
     async fn update_task_status(&self, task_id: &str, status: TaskStatus) -> anyhow::Result<()>;
     async fn cancel_task(&self, task_id: &str) -> anyhow::Result<Task>;
     async fn add_message_to_task(&self, task_id: &str, message: A2aMessage) -> anyhow::Result<()>;
+    async fn add_artifact_to_task(&self, task_id: &str, artifact: Artifact) -> anyhow::Result<()>;
     async fn list_tasks(&self, thread_id: Option<&str>) -> anyhow::Result<Vec<Task>>;
 }
 

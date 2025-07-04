@@ -310,6 +310,19 @@ impl TaskStore for RedisTaskStore {
         Ok(())
     }
 
+    async fn add_artifact_to_task(&self, task_id: &str, artifact: Artifact) -> anyhow::Result<()> {
+        let mut conn = self.client.get_async_connection().await?;
+        let key = self.task_key(task_id);
+
+        if let Some(mut task) = self.get_task(task_id).await? {
+            task.artifacts.push(artifact);
+            let serialized = serde_json::to_string(&task)?;
+            conn.set(&key, serialized).await?;
+        }
+
+        Ok(())
+    }
+
     async fn list_tasks(&self, context_id: Option<&str>) -> anyhow::Result<Vec<Task>> {
         let mut conn = self.client.get_async_connection().await?;
 

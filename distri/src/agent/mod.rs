@@ -69,6 +69,13 @@ pub enum AgentEvent {
         run_id: String,
         tool_call_id: String,
     },
+    ToolCallResult {
+        thread_id: String,
+        run_id: String,
+        tool_call_id: String,
+        result: String,
+        role: Option<String>,
+    },
     AgentHandover {
         thread_id: String,
         run_id: String,
