@@ -1,5 +1,6 @@
 use actix_web_lab::sse::{self, Sse};
 use distri::agent::{AgentEvent, AgentExecutor};
+use distri::ThreadStore;
 use distri::{memory::TaskStep, TaskStore};
 use distri_a2a::{
     EventKind, JsonRpcError, JsonRpcResponse, Message as A2aMessage, MessageSendParams, Part, Role,
@@ -15,6 +16,7 @@ pub async fn handle_message_send_streaming_sse(
     params: serde_json::Value,
     coordinator: Arc<AgentExecutor>,
     task_store: Arc<dyn TaskStore>,
+    thread_store: Arc<dyn ThreadStore>,
     req_id: Option<serde_json::Value>,
 ) -> Sse<impl futures_util::stream::Stream<Item = Result<sse::Event, std::convert::Infallible>>> {
     let id_field_clone = req_id.clone();
@@ -78,6 +80,8 @@ pub async fn handle_message_send_streaming_sse(
         let task_id = task.id.clone();
         // Add the user's message to the task history
         let _ = task_store.add_message_to_task(&task_id, params.message.clone()).await;
+        // Update the thread with the message for title/last_message
+        let _ = thread_store.update_thread_with_message(&thread_id, &extract_text_from_message(&params.message)).await;
         let task_step = TaskStep {
             task: extract_text_from_message(&params.message),
             task_images: None,

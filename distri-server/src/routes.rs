@@ -138,6 +138,7 @@ async fn jsonrpc_handler(
     let req = req.into_inner();
     let executor = executor.get_ref();
     let task_store = &executor.task_store.clone();
+    let thread_store = &executor.thread_store.clone();
 
     if req.method == "message/stream" {
         return Either::Left(
@@ -146,6 +147,7 @@ async fn jsonrpc_handler(
                 req.params,
                 executor.clone(),
                 task_store.clone(),
+                thread_store.clone(),
                 req.id.clone(),
             )
             .await,

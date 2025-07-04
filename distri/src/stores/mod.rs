@@ -20,7 +20,7 @@ pub struct InitializedStores {
     pub session_store: Arc<Box<dyn SessionStore>>,
     pub agent_store: Arc<dyn AgentStore>,
     pub task_store: Arc<dyn TaskStore>,
-    pub thread_store: Arc<Box<dyn ThreadStore>>,
+    pub thread_store: Arc<dyn ThreadStore>,
     pub tool_session_store: Option<Arc<Box<dyn ToolSessionStore>>>,
 }
 
@@ -35,8 +35,7 @@ impl StoreConfig {
             EntityStoreType::Memory => {
                 let agent_store = Arc::new(InMemoryAgentStore::new()) as Arc<dyn AgentStore>;
                 let task_store = Arc::new(HashMapTaskStore::new()) as Arc<dyn TaskStore>;
-                let thread_store =
-                    Arc::new(Box::new(HashMapThreadStore::default()) as Box<dyn ThreadStore>);
+                let thread_store = Arc::new(HashMapThreadStore::default()) as Arc<dyn ThreadStore>;
                 (agent_store, task_store, thread_store)
             }
             #[cfg(feature = "redis")]
@@ -49,9 +48,8 @@ impl StoreConfig {
                     as Arc<dyn AgentStore>;
                 let task_store = Arc::new(redis::RedisTaskStore::new(&redis_config.url).await?)
                     as Arc<dyn TaskStore>;
-                let thread_store = Arc::new(Box::new(
-                    redis::RedisThreadStore::new(&redis_config.url).await?,
-                ) as Box<dyn ThreadStore>);
+                let thread_store = Arc::new(redis::RedisThreadStore::new(&redis_config.url).await?)
+                    as Arc<dyn ThreadStore>;
                 (agent_store, task_store, thread_store)
             }
             #[cfg(not(feature = "redis"))]

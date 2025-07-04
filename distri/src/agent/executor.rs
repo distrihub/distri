@@ -32,7 +32,7 @@ pub struct AgentExecutor {
     pub coordinator_rx: Arc<Mutex<mpsc::Receiver<CoordinatorMessage>>>,
     pub coordinator_tx: mpsc::Sender<CoordinatorMessage>,
     pub session_store: Arc<Box<dyn SessionStore>>,
-    thread_store: Arc<Box<dyn ThreadStore>>,
+    pub thread_store: Arc<dyn ThreadStore>,
     pub task_store: Arc<dyn TaskStore>,
     pub context: Arc<ExecutorContext>,
 }
@@ -43,7 +43,7 @@ pub struct AgentExecutorBuilder {
     session_store: Option<Arc<Box<dyn SessionStore>>>,
     agent_store: Option<Arc<dyn AgentStore>>,
     task_store: Option<Arc<dyn TaskStore>>,
-    thread_store: Option<Arc<Box<dyn ThreadStore>>>,
+    thread_store: Option<Arc<dyn ThreadStore>>,
     context: Option<Arc<ExecutorContext>>,
 }
 
@@ -85,7 +85,7 @@ impl AgentExecutorBuilder {
         self
     }
 
-    pub fn with_thread_store(mut self, thread_store: Arc<Box<dyn ThreadStore>>) -> Self {
+    pub fn with_thread_store(mut self, thread_store: Arc<dyn ThreadStore>) -> Self {
         self.thread_store = Some(thread_store);
         self
     }
@@ -148,9 +148,9 @@ impl AgentExecutorBuilder {
         let task_store = self
             .task_store
             .unwrap_or_else(|| Arc::new(HashMapTaskStore::new()));
-        let thread_store = self.thread_store.unwrap_or_else(|| {
-            Arc::new(Box::new(HashMapThreadStore::default()) as Box<dyn ThreadStore>)
-        });
+        let thread_store = self
+            .thread_store
+            .unwrap_or_else(|| Arc::new(HashMapThreadStore::default()));
         let context = self
             .context
             .unwrap_or_else(|| Arc::new(ExecutorContext::default()));
@@ -179,8 +179,7 @@ impl AgentExecutor {
         context: Arc<ExecutorContext>,
     ) -> Self {
         let (coordinator_tx, coordinator_rx) = mpsc::channel(100);
-        let thread_store =
-            Arc::new(Box::new(HashMapThreadStore::default()) as Box<dyn ThreadStore>);
+        let thread_store = Arc::new(HashMapThreadStore::default());
 
         Self {
             agent_store: agent_store,
