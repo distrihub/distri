@@ -11,7 +11,7 @@ use std::{collections::HashMap, time::SystemTime};
 use chrono;
 use uuid;
 
-use crate::{servers::registry::ServerMetadata, tools::Tool};
+use crate::{servers::registry::ServerMetadata, tools::Tool, validate::validate_agent_definition};
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub enum _AuthType {
@@ -114,7 +114,7 @@ pub struct AgentDefinition {
     #[serde(default = "default_history_size")]
     pub history_size: Option<usize>,
     /// The planning configuration for the agent, if any.
-    #[serde(default, flatten)]
+    #[serde(default)]
     pub plan: Option<PlanConfig>,
     /// A2A-specific fields
     #[serde(default)]
@@ -130,6 +130,12 @@ pub struct AgentDefinition {
     #[serde(default)]
     pub sub_agents: Vec<String>,
 }
+impl AgentDefinition {
+    pub fn validate(&self) -> anyhow::Result<()> {
+        validate_agent_definition(self)?;
+        Ok(())
+    }
+}
 
 pub fn default_agent_version() -> Option<String> {
     Some("0.1.0".to_string())
@@ -139,15 +145,24 @@ pub fn default_agent_version() -> Option<String> {
 pub struct PlanConfig {
     /// Indicates whether planning is enabled for the agent.
     /// How often to replan, specified in steps.
-    #[serde(default)]
+    #[serde(default = "default_plan_interval")]
     pub interval: i32,
     /// The maximum number of iterations allowed during planning.
-    #[serde(default)]
+    #[serde(default = "default_plan_max_iterations")]
     pub max_iterations: Option<i32>,
     /// The model settings for the planning agent.
     #[serde(default)]
     pub model_settings: ModelSettings,
 }
+
+fn default_plan_interval() -> i32 {
+    5
+}
+
+fn default_plan_max_iterations() -> Option<i32> {
+    Some(10)
+}
+
 impl PlanConfig {
     pub fn new(interval: i32, max_iterations: i32, model_settings: ModelSettings) -> Self {
         Self {

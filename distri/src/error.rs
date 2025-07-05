@@ -18,4 +18,6 @@ pub enum AgentError {
     NotFound(String),
     #[error("Not implemented: {0}")]
     NotImplemented(String),
+    #[error("Validation error: {0}")]
+    Validation(String),
 }

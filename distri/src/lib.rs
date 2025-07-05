@@ -10,6 +10,7 @@ pub mod servers;
 pub mod stores;
 pub mod tools;
 pub mod types;
+pub mod validate;
 pub use error::AgentError;
 pub use stores::*;
 pub use stores::{

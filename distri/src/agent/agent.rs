@@ -22,6 +22,13 @@ pub const MAX_ITERATIONS: i32 = 10;
 
 #[async_trait::async_trait]
 pub trait BaseAgent: Send + Sync + std::fmt::Debug {
+    async fn validate(&self) -> Result<(), AgentError> {
+        self.get_definition()
+            .validate()
+            .map_err(|e| AgentError::Validation(e.to_string()))?;
+        Ok(())
+    }
+
     async fn invoke(
         &self,
         task: TaskStep,
@@ -153,6 +160,10 @@ impl StandardAgent {
             Some(DEFAULT_TOOL_DESCRIPTION_TEMPLATE),
         );
 
+        println!(
+            "plan_step: iteration: {}, plan_config: {:?}",
+            iteration, plan_config
+        );
         if (iteration - 1) % plan_config.interval == 0 {
             // Run either initial planning or planning update
             let (facts, plan) = if iteration == 1 {
@@ -406,6 +417,7 @@ impl StandardAgent {
         context: Arc<ExecutorContext>,
         event_tx: mpsc::Sender<AgentEvent>,
     ) -> Result<(), AgentError> {
+        self.validate().await?;
         let agent_id = &self.definition.name;
         let run_id = context.run_id.lock().await.clone();
         let thread_id = context.thread_id.clone();
@@ -519,6 +531,7 @@ impl StandardAgent {
         context: Arc<ExecutorContext>,
         event_tx: Option<mpsc::Sender<AgentEvent>>,
     ) -> Result<String, AgentError> {
+        self.validate().await?;
         let agent_id = &self.definition.name;
         let run_id = context.run_id.lock().await.clone();
         let thread_id = context.thread_id.clone();
