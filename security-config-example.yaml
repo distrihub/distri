@@ -1,0 +1,97 @@
+# Sample configuration for distri-server with security enabled
+
+# Agent configuration
+agents:
+  - name: "secured-agent"
+    description: "A secured agent that requires authentication"
+    system_prompt: "You are a secure agent that requires authentication to access."
+    model_settings:
+      provider: "openai"
+      model: "gpt-4"
+      temperature: 0.7
+
+# Server configuration with security
+server:
+  server_url: "https://api.mycompany.com"
+  agent_provider:
+    organization: "MyCompany"
+    url: "https://mycompany.com"
+  
+  default_input_modes:
+    - "text/plain"
+    - "text/markdown"
+    - "application/json"
+  
+  default_output_modes:
+    - "text/plain"
+    - "text/markdown"
+    - "application/json"
+  
+  capabilities:
+    streaming: true
+    push_notifications: true
+    state_transition_history: true
+    extensions: []
+  
+  preferred_transport: "JSONRPC"
+  documentation_url: "https://docs.mycompany.com/distri-api"
+  
+  # Security schemes configuration
+  security_schemes:
+    # API Key authentication
+    apiKey:
+      type: "apiKey"
+      name: "X-API-Key"
+      in: "header"
+      description: "API key for authentication"
+    
+    # Bearer token authentication
+    bearerAuth:
+      type: "http"
+      scheme: "bearer"
+      bearer_format: "JWT"
+      description: "Bearer token authentication"
+    
+    # Basic authentication
+    basicAuth:
+      type: "http"
+      scheme: "basic"
+      description: "Basic HTTP authentication"
+    
+    # OAuth2 (example - not fully implemented yet)
+    oauth2:
+      type: "oauth2"
+      description: "OAuth2 authentication"
+      flows:
+        authorization_code:
+          authorization_url: "https://auth.mycompany.com/oauth/authorize"
+          token_url: "https://auth.mycompany.com/oauth/token"
+          scopes:
+            read: "Read access to agents"
+            write: "Write access to agents"
+            admin: "Administrative access"
+  
+  # Security requirements - specifies which schemes are required
+  security:
+    # Option 1: Require API key OR bearer token
+    - apiKey: []
+      bearerAuth: []
+    
+    # Option 2: Require OAuth2 with specific scopes
+    # - oauth2: ["read", "write"]
+
+# Example of how to use the security:
+# 
+# For API Key authentication:
+# curl -H "X-API-Key: your-api-key-here" http://localhost:8080/api/v1/agents
+#
+# For Bearer token authentication:
+# curl -H "Authorization: Bearer your-jwt-token-here" http://localhost:8080/api/v1/agents
+#
+# For Basic authentication:
+# curl -H "Authorization: Basic base64(username:password)" http://localhost:8080/api/v1/agents
+
+# Logging configuration
+logging:
+  level: "info"
+  format: "json"

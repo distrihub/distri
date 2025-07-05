@@ -5,7 +5,7 @@ use anyhow::Result;
 use distri::{agent::AgentExecutor, types::ServerConfig};
 use std::sync::Arc;
 
-use crate::routes;
+use crate::{routes, security::create_security_middleware};
 
 pub struct A2AServer {
     executor: Arc<AgentExecutor>,
@@ -18,11 +18,13 @@ impl A2AServer {
 
     pub async fn start(&self, host: &str, port: u16, server_config: ServerConfig) -> Result<()> {
         let executor = self.executor.clone();
+        let security_middleware = create_security_middleware(&server_config);
 
         HttpServer::new(move || {
             App::new()
                 .wrap(Logger::default())
                 .wrap(Cors::permissive())
+                .wrap(security_middleware.clone())
                 .app_data(web::Data::new(executor.clone()))
                 .app_data(web::Data::new(server_config.clone()))
                 .configure(routes::config)
