@@ -30,13 +30,11 @@ async fn create_test_executor() -> Arc<AgentExecutor> {
         system_prompt: Some("You are a helpful test agent".to_string()),
         mcp_servers: vec![],
         model_settings: ModelSettings::default(),
-        parameters: None,
-        response_format: None,
         history_size: Some(10),
         plan: None,
         icon_url: Some("https://example.com/agent1.png".to_string()),
         max_iterations: Some(5),
-        sub_agents: vec![],
+        ..Default::default()
     };
 
     let agent2 = AgentDefinition {
@@ -45,13 +43,12 @@ async fn create_test_executor() -> Arc<AgentExecutor> {
         system_prompt: Some("You are another helpful test agent".to_string()),
         mcp_servers: vec![],
         model_settings: ModelSettings::default(),
-        parameters: None,
-        response_format: None,
         history_size: Some(10),
         plan: None,
         icon_url: Some("https://example.com/agent2.png".to_string()),
         max_iterations: Some(5),
         sub_agents: vec![],
+        ..Default::default()
     };
 
     executor.register_default_agent(agent1).await.unwrap();
@@ -63,10 +60,10 @@ async fn create_test_executor() -> Arc<AgentExecutor> {
 fn create_test_server_config() -> ServerConfig {
     ServerConfig {
         server_url: "http://localhost:8080".to_string(),
-        provider: Some(distri_a2a::AgentProvider {
+        agent_provider: distri_a2a::AgentProvider {
             organization: "Distri Test".to_string(),
             url: "https://github.com/distrihub/distri".to_string(),
-        }),
+        },
         default_input_modes: vec!["text/plain".to_string(), "text/markdown".to_string()],
         default_output_modes: vec!["text/plain".to_string(), "text/markdown".to_string()],
         security_schemes: std::collections::HashMap::new(),

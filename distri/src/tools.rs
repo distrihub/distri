@@ -21,9 +21,9 @@ use crate::agent::ExecutorContext;
 use crate::error::AgentError;
 use crate::servers::registry::{McpServerRegistry, ServerMetadata};
 use crate::stores::{AgentStore, ToolSessionStore};
+use crate::types::ServerTools;
 use crate::types::TransportType;
 use crate::types::{McpDefinition, ToolCall};
-use crate::types::{ServerTools, ToolsFilter};
 
 async fn async_server(metadata: ServerMetadata, transport: ServerInMemoryTransport) -> Result<()> {
     let builder = metadata
@@ -176,29 +176,26 @@ pub async fn get_mcp_tools(
 
                 // Filter tools based on actions_filter if specified
                 match &tool_def.filter {
-                    ToolsFilter::All => {
+                    None => {
                         tracing::debug!(
                             "Loading all {} tools from {}",
                             total_tools,
                             mcp_server_name
                         );
                     }
-                    ToolsFilter::Selected(selected) => {
+                    Some(selected) => {
                         let before_count = tools.len();
                         tools.retain_mut(|tool| {
                             let found = selected.iter().find(|t| {
-                                if tool.name == t.name {
+                                if tool.name.as_str() == t.as_str() {
                                     true
-                                } else if let Ok(name_regex) = Regex::new(&t.name) {
-                                    debug!("Matching {} against pattern {}", tool.name, t.name);
+                                } else if let Ok(name_regex) = Regex::new(&t) {
+                                    debug!("Matching {} against pattern {}", tool.name, t);
                                     name_regex.is_match(&tool.name)
                                 } else {
                                     false
                                 }
                             });
-                            if let Some(Some(d)) = found.as_ref().map(|t| t.description.as_ref()) {
-                                tool.description = Some(d.clone());
-                            }
                             found.is_some()
                         });
                         tracing::debug!(

@@ -1,6 +1,6 @@
 use anyhow::Context;
 use async_mcp::types::Tool as McpToolDefinition;
-use distri_a2a::{AgentCapabilities, AgentProvider, SecurityScheme};
+use distri_a2a::{AgentCapabilities, AgentProvider, AgentSkill, SecurityScheme};
 use mcp_proxy::types::ProxyServerConfig;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -70,12 +70,6 @@ pub struct LlmDefinition {
     /// Settings related to the model used by the agent.
     #[serde(default)]
     pub model_settings: ModelSettings,
-    /// Additional parameters for the agent, if any.
-    #[serde(default)]
-    pub parameters: Option<serde_json::Value>,
-    /// The format of the response, if specified.
-    #[serde(default)]
-    pub response_format: Option<serde_json::Value>,
     /// The size of the history to maintain for the agent.
     #[serde(default = "default_history_size")]
     pub history_size: Option<usize>,
@@ -88,8 +82,6 @@ impl From<AgentDefinition> for LlmDefinition {
             system_prompt: definition.system_prompt,
             mcp_servers: definition.mcp_servers,
             model_settings: definition.model_settings,
-            parameters: definition.parameters,
-            response_format: definition.response_format,
             history_size: definition.history_size,
         }
     }
@@ -103,6 +95,11 @@ pub struct AgentDefinition {
     /// A brief description of the agent's purpose.
     #[serde(default)]
     pub description: String,
+
+    /// The version of the agent.
+    #[serde(default = "default_agent_version")]
+    pub version: Option<String>,
+
     /// The system prompt for the agent, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_prompt: Option<String>,
@@ -112,17 +109,12 @@ pub struct AgentDefinition {
     /// Settings related to the model used by the agent.
     #[serde(default)]
     pub model_settings: ModelSettings,
-    /// Additional parameters for the agent, if any.
-    #[serde(default)]
-    pub parameters: Option<serde_json::Value>,
-    /// The format of the response, if specified.
-    #[serde(default)]
-    pub response_format: Option<serde_json::Value>,
+
     /// The size of the history to maintain for the agent.
     #[serde(default = "default_history_size")]
     pub history_size: Option<usize>,
     /// The planning configuration for the agent, if any.
-    #[serde(default)]
+    #[serde(default, flatten)]
     pub plan: Option<PlanConfig>,
     /// A2A-specific fields
     #[serde(default)]
@@ -131,9 +123,16 @@ pub struct AgentDefinition {
     #[serde(default)]
     pub max_iterations: Option<i32>,
 
+    #[serde(default)]
+    pub skills: Vec<AgentSkill>,
+
     /// List of sub-agents that this agent can transfer control to
     #[serde(default)]
     pub sub_agents: Vec<String>,
+}
+
+pub fn default_agent_version() -> Option<String> {
+    Some("0.1.0".to_string())
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, Default)]
@@ -202,20 +201,6 @@ pub struct McpSession {
     pub expiry: Option<SystemTime>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(untagged)]
-pub enum ToolsFilter {
-    All,
-    Selected(Vec<ToolSelector>),
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ToolSelector {
-    pub name: String,
-    pub description: Option<String>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum McpServerType {
@@ -228,18 +213,13 @@ pub enum McpServerType {
 #[serde(deny_unknown_fields)]
 pub struct McpDefinition {
     /// The filter applied to the tools in this MCP definition.
-    #[serde(default = "default_tools_filter")]
-    pub filter: ToolsFilter,
+    #[serde(default)]
+    pub filter: Option<Vec<String>>,
     /// The name of the MCP server.
     pub name: String,
     /// The type of the MCP server (Tool or Agent).
     #[serde(default)]
     pub r#type: McpServerType,
-}
-
-// Helper functions for serde defaults
-fn default_tools_filter() -> ToolsFilter {
-    ToolsFilter::All
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -258,9 +238,9 @@ pub struct ToolCall {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "lowercase", tag = "provider", content = "value")]
 pub enum ModelProvider {
-    OpenAI,
+    OpenAI {},
     AIGateway {
         base_url: Option<String>,
         api_key: Option<String>,
@@ -286,7 +266,13 @@ pub struct ModelSettings {
     #[serde(default = "default_max_iterations")]
     pub max_iterations: u32,
     #[serde(default = "default_model_provider")]
-    pub model_provider: ModelProvider,
+    pub provider: ModelProvider,
+    /// Additional parameters for the agent, if any.
+    #[serde(default)]
+    pub parameters: Option<serde_json::Value>,
+    /// The format of the response, if specified.
+    #[serde(default)]
+    pub response_format: Option<serde_json::Value>,
 }
 
 impl Default for ModelSettings {
@@ -299,7 +285,9 @@ impl Default for ModelSettings {
             frequency_penalty: 0.0,
             presence_penalty: 0.0,
             max_iterations: 10,
-            model_provider: default_model_provider(),
+            provider: default_model_provider(),
+            parameters: None,
+            response_format: None,
         }
     }
 }
@@ -490,8 +478,8 @@ fn default_redis_timeout() -> u64 {
 pub struct ServerConfig {
     #[serde(default = "default_server_url")]
     pub server_url: String,
-    #[serde(default = "default_provider")]
-    pub provider: Option<AgentProvider>,
+    #[serde(default = "default_agent_provider")]
+    pub agent_provider: AgentProvider,
     #[serde(default)]
     pub default_input_modes: Vec<String>,
     #[serde(default)]
@@ -512,7 +500,7 @@ impl Default for ServerConfig {
     fn default() -> Self {
         Self {
             server_url: default_server_url(),
-            provider: default_provider(),
+            agent_provider: default_agent_provider(),
             default_input_modes: vec![],
             default_output_modes: vec![],
             security_schemes: HashMap::new(),
@@ -529,11 +517,11 @@ impl Default for ServerConfig {
     }
 }
 
-fn default_provider() -> Option<AgentProvider> {
-    Some(AgentProvider {
+fn default_agent_provider() -> AgentProvider {
+    AgentProvider {
         organization: "Distri".to_string(),
         url: "https://distri.ai".to_string(),
-    })
+    }
 }
 
 fn default_server_url() -> String {

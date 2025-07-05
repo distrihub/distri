@@ -88,7 +88,7 @@ impl LLMExecutor {
         params: Option<Value>,
     ) -> Result<LLMResponse, AgentError> {
         // Create normalized parameters
-        if let Some(schema) = self.llm_def.parameters.as_ref() {
+        if let Some(schema) = self.llm_def.model_settings.parameters.as_ref() {
             let mut schema = schema.clone();
             validate_parameters(&mut schema, params.clone())
                 .map_err(|e| AgentError::Parameter(e.to_string()))?;
@@ -163,7 +163,7 @@ impl LLMExecutor {
         event_tx: mpsc::Sender<crate::agent::AgentEvent>,
     ) -> Result<StreamResult, AgentError> {
         // Create normalized parameters
-        if let Some(schema) = self.llm_def.parameters.as_ref() {
+        if let Some(schema) = self.llm_def.model_settings.parameters.as_ref() {
             let mut schema = schema.clone();
             validate_parameters(&mut schema, params.clone())
                 .map_err(|e| AgentError::Parameter(e.to_string()))?;
@@ -448,16 +448,19 @@ impl LLMExecutor {
             model: settings.model.clone(),
             messages,
             tools: if !tools.is_empty() { Some(tools) } else { None },
-            response_format: self.llm_def.response_format.clone().map(|r| {
-                async_openai::types::ResponseFormat::JsonSchema {
+            response_format: self
+                .llm_def
+                .model_settings
+                .response_format
+                .clone()
+                .map(|r| async_openai::types::ResponseFormat::JsonSchema {
                     json_schema: ResponseFormatJsonSchema {
                         description: None,
                         name,
                         schema: Some(r),
                         strict: Some(true),
                     },
-                }
-            }),
+                }),
             ..Default::default()
         }
     }
@@ -536,7 +539,7 @@ async fn completion(
     additional_headers: Option<HashMap<String, String>>,
     label: Option<String>,
 ) -> Result<CreateChatCompletionResponse, AgentError> {
-    let response = match &llm_def.model_settings.model_provider {
+    let response = match &llm_def.model_settings.provider {
         ModelProvider::AIGateway {
             base_url,
             api_key,
@@ -563,7 +566,7 @@ async fn completion(
             let client = Client::with_config(config);
             client.chat().create(request).await
         }
-        ModelProvider::OpenAI => {
+        ModelProvider::OpenAI { .. } => {
             let client = Client::with_config(OpenAIConfig::default());
             client.chat().create(request).await
         }
@@ -585,7 +588,7 @@ async fn completion_stream(
     impl Stream<Item = Result<CreateChatCompletionStreamResponse, async_openai::error::OpenAIError>>,
     AgentError,
 > {
-    let stream = match &llm_def.model_settings.model_provider {
+    let stream = match &llm_def.model_settings.provider {
         ModelProvider::AIGateway {
             base_url,
             api_key,
@@ -613,7 +616,7 @@ async fn completion_stream(
             let client = Client::with_config(config);
             client.chat().create_stream(request).await
         }
-        ModelProvider::OpenAI => {
+        ModelProvider::OpenAI { .. } => {
             let client = Client::with_config(OpenAIConfig::default());
             client.chat().create_stream(request).await
         }

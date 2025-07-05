@@ -1,10 +1,5 @@
 use comfy_table::{modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL, ContentArrangement, Table};
-use distri::{
-    agent::AgentExecutor,
-    tools::get_mcp_tools,
-    types::{McpServerType, ToolsFilter},
-    McpDefinition,
-};
+use distri::{agent::AgentExecutor, tools::get_mcp_tools, types::McpServerType, McpDefinition};
 use std::{collections::HashMap, sync::Arc};
 
 pub async fn list(executor: Arc<AgentExecutor>) -> anyhow::Result<()> {
@@ -54,7 +49,7 @@ pub async fn list_tools(executor: Arc<AgentExecutor>) -> anyhow::Result<()> {
             let def = McpDefinition {
                 name: name.clone(),
                 r#type: McpServerType::Tool,
-                filter: ToolsFilter::All,
+                filter: None,
             };
             let tools = get_mcp_tools(&[def], registry.clone()).await?;
             map.insert(name.clone(), tools);

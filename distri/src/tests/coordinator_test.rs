@@ -8,7 +8,7 @@ use crate::{
     memory::TaskStep,
     stores::InMemoryAgentStore,
     tests::utils::{get_registry, get_search_tool, register_coordinator},
-    types::{AgentDefinition, McpDefinition, ModelSettings, ToolSelector, ToolsFilter},
+    types::{AgentDefinition, McpDefinition, ModelSettings},
 };
 
 #[tokio::test(flavor = "multi_thread")]
@@ -26,7 +26,6 @@ async fn test_agent_coordination() -> anyhow::Result<()> {
         ),
         mcp_servers: tool_defs.clone(),
         model_settings: ModelSettings::default(),
-        parameters: Default::default(),
         ..Default::default()
     };
 
@@ -35,15 +34,11 @@ async fn test_agent_coordination() -> anyhow::Result<()> {
         description: "Test agent 2".to_string(),
         system_prompt: Some("You are agent 2. When you receive a message about twitter, use the twitter_agent tool to get information.".to_string()),
         mcp_servers: vec![McpDefinition {
-            filter: ToolsFilter::Selected(vec![ToolSelector {
-                name: "search_agent".to_string(),
-                description: Some("Execute the search agent to get information".to_string()),
-            }]),
+            filter: Some(vec!["search_agent".to_string()]),
             name: DISTRI_LOCAL_SERVER.to_string(),
             r#type: crate::types::McpServerType::Agent,
         }],
         model_settings: ModelSettings::default(),
-        parameters: Default::default(),
         ..Default::default()
     };
 

@@ -45,7 +45,7 @@ pub fn build_server<T: Transport>(
                                 name: definition.name.clone(),
                                 description: Some(definition.description.clone()),
                                 input_schema: json!({}),
-                                output_schema: definition.response_format.clone(),
+                                output_schema: definition.model_settings.response_format.clone(),
                             }
                         })
                         .collect(),

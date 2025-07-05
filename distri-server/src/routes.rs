@@ -5,10 +5,9 @@ use distri::agent::AgentExecutor;
 use distri::types::{AgentDefinition, ServerConfig, UpdateThreadRequest};
 use distri::{memory::TaskStep, TaskStore};
 use distri_a2a::{
-    AgentCard, JsonRpcError, JsonRpcRequest, JsonRpcResponse, Message as A2aMessage,
-    MessageSendParams, Part, Role, TaskIdParams, TaskState, TaskStatus, TextPart,
+    JsonRpcError, JsonRpcRequest, JsonRpcResponse, Message as A2aMessage, MessageSendParams, Part,
+    Role, TaskIdParams, TaskState, TaskStatus, TextPart,
 };
-use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::json;
 use std::sync::Arc;
@@ -21,16 +20,20 @@ use crate::handlers::{extract_text_from_message, handle_message_send_streaming_s
 pub fn config(cfg: &mut web::ServiceConfig) {
     cfg.service(
         web::scope("/api/v1")
-            .service(web::resource("/agents").route(web::get().to(list_agents)).route(web::post().to(create_agent)))
+            .service(
+                web::resource("/agents")
+                    .route(web::get().to(list_agents))
+                    .route(web::post().to(create_agent)),
+            )
             .service(
                 web::resource("/agents/{id}")
-                    .route(web::get().to(get_agent_card))
+                    .route(web::get().to(get_agent_definition))
                     .route(web::put().to(update_agent))
                     .route(web::post().to(jsonrpc_handler)),
             )
             .service(
                 web::resource("/agents/{agent_name}/.well-known/agent.json")
-                    .route(web::get().to(get_agent_json)),
+                    .route(web::get().to(get_agent_card)),
             )
             .service(web::resource("/schema/agent").route(web::get().to(get_agent_schema)))
             .service(web::resource("/tasks/{id}").route(web::get().to(get_task)))
@@ -50,50 +53,27 @@ pub fn config(cfg: &mut web::ServiceConfig) {
     );
 }
 
-async fn list_agents(
-    executor: web::Data<Arc<AgentExecutor>>,
-    server_config: web::Data<ServerConfig>,
-    req: actix_web::HttpRequest,
-) -> HttpResponse {
-    let base_url = get_base_url(&req);
+async fn list_agents(executor: web::Data<Arc<AgentExecutor>>) -> HttpResponse {
     let (agents, _) = executor.agent_store.list(None, None).await;
-    let agent_cards: Vec<AgentCard> = agents
-        .iter()
-        .map(|agent| {
-            distri::a2a::agent_def_to_card(
-                &agent.get_definition(),
-                server_config.get_ref().clone(),
-                &base_url,
-            )
-        })
-        .collect();
+    let agent_cards: Vec<AgentDefinition> =
+        agents.iter().map(|agent| agent.get_definition()).collect();
     HttpResponse::Ok().json(agent_cards)
 }
 
-async fn get_agent_card(
+async fn get_agent_definition(
     id: web::Path<String>,
     executor: web::Data<Arc<AgentExecutor>>,
-    server_config: web::Data<ServerConfig>,
-    req: actix_web::HttpRequest,
 ) -> HttpResponse {
     let agent_id = id.into_inner();
-    let base_url = get_base_url(&req);
 
     let agent = executor.agent_store.get(&agent_id).await;
     match agent {
-        Some(agent) => {
-            let card = distri::a2a::agent_def_to_card(
-                &agent.get_definition(),
-                server_config.get_ref().clone(),
-                &base_url,
-            );
-            HttpResponse::Ok().json(card)
-        }
+        Some(agent) => HttpResponse::Ok().json(agent.get_definition()),
         None => HttpResponse::NotFound().finish(),
     }
 }
 
-async fn get_agent_json(
+async fn get_agent_card(
     agent_name: web::Path<String>,
     executor: web::Data<Arc<AgentExecutor>>,
     server_config: web::Data<ServerConfig>,
@@ -560,7 +540,7 @@ async fn create_agent(
     executor: web::Data<Arc<AgentExecutor>>,
 ) -> HttpResponse {
     let definition = req.into_inner();
-    
+
     match executor.register_default_agent(definition).await {
         Ok(agent) => {
             let definition = agent.get_definition();
@@ -579,10 +559,10 @@ async fn update_agent(
 ) -> HttpResponse {
     let agent_id = id.into_inner();
     let mut definition = req.into_inner();
-    
+
     // Ensure the name matches the path parameter
     definition.name = agent_id;
-    
+
     match executor.update_agent(definition).await {
         Ok(agent) => {
             let definition = agent.get_definition();

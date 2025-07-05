@@ -5,7 +5,7 @@ use crate::{
     memory::TaskStep,
     tests::utils::{get_registry, get_tools_session_store},
     tools::Tool,
-    types::{AgentDefinition, ModelSettings, ServerTools},
+    types::{AgentDefinition, ModelSettings},
 };
 use anyhow::Result;
 use tokio::sync::Mutex;
@@ -21,13 +21,13 @@ async fn test_agent_creation_and_metadata() -> Result<()> {
         system_prompt: Some("You are a helpful assistant.".to_string()),
         mcp_servers: vec![],
         model_settings: ModelSettings::default(),
-        parameters: None,
-        response_format: None,
         history_size: Some(10),
         plan: None,
         icon_url: None,
         max_iterations: Some(3),
         sub_agents: vec![],
+        skills: vec![],
+        version: None,
     };
 
     // Properly initialize with registry
@@ -208,13 +208,13 @@ async fn test_standard_agent_hook_mechanism() -> Result<()> {
         system_prompt: Some("You are a helpful assistant.".to_string()),
         mcp_servers: vec![],
         model_settings: ModelSettings::default(),
-        parameters: None,
-        response_format: None,
         history_size: Some(10),
         plan: None,
         icon_url: None,
         max_iterations: Some(3),
         sub_agents: vec![],
+        skills: vec![],
+        version: None,
     };
 
     // Properly initialize with registry
@@ -288,13 +288,13 @@ async fn test_filtering_agent_content_filtering() -> Result<()> {
         system_prompt: Some("You are a helpful assistant.".to_string()),
         mcp_servers: vec![],
         model_settings: ModelSettings::default(),
-        parameters: None,
-        response_format: None,
         history_size: Some(10),
         plan: None,
         icon_url: None,
         max_iterations: Some(3),
         sub_agents: vec![],
+        skills: vec![],
+        version: None,
     };
 
     // Properly initialize with registry

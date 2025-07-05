@@ -42,7 +42,7 @@ impl ToolSessionStore for StaticSessionStore {
 // Comment out the simple version
 pub fn get_search_tool() -> McpDefinition {
     McpDefinition {
-        filter: crate::types::ToolsFilter::All,
+        filter: None,
         name: "twitter".to_string(),
         r#type: Default::default(),
     }
