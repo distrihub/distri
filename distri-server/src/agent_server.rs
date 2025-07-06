@@ -6,7 +6,7 @@ use distri::agent::AgentExecutor;
 use serde_json::json;
 use std::sync::Arc;
 
-use crate::{configure_distri_service, DistriServer};
+use crate::{configure_distri_service, DistriServer, security::create_security_middleware};
 use distri::types::Configuration;
 
 pub struct DistriAgentServer {
@@ -52,6 +52,9 @@ impl DistriAgentServer {
 
         tracing::info!("Server config: {:#?}", server_config);
 
+        // Create security middleware
+        let security_middleware = create_security_middleware(&server_config);
+
         HttpServer::new(move || {
             let executor = executor.clone();
             let service_name = self.service_name.clone();
@@ -67,6 +70,7 @@ impl DistriAgentServer {
                         .allow_any_header()
                         .max_age(3600),
                 )
+                .wrap(security_middleware.clone())
                 .route(
                     "/",
                     web::get().to({
