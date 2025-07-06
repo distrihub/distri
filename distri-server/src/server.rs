@@ -25,7 +25,7 @@ impl A2AServer {
                 .wrap(Cors::permissive())
                 .app_data(web::Data::new(executor.clone()))
                 .app_data(web::Data::new(server_config.clone()))
-                .configure(routes::config)
+                .configure(routes::all)
         })
         .bind((host, port))?
         .run()

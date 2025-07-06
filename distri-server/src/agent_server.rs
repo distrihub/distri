@@ -6,8 +6,9 @@ use distri::agent::AgentExecutor;
 use serde_json::json;
 use std::sync::Arc;
 
-use crate::{configure_distri_service, DistriServer};
 use distri::types::Configuration;
+
+use crate::routes;
 
 pub struct DistriAgentServer {
     pub service_name: String,
@@ -15,15 +16,17 @@ pub struct DistriAgentServer {
     pub capabilities: Vec<String>,
 }
 
-impl DistriAgentServer {
-    pub fn new() -> Self {
+impl Default for DistriAgentServer {
+    fn default() -> Self {
         Self {
             service_name: "distri-server".to_string(),
             description: "A Distri server instance".to_string(),
             capabilities: vec!["agent_execution".to_string(), "task_management".to_string()],
         }
     }
+}
 
+impl DistriAgentServer {
     /// Start the server with the configured settings
     pub async fn start(
         self,
@@ -41,13 +44,8 @@ impl DistriAgentServer {
         tracing::info!("  - http://{}:{}/health      - Health check", host, port);
         tracing::info!("  - http://{}:{}/api/v1/agents - List agents", host, port);
 
-        // For now, we don't have direct access to the DistriServer's registry
-        // The customizer pattern will be used more directly when we integrate
-        // with the full agent system initialization
-
         // Initialize the DistriServer with the customized config
-        let distri_server = DistriServer::initialize(&config, executor.clone()).await?;
-        let executor = distri_server.executor();
+
         let server_config = config.server.clone().unwrap_or_default();
 
         tracing::info!("Server config: {:#?}", server_config);
@@ -99,7 +97,9 @@ impl DistriAgentServer {
                     }),
                 )
                 .configure(|cfg| {
-                    configure_distri_service(cfg, executor.clone(), server_config.clone());
+                    cfg.app_data(web::Data::new(executor))
+                        .app_data(web::Data::new(server_config.clone()))
+                        .configure(routes::all);
                 });
 
             app
@@ -109,49 +109,6 @@ impl DistriAgentServer {
         .await?;
 
         Ok(())
-    }
-}
-
-/// Builder for creating reusable distri servers with customization
-pub struct DistriServerBuilder {
-    executor: Option<Arc<AgentExecutor>>,
-    config: Option<Configuration>,
-    server: Option<DistriAgentServer>,
-}
-impl DistriServerBuilder {
-    pub fn new() -> Self {
-        Self {
-            executor: None,
-            config: None,
-            server: None,
-        }
-    }
-}
-impl DistriServerBuilder {
-    pub fn with_server(mut self, server: DistriAgentServer) -> Self {
-        self.server = Some(server);
-        self
-    }
-
-    pub fn with_executor(mut self, executor: Arc<AgentExecutor>) -> Self {
-        self.executor = Some(executor);
-        self
-    }
-
-    pub fn with_config(mut self, config: Configuration) -> Self {
-        self.config = Some(config);
-        self
-    }
-
-    pub async fn build(self) -> Result<DistriServer> {
-        let executor = self
-            .executor
-            .ok_or(anyhow::anyhow!("Executor is required"))?;
-        let config = self.config.ok_or(anyhow::anyhow!("Config is required"))?;
-
-        let distri_server = DistriServer::initialize(&config, executor).await?;
-
-        Ok(distri_server)
     }
 }
 

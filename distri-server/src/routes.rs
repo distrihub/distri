@@ -15,9 +15,16 @@ use uuid::Uuid;
 
 use crate::handlers::{extract_text_from_message, handle_message_send_streaming_sse};
 
-// A2A specification
+// Configure all routes
+
+pub fn all(cfg: &mut web::ServiceConfig) {
+    backend(cfg);
+    public(cfg);
+    main(cfg);
+}
+
 // https://github.com/google-a2a/A2A/blob/main/specification/json/a2a.json
-pub fn config(cfg: &mut web::ServiceConfig) {
+pub fn backend(cfg: &mut web::ServiceConfig) {
     cfg.service(
         web::scope("/api/v1")
             .service(
@@ -28,14 +35,8 @@ pub fn config(cfg: &mut web::ServiceConfig) {
             .service(
                 web::resource("/agents/{id}")
                     .route(web::get().to(get_agent_definition))
-                    .route(web::put().to(update_agent))
-                    .route(web::post().to(jsonrpc_handler)),
+                    .route(web::put().to(update_agent)),
             )
-            .service(
-                web::resource("/agents/{agent_name}/.well-known/agent.json")
-                    .route(web::get().to(get_agent_card)),
-            )
-            .service(web::resource("/schema/agent").route(web::get().to(get_agent_schema)))
             .service(web::resource("/tasks/{id}").route(web::get().to(get_task)))
             .service(web::resource("/tasks").route(web::get().to(list_tasks)))
             // Thread endpoints
@@ -50,6 +51,23 @@ pub fn config(cfg: &mut web::ServiceConfig) {
                 web::resource("/threads/{thread_id}/messages")
                     .route(web::get().to(get_thread_messages)),
             ),
+    );
+}
+pub fn main(cfg: &mut web::ServiceConfig) {
+    cfg.service(
+        web::scope("/api/v1")
+            .service(web::resource("/agents/{id}").route(web::post().to(jsonrpc_handler))),
+    );
+}
+
+pub fn public(cfg: &mut web::ServiceConfig) {
+    cfg.service(
+        web::scope("/api/v1")
+            .service(
+                web::resource("/agents/{agent_name}/.well-known/agent.json")
+                    .route(web::get().to(get_agent_card)),
+            )
+            .service(web::resource("/schema/agent").route(web::get().to(get_agent_schema))),
     );
 }
 
@@ -367,6 +385,7 @@ async fn handle_task_cancel(
 #[derive(Deserialize)]
 struct ListThreadsQuery {
     agent_id: Option<String>,
+    user_id: Option<String>,
     limit: Option<u32>,
     offset: Option<u32>,
 }

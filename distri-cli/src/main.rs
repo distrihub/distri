@@ -7,8 +7,8 @@ use distri::{
     types::{get_distri_config_schema, Configuration},
 };
 use distri_cli::run::session::get_session_store;
-use distri_cli::{register_agents, run_agent_cli};
-use distri_server::A2AServer;
+use distri_cli::run_agent_cli;
+use distri_server::agent_server::{run_agent_server, DistriAgentServer};
 use dotenv::dotenv;
 use logging::init_logging;
 use mcp_proxy::McpProxy;
@@ -112,14 +112,8 @@ async fn main() -> Result<()> {
         Commands::Serve { host, port } => {
             let config = load_config(cli.config.to_str().unwrap())?;
             let executor = init_all(&config).await?;
-
-            register_agents(executor.clone(), &config).await?;
-
-            let server = A2AServer::new(executor);
-            tracing::info!("Starting server at http://{}:{}", host, port);
-            server
-                .start(&host, port, config.server.unwrap_or_default())
-                .await?;
+            let server = DistriAgentServer::default();
+            run_agent_server(server, executor, &config, &host, port).await?;
         }
         Commands::Proxy => {
             let config = load_config(cli.config.to_str().unwrap())?;
@@ -168,7 +162,10 @@ async fn update_all_agents(executor: Arc<AgentExecutor>, config: &Configuration)
             Err(e) => {
                 tracing::warn!("⚠️ Failed to update agent {}: {}", agent_name, e);
                 // Try to register as new agent if update fails
-                match executor.register_default_agent(agent_config.definition.clone()).await {
+                match executor
+                    .register_default_agent(agent_config.definition.clone())
+                    .await
+                {
                     Ok(_) => {
                         tracing::info!("✅ Registered new agent: {}", agent_name);
                     }

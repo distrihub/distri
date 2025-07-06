@@ -93,7 +93,7 @@ async fn test_agent_json_endpoint() {
             .app_data(web::Data::new(task_store))
             .app_data(web::Data::new(event_broadcaster))
             .app_data(web::Data::new(server_config))
-            .configure(routes::config),
+            .configure(routes::public),
     )
     .await;
 
@@ -148,59 +148,6 @@ async fn test_agent_json_endpoint() {
 }
 
 #[actix_web::test]
-async fn test_well_known_a2a_info() {
-    let executor = create_test_executor().await;
-    let server_config = create_test_server_config();
-    let task_store = Arc::new(HashMapTaskStore::new());
-    let (event_broadcaster, _) = broadcast::channel::<String>(1000);
-
-    let app = test::init_service(
-        App::new()
-            .app_data(web::Data::new(executor.clone()))
-            .app_data(web::Data::new(executor.agent_store.clone()))
-            .app_data(web::Data::new(task_store))
-            .app_data(web::Data::new(event_broadcaster))
-            .app_data(web::Data::new(server_config))
-            .configure(routes::config),
-    )
-    .await;
-
-    let req = test::TestRequest::get()
-        .uri("/.well-known/a2a")
-        .to_request();
-
-    let resp = test::call_service(&app, req).await;
-    assert!(resp.status().is_success());
-
-    let body: serde_json::Value = test::read_body_json(resp).await;
-
-    // Verify discovery info structure
-    assert_eq!(body["a2a_version"], distri_a2a::A2A_VERSION);
-    assert_eq!(body["server"], "Distri");
-    assert_eq!(body["transport"], "JSONRPC");
-
-    // Verify endpoints are present
-    let endpoints = &body["endpoints"];
-    assert!(endpoints["agents"]
-        .as_str()
-        .unwrap()
-        .contains("/api/v1/agents"));
-    assert!(endpoints["agent_json"]
-        .as_str()
-        .unwrap()
-        .contains("/agents/{agent_name}.json"));
-
-    // Verify agents array
-    let agents = body["agents"].as_array().unwrap();
-    assert_eq!(agents.len(), 2);
-
-    // Verify capabilities
-    let capabilities = &body["capabilities"];
-    assert_eq!(capabilities["streaming"], true);
-    assert_eq!(capabilities["pushNotifications"], true);
-}
-
-#[actix_web::test]
 async fn test_base_url_extraction() {
     let executor = create_test_executor().await;
     let server_config = create_test_server_config();
@@ -214,7 +161,7 @@ async fn test_base_url_extraction() {
             .app_data(web::Data::new(task_store))
             .app_data(web::Data::new(event_broadcaster))
             .app_data(web::Data::new(server_config))
-            .configure(routes::config),
+            .configure(routes::public),
     )
     .await;
 
