@@ -1,8 +1,7 @@
 use actix_web::{test, web, App};
 use distri::{
     agent::{AgentExecutor, AgentExecutorBuilder},
-    stores::InMemoryAgentStore,
-    types::{AgentDefinition, ModelSettings, ServerConfig},
+    types::{AgentDefinition, ModelSettings, ServerConfig, StoreConfig},
     HashMapTaskStore,
 };
 use distri_a2a::AgentCard;
@@ -13,15 +12,12 @@ use crate::routes;
 
 // Helper function to create test executor with agents
 async fn create_test_executor() -> Arc<AgentExecutor> {
-    let agent_store = Arc::new(InMemoryAgentStore::new());
-    let registry = Arc::new(tokio::sync::RwLock::new(
-        distri::servers::registry::McpServerRegistry::new(),
-    ));
-    let builder = AgentExecutorBuilder::new()
-        .with_agent_store(agent_store.clone())
-        .with_registry(registry);
-
-    let executor = Arc::new(builder.build().unwrap());
+    let stores = StoreConfig::default().initialize().await.unwrap();
+    let executor = AgentExecutorBuilder::default()
+        .with_stores(stores)
+        .build()
+        .unwrap();
+    let executor = Arc::new(executor);
 
     // Register test agents
     let agent1 = AgentDefinition {

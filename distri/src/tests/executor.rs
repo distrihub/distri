@@ -3,11 +3,10 @@ use std::sync::Arc;
 use tracing::info;
 
 use crate::{
-    agent::{AgentEvent, AgentExecutor, ExecutorContext, DISTRI_LOCAL_SERVER},
+    agent::{AgentEvent, DISTRI_LOCAL_SERVER},
     init_logging,
     memory::TaskStep,
-    stores::InMemoryAgentStore,
-    tests::utils::{get_registry, get_search_tool, get_tools_session_store, register_coordinator},
+    tests::utils::{get_search_tool, init_executor},
     types::{AgentDefinition, McpDefinition, ModelSettings},
 };
 
@@ -42,39 +41,24 @@ async fn test_agent_coordination() -> anyhow::Result<()> {
         ..Default::default()
     };
 
-    let local_agent_store = Arc::new(InMemoryAgentStore::new());
-    // Initialize coordinator with session stores
-    let registry = get_registry().await;
+    let executor = init_executor().await;
 
-    let tool_sessions = get_tools_session_store();
-
-    let coordinator = Arc::new(AgentExecutor::new(
-        registry.clone(),
-        tool_sessions,
-        None,
-        local_agent_store,
-        Arc::new(ExecutorContext::default()),
-    ));
-
-    //register coordinator in registry
-    register_coordinator(registry, coordinator.clone()).await;
+    let executor_clone = executor.clone();
 
     // Register agent definitions
 
-    let coordinator_clone = coordinator.clone();
-
-    coordinator
+    executor_clone
         .register_default_agent(agent1_def.clone())
         .await?;
-    coordinator
+    executor_clone
         .register_default_agent(agent2_def.clone())
         .await?;
     // Start coordinator in background
-    let coordinator_handle = tokio::spawn(async move {
-        coordinator_clone.run().await.unwrap();
+    let executor_handle = tokio::spawn(async move {
+        executor_clone.run().await.unwrap();
     });
 
-    let agent2_result = coordinator
+    let agent2_result = executor
         .execute(
             "agent2",
             TaskStep {
@@ -89,7 +73,7 @@ async fn test_agent_coordination() -> anyhow::Result<()> {
     info!("Agent 2 result: {}", agent2_result);
 
     // Clean up
-    coordinator_handle.abort();
+    executor_handle.abort();
     Ok(())
 }
 
@@ -108,28 +92,15 @@ async fn test_agent_coordination_streaming() -> anyhow::Result<()> {
     };
 
     // Initialize coordinator
-    let registry = get_registry().await;
-    let tool_sessions = get_tools_session_store();
-    let coordinator = Arc::new(AgentExecutor::new(
-        registry.clone(),
-        tool_sessions,
-        None,
-        Arc::new(InMemoryAgentStore::new()),
-        Arc::new(ExecutorContext::default()),
-    ));
-
-    // Register coordinator in registry
-    register_coordinator(registry, coordinator.clone()).await;
+    let executor = init_executor().await;
 
     // Register agent definition
-    coordinator
-        .register_default_agent(agent_def.clone())
-        .await?;
+    executor.register_default_agent(agent_def.clone()).await?;
 
     // Start coordinator in background
-    let coordinator_clone = coordinator.clone();
+    let executor_clone = executor.clone();
     let coordinator_handle = tokio::spawn(async move {
-        coordinator_clone.run().await.unwrap();
+        executor_clone.run().await.unwrap();
     });
 
     // Create channel for streaming events
@@ -161,7 +132,7 @@ async fn test_agent_coordination_streaming() -> anyhow::Result<()> {
     });
 
     // Execute streaming task
-    coordinator
+    executor
         .execute_stream("streaming_agent", task, None, event_tx, Arc::default())
         .await?;
 

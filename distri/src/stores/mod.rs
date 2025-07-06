@@ -35,13 +35,14 @@ impl StoreConfig {
         let entity_type = self.entity.as_ref().unwrap_or(&EntityStoreType::Noop);
         let session_type = self.session.as_ref().unwrap_or(&SessionStoreType::Noop);
 
+        let agent_store = Arc::new(InMemoryAgentStore::new()) as Arc<dyn AgentStore>;
+
         // Initialize entity stores (agents, tasks, threads)
-        let (agent_store, task_store, thread_store) = match entity_type {
+        let (task_store, thread_store) = match entity_type {
             EntityStoreType::Memory => {
-                let agent_store = Arc::new(InMemoryAgentStore::new()) as Arc<dyn AgentStore>;
                 let task_store = Arc::new(HashMapTaskStore::new()) as Arc<dyn TaskStore>;
                 let thread_store = Arc::new(HashMapThreadStore::default()) as Arc<dyn ThreadStore>;
-                (agent_store, task_store, thread_store)
+                (task_store, thread_store)
             }
             #[cfg(feature = "redis")]
             EntityStoreType::Redis => {
@@ -66,10 +67,10 @@ impl StoreConfig {
             EntityStoreType::Noop => {
                 // We need to use an in-memory store as a minimum requirement
                 // for the agent to respond to requests
-                let agent_store = Arc::new(InMemoryAgentStore::new()) as Arc<dyn AgentStore>;
+
                 let task_store = Arc::new(NoopTaskStore::default()) as Arc<dyn TaskStore>;
                 let thread_store = Arc::new(NoopThreadStore::default()) as Arc<dyn ThreadStore>;
-                (agent_store, task_store, thread_store)
+                (task_store, thread_store)
             }
         };
 

@@ -1,12 +1,11 @@
 use distri::{
     agent::{AgentExecutor, AgentExecutorBuilder},
-    servers::registry::{register_mcp_servers, McpServerRegistry, ServerMetadata, ServerTrait},
+    servers::registry::{ServerMetadata, ServerTrait},
     types::{Configuration, TransportType},
 };
 use distri_server::agent_server::DistriAgentServer;
 
 use std::{collections::HashMap, sync::Arc};
-use tokio::sync::RwLock;
 
 pub fn get_server() -> DistriAgentServer {
     DistriAgentServer {
@@ -58,15 +57,21 @@ pub fn custom_mcp_servers() -> HashMap<String, ServerMetadata> {
 }
 
 pub async fn init_agent_executor(config: &Configuration) -> anyhow::Result<Arc<AgentExecutor>> {
-    let registry = Arc::new(RwLock::new(McpServerRegistry::new()));
-    let executor = AgentExecutorBuilder::new()
-        .initialize_stores_from_config(config.stores.as_ref())
-        .await?
-        .with_registry(registry.clone());
+    let stores = config
+        .stores
+        .clone()
+        .unwrap_or_default()
+        .initialize()
+        .await?;
+    let executor = AgentExecutorBuilder::default()
+        .with_stores(stores)
+        .build()?;
 
-    let executor = Arc::new(executor.build()?);
+    let executor = Arc::new(executor);
 
-    register_mcp_servers(registry, executor.clone(), custom_mcp_servers()).await?;
+    for (name, server) in custom_mcp_servers() {
+        executor.register_mcp_server(name, server).await;
+    }
 
     // Register agents from configuration
     for agent_config in &config.agents {

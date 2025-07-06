@@ -61,14 +61,18 @@ pub fn replace_env_vars(content: &str) -> String {
 pub async fn init_all(
     config: &Configuration,
 ) -> Result<std::sync::Arc<distri::agent::AgentExecutor>> {
-    let executor = distri::agent::AgentExecutorBuilder::new()
-        .initialize_stores_from_config(config.stores.as_ref())
+    let stores = config
+        .stores
+        .clone()
+        .unwrap_or_default()
+        .initialize()
         .await?;
-
-    let executor = executor.with_tool_sessions(crate::run::session::get_session_store(
-        config.sessions.clone(),
-    ));
-    let executor = std::sync::Arc::new(executor.build()?);
+    let builder = distri::agent::AgentExecutorBuilder::default()
+        .with_stores(stores)
+        .with_tool_sessions(crate::run::session::get_session_store(
+            config.sessions.clone(),
+        ));
+    let executor = std::sync::Arc::new(builder.build()?);
     Ok(executor)
 }
 

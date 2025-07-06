@@ -8,7 +8,7 @@ use async_mcp::{server::Server, transport::Transport};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::Mutex;
 
 use crate::servers::tavily;
 use async_mcp::transport::ServerInMemoryTransport;
@@ -83,44 +83,41 @@ impl<T: Transport> ServerTrait for Server<T> {
     }
 }
 
-pub async fn register_mcp_servers(
-    server_registry: Arc<RwLock<McpServerRegistry>>,
-    coordinator: Arc<AgentExecutor>,
-    servers: HashMap<String, ServerMetadata>,
-) -> Result<()> {
-    let mut registry = server_registry.write().await;
+pub async fn register_tavily_mcp_server(executor: Arc<AgentExecutor>) {
+    executor
+        .register_mcp_server(
+            "web_search".to_string(),
+            ServerMetadata {
+                auth_session_key: None,
+                mcp_transport: TransportType::InMemory,
+                builder: Some(Arc::new(|_, transport| {
+                    let server = tavily::build(transport)?;
+                    Ok(Box::new(server) as Box<dyn ServerTrait>)
+                })),
+                memories: HashMap::new(),
+            },
+        )
+        .await;
+}
 
-    registry.register(
-        "web_search".to_string(),
-        ServerMetadata {
-            auth_session_key: None,
-            mcp_transport: TransportType::InMemory,
-            builder: Some(Arc::new(|_, transport| {
-                let server = tavily::build(transport)?;
-                Ok(Box::new(server) as Box<dyn ServerTrait>)
-            })),
-            memories: HashMap::new(),
-        },
-    );
+pub async fn register_default_mcp_servers(executor: Arc<AgentExecutor>) -> Result<()> {
+    let executor_clone = executor.clone();
 
-    registry.register(
-        DISTRI_LOCAL_SERVER.to_string(),
-        ServerMetadata {
-            auth_session_key: None,
-            mcp_transport: TransportType::InMemory,
-            builder: Some(Arc::new(move |_, transport| {
-                let coordinator = coordinator.clone();
-                let server = agent::build_server(transport, coordinator)?;
-                Ok(Box::new(server) as Box<dyn ServerTrait>)
-            })),
-            memories: HashMap::new(),
-        },
-    );
-
-    // Register external servers
-    for (name, metadata) in servers {
-        registry.register(name, metadata);
-    }
+    executor
+        .register_mcp_server(
+            DISTRI_LOCAL_SERVER.to_string(),
+            ServerMetadata {
+                auth_session_key: None,
+                mcp_transport: TransportType::InMemory,
+                builder: Some(Arc::new(move |_, transport| {
+                    let executor = executor_clone.clone();
+                    let server = agent::build_server(transport, executor)?;
+                    Ok(Box::new(server) as Box<dyn ServerTrait>)
+                })),
+                memories: HashMap::new(),
+            },
+        )
+        .await;
 
     Ok(())
 }

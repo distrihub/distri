@@ -3,22 +3,20 @@ use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
 
 use crate::{
-    agent::{AgentExecutor, ExecutorContext, DISTRI_LOCAL_SERVER},
+    agent::{AgentExecutor, AgentExecutorBuilder, ExecutorContext, DISTRI_LOCAL_SERVER},
     servers::registry::{McpServerRegistry, ServerMetadata, ServerTrait},
     tests::tools::build_mock_search_tool,
-    types::TransportType,
+    types::{StoreConfig, TransportType},
     McpDefinition, McpSession, ToolSessionStore,
 };
 
-pub fn get_tools_session_store() -> Option<Arc<Box<dyn ToolSessionStore>>> {
+pub fn get_tools_session_store() -> Arc<Box<dyn ToolSessionStore>> {
     dotenv::dotenv().ok();
     let session_key =
         std::env::var("X_USER_SESSION").unwrap_or_else(|_| "test_session_key".to_string());
     // Create executor with static session store
 
-    Some(Arc::new(
-        Box::new(StaticSessionStore { session_key }) as Box<dyn ToolSessionStore>
-    ))
+    Arc::new(Box::new(StaticSessionStore { session_key }))
 }
 
 pub struct StaticSessionStore {
@@ -85,4 +83,17 @@ pub async fn register_coordinator(
             memories: HashMap::new(),
         },
     );
+}
+
+pub async fn init_executor() -> Arc<AgentExecutor> {
+    let registry = get_registry().await;
+    let stores = StoreConfig::default().initialize().await.unwrap();
+    let executor = AgentExecutorBuilder::default()
+        .with_stores(stores)
+        .with_registry(registry.clone())
+        .build()
+        .unwrap();
+    let executor = Arc::new(executor);
+    register_coordinator(registry, executor.clone()).await;
+    executor
 }

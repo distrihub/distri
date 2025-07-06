@@ -3,10 +3,9 @@ use clap::Parser;
 use distri_cli::{list_agents, run, Cli, Commands};
 mod logging;
 use distri::{
-    agent::{AgentExecutor, AgentExecutorBuilder},
+    agent::AgentExecutor,
     types::{get_distri_config_schema, Configuration},
 };
-use distri_cli::run::session::get_session_store;
 use distri_cli::run_agent_cli;
 use distri_server::agent_server::{run_agent_server, DistriAgentServer};
 use dotenv::dotenv;
@@ -141,12 +140,18 @@ fn print_schema(pretty: bool) {
 }
 
 async fn init_all(config: &Configuration) -> Result<Arc<AgentExecutor>> {
-    let executor = AgentExecutorBuilder::new()
-        .initialize_stores_from_config(config.stores.as_ref())
+    let stores = config
+        .stores
+        .clone()
+        .unwrap_or_default()
+        .initialize()
         .await?;
-
-    let executor = executor.with_tool_sessions(get_session_store(config.sessions.clone()));
-    let executor = Arc::new(executor.build()?);
+    let builder = distri::agent::AgentExecutorBuilder::default()
+        .with_stores(stores)
+        .with_tool_sessions(crate::run::session::get_session_store(
+            config.sessions.clone(),
+        ));
+    let executor = std::sync::Arc::new(builder.build()?);
     Ok(executor)
 }
 

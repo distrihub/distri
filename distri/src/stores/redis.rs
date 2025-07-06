@@ -621,8 +621,11 @@ impl AgentStore for RedisAgentStore {
 
         let mut agents = Vec::new();
         for name in &agent_names {
-            if let Ok(Some(serialized)) = conn.get::<_, Option<String>>(&self.agent_key(name)).await {
-                if let Ok(definition) = serde_json::from_str::<crate::types::AgentDefinition>(&serialized) {
+            if let Ok(Some(serialized)) = conn.get::<_, Option<String>>(&self.agent_key(name)).await
+            {
+                if let Ok(definition) =
+                    serde_json::from_str::<crate::types::AgentDefinition>(&serialized)
+                {
                     // Note: We need to reconstruct the agent from stored definition
                     // In practice, you might store the entire agent or have a way to reconstruct it
                     // For now, we'll return empty agents vector as this is complex to implement properly
@@ -654,16 +657,16 @@ impl AgentStore for RedisAgentStore {
         let mut conn = self.client.get_async_connection().await?;
         let name = agent.get_name();
         let definition = agent.get_definition();
-        
+
         let serialized = serde_json::to_string(&definition)?;
         let agent_key = self.agent_key(name);
-        
+
         // Store agent definition
         conn.set(&agent_key, &serialized).await?;
-        
+
         // Add to agents list
         conn.zadd(&self.agents_list_key(), name, 0).await?;
-        
+
         Ok(())
     }
 
@@ -671,19 +674,19 @@ impl AgentStore for RedisAgentStore {
         let mut conn = self.client.get_async_connection().await?;
         let name = agent.get_name();
         let agent_key = self.agent_key(name);
-        
+
         // Check if agent exists
         let exists: bool = conn.exists(&agent_key).await?;
         if !exists {
             return Err(anyhow::anyhow!("Agent '{}' not found", name));
         }
-        
+
         let definition = agent.get_definition();
         let serialized = serde_json::to_string(&definition)?;
-        
+
         // Update agent definition
         conn.set(&agent_key, &serialized).await?;
-        
+
         Ok(())
     }
 }

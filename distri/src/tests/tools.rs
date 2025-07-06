@@ -33,7 +33,7 @@ async fn execute_tool_test() {
         &tool_call,
         &tool_def,
         registry,
-        get_tools_session_store(),
+        Some(get_tools_session_store()),
         Arc::new(ExecutorContext::default()),
     )
     .await

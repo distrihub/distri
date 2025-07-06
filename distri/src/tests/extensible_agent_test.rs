@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::{
     agent::{BaseAgent, FilteringAgent, LoggingAgent, StandardAgent},
     memory::TaskStep,
-    tests::utils::{get_registry, get_tools_session_store},
+    tests::utils::init_executor,
     tools::Tool,
     types::{AgentDefinition, ModelSettings},
 };
@@ -30,25 +30,14 @@ async fn test_agent_creation_and_metadata() -> Result<()> {
         version: None,
     };
 
-    // Properly initialize with registry
-    let registry = get_registry().await;
-    let tool_sessions = get_tools_session_store();
-    let local_agent_store = Arc::new(crate::stores::InMemoryAgentStore::new());
-
-    let mock_executor = std::sync::Arc::new(crate::agent::AgentExecutor::new(
-        registry,
-        tool_sessions,
-        None,
-        local_agent_store,
-        Arc::new(crate::agent::ExecutorContext::default()),
-    ));
-    let session_store = mock_executor.session_store.clone();
+    let executor = init_executor().await;
+    let session_store = executor.session_store.clone();
 
     // Create a LoggingAgent
     let logging_agent = LoggingAgent::new(
         agent_def.clone(),
         Arc::default(),
-        mock_executor.clone(),
+        executor.clone(),
         Arc::new(crate::agent::ExecutorContext::default()),
         session_store.clone(),
     );
@@ -64,7 +53,7 @@ async fn test_agent_creation_and_metadata() -> Result<()> {
     let filtering_agent = FilteringAgent::new(
         agent_def.clone(),
         Arc::default(),
-        mock_executor.clone(),
+        executor.clone(),
         Arc::new(crate::agent::ExecutorContext::default()),
         session_store.clone(),
         vec!["badword".to_string(), "inappropriate".to_string()],
@@ -217,26 +206,15 @@ async fn test_standard_agent_hook_mechanism() -> Result<()> {
         version: None,
     };
 
-    // Properly initialize with registry
-    let registry = get_registry().await;
-    let tool_sessions = get_tools_session_store();
-    let local_agent_store = Arc::new(crate::stores::InMemoryAgentStore::new());
-
-    let mock_executor = std::sync::Arc::new(crate::agent::AgentExecutor::new(
-        registry,
-        tool_sessions,
-        None,
-        local_agent_store,
-        Arc::new(crate::agent::ExecutorContext::default()),
-    ));
-    let session_store = mock_executor.session_store.clone();
+    let executor = init_executor().await;
+    let session_store = executor.session_store.clone();
 
     let hook_calls = Arc::new(Mutex::new(Vec::new()));
     let tracking_agent = MockHookTrackingAgent {
         inner: StandardAgent::new(
             agent_def.clone(),
             Arc::default(),
-            mock_executor.clone(),
+            executor.clone(),
             Arc::new(crate::agent::ExecutorContext::default()),
             session_store.clone(),
         ),
@@ -297,25 +275,14 @@ async fn test_filtering_agent_content_filtering() -> Result<()> {
         version: None,
     };
 
-    // Properly initialize with registry
-    let registry = get_registry().await;
-    let tool_sessions = get_tools_session_store();
-    let local_agent_store = Arc::new(crate::stores::InMemoryAgentStore::new());
-
-    let mock_executor = std::sync::Arc::new(crate::agent::AgentExecutor::new(
-        registry,
-        tool_sessions,
-        None,
-        local_agent_store,
-        Arc::new(crate::agent::ExecutorContext::default()),
-    ));
-    let session_store = mock_executor.session_store.clone();
+    let executor = init_executor().await;
+    let session_store = executor.session_store.clone();
 
     // Create a FilteringAgent with banned words
     let filtering_agent = FilteringAgent::new(
         agent_def.clone(),
         Arc::default(),
-        mock_executor.clone(),
+        executor.clone(),
         Arc::new(crate::agent::ExecutorContext::default()),
         session_store.clone(),
         vec!["badword".to_string(), "inappropriate".to_string()],

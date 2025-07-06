@@ -1,17 +1,14 @@
 use crate::{
     agent::{BaseAgent, StandardAgent},
     error::AgentError,
-    servers::registry::McpServerRegistry,
-    stores::HashMapTaskStore,
-    stores::{
-        AgentStore, HashMapThreadStore, LocalSessionStore, SessionStore, ThreadStore,
-        ToolSessionStore,
-    },
+    servers::registry::{McpServerRegistry, ServerMetadata},
+    stores::{AgentStore, ThreadStore, ToolSessionStore},
     tools::{get_tools, BuiltInToolContext, LlmToolsRegistry},
     types::{
-        Configuration, CreateThreadRequest, Thread, ThreadSummary, ToolCall, UpdateThreadRequest,
+        Configuration, CreateThreadRequest, StoreConfig, Thread, ThreadSummary, ToolCall,
+        UpdateThreadRequest,
     },
-    TaskStore,
+    InitializedStores, SessionStore, TaskStore,
 };
 use serde_json;
 use std::sync::Arc;
@@ -37,6 +34,7 @@ pub struct AgentExecutor {
     pub context: Arc<ExecutorContext>,
 }
 
+#[derive(Default)]
 pub struct AgentExecutorBuilder {
     registry: Option<Arc<RwLock<McpServerRegistry>>>,
     tool_sessions: Option<Arc<Box<dyn ToolSessionStore>>>,
@@ -48,18 +46,6 @@ pub struct AgentExecutorBuilder {
 }
 
 impl AgentExecutorBuilder {
-    pub fn new() -> Self {
-        Self {
-            registry: None,
-            tool_sessions: None,
-            session_store: None,
-            agent_store: None,
-            task_store: None,
-            thread_store: None,
-            context: None,
-        }
-    }
-
     pub fn with_registry(mut self, registry: Arc<RwLock<McpServerRegistry>>) -> Self {
         self.registry = Some(registry);
         self
@@ -95,16 +81,7 @@ impl AgentExecutorBuilder {
         self
     }
 
-    pub async fn initialize_stores_from_config(
-        mut self,
-        store_config: Option<&crate::types::StoreConfig>,
-    ) -> anyhow::Result<Self> {
-        let default_config = crate::types::StoreConfig::default();
-        let config = store_config.unwrap_or(&default_config);
-
-        // Initialize all stores using the StoreConfig::initialize method
-        let stores = config.initialize().await?;
-
+    pub fn with_stores(mut self, stores: InitializedStores) -> Self {
         // Set the stores if not already provided
         if self.session_store.is_none() {
             self.session_store = Some(stores.session_store);
@@ -121,16 +98,7 @@ impl AgentExecutorBuilder {
         if self.tool_sessions.is_none() {
             self.tool_sessions = stores.tool_session_store;
         }
-
-        // Initialize defaults for remaining fields
-        if self.context.is_none() {
-            self.context = Some(Arc::new(ExecutorContext::default()));
-        }
-        if self.registry.is_none() {
-            self.registry = Some(Arc::new(RwLock::new(McpServerRegistry::new())));
-        }
-
-        Ok(self)
+        self
     }
 
     pub fn build(self) -> anyhow::Result<AgentExecutor> {
@@ -138,19 +106,23 @@ impl AgentExecutorBuilder {
 
         let registry = self
             .registry
-            .ok_or_else(|| anyhow::anyhow!("Registry is required"))?;
+            .unwrap_or_else(|| Arc::new(RwLock::new(McpServerRegistry::default())));
+
         let session_store = self
             .session_store
-            .unwrap_or_else(|| Arc::new(Box::new(LocalSessionStore::new())));
-        let agent_store = self
-            .agent_store
-            .ok_or_else(|| anyhow::anyhow!("Agent store is required"))?;
+            .ok_or_else(|| anyhow::anyhow!("Session store is required. Use with_stores() to initialize. Default is LocalSessionStore."))?;
+
+        let agent_store = self.agent_store.ok_or_else(|| {
+            anyhow::anyhow!("Agent store is required. Use with_stores() to initialize. Default is InMemoryAgentStore.")
+        })?;
+
         let task_store = self
             .task_store
-            .unwrap_or_else(|| Arc::new(HashMapTaskStore::new()));
+            .ok_or_else(|| anyhow::anyhow!("Task store is required. Use with_stores() to initialize. Default is HashMapTaskStore."))?;
         let thread_store = self
             .thread_store
-            .unwrap_or_else(|| Arc::new(HashMapThreadStore::default()));
+            .ok_or_else(|| anyhow::anyhow!("Thread store is required. Use with_stores() to initialize. Default is HashMapThreadStore."))?;
+
         let context = self
             .context
             .unwrap_or_else(|| Arc::new(ExecutorContext::default()));
@@ -171,38 +143,15 @@ impl AgentExecutorBuilder {
 }
 
 impl AgentExecutor {
-    pub fn new(
-        registry: Arc<RwLock<McpServerRegistry>>,
-        tool_sessions: Option<Arc<Box<dyn ToolSessionStore>>>,
-        session_store: Option<Arc<Box<dyn SessionStore>>>,
-        agent_store: Arc<dyn AgentStore>,
-        context: Arc<ExecutorContext>,
-    ) -> Self {
-        let (coordinator_tx, coordinator_rx) = mpsc::channel(100);
-        let thread_store = Arc::new(HashMapThreadStore::default());
-
-        Self {
-            agent_store: agent_store,
-            tool_sessions,
-            registry,
-            coordinator_rx: Arc::new(Mutex::new(coordinator_rx)),
-            coordinator_tx,
-            session_store: session_store
-                .unwrap_or_else(|| Arc::new(Box::new(LocalSessionStore::new()))),
-            thread_store,
-            task_store: Arc::new(HashMapTaskStore::new()),
-            context: context,
-        }
-    }
-
     /// Initialize AgentExecutor from configuration
     pub async fn initialize(config: &Configuration) -> anyhow::Result<Self> {
-        let builder = AgentExecutorBuilder::new();
+        let builder = AgentExecutorBuilder::default();
 
+        let store_config = config.stores.clone().unwrap_or(StoreConfig::default());
         // Initialize stores from configuration
-        let builder = builder
-            .initialize_stores_from_config(config.stores.as_ref())
-            .await?;
+
+        let stores = store_config.initialize().await?;
+        let builder = builder.with_stores(stores);
 
         let executor = builder.build()?;
 
@@ -216,18 +165,9 @@ impl AgentExecutor {
         Ok(executor)
     }
 
-    /// Initialize AgentExecutor from configuration string or file path
-    pub async fn initialize_from_config(config_source: &str) -> anyhow::Result<Self> {
-        let config = if std::path::Path::new(config_source).exists() {
-            // It's a file path
-            let config_str = std::fs::read_to_string(config_source)?;
-            serde_yaml::from_str::<Configuration>(&config_str)?
-        } else {
-            // It's a config string
-            serde_yaml::from_str::<Configuration>(config_source)?
-        };
-
-        Self::initialize(&config).await
+    pub async fn register_mcp_server(&self, name: String, server: ServerMetadata) {
+        let registry = self.registry.clone();
+        registry.write().await.register(name, server);
     }
     pub async fn emit_tool_event(
         &self,

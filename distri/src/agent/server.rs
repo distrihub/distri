@@ -112,9 +112,10 @@ mod tests {
     use anyhow::Result;
 
     use crate::{
-        agent::{AgentExecutor, ExecutorContext},
+        agent::{AgentExecutorBuilder, ExecutorContext},
         stores::{InMemoryAgentStore, LocalSessionStore, SessionStore},
         tests::utils::{get_registry, get_tools_session_store},
+        types::StoreConfig,
     };
 
     use super::build_server;
@@ -127,19 +128,22 @@ mod tests {
 
     async fn async_server(transport: ServerInMemoryTransport, context: Arc<ExecutorContext>) {
         let registry = get_registry().await;
-        let session_store = Some(Arc::new(
-            Box::new(LocalSessionStore::new()) as Box<dyn SessionStore>
-        ));
+        let session_store = Arc::new(Box::new(LocalSessionStore::new()) as Box<dyn SessionStore>);
         let agent_store = Arc::new(InMemoryAgentStore::new());
         let tool_sessions = get_tools_session_store();
-        let coordinator = Arc::new(AgentExecutor::new(
-            registry.clone(),
-            tool_sessions,
-            session_store,
-            agent_store,
-            context.clone(),
-        ));
-        let server = build_server(transport.clone(), coordinator).unwrap();
+
+        let stores = StoreConfig::default().initialize().await.unwrap();
+        let executor = AgentExecutorBuilder::default()
+            .with_stores(stores)
+            .with_agent_store(agent_store)
+            .with_session_store(session_store)
+            .with_registry(registry)
+            .with_tool_sessions(tool_sessions)
+            .with_context(context.clone())
+            .build()
+            .unwrap();
+
+        let server = build_server(transport.clone(), Arc::new(executor)).unwrap();
         server.listen().await.unwrap();
     }
 
