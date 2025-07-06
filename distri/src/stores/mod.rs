@@ -3,13 +3,18 @@ pub mod memory;
 pub mod redis;
 mod types;
 
-use crate::types::{EntityStoreType, SessionStoreType, StoreConfig};
+use crate::{
+    noop::{NoopSessionStore, NoopTaskStore, NoopThreadStore, NoopToolSessionStore},
+    types::{EntityStoreType, SessionStoreType, StoreConfig},
+};
 use std::sync::Arc;
 // Re-export the main store traits and types
 pub use file::*;
 pub use types::*;
 // Re-export memory implementations
 pub use memory::*;
+
+pub mod noop;
 
 // Re-export redis implementations
 #[cfg(feature = "redis")]
@@ -27,8 +32,8 @@ pub struct InitializedStores {
 impl StoreConfig {
     /// Initialize all stores based on configuration
     pub async fn initialize(&self) -> anyhow::Result<InitializedStores> {
-        let entity_type = self.entity.as_ref().unwrap_or(&EntityStoreType::Memory);
-        let session_type = self.session.as_ref().unwrap_or(&SessionStoreType::InMemory);
+        let entity_type = self.entity.as_ref().unwrap_or(&EntityStoreType::Noop);
+        let session_type = self.session.as_ref().unwrap_or(&SessionStoreType::Noop);
 
         // Initialize entity stores (agents, tasks, threads)
         let (agent_store, task_store, thread_store) = match entity_type {
@@ -57,6 +62,14 @@ impl StoreConfig {
                 return Err(anyhow::anyhow!(
                     "Redis feature not enabled. Compile with --features redis"
                 ));
+            }
+            EntityStoreType::Noop => {
+                // We need to use an in-memory store as a minimum requirement
+                // for the agent to respond to requests
+                let agent_store = Arc::new(InMemoryAgentStore::new()) as Arc<dyn AgentStore>;
+                let task_store = Arc::new(NoopTaskStore::default()) as Arc<dyn TaskStore>;
+                let thread_store = Arc::new(NoopThreadStore::default()) as Arc<dyn ThreadStore>;
+                (agent_store, task_store, thread_store)
             }
         };
 
@@ -100,6 +113,14 @@ impl StoreConfig {
                 return Err(anyhow::anyhow!(
                     "Redis feature not enabled. Compile with --features redis"
                 ));
+            }
+            SessionStoreType::Noop => {
+                let session_store =
+                    Arc::new(Box::new(NoopSessionStore::default()) as Box<dyn SessionStore>);
+                let tool_session_store = Some(Arc::new(
+                    Box::new(NoopToolSessionStore::default()) as Box<dyn ToolSessionStore>
+                ));
+                (session_store, tool_session_store)
             }
         };
 

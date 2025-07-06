@@ -460,6 +460,7 @@ pub struct StoreConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum EntityStoreType {
+    Noop,
     Memory,
     Redis,
 }
@@ -467,6 +468,7 @@ pub enum EntityStoreType {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum SessionStoreType {
+    Noop,
     InMemory,
     Redis,
     File { path: String },
