@@ -1,5 +1,5 @@
 use crate::{
-    agent::{AgentEvent, AgentExecutor},
+    agent::{AgentEvent, AgentExecutor, AgentHooks},
     error::AgentError,
     llm::LLMExecutor,
     memory::SystemStep,
@@ -49,48 +49,6 @@ pub trait BaseAgent: Send + Sync + std::fmt::Debug {
         ))
     }
 
-    // Default implementation hooks that return values as-is
-    async fn after_task_step(
-        &self,
-        _task: TaskStep,
-        _context: Arc<ExecutorContext>,
-    ) -> Result<(), AgentError> {
-        Ok(())
-    }
-
-    async fn before_llm_step(
-        &self,
-        messages: &[Message],
-        _params: &Option<serde_json::Value>,
-        _context: Arc<ExecutorContext>,
-    ) -> Result<Vec<Message>, AgentError> {
-        Ok(messages.to_vec())
-    }
-
-    async fn before_tool_calls(
-        &self,
-        tool_calls: &[ToolCall],
-        _context: Arc<ExecutorContext>,
-    ) -> Result<Vec<ToolCall>, AgentError> {
-        Ok(tool_calls.to_vec())
-    }
-
-    async fn after_tool_calls(
-        &self,
-        _tool_responses: &[String],
-        _context: Arc<ExecutorContext>,
-    ) -> Result<(), AgentError> {
-        Ok(())
-    }
-
-    async fn after_finish(
-        &self,
-        _content: &str,
-        _context: Arc<ExecutorContext>,
-    ) -> Result<(), AgentError> {
-        Ok(())
-    }
-
     /// Clone the agent (required for object safety)
     fn clone_box(&self) -> Box<dyn BaseAgent>;
 
@@ -100,6 +58,9 @@ pub trait BaseAgent: Send + Sync + std::fmt::Debug {
     fn get_description(&self) -> &str;
     fn get_definition(&self) -> AgentDefinition;
     fn get_tools(&self) -> Vec<&Box<dyn Tool>>;
+
+    // Used in deserialization
+    fn agent_type(&self) -> AgentType;
 }
 
 /// Result of a single step execution
@@ -736,9 +697,23 @@ impl StandardAgent {
         }
     }
 }
+#[async_trait::async_trait]
+impl AgentHooks for StandardAgent {}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub enum AgentType {
+    #[default]
+    Standard,
+    Remote,
+    Custom(String),
+}
 
 #[async_trait::async_trait]
 impl BaseAgent for StandardAgent {
+    fn agent_type(&self) -> AgentType {
+        AgentType::Standard
+    }
+
     fn get_definition(&self) -> AgentDefinition {
         self.definition.clone()
     }

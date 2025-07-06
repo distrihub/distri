@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::{
-    agent::{BaseAgent, FilteringAgent, LoggingAgent, StandardAgent},
+    agent::{agent::AgentType, AgentHooks, BaseAgent, FilteringAgent, LoggingAgent, StandardAgent},
     memory::TaskStep,
     tests::utils::init_executor,
     tools::Tool,
@@ -87,6 +87,10 @@ async fn test_standard_agent_hook_mechanism() -> Result<()> {
 
     #[async_trait::async_trait]
     impl BaseAgent for MockHookTrackingAgent {
+        fn agent_type(&self) -> AgentType {
+            AgentType::Custom("MockHookTrackingAgent".to_string())
+        }
+
         fn get_definition(&self) -> crate::types::AgentDefinition {
             self.inner.get_definition()
         }
@@ -128,7 +132,9 @@ async fn test_standard_agent_hook_mechanism() -> Result<()> {
         ) -> Result<(), crate::error::AgentError> {
             Ok(())
         }
-
+    }
+    #[async_trait::async_trait]
+    impl AgentHooks for MockHookTrackingAgent {
         async fn after_task_step(
             &self,
             task: TaskStep,

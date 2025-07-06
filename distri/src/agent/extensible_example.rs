@@ -1,5 +1,8 @@
 use crate::{
-    agent::{AgentEvent, AgentExecutor, BaseAgent, ExecutorContext, StandardAgent},
+    agent::{
+        agent::AgentType, AgentEvent, AgentExecutor, AgentHooks, BaseAgent, ExecutorContext,
+        StandardAgent,
+    },
     error::AgentError,
     memory::TaskStep,
     tools::{LlmToolsRegistry, Tool},
@@ -46,6 +49,10 @@ impl LoggingAgent {
 
 #[async_trait::async_trait]
 impl BaseAgent for LoggingAgent {
+    fn agent_type(&self) -> AgentType {
+        AgentType::Custom("LoggingAgent".to_string())
+    }
+
     fn get_definition(&self) -> AgentDefinition {
         self.inner.get_definition()
     }
@@ -87,9 +94,10 @@ impl BaseAgent for LoggingAgent {
             .invoke_stream(task, params, context, event_tx)
             .await
     }
+}
 
-    // Custom hook implementations demonstrating extensibility
-
+#[async_trait::async_trait]
+impl AgentHooks for LoggingAgent {
     async fn after_task_step(
         &self,
         task: TaskStep,
@@ -249,6 +257,10 @@ impl FilteringAgent {
 
 #[async_trait::async_trait]
 impl BaseAgent for FilteringAgent {
+    fn agent_type(&self) -> AgentType {
+        AgentType::Custom("FilteringAgent".to_string())
+    }
+
     fn get_definition(&self) -> AgentDefinition {
         self.inner.get_definition()
     }
@@ -291,7 +303,10 @@ impl BaseAgent for FilteringAgent {
             .invoke_stream(task, params, context, event_tx)
             .await
     }
+}
 
+#[async_trait::async_trait]
+impl AgentHooks for FilteringAgent {
     async fn before_llm_step(
         &self,
         messages: &[Message],
