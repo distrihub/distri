@@ -511,12 +511,12 @@ impl AgentExecutor {
 
     pub async fn list_threads(
         &self,
-        agent_id: Option<&str>,
+        user_id: Option<&str>,
         limit: Option<u32>,
         offset: Option<u32>,
     ) -> Result<Vec<ThreadSummary>, AgentError> {
         self.thread_store
-            .list_threads(agent_id, limit, offset)
+            .list_threads(user_id, limit, offset)
             .await
             .map_err(|e| AgentError::Session(e.to_string()))
     }

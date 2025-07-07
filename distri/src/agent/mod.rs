@@ -5,15 +5,14 @@ mod hooks;
 pub mod log;
 pub mod reason;
 pub mod server;
+use crate::types::ToolCall;
 pub use agent::{BaseAgent, StandardAgent, StepResult, MAX_ITERATIONS};
 pub use executor::{AgentExecutor, AgentExecutorBuilder};
 pub use extensible_example::{FilteringAgent, LoggingAgent};
 pub use hooks::AgentHooks;
 pub use log::{ModelLogger, StepLogger};
-pub use server::{build_server, DISTRI_LOCAL_SERVER};
-
-use crate::types::ToolCall;
 use serde::{Deserialize, Serialize};
+pub use server::{build_server, DISTRI_LOCAL_SERVER};
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;

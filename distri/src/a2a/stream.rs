@@ -1,7 +1,6 @@
-use actix_web_lab::sse::{self, Sse};
-use distri::agent::{AgentEvent, AgentExecutor};
-use distri::ThreadStore;
-use distri::{memory::TaskStep, TaskStore};
+use crate::a2a::{extract_text_from_message, SseMessage};
+use crate::agent::{AgentEvent, AgentExecutor, ExecutorContext};
+use crate::memory::TaskStep;
 use distri_a2a::{
     EventKind, JsonRpcError, JsonRpcResponse, Message as A2aMessage, MessageSendParams, Part, Role,
     TaskState, TaskStatus, TaskStatusUpdateEvent, TextPart,
@@ -9,18 +8,16 @@ use distri_a2a::{
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
-use crate::handlers::extract_text_from_message;
-
 pub async fn handle_message_send_streaming_sse(
     agent_id: String,
     params: serde_json::Value,
-    coordinator: Arc<AgentExecutor>,
-    task_store: Arc<dyn TaskStore>,
-    thread_store: Arc<dyn ThreadStore>,
+    executor: Arc<AgentExecutor>,
     req_id: Option<serde_json::Value>,
-) -> Sse<impl futures_util::stream::Stream<Item = Result<sse::Event, std::convert::Infallible>>> {
+) -> impl futures_util::stream::Stream<Item = Result<SseMessage, std::convert::Infallible>> {
     let id_field_clone = req_id.clone();
-    let stream = async_stream::stream! {
+    let task_store = executor.task_store.clone();
+    let thread_store = executor.thread_store.clone();
+    async_stream::stream! {
         let params: Result<MessageSendParams, _> = serde_json::from_value(params);
         if params.is_err() {
             let error = JsonRpcResponse {
@@ -33,11 +30,14 @@ pub async fn handle_message_send_streaming_sse(
                 }),
                 id: id_field_clone.clone(),
             };
-            yield Ok::<_, std::convert::Infallible>(sse::Data::new(serde_json::to_string(&error).unwrap()).into());
+            yield Ok::<_, std::convert::Infallible>(SseMessage {
+                event: None,
+                data: serde_json::to_string(&error).unwrap(),
+            });
             return;
         }
         let params = params.unwrap();
-        let thread = match coordinator.ensure_thread_exists(
+        let thread = match executor.ensure_thread_exists(
             &agent_id,
             params.message.context_id.as_deref().map(String::from),
             Some(extract_text_from_message(&params.message)),
@@ -54,7 +54,10 @@ pub async fn handle_message_send_streaming_sse(
                     }),
                     id: id_field_clone.clone(),
                 };
-                yield Ok::<_, std::convert::Infallible>(sse::Data::new(serde_json::to_string(&error).unwrap()).into());
+                yield Ok::<_, std::convert::Infallible>(SseMessage {
+                    event: None,
+                    data: serde_json::to_string(&error).unwrap(),
+                });
                 return;
             }
         };
@@ -73,7 +76,10 @@ pub async fn handle_message_send_streaming_sse(
                     }),
                     id: id_field_clone.clone(),
                 };
-                yield Ok::<_, std::convert::Infallible>(sse::Data::new(serde_json::to_string(&error).unwrap()).into());
+                yield Ok::<_, std::convert::Infallible>(SseMessage {
+                    event: None,
+                    data: serde_json::to_string(&error).unwrap(),
+                });
                 return;
             }
         };
@@ -94,25 +100,25 @@ pub async fn handle_message_send_streaming_sse(
         let _ = task_store.update_task_status(&task_id, working_status).await;
         let (event_tx, mut event_rx) = mpsc::channel(100);
         let (sse_tx, mut sse_rx) = mpsc::channel(100);
-        let coordinator_context = Arc::new(distri::agent::ExecutorContext::new(
+        let executor_context = Arc::new(ExecutorContext::new(
             thread_id.clone(),
             Some(run_id.clone()),
-            coordinator.context.verbose,
-            coordinator.context.user_id.clone(),
-            Some(coordinator.context.tools_context.clone()),
+            executor.context.verbose,
+            executor.context.user_id.clone(),
+            Some(executor.context.tools_context.clone()),
         ));
         // Spawn execute_stream in the background
         let agent_id_clone = agent_id.clone();
         let task_step_clone = task_step.clone();
-        let coordinator_clone = coordinator.clone();
-        let coordinator_context_clone = coordinator_context.clone();
+        let executor_clone = executor.clone();
+        let executor_context_clone = executor_context.clone();
         tokio::spawn(async move {
-            let _ = coordinator_clone.execute_stream(
+            let _ = executor_clone.execute_stream(
                 &agent_id_clone,
                 task_step_clone,
                 None,
                 event_tx,
-                coordinator_context_clone,
+                executor_context_clone,
             ).await;
         });
         // Spawn a task to forward events from event_rx to sse_tx
@@ -400,9 +406,15 @@ pub async fn handle_message_send_streaming_sse(
             error: None,
             id: id_field_clone.clone(),
         };
-        yield Ok::<_, std::convert::Infallible>(sse::Data::new(serde_json::to_string(&resp).unwrap()).into());
+        yield Ok::<_, std::convert::Infallible>(SseMessage {
+            event: None,
+            data: serde_json::to_string(&resp).unwrap(),
+        });
         while let Some(resp) = sse_rx.recv().await {
-            yield Ok::<_, std::convert::Infallible>(sse::Data::new(serde_json::to_string(&resp).unwrap()).into());
+            yield Ok::<_, std::convert::Infallible>(SseMessage {
+                event: None,
+                data: serde_json::to_string(&resp).unwrap(),
+            });
         }
         // After all events, yield the final status
         let final_task = task_store.get_task(&task_id).await.ok().flatten();
@@ -436,7 +448,9 @@ pub async fn handle_message_send_streaming_sse(
             error: None,
             id: id_field_clone.clone(),
         };
-        yield Ok::<_, std::convert::Infallible>(sse::Data::new(serde_json::to_string(&resp).unwrap()).into());
-    };
-    Sse::from_stream(stream)
+        yield Ok::<_, std::convert::Infallible>(SseMessage {
+            event: None,
+            data: serde_json::to_string(&resp).unwrap(),
+        });
+    }
 }

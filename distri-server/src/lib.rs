@@ -1,5 +1,4 @@
 pub mod agent_server;
-pub mod handlers;
 pub mod routes;
 pub mod server;
 
