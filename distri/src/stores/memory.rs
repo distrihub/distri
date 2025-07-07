@@ -200,19 +200,7 @@ impl HashMapTaskStore {
 impl TaskStore for HashMapTaskStore {
     async fn create_task(&self, context_id: &str, task_id: Option<&str>) -> anyhow::Result<Task> {
         let task_id = task_id.unwrap_or(&Uuid::new_v4().to_string()).to_string();
-        let task = Task {
-            kind: EventKind::Task,
-            id: task_id.clone(),
-            context_id: context_id.to_string(),
-            status: TaskStatus {
-                state: TaskState::Submitted,
-                message: None,
-                timestamp: Some(chrono::Utc::now().to_rfc3339()),
-            },
-            artifacts: vec![],
-            history: vec![],
-            metadata: None,
-        };
+        let task = self.init_task(context_id, Some(&task_id));
 
         let mut tasks = self.tasks.write().await;
         tasks.insert(task_id, task.clone());

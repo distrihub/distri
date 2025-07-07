@@ -1,15 +1,7 @@
-#[cfg(feature = "redis")]
 use async_trait::async_trait;
-#[cfg(feature = "redis")]
 use redis::{AsyncCommands, Client};
-#[cfg(feature = "redis")]
-use serde::{Deserialize, Serialize};
-#[cfg(feature = "redis")]
-use std::{collections::HashMap, sync::Arc};
-#[cfg(feature = "redis")]
 use uuid::Uuid;
 
-#[cfg(feature = "redis")]
 use crate::{
     agent::ExecutorContext,
     memory::{LocalAgentMemory, MemoryStep},
@@ -19,17 +11,14 @@ use crate::{
     },
     types::{CreateThreadRequest, McpSession, Thread, ThreadSummary, UpdateThreadRequest},
 };
-#[cfg(feature = "redis")]
 use distri_a2a::{Artifact, Message as A2aMessage, Task, TaskState, TaskStatus};
 
-#[cfg(feature = "redis")]
 #[derive(Clone)]
 pub struct RedisSessionStore {
     client: Client,
     prefix: String,
 }
 
-#[cfg(feature = "redis")]
 impl RedisSessionStore {
     pub fn new(redis_url: &str, prefix: Option<String>) -> anyhow::Result<Self> {
         let client = Client::open(redis_url)?;
@@ -48,7 +37,6 @@ impl RedisSessionStore {
     }
 }
 
-#[cfg(feature = "redis")]
 #[async_trait::async_trait]
 impl SessionStore for RedisSessionStore {
     async fn get_steps(&self, thread_id: &str) -> anyhow::Result<Vec<MemoryStep>> {
@@ -72,7 +60,11 @@ impl SessionStore for RedisSessionStore {
         // Get existing memory or create new
         let mut memory = match conn.get::<_, Option<String>>(&key).await? {
             Some(json_data) => serde_json::from_str::<LocalAgentMemory>(&json_data)?,
-            None => LocalAgentMemory::new(thread_id.to_string()),
+            None => LocalAgentMemory {
+                thread_id: thread_id.to_string(),
+                steps: vec![],
+                iteration: 0,
+            },
         };
 
         memory.add_step(step);
@@ -228,16 +220,7 @@ impl TaskStore for RedisTaskStore {
         let mut conn = self.client.get_async_connection().await?;
         let task_id = task_id.unwrap_or(&Uuid::new_v4().to_string()).to_string();
 
-        let task = Task {
-            id: task_id.clone(),
-            context_id: context_id.to_string(),
-            status: TaskStatus {
-                state: TaskState::Created,
-                message: None,
-                timestamp: Some(chrono::Utc::now().to_rfc3339()),
-            },
-            messages: vec![],
-        };
+        let task = self.init_task(context_id, Some(&task_id));
 
         let serialized = serde_json::to_string(&task)?;
         let task_key = self.task_key(&task_id);
@@ -286,7 +269,7 @@ impl TaskStore for RedisTaskStore {
             .ok_or_else(|| anyhow::anyhow!("Task not found"))?;
 
         task.status = TaskStatus {
-            state: TaskState::Cancelled,
+            state: TaskState::Canceled,
             message: None,
             timestamp: Some(chrono::Utc::now().to_rfc3339()),
         };
@@ -302,7 +285,7 @@ impl TaskStore for RedisTaskStore {
         let key = self.task_key(task_id);
 
         if let Some(mut task) = self.get_task(task_id).await? {
-            task.messages.push(message);
+            task.history.push(message);
             let serialized = serde_json::to_string(&task)?;
             conn.set(&key, serialized).await?;
         }
@@ -577,11 +560,11 @@ pub struct RedisAgentStore {
 
 #[cfg(feature = "redis")]
 impl RedisAgentStore {
-    pub async fn new(redis_url: &str) -> anyhow::Result<Self> {
+    pub async fn new(redis_url: &str, prefix: Option<String>) -> anyhow::Result<Self> {
         let client = Client::open(redis_url)?;
         Ok(Self {
             client,
-            prefix: "distri:agent".to_string(),
+            prefix: prefix.unwrap_or_else(|| "distri:agent".to_string()),
         })
     }
 
@@ -608,11 +591,15 @@ impl AgentStore for RedisAgentStore {
         };
 
         let limit = limit.unwrap_or(100);
-        let start_index = cursor.unwrap_or_else(|| "0".to_string());
+        let start_index: isize = cursor.as_deref().unwrap_or("0").parse().unwrap_or(0);
 
         // Get agent names from sorted set
         let agent_names: Vec<String> = match conn
-            .zrange(&self.agents_list_key(), &start_index, limit as isize - 1)
+            .zrange(
+                &self.agents_list_key(),
+                start_index,
+                (start_index + limit as isize) - 1,
+            )
             .await
         {
             Ok(names) => names,

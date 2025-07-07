@@ -1,6 +1,6 @@
 mod file;
 pub mod memory;
-pub mod redis;
+
 mod types;
 
 use crate::{
@@ -15,6 +15,9 @@ pub use types::*;
 pub use memory::*;
 
 pub mod noop;
+
+#[cfg(feature = "redis")]
+pub mod redis;
 
 // Re-export redis implementations
 #[cfg(feature = "redis")]
@@ -50,13 +53,15 @@ impl StoreConfig {
                     anyhow::anyhow!("Redis config required when using Redis stores")
                 })?;
 
-                let agent_store = Arc::new(redis::RedisAgentStore::new(&redis_config.url).await?)
-                    as Arc<dyn AgentStore>;
-                let task_store = Arc::new(redis::RedisTaskStore::new(&redis_config.url).await?)
-                    as Arc<dyn TaskStore>;
-                let thread_store = Arc::new(redis::RedisThreadStore::new(&redis_config.url).await?)
-                    as Arc<dyn ThreadStore>;
-                (agent_store, task_store, thread_store)
+                let task_store = Arc::new(redis::RedisTaskStore::new(
+                    &redis_config.url,
+                    redis_config.prefix.clone(),
+                )?) as Arc<dyn TaskStore>;
+                let thread_store = Arc::new(redis::RedisThreadStore::new(
+                    &redis_config.url,
+                    redis_config.prefix.clone(),
+                )?) as Arc<dyn ThreadStore>;
+                (task_store, thread_store)
             }
             #[cfg(not(feature = "redis"))]
             EntityStoreType::Redis => {
@@ -100,13 +105,16 @@ impl StoreConfig {
                     anyhow::anyhow!("Redis config required when using Redis stores")
                 })?;
 
-                let session_store = Arc::new(Box::new(
-                    redis::RedisSessionStore::new(&redis_config.url).await?,
-                ) as Box<dyn SessionStore>);
-                let tool_session_store = Some(Arc::new(Box::new(
-                    redis::RedisToolSessionStore::new(&redis_config.url).await?,
-                )
-                    as Box<dyn ToolSessionStore>));
+                let session_store = Arc::new(Box::new(redis::RedisSessionStore::new(
+                    &redis_config.url,
+                    redis_config.prefix.clone(),
+                )?) as Box<dyn SessionStore>);
+                let tool_session_store = Some(Arc::new(
+                    Box::new(redis::RedisToolSessionStore::new(
+                        &redis_config.url,
+                        redis_config.prefix.clone(),
+                    )?) as Box<dyn ToolSessionStore>,
+                ));
                 (session_store, tool_session_store)
             }
             #[cfg(not(feature = "redis"))]

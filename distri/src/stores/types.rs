@@ -1,11 +1,12 @@
 use async_trait::async_trait;
+use uuid::Uuid;
 
 use crate::{
     agent::ExecutorContext,
     memory::MemoryStep,
     types::{CreateThreadRequest, McpSession, Message, Thread, ThreadSummary, UpdateThreadRequest},
 };
-use distri_a2a::{Artifact, Message as A2aMessage, Task, TaskStatus};
+use distri_a2a::{Artifact, EventKind, Message as A2aMessage, Task, TaskState, TaskStatus};
 
 #[async_trait]
 pub trait ToolSessionStore: Send + Sync {
@@ -77,6 +78,22 @@ pub struct SessionMemory {
 // Task Store trait for A2A task management
 #[async_trait]
 pub trait TaskStore: Send + Sync {
+    fn init_task(&self, context_id: &str, task_id: Option<&str>) -> Task {
+        let task_id = task_id.unwrap_or(&Uuid::new_v4().to_string()).to_string();
+        Task {
+            kind: EventKind::Task,
+            id: task_id.clone(),
+            context_id: context_id.to_string(),
+            status: TaskStatus {
+                state: TaskState::Submitted,
+                message: None,
+                timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            },
+            artifacts: vec![],
+            history: vec![],
+            metadata: None,
+        }
+    }
     async fn create_task(&self, context_id: &str, task_id: Option<&str>) -> anyhow::Result<Task>;
     async fn get_task(&self, task_id: &str) -> anyhow::Result<Option<Task>>;
     async fn update_task_status(&self, task_id: &str, status: TaskStatus) -> anyhow::Result<()>;

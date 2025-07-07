@@ -11,6 +11,11 @@ use std::{collections::HashMap, time::SystemTime};
 use chrono;
 use uuid;
 
+pub mod a2a {
+    // Re-export distri-a2a
+    pub use distri_a2a::*;
+}
+
 use crate::{servers::registry::ServerMetadata, tools::Tool, validate::validate_agent_definition};
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -481,6 +486,11 @@ pub struct RedisConfig {
     pub pool_size: u32,
     #[serde(default = "default_redis_timeout")]
     pub timeout_seconds: u64,
+    #[serde(default = "default_redis_prefix")]
+    pub prefix: Option<String>,
+}
+fn default_redis_prefix() -> Option<String> {
+    Some("distri:".to_string())
 }
 
 fn default_redis_pool_size() -> u32 {
