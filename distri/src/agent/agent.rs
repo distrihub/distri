@@ -331,6 +331,7 @@ impl StandardAgent {
                 Some(event_tx.clone()),
             )
             .await?;
+        tracing::info!("step_result: {:?}", step_result);
 
         Ok(step_result)
     }

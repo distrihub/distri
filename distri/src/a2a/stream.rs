@@ -1,5 +1,5 @@
 use crate::a2a::{extract_text_from_message, SseMessage};
-use crate::agent::{AgentEvent, AgentExecutor, ExecutorContext};
+use crate::agent::{AgentEvent, AgentExecutor, ExecutorContext, ExecutorContextMetadata};
 use crate::memory::TaskStep;
 use distri_a2a::{
     EventKind, JsonRpcError, JsonRpcResponse, Message as A2aMessage, MessageSendParams, Part, Role,
@@ -12,9 +12,9 @@ pub async fn handle_message_send_streaming_sse(
     agent_id: String,
     params: serde_json::Value,
     executor: Arc<AgentExecutor>,
-    req_id: Option<serde_json::Value>,
+    executor_context: Arc<ExecutorContext>,
 ) -> impl futures_util::stream::Stream<Item = Result<SseMessage, std::convert::Infallible>> {
-    let id_field_clone = req_id.clone();
+    let id_field_clone = executor_context.req_id.clone();
     let task_store = executor.task_store.clone();
     let thread_store = executor.thread_store.clone();
     async_stream::stream! {
@@ -63,6 +63,8 @@ pub async fn handle_message_send_streaming_sse(
         };
         let thread_id = thread.id;
         let run_id = params.message.task_id.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let metadata: Option<ExecutorContextMetadata> = params.metadata.map(|m| serde_json::from_value(m).unwrap_or_default());
+
         let task = match task_store.create_task(&thread_id, Some(&run_id)).await {
             Ok(t) => t,
             Err(e) => {
@@ -100,13 +102,7 @@ pub async fn handle_message_send_streaming_sse(
         let _ = task_store.update_task_status(&task_id, working_status).await;
         let (event_tx, mut event_rx) = mpsc::channel(100);
         let (sse_tx, mut sse_rx) = mpsc::channel(100);
-        let executor_context = Arc::new(ExecutorContext::new(
-            thread_id.clone(),
-            Some(run_id.clone()),
-            executor.context.verbose,
-            executor.context.user_id.clone(),
-            Some(executor.context.tools_context.clone()),
-        ));
+
         // Spawn execute_stream in the background
         let agent_id_clone = agent_id.clone();
         let task_step_clone = task_step.clone();

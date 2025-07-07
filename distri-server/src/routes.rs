@@ -108,7 +108,7 @@ async fn a2a_handler(
     let executor = executor.get_ref();
 
     let handler = A2AHandler::new(executor.clone());
-    let result = handler.handle_jsonrpc(agent_id, req).await;
+    let result = handler.handle_jsonrpc(agent_id, req, None).await;
     match result {
         futures_util::future::Either::Left(stream) => {
             actix_web::Either::Left(Sse::from_stream(stream.map(|r| match r {

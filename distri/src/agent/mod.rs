@@ -12,6 +12,7 @@ pub use extensible_example::{FilteringAgent, LoggingAgent};
 pub use hooks::AgentHooks;
 pub use log::{ModelLogger, StepLogger};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 pub use server::{build_server, DISTRI_LOCAL_SERVER};
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
@@ -118,20 +119,27 @@ pub enum CoordinatorMessage {
     },
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ExecutorContextMetadata {
+    /// Add additional context for tools to use passed as meta in tool calls
+    pub tools:
+        std::collections::HashMap<String, std::collections::HashMap<String, serde_json::Value>>,
+    #[serde(default)]
+    pub metadata: Option<serde_json::Value>,
+}
 #[derive(Debug, Clone)]
 pub struct ExecutorContext {
     pub thread_id: String,
     pub run_id: Arc<tokio::sync::Mutex<String>>,
     pub verbose: bool,
     pub user_id: Option<String>,
-    /// Add additional context for tools to use passed as meta in MCP calls
-    pub tools_context:
-        std::collections::HashMap<String, std::collections::HashMap<String, serde_json::Value>>,
+    pub metadata: Option<ExecutorContextMetadata>,
+    pub req_id: Option<Value>,
 }
 
 impl Default for ExecutorContext {
     fn default() -> Self {
-        Self::new(Uuid::new_v4().to_string(), None, true, None, None)
+        Self::new(Uuid::new_v4().to_string(), None, true, None, None, None)
     }
 }
 
@@ -141,9 +149,8 @@ impl ExecutorContext {
         run_id: Option<String>,
         verbose: bool,
         user_id: Option<String>,
-        tools_context: Option<
-            std::collections::HashMap<String, std::collections::HashMap<String, serde_json::Value>>,
-        >,
+        metadata: Option<ExecutorContextMetadata>,
+        req_id: Option<Value>,
     ) -> Self {
         Self {
             thread_id,
@@ -152,7 +159,8 @@ impl ExecutorContext {
             )),
             verbose,
             user_id,
-            tools_context: tools_context.unwrap_or_default(),
+            metadata,
+            req_id,
         }
     }
 

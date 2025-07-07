@@ -63,7 +63,7 @@ impl A2AHandler {
         })
     }
 
-    async fn get_task(&self, params: serde_json::Value) -> Result<Task, JsonRpcError> {
+    pub async fn get_task(&self, params: serde_json::Value) -> Result<Task, JsonRpcError> {
         let params: TaskIdParams = serde_json::from_value(params).map_err(|e| JsonRpcError {
             code: -32602,
             message: format!("Invalid params: {}", e),
@@ -85,10 +85,44 @@ impl A2AHandler {
         }
     }
 
+    pub fn get_executor_context(
+        req: &JsonRpcRequest,
+        user_id: Option<String>,
+        verbose: bool,
+    ) -> Result<ExecutorContext, JsonRpcError> {
+        let req_id = req.id.clone();
+        let params = req.params.clone();
+
+        let params: MessageSendParams =
+            serde_json::from_value(params).map_err(|e| JsonRpcError {
+                code: -32602,
+                message: format!("Invalid params: {}", e),
+                data: None,
+            })?;
+        let metadata = params
+            .metadata
+            .map(|m| serde_json::from_value(m).unwrap_or_default());
+
+        Ok(ExecutorContext {
+            thread_id: params.message.context_id.unwrap_or_default(),
+            run_id: Arc::new(tokio::sync::Mutex::new(
+                params
+                    .message
+                    .task_id
+                    .unwrap_or_else(|| Uuid::new_v4().to_string()),
+            )),
+            verbose,
+            user_id,
+            metadata,
+            req_id: req_id.clone(),
+        })
+    }
+
     pub async fn handle_jsonrpc(
         &self,
         agent_id: String,
         req: JsonRpcRequest,
+        executor_context: Option<ExecutorContext>,
     ) -> Either<
         impl futures_util::stream::Stream<Item = Result<SseMessage, std::convert::Infallible>>,
         JsonRpcResponse,
@@ -96,17 +130,38 @@ impl A2AHandler {
         let req_id = req.id.clone();
         // Otherwise, handle as before
         let result = match req.method.as_str() {
-            "message/stream" => Either::Left(
-                handle_message_send_streaming_sse(
-                    agent_id.clone(),
-                    req.params,
-                    self.executor.clone(),
-                    req_id.clone(),
-                )
-                .await,
-            ),
+            "message/stream" => {
+                let executor_context = executor_context
+                    .map(Ok)
+                    .unwrap_or_else(|| Self::get_executor_context(&req, None, false));
+                match executor_context {
+                    Ok(executor_context) => Either::Left(
+                        handle_message_send_streaming_sse(
+                            agent_id.clone(),
+                            req.params,
+                            self.executor.clone(),
+                            Arc::new(executor_context),
+                        )
+                        .await,
+                    ),
+                    Err(e) => Either::Right(Err(e)),
+                }
+            }
             "message/send" => {
-                Either::Right(self.handle_message_send(agent_id.clone(), req.params).await)
+                let executor_context = executor_context
+                    .map(Ok)
+                    .unwrap_or_else(|| Self::get_executor_context(&req, None, false));
+                match executor_context {
+                    Ok(executor_context) => Either::Right(
+                        self.handle_message_send(
+                            agent_id.clone(),
+                            req.params,
+                            Arc::new(executor_context),
+                        )
+                        .await,
+                    ),
+                    Err(e) => Either::Right(Err(e)),
+                }
             }
 
             "tasks/get" => Either::Right(self.handle_task_get(req.params).await),
@@ -148,6 +203,7 @@ impl A2AHandler {
         &self,
         agent_id: String,
         params: serde_json::Value,
+        executor_context: Arc<ExecutorContext>,
     ) -> Result<serde_json::Value, JsonRpcError> {
         let task_store = &self.executor.task_store.clone();
         let coordinator = &self.executor.clone();
@@ -211,22 +267,8 @@ impl A2AHandler {
                 data: None,
             })?;
 
-        // Execute the task using the coordinator with thread context
-        let coordinator_context = Arc::new(ExecutorContext::new(
-            thread_id.clone(),
-            Some(run_id.clone()),
-            coordinator.context.verbose,
-            coordinator.context.user_id.clone(),
-            Some(coordinator.context.tools_context.clone()),
-        ));
         let execution_result = coordinator
-            .execute(
-                &agent_id,
-                task_step,
-                None,
-                coordinator_context.clone(),
-                None,
-            )
+            .execute(&agent_id, task_step, None, executor_context.clone(), None)
             .await;
         let final_status = match execution_result {
             Ok(response) => {

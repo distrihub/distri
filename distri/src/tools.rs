@@ -307,12 +307,14 @@ impl<T: Transport + Clone> ToolExecutor<T> {
             }
         }
 
+        let metadata = self.context.metadata.clone().unwrap_or_default();
+        let tools_context = &metadata.tools;
         debug!(
-            "mcp_server: {}, self.context.tools_context: {:?}",
-            mcp_server, self.context.tools_context
+            "mcp_server: {}, tools_context: {:?}",
+            mcp_server, tools_context
         );
         // Add additional context for tools to use passed as meta in MCP calls
-        for (key, context) in &self.context.tools_context {
+        for (key, context) in tools_context.iter() {
             if key == mcp_server {
                 for (context_key, context_value) in context {
                     meta.insert(context_key.clone(), context_value.clone());
