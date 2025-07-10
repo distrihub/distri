@@ -1,0 +1,289 @@
+{
+  // Use IntelliSense to learn about possible attributes.
+  // Hover to view descriptions of existing attributes.
+  // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug unit tests in library 'distri'",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--lib",
+          "--package=distri"
+        ],
+        "filter": {
+          "name": "distri",
+          "kind": "lib"
+        }
+      },
+      "args": [],
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug unit tests in library 'distri_a2a'",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--lib",
+          "--package=distri-a2a"
+        ],
+        "filter": {
+          "name": "distri_a2a",
+          "kind": "lib"
+        }
+      },
+      "args": [],
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug unit tests in library 'mcp_proxy'",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--lib",
+          "--package=mcp-proxy"
+        ],
+        "filter": {
+          "name": "mcp_proxy",
+          "kind": "lib"
+        }
+      },
+      "args": [],
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug executable 'mcp-proxy'",
+      "cargo": {
+        "args": [
+          "build",
+          "--bin=mcp-proxy",
+          "--package=mcp-proxy"
+        ],
+        "filter": {
+          "name": "mcp-proxy",
+          "kind": "bin"
+        }
+      },
+      "args": [],
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug unit tests in executable 'mcp-proxy'",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--bin=mcp-proxy",
+          "--package=mcp-proxy"
+        ],
+        "filter": {
+          "name": "mcp-proxy",
+          "kind": "bin"
+        }
+      },
+      "args": [],
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug unit tests in library 'distri_server'",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--lib",
+          "--package=distri-server"
+        ],
+        "filter": {
+          "name": "distri_server",
+          "kind": "lib"
+        }
+      },
+      "args": [],
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug unit tests in library 'distri_cli'",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--lib",
+          "--package=distri-cli"
+        ],
+        "filter": {
+          "name": "distri_cli",
+          "kind": "lib"
+        }
+      },
+      "args": [],
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug executable 'distri'",
+      "cargo": {
+        "args": [
+          "build",
+          "--bin=distri",
+          "--package=distri-cli"
+        ],
+        "filter": {
+          "name": "distri",
+          "kind": "bin"
+        }
+      },
+      "args": [],
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug unit tests in executable 'distri'",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--bin=distri",
+          "--package=distri-cli"
+        ],
+        "filter": {
+          "name": "distri",
+          "kind": "bin"
+        }
+      },
+      "args": [],
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug unit tests in library 'distri_search'",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--lib",
+          "--package=distri-search"
+        ],
+        "filter": {
+          "name": "distri_search",
+          "kind": "lib"
+        }
+      },
+      "args": [],
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug executable 'distri-search'",
+      "cargo": {
+        "args": [
+          "build",
+          "--bin=distri-search",
+          "--package=distri-search"
+        ],
+        "filter": {
+          "name": "distri-search",
+          "kind": "bin"
+        }
+      },
+      "args": [],
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug unit tests in executable 'distri-search'",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--bin=distri-search",
+          "--package=distri-search"
+        ],
+        "filter": {
+          "name": "distri-search",
+          "kind": "bin"
+        }
+      },
+      "args": [],
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug unit tests in library 'twitter_bot'",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--lib",
+          "--package=twitter-bot"
+        ],
+        "filter": {
+          "name": "twitter_bot",
+          "kind": "lib"
+        }
+      },
+      "args": [],
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug executable 'twitter-bot'",
+      "cargo": {
+        "args": [
+          "build",
+          "--bin=twitter-bot",
+          "--package=twitter-bot"
+        ],
+        "filter": {
+          "name": "twitter-bot",
+          "kind": "bin"
+        }
+      },
+      "args": [],
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug unit tests in executable 'twitter-bot'",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--bin=twitter-bot",
+          "--package=twitter-bot"
+        ],
+        "filter": {
+          "name": "twitter-bot",
+          "kind": "bin"
+        }
+      },
+      "args": [],
+      "cwd": "${workspaceFolder}"
+    }
+  ]
+}

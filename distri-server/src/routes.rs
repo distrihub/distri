@@ -14,13 +14,18 @@ use std::sync::Arc;
 
 pub fn all(cfg: &mut web::ServiceConfig) {
     distri(cfg);
-    a2a(cfg);
+    // a2a(cfg);
 }
 
 // https://github.com/google-a2a/A2A/blob/main/specification/json/a2a.json
 pub fn distri(cfg: &mut web::ServiceConfig) {
     cfg.service(
         web::scope("/api/v1")
+            .service(web::resource("/agents/{id}").route(web::post().to(a2a_handler)))
+            .service(
+                web::resource("/agents/{agent_name}/.well-known/agent.json")
+                    .route(web::get().to(get_agent_card)),
+            )
             .service(
                 web::resource("/agents")
                     .route(web::get().to(list_agents))
@@ -45,16 +50,6 @@ pub fn distri(cfg: &mut web::ServiceConfig) {
                     .route(web::get().to(get_thread_messages)),
             )
             .service(web::resource("/schema/agent").route(web::get().to(get_agent_schema))),
-    );
-}
-pub fn a2a(cfg: &mut web::ServiceConfig) {
-    cfg.service(
-        web::scope("/api/v1")
-            .service(web::resource("/agents/{id}").route(web::post().to(a2a_handler)))
-            .service(
-                web::resource("/agents/{agent_name}/.well-known/agent.json")
-                    .route(web::get().to(get_agent_card)),
-            ),
     );
 }
 
@@ -112,7 +107,13 @@ async fn a2a_handler(
     match result {
         futures_util::future::Either::Left(stream) => {
             actix_web::Either::Left(Sse::from_stream(stream.map(|r| match r {
-                Ok(m) => Ok(sse::Data::new(serde_json::to_string(&m).unwrap()).into()),
+                Ok(m) => {
+                    let mut data = sse::Data::new(m.data);
+                    if m.event.is_some() {
+                        data.set_event(m.event.unwrap());
+                    }
+                    Ok(sse::Event::Data(data))
+                }
                 Err(e) => Err(e),
             })))
         }

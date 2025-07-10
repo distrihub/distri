@@ -466,7 +466,7 @@ pub struct StoreConfig {
 #[serde(rename_all = "lowercase")]
 pub enum EntityStoreType {
     Noop,
-    Memory,
+    InMemory,
     Redis,
 }
 

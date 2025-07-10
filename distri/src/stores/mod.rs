@@ -35,14 +35,14 @@ pub struct InitializedStores {
 impl StoreConfig {
     /// Initialize all stores based on configuration
     pub async fn initialize(&self) -> anyhow::Result<InitializedStores> {
-        let entity_type = self.entity.as_ref().unwrap_or(&EntityStoreType::Noop);
-        let session_type = self.session.as_ref().unwrap_or(&SessionStoreType::Noop);
+        let entity_type = self.entity.as_ref().unwrap_or(&EntityStoreType::InMemory);
+        let session_type = self.session.as_ref().unwrap_or(&SessionStoreType::InMemory);
 
         let agent_store = Arc::new(InMemoryAgentStore::new()) as Arc<dyn AgentStore>;
 
         // Initialize entity stores (agents, tasks, threads)
         let (task_store, thread_store) = match entity_type {
-            EntityStoreType::Memory => {
+            EntityStoreType::InMemory => {
                 let task_store = Arc::new(HashMapTaskStore::new()) as Arc<dyn TaskStore>;
                 let thread_store = Arc::new(HashMapThreadStore::default()) as Arc<dyn ThreadStore>;
                 (task_store, thread_store)
