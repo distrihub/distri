@@ -3,6 +3,7 @@ mod stream;
 use distri_a2a::{JsonRpcError, Message, Part};
 pub use handler::A2AHandler;
 use serde::{Deserialize, Serialize};
+pub mod mapper;
 
 fn unimplemented_error(method: &str) -> JsonRpcError {
     JsonRpcError {

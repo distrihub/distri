@@ -7,3 +7,4 @@ edition = "2021"
 serde = { workspace = true }
 serde_json = { workspace = true }
 schemars = "0.8.21"
+uuid = "1.13.1"

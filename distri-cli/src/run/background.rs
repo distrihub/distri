@@ -1,4 +1,4 @@
-use distri::agent::{AgentEvent, AgentExecutor};
+use distri::agent::{AgentEvent, AgentEventType, AgentExecutor};
 use distri::memory::TaskStep;
 use std::sync::Arc;
 use tracing::{error, info};
@@ -30,14 +30,23 @@ pub async fn run(
 
     while let Some(event) = rx.recv().await {
         match event {
-            AgentEvent::TextMessageStart { role, .. } => {
+            AgentEvent {
+                event: AgentEventType::TextMessageStart { role, .. },
+                ..
+            } => {
                 print!("{}: ", role);
             }
-            AgentEvent::TextMessageContent { delta, .. } => {
+            AgentEvent {
+                event: AgentEventType::TextMessageContent { delta, .. },
+                ..
+            } => {
                 print!("{}", delta);
             }
-            AgentEvent::TextMessageEnd { .. } => {
-                println!("");
+            AgentEvent {
+                event: AgentEventType::TextMessageEnd { .. },
+                ..
+            } => {
+                println!();
             }
             x => {
                 println!("{x:?}");

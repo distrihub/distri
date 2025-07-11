@@ -1,7 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use crate::{
-    agent::{ExecutorContext, ModelLogger},
+    agent::{AgentEventType, ExecutorContext, ModelLogger},
     error::AgentError,
     langdb::GatewayConfig,
     tools::LlmToolsRegistry,
@@ -15,6 +15,7 @@ use async_openai::{
         ChatCompletionRequestToolMessage, ChatCompletionRequestToolMessageContent,
         ChatCompletionRequestUserMessageArgs, CreateChatCompletionRequest,
         CreateChatCompletionResponse, CreateChatCompletionStreamResponse, ResponseFormatJsonSchema,
+        Role,
     },
     Client,
 };
@@ -196,15 +197,6 @@ impl LLMExecutor {
         let run_id = self.context.run_id.lock().await.clone();
         let thread_id = self.context.thread_id.clone();
 
-        // Send RunStarted event
-        event_tx
-            .send(crate::agent::AgentEvent::RunStarted {
-                thread_id: thread_id.clone(),
-                run_id: run_id.clone(),
-            })
-            .await
-            .map_err(|e| AgentError::LLMError(format!("Failed to send RunStarted event: {}", e)))?;
-
         let stream = completion_stream(
             &self.llm_def,
             request,
@@ -222,22 +214,10 @@ impl LLMExecutor {
         let mut current_content = String::new();
         let aggregated_tool_calls: RwLock<Vec<ToolCall>> = RwLock::new(Vec::new());
 
-        // Send TextMessageStart event
-        event_tx
-            .send(crate::agent::AgentEvent::TextMessageStart {
-                thread_id: thread_id.clone(),
-                run_id: run_id.clone(),
-                message_id: message_id.clone(),
-                role: "assistant".to_string(),
-            })
-            .await
-            .map_err(|e| {
-                AgentError::LLMError(format!("Failed to send TextMessageStart event: {}", e))
-            })?;
-
         tokio::pin!(stream);
 
         let mut stream_result = None;
+        let mut text_started = false;
         while let Some(chunk) = stream.next().await {
             let thread_id = thread_id.clone();
             let run_id = run_id.clone();
@@ -248,14 +228,35 @@ impl LLMExecutor {
                         let delta = &choice.delta;
 
                         if let Some(content) = &delta.content {
+                            if !text_started {
+                                text_started = true;
+                                event_tx
+                                    .send(crate::agent::AgentEvent {
+                                        thread_id: thread_id.clone(),
+                                        run_id: run_id.clone(),
+                                        event: AgentEventType::TextMessageStart {
+                                            message_id: message_id.clone(),
+                                            role: Role::Assistant,
+                                        },
+                                    })
+                                    .await
+                                    .map_err(|e| {
+                                        AgentError::LLMError(format!(
+                                            "Failed to send TextMessageStart event: {}",
+                                            e
+                                        ))
+                                    })?;
+                            }
                             current_content.push_str(content);
                             // Send TextMessageContent event
                             event_tx
-                                .send(crate::agent::AgentEvent::TextMessageContent {
+                                .send(crate::agent::AgentEvent {
                                     thread_id: thread_id.clone(),
                                     run_id: run_id.clone(),
-                                    message_id: message_id.clone(),
-                                    delta: content.to_string(),
+                                    event: AgentEventType::TextMessageContent {
+                                        message_id: message_id.clone(),
+                                        delta: content.to_string(),
+                                    },
                                 })
                                 .await
                                 .map_err(|e| {
@@ -293,83 +294,28 @@ impl LLMExecutor {
                                         });
                                         drop(tool_calls);
                                     }
-
-                                    // Send ToolCallStart event
-                                    event_tx
-                                        .send(crate::agent::AgentEvent::ToolCallStart {
-                                            thread_id: thread_id.clone(),
-                                            run_id: run_id.clone(),
-                                            tool_call_id: tool_call_id.clone(),
-                                            tool_call_name: tool_call_name.clone(),
-                                            parent_message_id: Some(message_id.clone()),
-                                        })
-                                        .await
-                                        .map_err(|e| {
-                                            AgentError::LLMError(format!(
-                                                "Failed to send ToolCallStart event: {}",
-                                                e
-                                            ))
-                                        })?;
-
-                                    // Send ToolCallArgs event
-                                    event_tx
-                                        .send(crate::agent::AgentEvent::ToolCallArgs {
-                                            thread_id: thread_id.clone(),
-                                            run_id: run_id.clone(),
-                                            tool_call_id: tool_call_id.clone(),
-                                            delta: arguments,
-                                        })
-                                        .await
-                                        .map_err(|e| {
-                                            AgentError::LLMError(format!(
-                                                "Failed to send ToolCallArgs event: {}",
-                                                e
-                                            ))
-                                        })?;
-
-                                    // Send ToolCallEnd event
-                                    event_tx
-                                        .send(crate::agent::AgentEvent::ToolCallEnd {
-                                            thread_id: thread_id.clone(),
-                                            run_id: run_id.clone(),
-                                            tool_call_id: tool_call_id.clone(),
-                                        })
-                                        .await
-                                        .map_err(|e| {
-                                            AgentError::LLMError(format!(
-                                                "Failed to send ToolCallEnd event: {}",
-                                                e
-                                            ))
-                                        })?;
                                 }
                             }
                         }
                         if let Some(finish_reason) = choice.finish_reason {
                             // Send TextMessageEnd event
-                            event_tx
-                                .send(crate::agent::AgentEvent::TextMessageEnd {
-                                    thread_id: thread_id.clone(),
-                                    run_id: run_id.clone(),
-                                    message_id: message_id.clone(),
-                                })
-                                .await
-                                .map_err(|e| {
-                                    AgentError::LLMError(format!(
-                                        "Failed to send TextMessageEnd event: {}",
-                                        e
-                                    ))
-                                })?;
-
-                            // Send RunFinished event
-                            event_tx
-                                .send(crate::agent::AgentEvent::RunFinished { thread_id, run_id })
-                                .await
-                                .map_err(|e| {
-                                    AgentError::LLMError(format!(
-                                        "Failed to send RunFinished event: {}",
-                                        e
-                                    ))
-                                })?;
+                            if text_started {
+                                event_tx
+                                    .send(crate::agent::AgentEvent {
+                                        event: AgentEventType::TextMessageEnd {
+                                            message_id: message_id.clone(),
+                                        },
+                                        thread_id: thread_id.clone(),
+                                        run_id: run_id.clone(),
+                                    })
+                                    .await
+                                    .map_err(|e| {
+                                        AgentError::LLMError(format!(
+                                            "Failed to send TextMessageEnd event: {}",
+                                            e
+                                        ))
+                                    })?;
+                            }
 
                             // Determine finish_reason
                             stream_result = Some(StreamResult {
@@ -382,18 +328,7 @@ impl LLMExecutor {
                 }
                 Err(e) => {
                     tracing::error!("OpenAI error: {}", e);
-                    // Send RunError event
-                    event_tx
-                        .send(crate::agent::AgentEvent::RunError {
-                            thread_id: thread_id.clone(),
-                            run_id: run_id.clone(),
-                            message: e.to_string(),
-                            code: None,
-                        })
-                        .await
-                        .map_err(|e| {
-                            AgentError::LLMError(format!("Failed to send RunError event: {}", e))
-                        })?;
+
                     return Err(AgentError::LLMError(e.to_string()));
                 }
             }

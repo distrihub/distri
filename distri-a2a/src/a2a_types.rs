@@ -292,7 +292,7 @@ pub struct MessageSendConfiguration {
 }
 
 /// A message exchanged between a user and an agent.
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Message {
     pub kind: EventKind,
@@ -309,6 +309,21 @@ pub struct Message {
     pub extensions: Vec<String>,
     #[serde(default)]
     pub metadata: Option<serde_json::Value>,
+}
+impl Default for Message {
+    fn default() -> Self {
+        Self {
+            message_id: uuid::Uuid::new_v4().to_string(),
+            kind: EventKind::Message,
+            role: Role::Agent,
+            parts: vec![],
+            context_id: None,
+            task_id: None,
+            reference_task_ids: vec![],
+            extensions: vec![],
+            metadata: None,
+        }
+    }
 }
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 #[serde(rename_all = "camelCase")]

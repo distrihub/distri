@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tracing::info;
 
 use crate::{
-    agent::{AgentEvent, DISTRI_LOCAL_SERVER},
+    agent::{AgentEvent, AgentEventType, DISTRI_LOCAL_SERVER},
     init_logging,
     memory::TaskStep,
     tests::utils::{get_search_tool, init_executor},
@@ -110,11 +110,17 @@ async fn test_agent_coordination_streaming() -> anyhow::Result<()> {
         let mut received_content = String::new();
         while let Some(event) = event_rx.recv().await {
             match event {
-                AgentEvent::TextMessageContent { delta, .. } => {
+                AgentEvent {
+                    event: AgentEventType::TextMessageContent { delta, .. },
+                    ..
+                } => {
                     received_content.push_str(&delta);
                     info!("Received stream chunk: {}", delta);
                 }
-                AgentEvent::RunFinished { .. } => {
+                AgentEvent {
+                    event: AgentEventType::RunFinished { .. },
+                    ..
+                } => {
                     info!("Stream finished. Final content: {}", received_content);
                     break;
                 }

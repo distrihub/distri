@@ -256,28 +256,6 @@ async fn get_thread_messages(
             for task in thread_tasks {
                 messages.extend(task.history);
             }
-
-            // Sort messages by timestamp if available
-            messages.sort_by(|a, b| {
-                let a_time = a
-                    .metadata
-                    .as_ref()
-                    .and_then(|m| m.get("timestamp"))
-                    .and_then(|t| t.as_str());
-                let b_time = b
-                    .metadata
-                    .as_ref()
-                    .and_then(|m| m.get("timestamp"))
-                    .and_then(|t| t.as_str());
-
-                match (a_time, b_time) {
-                    (Some(a), Some(b)) => a.cmp(b),
-                    (Some(_), None) => std::cmp::Ordering::Less,
-                    (None, Some(_)) => std::cmp::Ordering::Greater,
-                    (None, None) => std::cmp::Ordering::Equal,
-                }
-            });
-
             HttpResponse::Ok().json(messages)
         }
         Err(e) => HttpResponse::InternalServerError().json(json!({

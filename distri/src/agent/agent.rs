@@ -1,5 +1,5 @@
 use crate::{
-    agent::{AgentEvent, AgentExecutor, AgentHooks},
+    agent::{AgentEvent, AgentEventType, AgentExecutor, AgentHooks},
     error::AgentError,
     llm::LLMExecutor,
     memory::SystemStep,
@@ -10,6 +10,7 @@ use crate::{
     },
     SessionStore,
 };
+use async_openai::types::Role;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::info;
@@ -341,32 +342,38 @@ impl StandardAgent {
         event_tx: &mpsc::Sender<AgentEvent>,
         context: &ExecutorContext,
         content: &str,
-        role: &str,
+        role: &Role,
     ) {
         let run_id = context.run_id.lock().await.clone();
         let thread_id = context.thread_id.clone();
         let message_id = Uuid::new_v4().to_string();
         let _ = event_tx
-            .send(AgentEvent::TextMessageStart {
+            .send(AgentEvent {
                 thread_id: thread_id.clone(),
                 run_id: run_id.clone(),
-                message_id: message_id.clone(),
-                role: role.to_string(),
+                event: AgentEventType::TextMessageStart {
+                    message_id: message_id.clone(),
+                    role: role.clone(),
+                },
             })
             .await;
         let _ = event_tx
-            .send(AgentEvent::TextMessageContent {
+            .send(AgentEvent {
                 thread_id: thread_id.clone(),
                 run_id: run_id.clone(),
-                message_id: message_id.clone(),
-                delta: content.to_string(),
+                event: AgentEventType::TextMessageContent {
+                    message_id: message_id.clone(),
+                    delta: content.to_string(),
+                },
             })
             .await;
         let _ = event_tx
-            .send(AgentEvent::TextMessageEnd {
-                thread_id,
-                run_id,
-                message_id,
+            .send(AgentEvent {
+                thread_id: thread_id.clone(),
+                run_id: run_id.clone(),
+                event: AgentEventType::TextMessageEnd {
+                    message_id: message_id.clone(),
+                },
             })
             .await;
     }
@@ -391,9 +398,10 @@ impl StandardAgent {
 
         // Send RunStarted event
         let _ = event_tx
-            .send(AgentEvent::RunStarted {
+            .send(AgentEvent {
                 thread_id: thread_id.clone(),
                 run_id: run_id.clone(),
+                event: AgentEventType::RunStarted {},
             })
             .await;
 
@@ -415,7 +423,6 @@ impl StandardAgent {
                 .await
                 .map_err(|e| AgentError::Session(e.to_string()))?;
             loop {
-                println!("iteration: {}", iterations);
                 if iterations > max_iterations {
                     return Err(AgentError::LLMError(format!(
                         "Max iterations reached: {max_iterations}",
@@ -429,11 +436,9 @@ impl StandardAgent {
                 let messages = self
                     .before_llm_step(&current_messages, &params, context.clone())
                     .await?;
-                println!("iteration: {}: before_llm_step", iterations);
                 let step_result = self
                     .llm_step_stream(&messages, &params, context.clone(), event_tx.clone())
                     .await?;
-                println!("iteration:  after_llm_step");
                 match step_result {
                     StepResult::Finish(content) => {
                         // Call after_finish hook
@@ -471,16 +476,22 @@ impl StandardAgent {
         match &result {
             Ok(_) => {
                 let _ = event_tx
-                    .send(AgentEvent::RunFinished { thread_id, run_id })
+                    .send(AgentEvent {
+                        thread_id: thread_id.clone(),
+                        run_id: run_id.clone(),
+                        event: AgentEventType::RunFinished {},
+                    })
                     .await;
             }
             Err(e) => {
                 let _ = event_tx
-                    .send(AgentEvent::RunError {
-                        thread_id,
-                        run_id,
-                        message: e.to_string(),
-                        code: None,
+                    .send(AgentEvent {
+                        thread_id: thread_id.clone(),
+                        run_id: run_id.clone(),
+                        event: AgentEventType::RunError {
+                            message: e.to_string(),
+                            code: None,
+                        },
                     })
                     .await;
             }
@@ -507,9 +518,10 @@ impl StandardAgent {
         // Send RunStarted event if event_tx is provided
         if let Some(event_tx) = &event_tx {
             let _ = event_tx
-                .send(AgentEvent::RunStarted {
+                .send(AgentEvent {
                     thread_id: thread_id.clone(),
                     run_id: run_id.clone(),
+                    event: AgentEventType::RunStarted {},
                 })
                 .await;
         }
@@ -569,7 +581,7 @@ impl StandardAgent {
                                 event_tx,
                                 &context,
                                 &content,
-                                "assistant",
+                                &Role::Assistant,
                             )
                             .await;
                         }
@@ -588,16 +600,22 @@ impl StandardAgent {
             match &result {
                 Ok(_) => {
                     let _ = event_tx
-                        .send(AgentEvent::RunFinished { thread_id, run_id })
+                        .send(AgentEvent {
+                            thread_id: thread_id.clone(),
+                            run_id: run_id.clone(),
+                            event: AgentEventType::RunFinished {},
+                        })
                         .await;
                 }
                 Err(e) => {
                     let _ = event_tx
-                        .send(AgentEvent::RunError {
-                            thread_id,
-                            run_id,
-                            message: e.to_string(),
-                            code: None,
+                        .send(AgentEvent {
+                            thread_id: thread_id.clone(),
+                            run_id: run_id.clone(),
+                            event: AgentEventType::RunError {
+                                message: e.to_string(),
+                                code: None,
+                            },
                         })
                         .await;
                 }
@@ -643,10 +661,47 @@ impl StandardAgent {
                             let agent_id = agent_id.to_string();
                             let context = context.clone();
                             let event_tx = event_tx.clone();
+
                             async move {
+                                let run_id = { context.run_id.lock().await.clone() };
+                                if let Some(event_tx) = &event_tx {
+                                    let _ = event_tx
+                                        .send(AgentEvent {
+                                            thread_id: context.thread_id.clone(),
+                                            run_id: run_id.clone(),
+                                            event: AgentEventType::ToolCallStart {
+                                                tool_call_id: mapped_tool_call.tool_id.clone(),
+                                                tool_call_name: mapped_tool_call.tool_name.clone(),
+                                            },
+                                        })
+                                        .await
+                                        .map_err(|e| {
+                                            AgentError::LLMError(format!(
+                                                "Failed to send ToolCallStart event: {}",
+                                                e
+                                            ))
+                                        });
+
+                                    let _ = event_tx
+                                        .send(AgentEvent {
+                                            thread_id: context.thread_id.clone(),
+                                            run_id: run_id.clone(),
+                                            event: AgentEventType::ToolCallArgs {
+                                                tool_call_id: mapped_tool_call.tool_id.clone(),
+                                                delta: mapped_tool_call.input.clone(),
+                                            },
+                                        })
+                                        .await
+                                        .map_err(|e| {
+                                            AgentError::LLMError(format!(
+                                                "Failed to send ToolCallStart event: {}",
+                                                e
+                                            ))
+                                        });
+                                }
                                 info!("Agent: Executing tool call: {:#?}", mapped_tool_call);
                                 let content = executor
-                                    .emit_tool_event(
+                                    .execute_tool(
                                         agent_id,
                                         mapped_tool_call.clone(),
                                         event_tx.clone(),
@@ -656,6 +711,24 @@ impl StandardAgent {
                                     .unwrap_or_else(|err| format!("Error: {}", err));
                                 info!("Agent: Tool response: {}", content);
 
+                                if let Some(event_tx) = &event_tx {
+                                    let _ = event_tx
+                                        .send(AgentEvent {
+                                            thread_id: context.thread_id.clone(),
+                                            run_id: run_id.clone(),
+                                            event: AgentEventType::ToolCallResult {
+                                                tool_call_id: mapped_tool_call.tool_id.clone(),
+                                                result: content.clone(),
+                                            },
+                                        })
+                                        .await
+                                        .map_err(|e| {
+                                            AgentError::LLMError(format!(
+                                                "Failed to send ToolCallResult event: {}",
+                                                e
+                                            ))
+                                        });
+                                }
                                 Message {
                                     role: MessageRole::ToolResponse,
                                     name: Some(mapped_tool_call.tool_name.clone()),

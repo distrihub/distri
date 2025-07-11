@@ -7,6 +7,7 @@ pub mod reason;
 pub mod server;
 use crate::types::ToolCall;
 pub use agent::{BaseAgent, StandardAgent, StepResult, MAX_ITERATIONS};
+use async_openai::types::Role;
 pub use executor::{AgentExecutor, AgentExecutorBuilder};
 pub use extensible_example::{FilteringAgent, LoggingAgent};
 pub use hooks::AgentHooks;
@@ -20,66 +21,48 @@ use uuid::Uuid;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "snake_case")]
-pub enum AgentEvent {
-    RunStarted {
-        thread_id: String,
-        run_id: String,
-    },
-    RunFinished {
-        thread_id: String,
-        run_id: String,
-    },
+pub struct AgentEvent {
+    pub thread_id: String,
+    pub run_id: String,
+    pub event: AgentEventType,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "snake_case", tag = "type", content = "data")]
+pub enum AgentEventType {
+    RunStarted {},
+    RunFinished {},
     RunError {
-        thread_id: String,
-        run_id: String,
         message: String,
         code: Option<String>,
     },
     TextMessageStart {
-        thread_id: String,
-        run_id: String,
         message_id: String,
-        role: String,
+        role: Role,
     },
     TextMessageContent {
-        thread_id: String,
-        run_id: String,
         message_id: String,
         delta: String,
     },
     TextMessageEnd {
-        thread_id: String,
-        run_id: String,
         message_id: String,
     },
     ToolCallStart {
-        thread_id: String,
-        run_id: String,
         tool_call_id: String,
         tool_call_name: String,
-        parent_message_id: Option<String>,
     },
     ToolCallArgs {
-        thread_id: String,
-        run_id: String,
         tool_call_id: String,
         delta: String,
     },
     ToolCallEnd {
-        thread_id: String,
-        run_id: String,
         tool_call_id: String,
     },
     ToolCallResult {
-        thread_id: String,
-        run_id: String,
         tool_call_id: String,
         result: String,
-        role: Option<String>,
     },
     AgentHandover {
-        thread_id: String,
-        run_id: String,
         from_agent: String,
         to_agent: String,
         reason: Option<String>,
@@ -88,10 +71,9 @@ pub enum AgentEvent {
 
 #[derive(Debug)]
 pub enum CoordinatorMessage {
-    ExecuteTool {
+    ExecuteTools {
         agent_id: String,
         tool_call: ToolCall,
-        response_tx: oneshot::Sender<String>,
         event_tx: Option<mpsc::Sender<AgentEvent>>,
         context: Arc<ExecutorContext>,
     },
