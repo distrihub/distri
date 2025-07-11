@@ -14,7 +14,6 @@ use std::sync::Arc;
 
 pub fn all(cfg: &mut web::ServiceConfig) {
     distri(cfg);
-    // a2a(cfg);
 }
 
 // https://github.com/google-a2a/A2A/blob/main/specification/json/a2a.json
@@ -285,14 +284,6 @@ async fn get_thread_messages(
             "error": format!("Failed to get thread messages: {}", e)
         })),
     }
-}
-
-// Helper function to extract base URL from request
-fn get_base_url(req: &actix_web::HttpRequest) -> String {
-    let connection_info = req.connection_info();
-    let scheme = connection_info.scheme();
-    let host = connection_info.host();
-    format!("{}://{}", scheme, host)
 }
 
 async fn create_agent(

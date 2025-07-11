@@ -9,7 +9,7 @@ use crate::{
     types::{CreateThreadRequest, McpSession, Thread, ThreadSummary, UpdateThreadRequest},
     AgentStore, MemoryStore, SessionMemory, SessionStore, TaskStore, ThreadStore, ToolSessionStore,
 };
-use distri_a2a::{Artifact, EventKind, Message as A2aMessage, Task, TaskState, TaskStatus};
+use distri_a2a::{Artifact, Message as A2aMessage, Task, TaskState, TaskStatus};
 
 // Example in-memory implementation
 #[derive(Default)]

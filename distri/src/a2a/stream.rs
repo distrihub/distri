@@ -1,5 +1,5 @@
 use crate::a2a::{extract_text_from_message, SseMessage};
-use crate::agent::{AgentEvent, AgentExecutor, ExecutorContext, ExecutorContextMetadata};
+use crate::agent::{AgentEvent, AgentExecutor, ExecutorContext};
 use crate::memory::TaskStep;
 use distri_a2a::{
     EventKind, JsonRpcError, JsonRpcResponse, Message as A2aMessage, MessageSendParams, Part, Role,
@@ -63,7 +63,6 @@ pub async fn handle_message_send_streaming_sse(
         };
         let thread_id = thread.id;
         let run_id = params.message.task_id.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-        let metadata: Option<ExecutorContextMetadata> = params.metadata.map(|m| serde_json::from_value(m).unwrap_or_default());
 
         let task = match task_store.create_task(&thread_id, Some(&run_id)).await {
             Ok(t) => t,

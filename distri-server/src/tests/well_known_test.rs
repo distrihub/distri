@@ -89,7 +89,7 @@ async fn test_agent_json_endpoint() {
             .app_data(web::Data::new(task_store))
             .app_data(web::Data::new(event_broadcaster))
             .app_data(web::Data::new(server_config))
-            .configure(routes::a2a),
+            .configure(routes::all),
     )
     .await;
 
@@ -157,7 +157,7 @@ async fn test_base_url_extraction() {
             .app_data(web::Data::new(task_store))
             .app_data(web::Data::new(event_broadcaster))
             .app_data(web::Data::new(server_config))
-            .configure(routes::a2a),
+            .configure(routes::all),
     )
     .await;
 
