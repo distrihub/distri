@@ -1,0 +1,130 @@
+# Sample configuration demonstrating agent handover between twitter-bot and distri-search
+# This configuration shows how to set up two agents that can hand over control to each other
+
+agents:
+  # Twitter Bot Agent - Can analyze social media and hand over to research agent
+  - name: "twitter-bot"
+    description: "AI-powered Twitter bot that can access Twitter data and interact with social media"
+    system_prompt: |
+      You are TwitterBot, an AI assistant that specializes in Twitter and social media analysis.
+      
+      Your capabilities:
+      - Access Twitter timelines and tweets
+      - Analyze social media trends and sentiment
+      - Search for specific topics on Twitter
+      - Summarize social media discussions
+      
+      When you encounter a task that requires comprehensive web research beyond Twitter 
+      (like getting background information about trending topics, companies, or people), 
+      you should transfer control to the "distri-search" agent using the transfer_to_agent tool.
+      
+      Example scenarios to transfer:
+      - "Get background information about [company/person]"
+      - "Research the latest news about [topic]"
+      - "Find comprehensive information about [subject]"
+      - "Need web research beyond social media"
+      
+      After transferring, the distri-search agent will provide comprehensive research,
+      and may transfer back to you for final social media analysis and synthesis.
+      
+      Available tools:
+      - get_timeline: Get Twitter timeline
+      - search_tweets: Search Twitter for specific topics
+      - transfer_to_agent: Transfer control to another agent
+      
+    icon_url: "https://example.com/twitter-bot-icon.png"
+    mcp_servers:
+      - name: "twitter"
+    model_settings:
+      model: "gpt-4o-mini"
+      temperature: 0.7
+      max_tokens: 1500
+    max_iterations: 5
+    # Allow twitter-bot to handover to distri-search
+    sub_agents:
+      - "distri-search"
+
+  # Search Agent - Can do web research and hand over back to twitter agent
+  - name: "distri-search"
+    description: "Intelligent research agent that combines web search and scraping for comprehensive information gathering"
+    system_prompt: |
+      You are DistriSearch, an intelligent research agent with access to web search and scraping tools.
+      
+      Your capabilities:
+      - Search the web using multiple search engines
+      - Scrape and analyze web content from URLs
+      - Provide comprehensive research reports
+      - Gather information from multiple sources
+      
+      When you've completed comprehensive research and the original task was related to 
+      Twitter or social media analysis, you should transfer back to the "twitter-bot" agent 
+      using the transfer_to_agent tool so they can provide the final social media context 
+      and synthesis.
+      
+      Example scenarios to transfer back:
+      - After researching a company, transfer back for Twitter sentiment analysis
+      - After gathering news, transfer back for social media discussion analysis
+      - After background research, transfer back for Twitter trend analysis
+      - When research is complete and social media context is needed
+      
+      Available tools:
+      - search: Search the web using Tavily API
+      - scrape: Extract detailed content from specific URLs
+      - transfer_to_agent: Transfer control to another agent
+      
+    icon_url: "https://example.com/search-icon.png"
+    mcp_servers:
+      - name: "search"
+      - name: "scrape"
+    model_settings:
+      model: "gpt-4o-mini"
+      temperature: 0.7
+      max_tokens: 1500
+    max_iterations: 5
+    # Allow distri-search to handover to twitter-bot
+    sub_agents:
+      - "twitter-bot"
+
+# MCP server configurations
+mcp_servers:
+  - name: "twitter"
+    config:
+      command: "npx"
+      args: ["-y", "@modelcontextprotocol/server-twitter", "mock"]
+      env_vars: {}
+      
+  - name: "search"
+    config:
+      command: "npx"
+      args: ["-y", "@modelcontextprotocol/server-search", "mock"]
+      env_vars: {}
+      
+  - name: "scrape"
+    config:
+      command: "npx"
+      args: ["-y", "@modelcontextprotocol/server-scrape", "mock"]
+      env_vars: {}
+
+# Session configurations
+sessions: {}
+
+# Server configuration for A2A
+server:
+  server_url: "http://localhost:8080"
+  default_input_modes: ["text/plain", "text/markdown"]
+  default_output_modes: ["text/plain", "text/markdown"]
+  capabilities:
+    streaming: true
+    push_notifications: true
+    state_transition_history: true
+    extensions: []
+
+# Store configuration
+stores:
+  entity: "memory"
+  session: "memory"
+
+# Logging configuration
+logging:
+  level: "info"
+  verbose: true
