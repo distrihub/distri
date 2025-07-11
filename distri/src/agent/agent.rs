@@ -331,7 +331,6 @@ impl StandardAgent {
                 Some(event_tx.clone()),
             )
             .await?;
-        tracing::info!("step_result: {:?}", step_result);
 
         Ok(step_result)
     }
@@ -416,6 +415,7 @@ impl StandardAgent {
                 .await
                 .map_err(|e| AgentError::Session(e.to_string()))?;
             loop {
+                println!("iteration: {}", iterations);
                 if iterations > max_iterations {
                     return Err(AgentError::LLMError(format!(
                         "Max iterations reached: {max_iterations}",
@@ -429,9 +429,11 @@ impl StandardAgent {
                 let messages = self
                     .before_llm_step(&current_messages, &params, context.clone())
                     .await?;
+                println!("iteration: {}: before_llm_step", iterations);
                 let step_result = self
                     .llm_step_stream(&messages, &params, context.clone(), event_tx.clone())
                     .await?;
+                println!("iteration:  after_llm_step");
                 match step_result {
                     StepResult::Finish(content) => {
                         // Call after_finish hook

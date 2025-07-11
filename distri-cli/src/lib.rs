@@ -8,7 +8,7 @@ use tracing::debug;
 mod cli;
 pub mod logging;
 pub mod run;
-use run::{chat, event};
+use run::{background, chat};
 
 pub use cli::{Cli, Commands, EmbeddedCli, EmbeddedCommands};
 
@@ -102,7 +102,7 @@ pub async fn run_agent_cli(
                 task_images: None,
             })
             .unwrap_or_else(|| panic!("Task is needed for background mode"));
-        event::run(&agent_name, executor, task).await?;
+        background::run(&agent_name, executor, task).await?;
     } else {
         chat::run(&agent_name, executor).await?;
     }

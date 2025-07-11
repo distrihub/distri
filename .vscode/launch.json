@@ -256,14 +256,16 @@
         "args": [
           "build",
           "--bin=twitter-bot",
-          "--package=twitter-bot"
+          "--package=twitter-bot",
         ],
         "filter": {
           "name": "twitter-bot",
           "kind": "bin"
         }
       },
-      "args": [],
+      "args": [
+        "serve"
+      ],
       "cwd": "${workspaceFolder}"
     },
     {
