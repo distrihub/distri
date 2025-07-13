@@ -104,6 +104,106 @@ MCP (Multi-Agent Communication Protocol) is a standardized protocol that enables
 
 With MCP, any agent can be published as a reusable tool that other agents can leverage, creating an ecosystem of composable AI capabilities.
 
+## Custom Agent Resolution
+
+Distri supports custom agent types that can be automatically resolved from the agent store. This allows you to create specialized agents with custom behavior while maintaining the same interface.
+
+### Built-in Custom Agents
+
+#### LoggingAgent
+A custom agent that adds detailed logging to all operations:
+
+```rust
+use distri::agent::{AgentExecutor, AgentExecutorBuilder};
+
+let executor = AgentExecutorBuilder::default()
+    .with_stores(stores)
+    .build()?;
+
+// Register default factories for custom agent resolution
+executor.register_default_factories().await?;
+
+// Create and register a logging agent
+let logging_agent = executor.register_logging_agent(agent_definition).await?;
+```
+
+#### FilteringAgent
+A custom agent that filters content based on banned words:
+
+```rust
+// Create and register a filtering agent with custom banned words
+let filtering_agent = executor.register_filtering_agent(
+    agent_definition,
+    vec!["badword".to_string(), "inappropriate".to_string()],
+).await?;
+```
+
+### Creating Custom Agent Types
+
+1. **Implement the BaseAgent trait** for your custom agent:
+
+```rust
+use distri::agent::{BaseAgent, AgentType, StandardAgent};
+
+#[derive(Clone)]
+pub struct MyCustomAgent {
+    inner: StandardAgent,
+    custom_field: String,
+}
+
+#[async_trait::async_trait]
+impl BaseAgent for MyCustomAgent {
+    fn agent_type(&self) -> AgentType {
+        AgentType::Custom("MyCustomAgent".to_string())
+    }
+    
+    // Implement other required methods...
+}
+```
+
+2. **Create a factory** for your custom agent:
+
+```rust
+use distri::stores::AgentFactory;
+
+pub struct MyCustomAgentFactory;
+
+#[async_trait::async_trait]
+impl AgentFactory for MyCustomAgentFactory {
+    async fn create_agent(
+        &self,
+        definition: AgentDefinition,
+        executor: Arc<AgentExecutor>,
+        context: Arc<ExecutorContext>,
+        session_store: Arc<Box<dyn SessionStore>>,
+    ) -> anyhow::Result<Box<dyn BaseAgent>> {
+        // Create your custom agent
+        let agent = MyCustomAgent::new(definition, executor, context, session_store);
+        Ok(Box::new(agent))
+    }
+
+    fn agent_type(&self) -> &str {
+        "MyCustomAgent"
+    }
+}
+```
+
+3. **Register the factory** with the agent store:
+
+```rust
+executor.agent_store.register_factory(Box::new(MyCustomAgentFactory)).await?;
+```
+
+### Agent Resolution
+
+When you call `agent_store.get("agent_name")`, the system will:
+
+1. First check if the agent is already cached in memory
+2. If not found, retrieve the agent metadata from storage
+3. Use the appropriate factory to recreate the agent based on its type
+4. Cache the resolved agent for future use
+
+This allows custom agents to be properly resolved even after the system has been restarted, as long as the appropriate factories are registered.
 
 ## Configuration
 
@@ -125,14 +225,21 @@ Distri agents can be configured in two ways:
 - [ ] **Error Handling**: Proper A2A error codes and messages
 - [ ]  **Agent Discovery**: Dynamic agent registration and discovery
 
-### 2. Task Store Implementation
+### 2. Custom Agent Resolution
+- [x] **Agent Factories**: Create custom agent types with specialized behavior
+- [x] **Agent Type Resolution**: Automatically resolve custom agents from the store
+- [x] **Extensible Agent System**: Easy to add new agent types
+- [x] **Built-in Custom Agents**: LoggingAgent and FilteringAgent examples
+- [x] **Agent Metadata Storage**: Store agent type information for resolution
+
+### 3. Task Store Implementation
 - [x] **HashMap-based storage**: In-memory task storage with thread-safe operations
 - [x] **Task lifecycle management**: Submitted → Working → Completed/Failed/Canceled
 - [ ] **Message history**: Full conversation history per task
 - [ ] **Real-time updates**: Task status changes propagated via events
 - [ ]  **Redis Backend**: Distributed task storage for scalability
 
-### 3. Event Streaming
+### 4. Event Streaming
 - [x] **Server-Sent Events (SSE)**: Real-time task updates
 - [x] **Event Broadcasting**: Task status changes, text deltas, errors
 - [x] **Frontend Integration**: Live updates in the chat interface

@@ -219,4 +219,12 @@ impl AgentStore for NoopAgentStore {
     async fn update(&self, _agent: Box<dyn crate::agent::BaseAgent>) -> anyhow::Result<()> {
         Ok(())
     }
+
+    async fn register_factory(&self, _factory: Box<dyn crate::stores::AgentFactory>) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    async fn get_metadata(&self, _name: &str) -> Option<crate::stores::AgentMetadata> {
+        None
+    }
 }

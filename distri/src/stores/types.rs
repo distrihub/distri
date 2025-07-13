@@ -1,12 +1,11 @@
 use async_trait::async_trait;
-use uuid::Uuid;
 
 use crate::{
-    agent::ExecutorContext,
+    agent::{BaseAgent, ExecutorContext},
     memory::MemoryStep,
     types::{CreateThreadRequest, McpSession, Message, Thread, ThreadSummary, UpdateThreadRequest},
 };
-use distri_a2a::{Artifact, EventKind, Message as A2aMessage, Task, TaskState, TaskStatus};
+use distri_a2a::{Artifact, Message as A2aMessage, Task, TaskStatus};
 
 #[async_trait]
 pub trait ToolSessionStore: Send + Sync {
@@ -43,14 +42,12 @@ pub trait SessionStore: Send + Sync {
 // Higher-level MemoryStore trait - manages cross-session permanent memory using user_id
 #[async_trait::async_trait]
 pub trait MemoryStore: Send + Sync {
-    /// Store permanent memory from a session for cross-session access
     async fn store_memory(
         &self,
         user_id: &str,
         session_memory: SessionMemory,
     ) -> anyhow::Result<()>;
 
-    /// Search for relevant memories across sessions for a user
     async fn search_memories(
         &self,
         user_id: &str,
@@ -58,52 +55,38 @@ pub trait MemoryStore: Send + Sync {
         limit: Option<usize>,
     ) -> anyhow::Result<Vec<String>>;
 
-    /// Get all permanent memories for a user
     async fn get_user_memories(&self, user_id: &str) -> anyhow::Result<Vec<String>>;
 
-    /// Clear all memories for a user
     async fn clear_user_memories(&self, user_id: &str) -> anyhow::Result<()>;
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SessionMemory {
-    pub agent_id: String,
-    pub thread_id: String,
-    pub session_summary: String,
-    pub key_insights: Vec<String>,
-    pub important_facts: Vec<String>,
+    pub session_id: String,
+    pub user_id: String,
+    pub content: String,
     pub timestamp: chrono::DateTime<chrono::Utc>,
+    pub metadata: std::collections::HashMap<String, serde_json::Value>,
 }
 
-// Task Store trait for A2A task management
+// TaskStore trait - manages A2A tasks
 #[async_trait]
 pub trait TaskStore: Send + Sync {
-    fn init_task(&self, context_id: &str, task_id: Option<&str>) -> Task {
-        let task_id = task_id.unwrap_or(&Uuid::new_v4().to_string()).to_string();
-        Task {
-            kind: EventKind::Task,
-            id: task_id.clone(),
-            context_id: context_id.to_string(),
-            status: TaskStatus {
-                state: TaskState::Submitted,
-                message: None,
-                timestamp: Some(chrono::Utc::now().to_rfc3339()),
-            },
-            artifacts: vec![],
-            history: vec![],
-            metadata: None,
-        }
-    }
     async fn create_task(&self, context_id: &str, task_id: Option<&str>) -> anyhow::Result<Task>;
+
     async fn get_task(&self, task_id: &str) -> anyhow::Result<Option<Task>>;
+
     async fn update_task_status(&self, task_id: &str, status: TaskStatus) -> anyhow::Result<()>;
+
     async fn cancel_task(&self, task_id: &str) -> anyhow::Result<Task>;
+
     async fn add_message_to_task(&self, task_id: &str, message: A2aMessage) -> anyhow::Result<()>;
+
     async fn add_artifact_to_task(&self, task_id: &str, artifact: Artifact) -> anyhow::Result<()>;
-    async fn list_tasks(&self, thread_id: Option<&str>) -> anyhow::Result<Vec<Task>>;
+
+    async fn list_tasks(&self, context_id: Option<&str>) -> anyhow::Result<Vec<Task>>;
 }
 
-// Thread Store trait for thread management
 #[async_trait]
 pub trait ThreadStore: Send + Sync {
     fn as_any(&self) -> &dyn std::any::Any;
@@ -128,6 +111,32 @@ pub trait ThreadStore: Send + Sync {
     ) -> anyhow::Result<()>;
 }
 
+/// Agent factory trait for creating custom agents
+#[async_trait]
+pub trait AgentFactory: Send + Sync {
+    /// Create a custom agent from an agent definition and context
+    async fn create_agent(
+        &self,
+        definition: crate::types::AgentDefinition,
+        executor: std::sync::Arc<crate::agent::AgentExecutor>,
+        context: std::sync::Arc<ExecutorContext>,
+        session_store: std::sync::Arc<Box<dyn SessionStore>>,
+    ) -> anyhow::Result<Box<dyn BaseAgent>>;
+
+    /// Get the agent type this factory can create
+    fn agent_type(&self) -> &str;
+}
+
+/// Agent metadata stored in the agent store
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AgentMetadata {
+    pub name: String,
+    pub agent_type: String,
+    pub definition: crate::types::AgentDefinition,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
 #[async_trait]
 pub trait AgentStore: Send + Sync {
     /// Returns a page of agents and an optional next cursor
@@ -135,9 +144,18 @@ pub trait AgentStore: Send + Sync {
         &self,
         cursor: Option<String>,
         limit: Option<usize>,
-    ) -> (Vec<Box<dyn crate::agent::BaseAgent>>, Option<String>);
-    async fn get(&self, name: &str) -> Option<Box<dyn crate::agent::BaseAgent>>;
-    async fn register(&self, agent: Box<dyn crate::agent::BaseAgent>) -> anyhow::Result<()>;
+    ) -> (Vec<Box<dyn BaseAgent>>, Option<String>);
+    
+    async fn get(&self, name: &str) -> Option<Box<dyn BaseAgent>>;
+    
+    async fn register(&self, agent: Box<dyn BaseAgent>) -> anyhow::Result<()>;
+    
     /// Update an existing agent with new definition
-    async fn update(&self, agent: Box<dyn crate::agent::BaseAgent>) -> anyhow::Result<()>;
+    async fn update(&self, agent: Box<dyn BaseAgent>) -> anyhow::Result<()>;
+
+    /// Register a custom agent factory
+    async fn register_factory(&self, factory: Box<dyn AgentFactory>) -> anyhow::Result<()>;
+
+    /// Get agent metadata without resolving the full agent
+    async fn get_metadata(&self, name: &str) -> Option<AgentMetadata>;
 }

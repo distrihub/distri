@@ -65,13 +65,12 @@ impl MemoryStore for FileMemoryStore {
             let user_memories = memories.entry(user_id.to_string()).or_insert_with(Vec::new);
 
             let memory_entry = format!(
-                "Agent: {} | Session: {} ({})\nSummary: {}\nInsights: {}\nFacts: {}",
-                session_memory.agent_id,
-                session_memory.thread_id,
-                session_memory.timestamp.format("%Y-%m-%d %H:%M:%S"),
-                session_memory.session_summary,
-                session_memory.key_insights.join("; "),
-                session_memory.important_facts.join("; ")
+                "Session: {} | Thread: {} | Summary: {} | Key Insights: {} | Important Facts: {}",
+                session_memory.session_id,
+                session_memory.user_id,
+                session_memory.content,
+                session_memory.metadata.get("key_insights").and_then(|v| v.as_array()).map(|arr| arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join("; ")).unwrap_or_default(),
+                session_memory.metadata.get("important_facts").and_then(|v| v.as_array()).map(|arr| arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join("; ")).unwrap_or_default()
             );
 
             user_memories.push(memory_entry);

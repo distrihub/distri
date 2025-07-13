@@ -7,7 +7,7 @@ use crate::{
     agent::ExecutorContext,
     memory::{LocalAgentMemory, MemoryStep},
     types::{CreateThreadRequest, McpSession, Thread, ThreadSummary, UpdateThreadRequest},
-    AgentStore, MemoryStore, SessionMemory, SessionStore, TaskStore, ThreadStore, ToolSessionStore,
+    AgentStore, MemoryStore, SessionMemory, SessionStore, TaskStore, ThreadStore, ToolSessionStore, AgentFactory, AgentMetadata,
 };
 use distri_a2a::{Artifact, Message as A2aMessage, Task, TaskState, TaskStatus};
 
@@ -124,18 +124,17 @@ impl MemoryStore for LocalMemoryStore {
         let mut memories = self.memories.write().await;
         let user_memories = memories.entry(user_id.to_string()).or_insert_with(Vec::new);
 
-        // Create a consolidated memory entry from the session
-        let memory_entry = format!(
-            "Agent: {} | Session: {} ({})\nSummary: {}\nInsights: {}\nFacts: {}",
-            session_memory.agent_id,
-            session_memory.thread_id,
-            session_memory.timestamp.format("%Y-%m-%d %H:%M:%S"),
-            session_memory.session_summary,
-            session_memory.key_insights.join("; "),
-            session_memory.important_facts.join("; ")
+        // Create a formatted memory string
+        let memory_string = format!(
+            "Session: {} | Thread: {} | Summary: {} | Key Insights: {} | Important Facts: {}",
+            session_memory.session_id,
+            session_memory.user_id,
+            session_memory.content,
+            session_memory.metadata.get("key_insights").and_then(|v| v.as_array()).map(|arr| arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join("; ")).unwrap_or_default(),
+            session_memory.metadata.get("important_facts").and_then(|v| v.as_array()).map(|arr| arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join("; ")).unwrap_or_default()
         );
 
-        user_memories.push(memory_entry);
+        user_memories.push(memory_string);
         Ok(())
     }
 
@@ -200,7 +199,19 @@ impl HashMapTaskStore {
 impl TaskStore for HashMapTaskStore {
     async fn create_task(&self, context_id: &str, task_id: Option<&str>) -> anyhow::Result<Task> {
         let task_id = task_id.unwrap_or(&Uuid::new_v4().to_string()).to_string();
-        let task = self.init_task(context_id, Some(&task_id));
+        let task = Task {
+            kind: distri_a2a::EventKind::Task,
+            id: task_id.clone(),
+            context_id: context_id.to_string(),
+            status: TaskStatus {
+                state: TaskState::Submitted,
+                message: None,
+                timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            },
+            artifacts: vec![],
+            history: vec![],
+            metadata: None,
+        };
 
         let mut tasks = self.tasks.write().await;
         tasks.insert(task_id, task.clone());
@@ -389,12 +400,16 @@ impl ThreadStore for HashMapThreadStore {
 
 pub struct InMemoryAgentStore {
     agents: Arc<RwLock<HashMap<String, Box<dyn crate::agent::BaseAgent>>>>,
+    metadata: Arc<RwLock<HashMap<String, AgentMetadata>>>,
+    factories: Arc<RwLock<HashMap<String, Box<dyn AgentFactory>>>>,
 }
 
 impl InMemoryAgentStore {
     pub fn new() -> Self {
         Self {
             agents: Arc::new(RwLock::new(HashMap::new())),
+            metadata: Arc::new(RwLock::new(HashMap::new())),
+            factories: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -441,24 +456,103 @@ impl AgentStore for InMemoryAgentStore {
     }
 
     async fn get(&self, name: &str) -> Option<Box<dyn crate::agent::BaseAgent>> {
-        let agents = self.agents.read().await;
-        agents.get(name).map(|agent| agent.clone_box())
+        // First try to get from the in-memory cache
+        {
+            let agents = self.agents.read().await;
+            if let Some(agent) = agents.get(name) {
+                return Some(agent.clone_box());
+            }
+        }
+
+        // If not in cache, try to resolve using factories
+        let metadata = self.get_metadata(name).await?;
+        let factories = self.factories.read().await;
+        
+        if let Some(factory) = factories.get(&metadata.agent_type) {
+            // For now, we need to create a minimal executor context
+            // In a real implementation, you'd want to pass the actual executor
+            let context = Arc::new(ExecutorContext::default());
+            let session_store = Arc::new(Box::new(crate::stores::memory::LocalSessionStore::new()) as Box<dyn SessionStore>);
+            
+            // Create a minimal executor for agent creation
+            let executor = Arc::new(crate::agent::AgentExecutor::new_minimal_for_resolution());
+            
+            match factory.create_agent(metadata.definition, executor, context, session_store).await {
+                Ok(agent) => {
+                    // Cache the resolved agent
+                    let mut agents = self.agents.write().await;
+                    agents.insert(name.to_string(), agent.clone_box());
+                    Some(agent)
+                }
+                Err(_) => None,
+            }
+        } else {
+            None
+        }
     }
 
     async fn register(&self, agent: Box<dyn crate::agent::BaseAgent>) -> anyhow::Result<()> {
+        let name = agent.get_name().to_string();
+        let agent_type = agent.agent_type();
+        let definition = agent.get_definition();
+        
+        // Store the agent
         let mut agents = self.agents.write().await;
-        agents.insert(agent.get_name().to_string(), agent);
+        agents.insert(name.clone(), agent);
+        
+        // Store metadata
+        let mut metadata_store = self.metadata.write().await;
+        let now = chrono::Utc::now();
+        let metadata = AgentMetadata {
+            name: name.clone(),
+            agent_type: match agent_type {
+                crate::agent::agent::AgentType::Standard => "standard".to_string(),
+                crate::agent::agent::AgentType::Remote => "remote".to_string(),
+                crate::agent::agent::AgentType::Custom(custom_type) => custom_type,
+            },
+            definition,
+            created_at: now,
+            updated_at: now,
+        };
+        metadata_store.insert(name, metadata);
+        
         Ok(())
     }
 
     async fn update(&self, agent: Box<dyn crate::agent::BaseAgent>) -> anyhow::Result<()> {
+        let name = agent.get_name().to_string();
+        let agent_type = agent.agent_type();
+        let definition = agent.get_definition();
+        
         let mut agents = self.agents.write().await;
-        let agent_name = agent.get_name().to_string();
-        if agents.contains_key(&agent_name) {
-            agents.insert(agent_name, agent);
+        if agents.contains_key(&name) {
+            agents.insert(name.clone(), agent);
+            
+            // Update metadata
+            let mut metadata_store = self.metadata.write().await;
+            if let Some(existing_metadata) = metadata_store.get_mut(&name) {
+                existing_metadata.agent_type = match agent_type {
+                    crate::agent::agent::AgentType::Standard => "standard".to_string(),
+                    crate::agent::agent::AgentType::Remote => "remote".to_string(),
+                    crate::agent::agent::AgentType::Custom(custom_type) => custom_type,
+                };
+                existing_metadata.definition = definition;
+                existing_metadata.updated_at = chrono::Utc::now();
+            }
             Ok(())
         } else {
-            Err(anyhow::anyhow!("Agent '{}' not found", agent_name))
+            Err(anyhow::anyhow!("Agent '{}' not found", name))
         }
+    }
+
+    async fn register_factory(&self, factory: Box<dyn AgentFactory>) -> anyhow::Result<()> {
+        let mut factories = self.factories.write().await;
+        factories.insert(factory.agent_type().to_string(), factory);
+        Ok(())
+    }
+
+    async fn get_metadata(&self, name: &str) -> Option<AgentMetadata> {
+        let metadata = self.metadata.read().await;
+        metadata.get(name).cloned()
     }
 }

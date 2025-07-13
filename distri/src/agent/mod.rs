@@ -1,6 +1,7 @@
 pub mod agent;
 pub mod executor;
 pub mod extensible_example;
+pub mod factories;
 mod hooks;
 pub mod log;
 pub mod reason;
@@ -10,6 +11,7 @@ pub use agent::{BaseAgent, StandardAgent, StepResult, MAX_ITERATIONS};
 use async_openai::types::Role;
 pub use executor::{AgentExecutor, AgentExecutorBuilder};
 pub use extensible_example::{FilteringAgent, LoggingAgent};
+pub use factories::{AgentFactoryRegistry, FilteringAgentFactory, LoggingAgentFactory, StandardAgentFactory};
 pub use hooks::AgentHooks;
 pub use log::{ModelLogger, StepLogger};
 use serde::{Deserialize, Serialize};

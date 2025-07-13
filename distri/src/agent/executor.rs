@@ -1,5 +1,5 @@
 use crate::{
-    agent::{AgentEventType, BaseAgent, StandardAgent},
+    agent::{AgentEventType, BaseAgent, StandardAgent, LoggingAgent, FilteringAgent},
     error::AgentError,
     servers::registry::{McpServerRegistry, ServerMetadata},
     stores::{AgentStore, ThreadStore, ToolSessionStore},
@@ -155,6 +155,9 @@ impl AgentExecutor {
 
         let executor = builder.build()?;
 
+        // Register default agent factories for custom agent resolution
+        executor.register_default_factories().await?;
+
         // Register agents from configuration
         for agent_config in &config.agents {
             executor
@@ -163,6 +166,35 @@ impl AgentExecutor {
         }
 
         Ok(executor)
+    }
+
+    /// Create a minimal AgentExecutor for agent resolution purposes
+    /// This is used when resolving custom agents from the store
+    pub fn new_minimal_for_resolution() -> Self {
+        let (coordinator_tx, coordinator_rx) = mpsc::channel(100);
+        
+        Self {
+            agent_store: Arc::new(crate::stores::memory::InMemoryAgentStore::new()),
+            tool_sessions: None,
+            registry: Arc::new(RwLock::new(McpServerRegistry::default())),
+            coordinator_rx: Arc::new(Mutex::new(coordinator_rx)),
+            coordinator_tx,
+            session_store: Arc::new(Box::new(crate::stores::memory::LocalSessionStore::new()) as Box<dyn SessionStore>),
+            thread_store: Arc::new(crate::stores::memory::HashMapThreadStore::new()),
+            task_store: Arc::new(crate::stores::memory::HashMapTaskStore::new()),
+            context: Arc::new(ExecutorContext::default()),
+        }
+    }
+
+    /// Register default agent factories for custom agent resolution
+    pub async fn register_default_factories(&self) -> anyhow::Result<()> {
+        use crate::agent::factories::{LoggingAgentFactory, FilteringAgentFactory, StandardAgentFactory};
+        
+        self.agent_store.register_factory(Box::new(StandardAgentFactory)).await?;
+        self.agent_store.register_factory(Box::new(LoggingAgentFactory)).await?;
+        self.agent_store.register_factory(Box::new(FilteringAgentFactory::with_default_banned_words())).await?;
+        
+        Ok(())
     }
 
     pub async fn register_mcp_server(&self, name: String, server: ServerMetadata) {
@@ -242,6 +274,46 @@ impl AgentExecutor {
             Arc::new(self.clone()),
             self.context.clone(),
             self.session_store.clone(),
+        ));
+        self.register_agent(agent.clone_box()).await?;
+        Ok(agent)
+    }
+
+    /// Helper method to create a LoggingAgent from an AgentDefinition
+    pub async fn register_logging_agent(
+        &self,
+        definition: crate::types::AgentDefinition,
+    ) -> anyhow::Result<Box<dyn BaseAgent>> {
+        let tools = get_tools(&definition.mcp_servers, self.registry.clone()).await?;
+        let tools_registry = LlmToolsRegistry::new(tools);
+
+        let agent = Box::new(LoggingAgent::new(
+            definition,
+            Arc::new(tools_registry),
+            Arc::new(self.clone()),
+            self.context.clone(),
+            self.session_store.clone(),
+        ));
+        self.register_agent(agent.clone_box()).await?;
+        Ok(agent)
+    }
+
+    /// Helper method to create a FilteringAgent from an AgentDefinition
+    pub async fn register_filtering_agent(
+        &self,
+        definition: crate::types::AgentDefinition,
+        banned_words: Vec<String>,
+    ) -> anyhow::Result<Box<dyn BaseAgent>> {
+        let tools = get_tools(&definition.mcp_servers, self.registry.clone()).await?;
+        let tools_registry = LlmToolsRegistry::new(tools);
+
+        let agent = Box::new(FilteringAgent::new(
+            definition,
+            Arc::new(tools_registry),
+            Arc::new(self.clone()),
+            self.context.clone(),
+            self.session_store.clone(),
+            banned_words,
         ));
         self.register_agent(agent.clone_box()).await?;
         Ok(agent)
