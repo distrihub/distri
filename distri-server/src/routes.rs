@@ -3,7 +3,7 @@ use actix_web::{web, HttpResponse};
 use actix_web_lab::sse::{self, Sse};
 use distri::a2a::A2AHandler;
 use distri::agent::AgentExecutor;
-use distri::types::{AgentDefinition, ServerConfig, UpdateThreadRequest};
+use distri::types::{AgentDefinition, ServerConfig, UpdateThreadRequest, RegisterFrontendToolRequest, ExecuteFrontendToolRequest};
 use distri_a2a::JsonRpcRequest;
 use futures_util::StreamExt;
 use serde::Deserialize;
@@ -48,7 +48,17 @@ pub fn distri(cfg: &mut web::ServiceConfig) {
                 web::resource("/threads/{thread_id}/messages")
                     .route(web::get().to(get_thread_messages)),
             )
-            .service(web::resource("/schema/agent").route(web::get().to(get_agent_schema))),
+            .service(web::resource("/schema/agent").route(web::get().to(get_agent_schema)))
+            // Frontend tool endpoints
+            .service(
+                web::resource("/tools/frontend")
+                    .route(web::post().to(register_frontend_tool))
+                    .route(web::get().to(list_frontend_tools)),
+            )
+            .service(
+                web::resource("/tools/frontend/execute")
+                    .route(web::post().to(execute_frontend_tool)),
+            ),
     );
 }
 
@@ -307,4 +317,43 @@ async fn get_agent_schema() -> HttpResponse {
     use schemars::schema_for;
     let schema = schema_for!(AgentDefinition);
     HttpResponse::Ok().json(schema)
+}
+
+// Frontend tool handlers
+async fn register_frontend_tool(
+    req: web::Json<RegisterFrontendToolRequest>,
+    executor: web::Data<Arc<AgentExecutor>>,
+) -> HttpResponse {
+    match executor.register_frontend_tool(req.into_inner()).await {
+        Ok(response) => HttpResponse::Ok().json(response),
+        Err(e) => HttpResponse::BadRequest().json(json!({
+            "error": format!("Failed to register frontend tool: {}", e)
+        })),
+    }
+}
+
+async fn list_frontend_tools(
+    query: web::Query<ListFrontendToolsQuery>,
+    executor: web::Data<Arc<AgentExecutor>>,
+) -> HttpResponse {
+    match executor.get_frontend_tools(query.agent_id.as_deref()).await {
+        tools => HttpResponse::Ok().json(tools),
+    }
+}
+
+async fn execute_frontend_tool(
+    req: web::Json<ExecuteFrontendToolRequest>,
+    executor: web::Data<Arc<AgentExecutor>>,
+) -> HttpResponse {
+    match executor.execute_frontend_tool(req.into_inner()).await {
+        Ok(response) => HttpResponse::Ok().json(response),
+        Err(e) => HttpResponse::BadRequest().json(json!({
+            "error": format!("Failed to execute frontend tool: {}", e)
+        })),
+    }
+}
+
+#[derive(Deserialize)]
+struct ListFrontendToolsQuery {
+    agent_id: Option<String>,
 }

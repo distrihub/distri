@@ -257,6 +257,66 @@ pub struct ToolCall {
     pub input: String,
 }
 
+/// Frontend-defined tool that can be resolved in the frontend
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FrontendTool {
+    /// The name of the tool
+    pub name: String,
+    /// Description of what the tool does
+    pub description: String,
+    /// JSON schema for the tool's input parameters
+    pub input_schema: serde_json::Value,
+    /// Whether the tool should be resolved in the frontend
+    #[serde(default = "default_frontend_resolved")]
+    pub frontend_resolved: bool,
+    /// Optional metadata for the tool
+    #[serde(default)]
+    pub metadata: Option<serde_json::Value>,
+}
+
+fn default_frontend_resolved() -> bool {
+    true
+}
+
+/// Request to register a frontend tool
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RegisterFrontendToolRequest {
+    pub tool: FrontendTool,
+    pub agent_id: Option<String>, // If None, tool is available to all agents
+}
+
+/// Response for tool registration
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ToolRegistrationResponse {
+    pub success: bool,
+    pub tool_id: String,
+    pub message: String,
+}
+
+/// Request to execute a frontend tool
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ExecuteFrontendToolRequest {
+    pub tool_name: String,
+    pub arguments: serde_json::Value,
+    pub agent_id: String,
+    pub thread_id: Option<String>,
+    pub context: Option<serde_json::Value>,
+}
+
+/// Response from frontend tool execution
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FrontendToolResponse {
+    pub success: bool,
+    pub result: Option<String>,
+    pub error: Option<String>,
+    pub metadata: Option<serde_json::Value>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase", tag = "provider", content = "value")]
 pub enum ModelProvider {

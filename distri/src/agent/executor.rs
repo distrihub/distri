@@ -3,15 +3,17 @@ use crate::{
     error::AgentError,
     servers::registry::{McpServerRegistry, ServerMetadata},
     stores::{AgentStore, ThreadStore, ToolSessionStore},
-    tools::{get_tools, BuiltInToolContext, LlmToolsRegistry},
+    tools::{get_tools, BuiltInToolContext, LlmToolsRegistry, FrontendToolImpl, Tool},
     types::{
         Configuration, CreateThreadRequest, StoreConfig, Thread, ThreadSummary, ToolCall,
-        UpdateThreadRequest,
+        UpdateThreadRequest, FrontendTool, RegisterFrontendToolRequest, ToolRegistrationResponse,
+        ExecuteFrontendToolRequest, FrontendToolResponse, validate_parameters,
     },
     InitializedStores, SessionStore, TaskStore,
 };
-use serde_json;
+use serde_json::{self, json};
 use std::sync::Arc;
+use std::collections::HashMap;
 use tokio::sync::{mpsc, Mutex, RwLock};
 
 use super::AgentEvent;
@@ -32,6 +34,7 @@ pub struct AgentExecutor {
     pub thread_store: Arc<dyn ThreadStore>,
     pub task_store: Arc<dyn TaskStore>,
     pub context: Arc<ExecutorContext>,
+    pub frontend_tools: Arc<RwLock<HashMap<String, FrontendTool>>>,
 }
 
 #[derive(Default)]
@@ -136,7 +139,7 @@ impl AgentExecutorBuilder {
             session_store,
             thread_store,
             task_store,
-
+            frontend_tools: Arc::new(RwLock::new(HashMap::new())),
             context,
         })
     }
@@ -232,7 +235,14 @@ impl AgentExecutor {
         &self,
         definition: crate::types::AgentDefinition,
     ) -> anyhow::Result<Box<dyn BaseAgent>> {
-        let tools = get_tools(&definition.mcp_servers, self.registry.clone()).await?;
+        let mut tools = get_tools(&definition.mcp_servers, self.registry.clone()).await?;
+
+        // Add frontend tools to the registry
+        let frontend_tools = self.frontend_tools.read().await;
+        for (_, frontend_tool) in frontend_tools.iter() {
+            let frontend_tool_impl = Box::new(FrontendToolImpl::new(frontend_tool.clone())) as Box<dyn Tool>;
+            tools.insert(frontend_tool_impl.get_name(), frontend_tool_impl);
+        }
 
         let tools_registry = LlmToolsRegistry::new(tools);
 
@@ -265,6 +275,70 @@ impl AgentExecutor {
         ));
         self.agent_store.update(agent.clone_box()).await?;
         Ok(agent)
+    }
+
+    /// Register a frontend tool that can be resolved in the frontend
+    pub async fn register_frontend_tool(
+        &self,
+        request: RegisterFrontendToolRequest,
+    ) -> Result<ToolRegistrationResponse, AgentError> {
+        let tool_id = uuid::Uuid::new_v4().to_string();
+        let mut tools = self.frontend_tools.write().await;
+        
+        // Store the tool with the generated ID
+        tools.insert(tool_id.clone(), request.tool);
+        
+        Ok(ToolRegistrationResponse {
+            success: true,
+            tool_id,
+            message: "Frontend tool registered successfully".to_string(),
+        })
+    }
+
+    /// Get all frontend tools for an agent
+    pub async fn get_frontend_tools(&self, agent_id: Option<&str>) -> Vec<FrontendTool> {
+        let tools = self.frontend_tools.read().await;
+        tools.values().cloned().collect()
+    }
+
+    /// Execute a frontend tool (this will be called by the frontend)
+    pub async fn execute_frontend_tool(
+        &self,
+        request: ExecuteFrontendToolRequest,
+    ) -> Result<FrontendToolResponse, AgentError> {
+        // This method is called by the frontend to execute a tool
+        // The actual execution happens in the frontend, this just validates the request
+        let tools = self.frontend_tools.read().await;
+        
+        if let Some(tool) = tools.get(&request.tool_name) {
+            // Validate the input against the schema
+            if let Err(e) = validate_parameters(&mut tool.input_schema.clone(), Some(request.arguments.clone())) {
+                return Ok(FrontendToolResponse {
+                    success: false,
+                    result: None,
+                    error: Some(format!("Invalid arguments: {}", e)),
+                    metadata: None,
+                });
+            }
+
+            Ok(FrontendToolResponse {
+                success: true,
+                result: Some("Tool execution delegated to frontend".to_string()),
+                error: None,
+                metadata: Some(json!({
+                    "tool_name": tool.name,
+                    "frontend_resolved": true,
+                    "input_schema": tool.input_schema
+                })),
+            })
+        } else {
+            Ok(FrontendToolResponse {
+                success: false,
+                result: None,
+                error: Some(format!("Tool '{}' not found", request.tool_name)),
+                metadata: None,
+            })
+        }
     }
 
     pub async fn run(&self) -> anyhow::Result<()> {

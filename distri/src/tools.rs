@@ -24,6 +24,7 @@ use crate::stores::{AgentStore, ToolSessionStore};
 use crate::types::ServerTools;
 use crate::types::TransportType;
 use crate::types::{McpDefinition, ToolCall};
+use crate::types::{FrontendTool, FrontendToolResponse, ExecuteFrontendToolRequest};
 
 async fn async_server(metadata: ServerMetadata, transport: ServerInMemoryTransport) -> Result<()> {
     let builder = metadata
@@ -565,5 +566,61 @@ impl Tool for TransferToAgentTool {
                 target_agent
             )))
         }
+    }
+}
+
+/// Frontend tool implementation that delegates execution to the frontend
+pub struct FrontendToolImpl {
+    pub tool: FrontendTool,
+}
+
+impl FrontendToolImpl {
+    pub fn new(tool: FrontendTool) -> Self {
+        Self { tool }
+    }
+}
+
+#[async_trait::async_trait]
+impl Tool for FrontendToolImpl {
+    fn get_name(&self) -> String {
+        self.tool.name.clone()
+    }
+
+    fn get_description(&self) -> String {
+        self.tool.description.clone()
+    }
+
+    fn get_tool_definition(&self) -> async_openai::types::ChatCompletionTool {
+        async_openai::types::ChatCompletionTool {
+            r#type: async_openai::types::ChatCompletionToolType::Function,
+            function: async_openai::types::FunctionObject {
+                name: self.tool.name.clone(),
+                description: Some(self.tool.description.clone()),
+                parameters: Some(self.tool.input_schema.clone()),
+                strict: None,
+            },
+        }
+    }
+
+    async fn execute(
+        &self,
+        tool_call: ToolCall,
+        context: BuiltInToolContext,
+    ) -> Result<String, AgentError> {
+        // For frontend tools, we return a special response that indicates
+        // the tool should be resolved in the frontend
+        let response = FrontendToolResponse {
+            success: true,
+            result: Some(format!("Tool '{}' should be resolved in the frontend", self.tool.name)),
+            error: None,
+            metadata: Some(json!({
+                "tool_name": self.tool.name,
+                "tool_id": tool_call.tool_id,
+                "frontend_resolved": true,
+                "input": tool_call.input
+            })),
+        };
+
+        Ok(serde_json::to_string(&response).map_err(|e| AgentError::ToolExecution(e.to_string()))?)
     }
 }
