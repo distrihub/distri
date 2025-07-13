@@ -227,4 +227,8 @@ impl AgentStore for NoopAgentStore {
     async fn get_metadata(&self, _name: &str) -> Option<crate::stores::AgentMetadata> {
         None
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }

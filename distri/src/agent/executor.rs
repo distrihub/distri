@@ -319,6 +319,32 @@ impl AgentExecutor {
         Ok(agent)
     }
 
+    /// Helper method to register a custom agent with a specific agent type
+    pub async fn register_custom_agent(
+        &self,
+        definition: crate::types::AgentDefinition,
+        agent_type: &str,
+    ) -> anyhow::Result<Box<dyn BaseAgent>> {
+        // Create a custom agent that will be resolved by the factory
+        // We'll create a placeholder agent that gets replaced when retrieved
+        let agent = Box::new(StandardAgent::new(
+            definition.clone(),
+            Arc::new(LlmToolsRegistry::new(std::collections::HashMap::new())),
+            Arc::new(self.clone()),
+            self.context.clone(),
+            self.session_store.clone(),
+        ));
+        
+        // Store the agent
+        self.register_agent(agent.clone_box()).await?;
+        
+        // For now, we'll just return the agent as-is
+        // The custom agent resolution will happen when the agent is retrieved from the store
+        // and the factory is available to create the proper custom agent
+        
+        Ok(agent)
+    }
+
     /// Update an existing agent with new definition
     pub async fn update_agent(
         &self,

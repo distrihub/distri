@@ -158,4 +158,7 @@ pub trait AgentStore: Send + Sync {
 
     /// Get agent metadata without resolving the full agent
     async fn get_metadata(&self, name: &str) -> Option<AgentMetadata>;
+
+    /// Cast to Any for type-specific operations
+    fn as_any(&self) -> &dyn std::any::Any;
 }

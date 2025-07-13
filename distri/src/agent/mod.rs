@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod custom_agent_example;
 pub mod executor;
 pub mod extensible_example;
 pub mod factories;

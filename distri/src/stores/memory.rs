@@ -555,4 +555,8 @@ impl AgentStore for InMemoryAgentStore {
         let metadata = self.metadata.read().await;
         metadata.get(name).cloned()
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
