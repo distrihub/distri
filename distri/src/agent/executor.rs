@@ -3,11 +3,12 @@ use crate::{
     error::AgentError,
     servers::registry::{McpServerRegistry, ServerMetadata},
     stores::{AgentStore, ThreadStore, ToolSessionStore},
-    tools::{get_tools, BuiltInToolContext, LlmToolsRegistry, FrontendToolImpl, Tool},
+    tools::{get_tools, BuiltInToolContext, LlmToolsRegistry, FrontendTool, Tool},
     types::{
         Configuration, CreateThreadRequest, StoreConfig, Thread, ThreadSummary, ToolCall,
-        UpdateThreadRequest, FrontendTool, RegisterFrontendToolRequest, ToolRegistrationResponse,
-        ExecuteFrontendToolRequest, FrontendToolResponse, validate_parameters,
+        UpdateThreadRequest, FrontendToolDefinition, RegisterFrontendToolRequest, ToolRegistrationResponse,
+        ExecuteFrontendToolRequest, FrontendToolResponse, ToolResponse, ContinueWithToolResponsesRequest,
+        validate_parameters,
     },
     InitializedStores, SessionStore, TaskStore,
 };
@@ -34,7 +35,7 @@ pub struct AgentExecutor {
     pub thread_store: Arc<dyn ThreadStore>,
     pub task_store: Arc<dyn TaskStore>,
     pub context: Arc<ExecutorContext>,
-    pub frontend_tools: Arc<RwLock<HashMap<String, FrontendTool>>>,
+    pub frontend_tools: Arc<RwLock<HashMap<String, (FrontendToolDefinition, Option<String>)>>>,
 }
 
 #[derive(Default)]
@@ -239,9 +240,17 @@ impl AgentExecutor {
 
         // Add frontend tools to the registry
         let frontend_tools = self.frontend_tools.read().await;
-        for (_, frontend_tool) in frontend_tools.iter() {
-            let frontend_tool_impl = Box::new(FrontendToolImpl::new(frontend_tool.clone())) as Box<dyn Tool>;
-            tools.insert(frontend_tool_impl.get_name(), frontend_tool_impl);
+        for (_, (frontend_tool, tool_agent_id)) in frontend_tools.iter() {
+            // Only add tools that are global (None) or specific to this agent
+            if tool_agent_id.is_none() || tool_agent_id.as_ref() == Some(&definition.name) {
+                let frontend_tool_impl = Box::new(FrontendTool::new(
+                    frontend_tool.name.clone(),
+                    frontend_tool.description.clone(),
+                    frontend_tool.input_schema.clone(),
+                    frontend_tool.metadata.clone(),
+                )) as Box<dyn Tool>;
+                tools.insert(frontend_tool_impl.get_name(), frontend_tool_impl);
+            }
         }
 
         let tools_registry = LlmToolsRegistry::new(tools);
@@ -285,8 +294,8 @@ impl AgentExecutor {
         let tool_id = uuid::Uuid::new_v4().to_string();
         let mut tools = self.frontend_tools.write().await;
         
-        // Store the tool with the generated ID
-        tools.insert(tool_id.clone(), request.tool);
+        // Store the tool definition with agent association
+        tools.insert(request.tool.name.clone(), (request.tool, request.agent_id));
         
         Ok(ToolRegistrationResponse {
             success: true,
@@ -295,22 +304,39 @@ impl AgentExecutor {
         })
     }
 
-    /// Get all frontend tools for an agent
-    pub async fn get_frontend_tools(&self, agent_id: Option<&str>) -> Vec<FrontendTool> {
+    /// Get all frontend tool definitions
+    pub async fn get_frontend_tools(&self, agent_id: Option<&str>) -> Vec<FrontendToolDefinition> {
         let tools = self.frontend_tools.read().await;
-        tools.values().cloned().collect()
+        
+        match agent_id {
+            Some(agent_id) => {
+                // Return tools specific to this agent or global tools (None)
+                tools
+                    .values()
+                    .filter_map(|(tool, tool_agent_id)| {
+                        if tool_agent_id.is_none() || tool_agent_id.as_ref() == Some(&agent_id.to_string()) {
+                            Some(tool.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            }
+            None => {
+                // Return all tools
+                tools.values().map(|(tool, _)| tool.clone()).collect()
+            }
+        }
     }
 
-    /// Execute a frontend tool (this will be called by the frontend)
+    /// Execute a frontend tool (validation only)
     pub async fn execute_frontend_tool(
         &self,
         request: ExecuteFrontendToolRequest,
     ) -> Result<FrontendToolResponse, AgentError> {
-        // This method is called by the frontend to execute a tool
-        // The actual execution happens in the frontend, this just validates the request
         let tools = self.frontend_tools.read().await;
         
-        if let Some(tool) = tools.get(&request.tool_name) {
+        if let Some((tool, _)) = tools.get(&request.tool_name) {
             // Validate the input against the schema
             if let Err(e) = validate_parameters(&mut tool.input_schema.clone(), Some(request.arguments.clone())) {
                 return Ok(FrontendToolResponse {
@@ -339,6 +365,52 @@ impl AgentExecutor {
                 metadata: None,
             })
         }
+    }
+
+    /// Continue agent execution with tool responses
+    pub async fn continue_with_tool_responses(
+        &self,
+        request: ContinueWithToolResponsesRequest,
+        event_tx: Option<mpsc::Sender<AgentEvent>>,
+    ) -> Result<String, AgentError> {
+        let agent = self
+            .agent_store
+            .get(&request.agent_id)
+            .await
+            .ok_or_else(|| AgentError::NotFound(format!("Agent {} not found", request.agent_id)))?;
+
+        let context = Arc::new(ExecutorContext::new(
+            request.thread_id.clone(),
+            None,
+            true,
+            None,
+            None,
+            None,
+        ));
+
+        // Convert tool responses to messages
+        let mut tool_response_messages = Vec::new();
+        for tool_response in request.tool_responses {
+            let message = crate::types::Message {
+                role: crate::types::MessageRole::ToolResponse,
+                name: Some("frontend_tool".to_string()),
+                content: vec![crate::types::MessageContent {
+                    content_type: "text".to_string(),
+                    text: Some(tool_response.result),
+                    image: None,
+                }],
+                tool_calls: vec![ToolCall {
+                    tool_id: tool_response.tool_call_id,
+                    tool_name: "frontend_tool".to_string(),
+                    input: "".to_string(),
+                    external: false, // This is now a response, not a call
+                }],
+            };
+            tool_response_messages.push(message);
+        }
+
+        // Continue agent execution with the tool responses
+        agent.continue_execution(tool_response_messages, context, event_tx).await
     }
 
     pub async fn run(&self) -> anyhow::Result<()> {

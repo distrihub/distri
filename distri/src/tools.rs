@@ -24,7 +24,7 @@ use crate::stores::{AgentStore, ToolSessionStore};
 use crate::types::ServerTools;
 use crate::types::TransportType;
 use crate::types::{McpDefinition, ToolCall};
-use crate::types::{FrontendTool, FrontendToolResponse, ExecuteFrontendToolRequest};
+use crate::types::{FrontendToolResponse};
 
 async fn async_server(metadata: ServerMetadata, transport: ServerInMemoryTransport) -> Result<()> {
     let builder = metadata
@@ -570,33 +570,41 @@ impl Tool for TransferToAgentTool {
 }
 
 /// Frontend tool implementation that delegates execution to the frontend
-pub struct FrontendToolImpl {
-    pub tool: FrontendTool,
+pub struct FrontendTool {
+    pub name: String,
+    pub description: String,
+    pub input_schema: serde_json::Value,
+    pub metadata: Option<serde_json::Value>,
 }
 
-impl FrontendToolImpl {
-    pub fn new(tool: FrontendTool) -> Self {
-        Self { tool }
+impl FrontendTool {
+    pub fn new(name: String, description: String, input_schema: serde_json::Value, metadata: Option<serde_json::Value>) -> Self {
+        Self {
+            name,
+            description,
+            input_schema,
+            metadata,
+        }
     }
 }
 
 #[async_trait::async_trait]
-impl Tool for FrontendToolImpl {
+impl Tool for FrontendTool {
     fn get_name(&self) -> String {
-        self.tool.name.clone()
+        self.name.clone()
     }
 
     fn get_description(&self) -> String {
-        self.tool.description.clone()
+        self.description.clone()
     }
 
     fn get_tool_definition(&self) -> async_openai::types::ChatCompletionTool {
         async_openai::types::ChatCompletionTool {
             r#type: async_openai::types::ChatCompletionToolType::Function,
             function: async_openai::types::FunctionObject {
-                name: self.tool.name.clone(),
-                description: Some(self.tool.description.clone()),
-                parameters: Some(self.tool.input_schema.clone()),
+                name: self.name.clone(),
+                description: Some(self.description.clone()),
+                parameters: Some(self.input_schema.clone()),
                 strict: None,
             },
         }
@@ -605,19 +613,20 @@ impl Tool for FrontendToolImpl {
     async fn execute(
         &self,
         tool_call: ToolCall,
-        context: BuiltInToolContext,
+        _context: BuiltInToolContext,
     ) -> Result<String, AgentError> {
         // For frontend tools, we return a special response that indicates
         // the tool should be resolved in the frontend
         let response = FrontendToolResponse {
             success: true,
-            result: Some(format!("Tool '{}' should be resolved in the frontend", self.tool.name)),
+            result: Some(format!("Tool '{}' should be resolved in the frontend", self.name)),
             error: None,
             metadata: Some(json!({
-                "tool_name": self.tool.name,
+                "tool_name": self.name,
                 "tool_id": tool_call.tool_id,
                 "frontend_resolved": true,
-                "input": tool_call.input
+                "input": tool_call.input,
+                "tool_metadata": self.metadata
             })),
         };
 

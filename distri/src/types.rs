@@ -255,12 +255,15 @@ pub struct ToolCall {
     pub tool_id: String,
     pub tool_name: String,
     pub input: String,
+    /// Whether this tool call should be resolved externally (frontend)
+    #[serde(default)]
+    pub external: bool,
 }
 
 /// Frontend-defined tool that can be resolved in the frontend
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct FrontendTool {
+pub struct FrontendToolDefinition {
     /// The name of the tool
     pub name: String,
     /// Description of what the tool does
@@ -283,7 +286,7 @@ fn default_frontend_resolved() -> bool {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RegisterFrontendToolRequest {
-    pub tool: FrontendTool,
+    pub tool: FrontendToolDefinition,
     pub agent_id: Option<String>, // If None, tool is available to all agents
 }
 
@@ -315,6 +318,25 @@ pub struct FrontendToolResponse {
     pub result: Option<String>,
     pub error: Option<String>,
     pub metadata: Option<serde_json::Value>,
+}
+
+/// Tool response from external execution (frontend)
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ToolResponse {
+    pub tool_call_id: String,
+    pub result: String,
+    pub metadata: Option<serde_json::Value>,
+}
+
+/// Request to continue agent execution with tool responses
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ContinueWithToolResponsesRequest {
+    pub agent_id: String,
+    pub thread_id: String,
+    pub tool_responses: Vec<ToolResponse>,
+    pub context: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

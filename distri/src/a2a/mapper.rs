@@ -52,7 +52,7 @@ pub fn map_agent_event(event: &AgentEvent) -> Message {
             })],
             ..Default::default()
         },
-        AgentEventType::ToolCallResult { tool_call_id, result } => {
+        AgentEventType::ToolCallResult { tool_call_id: _, result } => {
             // Check if this is a frontend tool result
             if let Ok(parsed_result) = serde_json::from_str::<serde_json::Value>(result) {
                 if let Some(metadata) = parsed_result.get("metadata") {

@@ -291,6 +291,7 @@ impl LLMExecutor {
                                             tool_id: tool_call_id.clone(),
                                             tool_name: tool_call_name.clone(),
                                             input: arguments.clone(),
+                                            external: false,
                                         });
                                         drop(tool_calls);
                                     }
@@ -405,6 +406,7 @@ impl LLMExecutor {
             tool_id: tool_call.id.clone(),
             tool_name: tool_call.function.name.clone(),
             input: tool_call.function.arguments.clone(),
+            external: false,
         }
     }
 

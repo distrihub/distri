@@ -50,6 +50,18 @@ pub trait BaseAgent: Send + Sync + std::fmt::Debug {
         ))
     }
 
+    /// Continue execution with tool responses (for external tool calls)
+    async fn continue_execution(
+        &self,
+        _tool_response_messages: Vec<Message>,
+        _context: Arc<ExecutorContext>,
+        _event_tx: Option<mpsc::Sender<AgentEvent>>,
+    ) -> Result<String, AgentError> {
+        Err(AgentError::NotImplemented(
+            "BaseAgent::continue_execution not implemented".to_string(),
+        ))
+    }
+
     /// Clone the agent (required for object safety)
     fn clone_box(&self) -> Box<dyn BaseAgent>;
 
@@ -624,6 +636,133 @@ impl StandardAgent {
         result
     }
 
+    /// Continue execution with tool responses (for external tool calls)
+    pub async fn continue_execution(
+        &self,
+        tool_response_messages: Vec<Message>,
+        context: Arc<ExecutorContext>,
+        event_tx: Option<mpsc::Sender<AgentEvent>>,
+    ) -> Result<String, AgentError> {
+        self.validate().await?;
+        let agent_id = &self.definition.name;
+        let run_id = context.run_id.lock().await.clone();
+        let thread_id = context.thread_id.clone();
+        let mut iterations = self
+            .session_store
+            .get_iteration(&run_id)
+            .await
+            .map_err(|e| AgentError::Session(e.to_string()))?;
+
+        // Send RunStarted event if event_tx is provided
+        if let Some(event_tx) = &event_tx {
+            let _ = event_tx
+                .send(AgentEvent {
+                    thread_id: thread_id.clone(),
+                    run_id: run_id.clone(),
+                    event: AgentEventType::RunStarted {},
+                })
+                .await;
+        }
+
+        let result = async {
+            let mut current_messages = self
+                .session_store
+                .get_messages(&context.thread_id)
+                .await
+                .map_err(|e| AgentError::Session(e.to_string()))?;
+
+            // Add tool response messages to the conversation
+            current_messages.extend(tool_response_messages);
+
+            let max_iterations = self.definition.max_iterations.unwrap_or(MAX_ITERATIONS);
+            tracing::debug!("Max iterations per run set to: {}", max_iterations);
+            
+            loop {
+                if iterations >= max_iterations {
+                    tracing::warn!("Max iterations limit reached: {}", max_iterations);
+                    return Err(AgentError::LLMError(format!(
+                        "Max iterations reached: {max_iterations}",
+                    )));
+                }
+                iterations = self
+                    .session_store
+                    .inc_iteration(&run_id)
+                    .await
+                    .map_err(|e| AgentError::Session(e.to_string()))?;
+
+                let messages = self
+                    .before_llm_step(&current_messages, &None, context.clone())
+                    .await?;
+                let step_result = self
+                    .llm_step(&messages, &None, context.clone(), event_tx.clone())
+                    .await?;
+
+                match step_result {
+                    StepResult::Finish(content) => {
+                        // Call after_finish hook
+                        self.after_finish(&content, context.clone()).await?;
+
+                        tracing::info!("Agent execution completed successfully");
+                        let action_step = MemoryStep::Action(ActionStep {
+                            model_input_messages: Some(current_messages),
+                            model_output: Some(content.clone()),
+                            ..Default::default()
+                        });
+                        self.session_store
+                            .store_step(&context.thread_id, action_step.clone())
+                            .await
+                            .map_err(|e| AgentError::Session(e.to_string()))?;
+                        self.logger.log_step(agent_id, &action_step);
+                        // Emit text message events if event_tx is provided
+                        if let Some(event_tx) = &event_tx {
+                            self.emit_text_message_events(
+                                event_tx,
+                                &context,
+                                &content,
+                                &Role::Assistant,
+                            )
+                            .await;
+                        }
+                        return Ok(content);
+                    }
+                    StepResult::Continue(new_messages) => {
+                        current_messages.extend(new_messages);
+                        continue;
+                    }
+                }
+            }
+        }
+        .await;
+
+        // Send RunFinished or RunError event if event_tx is provided
+        if let Some(event_tx) = &event_tx {
+            match &result {
+                Ok(_) => {
+                    let _ = event_tx
+                        .send(AgentEvent {
+                            thread_id: thread_id.clone(),
+                            run_id: run_id.clone(),
+                            event: AgentEventType::RunFinished {},
+                        })
+                        .await;
+                }
+                Err(e) => {
+                    let _ = event_tx
+                        .send(AgentEvent {
+                            thread_id: thread_id.clone(),
+                            run_id: run_id.clone(),
+                            event: AgentEventType::RunError {
+                                message: e.to_string(),
+                                code: None,
+                            },
+                        })
+                        .await;
+                }
+            }
+        }
+        result
+    }
+
     async fn handle_finish_reason(
         &self,
         finish_reason: async_openai::types::FinishReason,
@@ -640,126 +779,151 @@ impl StandardAgent {
             }
             async_openai::types::FinishReason::ToolCalls => {
                 if !tool_calls.is_empty() {
-                    // Convert and add assistant message with tool calls
-                    let mut new_messages = vec![Message {
-                        role: MessageRole::Assistant,
-                        name: Some(agent_id.to_string()),
-                        content: vec![MessageContent {
-                            content_type: "text".to_string(),
-                            text: Some(content),
-                            image: None,
-                        }],
-                        tool_calls: tool_calls.to_vec(),
-                    }];
+                    // Check if any tool calls are external (frontend tools)
+                    let has_external_tools = tool_calls.iter().any(|tc| tc.external);
+                    
+                    if has_external_tools {
+                        // For external tools, we stop execution and return the tool calls
+                        // The frontend will handle the execution and call continue_execution
+                        let mut new_messages = vec![Message {
+                            role: MessageRole::Assistant,
+                            name: Some(agent_id.to_string()),
+                            content: vec![MessageContent {
+                                content_type: "text".to_string(),
+                                text: Some(content),
+                                image: None,
+                            }],
+                            tool_calls: tool_calls.to_vec(),
+                        }];
+                        
+                        // Add metadata to indicate these are external tool calls
+                        for tool_call in &mut new_messages[0].tool_calls {
+                            tool_call.external = true;
+                        }
+                        
+                        return Ok(StepResult::Continue(new_messages));
+                    } else {
+                        // Process internal tool calls as before
+                        let mut new_messages = vec![Message {
+                            role: MessageRole::Assistant,
+                            name: Some(agent_id.to_string()),
+                            content: vec![MessageContent {
+                                content_type: "text".to_string(),
+                                text: Some(content),
+                                image: None,
+                            }],
+                            tool_calls: tool_calls.to_vec(),
+                        }];
 
-                    let tool_calls = self.before_tool_calls(&tool_calls, context.clone()).await?;
+                        let tool_calls = self.before_tool_calls(&tool_calls, context.clone()).await?;
 
-                    // Process all tool calls in parallel
-                    let tool_responses =
-                        futures::future::join_all(tool_calls.iter().map(|mapped_tool_call| {
-                            let executor = self.executor.clone();
-                            let agent_id = agent_id.to_string();
-                            let context = context.clone();
-                            let event_tx = event_tx.clone();
+                        // Process all tool calls in parallel
+                        let tool_responses =
+                            futures::future::join_all(tool_calls.iter().map(|mapped_tool_call| {
+                                let executor = self.executor.clone();
+                                let agent_id = agent_id.to_string();
+                                let context = context.clone();
+                                let event_tx = event_tx.clone();
 
-                            async move {
-                                let run_id = { context.run_id.lock().await.clone() };
-                                if let Some(event_tx) = &event_tx {
-                                    let _ = event_tx
-                                        .send(AgentEvent {
-                                            thread_id: context.thread_id.clone(),
-                                            run_id: run_id.clone(),
-                                            event: AgentEventType::ToolCallStart {
-                                                tool_call_id: mapped_tool_call.tool_id.clone(),
-                                                tool_call_name: mapped_tool_call.tool_name.clone(),
-                                            },
-                                        })
+                                async move {
+                                    let run_id = { context.run_id.lock().await.clone() };
+                                    if let Some(event_tx) = &event_tx {
+                                        let _ = event_tx
+                                            .send(AgentEvent {
+                                                thread_id: context.thread_id.clone(),
+                                                run_id: run_id.clone(),
+                                                event: AgentEventType::ToolCallStart {
+                                                    tool_call_id: mapped_tool_call.tool_id.clone(),
+                                                    tool_call_name: mapped_tool_call.tool_name.clone(),
+                                                },
+                                            })
+                                            .await
+                                            .map_err(|e| {
+                                                AgentError::LLMError(format!(
+                                                    "Failed to send ToolCallStart event: {}",
+                                                    e
+                                                ))
+                                            });
+
+                                        let _ = event_tx
+                                            .send(AgentEvent {
+                                                thread_id: context.thread_id.clone(),
+                                                run_id: run_id.clone(),
+                                                event: AgentEventType::ToolCallArgs {
+                                                    tool_call_id: mapped_tool_call.tool_id.clone(),
+                                                    delta: mapped_tool_call.input.clone(),
+                                                },
+                                            })
+                                            .await
+                                            .map_err(|e| {
+                                                AgentError::LLMError(format!(
+                                                    "Failed to send ToolCallStart event: {}",
+                                                    e
+                                                ))
+                                            });
+                                    }
+                                    info!("Agent: Executing tool call: {:#?}", mapped_tool_call);
+                                    let content = executor
+                                        .execute_tool(
+                                            agent_id,
+                                            mapped_tool_call.clone(),
+                                            event_tx.clone(),
+                                            context.clone(),
+                                        )
                                         .await
-                                        .map_err(|e| {
-                                            AgentError::LLMError(format!(
-                                                "Failed to send ToolCallStart event: {}",
-                                                e
-                                            ))
-                                        });
+                                        .unwrap_or_else(|err| format!("Error: {}", err));
+                                    info!("Agent: Tool response: {}", content);
 
-                                    let _ = event_tx
-                                        .send(AgentEvent {
-                                            thread_id: context.thread_id.clone(),
-                                            run_id: run_id.clone(),
-                                            event: AgentEventType::ToolCallArgs {
-                                                tool_call_id: mapped_tool_call.tool_id.clone(),
-                                                delta: mapped_tool_call.input.clone(),
-                                            },
-                                        })
-                                        .await
-                                        .map_err(|e| {
-                                            AgentError::LLMError(format!(
-                                                "Failed to send ToolCallStart event: {}",
-                                                e
-                                            ))
-                                        });
+                                    if let Some(event_tx) = &event_tx {
+                                        let _ = event_tx
+                                            .send(AgentEvent {
+                                                thread_id: context.thread_id.clone(),
+                                                run_id: run_id.clone(),
+                                                event: AgentEventType::ToolCallResult {
+                                                    tool_call_id: mapped_tool_call.tool_id.clone(),
+                                                    result: content.clone(),
+                                                },
+                                            })
+                                            .await
+                                            .map_err(|e| {
+                                                AgentError::LLMError(format!(
+                                                    "Failed to send ToolCallResult event: {}",
+                                                    e
+                                                ))
+                                            });
+                                    }
+                                    Message {
+                                        role: MessageRole::ToolResponse,
+                                        name: Some(mapped_tool_call.tool_name.clone()),
+                                        content: vec![MessageContent {
+                                            content_type: "text".to_string(),
+                                            text: Some(content.clone()),
+                                            image: None,
+                                        }],
+                                        tool_calls: vec![mapped_tool_call.to_owned()],
+                                    }
                                 }
-                                info!("Agent: Executing tool call: {:#?}", mapped_tool_call);
-                                let content = executor
-                                    .execute_tool(
-                                        agent_id,
-                                        mapped_tool_call.clone(),
-                                        event_tx.clone(),
-                                        context.clone(),
-                                    )
-                                    .await
-                                    .unwrap_or_else(|err| format!("Error: {}", err));
-                                info!("Agent: Tool response: {}", content);
+                            }))
+                            .await;
 
-                                if let Some(event_tx) = &event_tx {
-                                    let _ = event_tx
-                                        .send(AgentEvent {
-                                            thread_id: context.thread_id.clone(),
-                                            run_id: run_id.clone(),
-                                            event: AgentEventType::ToolCallResult {
-                                                tool_call_id: mapped_tool_call.tool_id.clone(),
-                                                result: content.clone(),
-                                            },
-                                        })
-                                        .await
-                                        .map_err(|e| {
-                                            AgentError::LLMError(format!(
-                                                "Failed to send ToolCallResult event: {}",
-                                                e
-                                            ))
-                                        });
-                                }
-                                Message {
-                                    role: MessageRole::ToolResponse,
-                                    name: Some(mapped_tool_call.tool_name.clone()),
-                                    content: vec![MessageContent {
-                                        content_type: "text".to_string(),
-                                        text: Some(content.clone()),
-                                        image: None,
-                                    }],
-                                    tool_calls: vec![mapped_tool_call.to_owned()],
-                                }
-                            }
-                        }))
-                        .await;
+                        let tool_response_contents: Vec<String> = tool_responses
+                            .iter()
+                            .map(|msg| {
+                                msg.content
+                                    .first()
+                                    .and_then(|c| c.text.clone())
+                                    .unwrap_or_default()
+                            })
+                            .collect();
 
-                    let tool_response_contents: Vec<String> = tool_responses
-                        .iter()
-                        .map(|msg| {
-                            msg.content
-                                .first()
-                                .and_then(|c| c.text.clone())
-                                .unwrap_or_default()
-                        })
-                        .collect();
+                        // Call after_tool_calls hook
+                        self.after_tool_calls(&tool_response_contents, context)
+                            .await?;
 
-                    // Call after_tool_calls hook
-                    self.after_tool_calls(&tool_response_contents, context)
-                        .await?;
-
-                    // Add tool responses
-                    new_messages.extend(tool_responses);
-                    Ok(StepResult::Continue(new_messages))
+                        // Add tool responses
+                        new_messages.extend(tool_responses);
+                        Ok(StepResult::Continue(new_messages))
+                    }
                 } else {
                     Err(AgentError::LLMError(
                         "Tool calls finish reason but no tool calls".to_string(),
@@ -828,6 +992,15 @@ impl BaseAgent for StandardAgent {
         event_tx: mpsc::Sender<AgentEvent>,
     ) -> Result<(), AgentError> {
         StandardAgent::invoke_stream(self, task, params, context, event_tx).await
+    }
+
+    async fn continue_execution(
+        &self,
+        tool_response_messages: Vec<Message>,
+        context: Arc<ExecutorContext>,
+        event_tx: Option<mpsc::Sender<AgentEvent>>,
+    ) -> Result<String, AgentError> {
+        StandardAgent::continue_execution(self, tool_response_messages, context, event_tx).await
     }
 }
 

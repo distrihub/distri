@@ -27,6 +27,7 @@ async fn execute_tool_test() {
         tool_id: "1".to_string(),
         tool_name: "get_timeline".to_string(),
         input: "".to_string(),
+        external: false,
     };
     let registry = crate::tests::utils::get_registry().await;
     let result = execute_tool(
@@ -115,7 +116,7 @@ fn register_tools<T: Transport>(server: &mut ServerBuilder<T>) -> Result<()> {
             let args = req.arguments.unwrap_or_default();
 
             let result: Result<CallToolResponse, anyhow::Error> = async {
-                let query = args["query"]
+                let _query = args["query"]
                     .as_str()
                     .ok_or_else(|| anyhow::anyhow!("Missing query parameter"))?;
 

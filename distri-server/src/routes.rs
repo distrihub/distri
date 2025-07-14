@@ -3,7 +3,7 @@ use actix_web::{web, HttpResponse};
 use actix_web_lab::sse::{self, Sse};
 use distri::a2a::A2AHandler;
 use distri::agent::AgentExecutor;
-use distri::types::{AgentDefinition, ServerConfig, UpdateThreadRequest, RegisterFrontendToolRequest, ExecuteFrontendToolRequest};
+use distri::types::{AgentDefinition, ServerConfig, UpdateThreadRequest, RegisterFrontendToolRequest, ExecuteFrontendToolRequest, ContinueWithToolResponsesRequest};
 use distri_a2a::JsonRpcRequest;
 use futures_util::StreamExt;
 use serde::Deserialize;
@@ -58,6 +58,10 @@ pub fn distri(cfg: &mut web::ServiceConfig) {
             .service(
                 web::resource("/tools/frontend/execute")
                     .route(web::post().to(execute_frontend_tool)),
+            )
+            .service(
+                web::resource("/agents/{id}/continue")
+                    .route(web::post().to(continue_with_tool_responses)),
             ),
     );
 }
@@ -349,6 +353,26 @@ async fn execute_frontend_tool(
         Ok(response) => HttpResponse::Ok().json(response),
         Err(e) => HttpResponse::BadRequest().json(json!({
             "error": format!("Failed to execute frontend tool: {}", e)
+        })),
+    }
+}
+
+async fn continue_with_tool_responses(
+    id: web::Path<String>,
+    req: web::Json<ContinueWithToolResponsesRequest>,
+    executor: web::Data<Arc<AgentExecutor>>,
+) -> HttpResponse {
+    let agent_id = id.into_inner();
+    let req = req.into_inner();
+    let executor = executor.get_ref();
+
+    match executor.continue_with_tool_responses(req, None).await {
+        Ok(result) => HttpResponse::Ok().json(json!({
+            "success": true,
+            "result": result
+        })),
+        Err(e) => HttpResponse::InternalServerError().json(json!({
+            "error": format!("Failed to continue execution: {}", e)
         })),
     }
 }

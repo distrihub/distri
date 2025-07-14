@@ -1,267 +1,397 @@
-# Frontend Tools for Distri
+# Frontend Tools System
 
-This document explains how to use the new frontend tool system that allows tools to be defined and resolved in the frontend instead of the backend.
+This document describes the frontend tools system that allows tools to be defined and executed in the frontend while maintaining backend validation and integration with the existing agent and tool system.
 
 ## Overview
 
-The frontend tool system allows you to:
-1. Define tools from the frontend that can be resolved there
-2. Register these tools with the backend so they're available to agents
-3. Execute these tools in the frontend while maintaining integration with the agent system
+The frontend tools system supports three scenarios:
+
+1. **Approve/Reject Flow**: Tools are defined in the backend but require frontend approval/rejection
+2. **Frontend-Defined Tools**: Tools are defined and executed entirely in the frontend
+3. **Hybrid Approach**: Some tools are backend-defined, others are frontend-defined
+
+## Architecture
+
+### Backend Components
+
+- **FrontendTool**: A standard tool implementation that marks tool calls as external
+- **AgentExecutor**: Manages frontend tool registration and execution
+- **StandardAgent**: Handles external tool calls by stopping execution and returning tool calls
+- **A2A Handler**: Routes tool responses and continues execution
+
+### Frontend Components
+
+- **Tool Registry**: Manages frontend tool definitions
+- **Tool Execution**: Handles tool execution and user interaction
+- **Response Handling**: Sends tool responses back to continue agent execution
 
 ## API Endpoints
 
-### Register a Frontend Tool
+### Register Frontend Tool
 
-**POST** `/api/v1/tools/frontend`
+```http
+POST /api/v1/tools/frontend
+Content-Type: application/json
 
-Register a new frontend tool that can be resolved in the frontend.
-
-**Request Body:**
-```json
 {
   "tool": {
-    "name": "example_tool",
-    "description": "An example tool that runs in the frontend",
+    "name": "show_notification",
+    "description": "Show a notification to the user",
     "input_schema": {
       "type": "object",
       "properties": {
         "message": {
           "type": "string",
-          "description": "The message to process"
+          "description": "The message to display"
+        },
+        "type": {
+          "type": "string",
+          "enum": ["info", "warning", "error"],
+          "default": "info"
         }
       },
       "required": ["message"]
     },
     "frontend_resolved": true,
     "metadata": {
-      "category": "utility",
-      "version": "1.0.0"
+      "category": "ui",
+      "requires_user_interaction": true
     }
   },
-  "agent_id": "my_agent" // Optional: if not provided, tool is available to all agents
-}
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "tool_id": "uuid-generated-id",
-  "message": "Frontend tool registered successfully"
+  "agent_id": "optional-agent-id"
 }
 ```
 
 ### List Frontend Tools
 
-**GET** `/api/v1/tools/frontend?agent_id=my_agent`
-
-Get all registered frontend tools, optionally filtered by agent.
-
-**Response:**
-```json
-[
-  {
-    "name": "example_tool",
-    "description": "An example tool that runs in the frontend",
-    "input_schema": {
-      "type": "object",
-      "properties": {
-        "message": {
-          "type": "string",
-          "description": "The message to process"
-        }
-      },
-      "required": ["message"]
-    },
-    "frontend_resolved": true,
-    "metadata": {
-      "category": "utility",
-      "version": "1.0.0"
-    }
-  }
-]
+```http
+GET /api/v1/tools/frontend?agent_id=optional-agent-id
 ```
 
-### Execute a Frontend Tool
+### Execute Frontend Tool (Validation)
 
-**POST** `/api/v1/tools/frontend/execute`
+```http
+POST /api/v1/tools/frontend/execute
+Content-Type: application/json
 
-Execute a frontend tool (this is typically called by the frontend itself).
-
-**Request Body:**
-```json
 {
-  "tool_name": "example_tool",
+  "tool_name": "show_notification",
   "arguments": {
-    "message": "Hello, world!"
+    "message": "Hello from the agent!",
+    "type": "info"
   },
-  "agent_id": "my_agent",
+  "agent_id": "my-agent",
   "thread_id": "thread-123",
   "context": {
-    "user_id": "user-456",
-    "session_data": "some-session-data"
+    "user_id": "user-456"
   }
 }
 ```
 
-**Response:**
-```json
+### Continue with Tool Responses
+
+```http
+POST /api/v1/agents/{agent_id}/continue
+Content-Type: application/json
+
 {
-  "success": true,
-  "result": "Tool execution delegated to frontend",
-  "error": null,
-  "metadata": {
-    "tool_name": "example_tool",
-    "frontend_resolved": true,
-    "input_schema": {
-      "type": "object",
-      "properties": {
-        "message": {
-          "type": "string",
-          "description": "The message to process"
-        }
-      },
-      "required": ["message"]
+  "agent_id": "my-agent",
+  "thread_id": "thread-123",
+  "tool_responses": [
+    {
+      "tool_call_id": "call-789",
+      "result": "User approved the notification",
+      "metadata": {
+        "user_action": "approved",
+        "timestamp": "2024-01-01T12:00:00Z"
+      }
     }
+  ],
+  "context": {
+    "user_id": "user-456"
   }
 }
 ```
 
-## How It Works
+## Execution Flow
 
-### 1. Tool Registration
+### 1. Agent Execution with External Tools
 
-When you register a frontend tool:
-- The tool is stored in the backend's frontend tool registry
-- The tool becomes available to agents during their initialization
-- The tool's schema is validated and stored
+1. Agent processes user message
+2. LLM decides to use a frontend tool
+3. Tool call is marked as `external: true`
+4. Agent execution stops and returns tool calls
+5. Frontend receives tool calls via SSE events
 
-### 2. Agent Integration
+### 2. Frontend Tool Execution
 
-When an agent is created or updated:
-- All registered frontend tools are added to the agent's tool registry
-- The agent can see and use these tools just like any other tool
-- The LLM can call these tools as part of its reasoning process
+1. Frontend receives tool call event
+2. Frontend validates tool call against registered tools
+3. Frontend executes tool (shows UI, asks user, etc.)
+4. Frontend sends tool response to backend
 
-### 3. Tool Execution
+### 3. Agent Continuation
 
-When the LLM decides to use a frontend tool:
-- The tool call is processed by the backend
-- The backend returns a special response indicating the tool should be resolved in the frontend
-- The frontend receives this response and can handle the tool execution
-- The frontend can then call the execute endpoint to validate the request and get metadata
+1. Backend receives tool responses
+2. Agent continues execution with tool responses
+3. Agent processes results and continues conversation
 
-### 4. Frontend Resolution
+## Frontend Integration
 
-The frontend is responsible for:
-- Detecting when a tool should be resolved in the frontend
-- Executing the actual tool logic
-- Returning the result to the user or continuing the conversation
-
-## Example Usage
-
-### 1. Register a Tool
+### JavaScript Example
 
 ```javascript
-const response = await fetch('/api/v1/tools/frontend', {
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-  },
-  body: JSON.stringify({
-    tool: {
-      name: 'show_notification',
-      description: 'Show a notification to the user',
-      input_schema: {
-        type: 'object',
-        properties: {
-          title: { type: 'string' },
-          message: { type: 'string' },
-          type: { 
-            type: 'string', 
-            enum: ['info', 'success', 'warning', 'error'] 
-          }
-        },
-        required: ['title', 'message']
+import { DistriClient } from '@distri/core';
+
+const client = new DistriClient({
+  baseUrl: 'http://localhost:8080',
+  apiVersion: 'v1'
+});
+
+// Register a frontend tool
+const toolRegistration = await client.registerFrontendTool({
+  tool: {
+    name: 'show_notification',
+    description: 'Show a notification to the user',
+    input_schema: {
+      type: 'object',
+      properties: {
+        message: { type: 'string' },
+        type: { type: 'string', enum: ['info', 'warning', 'error'] }
       },
-      frontend_resolved: true
+      required: ['message']
     },
-    agent_id: 'my_agent'
-  })
+    frontend_resolved: true
+  }
 });
-```
 
-### 2. Handle Tool Calls in Frontend
+// Send message to agent
+const response = await client.sendStreamingMessage('my-agent', {
+  message: {
+    role: 'user',
+    parts: [{ type: 'text', text: 'Show me a notification' }]
+  }
+});
 
-```javascript
-// In your frontend message handling code
-function handleAgentMessage(message) {
-  // Check if this is a frontend tool response
-  if (message.text && message.text.includes('[Frontend Tool:')) {
-    // Extract tool information and execute in frontend
-    const toolName = extractToolName(message.text);
-    const toolArgs = extractToolArgs(message.text);
+// Handle tool calls in the frontend
+response.on('tool_call_start', (event) => {
+  if (event.tool_call_name === 'show_notification') {
+    // Parse tool call arguments
+    const args = JSON.parse(event.delta);
     
-    // Execute the tool in the frontend
-    executeFrontendTool(toolName, toolArgs);
-  } else {
-    // Handle regular message
-    displayMessage(message);
+    // Show notification to user
+    showNotification(args.message, args.type);
   }
-}
+});
 
-function executeFrontendTool(toolName, args) {
-  switch (toolName) {
-    case 'show_notification':
-      showNotification(args.title, args.message, args.type);
-      break;
-    // Handle other frontend tools
-  }
+// Send tool response when user interacts
+async function handleUserResponse(toolCallId, result) {
+  await client.continueWithToolResponses('my-agent', {
+    agent_id: 'my-agent',
+    thread_id: response.thread_id,
+    tool_responses: [{
+      tool_call_id: toolCallId,
+      result: result,
+      metadata: {
+        user_action: 'approved',
+        timestamp: new Date().toISOString()
+      }
+    }]
+  });
 }
 ```
 
-### 3. Validate Tool Execution
+### React Hook Example
 
 ```javascript
-// Optional: Validate tool execution with backend
-const validationResponse = await fetch('/api/v1/tools/frontend/execute', {
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-  },
-  body: JSON.stringify({
-    tool_name: 'show_notification',
-    arguments: {
-      title: 'Hello',
-      message: 'This is a notification',
-      type: 'info'
-    },
-    agent_id: 'my_agent',
-    thread_id: 'current-thread-id'
-  })
-});
+import { useDistri, useDistriClient } from '@distri/react';
+
+function ChatWithTools() {
+  const client = useDistriClient();
+  const [messages, setMessages] = useState([]);
+  const [pendingToolCalls, setPendingToolCalls] = useState([]);
+
+  const sendMessage = async (text) => {
+    const response = await client.sendStreamingMessage('my-agent', {
+      message: {
+        role: 'user',
+        parts: [{ type: 'text', text }]
+      }
+    });
+
+    response.on('tool_call_start', (event) => {
+      setPendingToolCalls(prev => [...prev, event]);
+    });
+
+    response.on('text_delta', (event) => {
+      setMessages(prev => [...prev, { type: 'text', content: event.delta }]);
+    });
+  };
+
+  const handleToolResponse = async (toolCallId, result) => {
+    await client.continueWithToolResponses('my-agent', {
+      agent_id: 'my-agent',
+      thread_id: response.thread_id,
+      tool_responses: [{
+        tool_call_id: toolCallId,
+        result: result
+      }]
+    });
+
+    setPendingToolCalls(prev => prev.filter(call => call.tool_call_id !== toolCallId));
+  };
+
+  return (
+    <div>
+      <div className="messages">
+        {messages.map((msg, i) => (
+          <div key={i}>{msg.content}</div>
+        ))}
+      </div>
+      
+      {pendingToolCalls.map(call => (
+        <ToolCallHandler
+          key={call.tool_call_id}
+          toolCall={call}
+          onResponse={handleToolResponse}
+        />
+      ))}
+      
+      <MessageInput onSend={sendMessage} />
+    </div>
+  );
+}
+
+function ToolCallHandler({ toolCall, onResponse }) {
+  if (toolCall.tool_call_name === 'show_notification') {
+    const args = JSON.parse(toolCall.delta);
+    
+    return (
+      <div className="tool-call">
+        <p>Show notification: {args.message}</p>
+        <button onClick={() => onResponse(toolCall.tool_call_id, 'approved')}>
+          Approve
+        </button>
+        <button onClick={() => onResponse(toolCall.tool_call_id, 'rejected')}>
+          Reject
+        </button>
+      </div>
+    );
+  }
+  
+  return null;
+}
 ```
 
-## Benefits
+## Tool Types
 
-1. **Flexibility**: Tools can be defined and modified without backend changes
-2. **User Experience**: Tools can interact directly with the UI
-3. **Performance**: Frontend tools don't require backend processing
-4. **Integration**: Seamless integration with the existing agent system
-5. **Validation**: Backend still validates tool schemas and requests
+### 1. UI Interaction Tools
 
-## Limitations
+Tools that require user interaction:
 
-1. **Frontend Dependency**: Tools require frontend implementation
-2. **Security**: Frontend tools run in the user's browser
-3. **Persistence**: Tool state is not persisted across sessions (unless implemented in frontend)
-4. **Complexity**: Requires coordination between frontend and backend
+```javascript
+{
+  name: 'confirm_action',
+  description: 'Ask user to confirm an action',
+  input_schema: {
+    type: 'object',
+    properties: {
+      question: { type: 'string' },
+      options: { type: 'array', items: { type: 'string' } }
+    },
+    required: ['question']
+  }
+}
+```
+
+### 2. Data Input Tools
+
+Tools that collect data from users:
+
+```javascript
+{
+  name: 'get_user_input',
+  description: 'Get input from the user',
+  input_schema: {
+    type: 'object',
+    properties: {
+      prompt: { type: 'string' },
+      type: { type: 'string', enum: ['text', 'number', 'email'] }
+    },
+    required: ['prompt']
+  }
+}
+```
+
+### 3. External Service Tools
+
+Tools that integrate with external services:
+
+```javascript
+{
+  name: 'send_email',
+  description: 'Send an email',
+  input_schema: {
+    type: 'object',
+    properties: {
+      to: { type: 'string' },
+      subject: { type: 'string' },
+      body: { type: 'string' }
+    },
+    required: ['to', 'subject', 'body']
+  }
+}
+```
 
 ## Best Practices
 
-1. **Schema Validation**: Always provide proper JSON schemas for your tools
-2. **Error Handling**: Implement proper error handling in frontend tool execution
-3. **User Feedback**: Provide clear feedback when frontend tools are executed
-4. **Documentation**: Document your frontend tools for other developers
-5. **Testing**: Test both the tool registration and execution flows
+### 1. Tool Design
+
+- Keep tool names descriptive and unique
+- Provide clear descriptions for LLM understanding
+- Use proper JSON schemas for validation
+- Include metadata for frontend handling
+
+### 2. Error Handling
+
+- Validate tool inputs on both frontend and backend
+- Provide meaningful error messages
+- Handle tool execution failures gracefully
+- Implement retry logic for transient failures
+
+### 3. User Experience
+
+- Show clear UI for tool interactions
+- Provide progress indicators for long-running tools
+- Allow users to cancel tool execution
+- Maintain conversation context during tool execution
+
+### 4. Security
+
+- Validate all tool inputs
+- Sanitize tool outputs
+- Implement proper authentication and authorization
+- Log tool executions for audit purposes
+
+## Limitations
+
+1. **Tool State**: Tools cannot maintain state between calls
+2. **Complex Workflows**: Multi-step workflows require careful design
+3. **Error Recovery**: Failed tool executions need manual intervention
+4. **Performance**: External tool calls add latency to agent responses
+
+## Future Enhancements
+
+1. **Tool Chaining**: Support for chaining multiple tools
+2. **Async Tools**: Support for long-running tool execution
+3. **Tool Templates**: Reusable tool definitions
+4. **Tool Marketplace**: Share and discover community tools
+5. **Tool Analytics**: Track tool usage and performance
+
+## Examples
+
+See the `examples/` directory for complete working examples:
+
+- `frontend_tools_example.rs`: Rust backend example
+- `frontend_tools_example.js`: JavaScript frontend example
+- `frontend_tools_test.rs`: Test suite for the system
