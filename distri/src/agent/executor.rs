@@ -1,5 +1,5 @@
 use crate::{
-    agent::{AgentEventType, BaseAgent, StandardAgent, LoggingAgent, FilteringAgent},
+    agent::{AgentEventType, BaseAgent, StandardAgent, LoggingAgent, FilteringAgent, factory::AgentFactory},
     error::AgentError,
     servers::registry::{McpServerRegistry, ServerMetadata},
     stores::{AgentStore, ThreadStore, ToolSessionStore},
@@ -10,9 +10,10 @@ use crate::{
     },
     InitializedStores, SessionStore, TaskStore,
 };
-use serde_json;
+use async_trait::async_trait;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex, RwLock};
+use uuid::Uuid;
 
 use super::AgentEvent;
 use super::CoordinatorMessage;
@@ -24,14 +25,15 @@ use crate::memory::TaskStep;
 #[derive(Clone)]
 pub struct AgentExecutor {
     pub agent_store: Arc<dyn AgentStore>,
-    pub tool_sessions: Option<Arc<Box<dyn ToolSessionStore>>>,
+    pub tool_sessions: Option<Arc<dyn ToolSessionStore>>,
     pub registry: Arc<RwLock<McpServerRegistry>>,
-    pub coordinator_rx: Arc<Mutex<mpsc::Receiver<CoordinatorMessage>>>,
-    pub coordinator_tx: mpsc::Sender<CoordinatorMessage>,
+    pub coordinator_rx: Arc<Mutex<mpsc::Receiver<AgentEventType>>>,
+    pub coordinator_tx: mpsc::Sender<AgentEventType>,
     pub session_store: Arc<Box<dyn SessionStore>>,
     pub thread_store: Arc<dyn ThreadStore>,
     pub task_store: Arc<dyn TaskStore>,
     pub context: Arc<ExecutorContext>,
+    pub agent_factories: Arc<RwLock<std::collections::HashMap<String, Box<dyn AgentFactory>>>>,
 }
 
 #[derive(Default)]
@@ -138,6 +140,7 @@ impl AgentExecutorBuilder {
             task_store,
 
             context,
+            agent_factories: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
         })
     }
 }
@@ -154,9 +157,6 @@ impl AgentExecutor {
         let builder = builder.with_stores(stores);
 
         let executor = builder.build()?;
-
-        // Register default agent factories for custom agent resolution
-        executor.register_default_factories().await?;
 
         // Register agents from configuration
         for agent_config in &config.agents {
@@ -183,18 +183,8 @@ impl AgentExecutor {
             thread_store: Arc::new(crate::stores::memory::HashMapThreadStore::new()),
             task_store: Arc::new(crate::stores::memory::HashMapTaskStore::new()),
             context: Arc::new(ExecutorContext::default()),
+            agent_factories: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
         }
-    }
-
-    /// Register default agent factories for custom agent resolution
-    pub async fn register_default_factories(&self) -> anyhow::Result<()> {
-        use crate::agent::factories::{LoggingAgentFactory, FilteringAgentFactory, StandardAgentFactory};
-        
-        self.agent_store.register_factory(Box::new(StandardAgentFactory)).await?;
-        self.agent_store.register_factory(Box::new(LoggingAgentFactory)).await?;
-        self.agent_store.register_factory(Box::new(FilteringAgentFactory::with_default_banned_words())).await?;
-        
-        Ok(())
     }
 
     pub async fn register_mcp_server(&self, name: String, server: ServerMetadata) {
@@ -317,6 +307,42 @@ impl AgentExecutor {
         ));
         self.register_agent(agent.clone_box()).await?;
         Ok(agent)
+    }
+
+    /// Register a custom agent factory
+    pub async fn register_factory(&self, factory: Box<dyn AgentFactory>) -> anyhow::Result<()> {
+        let mut factories = self.agent_factories.write().await;
+        factories.insert(factory.agent_type().to_string(), factory);
+        Ok(())
+    }
+
+    /// Initialize an agent from the store with context
+    pub async fn initialize_agent(
+        &self,
+        name: &str,
+        context: Arc<ExecutorContext>,
+    ) -> anyhow::Result<Option<Box<dyn BaseAgent>>> {
+        // First try to get from the store directly
+        if let Some(agent) = self.agent_store.get(name).await {
+            return Ok(Some(agent));
+        }
+
+        // If not found, try to initialize using factories
+        let metadata = self.agent_store.get_metadata(name).await;
+        if let Some(metadata) = metadata {
+            let factories = self.agent_factories.read().await;
+            if let Some(factory) = factories.get(&metadata.agent_type) {
+                let agent = factory.create_agent(
+                    metadata.definition,
+                    Arc::new(self.clone()),
+                    context,
+                    self.session_store.clone(),
+                ).await?;
+                return Ok(Some(agent));
+            }
+        }
+
+        Ok(None)
     }
 
     /// Helper method to register a custom agent with a specific agent type

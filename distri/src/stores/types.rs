@@ -111,22 +111,6 @@ pub trait ThreadStore: Send + Sync {
     ) -> anyhow::Result<()>;
 }
 
-/// Agent factory trait for creating custom agents
-#[async_trait]
-pub trait AgentFactory: Send + Sync {
-    /// Create a custom agent from an agent definition and context
-    async fn create_agent(
-        &self,
-        definition: crate::types::AgentDefinition,
-        executor: std::sync::Arc<crate::agent::AgentExecutor>,
-        context: std::sync::Arc<ExecutorContext>,
-        session_store: std::sync::Arc<Box<dyn SessionStore>>,
-    ) -> anyhow::Result<Box<dyn BaseAgent>>;
-
-    /// Get the agent type this factory can create
-    fn agent_type(&self) -> &str;
-}
-
 /// Agent metadata stored in the agent store
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AgentMetadata {
@@ -152,9 +136,6 @@ pub trait AgentStore: Send + Sync {
     
     /// Update an existing agent with new definition
     async fn update(&self, agent: Box<dyn BaseAgent>) -> anyhow::Result<()>;
-
-    /// Register a custom agent factory
-    async fn register_factory(&self, factory: Box<dyn AgentFactory>) -> anyhow::Result<()>;
 
     /// Get agent metadata without resolving the full agent
     async fn get_metadata(&self, name: &str) -> Option<AgentMetadata>;

@@ -7,7 +7,7 @@ use crate::{
     agent::ExecutorContext,
     memory::{LocalAgentMemory, MemoryStep},
     types::{CreateThreadRequest, McpSession, Thread, ThreadSummary, UpdateThreadRequest},
-    AgentStore, MemoryStore, SessionMemory, SessionStore, TaskStore, ThreadStore, ToolSessionStore, AgentFactory, AgentMetadata,
+    AgentStore, MemoryStore, SessionMemory, SessionStore, TaskStore, ThreadStore, ToolSessionStore, AgentMetadata,
 };
 use distri_a2a::{Artifact, Message as A2aMessage, Task, TaskState, TaskStatus};
 
@@ -401,7 +401,6 @@ impl ThreadStore for HashMapThreadStore {
 pub struct InMemoryAgentStore {
     agents: Arc<RwLock<HashMap<String, Box<dyn crate::agent::BaseAgent>>>>,
     metadata: Arc<RwLock<HashMap<String, AgentMetadata>>>,
-    factories: Arc<RwLock<HashMap<String, Box<dyn AgentFactory>>>>,
 }
 
 impl InMemoryAgentStore {
@@ -409,7 +408,6 @@ impl InMemoryAgentStore {
         Self {
             agents: Arc::new(RwLock::new(HashMap::new())),
             metadata: Arc::new(RwLock::new(HashMap::new())),
-            factories: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -456,39 +454,8 @@ impl AgentStore for InMemoryAgentStore {
     }
 
     async fn get(&self, name: &str) -> Option<Box<dyn crate::agent::BaseAgent>> {
-        // First try to get from the in-memory cache
-        {
-            let agents = self.agents.read().await;
-            if let Some(agent) = agents.get(name) {
-                return Some(agent.clone_box());
-            }
-        }
-
-        // If not in cache, try to resolve using factories
-        let metadata = self.get_metadata(name).await?;
-        let factories = self.factories.read().await;
-        
-        if let Some(factory) = factories.get(&metadata.agent_type) {
-            // For now, we need to create a minimal executor context
-            // In a real implementation, you'd want to pass the actual executor
-            let context = Arc::new(ExecutorContext::default());
-            let session_store = Arc::new(Box::new(crate::stores::memory::LocalSessionStore::new()) as Box<dyn SessionStore>);
-            
-            // Create a minimal executor for agent creation
-            let executor = Arc::new(crate::agent::AgentExecutor::new_minimal_for_resolution());
-            
-            match factory.create_agent(metadata.definition, executor, context, session_store).await {
-                Ok(agent) => {
-                    // Cache the resolved agent
-                    let mut agents = self.agents.write().await;
-                    agents.insert(name.to_string(), agent.clone_box());
-                    Some(agent)
-                }
-                Err(_) => None,
-            }
-        } else {
-            None
-        }
+        let agents = self.agents.read().await;
+        agents.get(name).map(|agent| agent.clone_box())
     }
 
     async fn register(&self, agent: Box<dyn crate::agent::BaseAgent>) -> anyhow::Result<()> {
@@ -543,12 +510,6 @@ impl AgentStore for InMemoryAgentStore {
         } else {
             Err(anyhow::anyhow!("Agent '{}' not found", name))
         }
-    }
-
-    async fn register_factory(&self, factory: Box<dyn AgentFactory>) -> anyhow::Result<()> {
-        let mut factories = self.factories.write().await;
-        factories.insert(factory.agent_type().to_string(), factory);
-        Ok(())
     }
 
     async fn get_metadata(&self, name: &str) -> Option<AgentMetadata> {

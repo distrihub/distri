@@ -220,10 +220,6 @@ impl AgentStore for NoopAgentStore {
         Ok(())
     }
 
-    async fn register_factory(&self, _factory: Box<dyn crate::stores::AgentFactory>) -> anyhow::Result<()> {
-        Ok(())
-    }
-
     async fn get_metadata(&self, _name: &str) -> Option<crate::stores::AgentMetadata> {
         None
     }

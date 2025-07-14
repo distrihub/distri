@@ -1,7 +1,7 @@
 use crate::{
-    agent::{BaseAgent, ExecutorContext, agent::AgentType},
+    agent::{BaseAgent, ExecutorContext, agent::AgentType, StandardAgent, wrapper::CustomAgentWrapper, factory::AgentFactory},
     memory::TaskStep,
-    stores::{AgentFactory, SessionStore},
+    stores::{SessionStore},
     types::AgentDefinition,
 };
 use async_trait::async_trait;
@@ -62,32 +62,85 @@ impl BaseAgent for PrefixAgent {
     }
 }
 
-/// Factory for creating PrefixAgent instances
-pub struct PrefixAgentFactory {
+/// Factory for creating LoggingAgent instances using the wrapper pattern
+pub struct LoggingAgentFactory {
     prefix: String,
 }
 
-impl PrefixAgentFactory {
+impl LoggingAgentFactory {
     pub fn new(prefix: String) -> Self {
         Self { prefix }
     }
 }
 
 #[async_trait]
-impl AgentFactory for PrefixAgentFactory {
+impl AgentFactory for LoggingAgentFactory {
     async fn create_agent(
         &self,
         definition: AgentDefinition,
-        _executor: Arc<crate::agent::AgentExecutor>,
-        _context: Arc<ExecutorContext>,
-        _session_store: Arc<Box<dyn SessionStore>>,
+        executor: Arc<crate::agent::AgentExecutor>,
+        context: Arc<ExecutorContext>,
+        session_store: Arc<Box<dyn SessionStore>>,
     ) -> anyhow::Result<Box<dyn BaseAgent>> {
-        let agent = PrefixAgent::new(definition, self.prefix.clone());
-        Ok(Box::new(agent))
+        // Create a standard agent
+        let tools_registry = Arc::new(crate::tools::LlmToolsRegistry::new(std::collections::HashMap::new()));
+        let standard_agent = StandardAgent::new(
+            definition,
+            tools_registry,
+            executor,
+            context,
+            session_store,
+        );
+        
+        // Create the wrapper
+        let wrapper = CustomAgentWrapper::new(standard_agent);
+        
+        Ok(Box::new(wrapper))
     }
 
     fn agent_type(&self) -> &str {
-        "prefix"
+        "logging"
+    }
+}
+
+/// Factory for creating FilteringAgent instances using the wrapper pattern
+pub struct FilteringAgentFactory {
+    banned_words: Vec<String>,
+}
+
+impl FilteringAgentFactory {
+    pub fn new(banned_words: Vec<String>) -> Self {
+        Self { banned_words }
+    }
+}
+
+#[async_trait]
+impl AgentFactory for FilteringAgentFactory {
+    async fn create_agent(
+        &self,
+        definition: AgentDefinition,
+        executor: Arc<crate::agent::AgentExecutor>,
+        context: Arc<ExecutorContext>,
+        session_store: Arc<Box<dyn SessionStore>>,
+    ) -> anyhow::Result<Box<dyn BaseAgent>> {
+        // Create a standard agent
+        let tools_registry = Arc::new(crate::tools::LlmToolsRegistry::new(std::collections::HashMap::new()));
+        let standard_agent = StandardAgent::new(
+            definition,
+            tools_registry,
+            executor,
+            context,
+            session_store,
+        );
+        
+        // Create the wrapper
+        let wrapper = CustomAgentWrapper::new(standard_agent);
+        
+        Ok(Box::new(wrapper))
+    }
+
+    fn agent_type(&self) -> &str {
+        "filtering"
     }
 }
 
