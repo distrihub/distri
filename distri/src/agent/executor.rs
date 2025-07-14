@@ -1,5 +1,5 @@
 use crate::{
-    agent::{AgentEventType, BaseAgent, AgentFactoryRegistry},
+    agent::{AgentEventType, AgentFactoryRegistry, BaseAgent},
     error::AgentError,
     servers::registry::{McpServerRegistry, ServerMetadata},
     stores::{AgentStore, ThreadStore, ToolSessionStore},
@@ -197,7 +197,7 @@ impl AgentExecutor {
 
         let agent = self.create_agent_from_definition(definition).await?;
         let tools = agent.get_tools();
-        
+
         if let Some(tool) = tools.iter().find(|t| t.get_name() == tool_call.tool_name) {
             let registry = self.registry.clone();
             let tool_sessions = self.tool_sessions.clone();
@@ -229,7 +229,10 @@ impl AgentExecutor {
         Err(AgentError::ToolNotFound(tool_call.tool_name))
     }
 
-    pub async fn register_agent_definition(&self, definition: crate::types::AgentDefinition) -> anyhow::Result<()> {
+    pub async fn register_agent_definition(
+        &self,
+        definition: crate::types::AgentDefinition,
+    ) -> anyhow::Result<()> {
         tracing::info!("Registering agent definition: {}", definition.name);
 
         self.agent_store
@@ -244,7 +247,8 @@ impl AgentExecutor {
         &self,
         definition: crate::types::AgentDefinition,
     ) -> Result<Box<dyn BaseAgent>, AgentError> {
-        let tools = get_tools(&definition.mcp_servers, self.registry.clone()).await
+        let tools = get_tools(&definition.mcp_servers, self.registry.clone())
+            .await
             .map_err(|e| AgentError::ToolExecution(e.to_string()))?;
         let tools_registry = LlmToolsRegistry::new(tools);
 

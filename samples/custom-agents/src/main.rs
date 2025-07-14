@@ -1,6 +1,6 @@
-use custom_agents::{create_logging_agent_factory, create_filtering_agent_factory};
+use custom_agents::{create_filtering_agent_factory, create_logging_agent_factory};
 use distri::{
-    agent::{AgentExecutor, AgentExecutorBuilder},
+    agent::AgentExecutorBuilder,
     memory::TaskStep,
     types::{AgentDefinition, Configuration, ModelSettings},
 };
@@ -28,7 +28,7 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or_default()
         .initialize()
         .await?;
-    
+
     let executor = AgentExecutorBuilder::default()
         .with_stores(stores)
         .build()?;
@@ -36,10 +36,17 @@ async fn main() -> anyhow::Result<()> {
     let executor = Arc::new(executor);
 
     // Register custom agent factories
-    executor.register_agent_factory("logging".to_string(), create_logging_agent_factory()).await;
+    executor
+        .register_agent_factory("logging".to_string(), create_logging_agent_factory())
+        .await;
 
     let banned_words = vec!["badword".to_string(), "inappropriate".to_string()];
-    executor.register_agent_factory("filtering".to_string(), create_filtering_agent_factory(banned_words)).await;
+    executor
+        .register_agent_factory(
+            "filtering".to_string(),
+            create_filtering_agent_factory(banned_words),
+        )
+        .await;
 
     // Create agent definitions
     let logging_agent_def = AgentDefinition {
@@ -75,8 +82,12 @@ async fn main() -> anyhow::Result<()> {
     };
 
     // Register agent definitions
-    executor.register_agent_definition(logging_agent_def.clone()).await?;
-    executor.register_agent_definition(filtering_agent_def.clone()).await?;
+    executor
+        .register_agent_definition(logging_agent_def.clone())
+        .await?;
+    executor
+        .register_agent_definition(filtering_agent_def.clone())
+        .await?;
 
     // Test the agents
     let task = TaskStep {
@@ -87,11 +98,17 @@ async fn main() -> anyhow::Result<()> {
     let context = Arc::new(distri::agent::ExecutorContext::default());
 
     println!("Testing LoggingAgent...");
-    let logging_agent = executor.create_agent_from_definition(logging_agent_def).await?;
-    let _result = logging_agent.invoke(task.clone(), None, context.clone(), None).await?;
+    let logging_agent = executor
+        .create_agent_from_definition(logging_agent_def)
+        .await?;
+    let _result = logging_agent
+        .invoke(task.clone(), None, context.clone(), None)
+        .await?;
 
     println!("\nTesting FilteringAgent...");
-    let filtering_agent = executor.create_agent_from_definition(filtering_agent_def).await?;
+    let filtering_agent = executor
+        .create_agent_from_definition(filtering_agent_def)
+        .await?;
     let _result = filtering_agent.invoke(task, None, context, None).await?;
 
     println!("\n✅ Custom agents test completed successfully!");

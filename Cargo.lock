@@ -1073,6 +1073,7 @@ dependencies = [
  "distri",
  "distri-server",
  "serde",
+ "serde_json",
  "serde_yaml",
  "tokio",
  "tracing",
