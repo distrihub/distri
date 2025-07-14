@@ -16,8 +16,11 @@ pub async fn list(executor: Arc<AgentExecutor>) -> anyhow::Result<()> {
         .set_content_arrangement(ContentArrangement::Dynamic)
         .to_owned();
     table.add_row(vec!["Agent", "Description", "Servers"]);
-    for agent in agents.iter() {
-        let definition = agent.get_definition();
+    for definition in agents.iter() {
+        let agent = executor
+            .create_agent_from_definition(definition.clone())
+            .await?;
+
         let tools = agent.get_tools();
         table.add_row(vec![
             definition.name.clone(),

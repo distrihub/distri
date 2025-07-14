@@ -47,8 +47,8 @@ async fn create_test_executor() -> Arc<AgentExecutor> {
         ..Default::default()
     };
 
-    executor.register_default_agent(agent1).await.unwrap();
-    executor.register_default_agent(agent2).await.unwrap();
+    executor.register_agent_definition(agent1).await.unwrap();
+    executor.register_agent_definition(agent2).await.unwrap();
 
     executor
 }

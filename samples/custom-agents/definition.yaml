@@ -1,0 +1,44 @@
+# Custom Agents Sample Configuration
+# This demonstrates how to configure agents for use with custom agent factories
+
+# Agent definitions
+agents:
+  - name: "logging-assistant"
+    description: "A helpful assistant with comprehensive logging"
+    system_prompt: |
+      You are a helpful assistant that provides clear and concise answers.
+      Always be polite and professional in your responses.
+    mcp_servers: []
+    model_settings:
+      model: "gpt-4o-mini"
+      temperature: 0.7
+      max_tokens: 1000
+    max_iterations: 5
+
+  - name: "filtering-assistant"
+    description: "A helpful assistant that filters inappropriate content"
+    system_prompt: |
+      You are a helpful assistant that provides family-friendly responses.
+      Always ensure your content is appropriate for all audiences.
+    mcp_servers: []
+    model_settings:
+      model: "gpt-4o-mini"
+      temperature: 0.7
+      max_tokens: 1000
+    max_iterations: 5
+
+# Store configuration
+stores:
+  entity: "memory"
+  session: "memory"
+
+# MCP server configurations (empty for this example)
+mcp_servers: []
+
+# Session configurations
+sessions: {}
+
+# Logging configuration
+logging:
+  level: "info"
+  verbose: true

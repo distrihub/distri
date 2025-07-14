@@ -19,6 +19,7 @@ async fn test_agent_coordination() -> anyhow::Result<()> {
     let agent1_def = AgentDefinition {
         name: "search_agent".to_string(),
         description: "Test agent 1".to_string(),
+        agent_type: Some("standard".to_string()),
         system_prompt: Some(
             "You are agent 1. When you receive a message, call search_agent and summarize the profile!"
                 .to_string(),
@@ -31,6 +32,7 @@ async fn test_agent_coordination() -> anyhow::Result<()> {
     let agent2_def = AgentDefinition {
         name: "agent2".to_string(),
         description: "Test agent 2".to_string(),
+        agent_type: Some("standard".to_string()),
         system_prompt: Some("You are agent 2. When you receive a message about twitter, use the twitter_agent tool to get information.".to_string()),
         mcp_servers: vec![McpDefinition {
             filter: Some(vec!["search_agent".to_string()]),
@@ -45,8 +47,8 @@ async fn test_agent_coordination() -> anyhow::Result<()> {
     let executor = init_executor().await;
 
     let executor_clone = executor.clone();
-    executor.register_default_agent(agent1_def.clone()).await?;
-    executor.register_default_agent(agent2_def.clone()).await?;
+    executor.register_agent_definition(agent1_def.clone()).await?;
+    executor.register_agent_definition(agent2_def.clone()).await?;
     // Start coordinator in background
     let coordinator_handle = tokio::spawn(async move { executor_clone.run().await.unwrap() });
 
@@ -77,6 +79,7 @@ async fn test_agent_coordination_streaming() -> anyhow::Result<()> {
     let agent_def = AgentDefinition {
         name: "streaming_agent".to_string(),
         description: "Test streaming agent".to_string(),
+        agent_type: Some("standard".to_string()),
         system_prompt: Some(
             "You are a streaming test agent. When you receive a message, respond with a stream of text that counts from 1 to 5.".to_string(),
         ),
@@ -87,7 +90,7 @@ async fn test_agent_coordination_streaming() -> anyhow::Result<()> {
     let executor = init_executor().await;
 
     // Register agent definition
-    executor.register_default_agent(agent_def.clone()).await?;
+    executor.register_agent_definition(agent_def.clone()).await?;
 
     // Start coordinator in background
     let executor_clone = executor.clone();

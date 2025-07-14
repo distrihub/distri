@@ -54,9 +54,7 @@ pub fn distri(cfg: &mut web::ServiceConfig) {
 
 async fn list_agents(executor: web::Data<Arc<AgentExecutor>>) -> HttpResponse {
     let (agents, _) = executor.agent_store.list(None, None).await;
-    let agent_cards: Vec<AgentDefinition> =
-        agents.iter().map(|agent| agent.get_definition()).collect();
-    HttpResponse::Ok().json(agent_cards)
+    HttpResponse::Ok().json(agents)
 }
 
 async fn get_agent_definition(
@@ -67,7 +65,7 @@ async fn get_agent_definition(
 
     let agent = executor.agent_store.get(&agent_id).await;
     match agent {
-        Some(agent) => HttpResponse::Ok().json(agent.get_definition()),
+        Some(agent) => HttpResponse::Ok().json(agent),
         None => HttpResponse::NotFound().finish(),
     }
 }
@@ -270,9 +268,8 @@ async fn create_agent(
 ) -> HttpResponse {
     let definition = req.into_inner();
 
-    match executor.register_default_agent(definition).await {
-        Ok(agent) => {
-            let definition = agent.get_definition();
+    match executor.register_agent_definition(definition.clone()).await {
+        Ok(_) => {
             HttpResponse::Ok().json(definition)
         }
         Err(e) => HttpResponse::BadRequest().json(json!({
@@ -292,9 +289,8 @@ async fn update_agent(
     // Ensure the name matches the path parameter
     definition.name = agent_id;
 
-    match executor.update_agent(definition).await {
-        Ok(agent) => {
-            let definition = agent.get_definition();
+    match executor.update_agent_definition(definition.clone()).await {
+        Ok(_) => {
             HttpResponse::Ok().json(definition)
         }
         Err(e) => HttpResponse::BadRequest().json(json!({

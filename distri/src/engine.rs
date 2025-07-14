@@ -17,10 +17,6 @@ impl DistriEngine {
 
     pub async fn list_agents(&self) -> Result<Vec<AgentDefinition>> {
         let (agents, _) = self.executor.agent_store.list(None, None).await;
-        let agent_definitions = agents
-            .into_iter()
-            .map(|agent| agent.get_definition())
-            .collect();
-        Ok(agent_definitions)
+        Ok(agents)
     }
 }

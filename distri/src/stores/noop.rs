@@ -204,19 +204,19 @@ impl AgentStore for NoopAgentStore {
         &self,
         _cursor: Option<String>,
         _limit: Option<usize>,
-    ) -> (Vec<Box<dyn crate::agent::BaseAgent>>, Option<String>) {
+    ) -> (Vec<crate::types::AgentDefinition>, Option<String>) {
         (vec![], None)
     }
 
-    async fn get(&self, _name: &str) -> Option<Box<dyn crate::agent::BaseAgent>> {
+    async fn get(&self, _name: &str) -> Option<crate::types::AgentDefinition> {
         None
     }
 
-    async fn register(&self, _agent: Box<dyn crate::agent::BaseAgent>) -> anyhow::Result<()> {
+    async fn register(&self, _definition: crate::types::AgentDefinition) -> anyhow::Result<()> {
         Ok(())
     }
 
-    async fn update(&self, _agent: Box<dyn crate::agent::BaseAgent>) -> anyhow::Result<()> {
+    async fn update(&self, _definition: crate::types::AgentDefinition) -> anyhow::Result<()> {
         Ok(())
     }
 }

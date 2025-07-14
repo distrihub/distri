@@ -40,12 +40,11 @@ pub fn build_server<T: Transport>(
                     tools: agents
                         .iter()
                         .map(|t| {
-                            let definition = t.get_definition();
                             Tool {
-                                name: definition.name.clone(),
-                                description: Some(definition.description.clone()),
+                                name: t.name.clone(),
+                                description: Some(t.description.clone()),
                                 input_schema: json!({}),
-                                output_schema: definition.model_settings.response_format.clone(),
+                                output_schema: t.model_settings.response_format.clone(),
                             }
                         })
                         .collect(),
@@ -68,7 +67,9 @@ pub fn build_server<T: Transport>(
                 println!("agent_name: {}", agent_name);
                 let context = Arc::new(ExecutorContext::default());
 
-                let agent = coordinator.agent_store.get(&agent_name).await.unwrap();
+                let agent_def = coordinator.agent_store.get(&agent_name).await.unwrap();
+                let agent = coordinator.create_agent_from_definition(agent_def).await
+                    .map_err(|e| AgentError::ToolExecution(e.to_string()))?;
 
                 let result = agent
                     .invoke(

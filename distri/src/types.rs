@@ -105,6 +105,10 @@ pub struct AgentDefinition {
     #[serde(default = "default_agent_version")]
     pub version: Option<String>,
 
+    /// The type of agent (e.g., "standard", "logging", "filtering")
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_type: Option<String>,
+
     /// The system prompt for the agent, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_prompt: Option<String>,

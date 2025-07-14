@@ -584,7 +584,7 @@ impl AgentStore for RedisAgentStore {
         &self,
         cursor: Option<String>,
         limit: Option<usize>,
-    ) -> (Vec<Box<dyn crate::agent::BaseAgent>>, Option<String>) {
+    ) -> (Vec<crate::types::AgentDefinition>, Option<String>) {
         let mut conn = match self.client.get_async_connection().await {
             Ok(conn) => conn,
             Err(_) => return (Vec::new(), None),
@@ -606,17 +606,14 @@ impl AgentStore for RedisAgentStore {
             Err(_) => return (Vec::new(), None),
         };
 
-        let mut agents = Vec::new();
+        let mut definitions = Vec::new();
         for name in &agent_names {
             if let Ok(Some(serialized)) = conn.get::<_, Option<String>>(&self.agent_key(name)).await
             {
                 if let Ok(definition) =
                     serde_json::from_str::<crate::types::AgentDefinition>(&serialized)
                 {
-                    // Note: We need to reconstruct the agent from stored definition
-                    // In practice, you might store the entire agent or have a way to reconstruct it
-                    // For now, we'll return empty agents vector as this is complex to implement properly
-                    // without access to the full agent creation context
+                    definitions.push(definition);
                 }
             }
         }
@@ -627,26 +624,23 @@ impl AgentStore for RedisAgentStore {
             None
         };
 
-        (agents, next_cursor)
+        (definitions, next_cursor)
     }
 
-    async fn get(&self, name: &str) -> Option<Box<dyn crate::agent::BaseAgent>> {
+    async fn get(&self, name: &str) -> Option<crate::types::AgentDefinition> {
         let mut conn = self.client.get_async_connection().await.ok()?;
         let key = self.agent_key(name);
 
         let serialized: Option<String> = conn.get(&key).await.ok()?;
-        // Note: Similar issue as with list - we'd need to reconstruct the agent
-        // This is a limitation of storing agents in Redis without full context
-        None
+        serialized.and_then(|s| serde_json::from_str(&s).ok())
     }
 
-    async fn register(&self, agent: Box<dyn crate::agent::BaseAgent>) -> anyhow::Result<()> {
+    async fn register(&self, definition: crate::types::AgentDefinition) -> anyhow::Result<()> {
         let mut conn = self.client.get_async_connection().await?;
-        let name = agent.get_name();
-        let definition = agent.get_definition();
+        let name = definition.name.clone();
 
         let serialized = serde_json::to_string(&definition)?;
-        let agent_key = self.agent_key(name);
+        let agent_key = self.agent_key(&name);
 
         // Store agent definition
         conn.set(&agent_key, &serialized).await?;
@@ -657,10 +651,10 @@ impl AgentStore for RedisAgentStore {
         Ok(())
     }
 
-    async fn update(&self, agent: Box<dyn crate::agent::BaseAgent>) -> anyhow::Result<()> {
+    async fn update(&self, definition: crate::types::AgentDefinition) -> anyhow::Result<()> {
         let mut conn = self.client.get_async_connection().await?;
-        let name = agent.get_name();
-        let agent_key = self.agent_key(name);
+        let name = definition.name.clone();
+        let agent_key = self.agent_key(&name);
 
         // Check if agent exists
         let exists: bool = conn.exists(&agent_key).await?;
@@ -668,7 +662,6 @@ impl AgentStore for RedisAgentStore {
             return Err(anyhow::anyhow!("Agent '{}' not found", name));
         }
 
-        let definition = agent.get_definition();
         let serialized = serde_json::to_string(&definition)?;
 
         // Update agent definition

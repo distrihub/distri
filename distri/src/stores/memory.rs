@@ -388,7 +388,7 @@ impl ThreadStore for HashMapThreadStore {
 }
 
 pub struct InMemoryAgentStore {
-    agents: Arc<RwLock<HashMap<String, Box<dyn crate::agent::BaseAgent>>>>,
+    agents: Arc<RwLock<HashMap<String, crate::types::AgentDefinition>>>,
 }
 
 impl InMemoryAgentStore {
@@ -398,9 +398,9 @@ impl InMemoryAgentStore {
         }
     }
 
-    pub async fn insert(&self, name: String, agent: Box<dyn crate::agent::BaseAgent>) {
+    pub async fn insert(&self, name: String, definition: crate::types::AgentDefinition) {
         let mut agents = self.agents.write().await;
-        agents.insert(name, agent);
+        agents.insert(name, definition);
     }
 }
 
@@ -410,7 +410,7 @@ impl AgentStore for InMemoryAgentStore {
         &self,
         cursor: Option<String>,
         limit: Option<usize>,
-    ) -> (Vec<Box<dyn crate::agent::BaseAgent>>, Option<String>) {
+    ) -> (Vec<crate::types::AgentDefinition>, Option<String>) {
         let agents = self.agents.read().await;
         let limit = limit.unwrap_or(100);
 
@@ -426,9 +426,9 @@ impl AgentStore for InMemoryAgentStore {
         };
 
         let agent_entries: Vec<_> = agents.iter().skip(start_index).take(limit).collect();
-        let results: Vec<Box<dyn crate::agent::BaseAgent>> = agent_entries
+        let results: Vec<crate::types::AgentDefinition> = agent_entries
             .iter()
-            .map(|(_, agent)| agent.clone_box())
+            .map(|(_, definition)| (*definition).clone())
             .collect();
 
         let next_cursor = if agent_entries.len() == limit {
@@ -440,22 +440,22 @@ impl AgentStore for InMemoryAgentStore {
         (results, next_cursor)
     }
 
-    async fn get(&self, name: &str) -> Option<Box<dyn crate::agent::BaseAgent>> {
+    async fn get(&self, name: &str) -> Option<crate::types::AgentDefinition> {
         let agents = self.agents.read().await;
-        agents.get(name).map(|agent| agent.clone_box())
+        agents.get(name).cloned()
     }
 
-    async fn register(&self, agent: Box<dyn crate::agent::BaseAgent>) -> anyhow::Result<()> {
+    async fn register(&self, definition: crate::types::AgentDefinition) -> anyhow::Result<()> {
         let mut agents = self.agents.write().await;
-        agents.insert(agent.get_name().to_string(), agent);
+        agents.insert(definition.name.clone(), definition);
         Ok(())
     }
 
-    async fn update(&self, agent: Box<dyn crate::agent::BaseAgent>) -> anyhow::Result<()> {
+    async fn update(&self, definition: crate::types::AgentDefinition) -> anyhow::Result<()> {
         let mut agents = self.agents.write().await;
-        let agent_name = agent.get_name().to_string();
+        let agent_name = definition.name.clone();
         if agents.contains_key(&agent_name) {
-            agents.insert(agent_name, agent);
+            agents.insert(agent_name, definition);
             Ok(())
         } else {
             Err(anyhow::anyhow!("Agent '{}' not found", agent_name))
