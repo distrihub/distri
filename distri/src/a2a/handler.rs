@@ -29,7 +29,7 @@ impl A2AHandler {
         agent_id: String,
         server_config: Option<ServerConfig>,
     ) -> Result<AgentCard, JsonRpcError> {
-        let agent = self
+        let def = self
             .executor
             .agent_store
             .get(&agent_id)
@@ -39,7 +39,6 @@ impl A2AHandler {
                 message: format!("Agent not found: {}", agent_id),
                 data: None,
             })?;
-        let def = agent.get_definition();
         let server_config = server_config.unwrap_or_default();
         let base_url = server_config.server_url.clone();
         Ok(AgentCard {

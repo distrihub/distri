@@ -114,14 +114,14 @@ pub async fn run_agent_cli(
 pub async fn register_agents(executor: Arc<AgentExecutor>, config: &Configuration) -> Result<()> {
     for agent in &config.agents {
         // Try to update existing agent first, then register if not found
-        match executor.update_agent(agent.definition.clone()).await {
+        match executor.update_agent_definition(agent.definition.clone()).await {
             Ok(_) => {
                 tracing::debug!("Updated existing agent: {}", agent.definition.name);
             }
             Err(_) => {
                 // Agent doesn't exist, register as new
                 executor
-                    .register_default_agent(agent.definition.clone())
+                    .register_agent_definition(agent.definition.clone())
                     .await?;
                 tracing::debug!("Registered new agent: {}", agent.definition.name);
             }

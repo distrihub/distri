@@ -1,5 +1,5 @@
 use crate::{
-    agent::{AgentEventType, BaseAgent, StandardAgent},
+    agent::{AgentEventType, BaseAgent, AgentFactoryRegistry},
     error::AgentError,
     servers::registry::{McpServerRegistry, ServerMetadata},
     stores::{AgentStore, ThreadStore, ToolSessionStore},
@@ -32,6 +32,7 @@ pub struct AgentExecutor {
     pub thread_store: Arc<dyn ThreadStore>,
     pub task_store: Arc<dyn TaskStore>,
     pub context: Arc<ExecutorContext>,
+    pub agent_factory: Arc<RwLock<AgentFactoryRegistry>>,
 }
 
 #[derive(Default)]
@@ -43,6 +44,7 @@ pub struct AgentExecutorBuilder {
     task_store: Option<Arc<dyn TaskStore>>,
     thread_store: Option<Arc<dyn ThreadStore>>,
     context: Option<Arc<ExecutorContext>>,
+    agent_factory: Option<Arc<RwLock<AgentFactoryRegistry>>>,
 }
 
 impl AgentExecutorBuilder {
@@ -78,6 +80,11 @@ impl AgentExecutorBuilder {
 
     pub fn with_context(mut self, context: Arc<ExecutorContext>) -> Self {
         self.context = Some(context);
+        self
+    }
+
+    pub fn with_agent_factory(mut self, agent_factory: Arc<RwLock<AgentFactoryRegistry>>) -> Self {
+        self.agent_factory = Some(agent_factory);
         self
     }
 
@@ -127,6 +134,10 @@ impl AgentExecutorBuilder {
             .context
             .unwrap_or_else(|| Arc::new(ExecutorContext::default()));
 
+        let agent_factory = self
+            .agent_factory
+            .unwrap_or_else(|| Arc::new(RwLock::new(AgentFactoryRegistry::default())));
+
         Ok(AgentExecutor {
             agent_store,
             tool_sessions: self.tool_sessions,
@@ -136,8 +147,8 @@ impl AgentExecutorBuilder {
             session_store,
             thread_store,
             task_store,
-
             context,
+            agent_factory,
         })
     }
 }
@@ -158,7 +169,7 @@ impl AgentExecutor {
         // Register agents from configuration
         for agent_config in &config.agents {
             executor
-                .register_default_agent(agent_config.definition.clone())
+                .register_agent_definition(agent_config.definition.clone())
                 .await?;
         }
 
@@ -177,15 +188,16 @@ impl AgentExecutor {
         event_tx: Option<mpsc::Sender<AgentEvent>>,
         context: Arc<ExecutorContext>,
     ) -> Result<String, AgentError> {
-        // Check if this is a built-in tool first
-
-        let agent = self
+        // Get agent definition and create agent instance
+        let definition = self
             .agent_store
             .get(&agent_id)
             .await
             .ok_or_else(|| AgentError::NotFound(format!("Agent {} not found", agent_id)))?;
 
+        let agent = self.create_agent_from_definition(definition).await?;
         let tools = agent.get_tools();
+        
         if let Some(tool) = tools.iter().find(|t| t.get_name() == tool_call.tool_name) {
             let registry = self.registry.clone();
             let tool_sessions = self.tool_sessions.clone();
@@ -217,54 +229,51 @@ impl AgentExecutor {
         Err(AgentError::ToolNotFound(tool_call.tool_name))
     }
 
-    pub async fn register_agent(&self, agent: Box<dyn BaseAgent>) -> anyhow::Result<()> {
-        tracing::info!("Registering agent: {}", agent.get_name());
+    pub async fn register_agent_definition(&self, definition: crate::types::AgentDefinition) -> anyhow::Result<()> {
+        tracing::info!("Registering agent definition: {}", definition.name);
 
         self.agent_store
-            .register(agent)
+            .register(definition)
             .await
             .map_err(|e| anyhow::anyhow!(e))?;
         Ok(())
     }
 
-    /// Helper method to create a DefaultAgent from an AgentDefinition
-    pub async fn register_default_agent(
+    /// Create an agent instance from a definition using the factory
+    pub async fn create_agent_from_definition(
         &self,
         definition: crate::types::AgentDefinition,
-    ) -> anyhow::Result<Box<dyn BaseAgent>> {
-        let tools = get_tools(&definition.mcp_servers, self.registry.clone()).await?;
-
+    ) -> Result<Box<dyn BaseAgent>, AgentError> {
+        let tools = get_tools(&definition.mcp_servers, self.registry.clone()).await
+            .map_err(|e| AgentError::ToolExecution(e.to_string()))?;
         let tools_registry = LlmToolsRegistry::new(tools);
 
-        let agent = Box::new(StandardAgent::new(
+        let factory = self.agent_factory.read().await;
+        factory.create_agent(
             definition,
             Arc::new(tools_registry),
             Arc::new(self.clone()),
             self.context.clone(),
             self.session_store.clone(),
-        ));
-        self.register_agent(agent.clone_box()).await?;
-        Ok(agent)
+        )
+    }
+
+    /// Register a custom agent factory
+    pub async fn register_agent_factory(
+        &self,
+        agent_type: String,
+        factory: Arc<crate::agent::factory::AgentFactoryFn>,
+    ) {
+        let mut factory_registry = self.agent_factory.write().await;
+        factory_registry.register_factory(agent_type, factory);
     }
 
     /// Update an existing agent with new definition
-    pub async fn update_agent(
+    pub async fn update_agent_definition(
         &self,
         definition: crate::types::AgentDefinition,
-    ) -> anyhow::Result<Box<dyn BaseAgent>> {
-        let tools = get_tools(&definition.mcp_servers, self.registry.clone()).await?;
-
-        let tools_registry = LlmToolsRegistry::new(tools);
-
-        let agent = Box::new(StandardAgent::new(
-            definition,
-            Arc::new(tools_registry),
-            Arc::new(self.clone()),
-            self.context.clone(),
-            self.session_store.clone(),
-        ));
-        self.agent_store.update(agent.clone_box()).await?;
-        Ok(agent)
+    ) -> anyhow::Result<()> {
+        self.agent_store.update(definition).await
     }
 
     pub async fn run(&self) -> anyhow::Result<()> {
@@ -376,15 +385,15 @@ impl AgentExecutor {
         context: Arc<ExecutorContext>,
         event_tx: Option<tokio::sync::mpsc::Sender<AgentEvent>>,
     ) -> Result<String, AgentError> {
-        // Get agent from store and use invoke method
-        if let Some(agent) = self.agent_store.get(agent_id).await {
-            agent.invoke(task, params, context, event_tx).await
-        } else {
-            Err(AgentError::NotFound(format!(
-                "Agent {} not found",
-                agent_id
-            )))
-        }
+        // Get agent definition and create agent instance
+        let definition = self
+            .agent_store
+            .get(agent_id)
+            .await
+            .ok_or_else(|| AgentError::NotFound(format!("Agent {} not found", agent_id)))?;
+
+        let agent = self.create_agent_from_definition(definition).await?;
+        agent.invoke(task, params, context, event_tx).await
     }
 
     async fn call_agent_stream(
@@ -395,15 +404,15 @@ impl AgentExecutor {
         context: Arc<ExecutorContext>,
         event_tx: mpsc::Sender<AgentEvent>,
     ) -> Result<(), AgentError> {
-        // Get agent from store and use invoke_stream method
-        if let Some(agent) = self.agent_store.get(agent_id).await {
-            agent.invoke_stream(task, params, context, event_tx).await
-        } else {
-            Err(AgentError::NotFound(format!(
-                "Agent {} not found",
-                agent_id
-            )))
-        }
+        // Get agent definition and create agent instance
+        let definition = self
+            .agent_store
+            .get(agent_id)
+            .await
+            .ok_or_else(|| AgentError::NotFound(format!("Agent {} not found", agent_id)))?;
+
+        let agent = self.create_agent_from_definition(definition).await?;
+        agent.invoke_stream(task, params, context, event_tx).await
     }
 
     // Thread management methods

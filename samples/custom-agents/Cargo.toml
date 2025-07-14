@@ -1,0 +1,16 @@
+[package]
+name = "custom-agents"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+distri = { path = "../../distri" }
+distri-server = { path = "../../distri-server" }
+anyhow = "1.0"
+tokio = { version = "1.0", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+serde = { version = "1.0", features = ["derive"] }
+serde_yaml = "0.9"
+async-trait = "0.1"
+uuid = { version = "1.0", features = ["v4"] }

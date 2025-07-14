@@ -9,6 +9,7 @@ members = [
   "distri-a2a",
   "samples/distri-search",
   "samples/twitter-bot",
+  "samples/custom-agents",
 ]
 default-members = ["distri-cli"]
 

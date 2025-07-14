@@ -130,14 +130,14 @@ pub trait ThreadStore: Send + Sync {
 
 #[async_trait]
 pub trait AgentStore: Send + Sync {
-    /// Returns a page of agents and an optional next cursor
+    /// Returns a page of agent definitions and an optional next cursor
     async fn list(
         &self,
         cursor: Option<String>,
         limit: Option<usize>,
-    ) -> (Vec<Box<dyn crate::agent::BaseAgent>>, Option<String>);
-    async fn get(&self, name: &str) -> Option<Box<dyn crate::agent::BaseAgent>>;
-    async fn register(&self, agent: Box<dyn crate::agent::BaseAgent>) -> anyhow::Result<()>;
+    ) -> (Vec<crate::types::AgentDefinition>, Option<String>);
+    async fn get(&self, name: &str) -> Option<crate::types::AgentDefinition>;
+    async fn register(&self, definition: crate::types::AgentDefinition) -> anyhow::Result<()>;
     /// Update an existing agent with new definition
-    async fn update(&self, agent: Box<dyn crate::agent::BaseAgent>) -> anyhow::Result<()>;
+    async fn update(&self, definition: crate::types::AgentDefinition) -> anyhow::Result<()>;
 }
