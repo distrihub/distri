@@ -1,5 +1,6 @@
 pub mod a2a;
 pub mod agent;
+
 pub mod engine;
 pub mod error;
 pub mod langdb;
@@ -18,6 +19,9 @@ pub use stores::{
     LocalSessionStore, MemoryStore, SessionMemory, SessionStore, TaskStore, ToolSessionStore,
 };
 pub use types::{AgentDefinition, McpDefinition, McpSession, ModelSettings};
+
+#[cfg(feature = "coding")]
+pub mod coding;
 
 #[cfg(test)]
 mod tests;
