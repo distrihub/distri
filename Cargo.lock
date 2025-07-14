@@ -1072,6 +1072,7 @@ dependencies = [
  "async-trait",
  "distri",
  "distri-server",
+ "dotenv",
  "serde",
  "serde_json",
  "serde_yaml",

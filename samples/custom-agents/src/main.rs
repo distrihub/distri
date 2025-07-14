@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    dotenv::dotenv().ok();
     // Initialize logging
     tracing_subscriber::fmt::init();
 
