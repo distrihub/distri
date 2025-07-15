@@ -17,7 +17,7 @@ async fn test_executor_with_custom_agent_factories() -> Result<()> {
     let custom_factory = Arc::new(
         |definition, tools_registry, executor, context, session_store| {
             use crate::agent::AgentEvent;
-            use crate::agent::{agent::AgentType, BaseAgent, StandardAgent};
+            use crate::agent::{agent::AgentType, AgentHooks, BaseAgent, StandardAgent};
             use crate::error::AgentError;
             use crate::tools::Tool;
             use tokio::sync::mpsc;
@@ -59,6 +59,10 @@ async fn test_executor_with_custom_agent_factories() -> Result<()> {
                     Box::new(self.clone())
                 }
 
+                fn get_hooks(&self) -> Option<&dyn AgentHooks> {
+                    Some(self)
+                }
+
                 async fn invoke(
                     &self,
                     task: TaskStep,
@@ -83,6 +87,9 @@ async fn test_executor_with_custom_agent_factories() -> Result<()> {
                         .await
                 }
             }
+
+            #[async_trait::async_trait]
+            impl AgentHooks for TestCustomAgent {}
 
             Box::new(TestCustomAgent {
                 inner: StandardAgent::new(

@@ -73,6 +73,10 @@ impl BaseAgent for LoggingAgent {
         Box::new(self.clone())
     }
 
+    fn get_hooks(&self) -> Option<&dyn AgentHooks> {
+        Some(self)
+    }
+
     async fn invoke(
         &self,
         task: TaskStep,
@@ -234,6 +238,10 @@ impl BaseAgent for FilteringAgent {
 
     fn clone_box(&self) -> Box<dyn BaseAgent> {
         Box::new(self.clone())
+    }
+
+    fn get_hooks(&self) -> Option<&dyn AgentHooks> {
+        Some(self)
     }
 
     async fn invoke(

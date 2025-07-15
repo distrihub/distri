@@ -63,6 +63,11 @@ pub trait BaseAgent: Send + Sync + std::fmt::Debug {
 
     // Used in deserialization
     fn agent_type(&self) -> AgentType;
+
+    /// Get hooks for this agent (default implementation returns None for standard agents)
+    fn get_hooks(&self) -> Option<&dyn AgentHooks> {
+        None
+    }
 }
 
 /// Result of a single step execution
@@ -74,7 +79,7 @@ pub enum StepResult {
     Finish(String),
 }
 
-/// Standard agent implementation that provides the full LLM-based behavior with extensible hooks
+/// Standard agent implementation
 #[derive(Clone)]
 pub struct StandardAgent {
     pub definition: AgentDefinition,
@@ -88,6 +93,7 @@ impl std::fmt::Debug for StandardAgent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("StandardAgent")
             .field("definition", &self.definition)
+            .field("tools_registry", &"Arc<LlmToolsRegistry>")
             .finish()
     }
 }
@@ -100,15 +106,16 @@ impl StandardAgent {
         context: Arc<ExecutorContext>,
         session_store: Arc<Box<dyn SessionStore>>,
     ) -> Self {
-        let logger = StepLogger::new(context.verbose);
         Self {
             definition,
             tools_registry,
             executor,
-            logger,
+            logger: StepLogger::new(false), // TODO: Get verbose from context
             session_store,
         }
     }
+
+
 
     pub async fn plan_step(
         &self,
@@ -416,7 +423,11 @@ impl StandardAgent {
                 self.system_step(context.clone()).await?;
                 self.task_step(&task, context.clone()).await?;
                 // Call after_task_step hook
-                self.after_task_step(task.clone(), context.clone()).await?;
+                if let Some(hooks) = self.get_hooks() {
+                    hooks.after_task_step(task.clone(), context.clone()).await?
+                } else {
+                    self.after_task_step(task.clone(), context.clone()).await?
+                }
             }
             let mut current_messages = self
                 .session_store
@@ -434,13 +445,19 @@ impl StandardAgent {
                     self.plan_step(task.clone(), plan_config, iterations, context.clone())
                         .await?;
                 }
-                let messages = self
-                    .before_llm_step(&current_messages, &params, context.clone())
-                    .await?;
+                let messages = if let Some(hooks) = self.get_hooks() {
+                    hooks.before_llm_step(&current_messages, &params, context.clone()).await?
+                } else {
+                    self.before_llm_step(&current_messages, &params, context.clone()).await?
+                };
                 let step_result = self
                     .llm_step_stream(&messages, &params, context.clone(), event_tx.clone())
                     .await?;
-                let step_result = self.after_finish(step_result, context.clone()).await?;
+                let step_result = if let Some(hooks) = self.get_hooks() {
+                    hooks.after_finish(step_result, context.clone()).await?
+                } else {
+                    self.after_finish(step_result, context.clone()).await?
+                };
                 match step_result {
                     StepResult::Finish(content) => {
                         // Call after_finish hook
@@ -530,7 +547,11 @@ impl StandardAgent {
                 self.system_step(context.clone()).await?;
                 self.task_step(&task, context.clone()).await?;
                 // Call after_task_step hook
-                self.after_task_step(task.clone(), context.clone()).await?;
+                if let Some(hooks) = self.get_hooks() {
+                    hooks.after_task_step(task.clone(), context.clone()).await?
+                } else {
+                    self.after_task_step(task.clone(), context.clone()).await?
+                }
             }
             let mut current_messages = self
                 .session_store
@@ -552,14 +573,20 @@ impl StandardAgent {
                     .await
                     .map_err(|e| AgentError::Session(e.to_string()))?;
 
-                let messages = self
-                    .before_llm_step(&current_messages, &params, context.clone())
-                    .await?;
+                let messages = if let Some(hooks) = self.get_hooks() {
+                    hooks.before_llm_step(&current_messages, &params, context.clone()).await?
+                } else {
+                    self.before_llm_step(&current_messages, &params, context.clone()).await?
+                };
                 let step_result = self
                     .llm_step(&messages, &params, context.clone(), event_tx.clone())
                     .await?;
 
-                let step_result = self.after_finish(step_result, context.clone()).await?;
+                let step_result = if let Some(hooks) = self.get_hooks() {
+                    hooks.after_finish(step_result, context.clone()).await?
+                } else {
+                    self.after_finish(step_result, context.clone()).await?
+                };
                 match step_result {
                     StepResult::Finish(content) => {
                         tracing::info!("Agent execution completed successfully");
@@ -825,7 +852,7 @@ impl BaseAgent for StandardAgent {
     }
 
     fn clone_box(&self) -> Box<dyn BaseAgent> {
-        Box::new(self.clone())
+        Box::new(StandardAgent::clone(self))
     }
 
     fn get_name(&self) -> &str {

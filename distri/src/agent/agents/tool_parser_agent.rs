@@ -138,6 +138,10 @@ impl BaseAgent for ToolParserAgent {
         Box::new(self.clone())
     }
 
+    fn get_hooks(&self) -> Option<&dyn AgentHooks> {
+        Some(self)
+    }
+
     async fn invoke(
         &self,
         task: TaskStep,
