@@ -1,5 +1,7 @@
 pub mod agent;
 pub mod agents;
+pub mod capabilities;
+pub mod composable_agent;
 pub mod executor;
 pub mod factory;
 mod hooks;
