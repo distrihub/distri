@@ -1,5 +1,5 @@
 use crate::{
-    agent::{BaseAgent, ExecutorContext},
+    agent::{BaseAgent, ExecutorContext, StepResult},
     error::AgentError,
     memory::TaskStep,
     types::{Message, ToolCall},
@@ -44,9 +44,9 @@ pub trait AgentHooks: BaseAgent {
 
     async fn after_finish(
         &self,
-        _content: &str,
+        step_result: StepResult,
         _context: Arc<ExecutorContext>,
-    ) -> Result<(), AgentError> {
-        Ok(())
+    ) -> Result<StepResult, AgentError> {
+        Ok(step_result)
     }
 }

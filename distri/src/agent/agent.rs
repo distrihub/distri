@@ -439,11 +439,10 @@ impl StandardAgent {
                 let step_result = self
                     .llm_step_stream(&messages, &params, context.clone(), event_tx.clone())
                     .await?;
+                let step_result = self.after_finish(step_result, context.clone()).await?;
                 match step_result {
                     StepResult::Finish(content) => {
                         // Call after_finish hook
-                        self.after_finish(&content, context.clone()).await?;
-
                         // Store final response as action step
                         let action_step = MemoryStep::Action(ActionStep {
                             model_input_messages: Some(current_messages),
@@ -559,11 +558,9 @@ impl StandardAgent {
                     .llm_step(&messages, &params, context.clone(), event_tx.clone())
                     .await?;
 
+                let step_result = self.after_finish(step_result, context.clone()).await?;
                 match step_result {
                     StepResult::Finish(content) => {
-                        // Call after_finish hook
-                        self.after_finish(&content, context.clone()).await?;
-
                         tracing::info!("Agent execution completed successfully");
                         let action_step = MemoryStep::Action(ActionStep {
                             model_input_messages: Some(current_messages),

@@ -4,10 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-default = ["inmemory", "coding"]
+default = ["inmemory"]
 inmemory = []
 redis = ["dep:redis", "dep:bb8", "dep:bb8-redis"]
-coding = ["dep:rustyscript"]
 
 [dependencies]
 distri-a2a = { path = "../distri-a2a" }
@@ -34,7 +33,6 @@ chrono = { version = "0.4", features = ["serde"] }
 comfy-table = "7.0"
 futures-util = "0.3"
 async-stream = "0.3"
-rustyscript = { version = "0.11.0", optional = true }
 
 # Redis dependencies (optional)
 redis = { version = "0.24", optional = true }

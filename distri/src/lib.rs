@@ -20,9 +20,6 @@ pub use stores::{
 };
 pub use types::{AgentDefinition, McpDefinition, McpSession, ModelSettings};
 
-#[cfg(feature = "coding")]
-pub mod coding;
-
 #[cfg(test)]
 mod tests;
 

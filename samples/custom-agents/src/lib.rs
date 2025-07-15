@@ -1,7 +1,7 @@
 use distri::{
     agent::{
         agent::AgentType, AgentEvent, AgentExecutor, AgentHooks, BaseAgent, ExecutorContext,
-        StandardAgent,
+        StandardAgent, StepResult,
     },
     error::AgentError,
     memory::TaskStep,
@@ -146,14 +146,19 @@ impl AgentHooks for LoggingAgent {
 
     async fn after_finish(
         &self,
-        content: &str,
+        step_result: StepResult,
         context: Arc<ExecutorContext>,
-    ) -> Result<(), AgentError> {
-        info!(
-            "🏁 LoggingAgent: Task completed! Response length: {} characters",
-            content.len()
-        );
-        self.inner.after_finish(content, context).await
+    ) -> Result<StepResult, AgentError> {
+        match &step_result {
+            StepResult::Finish(content) => {
+                info!(
+                    "🏁 LoggingAgent: Task completed! Response length: {} characters",
+                    content.len()
+                );
+            }
+            _ => {}
+        }
+        self.inner.after_finish(step_result, context).await
     }
 }
 
@@ -259,43 +264,54 @@ impl BaseAgent for FilteringAgent {
 impl AgentHooks for FilteringAgent {
     async fn after_finish(
         &self,
-        content: &str,
+        step_result: StepResult,
         context: Arc<ExecutorContext>,
-    ) -> Result<(), AgentError> {
-        let filtered = self.filter_content(content);
-        info!(
-            "FilteringAgent: Content filtered - original: {} chars, filtered: {} chars",
-            content.len(),
-            filtered.len()
-        );
-        self.inner.after_finish(&filtered, context).await
+    ) -> Result<StepResult, AgentError> {
+        match step_result {
+            StepResult::Finish(content) => {
+                let filtered = self.filter_content(&content);
+                info!(
+                    "FilteringAgent: Content filtered - original: {} chars, filtered: {} chars",
+                    content.len(),
+                    filtered.len()
+                );
+                self.inner
+                    .after_finish(StepResult::Finish(filtered), context)
+                    .await
+            }
+            _ => self.inner.after_finish(step_result, context).await,
+        }
     }
 }
 
 /// Factory functions for custom agents
 pub fn create_logging_agent_factory() -> Arc<distri::agent::factory::AgentFactoryFn> {
-    Arc::new(|definition, tools_registry, executor, context, session_store| {
-        Box::new(LoggingAgent::new(
-            definition,
-            tools_registry,
-            executor,
-            context,
-            session_store,
-        ))
-    })
+    Arc::new(
+        |definition, tools_registry, executor, context, session_store| {
+            Box::new(LoggingAgent::new(
+                definition,
+                tools_registry,
+                executor,
+                context,
+                session_store,
+            ))
+        },
+    )
 }
 
 pub fn create_filtering_agent_factory(
     banned_words: Vec<String>,
 ) -> Arc<distri::agent::factory::AgentFactoryFn> {
-    Arc::new(move |definition, tools_registry, executor, context, session_store| {
-        Box::new(FilteringAgent::new(
-            definition,
-            tools_registry,
-            executor,
-            context,
-            session_store,
-            banned_words.clone(),
-        ))
-    })
+    Arc::new(
+        move |definition, tools_registry, executor, context, session_store| {
+            Box::new(FilteringAgent::new(
+                definition,
+                tools_registry,
+                executor,
+                context,
+                session_store,
+                banned_words.clone(),
+            ))
+        },
+    )
 }
