@@ -145,10 +145,8 @@ pub fn get_planning_definition(model_settings: ModelSettings) -> LlmDefinition {
             )
             .to_string(),
         ),
-        mcp_servers: vec![],
         history_size: None,
         model_settings: model_settings.clone(),
-
         ..Default::default()
     }
 }

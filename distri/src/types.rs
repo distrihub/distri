@@ -69,9 +69,6 @@ pub struct LlmDefinition {
     /// The system prompt for the agent, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_prompt: Option<String>,
-    /// A list of MCP server definitions associated with the agent.
-    #[serde(default)]
-    pub mcp_servers: Vec<McpDefinition>,
     /// Settings related to the model used by the agent.
     #[serde(default)]
     pub model_settings: ModelSettings,
@@ -85,7 +82,6 @@ impl From<AgentDefinition> for LlmDefinition {
         Self {
             name: definition.name,
             system_prompt: definition.system_prompt,
-            mcp_servers: definition.mcp_servers,
             model_settings: definition.model_settings,
             history_size: definition.history_size,
         }
@@ -427,17 +423,9 @@ pub fn get_tool_description(tool: &Box<dyn Tool>, template: &str) -> String {
         )
 }
 
-#[derive(Debug, serde::Deserialize, JsonSchema)]
-pub struct AgentConfig {
-    #[serde(flatten)]
-    pub definition: AgentDefinition,
-    #[serde(default = "default_max_history")]
-    pub max_history: usize,
-}
-
 #[derive(serde::Deserialize, JsonSchema)]
 pub struct Configuration {
-    pub agents: Vec<AgentConfig>,
+    pub agents: Vec<AgentDefinition>,
     #[serde(default)]
     pub sessions: HashMap<String, String>,
     #[serde(default)]
@@ -449,6 +437,7 @@ pub struct Configuration {
     #[serde(default)]
     pub stores: Option<StoreConfig>,
 }
+
 fn default_server_config() -> Option<ServerConfig> {
     Some(ServerConfig::default())
 }
@@ -579,10 +568,6 @@ impl std::fmt::Debug for Configuration {
             .field("sessions", &self.sessions)
             .finish()
     }
-}
-
-fn default_max_history() -> usize {
-    5
 }
 
 pub fn get_distri_config_schema(pretty: bool) -> Result<String, serde_json::Error> {

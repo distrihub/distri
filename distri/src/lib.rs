@@ -9,6 +9,7 @@ pub mod logging;
 pub mod memory;
 pub mod servers;
 pub mod stores;
+pub mod tool_formatter;
 pub mod tools;
 pub mod types;
 pub mod validate;

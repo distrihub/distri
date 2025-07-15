@@ -115,10 +115,6 @@ fn register_tools<T: Transport>(server: &mut ServerBuilder<T>) -> Result<()> {
             let args = req.arguments.unwrap_or_default();
 
             let result: Result<CallToolResponse, anyhow::Error> = async {
-                let query = args["query"]
-                    .as_str()
-                    .ok_or_else(|| anyhow::anyhow!("Missing query parameter"))?;
-
                 let search_results = json!({
                     "results": [
                         {

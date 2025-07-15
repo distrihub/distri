@@ -14,7 +14,7 @@ async fn test_agent_factory_registry() -> Result<()> {
 
     // Test that standard factory is registered by default
     assert!(factory_registry.has_factory("standard"));
-    
+
     // Test getting agent types
     let agent_types = factory_registry.get_agent_types();
     assert!(agent_types.contains(&"standard".to_string()));
@@ -32,22 +32,19 @@ async fn test_agent_creation_from_definition() -> Result<()> {
         description: "A test standard agent".to_string(),
         agent_type: Some("standard".to_string()),
         system_prompt: Some("You are a helpful assistant.".to_string()),
-        mcp_servers: vec![],
         model_settings: ModelSettings::default(),
         history_size: Some(10),
-        plan: None,
-        icon_url: None,
         max_iterations: Some(3),
-        sub_agents: vec![],
-        skills: vec![],
-        version: None,
+        ..Default::default()
     };
 
     let executor = init_executor().await;
     let _session_store = executor.session_store.clone();
 
     // Test creating agent from definition
-    let agent = executor.create_agent_from_definition(agent_def.clone()).await?;
+    let agent = executor
+        .create_agent_from_definition(agent_def.clone())
+        .await?;
 
     // Test that the agent has the correct metadata
     assert_eq!(agent.get_name(), "test_standard_agent");
@@ -73,16 +70,14 @@ async fn test_agent_store_with_definitions() -> Result<()> {
         mcp_servers: vec![],
         model_settings: ModelSettings::default(),
         history_size: Some(10),
-        plan: None,
-        icon_url: None,
         max_iterations: Some(3),
-        sub_agents: vec![],
-        skills: vec![],
-        version: None,
+        ..Default::default()
     };
 
     // Test registering agent definition
-    executor.register_agent_definition(agent_def.clone()).await?;
+    executor
+        .register_agent_definition(agent_def.clone())
+        .await?;
 
     // Test retrieving agent definition
     let retrieved_def = executor.agent_store.get("test_store_agent").await;

@@ -167,9 +167,9 @@ impl AgentExecutor {
         let executor = builder.build()?;
 
         // Register agents from configuration
-        for agent_config in &config.agents {
+        for definition in &config.agents {
             executor
-                .register_agent_definition(agent_config.definition.clone())
+                .register_agent_definition(definition.clone())
                 .await?;
         }
 
@@ -396,7 +396,17 @@ impl AgentExecutor {
             .await
             .ok_or_else(|| AgentError::NotFound(format!("Agent {} not found", agent_id)))?;
 
+        let agent_type = definition
+            .agent_type
+            .clone()
+            .unwrap_or("standard".to_string());
         let agent = self.create_agent_from_definition(definition).await?;
+        tracing::info!(
+            "Invoking agent: {}, {}, {:?}",
+            agent_type,
+            agent.get_name(),
+            agent.agent_type()
+        );
         agent.invoke(task, params, context, event_tx).await
     }
 
@@ -415,7 +425,18 @@ impl AgentExecutor {
             .await
             .ok_or_else(|| AgentError::NotFound(format!("Agent {} not found", agent_id)))?;
 
-        let agent = self.create_agent_from_definition(definition).await?;
+        let agent_type = definition
+            .agent_type
+            .clone()
+            .unwrap_or("standard".to_string());
+
+        let agent: Box<dyn BaseAgent> = self.create_agent_from_definition(definition).await?;
+        tracing::info!(
+            "Invoking agent: {}, {}, {:?}",
+            agent_type,
+            agent.get_name(),
+            agent.agent_type()
+        );
         agent.invoke_stream(task, params, context, event_tx).await
     }
 

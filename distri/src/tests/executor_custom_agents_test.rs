@@ -32,12 +32,8 @@ async fn test_executor_with_custom_agents() -> Result<()> {
         mcp_servers: vec![],
         model_settings: ModelSettings::default(),
         history_size: Some(10),
-        plan: None,
-        icon_url: None,
         max_iterations: Some(3),
-        sub_agents: vec![],
-        skills: vec![],
-        version: None,
+        ..Default::default()
     };
 
     let custom_agent_def = AgentDefinition {
@@ -48,17 +44,17 @@ async fn test_executor_with_custom_agents() -> Result<()> {
         mcp_servers: vec![],
         model_settings: ModelSettings::default(),
         history_size: Some(10),
-        plan: None,
-        icon_url: None,
         max_iterations: Some(3),
-        sub_agents: vec![],
-        skills: vec![],
-        version: None,
+        ..Default::default()
     };
 
     // Register agent definitions
-    executor.register_agent_definition(standard_agent_def.clone()).await?;
-    executor.register_agent_definition(custom_agent_def.clone()).await?;
+    executor
+        .register_agent_definition(standard_agent_def.clone())
+        .await?;
+    executor
+        .register_agent_definition(custom_agent_def.clone())
+        .await?;
 
     // Test direct execution of standard agent
     let task = TaskStep {
@@ -70,29 +66,30 @@ async fn test_executor_with_custom_agents() -> Result<()> {
 
     // Test standard agent execution
     info!("Testing StandardAgent execution...");
-    let standard_result = executor.execute(
-        "test-standard-agent",
-        task.clone(),
-        None,
-        context.clone(),
-        None,
-    ).await?;
-    
+    let standard_result = executor
+        .execute(
+            "test-standard-agent",
+            task.clone(),
+            None,
+            context.clone(),
+            None,
+        )
+        .await?;
+
     assert!(!standard_result.is_empty());
     info!("✅ StandardAgent execution successful: {}", standard_result);
 
     // Test that custom agent type fails (no factory registered)
     info!("Testing custom agent type failure...");
-    let custom_result = executor.execute(
-        "test-custom-agent",
-        task,
-        None,
-        context,
-        None,
-    ).await;
-    
+    let custom_result = executor
+        .execute("test-custom-agent", task, None, context, None)
+        .await;
+
     assert!(custom_result.is_err());
-    info!("✅ Custom agent type correctly failed: {}", custom_result.unwrap_err());
+    info!(
+        "✅ Custom agent type correctly failed: {}",
+        custom_result.unwrap_err()
+    );
 
     info!("✅ Executor custom agents test completed successfully");
     Ok(())
