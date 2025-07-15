@@ -1,5 +1,5 @@
 use crate::{
-    agent::{CapabilityHooks, ExecutorContext, StepResult},
+    agent::{AgentHooks, ExecutorContext, StepResult},
     error::AgentError,
     memory::TaskStep,
     tool_formatter::{ToolCallFormat, ToolCallWrapper},
@@ -23,7 +23,7 @@ pub trait AgentCapability: Send + Sync {
     fn as_any(&self) -> &dyn Any;
     
     /// Get hooks for this capability (returns None if no hooks are needed)
-    fn get_hooks(&self) -> Option<&dyn CapabilityHooks> {
+    fn get_hooks(&self) -> Option<&dyn AgentHooks> {
         None
     }
 }
@@ -141,6 +141,7 @@ impl AgentCapability for ContentFilteringCapability {
 }
 
 /// Hooks implementation for XML tool parsing capability
+#[derive(Clone, Debug)]
 pub struct XmlToolParsingHooks {
     tool_call_format: ToolCallFormat,
 }
@@ -193,15 +194,14 @@ IMPORTANT: When you need to use tools, format your response as XML with the foll
 Do not include any other text in your response when using tools. Only return the XML tool call structure."#
                     .to_string()
             }
-            ToolCallFormat::Legacy => {
+            ToolCallFormat::Function => {
                 r#"
 
 IMPORTANT: When you need to use tools, format your response as XML with the following structure:
 
-<invoke name="tool_name">
-<parameter name="param1">value1</parameter>
-<parameter name="param2">value2</parameter>
-</invoke>
+<tool_calls>
+tool_name({"param1": "value1", "param2": "value2"})
+</tool_calls>
 
 Do not include any other text in your response when using tools. Only return the XML tool call structure."#
                     .to_string()
@@ -259,7 +259,7 @@ impl AgentHooks for XmlToolParsingHooks {
                         // In a real implementation, you'd execute them and return the results
                         let tool_calls_text = tool_calls
                             .iter()
-                            .map(|tc| format!("- {}: {:?}", tc.tool_name, tc.arguments))
+                            .map(|tc| format!("- {}: {:?}", tc.tool_name, tc.input))
                             .collect::<Vec<_>>()
                             .join("\n");
 
@@ -280,6 +280,7 @@ impl AgentHooks for XmlToolParsingHooks {
 }
 
 /// Hooks implementation for logging capability
+#[derive(Clone, Debug)]
 pub struct LoggingHooks {
     log_level: String,
 }
@@ -299,7 +300,7 @@ impl AgentHooks for LoggingHooks {
     ) -> Result<(), AgentError> {
         info!(
             "🔧 LoggingHooks: Task step completed - {} (level: {})",
-            task.content, self.log_level
+            task.task, self.log_level
         );
         Ok(())
     }
@@ -320,6 +321,7 @@ impl AgentHooks for LoggingHooks {
 }
 
 /// Hooks implementation for content filtering capability
+#[derive(Clone, Debug)]
 pub struct ContentFilteringHooks {
     banned_words: Vec<String>,
 }

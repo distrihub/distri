@@ -1,6 +1,6 @@
 use crate::{
     agent::{AgentHooks, BaseAgent, StandardAgent},
-    agent::capabilities::AgentCapability,
+    agent::capabilities::{AgentCapability, ContentFilteringCapability, LoggingCapability, XmlToolParsingCapability},
     error::AgentError,
     memory::TaskStep,
     types::AgentDefinition,
@@ -10,7 +10,6 @@ use std::sync::Arc;
 use tracing::info;
 
 /// A composable agent that can combine multiple capabilities dynamically
-#[derive(Clone)]
 pub struct ComposableAgent {
     inner: StandardAgent,
     capabilities: Vec<Box<dyn AgentCapability>>,
@@ -118,6 +117,34 @@ impl ComposableAgent {
     }
 }
 
+impl Clone for ComposableAgent {
+    fn clone(&self) -> Self {
+        // Since AgentCapability doesn't implement Clone, we need to recreate capabilities
+        // This is a limitation of the current design - capabilities need to be Clone
+        let mut capabilities = Vec::new();
+        
+        for capability in &self.capabilities {
+            // Try to clone each capability by downcasting and recreating
+            if let Some(xml_cap) = capability.as_any().downcast_ref::<XmlToolParsingCapability>() {
+                capabilities.push(Box::new(xml_cap.clone()) as Box<dyn AgentCapability>);
+            } else if let Some(log_cap) = capability.as_any().downcast_ref::<LoggingCapability>() {
+                capabilities.push(Box::new(log_cap.clone()) as Box<dyn AgentCapability>);
+            } else if let Some(filter_cap) = capability.as_any().downcast_ref::<ContentFilteringCapability>() {
+                capabilities.push(Box::new(filter_cap.clone()) as Box<dyn AgentCapability>);
+            } else {
+                // For unknown capabilities, we can't clone them
+                // This is a limitation that could be addressed by adding Clone to AgentCapability trait
+                panic!("Cannot clone unknown capability type");
+            }
+        }
+        
+        Self {
+            inner: self.inner.clone(),
+            capabilities,
+        }
+    }
+}
+
 // Custom implementation to override agent_type and get_hooks
 #[async_trait::async_trait]
 impl BaseAgent for ComposableAgent {
@@ -171,6 +198,7 @@ impl BaseAgent for ComposableAgent {
 }
 
 /// Dynamic hooks implementation that chains all capability hooks
+#[async_trait::async_trait]
 impl AgentHooks for ComposableAgent {
     async fn after_task_step(
         &self,
