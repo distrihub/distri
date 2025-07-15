@@ -386,6 +386,9 @@ pub trait Tool: Send + Sync {
         tool_call: ToolCall,
         context: BuiltInToolContext,
     ) -> Result<String, AgentError>;
+
+    /// Clone the tool (required for object safety)
+    fn clone_box(&self) -> Box<dyn Tool>;
 }
 
 pub struct McpTool {
@@ -428,6 +431,13 @@ impl Tool for McpTool {
         )
         .await
         .map_err(|e| AgentError::ToolExecution(e.to_string()))
+    }
+
+    fn clone_box(&self) -> Box<dyn Tool> {
+        Box::new(Self {
+            mcp_definition: self.mcp_definition.clone(),
+            tool: self.tool.clone(),
+        })
     }
 }
 
@@ -565,5 +575,9 @@ impl Tool for TransferToAgentTool {
                 target_agent
             )))
         }
+    }
+
+    fn clone_box(&self) -> Box<dyn Tool> {
+        Box::new(Self)
     }
 }

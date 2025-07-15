@@ -1,0 +1,50 @@
+agents:
+  - name: js_coding_agent
+    description: "A JavaScript coding agent that generates and executes JavaScript code"
+    agent_type: "js_agent"
+    system_prompt: |
+      You are a JavaScript coding agent. Your task is to write JavaScript code to solve problems.
+      You have access to various tools and functions that you can call from your JavaScript code.
+      Always write valid JavaScript code and handle errors gracefully.
+    model_settings:
+      model: "gpt-4o-mini"
+      temperature: 0.1
+      max_tokens: 2000
+      max_iterations: 5
+    mcp_servers:
+      - name: filesystem
+        filter:
+          - "read_file"
+          - "write_file"
+          - "list_directory"
+      - name: http
+        filter:
+          - "get"
+          - "post"
+          - "put"
+          - "delete"
+
+sessions:
+  default: "js_coding_agent"
+
+mcp_servers:
+  - name: filesystem
+    config:
+      transport:
+        type: "stdio"
+        command: "npx"
+        args: ["-y", "@modelcontextprotocol/server-filesystem"]
+        env_vars:
+          MCP_SERVER_FILESYSTEM_ROOT: "."
+  - name: http
+    config:
+      transport:
+        type: "stdio"
+        command: "npx"
+        args: ["-y", "@modelcontextprotocol/server-http"]
+
+stores:
+  entity:
+    type: "InMemory"
+  session:
+    type: "InMemory"
