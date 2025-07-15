@@ -4,6 +4,7 @@ pub mod executor;
 pub mod factory;
 mod hooks;
 pub mod log;
+pub mod macros;
 pub mod reason;
 pub mod server;
 use crate::types::ToolCall;

@@ -112,58 +112,8 @@ another_tool({"param": "value"})
     }
 }
 
-#[async_trait::async_trait]
-impl BaseAgent for ToolParserAgent {
-    fn agent_type(&self) -> AgentType {
-        AgentType::Custom("tool_parser".to_string())
-    }
-
-    fn get_definition(&self) -> AgentDefinition {
-        self.inner.get_definition()
-    }
-
-    fn get_description(&self) -> &str {
-        self.inner.get_description()
-    }
-
-    fn get_tools(&self) -> Vec<&Box<dyn Tool>> {
-        self.inner.get_tools()
-    }
-
-    fn get_name(&self) -> &str {
-        self.inner.get_name()
-    }
-
-    fn clone_box(&self) -> Box<dyn BaseAgent> {
-        Box::new(self.clone())
-    }
-
-    fn get_hooks(&self) -> Option<&dyn AgentHooks> {
-        Some(self)
-    }
-
-    async fn invoke(
-        &self,
-        task: TaskStep,
-        params: Option<serde_json::Value>,
-        context: Arc<ExecutorContext>,
-        event_tx: Option<mpsc::Sender<AgentEvent>>,
-    ) -> Result<String, AgentError> {
-        self.inner.invoke(task, params, context, event_tx).await
-    }
-
-    async fn invoke_stream(
-        &self,
-        task: TaskStep,
-        params: Option<serde_json::Value>,
-        context: Arc<ExecutorContext>,
-        event_tx: mpsc::Sender<AgentEvent>,
-    ) -> Result<(), AgentError> {
-        self.inner
-            .invoke_stream(task, params, context, event_tx)
-            .await
-    }
-}
+// Use the macro to automatically implement BaseAgent
+crate::impl_base_agent_delegate!(ToolParserAgent, "tool_parser", inner);
 
 #[async_trait::async_trait]
 impl AgentHooks for ToolParserAgent {
