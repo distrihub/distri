@@ -21,3 +21,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokio = { version = "1.0", features = ["full"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "chrono"] }
+
+# https://github.com/rscarson/rustyscript/issues/332
+[patch.crates-io]
+deno_media_type = { git = 'https://github.com/denoland/deno_media_type', tag = "0.2.6" }

@@ -11,7 +11,7 @@ use tokio::sync::mpsc;
 
 /// Registry for JavaScript tools that can be called from generated JavaScript code
 pub struct JsToolRegistry {
-    tools: HashMap<String, Box<dyn Tool>>,
+    pub tools: HashMap<String, Box<dyn Tool>>,
 }
 
 impl JsToolRegistry {
@@ -22,7 +22,7 @@ impl JsToolRegistry {
     /// Generate JavaScript function schemas for the LLM
     pub fn generate_function_schemas(&self) -> String {
         let mut schemas = Vec::new();
-        
+
         for (name, tool) in &self.tools {
             let definition = tool.get_tool_definition();
             let schema = format!(
@@ -33,12 +33,16 @@ impl JsToolRegistry {
     </parameters>
 </function>"#,
                 name,
-                definition.function.description.as_ref().unwrap_or(&"".to_string()),
+                definition
+                    .function
+                    .description
+                    .as_ref()
+                    .unwrap_or(&"".to_string()),
                 serde_json::to_string_pretty(&definition.function.parameters).unwrap_or_default()
             );
             schemas.push(schema);
         }
-        
+
         schemas.join("\n\n")
     }
 
@@ -51,8 +55,13 @@ impl JsToolRegistry {
                 format!(
                     "- {}: {}\n  Takes inputs: {}\n  Returns: {}",
                     name,
-                    definition.function.description.as_ref().unwrap_or(&"".to_string()),
-                    serde_json::to_string_pretty(&definition.function.parameters).unwrap_or_default(),
+                    definition
+                        .function
+                        .description
+                        .as_ref()
+                        .unwrap_or(&"".to_string()),
+                    serde_json::to_string_pretty(&definition.function.parameters)
+                        .unwrap_or_default(),
                     tool.get_description()
                 )
             })

@@ -44,7 +44,7 @@ impl JsAgent {
         // Convert tools to JsToolRegistry
         let js_tools = tools_registry.tools.clone();
         let js_tool_registry = Arc::new(JsToolRegistry::new(js_tools));
-        
+
         // Create JavaScript executor
         let js_executor = JsExecutor::new(js_tool_registry.clone())?;
 
@@ -62,7 +62,7 @@ impl JsAgent {
     fn generate_system_prompt(&self) -> String {
         let tool_descriptions = self.js_tool_registry.get_tool_descriptions();
         let function_schemas = self.js_tool_registry.generate_function_schemas();
-        
+
         format!(
             r#"You are a JavaScript coding agent. Your task is to write JavaScript code to solve problems.
 
@@ -100,8 +100,7 @@ try {{
 ```
 
 Your response should be valid JavaScript code that can be executed directly."#,
-            tool_descriptions,
-            function_schemas
+            tool_descriptions, function_schemas
         )
     }
 
@@ -142,7 +141,7 @@ Your response should be valid JavaScript code that can be executed directly."#,
 
         // Create LLM executor
         let llm_executor = LLMExecutor::new(
-            self.definition.model_settings.clone(),
+            self.definition.into(),
             Arc::default(),
             context.clone(),
             None,
@@ -210,7 +209,10 @@ Your response should be valid JavaScript code that can be executed directly."#,
                     run_id: context.run_id.lock().await.clone(),
                     event: AgentEventType::TextMessageContent {
                         message_id: Uuid::new_v4().to_string(),
-                        delta: format!("Generated code:\n```javascript\n{}\n```\n\nOutput:\n{}", js_code, code_output.output),
+                        delta: format!(
+                            "Generated code:\n```javascript\n{}\n```\n\nOutput:\n{}",
+                            js_code, code_output.output
+                        ),
                     },
                 })
                 .await;
@@ -267,18 +269,16 @@ Your response should be valid JavaScript code that can be executed directly."#,
                 .await
                 .map_err(|e| AgentError::Session(e.to_string()))?;
 
-            Ok(StepResult::Continue(vec![
-                Message {
-                    role: MessageRole::Assistant,
-                    name: None,
-                    content: vec![MessageContent {
-                        content_type: "text".to_string(),
-                        text: Some(format!("Code execution result: {}", code_output.output)),
-                        image: None,
-                    }],
-                    tool_calls: vec![],
-                },
-            ]))
+            Ok(StepResult::Continue(vec![Message {
+                role: MessageRole::Assistant,
+                name: None,
+                content: vec![MessageContent {
+                    content_type: "text".to_string(),
+                    text: Some(format!("Code execution result: {}", code_output.output)),
+                    image: None,
+                }],
+                tool_calls: vec![],
+            }]))
         }
     }
 }
@@ -335,7 +335,9 @@ impl BaseAgent for JsAgent {
                 info!("JsAgent iteration {} of {}", iteration, max_iterations);
             }
 
-            let step_result = self.execute_step(&task, context.clone(), event_tx.clone()).await?;
+            let step_result = self
+                .execute_step(&task, context.clone(), event_tx.clone())
+                .await?;
 
             match step_result {
                 StepResult::Finish(final_answer) => {
