@@ -6,7 +6,7 @@ use crate::{
     error::AgentError,
     memory::TaskStep,
     tools::{LlmToolsRegistry, Tool},
-    types::{AgentDefinition, Message, ToolCall},
+    types::{AgentDefinition, Message, ToolCall, ToolCallFormat, ToolCallWrapper},
     SessionStore,
 };
 use std::sync::Arc;
@@ -20,12 +20,14 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub struct ToolParserAgent {
     inner: StandardAgent,
+    tool_call_format: ToolCallFormat,
 }
 
 impl std::fmt::Debug for ToolParserAgent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ToolParserAgent")
             .field("inner", &self.inner)
+            .field("tool_call_format", &self.tool_call_format)
             .finish()
     }
 }
@@ -37,6 +39,7 @@ impl ToolParserAgent {
         coordinator: Arc<AgentExecutor>,
         context: Arc<ExecutorContext>,
         session_store: Arc<Box<dyn SessionStore>>,
+        tool_call_format: ToolCallFormat,
     ) -> Self {
         // Create a copy of the definition with empty tools
         let mut empty_definition = definition.clone();
@@ -49,79 +52,54 @@ impl ToolParserAgent {
             context,
             session_store,
         );
-        Self { inner }
+        Self { 
+            inner,
+            tool_call_format,
+        }
     }
 
-    /// Parse XML tool calls from the LLM response
-    pub fn parse_xml_tool_calls(&self, content: &str) -> Result<Vec<ToolCall>, AgentError> {
-        let mut tool_calls = Vec::new();
-        
-        // Simple XML parsing for tool calls
-        // Look for patterns like <tool_call name="tool_name" args='{"key": "value"}'> or similar
-        let _content_lower = content.to_lowercase();
-        
-        // Try to find tool call patterns
-        let patterns = [
-            r#"<tool_call\s+name\s*=\s*["']([^"']+)["'][^>]*args\s*=\s*["']([^"']+)["'][^>]*>"#,
-            r#"<tool\s+name\s*=\s*["']([^"']+)["'][^>]*args\s*=\s*["']([^"']+)["'][^>]*>"#,
-            r#"<call\s+tool\s*=\s*["']([^"']+)["'][^>]*args\s*=\s*["']([^"']+)["'][^>]*>"#,
-        ];
-
-        for pattern in &patterns {
-            if let Ok(regex) = regex::Regex::new(pattern) {
-                for captures in regex.captures_iter(content) {
-                    if captures.len() >= 3 {
-                        let tool_name = captures[1].to_string();
-                        let args = captures[2].to_string();
-                        
-                        // Generate a unique tool ID
-                        let tool_id = Uuid::new_v4().to_string();
-                        
-                        tool_calls.push(ToolCall {
-                            tool_id,
-                            tool_name,
-                            input: args,
-                        });
-                    }
+    /// Parse tool calls from the LLM response using the configured format
+    pub fn parse_tool_calls(&self, content: &str) -> Result<Vec<ToolCall>, AgentError> {
+        match ToolCallWrapper::parse_from_xml(content, self.tool_call_format.clone()) {
+            Ok(tool_calls) => {
+                if tool_calls.is_empty() {
+                    warn!("No tool calls found in content: {}", content);
+                } else {
+                    info!("Parsed {} tool calls from content using format {:?}", tool_calls.len(), self.tool_call_format);
                 }
+                Ok(tool_calls)
+            }
+            Err(e) => {
+                error!("Error parsing tool calls: {}", e);
+                Err(AgentError::ToolExecution(format!("Failed to parse tool calls: {}", e)))
             }
         }
+    }
 
-        // If no tool calls found with regex, try to parse JSON-like structures
-        if tool_calls.is_empty() {
-            // Look for JSON-like tool call structures
-            let json_patterns = [
-                r#"\{[^}]*"tool"\s*:\s*"([^"]+)"[^}]*"args"\s*:\s*(\{[^}]+\})[^}]*\}"#,
-                r#"\{[^}]*"name"\s*:\s*"([^"]+)"[^}]*"arguments"\s*:\s*(\{[^}]+\})[^}]*\}"#,
-            ];
+    /// Get format-specific instructions for the LLM
+    pub fn get_format_instructions(&self) -> String {
+        match self.tool_call_format {
+            ToolCallFormat::Current => {
+                r#"
+IMPORTANT: When you need to use tools, respond with tool calls in XML format. Use the following format:
 
-            for pattern in &json_patterns {
-                if let Ok(regex) = regex::Regex::new(pattern) {
-                    for captures in regex.captures_iter(content) {
-                        if captures.len() >= 3 {
-                            let tool_name = captures[1].to_string();
-                            let args = captures[2].to_string();
-                            
-                            let tool_id = Uuid::new_v4().to_string();
-                            
-                            tool_calls.push(ToolCall {
-                                tool_id,
-                                tool_name,
-                                input: args,
-                            });
-                        }
-                    }
-                }
+<tool_calls>
+<tool_call name="tool_name" args='{"parameter1": "value1", "parameter2": "value2"}' />
+<tool_call name="another_tool" args='{"param": "value"}' />
+</tool_calls>
+"#.to_string()
+            }
+            ToolCallFormat::Function => {
+                r#"
+IMPORTANT: When you need to use tools, respond with tool calls in JavaScript-like function format. Use the following format:
+
+<tool_calls>
+tool_name({"parameter1": "value1", "parameter2": "value2"})
+another_tool({"param": "value"})
+</tool_calls>
+"#.to_string()
             }
         }
-
-        if tool_calls.is_empty() {
-            warn!("No tool calls found in content: {}", content);
-        } else {
-            info!("Parsed {} tool calls from XML/JSON content", tool_calls.len());
-        }
-
-        Ok(tool_calls)
     }
 }
 
@@ -191,15 +169,8 @@ impl AgentHooks for ToolParserAgent {
             if let crate::types::MessageRole::System = message.role {
                 if let Some(content) = message.content.first_mut() {
                     if let Some(text) = &mut content.text {
-                        // Append XML tool call instructions to the system prompt
-                        let xml_instructions = r#"
-
-IMPORTANT: When you need to use tools, respond with tool calls in XML format. Use the following format:
-
-<tool_call name="tool_name" args='{"parameter1": "value1", "parameter2": "value2"}'>
-
-Available tools:
-"#;
+                        // Append format-specific tool call instructions to the system prompt
+                        let format_instructions = self.get_format_instructions();
                         
                         // Get tool descriptions from the original tools registry
                         let tools = self.inner.get_tools();
@@ -217,8 +188,9 @@ Available tools:
                             .collect();
                         
                         let tools_text = tool_descriptions.join("\n");
+                        let available_tools = format!("\nAvailable tools:\n{}", tools_text);
                         
-                        *text = format!("{}{}{}", text, xml_instructions, tools_text);
+                        *text = format!("{}{}{}", text, format_instructions, available_tools);
                     }
                 }
             }
@@ -237,7 +209,7 @@ Available tools:
                 info!("🔍 ToolParserAgent: Parsing content for XML tool calls");
                 
                 // Try to parse tool calls from the content
-                match self.parse_xml_tool_calls(content) {
+                match self.parse_tool_calls(content) {
                     Ok(tool_calls) if !tool_calls.is_empty() => {
                         info!("🛠️ ToolParserAgent: Found {} tool calls, executing them", tool_calls.len());
                         
@@ -290,7 +262,7 @@ Available tools:
                             if let Some(text) = &content.text {
                                 info!("🔍 ToolParserAgent: Parsing assistant message for XML tool calls");
                                 
-                                match self.parse_xml_tool_calls(text) {
+                                match self.parse_tool_calls(text) {
                                     Ok(tool_calls) if !tool_calls.is_empty() => {
                                         info!("🛠️ ToolParserAgent: Found {} tool calls in assistant message", tool_calls.len());
                                         
@@ -341,15 +313,21 @@ Available tools:
     }
 }
 
-/// Factory function to create a ToolParserAgent
+/// Factory function to create a ToolParserAgent with default format
 pub fn create_tool_parser_agent_factory() -> Arc<crate::agent::factory::AgentFactoryFn> {
-    Arc::new(|definition, tools_registry, coordinator, context, session_store| {
+    create_tool_parser_agent_factory_with_format(ToolCallFormat::Current)
+}
+
+/// Factory function to create a ToolParserAgent with specified format
+pub fn create_tool_parser_agent_factory_with_format(format: ToolCallFormat) -> Arc<crate::agent::factory::AgentFactoryFn> {
+    Arc::new(move |definition, tools_registry, coordinator, context, session_store| {
         let agent = ToolParserAgent::new(
             definition,
             tools_registry,
             coordinator,
             context,
             session_store,
+            format.clone(),
         );
         Box::new(agent)
     })
