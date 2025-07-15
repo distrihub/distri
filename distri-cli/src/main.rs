@@ -159,8 +159,8 @@ async fn update_all_agents(executor: Arc<AgentExecutor>, config: &Configuration)
     tracing::info!("Updating all agent definitions from config...");
 
     for agent_config in &config.agents {
-        let agent_name = &agent_config.definition.name;
-        match executor.update_agent_definition(agent_config.definition.clone()).await {
+        let agent_name = &agent_config.name;
+        match executor.update_agent_definition(agent_config.clone()).await {
             Ok(_) => {
                 tracing::info!("✅ Updated agent: {}", agent_name);
             }
@@ -168,7 +168,7 @@ async fn update_all_agents(executor: Arc<AgentExecutor>, config: &Configuration)
                 tracing::warn!("⚠️ Failed to update agent {}: {}", agent_name, e);
                 // Try to register as new agent if update fails
                 match executor
-                    .register_agent_definition(agent_config.definition.clone())
+                    .register_agent_definition(agent_config.clone())
                     .await
                 {
                     Ok(_) => {

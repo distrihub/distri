@@ -112,18 +112,16 @@ pub async fn run_agent_cli(
 }
 
 pub async fn register_agents(executor: Arc<AgentExecutor>, config: &Configuration) -> Result<()> {
-    for agent in &config.agents {
+    for def in &config.agents {
         // Try to update existing agent first, then register if not found
-        match executor.update_agent_definition(agent.definition.clone()).await {
+        match executor.update_agent_definition(def.clone()).await {
             Ok(_) => {
-                tracing::debug!("Updated existing agent: {}", agent.definition.name);
+                tracing::debug!("Updated existing agent: {}", def.name);
             }
             Err(_) => {
                 // Agent doesn't exist, register as new
-                executor
-                    .register_agent_definition(agent.definition.clone())
-                    .await?;
-                tracing::debug!("Registered new agent: {}", agent.definition.name);
+                executor.register_agent_definition(def.clone()).await?;
+                tracing::debug!("Registered new agent: {}", def.name);
             }
         }
     }
@@ -136,7 +134,7 @@ pub async fn get_agent_name(config: &Configuration, agent_name: Option<String>) 
         None => config
             .agents
             .iter()
-            .map(|a| a.definition.name.clone())
+            .map(|a| a.name.clone())
             .next()
             .unwrap_or_else(|| panic!("No agents found")),
     };

@@ -5,14 +5,14 @@ use crate::{
     },
     error::AgentError,
     memory::TaskStep,
+    tool_formatter::{ToolCallFormat, ToolCallWrapper},
     tools::{LlmToolsRegistry, Tool},
-    types::{AgentDefinition, Message, ToolCall, ToolCallFormat, ToolCallWrapper},
+    types::{AgentDefinition, Message, ToolCall},
     SessionStore,
 };
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
-use uuid::Uuid;
 
 /// ToolParserAgent that parses XML tool calls from LLM output
 /// This agent initializes a standard agent with empty tools and uses custom hooks
@@ -20,6 +20,7 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub struct ToolParserAgent {
     inner: StandardAgent,
+    tools_registry: Arc<LlmToolsRegistry>,
     tool_call_format: ToolCallFormat,
 }
 
@@ -47,13 +48,14 @@ impl ToolParserAgent {
 
         let inner = StandardAgent::new(
             empty_definition,
-            tools_registry,
+            Arc::default(),
             coordinator,
             context,
             session_store,
         );
-        Self { 
+        Self {
             inner,
+            tools_registry,
             tool_call_format,
         }
     }
@@ -65,13 +67,20 @@ impl ToolParserAgent {
                 if tool_calls.is_empty() {
                     warn!("No tool calls found in content: {}", content);
                 } else {
-                    info!("Parsed {} tool calls from content using format {:?}", tool_calls.len(), self.tool_call_format);
+                    info!(
+                        "Parsed {} tool calls from content using format {:?}",
+                        tool_calls.len(),
+                        self.tool_call_format
+                    );
                 }
                 Ok(tool_calls)
             }
             Err(e) => {
                 error!("Error parsing tool calls: {}", e);
-                Err(AgentError::ToolExecution(format!("Failed to parse tool calls: {}", e)))
+                Err(AgentError::ToolExecution(format!(
+                    "Failed to parse tool calls: {}",
+                    e
+                )))
             }
         }
     }
@@ -106,7 +115,7 @@ another_tool({"param": "value"})
 #[async_trait::async_trait]
 impl BaseAgent for ToolParserAgent {
     fn agent_type(&self) -> AgentType {
-        AgentType::Custom("ToolParserAgent".to_string())
+        AgentType::Custom("tool_parser".to_string())
     }
 
     fn get_definition(&self) -> AgentDefinition {
@@ -161,9 +170,9 @@ impl AgentHooks for ToolParserAgent {
         context: Arc<ExecutorContext>,
     ) -> Result<Vec<Message>, AgentError> {
         info!("🔧 ToolParserAgent: Modifying system prompt to include XML tool call instructions");
-        
+
         let mut modified_messages = messages.to_vec();
-        
+
         // Find and modify the system message to include XML tool call instructions
         for message in &mut modified_messages {
             if let crate::types::MessageRole::System = message.role {
@@ -171,7 +180,7 @@ impl AgentHooks for ToolParserAgent {
                     if let Some(text) = &mut content.text {
                         // Append format-specific tool call instructions to the system prompt
                         let format_instructions = self.get_format_instructions();
-                        
+
                         // Get tool descriptions from the original tools registry
                         let tools = self.inner.get_tools();
                         let tool_descriptions: Vec<String> = tools
@@ -181,22 +190,28 @@ impl AgentHooks for ToolParserAgent {
                                 format!(
                                     "- {}: {} (parameters: {})",
                                     tool.get_name(),
-                                    def.function.description.as_deref().unwrap_or("No description"),
-                                    serde_json::to_string_pretty(&def.function.parameters).unwrap_or_default()
+                                    def.function
+                                        .description
+                                        .as_deref()
+                                        .unwrap_or("No description"),
+                                    serde_json::to_string_pretty(&def.function.parameters)
+                                        .unwrap_or_default()
                                 )
                             })
                             .collect();
-                        
+
                         let tools_text = tool_descriptions.join("\n");
                         let available_tools = format!("\nAvailable tools:\n{}", tools_text);
-                        
+
                         *text = format!("{}{}{}", text, format_instructions, available_tools);
                     }
                 }
             }
         }
-        
-        self.inner.before_llm_step(&modified_messages, params, context).await
+
+        self.inner
+            .before_llm_step(&modified_messages, params, context)
+            .await
     }
 
     async fn after_finish(
@@ -207,20 +222,30 @@ impl AgentHooks for ToolParserAgent {
         match &step_result {
             StepResult::Finish(content) => {
                 info!("🔍 ToolParserAgent: Parsing content for XML tool calls");
-                
+
                 // Try to parse tool calls from the content
                 match self.parse_tool_calls(content) {
                     Ok(tool_calls) if !tool_calls.is_empty() => {
-                        info!("🛠️ ToolParserAgent: Found {} tool calls, executing them", tool_calls.len());
-                        
+                        info!(
+                            "🛠️ ToolParserAgent: Found {} tool calls, executing them",
+                            tool_calls.len()
+                        );
+
                         // Execute the tool calls
                         let agent_id = self.get_name();
                         let event_tx = None; // We don't have event_tx in this context
-                        
-                        match self.inner.execute_tool_calls(tool_calls, agent_id, context.clone(), event_tx).await {
+
+                        match self
+                            .inner
+                            .execute_tool_calls(tool_calls, agent_id, context.clone(), event_tx)
+                            .await
+                        {
                             Ok(tool_responses) => {
-                                info!("✅ ToolParserAgent: Successfully executed {} tool calls", tool_responses.len());
-                                
+                                info!(
+                                    "✅ ToolParserAgent: Successfully executed {} tool calls",
+                                    tool_responses.len()
+                                );
+
                                 // Create a new message with the tool responses
                                 let tool_response_content = tool_responses
                                     .iter()
@@ -232,25 +257,33 @@ impl AgentHooks for ToolParserAgent {
                                     })
                                     .collect::<Vec<String>>()
                                     .join("\n\n");
-                                
+
                                 // Return the tool response content
                                 Ok(StepResult::Finish(tool_response_content))
                             }
                             Err(e) => {
                                 error!("❌ ToolParserAgent: Error executing tool calls: {}", e);
                                 // Return the original content with error information
-                                Ok(StepResult::Finish(format!("Error executing tool calls: {}\n\nOriginal response: {}", e, content)))
+                                Ok(StepResult::Finish(format!(
+                                    "Error executing tool calls: {}\n\nOriginal response: {}",
+                                    e, content
+                                )))
                             }
                         }
                     }
                     Ok(_) => {
-                        info!("📝 ToolParserAgent: No tool calls found, returning original content");
+                        info!(
+                            "📝 ToolParserAgent: No tool calls found, returning original content"
+                        );
                         Ok(step_result)
                     }
                     Err(e) => {
                         error!("❌ ToolParserAgent: Error parsing tool calls: {}", e);
                         // Return the original content with error information
-                        Ok(StepResult::Finish(format!("Error parsing tool calls: {}\n\nOriginal response: {}", e, content)))
+                        Ok(StepResult::Finish(format!(
+                            "Error parsing tool calls: {}\n\nOriginal response: {}",
+                            e, content
+                        )))
                     }
                 }
             }
@@ -261,29 +294,41 @@ impl AgentHooks for ToolParserAgent {
                         if let Some(content) = last_message.content.first() {
                             if let Some(text) = &content.text {
                                 info!("🔍 ToolParserAgent: Parsing assistant message for XML tool calls");
-                                
+
                                 match self.parse_tool_calls(text) {
                                     Ok(tool_calls) if !tool_calls.is_empty() => {
                                         info!("🛠️ ToolParserAgent: Found {} tool calls in assistant message", tool_calls.len());
-                                        
+
                                         // Execute the tool calls
                                         let agent_id = self.get_name();
                                         let event_tx = None;
-                                        
-                                        match self.inner.execute_tool_calls(tool_calls, agent_id, context.clone(), event_tx).await {
+
+                                        match self
+                                            .inner
+                                            .execute_tool_calls(
+                                                tool_calls,
+                                                agent_id,
+                                                context.clone(),
+                                                event_tx,
+                                            )
+                                            .await
+                                        {
                                             Ok(tool_responses) => {
                                                 info!("✅ ToolParserAgent: Successfully executed {} tool calls", tool_responses.len());
-                                                
+
                                                 // Add tool responses to the messages
                                                 let mut new_messages = messages.clone();
                                                 new_messages.extend(tool_responses);
-                                                
+
                                                 Ok(StepResult::Continue(new_messages))
                                             }
                                             Err(e) => {
                                                 error!("❌ ToolParserAgent: Error executing tool calls: {}", e);
                                                 // Return error message
-                                                Ok(StepResult::Finish(format!("Error executing tool calls: {}", e)))
+                                                Ok(StepResult::Finish(format!(
+                                                    "Error executing tool calls: {}",
+                                                    e
+                                                )))
                                             }
                                         }
                                     }
@@ -292,8 +337,14 @@ impl AgentHooks for ToolParserAgent {
                                         Ok(step_result)
                                     }
                                     Err(e) => {
-                                        error!("❌ ToolParserAgent: Error parsing tool calls: {}", e);
-                                        Ok(StepResult::Finish(format!("Error parsing tool calls: {}", e)))
+                                        error!(
+                                            "❌ ToolParserAgent: Error parsing tool calls: {}",
+                                            e
+                                        );
+                                        Ok(StepResult::Finish(format!(
+                                            "Error parsing tool calls: {}",
+                                            e
+                                        )))
                                     }
                                 }
                             } else {
@@ -319,16 +370,20 @@ pub fn create_tool_parser_agent_factory() -> Arc<crate::agent::factory::AgentFac
 }
 
 /// Factory function to create a ToolParserAgent with specified format
-pub fn create_tool_parser_agent_factory_with_format(format: ToolCallFormat) -> Arc<crate::agent::factory::AgentFactoryFn> {
-    Arc::new(move |definition, tools_registry, coordinator, context, session_store| {
-        let agent = ToolParserAgent::new(
-            definition,
-            tools_registry,
-            coordinator,
-            context,
-            session_store,
-            format.clone(),
-        );
-        Box::new(agent)
-    })
+pub fn create_tool_parser_agent_factory_with_format(
+    format: ToolCallFormat,
+) -> Arc<crate::agent::factory::AgentFactoryFn> {
+    Arc::new(
+        move |definition, tools_registry, coordinator, context, session_store| {
+            let agent = ToolParserAgent::new(
+                definition,
+                tools_registry,
+                coordinator,
+                context,
+                session_store,
+                format.clone(),
+            );
+            Box::new(agent)
+        },
+    )
 }

@@ -1,4 +1,5 @@
-use crate::types::{ToolCall, ToolCallFormat, ToolCallWrapper};
+use crate::tool_formatter::{ToolCallFormat, ToolCallWrapper};
+use crate::types::ToolCall;
 
 #[test]
 fn test_current_format_parsing() {
@@ -12,9 +13,9 @@ fn test_current_format_parsing() {
     
     That's all I have to say.
     "#;
-    
+
     let tool_calls = ToolCallWrapper::parse_from_xml(content, ToolCallFormat::Current).unwrap();
-    
+
     assert_eq!(tool_calls.len(), 2);
     assert_eq!(tool_calls[0].tool_name, "search");
     assert_eq!(tool_calls[0].input, r#"{"query": "rust programming"}"#);
@@ -34,9 +35,9 @@ fn test_function_format_parsing() {
     
     That's all I have to say.
     "#;
-    
+
     let tool_calls = ToolCallWrapper::parse_from_xml(content, ToolCallFormat::Function).unwrap();
-    
+
     assert_eq!(tool_calls.len(), 2);
     assert_eq!(tool_calls[0].tool_name, "search");
     assert_eq!(tool_calls[0].input, r#"{"query": "rust programming"}"#);
@@ -58,18 +59,18 @@ fn test_current_format_generation() {
             input: r#"{"url": "https://example.com"}"#.to_string(),
         },
     ];
-    
+
     let wrapper = ToolCallWrapper {
         format: ToolCallFormat::Current,
         tool_calls,
     };
-    
+
     let xml = wrapper.to_xml(&ToolCallFormat::Current);
     let expected = r#"<tool_calls>
 <tool_call name="search" args='{"query": "test"}' />
 <tool_call name="scrape" args='{"url": "https://example.com"}' />
 </tool_calls>"#;
-    
+
     assert_eq!(xml.trim(), expected);
 }
 
@@ -87,18 +88,18 @@ fn test_function_format_generation() {
             input: r#"{"url": "https://example.com"}"#.to_string(),
         },
     ];
-    
+
     let wrapper = ToolCallWrapper {
         format: ToolCallFormat::Function,
         tool_calls,
     };
-    
+
     let xml = wrapper.to_xml(&ToolCallFormat::Function);
     let expected = r#"<tool_calls>
 search({"query": "test"})
 scrape({"url": "https://example.com"})
 </tool_calls>"#;
-    
+
     assert_eq!(xml.trim(), expected);
 }
 
@@ -112,9 +113,9 @@ fn test_fallback_parsing_without_wrapper() {
     
     That's all I have to say.
     "#;
-    
+
     let tool_calls = ToolCallWrapper::parse_from_xml(content, ToolCallFormat::Current).unwrap();
-    
+
     assert_eq!(tool_calls.len(), 2);
     assert_eq!(tool_calls[0].tool_name, "search");
     assert_eq!(tool_calls[1].tool_name, "scrape");
@@ -130,9 +131,9 @@ fn test_function_fallback_parsing_without_wrapper() {
     
     That's all I have to say.
     "#;
-    
+
     let tool_calls = ToolCallWrapper::parse_from_xml(content, ToolCallFormat::Function).unwrap();
-    
+
     assert_eq!(tool_calls.len(), 2);
     assert_eq!(tool_calls[0].tool_name, "search");
     assert_eq!(tool_calls[1].tool_name, "scrape");
@@ -141,10 +142,10 @@ fn test_function_fallback_parsing_without_wrapper() {
 #[test]
 fn test_empty_tool_calls() {
     let content = "This is just regular text with no tool calls.";
-    
+
     let tool_calls = ToolCallWrapper::parse_from_xml(content, ToolCallFormat::Current).unwrap();
     assert_eq!(tool_calls.len(), 0);
-    
+
     let tool_calls = ToolCallWrapper::parse_from_xml(content, ToolCallFormat::Function).unwrap();
     assert_eq!(tool_calls.len(), 0);
 }
@@ -155,15 +156,15 @@ fn test_empty_wrapper_generation() {
         format: ToolCallFormat::Current,
         tool_calls: vec![],
     };
-    
+
     let xml = wrapper.to_xml(&ToolCallFormat::Current);
     assert_eq!(xml, "");
-    
+
     let wrapper = ToolCallWrapper {
         format: ToolCallFormat::Function,
         tool_calls: vec![],
     };
-    
+
     let xml = wrapper.to_xml(&ToolCallFormat::Function);
     assert_eq!(xml, "");
 }

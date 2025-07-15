@@ -72,9 +72,9 @@ pub async fn init_agent_executor(config: &Configuration) -> anyhow::Result<Arc<A
     register_default_mcp_servers(executor.clone()).await?;
 
     // Register agents from configuration
-    for agent_config in &config.agents {
+    for definition in &config.agents {
         executor
-            .register_agent_definition(agent_config.definition.clone())
+            .register_agent_definition(definition.clone())
             .await?;
     }
     Ok(executor)

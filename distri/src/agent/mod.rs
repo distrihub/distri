@@ -6,9 +6,11 @@ mod hooks;
 pub mod log;
 pub mod reason;
 pub mod server;
-use crate::types::{ToolCall, ToolCallFormat, ToolCallWrapper};
+use crate::types::ToolCall;
 pub use agent::{BaseAgent, StandardAgent, StepResult, MAX_ITERATIONS};
-pub use agents::{ToolParserAgent, create_tool_parser_agent_factory, create_tool_parser_agent_factory_with_format};
+pub use agents::{
+    create_tool_parser_agent_factory, create_tool_parser_agent_factory_with_format, ToolParserAgent,
+};
 use async_openai::types::Role;
 pub use executor::{AgentExecutor, AgentExecutorBuilder};
 pub use factory::AgentFactoryRegistry;
