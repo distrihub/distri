@@ -1,5 +1,5 @@
 use crate::{
-    agent::{AgentHooks, BaseAgent, ExecutorContext, StepResult},
+    agent::{CapabilityHooks, ExecutorContext, StepResult},
     error::AgentError,
     memory::TaskStep,
     tool_formatter::{ToolCallFormat, ToolCallWrapper},
@@ -21,21 +21,137 @@ pub trait AgentCapability: Send + Sync {
     
     /// Get the capability as Any for downcasting
     fn as_any(&self) -> &dyn Any;
+    
+    /// Get hooks for this capability (returns None if no hooks are needed)
+    fn get_hooks(&self) -> Option<&dyn CapabilityHooks> {
+        None
+    }
 }
 
 /// Capability for parsing XML tool calls from LLM responses
 #[derive(Clone, Debug)]
 pub struct XmlToolParsingCapability {
     pub tool_call_format: ToolCallFormat,
+    hooks: XmlToolParsingHooks,
 }
 
 impl XmlToolParsingCapability {
     pub fn new(tool_call_format: ToolCallFormat) -> Self {
-        Self { tool_call_format }
+        let hooks = XmlToolParsingHooks::new(tool_call_format.clone());
+        Self { 
+            tool_call_format,
+            hooks,
+        }
     }
 
+
+}
+
+#[async_trait::async_trait]
+impl AgentCapability for XmlToolParsingCapability {
+    fn capability_name(&self) -> &'static str {
+        "xml_tool_parsing"
+    }
+    
+    fn agent_type(&self) -> &'static str {
+        "tool_parser"
+    }
+    
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    
+    fn get_hooks(&self) -> Option<&dyn AgentHooks> {
+        Some(&self.hooks)
+    }
+}
+
+/// Capability for enhanced logging and monitoring
+#[derive(Clone, Debug)]
+pub struct LoggingCapability {
+    pub log_level: String,
+    hooks: LoggingHooks,
+}
+
+impl LoggingCapability {
+    pub fn new(log_level: String) -> Self {
+        let hooks = LoggingHooks::new(log_level.clone());
+        Self { 
+            log_level,
+            hooks,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl AgentCapability for LoggingCapability {
+    fn capability_name(&self) -> &'static str {
+        "enhanced_logging"
+    }
+    
+    fn agent_type(&self) -> &'static str {
+        "logging"
+    }
+    
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    
+    fn get_hooks(&self) -> Option<&dyn AgentHooks> {
+        Some(&self.hooks)
+    }
+}
+
+/// Capability for content filtering
+#[derive(Clone, Debug)]
+pub struct ContentFilteringCapability {
+    pub banned_words: Vec<String>,
+    hooks: ContentFilteringHooks,
+}
+
+impl ContentFilteringCapability {
+    pub fn new(banned_words: Vec<String>) -> Self {
+        let hooks = ContentFilteringHooks::new(banned_words.clone());
+        Self { 
+            banned_words,
+            hooks,
+        }
+    }
+
+
+}
+
+#[async_trait::async_trait]
+impl AgentCapability for ContentFilteringCapability {
+    fn capability_name(&self) -> &'static str {
+        "content_filtering"
+    }
+    
+    fn agent_type(&self) -> &'static str {
+        "filtering"
+    }
+    
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    
+    fn get_hooks(&self) -> Option<&dyn AgentHooks> {
+        Some(&self.hooks)
+    }
+}
+
+/// Hooks implementation for XML tool parsing capability
+pub struct XmlToolParsingHooks {
+    tool_call_format: ToolCallFormat,
+}
+
+impl XmlToolParsingHooks {
+    pub fn new(tool_call_format: ToolCallFormat) -> Self {
+        Self { tool_call_format }
+    }
+    
     /// Parse tool calls from the LLM response using the configured format
-    pub fn parse_tool_calls(&self, content: &str) -> Result<Vec<ToolCall>, AgentError> {
+    fn parse_tool_calls(&self, content: &str) -> Result<Vec<ToolCall>, AgentError> {
         match ToolCallWrapper::parse_from_xml(content, self.tool_call_format.clone()) {
             Ok(tool_calls) => {
                 if tool_calls.is_empty() {
@@ -60,7 +176,7 @@ impl XmlToolParsingCapability {
     }
 
     /// Get format-specific instructions for the LLM
-    pub fn get_format_instructions(&self) -> String {
+    fn get_format_instructions(&self) -> String {
         match self.tool_call_format {
             ToolCallFormat::Current => {
                 r#"
@@ -95,95 +211,6 @@ Do not include any other text in your response when using tools. Only return the
 }
 
 #[async_trait::async_trait]
-impl AgentCapability for XmlToolParsingCapability {
-    fn capability_name(&self) -> &'static str {
-        "xml_tool_parsing"
-    }
-    
-    fn agent_type(&self) -> &'static str {
-        "tool_parser"
-    }
-    
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-}
-
-/// Capability for enhanced logging and monitoring
-#[derive(Clone, Debug)]
-pub struct LoggingCapability {
-    pub log_level: String,
-}
-
-impl LoggingCapability {
-    pub fn new(log_level: String) -> Self {
-        Self { log_level }
-    }
-}
-
-#[async_trait::async_trait]
-impl AgentCapability for LoggingCapability {
-    fn capability_name(&self) -> &'static str {
-        "enhanced_logging"
-    }
-    
-    fn agent_type(&self) -> &'static str {
-        "logging"
-    }
-    
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-}
-
-/// Capability for content filtering
-#[derive(Clone, Debug)]
-pub struct ContentFilteringCapability {
-    pub banned_words: Vec<String>,
-}
-
-impl ContentFilteringCapability {
-    pub fn new(banned_words: Vec<String>) -> Self {
-        Self { banned_words }
-    }
-
-    pub fn filter_content(&self, content: &str) -> String {
-        let mut filtered = content.to_string();
-        for word in &self.banned_words {
-            let replacement = "*".repeat(word.len());
-            filtered = filtered.replace(word, &replacement);
-        }
-        filtered
-    }
-}
-
-#[async_trait::async_trait]
-impl AgentCapability for ContentFilteringCapability {
-    fn capability_name(&self) -> &'static str {
-        "content_filtering"
-    }
-    
-    fn agent_type(&self) -> &'static str {
-        "filtering"
-    }
-    
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-}
-
-/// Hooks implementation for XML tool parsing capability
-pub struct XmlToolParsingHooks {
-    capability: XmlToolParsingCapability,
-}
-
-impl XmlToolParsingHooks {
-    pub fn new(capability: XmlToolParsingCapability) -> Self {
-        Self { capability }
-    }
-}
-
-#[async_trait::async_trait]
 impl AgentHooks for XmlToolParsingHooks {
     async fn before_llm_step(
         &self,
@@ -201,7 +228,7 @@ impl AgentHooks for XmlToolParsingHooks {
                 if let Some(content) = message.content.first_mut() {
                     if let Some(text) = &mut content.text {
                         // Append format-specific tool call instructions to the system prompt
-                        let format_instructions = self.capability.get_format_instructions();
+                        let format_instructions = self.get_format_instructions();
                         *text = format!("{}{}", text, format_instructions);
                     }
                 }
@@ -221,7 +248,7 @@ impl AgentHooks for XmlToolParsingHooks {
                 info!("🔍 XmlToolParsingHooks: Parsing content for XML tool calls");
 
                 // Try to parse tool calls from the content
-                match self.capability.parse_tool_calls(content) {
+                match self.parse_tool_calls(content) {
                     Ok(tool_calls) if !tool_calls.is_empty() => {
                         info!(
                             "🛠️ XmlToolParsingHooks: Found {} tool calls, executing them",
@@ -254,12 +281,12 @@ impl AgentHooks for XmlToolParsingHooks {
 
 /// Hooks implementation for logging capability
 pub struct LoggingHooks {
-    capability: LoggingCapability,
+    log_level: String,
 }
 
 impl LoggingHooks {
-    pub fn new(capability: LoggingCapability) -> Self {
-        Self { capability }
+    pub fn new(log_level: String) -> Self {
+        Self { log_level }
     }
 }
 
@@ -272,7 +299,7 @@ impl AgentHooks for LoggingHooks {
     ) -> Result<(), AgentError> {
         info!(
             "🔧 LoggingHooks: Task step completed - {} (level: {})",
-            task.content, self.capability.log_level
+            task.content, self.log_level
         );
         Ok(())
     }
@@ -286,7 +313,7 @@ impl AgentHooks for LoggingHooks {
         info!(
             "🔧 LoggingHooks: LLM step starting with {} messages (level: {})",
             messages.len(),
-            self.capability.log_level
+            self.log_level
         );
         Ok(messages.to_vec())
     }
@@ -294,12 +321,21 @@ impl AgentHooks for LoggingHooks {
 
 /// Hooks implementation for content filtering capability
 pub struct ContentFilteringHooks {
-    capability: ContentFilteringCapability,
+    banned_words: Vec<String>,
 }
 
 impl ContentFilteringHooks {
-    pub fn new(capability: ContentFilteringCapability) -> Self {
-        Self { capability }
+    pub fn new(banned_words: Vec<String>) -> Self {
+        Self { banned_words }
+    }
+    
+    fn filter_content(&self, content: &str) -> String {
+        let mut filtered = content.to_string();
+        for word in &self.banned_words {
+            let replacement = "*".repeat(word.len());
+            filtered = filtered.replace(word, &replacement);
+        }
+        filtered
     }
 }
 
@@ -312,7 +348,7 @@ impl AgentHooks for ContentFilteringHooks {
     ) -> Result<StepResult, AgentError> {
         match step_result {
             StepResult::Finish(content) => {
-                let filtered = self.capability.filter_content(&content);
+                let filtered = self.filter_content(&content);
                 info!(
                     "🔧 ContentFilteringHooks: Content filtered - original: {} chars, filtered: {} chars",
                     content.len(),
