@@ -1,5 +1,5 @@
 use crate::{
-    agent::{AgentEvent, AgentEventType, AgentExecutor, AgentHooks},
+    agent::{AgentEvent, AgentEventType, AgentExecutor},
     error::AgentError,
     llm::LLMExecutor,
     memory::SystemStep,
@@ -22,8 +22,53 @@ use crate::memory::{ActionStep, MemoryStep, PlanningStep, TaskStep};
 
 pub const MAX_ITERATIONS: i32 = 10;
 
+/// Trait for agent hooks that can be chained together
 #[async_trait::async_trait]
-pub trait BaseTrait: Send + Sync + std::fmt::Debug {
+pub trait AgentHooks: Send + Sync {
+    async fn after_task_step(
+        &self,
+        _task: TaskStep,
+        _context: Arc<ExecutorContext>,
+    ) -> Result<(), AgentError> {
+        Ok(())
+    }
+
+    async fn before_llm_step(
+        &self,
+        messages: &[Message],
+        _params: &Option<serde_json::Value>,
+        _context: Arc<ExecutorContext>,
+    ) -> Result<Vec<Message>, AgentError> {
+        Ok(messages.to_vec())
+    }
+
+    async fn before_tool_calls(
+        &self,
+        tool_calls: &[ToolCall],
+        _context: Arc<ExecutorContext>,
+    ) -> Result<Vec<ToolCall>, AgentError> {
+        Ok(tool_calls.to_vec())
+    }
+
+    async fn after_tool_calls(
+        &self,
+        _tool_responses: &[String],
+        _context: Arc<ExecutorContext>,
+    ) -> Result<(), AgentError> {
+        Ok(())
+    }
+
+    async fn after_finish(
+        &self,
+        step_result: StepResult,
+        _context: Arc<ExecutorContext>,
+    ) -> Result<StepResult, AgentError> {
+        Ok(step_result)
+    }
+}
+
+#[async_trait::async_trait]
+pub trait BaseAgent: Send + Sync + std::fmt::Debug {
     async fn validate(&self) -> Result<(), AgentError> {
         self.get_definition()
             .validate()
@@ -47,7 +92,7 @@ pub trait BaseTrait: Send + Sync + std::fmt::Debug {
         _event_tx: mpsc::Sender<AgentEvent>,
     ) -> Result<(), AgentError> {
         Err(AgentError::NotImplemented(
-            "BaseTrait::invoke_stream not implemented".to_string(),
+            "BaseAgent::invoke_stream not implemented".to_string(),
         ))
     }
 
@@ -89,7 +134,7 @@ pub struct StandardAgentImpl {
     session_store: Arc<Box<dyn SessionStore>>,
 }
 
-impl std::fmt::Debug for StandardAgent {
+impl std::fmt::Debug for StandardAgentImpl {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("StandardAgent")
             .field("definition", &self.definition)
@@ -824,7 +869,7 @@ pub enum AgentType {
 }
 
 #[async_trait::async_trait]
-impl BaseTrait for StandardAgentImpl {
+impl BaseAgent for StandardAgentImpl {
     fn agent_type(&self) -> AgentType {
         AgentType::Standard
     }
@@ -848,11 +893,11 @@ impl BaseTrait for StandardAgentImpl {
         context: Arc<ExecutorContext>,
         event_tx: Option<mpsc::Sender<AgentEvent>>,
     ) -> Result<String, AgentError> {
-        StandardAgent::invoke(self, task, params, context, event_tx).await
+        StandardAgentImpl::invoke(self, task, params, context, event_tx).await
     }
 
     fn clone_box(&self) -> Box<dyn BaseAgent> {
-        Box::new(StandardAgent::clone(self))
+        Box::new(StandardAgentImpl::clone(self))
     }
 
     fn get_name(&self) -> &str {
@@ -866,9 +911,9 @@ impl BaseTrait for StandardAgentImpl {
         context: Arc<ExecutorContext>,
         event_tx: mpsc::Sender<AgentEvent>,
     ) -> Result<(), AgentError> {
-        StandardAgent::invoke_stream(self, task, params, context, event_tx).await
+        StandardAgentImpl::invoke_stream(self, task, params, context, event_tx).await
     }
 }
 
 // Keep DefaultAgent as an alias for backward compatibility
-pub type DefaultAgent = StandardAgent;
+pub type DefaultAgent = StandardAgentImpl;

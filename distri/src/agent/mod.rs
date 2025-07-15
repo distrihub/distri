@@ -1,23 +1,23 @@
 pub mod agent;
 pub mod agents;
-pub mod capabilities;
-pub mod composable_agent;
 pub mod executor;
 pub mod factory;
-mod hooks;
+pub mod hooks;
 pub mod log;
 pub mod macros;
+pub mod plugin_agent;
 pub mod reason;
 pub mod server;
 use crate::types::ToolCall;
-pub use agent::{BaseAgent, StandardAgent, StepResult, MAX_ITERATIONS};
+pub use agent::{BaseAgent, StandardAgentImpl, StepResult, MAX_ITERATIONS};
 pub use agents::{
     create_tool_parser_agent_factory, create_tool_parser_agent_factory_with_format, ToolParserAgent,
 };
+pub use plugin_agent::Agent;
 use async_openai::types::Role;
 pub use executor::{AgentExecutor, AgentExecutorBuilder};
 pub use factory::AgentFactoryRegistry;
-pub use hooks::AgentHooks;
+pub use agent::AgentHooks;
 pub use log::{ModelLogger, StepLogger};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

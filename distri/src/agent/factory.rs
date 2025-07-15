@@ -45,7 +45,7 @@ impl AgentFactoryRegistry {
             "standard".to_string(),
             Arc::new(
                 |definition, tools_registry, executor, context, session_store| {
-                    Box::new(crate::agent::StandardAgent::new(
+                    Box::new(crate::agent::StandardAgentImpl::new(
                         definition,
                         tools_registry,
                         executor,

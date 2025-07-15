@@ -1,7 +1,7 @@
 /// Macro to automatically implement common BaseAgent methods for custom agents
 /// that wrap a StandardAgent
 #[macro_export]
-macro_rules! impl_base_agent_delegate {
+macro_rules! delegate_base_agent {
     ($agent_type:ty, $agent_name:expr, $inner_field:ident) => {
         #[async_trait::async_trait]
         impl $crate::agent::BaseAgent for $agent_type {

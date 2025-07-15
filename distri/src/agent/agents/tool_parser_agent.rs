@@ -1,6 +1,6 @@
 use crate::{
     agent::{
-        agent::{AgentType, StandardAgent, StepResult},
+        agent::{AgentType, StandardAgentImpl, StepResult},
         AgentEvent, AgentExecutor, AgentHooks, BaseAgent, ExecutorContext,
     },
     error::AgentError,
@@ -19,7 +19,7 @@ use tracing::{error, info, warn};
 /// to parse XML tool calls from the LLM response
 #[derive(Clone)]
 pub struct ToolParserAgent {
-    inner: StandardAgent,
+    inner: StandardAgentImpl,
     tools_registry: Arc<LlmToolsRegistry>,
     tool_call_format: ToolCallFormat,
 }
@@ -46,7 +46,7 @@ impl ToolParserAgent {
         let mut empty_definition = definition.clone();
         empty_definition.mcp_servers = Vec::new(); // Remove all MCP servers to have no tools
 
-        let inner = StandardAgent::new(
+        let inner = StandardAgentImpl::new(
             empty_definition,
             Arc::default(),
             coordinator,
@@ -113,7 +113,7 @@ another_tool({"param": "value"})
 }
 
 // Use the macro to automatically implement BaseAgent
-crate::impl_base_agent_delegate!(ToolParserAgent, "tool_parser", inner);
+crate::delegate_base_agent!(ToolParserAgent, "tool_parser", inner);
 
 #[async_trait::async_trait]
 impl AgentHooks for ToolParserAgent {
