@@ -23,7 +23,7 @@ use crate::memory::{ActionStep, MemoryStep, PlanningStep, TaskStep};
 pub const MAX_ITERATIONS: i32 = 10;
 
 #[async_trait::async_trait]
-pub trait BaseAgent: Send + Sync + std::fmt::Debug {
+pub trait BaseTrait: Send + Sync + std::fmt::Debug {
     async fn validate(&self) -> Result<(), AgentError> {
         self.get_definition()
             .validate()
@@ -47,7 +47,7 @@ pub trait BaseAgent: Send + Sync + std::fmt::Debug {
         _event_tx: mpsc::Sender<AgentEvent>,
     ) -> Result<(), AgentError> {
         Err(AgentError::NotImplemented(
-            "BaseAgent::invoke_stream not implemented".to_string(),
+            "BaseTrait::invoke_stream not implemented".to_string(),
         ))
     }
 
@@ -81,7 +81,7 @@ pub enum StepResult {
 
 /// Standard agent implementation
 #[derive(Clone)]
-pub struct StandardAgent {
+pub struct StandardAgentImpl {
     pub definition: AgentDefinition,
     tools_registry: Arc<LlmToolsRegistry>,
     executor: Arc<AgentExecutor>,
@@ -98,7 +98,7 @@ impl std::fmt::Debug for StandardAgent {
     }
 }
 
-impl StandardAgent {
+impl StandardAgentImpl {
     pub fn new(
         definition: AgentDefinition,
         tools_registry: Arc<LlmToolsRegistry>,
@@ -812,7 +812,7 @@ impl StandardAgent {
     }
 }
 #[async_trait::async_trait]
-impl AgentHooks for StandardAgent {}
+impl AgentHooks for StandardAgentImpl {}
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -824,7 +824,7 @@ pub enum AgentType {
 }
 
 #[async_trait::async_trait]
-impl BaseAgent for StandardAgent {
+impl BaseTrait for StandardAgentImpl {
     fn agent_type(&self) -> AgentType {
         AgentType::Standard
     }
