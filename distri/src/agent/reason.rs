@@ -1,10 +1,7 @@
-use crate::{
-    memory::TaskStep,
-    types::{LlmDefinition, Message, MessageContent, MessageRole, ModelSettings},
-};
+use crate::types::{LlmDefinition, Message, MessagePart, MessageRole, ModelSettings};
 
 pub async fn create_initial_plan(
-    task: &TaskStep,
+    message: &Message,
     tools_description: &str,
     model: &(dyn Fn(Vec<Message>) -> futures::future::BoxFuture<'static, anyhow::Result<String>>
           + Send
@@ -15,25 +12,12 @@ pub async fn create_initial_plan(
         Message {
             role: MessageRole::System,
             name: Some("facts".to_string()),
-            content: vec![MessageContent {
-                content_type: "text".to_string(),
-                text: Some(
-                    "Analyze the given task and list the key facts and requirements.".to_string(),
-                ),
-                image: None,
-            }],
-            tool_calls: Vec::new(),
+            parts: vec![MessagePart::Text(
+                "Analyze the given task and list the key facts and requirements.".to_string(),
+            )],
+            ..Default::default()
         },
-        Message {
-            role: MessageRole::User,
-            name: Some("task".to_string()),
-            content: vec![MessageContent {
-                content_type: "text".to_string(),
-                text: Some(format!("Task:\n{}", task.task)),
-                image: None,
-            }],
-            tool_calls: Vec::new(),
-        },
+        message.clone(),
     ];
 
     let facts = model(facts_messages).await?;
@@ -41,27 +25,20 @@ pub async fn create_initial_plan(
     // Then create plan based on facts
     let plan_messages = vec![
         Message {
+            id: uuid::Uuid::new_v4().to_string(),
             role: MessageRole::System,
             name: Some("plan".to_string()),
-            content: vec![MessageContent {
-                content_type: "text".to_string(),
-                text: Some(format!(
-                    "Create a detailed plan to solve the task. Available tools:\n{}",
-                    tools_description
-                )),
-                image: None,
-            }],
-            tool_calls: Vec::new(),
+            parts: vec![MessagePart::Text(format!(
+                "Create a detailed plan to solve the task. Available tools:\n{}",
+                tools_description
+            ))],
+            ..Default::default()
         },
         Message {
             role: MessageRole::User,
             name: Some("task".to_string()),
-            content: vec![MessageContent {
-                content_type: "text".to_string(),
-                text: Some(format!("Task: {}\n\nKnown facts:\n{}", task.task, facts)),
-                image: None,
-            }],
-            tool_calls: Vec::new(),
+            parts: message.parts.clone(),
+            ..Default::default()
         },
     ];
 
@@ -71,10 +48,10 @@ pub async fn create_initial_plan(
 }
 
 pub async fn update_plan(
-    task: &str,
+    message: &Message,
     tools_description: &str,
     previous_steps: &[Message],
-    remaining_steps: i32,
+    remaining_steps: usize,
     model: &(dyn Fn(Vec<Message>) -> futures::future::BoxFuture<'static, anyhow::Result<String>>
           + Send
           + Sync),
@@ -83,14 +60,10 @@ pub async fn update_plan(
     let facts_update_messages = vec![Message {
         role: MessageRole::System,
         name: Some("facts_update".to_string()),
-        content: vec![MessageContent {
-            content_type: "text".to_string(),
-            text: Some(
-                "Based on the execution history, update the list of known facts.".to_string(),
-            ),
-            image: None,
-        }],
-        tool_calls: Vec::new(),
+        parts: vec![MessagePart::Text(
+            "Based on the execution history, update the list of known facts.".to_string(),
+        )],
+        ..Default::default()
     }];
     let mut all_messages = facts_update_messages;
     all_messages.extend_from_slice(previous_steps);
@@ -99,32 +72,38 @@ pub async fn update_plan(
 
     // Create updated plan
     let plan_update_messages = vec![Message {
+        
         role: MessageRole::System,
         name: Some("plan_update".to_string()),
-        content: vec![MessageContent {
-            content_type: "text".to_string(),
-                text: Some(format!(
+        parts: vec![
+            MessagePart::Text(format!(
                     "Update the execution plan based on progress. You have {} steps remaining. Available tools:\n{}",
-                    remaining_steps, tools_description
-                )),
-                image: None,
-        }],
-        tool_calls: Vec::new(),
+                    remaining_steps, tools_description)
+        )],
+        ..Default::default()
     }];
     let mut all_messages = plan_update_messages;
     all_messages.extend_from_slice(previous_steps);
     all_messages.push(Message {
         role: MessageRole::User,
         name: Some("task".to_string()),
-        content: vec![MessageContent {
-            content_type: "text".to_string(),
-            text: Some(format!(
-                "Updated facts:\n{}\n\nProvide updated plan for completing the task: {}",
-                updated_facts, task
-            )),
-            image: None,
-        }],
-        tool_calls: Vec::new(),
+        parts: vec![MessagePart::Text(format!(
+            "Updated facts:\n{}\n\nProvide updated plan for completing the task: {}",
+            updated_facts,
+            message
+                .parts
+                .iter()
+                .find(|p| matches!(p, MessagePart::Text(_)))
+                .map(|p| {
+                    if let MessagePart::Text(text) = p {
+                        text.clone()
+                    } else {
+                        String::new()
+                    }
+                })
+                .unwrap_or_default()
+        ))],
+        ..Default::default()
     });
 
     let updated_plan = model(all_messages).await?;

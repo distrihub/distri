@@ -1,12 +1,12 @@
 use distri::agent::{AgentEvent, AgentEventType, AgentExecutor};
-use distri::memory::TaskStep;
+use distri::types::Message;
 use std::sync::Arc;
 use tracing::{error, info};
 
 pub async fn run(
     agent_name: &str,
     executor: Arc<AgentExecutor>,
-    task: TaskStep,
+    task: Message,
 ) -> anyhow::Result<()> {
     info!("Executing agent run");
 
@@ -15,13 +15,7 @@ pub async fn run(
     let agent_name = agent_name.to_string();
     let handle = tokio::spawn(async move {
         let res = executor
-            .execute_stream(
-                &agent_name,
-                task,
-                None,
-                tx,
-                Arc::default(), // No thread context for event execution
-            )
+            .execute_stream(&agent_name, task, Arc::default(), tx)
             .await;
         if let Err(e) = res {
             error!("Error from agent: {}", e);

@@ -2,56 +2,9 @@ use comfy_table::{modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL, ContentArra
 use tracing::info;
 
 use crate::{
-    memory::MemoryStep,
     tools::LlmToolsRegistry,
     types::{LlmDefinition, Message},
 };
-
-#[derive(Debug, Clone)]
-pub struct StepLogger {
-    pub verbose: bool,
-}
-
-impl StepLogger {
-    pub fn new(verbose: bool) -> Self {
-        Self { verbose }
-    }
-
-    pub fn log_step(&self, agent_id: &str, step: &MemoryStep) {
-        if !self.verbose {
-            return;
-        }
-
-        let mut table = Table::new()
-            .load_preset(UTF8_FULL)
-            .apply_modifier(UTF8_ROUND_CORNERS)
-            .set_content_arrangement(ContentArrangement::Dynamic)
-            .to_owned();
-        table.set_header(vec!["Agent", "Step Type", "Details"]);
-
-        match step {
-            MemoryStep::Task(task) => {
-                let details = task.task.to_string();
-                table.add_row(vec![agent_id, "Task", &details]);
-            }
-            MemoryStep::Planning(planning) => {
-                let facts = planning.facts.to_string();
-                let plan = planning.plan.to_string();
-                table.add_row(vec![agent_id, "Planning", &facts]);
-                table.add_row(vec!["", "Plan", &plan]);
-            }
-            MemoryStep::Action(action) => {
-                let output = action.model_output.as_deref().unwrap_or("No output");
-                table.add_row(vec![agent_id, "Action", output]);
-            }
-            MemoryStep::System(system) => {
-                let system_prompt = system.system_prompt.to_string();
-                table.add_row(vec![agent_id, "System", &system_prompt]);
-            }
-        }
-        info!("\n{}", table);
-    }
-}
 
 #[derive(Debug, Clone)]
 pub struct ModelLogger {
@@ -79,7 +32,7 @@ impl ModelLogger {
         let tools_str = tools_table(tools_registry).to_string();
 
         table.add_row(vec![llm_def.name.clone(), settings_str, tools_str]);
-        tracing::debug!("\n{}", table);
+        tracing::info!("\n{}", table);
     }
 
     pub fn log_messages(&self, messages: &[Message]) {
@@ -88,13 +41,32 @@ impl ModelLogger {
 
         for m in messages {
             let mut content = String::new();
-            for c in &m.content {
-                let content_str = match c.content_type.as_str() {
-                    "text" => c.text.clone().unwrap_or_default(),
-                    _ => c.content_type.clone(),
+            for c in &m.parts {
+                let content_str = match c {
+                    crate::types::MessagePart::Text(text) => text.clone(),
+                    _ => continue,
                 };
                 content.push_str(&content_str);
                 content.push_str("\n");
+            }
+            if let Some(metadata) = &m.metadata {
+                match metadata {
+                    crate::types::MessageMetadata::ToolResponse { tool_call_id, .. } => {
+                        content.push_str(&format!("Tool response: {}", tool_call_id));
+                    }
+                    crate::types::MessageMetadata::ToolCalls { tool_calls } => {
+                        content.push_str(&format!("Tool calls: {:?}", tool_calls));
+                    }
+                    crate::types::MessageMetadata::FinalResponse { final_response } => {
+                        content.push_str(&format!("Final response: {}", final_response));
+                    }
+                    crate::types::MessageMetadata::PlanFacts { facts } => {
+                        content.push_str(&format!("Plan facts: {}", facts));
+                    }
+                    crate::types::MessageMetadata::Plan { plan } => {
+                        content.push_str(&format!("Plan: {}", plan));
+                    }
+                }
             }
             table.add_row(vec![format!("{:?}", m.role), content]);
         }
@@ -102,7 +74,7 @@ impl ModelLogger {
         table
             .load_preset(comfy_table::presets::UTF8_FULL)
             .set_content_arrangement(comfy_table::ContentArrangement::Dynamic);
-        tracing::debug!("{}", table);
+        tracing::info!("{}", table);
     }
     pub fn log_model_execution(
         &self,

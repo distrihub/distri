@@ -1,13 +1,14 @@
 use async_trait::async_trait;
-use uuid::Uuid;
 
 use crate::{
     agent::ExecutorContext,
-    memory::MemoryStep,
-    types::{CreateThreadRequest, McpSession, Thread, ThreadSummary, UpdateThreadRequest},
+    types::{
+        CreateThreadRequest, McpSession, Message, Task, TaskStatus, Thread, ThreadSummary,
+        UpdateThreadRequest,
+    },
     AgentStore, MemoryStore, SessionMemory, SessionStore, TaskStore, ThreadStore, ToolSessionStore,
 };
-use distri_a2a::{Artifact, EventKind, Message as A2aMessage, Task, TaskState, TaskStatus};
+use distri_a2a::Artifact;
 
 // Noop ToolSessionStore
 #[derive(Default)]
@@ -30,24 +31,20 @@ pub struct NoopSessionStore;
 
 #[async_trait::async_trait]
 impl SessionStore for NoopSessionStore {
-    async fn get_steps(&self, _thread_id: &str) -> anyhow::Result<Vec<MemoryStep>> {
-        Ok(vec![])
-    }
-
-    async fn store_step(&self, _thread_id: &str, _step: MemoryStep) -> anyhow::Result<()> {
-        Ok(())
-    }
-
     async fn clear_session(&self, _thread_id: &str) -> anyhow::Result<()> {
         Ok(())
     }
 
-    async fn inc_iteration(&self, _thread_id: &str) -> anyhow::Result<i32> {
-        Ok(0)
+    async fn set_value(&self, _thread_id: &str, _key: &str, _value: &str) -> anyhow::Result<()> {
+        Ok(())
     }
 
-    async fn get_iteration(&self, _thread_id: &str) -> anyhow::Result<i32> {
-        Ok(0)
+    async fn get_value(&self, _thread_id: &str, _key: &str) -> anyhow::Result<Option<String>> {
+        Ok(None)
+    }
+
+    async fn delete_value(&self, _thread_id: &str, _key: &str) -> anyhow::Result<()> {
+        Ok(())
     }
 }
 
@@ -90,20 +87,8 @@ pub struct NoopTaskStore;
 #[async_trait]
 impl TaskStore for NoopTaskStore {
     async fn create_task(&self, context_id: &str, task_id: Option<&str>) -> anyhow::Result<Task> {
-        let task_id = task_id.unwrap_or(&Uuid::new_v4().to_string()).to_string();
-        Ok(Task {
-            kind: EventKind::Task,
-            id: task_id.clone(),
-            context_id: context_id.to_string(),
-            status: TaskStatus {
-                state: TaskState::Submitted,
-                message: None,
-                timestamp: Some(chrono::Utc::now().to_rfc3339()),
-            },
-            artifacts: vec![],
-            history: vec![],
-            metadata: None,
-        })
+        let task = TaskStore::init_task(self, context_id, task_id);
+        Ok(task)
     }
 
     async fn get_task(&self, _task_id: &str) -> anyhow::Result<Option<Task>> {
@@ -118,11 +103,7 @@ impl TaskStore for NoopTaskStore {
         Err(anyhow::anyhow!("Task not found"))
     }
 
-    async fn add_message_to_task(
-        &self,
-        _task_id: &str,
-        _message: A2aMessage,
-    ) -> anyhow::Result<()> {
+    async fn add_message_to_task(&self, _task_id: &str, _message: &Message) -> anyhow::Result<()> {
         Ok(())
     }
 
@@ -134,6 +115,10 @@ impl TaskStore for NoopTaskStore {
         Ok(())
     }
     async fn list_tasks(&self, _context_id: Option<&str>) -> anyhow::Result<Vec<Task>> {
+        Ok(vec![])
+    }
+
+    async fn get_messages(&self, _thread_id: &str) -> anyhow::Result<Vec<Message>> {
         Ok(vec![])
     }
 }

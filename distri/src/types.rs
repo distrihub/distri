@@ -88,7 +88,7 @@ impl From<AgentDefinition> for LlmDefinition {
     fn from(definition: AgentDefinition) -> Self {
         Self {
             name: definition.name,
-            system_prompt: definition.system_prompt,
+            system_prompt: Some(definition.system_prompt),
             model_settings: definition.model_settings,
             history_size: definition.history_size,
             include_tools: definition.include_tools,
@@ -114,8 +114,8 @@ pub struct AgentDefinition {
     pub agent_type: Option<String>,
 
     /// The system prompt for the agent, if any.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub system_prompt: Option<String>,
+    #[serde(default)]
+    pub system_prompt: String,
     /// A list of MCP server definitions associated with the agent.
     #[serde(default)]
     pub mcp_servers: Vec<McpDefinition>,
@@ -167,7 +167,7 @@ pub struct PlanConfig {
     pub interval: i32,
     /// The maximum number of iterations allowed during planning.
     #[serde(default = "default_plan_max_iterations")]
-    pub max_iterations: Option<i32>,
+    pub max_iterations: Option<usize>,
     /// The model settings for the planning agent.
     #[serde(default)]
     pub model_settings: ModelSettings,
@@ -177,12 +177,12 @@ fn default_plan_interval() -> i32 {
     5
 }
 
-fn default_plan_max_iterations() -> Option<i32> {
+fn default_plan_max_iterations() -> Option<usize> {
     Some(10)
 }
 
 impl PlanConfig {
-    pub fn new(interval: i32, max_iterations: i32, model_settings: ModelSettings) -> Self {
+    pub fn new(interval: i32, max_iterations: usize, model_settings: ModelSettings) -> Self {
         Self {
             interval: interval,
             max_iterations: Some(max_iterations),
@@ -199,30 +199,132 @@ pub enum MessageRole {
     Assistant,
     /// Represents a message from the user.
     User,
-    /// Represents a response from a tool.
-    ToolResponse,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema)]
-pub struct MessageContent {
-    /// The type of content (e.g., text, image).
-    #[serde(rename = "type")]
-    pub content_type: String,
-    /// The text content of the message, if any.
-    #[serde(default)]
-    pub text: Option<String>,
-    /// The image content of the message, if any.
-    #[serde(default)]
-    pub image: Option<String>,
+#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum MessagePart {
+    Text(String),
+    Image(FileType),
+}
+#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, PartialEq)]
+#[serde(rename_all = "lowercase", tag = "type")]
+pub enum FileType {
+    // bytes are base64 encoded
+    Bytes {
+        bytes: String,
+        mime_type: String,
+        name: Option<String>,
+    },
+    Url {
+        url: String,
+        mime_type: String,
+        name: Option<String>,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, JsonSchema)]
 pub struct Message {
+    pub id: String,
     pub role: MessageRole,
     pub name: Option<String>,
-    pub content: Vec<MessageContent>,
-    #[serde(default)]
-    pub tool_calls: Vec<ToolCall>,
+    pub parts: Vec<MessagePart>,
+    pub metadata: Option<MessageMetadata>,
+}
+
+impl Default for Message {
+    fn default() -> Self {
+        Self {
+            id: uuid::Uuid::new_v4().to_string(),
+            role: MessageRole::User,
+            name: None,
+            parts: vec![],
+            metadata: None,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema)]
+pub struct ToolResult {
+    pub tool_call_id: String,
+    pub result: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema)]
+#[serde(rename_all = "lowercase", tag = "type")]
+pub enum MessageMetadata {
+    ToolResponse {
+        tool_call_id: String,
+        result: String,
+    },
+    ToolCalls {
+        tool_calls: Vec<ToolCall>,
+    },
+    FinalResponse {
+        final_response: bool,
+    },
+    PlanFacts {
+        facts: String,
+    },
+    Plan {
+        plan: String,
+    },
+}
+
+impl Message {
+    pub fn user(task: String, name: Option<String>) -> Self {
+        Self {
+            role: MessageRole::User,
+            name,
+            parts: vec![MessagePart::Text(task)],
+            ..Default::default()
+        }
+    }
+    pub fn system(task: String, name: Option<String>) -> Self {
+        Self {
+            role: MessageRole::System,
+            name,
+            parts: vec![MessagePart::Text(task)],
+            ..Default::default()
+        }
+    }
+
+    pub fn assistant(task: String, name: Option<String>) -> Self {
+        Self {
+            role: MessageRole::Assistant,
+            name,
+            parts: vec![MessagePart::Text(task)],
+            ..Default::default()
+        }
+    }
+
+    pub fn as_text(&self) -> Option<String> {
+        let part = self.parts.iter().next();
+        if let Some(MessagePart::Text(text)) = part {
+            Some(text.clone())
+        } else {
+            None
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema)]
+pub struct Task {
+    pub id: String,
+    pub thread_id: String,
+    pub status: TaskStatus,
+    pub messages: Vec<Message>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema)]
+pub enum TaskStatus {
+    Pending,
+    Running,
+    Completed,
+    Failed,
+    Canceled,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

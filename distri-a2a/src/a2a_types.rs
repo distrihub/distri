@@ -367,14 +367,28 @@ pub struct TextPart {
 #[serde(rename_all = "camelCase")]
 pub struct FilePart {
     pub file: FileObject,
+    #[serde(default)]
+    pub metadata: Option<serde_json::Value>,
 }
 
 /// A file object, which can be represented by a URI or by its raw bytes.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(untagged)]
 pub enum FileObject {
-    WithUri { uri: String },
-    WithBytes { bytes: String },
+    WithUri {
+        uri: String,
+        #[serde(default)]
+        mime_type: Option<String>,
+        #[serde(default)]
+        name: Option<String>,
+    },
+    WithBytes {
+        bytes: String,
+        #[serde(default)]
+        mime_type: Option<String>,
+        #[serde(default)]
+        name: Option<String>,
+    },
 }
 
 /// A data part of a message, containing arbitrary JSON data.

@@ -38,7 +38,6 @@ fn custom_mcp_servers() -> HashMap<String, ServerMetadata> {
                 let server = mcp_twitter::build(transport)?;
                 Ok(Box::new(server) as Box<dyn ServerTrait>)
             })),
-            memories: HashMap::new(),
         },
     );
 

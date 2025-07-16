@@ -5,11 +5,14 @@ use uuid::Uuid;
 
 use crate::{
     agent::ExecutorContext,
-    memory::{LocalAgentMemory, MemoryStep},
-    types::{CreateThreadRequest, McpSession, Thread, ThreadSummary, UpdateThreadRequest},
-    AgentStore, MemoryStore, SessionMemory, SessionStore, TaskStore, ThreadStore, ToolSessionStore,
+    types::{
+        CreateThreadRequest, McpSession, Message, Task, TaskStatus, Thread, ThreadSummary,
+        UpdateThreadRequest,
+    },
+    AgentStore, LocalSession, MemoryStore, SessionMemory, SessionStore, TaskStore, ThreadStore,
+    ToolSessionStore,
 };
-use distri_a2a::{Artifact, Message as A2aMessage, Task, TaskState, TaskStatus};
+use distri_a2a::Artifact;
 
 // Example in-memory implementation
 #[derive(Default)]
@@ -37,8 +40,7 @@ impl ToolSessionStore for InMemorySessionStore {
 // Local SessionStore implementation using HashMap with just thread_id
 #[derive(Clone)]
 pub struct LocalSessionStore {
-    sessions: Arc<RwLock<HashMap<String, LocalAgentMemory>>>,
-    iterations: Arc<RwLock<HashMap<String, i32>>>,
+    sessions: Arc<RwLock<HashMap<String, LocalSession>>>,
 }
 
 impl Default for LocalSessionStore {
@@ -51,52 +53,38 @@ impl LocalSessionStore {
     pub fn new() -> Self {
         Self {
             sessions: Arc::new(RwLock::new(HashMap::new())),
-            iterations: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 }
 
 #[async_trait::async_trait]
 impl SessionStore for LocalSessionStore {
-    async fn get_steps(&self, thread_id: &str) -> anyhow::Result<Vec<MemoryStep>> {
-        let sessions = self.sessions.read().await;
-        let memory = sessions
-            .get(thread_id)
-            .cloned()
-            .unwrap_or_else(LocalAgentMemory::default);
-        Ok(memory.get_steps())
-    }
-
-    async fn store_step(&self, thread_id: &str, step: MemoryStep) -> anyhow::Result<()> {
-        let mut sessions = self.sessions.write().await;
-        let memory = sessions
-            .entry(thread_id.to_string())
-            .or_insert_with(LocalAgentMemory::default);
-        memory.add_step(step);
-        Ok(())
-    }
-
     async fn clear_session(&self, thread_id: &str) -> anyhow::Result<()> {
         let mut sessions = self.sessions.write().await;
         sessions.remove(thread_id);
         Ok(())
     }
 
-    async fn inc_iteration(&self, thread_id: &str) -> anyhow::Result<i32> {
-        let mut iterations = self.iterations.write().await;
-        tracing::debug!(
-            "Incrementing iteration for thread: {}, iterations: {:#?}",
-            thread_id,
-            iterations
-        );
-        let count = iterations.entry(thread_id.to_string()).or_insert(0);
-        *count += 1;
-        Ok(*count)
+    async fn set_value(&self, thread_id: &str, key: &str, value: &str) -> anyhow::Result<()> {
+        let mut sessions = self.sessions.write().await;
+        let session = sessions
+            .entry(thread_id.to_string())
+            .or_insert_with(LocalSession::default);
+        session.values.insert(key.to_string(), value.to_string());
+        Ok(())
     }
 
-    async fn get_iteration(&self, thread_id: &str) -> anyhow::Result<i32> {
-        let iterations = self.iterations.read().await;
-        Ok(*iterations.get(thread_id).unwrap_or(&0))
+    async fn get_value(&self, thread_id: &str, key: &str) -> anyhow::Result<Option<String>> {
+        let sessions = self.sessions.read().await;
+        let session = sessions.get(thread_id).cloned().unwrap_or_default();
+        Ok(session.values.get(key).cloned())
+    }
+
+    async fn delete_value(&self, thread_id: &str, key: &str) -> anyhow::Result<()> {
+        let mut sessions = self.sessions.write().await;
+        let session = sessions.get_mut(thread_id).unwrap();
+        session.values.remove(key);
+        Ok(())
     }
 }
 
@@ -216,6 +204,7 @@ impl TaskStore for HashMapTaskStore {
         let mut tasks = self.tasks.write().await;
         if let Some(task) = tasks.get_mut(task_id) {
             task.status = status;
+            task.updated_at = chrono::Utc::now().timestamp_millis();
         }
         Ok(())
     }
@@ -226,28 +215,28 @@ impl TaskStore for HashMapTaskStore {
             .get_mut(task_id)
             .ok_or_else(|| anyhow::anyhow!("Task not found"))?;
 
-        task.status = TaskStatus {
-            state: TaskState::Canceled,
-            message: None,
-            timestamp: Some(chrono::Utc::now().to_rfc3339()),
-        };
+        task.status = TaskStatus::Canceled;
 
         Ok(task.clone())
     }
 
-    async fn add_message_to_task(&self, task_id: &str, message: A2aMessage) -> anyhow::Result<()> {
+    async fn add_message_to_task(&self, task_id: &str, message: &Message) -> anyhow::Result<()> {
         let mut tasks = self.tasks.write().await;
         if let Some(task) = tasks.get_mut(task_id) {
-            task.history.push(message);
+            task.messages.push(message.clone());
         }
         Ok(())
     }
 
-    async fn add_artifact_to_task(&self, task_id: &str, artifact: Artifact) -> anyhow::Result<()> {
-        let mut tasks = self.tasks.write().await;
-        if let Some(task) = tasks.get_mut(task_id) {
-            task.artifacts.push(artifact);
-        }
+    async fn add_artifact_to_task(
+        &self,
+        _task_id: &str,
+        _artifact: Artifact,
+    ) -> anyhow::Result<()> {
+        // let mut tasks = self.tasks.write().await;
+        // if let Some(task) = tasks.get_mut(task_id) {
+        //     task.artifacts.push(artifact);
+        // }
         Ok(())
     }
     async fn list_tasks(&self, context_id: Option<&str>) -> anyhow::Result<Vec<Task>> {
@@ -255,13 +244,24 @@ impl TaskStore for HashMapTaskStore {
         let result = if let Some(context_id) = context_id {
             tasks
                 .values()
-                .filter(|task| task.context_id == context_id)
+                .filter(|task| task.thread_id == context_id)
                 .cloned()
                 .collect()
         } else {
             tasks.values().cloned().collect()
         };
         Ok(result)
+    }
+
+    async fn get_messages(&self, thread_id: &str) -> anyhow::Result<Vec<Message>> {
+        let tasks = self.tasks.read().await;
+        let result: Vec<Task> = tasks
+            .values()
+            .filter(|task| task.thread_id == thread_id)
+            .cloned()
+            .collect();
+        let messages = result.into_iter().flat_map(|task| task.messages).collect();
+        Ok(messages)
     }
 }
 

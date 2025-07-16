@@ -1,10 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
 
-use crate::{
-    memory::{AgentMemory, LocalAgentMemory, MemoryStep},
-    MemoryStore, SessionMemory, SessionStore,
-};
+use crate::{LocalSession, MemoryStore, SessionMemory, SessionStore};
 
 // File-based MemoryStore implementation using user_id
 #[derive(Clone)]
@@ -130,7 +127,7 @@ impl MemoryStore for FileMemoryStore {
 #[derive(Clone)]
 pub struct FileSessionStore {
     file_path: String,
-    sessions: Arc<RwLock<HashMap<String, LocalAgentMemory>>>,
+    sessions: Arc<RwLock<HashMap<String, LocalSession>>>,
 }
 
 impl FileSessionStore {
@@ -146,7 +143,7 @@ impl FileSessionStore {
     fn get_file_path(&self, thread_id: &str) -> String {
         format!("{}/{}.session", self.file_path, thread_id)
     }
-
+    #[allow(dead_code)]
     async fn load_from_file(&self, thread_id: &str) -> anyhow::Result<()> {
         let path = self.get_file_path(thread_id);
         if !tokio::fs::try_exists(&path).await? {
@@ -154,7 +151,7 @@ impl FileSessionStore {
         }
 
         let contents = tokio::fs::read_to_string(&path).await?;
-        let memory: LocalAgentMemory = serde_json::from_str(&contents)?;
+        let memory: LocalSession = serde_json::from_str(&contents)?;
 
         let mut sessions = self.sessions.write().await;
         sessions.insert(thread_id.to_string(), memory);
@@ -175,28 +172,29 @@ impl FileSessionStore {
 
 #[async_trait::async_trait]
 impl SessionStore for FileSessionStore {
-    async fn get_steps(&self, thread_id: &str) -> anyhow::Result<Vec<MemoryStep>> {
-        self.load_from_file(thread_id).await?;
-        let sessions = self.sessions.read().await;
-        let memory = sessions
-            .get(thread_id)
-            .cloned()
-            .unwrap_or_else(LocalAgentMemory::default);
-        Ok(memory.get_steps())
-    }
-
-    async fn store_step(&self, thread_id: &str, step: MemoryStep) -> anyhow::Result<()> {
-        {
-            let mut sessions = self.sessions.write().await;
-            let memory = sessions
-                .entry(thread_id.to_string())
-                .or_insert_with(|| LocalAgentMemory::new(thread_id.to_string()));
-            memory.add_step(step);
-        }
+    async fn set_value(&self, thread_id: &str, key: &str, value: &str) -> anyhow::Result<()> {
+        let mut sessions = self.sessions.write().await;
+        let session = sessions
+            .entry(thread_id.to_string())
+            .or_insert_with(LocalSession::default);
+        session.values.insert(key.to_string(), value.to_string());
         self.save_to_file(thread_id).await?;
         Ok(())
     }
 
+    async fn get_value(&self, thread_id: &str, key: &str) -> anyhow::Result<Option<String>> {
+        let sessions = self.sessions.read().await;
+        let session = sessions.get(thread_id).cloned().unwrap_or_default();
+        Ok(session.values.get(key).cloned())
+    }
+
+    async fn delete_value(&self, thread_id: &str, key: &str) -> anyhow::Result<()> {
+        let mut sessions = self.sessions.write().await;
+        let session = sessions.get_mut(thread_id).unwrap();
+        session.values.remove(key);
+        self.save_to_file(thread_id).await?;
+        Ok(())
+    }
     async fn clear_session(&self, thread_id: &str) -> anyhow::Result<()> {
         let mut sessions = self.sessions.write().await;
         sessions.remove(thread_id);
@@ -206,27 +204,5 @@ impl SessionStore for FileSessionStore {
             tokio::fs::remove_file(&path).await?;
         }
         Ok(())
-    }
-
-    async fn inc_iteration(&self, run_id: &str) -> anyhow::Result<i32> {
-        let iteration = {
-            let mut sessions = self.sessions.write().await;
-            let memory = sessions
-                .entry(run_id.to_string())
-                .or_insert_with(|| LocalAgentMemory::new(run_id.to_string()));
-            memory.iteration += 1;
-            memory.iteration
-        };
-        self.save_to_file(run_id).await?;
-        Ok(iteration)
-    }
-
-    async fn get_iteration(&self, run_id: &str) -> anyhow::Result<i32> {
-        let sessions = self.sessions.read().await;
-        let memory = sessions
-            .get(run_id)
-            .cloned()
-            .unwrap_or_else(LocalAgentMemory::default);
-        Ok(memory.iteration)
     }
 }

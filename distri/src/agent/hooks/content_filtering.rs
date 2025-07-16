@@ -27,7 +27,7 @@ impl ContentFilteringHooks {
 
 #[async_trait::async_trait]
 impl AgentHooks for ContentFilteringHooks {
-    async fn after_finish(&self, step_result: StepResult) -> Result<StepResult, AgentError> {
+    async fn before_step_result(&self, step_result: StepResult) -> Result<StepResult, AgentError> {
         match step_result {
             StepResult::Finish(content) => {
                 let filtered = self.filter_content(&content);

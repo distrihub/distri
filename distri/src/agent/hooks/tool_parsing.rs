@@ -132,27 +132,27 @@ Do not include any other text in your response when using tools. Only return the
 
 #[async_trait::async_trait]
 impl AgentHooks for ToolParsingHooks {
-    async fn before_llm_step(&self, messages: &[Message]) -> Result<Vec<Message>, AgentError> {
-        debug!(
-            "🔧 ToolParsingHooks: Modifying system prompt to include XML tool call instructions"
-        );
+    async fn llm_messages(&self, messages: &[Message]) -> Result<Vec<Message>, AgentError> {
+        info!("🔧 ToolParsingHooks: Modifying system prompt to include XML tool call instructions");
 
-        let mut modified_messages = messages.to_vec();
-
+        let mut new_messages = messages.to_vec();
         // Find and modify the system message to include XML tool call instructions
-        for message in &mut modified_messages {
+        for message in new_messages.iter_mut() {
             if let crate::types::MessageRole::System = message.role {
-                if let Some(content) = message.content.first_mut() {
-                    if let Some(text) = &mut content.text {
-                        // Append format-specific tool call instructions to the system prompt
-                        let format_instructions = self.get_format_instructions();
-                        *text = format!("{}{}", text, format_instructions);
+                if let Some(content) = message.parts.first_mut() {
+                    match content {
+                        crate::types::MessagePart::Text(text) => {
+                            // Append format-specific tool call instructions to the system prompt
+                            let format_instructions = self.get_format_instructions();
+                            *text = format!("{}{}", text, format_instructions);
+                        }
+                        _ => {}
                     }
                 }
             }
         }
 
-        Ok(modified_messages)
+        Ok(new_messages)
     }
 
     async fn after_execute(

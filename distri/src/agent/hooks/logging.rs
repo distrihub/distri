@@ -1,7 +1,6 @@
 use crate::{
     agent::{AgentEvent, AgentHooks, ExecutorContext},
     error::AgentError,
-    memory::TaskStep,
     types::Message,
 };
 use std::sync::Arc;
@@ -23,19 +22,18 @@ impl LoggingHooks {
 impl AgentHooks for LoggingHooks {
     async fn before_invoke(
         &self,
-        task: TaskStep,
-        _params: Option<serde_json::Value>,
+        message: Message,
         _context: Arc<ExecutorContext>,
         _event_tx: Option<tokio::sync::mpsc::Sender<AgentEvent>>,
     ) -> Result<(), AgentError> {
         info!(
-            "🔧 LoggingHooks: Task step completed - {} (level: {})",
-            task.task, self.log_level
+            "🔧 LoggingHooks: Message received - {:?} (level: {})",
+            message.parts, self.log_level
         );
         Ok(())
     }
 
-    async fn before_llm_step(&self, messages: &[Message]) -> Result<Vec<Message>, AgentError> {
+    async fn llm_messages(&self, messages: &[Message]) -> Result<Vec<Message>, AgentError> {
         info!(
             "🔧 LoggingHooks: LLM step starting with {} messages (level: {})",
             messages.len(),

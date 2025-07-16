@@ -1,14 +1,10 @@
 use crate::a2a::stream::handle_message_send_streaming_sse;
 use crate::a2a::{extract_text_from_message, unimplemented_error, SseMessage};
 use crate::agent::AgentExecutor;
-use crate::memory::TaskStep;
 use crate::types::{default_agent_version, ServerConfig};
 use distri_a2a::{AgentCard, Task};
 
-use distri_a2a::{
-    JsonRpcError, JsonRpcRequest, JsonRpcResponse, Message as A2aMessage, MessageSendParams, Part,
-    Role, TaskIdParams, TaskState, TaskStatus, TextPart,
-};
+use distri_a2a::{JsonRpcError, JsonRpcRequest, JsonRpcResponse, MessageSendParams, TaskIdParams};
 use futures::future::Either;
 
 use std::sync::Arc;
@@ -70,7 +66,7 @@ impl A2AHandler {
         })?;
 
         match self.executor.task_store.get_task(&params.id).await {
-            Ok(Some(task)) => Ok(task),
+            Ok(Some(task)) => Ok(task.into()),
             Ok(None) => Err(JsonRpcError {
                 code: -32001,
                 message: "Task not found".to_string(),
@@ -104,12 +100,10 @@ impl A2AHandler {
 
         Ok(ExecutorContext {
             thread_id: params.message.context_id.unwrap_or_default(),
-            run_id: Arc::new(tokio::sync::Mutex::new(
-                params
-                    .message
-                    .task_id
-                    .unwrap_or_else(|| Uuid::new_v4().to_string()),
-            )),
+            run_id: params
+                .message
+                .task_id
+                .unwrap_or_else(|| Uuid::new_v4().to_string()),
             verbose,
             user_id,
             metadata,
@@ -245,75 +239,10 @@ impl A2AHandler {
                 data: None,
             })?;
 
-        // Convert A2A message to internal format
-        let task_step = TaskStep {
-            task: extract_text_from_message(&params.message),
-            task_images: None,
-        };
-
-        // Update task status to working
-        let working_status = TaskStatus {
-            state: TaskState::Working,
-            message: Some(params.message.clone()),
-            timestamp: Some(chrono::Utc::now().to_rfc3339()),
-        };
-        task_store
-            .update_task_status(&task.id, working_status)
-            .await
-            .map_err(|e| JsonRpcError {
-                code: -32603,
-                message: format!("Failed to update task status: {}", e),
-                data: None,
-            })?;
-
-        let execution_result = coordinator
-            .execute(&agent_id, task_step, None, executor_context.clone(), None)
+        let _execution_result = coordinator
+            .execute(&agent_id, params.message.into(), executor_context, None)
             .await;
-        let final_status = match execution_result {
-            Ok(response) => {
-                // Create response message
-                let response_message = A2aMessage {
-                    message_id: Uuid::new_v4().to_string(),
-                    role: Role::Agent,
-                    parts: vec![Part::Text(TextPart { text: response })],
-                    context_id: Some(thread_id.clone()),
-                    task_id: Some(task.id.clone()),
-                    ..Default::default()
-                };
 
-                // Add response to task history
-                task_store
-                    .add_message_to_task(&task.id, response_message.clone())
-                    .await
-                    .map_err(|e| JsonRpcError {
-                        code: -32603,
-                        message: format!("Failed to add message to task: {}", e),
-                        data: None,
-                    })?;
-
-                TaskStatus {
-                    state: TaskState::Completed,
-                    message: Some(response_message),
-                    timestamp: Some(chrono::Utc::now().to_rfc3339()),
-                }
-            }
-            Err(_) => TaskStatus {
-                state: TaskState::Failed,
-                message: None,
-                timestamp: Some(chrono::Utc::now().to_rfc3339()),
-            },
-        };
-
-        // Update final task status
-        task_store
-            .update_task_status(&task.id, final_status)
-            .await
-            .map_err(|e| JsonRpcError {
-                code: -32603,
-                message: format!("Failed to update final task status: {}", e),
-                data: None,
-            })?;
-        // Get updated task
         let updated_task = task_store
             .get_task(&task.id)
             .await
@@ -328,6 +257,7 @@ impl A2AHandler {
                 data: None,
             })?;
 
+        let updated_task: Task = updated_task.into();
         Ok(serde_json::to_value(updated_task).unwrap())
     }
 

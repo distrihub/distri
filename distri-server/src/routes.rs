@@ -1,7 +1,7 @@
 use actix_web::Either;
 use actix_web::{web, HttpResponse};
 use actix_web_lab::sse::{self, Sse};
-use distri::a2a::A2AHandler;
+use distri::a2a::{from_message_and_task, A2AHandler};
 use distri::agent::AgentExecutor;
 use distri::types::{AgentDefinition, ServerConfig, UpdateThreadRequest};
 use distri_a2a::JsonRpcRequest;
@@ -215,12 +215,7 @@ async fn list_tasks(
             let limit = query.limit.unwrap_or(50) as usize;
 
             // Sort by timestamp descending (most recent first)
-            tasks.sort_by(|a, b| match (&a.status.timestamp, &b.status.timestamp) {
-                (Some(a_time), Some(b_time)) => b_time.cmp(a_time),
-                (Some(_), None) => std::cmp::Ordering::Less,
-                (None, Some(_)) => std::cmp::Ordering::Greater,
-                (None, None) => std::cmp::Ordering::Equal,
-            });
+            tasks.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
 
             let end = std::cmp::min(offset + limit, tasks.len());
             if offset >= tasks.len() {
@@ -247,12 +242,17 @@ async fn get_thread_messages(
             // Filter tasks by thread context and extract messages from history
             let thread_tasks: Vec<_> = tasks
                 .into_iter()
-                .filter(|task| task.context_id == thread_id)
+                .filter(|task| task.thread_id == thread_id)
                 .collect();
 
-            let mut messages = Vec::new();
+            let mut messages: Vec<distri_a2a::Message> = Vec::new();
             for task in thread_tasks {
-                messages.extend(task.history);
+                let task_messages = &task.messages;
+                messages.extend(
+                    task_messages
+                        .into_iter()
+                        .map(|m| from_message_and_task(&m, &task)),
+                );
             }
             HttpResponse::Ok().json(messages)
         }

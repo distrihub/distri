@@ -5,9 +5,8 @@ use tracing::info;
 use crate::{
     agent::{AgentEvent, AgentEventType, DISTRI_LOCAL_SERVER},
     init_logging,
-    memory::TaskStep,
     tests::utils::{get_search_tool, init_executor},
-    types::{AgentDefinition, McpDefinition, ModelSettings},
+    types::{AgentDefinition, McpDefinition, Message, ModelSettings},
 };
 
 #[tokio::test(flavor = "multi_thread")]
@@ -20,10 +19,7 @@ async fn test_agent_coordination() -> anyhow::Result<()> {
         name: "search_agent".to_string(),
         description: "Test agent 1".to_string(),
         agent_type: Some("standard".to_string()),
-        system_prompt: Some(
-            "You are agent 1. When you receive a message, call search_agent and summarize the profile!"
-                .to_string(),
-        ),
+        system_prompt: "You are agent 1. When you receive a message, call search_agent and summarize the profile!".to_string(),
         mcp_servers: tool_defs.clone(),
         model_settings: ModelSettings::default(),
         ..Default::default()
@@ -33,7 +29,7 @@ async fn test_agent_coordination() -> anyhow::Result<()> {
         name: "agent2".to_string(),
         description: "Test agent 2".to_string(),
         agent_type: Some("standard".to_string()),
-        system_prompt: Some("You are agent 2. When you receive a message about twitter, use the twitter_agent tool to get information.".to_string()),
+        system_prompt: "You are agent 2. When you receive a message about twitter, use the twitter_agent tool to get information.".to_string(),
         mcp_servers: vec![McpDefinition {
             filter: Some(vec!["search_agent".to_string()]),
             name: DISTRI_LOCAL_SERVER.to_string(),
@@ -59,11 +55,10 @@ async fn test_agent_coordination() -> anyhow::Result<()> {
     let agent2_result = executor
         .execute(
             "agent2",
-            TaskStep {
-                task: "Ask twitter_agent for the summary of my timeline".to_string(),
-                task_images: None,
-            },
-            None,
+            Message::user(
+                "Ask twitter_agent for the summary of my timeline".to_string(),
+                None,
+            ),
             Arc::default(),
             None,
         )
@@ -84,9 +79,7 @@ async fn test_agent_coordination_streaming() -> anyhow::Result<()> {
         name: "streaming_agent".to_string(),
         description: "Test streaming agent".to_string(),
         agent_type: Some("standard".to_string()),
-        system_prompt: Some(
-            "You are a streaming test agent. When you receive a message, respond with a stream of text that counts from 1 to 5.".to_string(),
-        ),
+        system_prompt: "You are a streaming test agent. When you receive a message, respond with a stream of text that counts from 1 to 5.".to_string(),
         ..Default::default()
     };
 
@@ -109,10 +102,7 @@ async fn test_agent_coordination_streaming() -> anyhow::Result<()> {
 
     // Get agent handle and execute streaming task
 
-    let task = TaskStep {
-        task: "Count from 1 to 5".to_string(),
-        task_images: None,
-    };
+    let task = Message::user("Count from 1 to 5".to_string(), None);
 
     // Spawn task to handle streaming events
     let event_handle = tokio::spawn(async move {
@@ -140,7 +130,7 @@ async fn test_agent_coordination_streaming() -> anyhow::Result<()> {
 
     // Execute streaming task
     executor
-        .execute_stream("streaming_agent", task, None, event_tx, Arc::default())
+        .execute_stream("streaming_agent", task, Arc::default(), event_tx)
         .await?;
 
     // Wait for event handling to complete
