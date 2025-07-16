@@ -334,6 +334,21 @@ pub struct McpSession {
     pub token: String,
     /// The expiry time of the session, if specified.
     pub expiry: Option<SystemTime>,
+    /// OAuth access token for authenticated services
+    #[serde(default)]
+    pub oauth_access_token: Option<String>,
+    /// OAuth refresh token for authenticated services
+    #[serde(default)]
+    pub oauth_refresh_token: Option<String>,
+    /// OAuth token expiry time
+    #[serde(default)]
+    pub oauth_expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// OAuth token type (e.g., "Bearer")
+    #[serde(default)]
+    pub oauth_token_type: Option<String>,
+    /// OAuth scope
+    #[serde(default)]
+    pub oauth_scope: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]

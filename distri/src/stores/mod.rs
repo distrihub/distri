@@ -36,6 +36,7 @@ pub struct InitializedStores {
     pub task_store: Arc<dyn TaskStore>,
     pub thread_store: Arc<dyn ThreadStore>,
     pub tool_session_store: Option<Arc<Box<dyn ToolSessionStore>>>,
+    pub auth_store: Arc<dyn AuthStore>,
 }
 
 impl StoreConfig {
@@ -139,12 +140,16 @@ impl StoreConfig {
             }
         };
 
+        // Initialize auth store (always in-memory for now)
+        let auth_store = Arc::new(InMemoryAuthStore::new()) as Arc<dyn AuthStore>;
+
         Ok(InitializedStores {
             session_store,
             agent_store,
             task_store,
             thread_store,
             tool_session_store,
+            auth_store,
         })
     }
 }

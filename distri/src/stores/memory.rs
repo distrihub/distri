@@ -9,8 +9,8 @@ use crate::{
         CreateThreadRequest, McpSession, Message, Task, TaskStatus, Thread, ThreadSummary,
         UpdateThreadRequest,
     },
-    AgentStore, LocalSession, MemoryStore, SessionMemory, SessionStore, TaskStore, ThreadStore,
-    ToolSessionStore,
+    AgentStore, LocalSession, MemoryStore, OAuthState, OAuthTokens, SessionMemory, SessionStore, TaskStore, ThreadStore,
+    ToolSessionStore, AuthStore,
 };
 use distri_a2a::Artifact;
 
@@ -460,5 +460,122 @@ impl AgentStore for InMemoryAgentStore {
         } else {
             Err(anyhow::anyhow!("Agent '{}' not found", agent_name))
         }
+    }
+}
+
+// In-memory AuthStore implementation
+#[derive(Clone, Default)]
+pub struct InMemoryAuthStore {
+    oauth_tokens: Arc<RwLock<HashMap<String, HashMap<String, OAuthTokens>>>>, // service_name -> user_id -> tokens
+    oauth_states: Arc<RwLock<HashMap<String, OAuthState>>>, // state -> OAuthState
+}
+
+impl InMemoryAuthStore {
+    pub fn new() -> Self {
+        Self {
+            oauth_tokens: Arc::new(RwLock::new(HashMap::new())),
+            oauth_states: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+}
+
+#[async_trait]
+impl AuthStore for InMemoryAuthStore {
+    async fn store_oauth_tokens(
+        &self,
+        service_name: &str,
+        user_id: &str,
+        access_token: &str,
+        refresh_token: Option<&str>,
+        expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> anyhow::Result<()> {
+        let mut tokens = self.oauth_tokens.write().await;
+        let service_tokens = tokens.entry(service_name.to_string()).or_insert_with(HashMap::new);
+        
+        service_tokens.insert(user_id.to_string(), OAuthTokens {
+            access_token: access_token.to_string(),
+            refresh_token: refresh_token.map(|s| s.to_string()),
+            expires_at,
+            token_type: "Bearer".to_string(),
+            scope: None,
+        });
+        
+        Ok(())
+    }
+
+    async fn get_oauth_tokens(
+        &self,
+        service_name: &str,
+        user_id: &str,
+    ) -> anyhow::Result<Option<OAuthTokens>> {
+        let tokens = self.oauth_tokens.read().await;
+        if let Some(service_tokens) = tokens.get(service_name) {
+            Ok(service_tokens.get(user_id).cloned())
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn remove_oauth_tokens(
+        &self,
+        service_name: &str,
+        user_id: &str,
+    ) -> anyhow::Result<()> {
+        let mut tokens = self.oauth_tokens.write().await;
+        if let Some(service_tokens) = tokens.get_mut(service_name) {
+            service_tokens.remove(user_id);
+        }
+        Ok(())
+    }
+
+    async fn has_valid_oauth_tokens(
+        &self,
+        service_name: &str,
+        user_id: &str,
+    ) -> anyhow::Result<bool> {
+        if let Some(tokens) = self.get_oauth_tokens(service_name, user_id).await? {
+            // Check if token is expired
+            if let Some(expires_at) = tokens.expires_at {
+                Ok(chrono::Utc::now() < expires_at)
+            } else {
+                Ok(true) // No expiry, assume valid
+            }
+        } else {
+            Ok(false)
+        }
+    }
+
+    async fn store_oauth_state(
+        &self,
+        state: &str,
+        service_name: &str,
+        user_id: &str,
+        redirect_uri: &str,
+    ) -> anyhow::Result<()> {
+        let mut states = self.oauth_states.write().await;
+        states.insert(state.to_string(), OAuthState {
+            service_name: service_name.to_string(),
+            user_id: user_id.to_string(),
+            redirect_uri: redirect_uri.to_string(),
+            created_at: chrono::Utc::now(),
+        });
+        Ok(())
+    }
+
+    async fn get_oauth_state(
+        &self,
+        state: &str,
+    ) -> anyhow::Result<Option<OAuthState>> {
+        let states = self.oauth_states.read().await;
+        Ok(states.get(state).cloned())
+    }
+
+    async fn remove_oauth_state(
+        &self,
+        state: &str,
+    ) -> anyhow::Result<()> {
+        let mut states = self.oauth_states.write().await;
+        states.remove(state);
+        Ok(())
     }
 }

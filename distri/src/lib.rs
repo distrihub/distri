@@ -7,6 +7,7 @@ pub mod langdb;
 pub mod llm;
 pub mod logging;
 pub mod memory;
+pub mod oauth;
 pub mod servers;
 pub mod stores;
 pub mod tool_formatter;
@@ -16,8 +17,8 @@ pub mod validate;
 pub use error::AgentError;
 pub use stores::*;
 pub use stores::{
-    FileMemoryStore, FileSessionStore, HashMapTaskStore, InMemorySessionStore, LocalMemoryStore,
-    LocalSessionStore, MemoryStore, SessionMemory, SessionStore, TaskStore, ToolSessionStore,
+    AuthStore, FileMemoryStore, FileSessionStore, HashMapTaskStore, InMemoryAuthStore, InMemorySessionStore, LocalMemoryStore,
+    LocalSessionStore, MemoryStore, OAuthState, OAuthTokens, SessionMemory, SessionStore, TaskStore, ToolSessionStore,
 };
 pub use types::{AgentDefinition, McpDefinition, McpSession, ModelSettings};
 

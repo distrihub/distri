@@ -1,0 +1,71 @@
+# OAuth Configuration Example for Distri
+# This file shows how to configure OAuth services for Reddit and Google
+
+# OAuth Services Configuration
+oauth_services:
+  reddit:
+    client_id: "your_reddit_client_id"
+    client_secret: "your_reddit_client_secret"
+    authorization_url: "https://www.reddit.com/api/v1/authorize"
+    token_url: "https://www.reddit.com/api/v1/access_token"
+    redirect_uri: "http://localhost:8080/api/v1/oauth/callback"
+    scopes:
+      - "read"
+      - "history"
+      - "identity"
+
+  google:
+    client_id: "your_google_client_id"
+    client_secret: "your_google_client_secret"
+    authorization_url: "https://accounts.google.com/o/oauth2/v2/auth"
+    token_url: "https://oauth2.googleapis.com/token"
+    redirect_uri: "http://localhost:8080/api/v1/oauth/callback"
+    scopes:
+      - "https://www.googleapis.com/auth/userinfo.profile"
+      - "https://www.googleapis.com/auth/userinfo.email"
+
+# Agent Configuration with OAuth-enabled tools
+agents:
+  - name: "oauth-assistant"
+    description: "Assistant with OAuth-enabled tools for Reddit and Google"
+    system_prompt: |
+      You are a helpful assistant that can access Reddit and Google services.
+      When a user wants to use Reddit tools, you'll need to guide them through OAuth authentication first.
+      If authentication is required, explain the process and provide the authorization URL.
+    mcp_servers:
+      - name: "reddit"
+        type: "tool"
+      - name: "google"
+        type: "tool"
+    model_settings:
+      model: "gpt-4o-mini"
+      temperature: 0.7
+      max_tokens: 1000
+    history_size: 10
+    include_tools: true
+
+# Server Configuration
+server:
+  server_url: "http://localhost:8080"
+  agent_provider:
+    organization: "Distri"
+    url: "https://github.com/distri-ai/distri"
+  default_input_modes:
+    - "text/plain"
+  default_output_modes:
+    - "text/plain"
+  security_schemes:
+    oauth2:
+      type: "oauth2"
+      flows:
+        authorizationCode:
+          authorizationUrl: "https://accounts.google.com/o/oauth2/v2/auth"
+          tokenUrl: "https://oauth2.googleapis.com/token"
+          scopes:
+            profile: "Access to user profile"
+            email: "Access to user email"
+
+# Store Configuration
+stores:
+  entity: "InMemory"
+  session: "InMemory"

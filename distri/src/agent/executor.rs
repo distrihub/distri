@@ -1,8 +1,9 @@
 use crate::{
     agent::{AgentEventType, AgentFactoryRegistry, BaseAgent},
     error::AgentError,
+    oauth::OAuthManager,
     servers::registry::{McpServerRegistry, ServerMetadata},
-    stores::{AgentStore, ThreadStore, ToolSessionStore},
+    stores::{AgentStore, AuthStore, ThreadStore, ToolSessionStore},
     tools::{get_tools, BuiltInToolContext, LlmToolsRegistry},
     types::{
         Configuration, CreateThreadRequest, Message, StoreConfig, Thread, ThreadSummary, ToolCall,
@@ -31,6 +32,8 @@ pub struct AgentExecutor {
     pub thread_store: Arc<dyn ThreadStore>,
     pub task_store: Arc<dyn TaskStore>,
     pub agent_factory: Arc<RwLock<AgentFactoryRegistry>>,
+    pub auth_store: Arc<dyn AuthStore>,
+    pub oauth_manager: Arc<OAuthManager>,
 }
 
 #[derive(Default)]
@@ -42,6 +45,8 @@ pub struct AgentExecutorBuilder {
     task_store: Option<Arc<dyn TaskStore>>,
     thread_store: Option<Arc<dyn ThreadStore>>,
     agent_factory: Option<Arc<RwLock<AgentFactoryRegistry>>>,
+    auth_store: Option<Arc<dyn AuthStore>>,
+    oauth_manager: Option<Arc<OAuthManager>>,
 }
 
 impl AgentExecutorBuilder {
@@ -80,6 +85,16 @@ impl AgentExecutorBuilder {
         self
     }
 
+    pub fn with_auth_store(mut self, auth_store: Arc<dyn AuthStore>) -> Self {
+        self.auth_store = Some(auth_store);
+        self
+    }
+
+    pub fn with_oauth_manager(mut self, oauth_manager: Arc<OAuthManager>) -> Self {
+        self.oauth_manager = Some(oauth_manager);
+        self
+    }
+
     pub fn with_stores(mut self, stores: InitializedStores) -> Self {
         // Set the stores if not already provided
         if self.session_store.is_none() {
@@ -96,6 +111,9 @@ impl AgentExecutorBuilder {
         }
         if self.tool_sessions.is_none() {
             self.tool_sessions = stores.tool_session_store;
+        }
+        if self.auth_store.is_none() {
+            self.auth_store = Some(stores.auth_store);
         }
         self
     }
@@ -126,6 +144,14 @@ impl AgentExecutorBuilder {
             .agent_factory
             .unwrap_or_else(|| Arc::new(RwLock::new(AgentFactoryRegistry::default())));
 
+        let auth_store = self
+            .auth_store
+            .ok_or_else(|| anyhow::anyhow!("Auth store is required. Use with_stores() to initialize."))?;
+
+        let oauth_manager = self
+            .oauth_manager
+            .unwrap_or_else(|| Arc::new(OAuthManager::new()));
+
         Ok(AgentExecutor {
             agent_store,
             tool_sessions: self.tool_sessions,
@@ -136,6 +162,8 @@ impl AgentExecutorBuilder {
             thread_store,
             task_store,
             agent_factory,
+            auth_store,
+            oauth_manager,
         })
     }
 }
@@ -187,6 +215,17 @@ impl AgentExecutor {
         let tools = agent.get_tools();
 
         if let Some(tool) = tools.iter().find(|t| t.get_name() == tool_call.tool_name) {
+            // Check if OAuth is required for this tool
+            if let Some(service_name) = self.get_oauth_service_for_tool(&tool_call.tool_name) {
+                let user_id = context.user_id.as_deref().unwrap_or("default_user");
+                if self.oauth_manager.check_auth_required(self.auth_store.as_ref(), service_name, user_id).await? {
+                    return Err(AgentError::AuthRequired(format!(
+                        "OAuth authentication required for {} service. Please authenticate first.",
+                        service_name
+                    )));
+                }
+            }
+
             let registry = self.registry.clone();
             let tool_sessions = self.tool_sessions.clone();
             let context = context.clone();
@@ -215,6 +254,15 @@ impl AgentExecutor {
             }
         }
         Err(AgentError::ToolNotFound(tool_call.tool_name))
+    }
+
+    fn get_oauth_service_for_tool(&self, tool_name: &str) -> Option<&str> {
+        // Map tool names to OAuth services
+        if tool_name.starts_with("reddit_") {
+            Some("reddit")
+        } else {
+            None
+        }
     }
 
     pub async fn register_agent_definition(
