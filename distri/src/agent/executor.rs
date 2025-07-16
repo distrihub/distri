@@ -196,6 +196,7 @@ impl AgentExecutor {
             .ok_or_else(|| AgentError::NotFound(format!("Agent {} not found", agent_id)))?;
 
         let agent = self.create_agent_from_definition(definition).await?;
+
         let tools = agent.get_tools();
 
         if let Some(tool) = tools.iter().find(|t| t.get_name() == tool_call.tool_name) {

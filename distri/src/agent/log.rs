@@ -1,7 +1,11 @@
 use comfy_table::{modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL, ContentArrangement, Table};
 use tracing::info;
 
-use crate::{memory::MemoryStep, tools::LlmToolsRegistry, types::LlmDefinition};
+use crate::{
+    memory::MemoryStep,
+    tools::LlmToolsRegistry,
+    types::{LlmDefinition, Message},
+};
 
 #[derive(Debug, Clone)]
 pub struct StepLogger {
@@ -78,6 +82,28 @@ impl ModelLogger {
         tracing::debug!("\n{}", table);
     }
 
+    pub fn log_messages(&self, messages: &[Message]) {
+        let mut table = Table::new();
+        table.set_header(vec!["Role", "Content"]);
+
+        for m in messages {
+            let mut content = String::new();
+            for c in &m.content {
+                let content_str = match c.content_type.as_str() {
+                    "text" => c.text.clone().unwrap_or_default(),
+                    _ => c.content_type.clone(),
+                };
+                content.push_str(&content_str);
+                content.push_str("\n");
+            }
+            table.add_row(vec![format!("{:?}", m.role), content]);
+        }
+
+        table
+            .load_preset(comfy_table::presets::UTF8_FULL)
+            .set_content_arrangement(comfy_table::ContentArrangement::Dynamic);
+        tracing::debug!("{}", table);
+    }
     pub fn log_model_execution(
         &self,
         agent_name: &str,

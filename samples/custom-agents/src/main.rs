@@ -58,12 +58,8 @@ async fn main() -> anyhow::Result<()> {
         mcp_servers: vec![],
         model_settings: ModelSettings::default(),
         history_size: Some(10),
-        plan: None,
-        icon_url: None,
         max_iterations: Some(5),
-        sub_agents: vec![],
-        skills: vec![],
-        version: None,
+        ..Default::default()
     };
 
     let filtering_agent_def = AgentDefinition {
@@ -74,12 +70,8 @@ async fn main() -> anyhow::Result<()> {
         mcp_servers: vec![],
         model_settings: ModelSettings::default(),
         history_size: Some(10),
-        plan: None,
-        icon_url: None,
         max_iterations: Some(5),
-        sub_agents: vec![],
-        skills: vec![],
-        version: None,
+        ..Default::default()
     };
 
     // Register agent definitions

@@ -39,13 +39,11 @@ pub fn build_server<T: Transport>(
                 let response = ToolsListResponse {
                     tools: agents
                         .iter()
-                        .map(|t| {
-                            Tool {
-                                name: t.name.clone(),
-                                description: Some(t.description.clone()),
-                                input_schema: json!({}),
-                                output_schema: t.model_settings.response_format.clone(),
-                            }
+                        .map(|t| Tool {
+                            name: t.name.clone(),
+                            description: Some(t.description.clone()),
+                            input_schema: json!({}),
+                            output_schema: t.model_settings.response_format.clone(),
                         })
                         .collect(),
                     next_cursor,
@@ -59,16 +57,16 @@ pub fn build_server<T: Transport>(
             let coordinator = coordinator_clone2.clone();
 
             Box::pin(async move {
-                println!("req: {:?}", req);
                 let agent_name = req.name.clone();
                 let args = req.arguments.unwrap_or_default();
                 let message = args["message"].as_str().unwrap().to_string();
 
-                println!("agent_name: {}", agent_name);
                 let context = Arc::new(ExecutorContext::default());
 
                 let agent_def = coordinator.agent_store.get(&agent_name).await.unwrap();
-                let agent = coordinator.create_agent_from_definition(agent_def).await
+                let agent = coordinator
+                    .create_agent_from_definition(agent_def)
+                    .await
                     .map_err(|e| AgentError::ToolExecution(e.to_string()))?;
 
                 let result = agent

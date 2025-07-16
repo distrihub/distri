@@ -98,7 +98,9 @@ async fn test_agent_coordination_streaming() -> anyhow::Result<()> {
     let executor = init_executor().await;
 
     // Register agent definition
-    executor.register_agent_definition(agent_def.clone()).await?;
+    executor
+        .register_agent_definition(agent_def.clone())
+        .await?;
 
     // Start coordinator in background
     let executor_clone = executor.clone();

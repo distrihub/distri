@@ -1,5 +1,5 @@
 use crate::{
-    agent::{AgentHooks, ExecutorContext},
+    agent::{AgentEvent, AgentHooks, ExecutorContext},
     error::AgentError,
     memory::TaskStep,
     types::Message,
@@ -21,10 +21,12 @@ impl LoggingHooks {
 
 #[async_trait::async_trait]
 impl AgentHooks for LoggingHooks {
-    async fn after_task_step(
+    async fn before_invoke(
         &self,
         task: TaskStep,
+        _params: Option<serde_json::Value>,
         _context: Arc<ExecutorContext>,
+        _event_tx: Option<tokio::sync::mpsc::Sender<AgentEvent>>,
     ) -> Result<(), AgentError> {
         info!(
             "🔧 LoggingHooks: Task step completed - {} (level: {})",
@@ -33,12 +35,7 @@ impl AgentHooks for LoggingHooks {
         Ok(())
     }
 
-    async fn before_llm_step(
-        &self,
-        messages: &[Message],
-        _params: &Option<serde_json::Value>,
-        _context: Arc<ExecutorContext>,
-    ) -> Result<Vec<Message>, AgentError> {
+    async fn before_llm_step(&self, messages: &[Message]) -> Result<Vec<Message>, AgentError> {
         info!(
             "🔧 LoggingHooks: LLM step starting with {} messages (level: {})",
             messages.len(),

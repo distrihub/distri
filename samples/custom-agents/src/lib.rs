@@ -1,10 +1,10 @@
 use distri::{
-    agent::{AgentExecutor, AgentHooks, ExecutorContext, StandardAgent, StepResult},
+    agent::{AgentEvent, AgentExecutor, AgentHooks, ExecutorContext, StandardAgent, StepResult},
     delegate_base_agent,
     error::AgentError,
     memory::TaskStep,
     tools::LlmToolsRegistry,
-    types::{AgentDefinition, Message, ToolCall},
+    types::AgentDefinition,
     SessionStore,
 };
 use std::sync::Arc;
@@ -41,67 +41,15 @@ delegate_base_agent!(LoggingAgent, "LoggingAgent", inner);
 
 #[async_trait::async_trait]
 impl AgentHooks for LoggingAgent {
-    async fn after_task_step(
+    async fn before_invoke(
         &self,
         task: TaskStep,
+        _params: Option<serde_json::Value>,
         _context: Arc<ExecutorContext>,
+        _event_tx: Option<tokio::sync::mpsc::Sender<AgentEvent>>,
     ) -> Result<(), AgentError> {
         info!("🚀 LoggingAgent: Starting task - {}", task.task);
         Ok(())
-    }
-
-    async fn before_llm_step(
-        &self,
-        messages: &[Message],
-        _params: &Option<serde_json::Value>,
-        _context: Arc<ExecutorContext>,
-    ) -> Result<Vec<Message>, AgentError> {
-        info!(
-            "🤖 LoggingAgent: About to call LLM with {} messages",
-            messages.len()
-        );
-        Ok(messages.to_vec())
-    }
-
-    async fn before_tool_calls(
-        &self,
-        tool_calls: &[ToolCall],
-        _context: Arc<ExecutorContext>,
-    ) -> Result<Vec<ToolCall>, AgentError> {
-        info!(
-            "🔧 LoggingAgent: About to execute {} tool calls",
-            tool_calls.len()
-        );
-        Ok(tool_calls.to_vec())
-    }
-
-    async fn after_tool_calls(
-        &self,
-        tool_responses: &[String],
-        _context: Arc<ExecutorContext>,
-    ) -> Result<(), AgentError> {
-        info!(
-            "✅ LoggingAgent: Received {} tool responses",
-            tool_responses.len()
-        );
-        Ok(())
-    }
-
-    async fn after_finish(
-        &self,
-        step_result: StepResult,
-        _context: Arc<ExecutorContext>,
-    ) -> Result<StepResult, AgentError> {
-        match &step_result {
-            StepResult::Finish(content) => {
-                info!(
-                    "🏁 LoggingAgent: Task completed! Response length: {} characters",
-                    content.len()
-                );
-            }
-            _ => {}
-        }
-        Ok(step_result)
     }
 }
 
@@ -150,11 +98,7 @@ delegate_base_agent!(FilteringAgent, "FilteringAgent", inner);
 
 #[async_trait::async_trait]
 impl AgentHooks for FilteringAgent {
-    async fn after_finish(
-        &self,
-        step_result: StepResult,
-        _context: Arc<ExecutorContext>,
-    ) -> Result<StepResult, AgentError> {
+    async fn after_finish(&self, step_result: StepResult) -> Result<StepResult, AgentError> {
         match step_result {
             StepResult::Finish(content) => {
                 let filtered = self.filter_content(&content);

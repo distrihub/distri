@@ -47,8 +47,12 @@ async fn test_agent_coordination() -> anyhow::Result<()> {
     let executor = init_executor().await;
 
     let executor_clone = executor.clone();
-    executor.register_agent_definition(agent1_def.clone()).await?;
-    executor.register_agent_definition(agent2_def.clone()).await?;
+    executor
+        .register_agent_definition(agent1_def.clone())
+        .await?;
+    executor
+        .register_agent_definition(agent2_def.clone())
+        .await?;
     // Start coordinator in background
     let coordinator_handle = tokio::spawn(async move { executor_clone.run().await.unwrap() });
 
@@ -90,7 +94,9 @@ async fn test_agent_coordination_streaming() -> anyhow::Result<()> {
     let executor = init_executor().await;
 
     // Register agent definition
-    executor.register_agent_definition(agent_def.clone()).await?;
+    executor
+        .register_agent_definition(agent_def.clone())
+        .await?;
 
     // Start coordinator in background
     let executor_clone = executor.clone();

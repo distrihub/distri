@@ -1,7 +1,6 @@
 use crate::{
     agent::{
-        AgentEvent, AgentEventType, AgentExecutor, AgentHooks, AgentType, BaseAgent, StepResult,
-        MAX_ITERATIONS,
+        AgentEvent, AgentEventType, AgentExecutor, AgentType, BaseAgent, StepResult, MAX_ITERATIONS,
     },
     error::AgentError,
     llm::LLMExecutor,
@@ -13,11 +12,9 @@ use crate::{
     },
     SessionStore,
 };
-use async_openai::types::Role;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::info;
-use uuid::Uuid;
 
 use crate::agent::{reason::create_initial_plan, ExecutorContext, StepLogger};
 use crate::memory::{ActionStep, MemoryStep, PlanningStep, TaskStep};
@@ -26,7 +23,7 @@ use crate::memory::{ActionStep, MemoryStep, PlanningStep, TaskStep};
 #[derive(Clone)]
 pub struct StandardAgent {
     pub definition: AgentDefinition,
-    tools_registry: Arc<LlmToolsRegistry>,
+    tools_registry: Arc<LlmToolsRegistry>, // This will be Arc::default() now
     executor: Arc<AgentExecutor>,
     logger: StepLogger,
     session_store: Arc<Box<dyn SessionStore>>,
@@ -44,7 +41,7 @@ impl std::fmt::Debug for StandardAgent {
 impl StandardAgent {
     pub fn new(
         definition: AgentDefinition,
-        tools_registry: Arc<LlmToolsRegistry>,
+        tools_registry: Arc<LlmToolsRegistry>, // pass Arc::default() here
         executor: Arc<AgentExecutor>,
         session_store: Arc<Box<dyn SessionStore>>,
     ) -> Self {
@@ -52,7 +49,7 @@ impl StandardAgent {
             definition,
             tools_registry,
             executor,
-            logger: StepLogger::new(false), // TODO: Get verbose from context
+            logger: StepLogger::new(false),
             session_store,
         }
     }
@@ -235,6 +232,12 @@ impl StandardAgent {
         // Execute LLM call
         let response = executor.execute(messages, params.clone()).await?;
 
+        let response = if let Some(hooks) = hooks {
+            hooks.after_execute(response).await?
+        } else {
+            response
+        };
+
         let step_result = self
             .handle_finish_reason(
                 response.finish_reason,
@@ -272,6 +275,11 @@ impl StandardAgent {
         let stream_result = executor
             .execute_stream(&messages, params.clone(), event_tx.clone())
             .await?;
+        let stream_result = if let Some(hooks) = hooks {
+            hooks.after_execute_stream(stream_result).await?
+        } else {
+            stream_result
+        };
 
         let step_result = self
             .handle_finish_reason(
@@ -286,48 +294,6 @@ impl StandardAgent {
             .await?;
 
         Ok(step_result)
-    }
-
-    /// Helper to emit TextMessage* events for a message
-    async fn emit_text_message_events(
-        &self,
-        event_tx: &mpsc::Sender<AgentEvent>,
-        context: &ExecutorContext,
-        content: &str,
-        role: &Role,
-    ) {
-        let run_id = context.run_id.lock().await.clone();
-        let thread_id = context.thread_id.clone();
-        let message_id = Uuid::new_v4().to_string();
-        let _ = event_tx
-            .send(AgentEvent {
-                thread_id: thread_id.clone(),
-                run_id: run_id.clone(),
-                event: AgentEventType::TextMessageStart {
-                    message_id: message_id.clone(),
-                    role: role.clone(),
-                },
-            })
-            .await;
-        let _ = event_tx
-            .send(AgentEvent {
-                thread_id: thread_id.clone(),
-                run_id: run_id.clone(),
-                event: AgentEventType::TextMessageContent {
-                    message_id: message_id.clone(),
-                    delta: content.to_string(),
-                },
-            })
-            .await;
-        let _ = event_tx
-            .send(AgentEvent {
-                thread_id: thread_id.clone(),
-                run_id: run_id.clone(),
-                event: AgentEventType::TextMessageEnd {
-                    message_id: message_id.clone(),
-                },
-            })
-            .await;
     }
 
     pub async fn invoke_with_hooks(
@@ -346,6 +312,18 @@ impl StandardAgent {
             .get_iteration(&run_id)
             .await
             .map_err(|e| AgentError::Session(e.to_string()))?;
+
+        if let Some(hooks) = hooks {
+            hooks
+                .before_invoke(
+                    task.clone(),
+                    params.clone(),
+                    context.clone(),
+                    event_tx.clone(),
+                )
+                .await?;
+        }
+
         // Send RunStarted event if event_tx is provided
         if let Some(event_tx) = &event_tx {
             let _ = event_tx
@@ -361,9 +339,6 @@ impl StandardAgent {
                 self.system_step(context.clone()).await?;
                 self.task_step(&task, context.clone()).await?;
                 // Call after_task_step hook
-                if let Some(hooks) = hooks {
-                    hooks.after_task_step(task.clone(), context.clone()).await?;
-                }
             }
             let mut current_messages = self
                 .session_store
@@ -387,9 +362,7 @@ impl StandardAgent {
                     .map_err(|e| AgentError::Session(e.to_string()))?;
 
                 let messages = if let Some(hooks) = hooks {
-                    hooks
-                        .before_llm_step(&current_messages.clone(), &params, context.clone())
-                        .await?
+                    hooks.before_llm_step(&current_messages.clone()).await?
                 } else {
                     current_messages.clone()
                 };
@@ -398,7 +371,7 @@ impl StandardAgent {
                     .await?;
 
                 let step_result = if let Some(hooks) = hooks {
-                    hooks.after_finish(step_result, context.clone()).await?
+                    hooks.after_finish(step_result).await?
                 } else {
                     step_result
                 };
@@ -472,6 +445,16 @@ impl StandardAgent {
             .await
             .map_err(|e| AgentError::Session(e.to_string()))?;
 
+        if let Some(hooks) = hooks {
+            hooks
+                .before_invoke(
+                    task.clone(),
+                    params.clone(),
+                    context.clone(),
+                    Some(event_tx.clone()),
+                )
+                .await?;
+        }
         // Send RunStarted event
         let _ = event_tx
             .send(AgentEvent {
@@ -491,9 +474,6 @@ impl StandardAgent {
                 self.system_step(context.clone()).await?;
                 self.task_step(&task, context.clone()).await?;
                 // Call after_task_step hook
-                if let Some(hooks) = hooks {
-                    hooks.after_task_step(task.clone(), context.clone()).await?;
-                }
             }
             let mut current_messages = self
                 .session_store
@@ -512,9 +492,7 @@ impl StandardAgent {
                         .await?;
                 }
                 let messages = if let Some(hooks) = hooks {
-                    hooks
-                        .before_llm_step(&current_messages.clone(), &params, context.clone())
-                        .await?
+                    hooks.before_llm_step(&current_messages.clone()).await?
                 } else {
                     current_messages.clone()
                 };
@@ -523,7 +501,7 @@ impl StandardAgent {
                     .await?;
 
                 let step_result = if let Some(hooks) = hooks {
-                    hooks.after_finish(step_result, context.clone()).await?
+                    hooks.after_finish(step_result).await?
                 } else {
                     step_result
                 };
@@ -584,130 +562,6 @@ impl StandardAgent {
         result
     }
 
-    pub async fn execute_tool_calls(
-        &self,
-        tool_calls: Vec<ToolCall>,
-        agent_id: &str,
-        context: Arc<ExecutorContext>,
-        event_tx: Option<mpsc::Sender<AgentEvent>>,
-        hooks: Option<&dyn crate::agent::AgentHooks>,
-    ) -> Result<Vec<Message>, AgentError> {
-        let tool_calls = if let Some(hooks) = hooks {
-            hooks
-                .before_tool_calls(&tool_calls, context.clone())
-                .await?
-        } else {
-            tool_calls
-        };
-
-        // Process all tool calls in parallel
-        let tool_responses = futures::future::join_all(tool_calls.iter().map(|mapped_tool_call| {
-            let executor = self.executor.clone();
-            let agent_id = agent_id.to_string();
-            let context = context.clone();
-            let event_tx = event_tx.clone();
-
-            async move {
-                let run_id = { context.run_id.lock().await.clone() };
-                if let Some(event_tx) = &event_tx {
-                    let _ = event_tx
-                        .send(AgentEvent {
-                            thread_id: context.thread_id.clone(),
-                            run_id: run_id.clone(),
-                            event: AgentEventType::ToolCallStart {
-                                tool_call_id: mapped_tool_call.tool_id.clone(),
-                                tool_call_name: mapped_tool_call.tool_name.clone(),
-                            },
-                        })
-                        .await
-                        .map_err(|e| {
-                            AgentError::LLMError(format!(
-                                "Failed to send ToolCallStart event: {}",
-                                e
-                            ))
-                        });
-
-                    let _ = event_tx
-                        .send(AgentEvent {
-                            thread_id: context.thread_id.clone(),
-                            run_id: run_id.clone(),
-                            event: AgentEventType::ToolCallArgs {
-                                tool_call_id: mapped_tool_call.tool_id.clone(),
-                                delta: mapped_tool_call.input.clone(),
-                            },
-                        })
-                        .await
-                        .map_err(|e| {
-                            AgentError::LLMError(format!(
-                                "Failed to send ToolCallStart event: {}",
-                                e
-                            ))
-                        });
-                }
-                info!("Agent: Executing tool call: {:#?}", mapped_tool_call);
-                let content = executor
-                    .execute_tool(
-                        agent_id,
-                        mapped_tool_call.clone(),
-                        event_tx.clone(),
-                        context.clone(),
-                    )
-                    .await
-                    .unwrap_or_else(|err| format!("Error: {}", err));
-                info!("Agent: Tool response: {}", content);
-
-                if let Some(event_tx) = &event_tx {
-                    let _ = event_tx
-                        .send(AgentEvent {
-                            thread_id: context.thread_id.clone(),
-                            run_id: run_id.clone(),
-                            event: AgentEventType::ToolCallResult {
-                                tool_call_id: mapped_tool_call.tool_id.clone(),
-                                result: content.clone(),
-                            },
-                        })
-                        .await
-                        .map_err(|e| {
-                            AgentError::LLMError(format!(
-                                "Failed to send ToolCallResult event: {}",
-                                e
-                            ))
-                        });
-                }
-                Message {
-                    role: MessageRole::ToolResponse,
-                    name: Some(mapped_tool_call.tool_name.clone()),
-                    content: vec![MessageContent {
-                        content_type: "text".to_string(),
-                        text: Some(content.clone()),
-                        image: None,
-                    }],
-                    tool_calls: vec![mapped_tool_call.to_owned()],
-                }
-            }
-        }))
-        .await;
-
-        let tool_response_contents: Vec<String> = tool_responses
-            .iter()
-            .map(|msg| {
-                msg.content
-                    .first()
-                    .and_then(|c| c.text.clone())
-                    .unwrap_or_default()
-            })
-            .collect();
-
-        // Call after_tool_calls hook
-        if let Some(hooks) = hooks {
-            hooks
-                .after_tool_calls(&tool_response_contents, context.clone())
-                .await?;
-        }
-
-        Ok(tool_responses)
-    }
-
     async fn handle_finish_reason(
         &self,
         finish_reason: async_openai::types::FinishReason,
@@ -737,9 +591,26 @@ impl StandardAgent {
                         tool_calls: tool_calls.to_vec(),
                     }];
 
-                    let tool_responses = self
-                        .execute_tool_calls(tool_calls, agent_id, context, event_tx, hooks)
-                        .await?;
+                    let tool_calls = if let Some(hooks) = hooks {
+                        hooks.before_tool_calls(&tool_calls).await?
+                    } else {
+                        tool_calls
+                    };
+
+                    let tool_responses = execute_tool_calls(
+                        self.executor.clone(),
+                        tool_calls,
+                        agent_id,
+                        context.clone(),
+                        event_tx,
+                    )
+                    .await?;
+
+                    let tool_responses = if let Some(hooks) = hooks {
+                        hooks.after_tool_calls(&tool_responses).await?
+                    } else {
+                        tool_responses
+                    };
 
                     // Add tool responses
                     new_messages.extend(tool_responses);
@@ -803,4 +674,93 @@ impl BaseAgent for StandardAgent {
     ) -> Result<(), AgentError> {
         StandardAgent::invoke_stream_with_hooks(self, task, params, context, event_tx, None).await
     }
+}
+
+pub async fn execute_tool_calls(
+    executor: Arc<AgentExecutor>,
+    tool_calls: Vec<ToolCall>,
+    agent_id: &str,
+    context: Arc<ExecutorContext>,
+    event_tx: Option<mpsc::Sender<AgentEvent>>,
+) -> Result<Vec<Message>, AgentError> {
+    // Process all tool calls in parallel
+    let tool_responses = futures::future::join_all(tool_calls.iter().map(|mapped_tool_call| {
+        let executor = executor.clone();
+        let agent_id = agent_id.to_string();
+        let context = context.clone();
+        let event_tx = event_tx.clone();
+
+        async move {
+            let run_id = { context.run_id.lock().await.clone() };
+            if let Some(event_tx) = &event_tx {
+                let _ = event_tx
+                    .send(AgentEvent {
+                        thread_id: context.thread_id.clone(),
+                        run_id: run_id.clone(),
+                        event: AgentEventType::ToolCallStart {
+                            tool_call_id: mapped_tool_call.tool_id.clone(),
+                            tool_call_name: mapped_tool_call.tool_name.clone(),
+                        },
+                    })
+                    .await
+                    .map_err(|e| {
+                        AgentError::LLMError(format!("Failed to send ToolCallStart event: {}", e))
+                    });
+
+                let _ = event_tx
+                    .send(AgentEvent {
+                        thread_id: context.thread_id.clone(),
+                        run_id: run_id.clone(),
+                        event: AgentEventType::ToolCallArgs {
+                            tool_call_id: mapped_tool_call.tool_id.clone(),
+                            delta: mapped_tool_call.input.clone(),
+                        },
+                    })
+                    .await
+                    .map_err(|e| {
+                        AgentError::LLMError(format!("Failed to send ToolCallStart event: {}", e))
+                    });
+            }
+            info!("Agent: Executing tool call: {:#?}", mapped_tool_call);
+            let content = executor
+                .execute_tool(
+                    agent_id,
+                    mapped_tool_call.clone(),
+                    event_tx.clone(),
+                    context.clone(),
+                )
+                .await
+                .unwrap_or_else(|err| format!("Error: {}", err));
+            info!("Agent: Tool response: {}", content);
+
+            if let Some(event_tx) = &event_tx {
+                let _ = event_tx
+                    .send(AgentEvent {
+                        thread_id: context.thread_id.clone(),
+                        run_id: run_id.clone(),
+                        event: AgentEventType::ToolCallResult {
+                            tool_call_id: mapped_tool_call.tool_id.clone(),
+                            result: content.clone(),
+                        },
+                    })
+                    .await
+                    .map_err(|e| {
+                        AgentError::LLMError(format!("Failed to send ToolCallResult event: {}", e))
+                    });
+            }
+            Message {
+                role: MessageRole::ToolResponse,
+                name: Some(mapped_tool_call.tool_name.clone()),
+                content: vec![MessageContent {
+                    content_type: "text".to_string(),
+                    text: Some(content.clone()),
+                    image: None,
+                }],
+                tool_calls: vec![mapped_tool_call.to_owned()],
+            }
+        }
+    }))
+    .await;
+
+    Ok(tool_responses)
 }

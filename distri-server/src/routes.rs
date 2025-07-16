@@ -269,9 +269,7 @@ async fn create_agent(
     let definition = req.into_inner();
 
     match executor.register_agent_definition(definition.clone()).await {
-        Ok(_) => {
-            HttpResponse::Ok().json(definition)
-        }
+        Ok(_) => HttpResponse::Ok().json(definition),
         Err(e) => HttpResponse::BadRequest().json(json!({
             "error": format!("Failed to create agent: {}", e)
         })),
@@ -290,9 +288,7 @@ async fn update_agent(
     definition.name = agent_id;
 
     match executor.update_agent_definition(definition.clone()).await {
-        Ok(_) => {
-            HttpResponse::Ok().json(definition)
-        }
+        Ok(_) => HttpResponse::Ok().json(definition),
         Err(e) => HttpResponse::BadRequest().json(json!({
             "error": format!("Failed to update agent: {}", e)
         })),

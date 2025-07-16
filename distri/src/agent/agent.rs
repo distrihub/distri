@@ -1,5 +1,5 @@
 use crate::{
-    agent::{AgentHooks, StandardAgent},
+    agent::{AgentEvent, AgentHooks, StandardAgent},
     delegate_base_agent,
     error::AgentError,
     memory::TaskStep,
@@ -84,14 +84,22 @@ delegate_base_agent!(Agent, "Agent", base);
 // Implement AgentHooks by chaining all hooks
 #[async_trait::async_trait]
 impl AgentHooks for Agent {
-    async fn after_task_step(
+    async fn before_invoke(
         &self,
         task: TaskStep,
+        params: Option<serde_json::Value>,
         context: Arc<crate::agent::ExecutorContext>,
+        event_tx: Option<tokio::sync::mpsc::Sender<AgentEvent>>,
     ) -> Result<(), AgentError> {
         // Call hooks on all registered hooks
         for hook in &self.hooks {
-            hook.after_task_step(task.clone(), context.clone()).await?;
+            hook.before_invoke(
+                task.clone(),
+                params.clone(),
+                context.clone(),
+                event_tx.clone(),
+            )
+            .await?;
         }
         Ok(())
     }
@@ -99,16 +107,12 @@ impl AgentHooks for Agent {
     async fn before_llm_step(
         &self,
         messages: &[crate::types::Message],
-        params: &Option<serde_json::Value>,
-        context: Arc<crate::agent::ExecutorContext>,
     ) -> Result<Vec<crate::types::Message>, AgentError> {
         let mut processed_messages = messages.to_vec();
 
         // Chain hooks through all registered hooks
         for hook in &self.hooks {
-            processed_messages = hook
-                .before_llm_step(&processed_messages, params, context.clone())
-                .await?;
+            processed_messages = hook.before_llm_step(&processed_messages).await?;
         }
 
         Ok(processed_messages)
@@ -117,15 +121,12 @@ impl AgentHooks for Agent {
     async fn before_tool_calls(
         &self,
         tool_calls: &[crate::types::ToolCall],
-        context: Arc<crate::agent::ExecutorContext>,
     ) -> Result<Vec<crate::types::ToolCall>, AgentError> {
         let mut processed_tool_calls = tool_calls.to_vec();
 
         // Chain hooks through all registered hooks
         for hook in &self.hooks {
-            processed_tool_calls = hook
-                .before_tool_calls(&processed_tool_calls, context.clone())
-                .await?;
+            processed_tool_calls = hook.before_tool_calls(&processed_tool_calls).await?;
         }
 
         Ok(processed_tool_calls)
@@ -133,29 +134,55 @@ impl AgentHooks for Agent {
 
     async fn after_tool_calls(
         &self,
-        tool_responses: &[String],
-        context: Arc<crate::agent::ExecutorContext>,
-    ) -> Result<(), AgentError> {
+        tool_responses: &[crate::types::Message],
+    ) -> Result<Vec<crate::types::Message>, AgentError> {
         // Call hooks on all registered hooks
+        let mut processed_tool_responses = tool_responses.to_vec();
         for hook in &self.hooks {
-            hook.after_tool_calls(tool_responses, context.clone())
-                .await?;
+            processed_tool_responses = hook.after_tool_calls(&processed_tool_responses).await?;
         }
-        Ok(())
+        Ok(processed_tool_responses)
     }
 
     async fn after_finish(
         &self,
         step_result: crate::agent::StepResult,
-        context: Arc<crate::agent::ExecutorContext>,
     ) -> Result<crate::agent::StepResult, AgentError> {
         let mut processed_result = step_result;
 
         // Chain hooks through all registered hooks
         for hook in &self.hooks {
-            processed_result = hook.after_finish(processed_result, context.clone()).await?;
+            processed_result = hook.after_finish(processed_result).await?;
         }
 
         Ok(processed_result)
+    }
+
+    async fn after_execute(
+        &self,
+        response: crate::llm::LLMResponse,
+    ) -> Result<crate::llm::LLMResponse, AgentError> {
+        let mut processed_response = response;
+
+        // Chain hooks through all registered hooks
+        for hook in &self.hooks {
+            processed_response = hook.after_execute(processed_response).await?;
+        }
+
+        Ok(processed_response)
+    }
+
+    async fn after_execute_stream(
+        &self,
+        response: crate::llm::StreamResult,
+    ) -> Result<crate::llm::StreamResult, AgentError> {
+        let mut processed_response = response;
+
+        // Chain hooks through all registered hooks
+        for hook in &self.hooks {
+            processed_response = hook.after_execute_stream(processed_response).await?;
+        }
+
+        Ok(processed_response)
     }
 }

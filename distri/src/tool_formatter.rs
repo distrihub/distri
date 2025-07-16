@@ -9,10 +9,7 @@ use crate::types::ToolCall;
 pub enum ToolCallFormat {
     /// Current format: XML with attributes
     /// Example: <tool_call name="search" args='{"query": "test"}' />
-    Current,
-    /// JavaScript-like function format
-    /// Example: <tool_call>search({"query": "test"})</tool_call>
-    Function,
+    Xml,
 }
 
 /// Tool call wrapper that supports multiple formats
@@ -29,119 +26,77 @@ impl ToolCallWrapper {
         format: ToolCallFormat,
     ) -> Result<Vec<ToolCall>, anyhow::Error> {
         match format {
-            ToolCallFormat::Current => Self::parse_current_format(content),
-            ToolCallFormat::Function => Self::parse_function_format(content),
+            ToolCallFormat::Xml => Self::parse_xml_format(content),
         }
     }
 
-    /// Parse current format: <tool_call name="tool_name" args='{"param": "value"}' />
-    fn parse_current_format(content: &str) -> Result<Vec<ToolCall>, anyhow::Error> {
+    /// Parse Cline-style XML: <tool_name><param1>value</param1>...</tool_name>
+    fn parse_xml_format(content: &str) -> Result<Vec<ToolCall>, anyhow::Error> {
+        use quick_xml::events::Event;
+        use quick_xml::Reader;
+        use std::collections::HashMap;
+
         let mut tool_calls = Vec::new();
+        let mut reader = Reader::from_str(content);
+        reader.trim_text(true);
+        let mut buf = Vec::new();
 
-        // Look for <tool_calls> wrapper
-        if let Some(wrapper_match) = regex::Regex::new(r#"<tool_calls>(.*?)</tool_calls>"#)
-            .map_err(|e| anyhow::anyhow!("Invalid regex: {}", e))?
-            .captures(content)
-        {
-            let inner_content = &wrapper_match[1];
+        // Get all tool names from the registry (for now, allow any tag)
+        // In practice, you may want to pass the registry or a list of valid tool names
 
-            // Parse individual tool calls with more flexible pattern
-            let tool_call_pattern = r#"<tool_call\s+name\s*=\s*["']([^"']+)["'][^>]*args\s*=\s*["']([^"']+)["'][^>]*/?>"#;
-            let regex = regex::Regex::new(tool_call_pattern)
-                .map_err(|e| anyhow::anyhow!("Invalid regex: {}", e))?;
-
-            for captures in regex.captures_iter(inner_content) {
-                if captures.len() >= 3 {
-                    let tool_name = captures[1].to_string();
-                    let args = captures[2].to_string();
-
+        // We'll parse all top-level tags as tool calls
+        loop {
+            match reader.read_event_into(&mut buf) {
+                Ok(Event::Start(ref e)) => {
+                    let tool_name = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                    let mut params = HashMap::new();
+                    let mut param_buf = Vec::new();
+                    // Read child elements as parameters
+                    loop {
+                        match reader.read_event_into(&mut param_buf) {
+                            Ok(Event::Start(ref param_e)) => {
+                                let param_name =
+                                    String::from_utf8_lossy(param_e.name().as_ref()).to_string();
+                                // Read the text inside the parameter
+                                let value = match reader.read_event_into(&mut param_buf) {
+                                    Ok(Event::Text(t)) => {
+                                        t.unescape().unwrap_or_default().to_string()
+                                    }
+                                    _ => String::new(),
+                                };
+                                params.insert(param_name, value);
+                                // Expect End for this param
+                                let _ = reader.read_event_into(&mut param_buf);
+                            }
+                            Ok(Event::End(ref end_e)) if end_e.name() == e.name() => {
+                                // End of this tool call
+                                break;
+                            }
+                            Ok(Event::Eof) => break,
+                            _ => {}
+                        }
+                        param_buf.clear();
+                    }
+                    // Convert params to JSON
+                    let input = serde_json::to_string(&params)?;
                     tool_calls.push(ToolCall {
                         tool_id: uuid::Uuid::new_v4().to_string(),
                         tool_name,
-                        input: args,
+                        input,
                     });
                 }
+                Ok(Event::Eof) => break,
+                _ => {}
             }
-        } else {
-            // Fallback: look for individual tool calls without wrapper
-            let tool_call_pattern = r#"<tool_call\s+name\s*=\s*["']([^"']+)["'][^>]*args\s*=\s*["']([^"']+)["'][^>]*/?>"#;
-            let regex = regex::Regex::new(tool_call_pattern)
-                .map_err(|e| anyhow::anyhow!("Invalid regex: {}", e))?;
-
-            for captures in regex.captures_iter(content) {
-                if captures.len() >= 3 {
-                    let tool_name = captures[1].to_string();
-                    let args = captures[2].to_string();
-
-                    tool_calls.push(ToolCall {
-                        tool_id: uuid::Uuid::new_v4().to_string(),
-                        tool_name,
-                        input: args,
-                    });
-                }
-            }
+            buf.clear();
         }
-
-        Ok(tool_calls)
-    }
-
-    /// Parse function format: <tool_calls>tool_name({"param": "value"})</tool_calls>
-    fn parse_function_format(content: &str) -> Result<Vec<ToolCall>, anyhow::Error> {
-        let mut tool_calls = Vec::new();
-
-        // Look for <tool_calls> wrapper
-        if let Some(wrapper_match) = regex::Regex::new(r#"<tool_calls>(.*?)</tool_calls>"#)
-            .map_err(|e| anyhow::anyhow!("Invalid regex: {}", e))?
-            .captures(content)
-        {
-            let inner_content = &wrapper_match[1];
-
-            // Parse function-style tool calls: tool_name({"param": "value"})
-            // Use a simpler approach that finds function calls and extracts JSON
-            let function_pattern = r#"(\w+)\s*\(\s*(\{[^}]*\})\s*\)"#;
-            let regex = regex::Regex::new(function_pattern)
-                .map_err(|e| anyhow::anyhow!("Invalid regex: {}", e))?;
-
-            for captures in regex.captures_iter(inner_content) {
-                if captures.len() >= 3 {
-                    let tool_name = captures[1].to_string();
-                    let args = captures[2].to_string();
-
-                    tool_calls.push(ToolCall {
-                        tool_id: uuid::Uuid::new_v4().to_string(),
-                        tool_name,
-                        input: args,
-                    });
-                }
-            }
-        } else {
-            // Fallback: look for individual function calls without wrapper
-            let function_pattern = r#"(\w+)\s*\(\s*(\{[^}]*\})\s*\)"#;
-            let regex = regex::Regex::new(function_pattern)
-                .map_err(|e| anyhow::anyhow!("Invalid regex: {}", e))?;
-
-            for captures in regex.captures_iter(content) {
-                if captures.len() >= 3 {
-                    let tool_name = captures[1].to_string();
-                    let args = captures[2].to_string();
-
-                    tool_calls.push(ToolCall {
-                        tool_id: uuid::Uuid::new_v4().to_string(),
-                        tool_name,
-                        input: args,
-                    });
-                }
-            }
-        }
-
         Ok(tool_calls)
     }
 
     /// Generate XML representation of tool calls in the specified format
     pub fn to_xml(&self, format: &ToolCallFormat) -> String {
         match format {
-            ToolCallFormat::Current => self.to_current_format_xml(),
-            ToolCallFormat::Function => self.to_function_format_xml(),
+            ToolCallFormat::Xml => self.to_current_format_xml(),
         }
     }
 
@@ -159,20 +114,6 @@ impl ToolCallWrapper {
                     tc.tool_name, tc.input
                 )
             })
-            .collect();
-
-        format!("<tool_calls>\n{}\n</tool_calls>", tool_calls_xml.join("\n"))
-    }
-
-    fn to_function_format_xml(&self) -> String {
-        if self.tool_calls.is_empty() {
-            return String::new();
-        }
-
-        let tool_calls_xml: Vec<String> = self
-            .tool_calls
-            .iter()
-            .map(|tc| format!("{}({})", tc.tool_name, tc.input))
             .collect();
 
         format!("<tool_calls>\n{}\n</tool_calls>", tool_calls_xml.join("\n"))

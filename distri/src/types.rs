@@ -75,6 +75,14 @@ pub struct LlmDefinition {
     /// The size of the history to maintain for the agent.
     #[serde(default = "default_history_size")]
     pub history_size: Option<usize>,
+
+    /// Whether to include tools in the response.
+    #[serde(default = "default_include_tools")]
+    pub include_tools: bool,
+}
+
+fn default_include_tools() -> bool {
+    true
 }
 
 impl From<AgentDefinition> for LlmDefinition {
@@ -84,6 +92,7 @@ impl From<AgentDefinition> for LlmDefinition {
             system_prompt: definition.system_prompt,
             model_settings: definition.model_settings,
             history_size: definition.history_size,
+            include_tools: definition.include_tools,
         }
     }
 }
@@ -134,7 +143,12 @@ pub struct AgentDefinition {
     /// List of sub-agents that this agent can transfer control to
     #[serde(default)]
     pub sub_agents: Vec<String>,
+
+    /// Whether to include tools in the response.
+    #[serde(default = "default_include_tools")]
+    pub include_tools: bool,
 }
+
 impl AgentDefinition {
     pub fn validate(&self) -> anyhow::Result<()> {
         validate_agent_definition(self)?;

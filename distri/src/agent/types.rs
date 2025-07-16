@@ -5,6 +5,7 @@ use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
 
 use crate::{
+    llm::{LLMResponse, StreamResult},
     memory::TaskStep,
     tools::Tool,
     types::{Message, ToolCall},
@@ -157,44 +158,46 @@ pub const MAX_ITERATIONS: i32 = 10;
 /// Trait for agent hooks that can be chained together
 #[async_trait::async_trait]
 pub trait AgentHooks: Send + Sync {
-    async fn after_task_step(
+    async fn before_invoke(
         &self,
         _task: TaskStep,
+        _params: Option<serde_json::Value>,
         _context: Arc<ExecutorContext>,
+        _event_tx: Option<mpsc::Sender<AgentEvent>>,
     ) -> Result<(), AgentError> {
         Ok(())
     }
 
-    async fn before_llm_step(
-        &self,
-        messages: &[Message],
-        _params: &Option<serde_json::Value>,
-        _context: Arc<ExecutorContext>,
-    ) -> Result<Vec<Message>, AgentError> {
+    async fn before_llm_step(&self, messages: &[Message]) -> Result<Vec<Message>, AgentError> {
         Ok(messages.to_vec())
+    }
+
+    async fn after_execute(&self, response: LLMResponse) -> Result<LLMResponse, AgentError> {
+        Ok(response)
+    }
+
+    async fn after_execute_stream(
+        &self,
+        response: StreamResult,
+    ) -> Result<StreamResult, AgentError> {
+        Ok(response)
     }
 
     async fn before_tool_calls(
         &self,
         tool_calls: &[ToolCall],
-        _context: Arc<ExecutorContext>,
     ) -> Result<Vec<ToolCall>, AgentError> {
         Ok(tool_calls.to_vec())
     }
 
     async fn after_tool_calls(
         &self,
-        _tool_responses: &[String],
-        _context: Arc<ExecutorContext>,
-    ) -> Result<(), AgentError> {
-        Ok(())
+        tool_responses: &[Message],
+    ) -> Result<Vec<Message>, AgentError> {
+        Ok(tool_responses.to_vec())
     }
 
-    async fn after_finish(
-        &self,
-        step_result: StepResult,
-        _context: Arc<ExecutorContext>,
-    ) -> Result<StepResult, AgentError> {
+    async fn after_finish(&self, step_result: StepResult) -> Result<StepResult, AgentError> {
         Ok(step_result)
     }
 }

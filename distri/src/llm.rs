@@ -88,6 +88,7 @@ impl LLMExecutor {
         messages: &[Message],
         params: Option<Value>,
     ) -> Result<LLMResponse, AgentError> {
+        self.model_logger.log_messages(messages);
         // Create normalized parameters
         if let Some(schema) = self.llm_def.model_settings.parameters.as_ref() {
             let mut schema = schema.clone();
@@ -163,6 +164,8 @@ impl LLMExecutor {
         params: Option<Value>,
         event_tx: mpsc::Sender<crate::agent::AgentEvent>,
     ) -> Result<StreamResult, AgentError> {
+        self.model_logger.log_messages(messages);
+
         // Create normalized parameters
         if let Some(schema) = self.llm_def.model_settings.parameters.as_ref() {
             let mut schema = schema.clone();
@@ -382,7 +385,11 @@ impl LLMExecutor {
         CreateChatCompletionRequest {
             model: settings.model.clone(),
             messages,
-            tools: if !tools.is_empty() { Some(tools) } else { None },
+            tools: if !tools.is_empty() && self.llm_def.include_tools {
+                Some(tools)
+            } else {
+                None
+            },
             response_format: self
                 .llm_def
                 .model_settings

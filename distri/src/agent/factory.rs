@@ -55,14 +55,18 @@ impl AgentFactoryRegistry {
         self.register_factory(
             "tool_parser".to_string(),
             Arc::new(|definition, tools_registry, executor, session_store| {
+                let mut definition = definition.clone();
+                // skip tools in llm definition
+                definition.include_tools = false;
                 Box::new(Agent::new(
                     definition,
-                    tools_registry,
-                    executor,
+                    tools_registry.clone(),
+                    executor.clone(),
                     session_store,
-                    vec![Arc::new(ToolParsingHooks::new(
-                        crate::tool_formatter::ToolCallFormat::Current,
-                    ))],
+                    vec![Arc::new(ToolParsingHooks {
+                        tool_call_format: crate::tool_formatter::ToolCallFormat::Xml,
+                        tools_registry,
+                    })],
                 ))
             }),
         );

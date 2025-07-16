@@ -1,8 +1,7 @@
 use crate::{
-    agent::{AgentHooks, ExecutorContext, StepResult},
+    agent::{AgentHooks, StepResult},
     error::AgentError,
 };
-use std::sync::Arc;
 use tracing::info;
 
 /// Hooks implementation for content filtering capability
@@ -15,7 +14,7 @@ impl ContentFilteringHooks {
     pub fn new(banned_words: Vec<String>) -> Self {
         Self { banned_words }
     }
-    
+
     fn filter_content(&self, content: &str) -> String {
         let mut filtered = content.to_string();
         for word in &self.banned_words {
@@ -28,11 +27,7 @@ impl ContentFilteringHooks {
 
 #[async_trait::async_trait]
 impl AgentHooks for ContentFilteringHooks {
-    async fn after_finish(
-        &self,
-        step_result: StepResult,
-        _context: Arc<ExecutorContext>,
-    ) -> Result<StepResult, AgentError> {
+    async fn after_finish(&self, step_result: StepResult) -> Result<StepResult, AgentError> {
         match step_result {
             StepResult::Finish(content) => {
                 let filtered = self.filter_content(&content);
