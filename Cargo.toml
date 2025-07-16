@@ -3,7 +3,6 @@ resolver = "2"
 
 members = [
   "distri",
-  "proxy",
   "distri-server",
   "distri-cli",
   "distri-a2a",

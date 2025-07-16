@@ -26,7 +26,6 @@ anyhow = { workspace = true }
 futures = "0.3.31"
 jsonschema = "0.28.3"
 schemars = "0.8.21"
-mcp-proxy = { path = "../proxy" }
 secrecy = { version = "0.10.3", features = ["serde"] }
 uuid = "1.13.1"
 chrono = { version = "0.4", features = ["serde"] }

@@ -1277,7 +1277,6 @@ dependencies = [
  "futures",
  "futures-util",
  "jsonschema",
- "mcp-proxy",
  "openssl",
  "quick-xml 0.31.0",
  "redis",
@@ -1321,7 +1320,6 @@ dependencies = [
  "dotenv",
  "futures",
  "futures-util",
- "mcp-proxy",
  "regex",
  "rustyline",
  "serde",
@@ -2500,25 +2498,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8263075bb86c5a1b1427b5ae862e8889656f126e9f77c484496e8b47cf5c5558"
 dependencies = [
  "regex-automata 0.1.10",
-]
-
-[[package]]
-name = "mcp-proxy"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-mcp",
- "async-trait",
- "clap",
- "futures",
- "schemars",
- "serde",
- "serde_json",
- "serde_yaml",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "url",
 ]
 
 [[package]]

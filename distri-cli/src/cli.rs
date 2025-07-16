@@ -23,10 +23,6 @@ pub enum Commands {
     List,
     /// List available tools
     ListTools,
-
-    /// Start MCP proxy server
-    Proxy,
-
     /// Run agent in interactive chat mode or execute a single task
     Run {
         /// Agent name (uses first agent if not specified)

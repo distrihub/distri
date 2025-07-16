@@ -17,7 +17,6 @@ async fn main() -> anyhow::Result<()> {
         agents: vec![],
         sessions: std::collections::HashMap::new(),
         mcp_servers: vec![],
-        proxy: None,
         server: None,
         stores: None,
     };

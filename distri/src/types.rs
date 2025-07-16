@@ -1,7 +1,6 @@
 use anyhow::Context;
 use async_mcp::types::Tool as McpToolDefinition;
 use distri_a2a::{AgentCapabilities, AgentProvider, AgentSkill, SecurityScheme};
-use mcp_proxy::types::ProxyServerConfig;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{self, json};
@@ -444,8 +443,6 @@ pub struct Configuration {
     pub sessions: HashMap<String, String>,
     #[serde(default)]
     pub mcp_servers: Vec<ExternalMcpServer>,
-    #[serde(default)]
-    pub proxy: Option<ProxyServerConfig>,
     #[serde(default = "default_server_config")]
     pub server: Option<ServerConfig>,
     #[serde(default)]

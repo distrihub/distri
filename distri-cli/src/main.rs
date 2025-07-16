@@ -10,7 +10,6 @@ use distri_cli::run_agent_cli;
 use distri_server::agent_server::{run_agent_server, DistriAgentServer};
 use dotenv::dotenv;
 use logging::init_logging;
-use mcp_proxy::McpProxy;
 use std::{env, sync::Arc};
 use tracing::debug;
 
@@ -113,21 +112,6 @@ async fn main() -> Result<()> {
             let executor = init_all(&config).await?;
             let server = DistriAgentServer::default();
             run_agent_server(server, executor, &config, &host, port).await?;
-        }
-        Commands::Proxy => {
-            let config = load_config(cli.config.to_str().unwrap())?;
-            let proxy_config = Arc::new(config.proxy.expect("proxy configuration is missing"));
-            let port = proxy_config.port;
-            let proxy = McpProxy::initialize(proxy_config).await?;
-
-            async_mcp::run_http_server(port, None, move |transport| {
-                let proxy = proxy.clone();
-                async move {
-                    let server = proxy.build(transport).await?;
-                    Ok(server)
-                }
-            })
-            .await?;
         }
     }
 
