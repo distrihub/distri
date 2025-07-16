@@ -1,7 +1,6 @@
 use crate::{
     agent::{AgentHooks, ExecutorContext, StepResult},
     error::AgentError,
-    memory::TaskStep,
     tool_formatter::{ToolCallFormat, ToolCallWrapper},
     types::{Message, ToolCall},
 };
@@ -18,9 +17,9 @@ impl ToolParsingHooks {
     pub fn new(tool_call_format: ToolCallFormat) -> Self {
         Self { tool_call_format }
     }
-    
+
     /// Parse tool calls from the LLM response using the configured format
-    fn parse_tool_calls(&self, content: &str) -> Result<Vec<ToolCall>, AgentError> {
+    pub fn parse_tool_calls(&self, content: &str) -> Result<Vec<ToolCall>, AgentError> {
         match ToolCallWrapper::parse_from_xml(content, self.tool_call_format.clone()) {
             Ok(tool_calls) => {
                 if tool_calls.is_empty() {

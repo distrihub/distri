@@ -1,12 +1,9 @@
 pub mod coordinator_test;
 pub mod executor;
-pub mod extensible_agent_test;
-pub mod executor_test;
 pub mod executor_custom_agents_test;
+pub mod executor_test;
+pub mod extensible_agent_test;
 pub mod hook_delegation_test;
-pub mod macro_example_test;
-pub mod simplified_custom_agent_example;
-pub mod composable_agent_test;
-pub mod tools;
 pub mod tool_call_format;
+pub mod tools;
 pub mod utils;

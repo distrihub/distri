@@ -5,8 +5,8 @@ macro_rules! delegate_base_agent {
     ($agent_type:ty, $agent_name:expr, $inner_field:ident) => {
         #[async_trait::async_trait]
         impl $crate::agent::BaseAgent for $agent_type {
-            fn agent_type(&self) -> $crate::agent::agent::AgentType {
-                $crate::agent::agent::AgentType::Custom($agent_name.to_string())
+            fn agent_type(&self) -> $crate::agent::AgentType {
+                $crate::agent::AgentType::Custom($agent_name.to_string())
             }
 
             fn get_definition(&self) -> $crate::types::AgentDefinition {
@@ -40,7 +40,9 @@ macro_rules! delegate_base_agent {
                 context: std::sync::Arc<$crate::agent::ExecutorContext>,
                 event_tx: Option<tokio::sync::mpsc::Sender<$crate::agent::AgentEvent>>,
             ) -> Result<String, $crate::error::AgentError> {
-                self.$inner_field.invoke(task, params, context, event_tx).await
+                self.$inner_field
+                    .invoke(task, params, context, event_tx)
+                    .await
             }
 
             async fn invoke_stream(
@@ -50,7 +52,9 @@ macro_rules! delegate_base_agent {
                 context: std::sync::Arc<$crate::agent::ExecutorContext>,
                 event_tx: tokio::sync::mpsc::Sender<$crate::agent::AgentEvent>,
             ) -> Result<(), $crate::error::AgentError> {
-                self.$inner_field.invoke_stream(task, params, context, event_tx).await
+                self.$inner_field
+                    .invoke_stream(task, params, context, event_tx)
+                    .await
             }
         }
     };

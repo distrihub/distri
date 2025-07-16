@@ -257,7 +257,6 @@ impl AgentExecutor {
             definition,
             Arc::new(tools_registry),
             Arc::new(self.clone()),
-            self.context.clone(),
             self.session_store.clone(),
         )
     }

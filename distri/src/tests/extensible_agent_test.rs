@@ -1,5 +1,5 @@
 use crate::{
-    agent::{agent::AgentType, AgentFactoryRegistry},
+    agent::{AgentFactoryRegistry, AgentType},
     tests::utils::init_executor,
     types::{AgentDefinition, ModelSettings},
 };

@@ -1,5 +1,5 @@
 use crate::{
-    agent::{BaseAgent, ExecutorContext, ToolParserAgent},
+    agent::{hooks::ToolParsingHooks, Agent, BaseAgent},
     error::AgentError,
     tools::LlmToolsRegistry,
     types::AgentDefinition,
@@ -12,7 +12,6 @@ pub type AgentFactoryFn = dyn Fn(
         AgentDefinition,
         Arc<LlmToolsRegistry>,
         Arc<crate::agent::AgentExecutor>,
-        Arc<ExecutorContext>,
         Arc<Box<dyn SessionStore>>,
     ) -> Box<dyn BaseAgent>
     + Send
@@ -43,33 +42,29 @@ impl AgentFactoryRegistry {
         // Register default StandardAgent factory
         self.register_factory(
             "standard".to_string(),
-            Arc::new(
-                |definition, tools_registry, executor, context, session_store| {
-                    Box::new(crate::agent::StandardAgentImpl::new(
-                        definition,
-                        tools_registry,
-                        executor,
-                        context,
-                        session_store,
-                    ))
-                },
-            ),
+            Arc::new(|definition, tools_registry, executor, session_store| {
+                Box::new(crate::agent::standard::StandardAgent::new(
+                    definition,
+                    tools_registry,
+                    executor,
+                    session_store,
+                ))
+            }),
         );
 
         self.register_factory(
             "tool_parser".to_string(),
-            Arc::new(
-                |definition, tools_registry, executor, context, session_store| {
-                    Box::new(ToolParserAgent::new(
-                        definition,
-                        tools_registry,
-                        executor,
-                        context,
-                        session_store,
+            Arc::new(|definition, tools_registry, executor, session_store| {
+                Box::new(Agent::new(
+                    definition,
+                    tools_registry,
+                    executor,
+                    session_store,
+                    vec![Arc::new(ToolParsingHooks::new(
                         crate::tool_formatter::ToolCallFormat::Current,
-                    ))
-                },
-            ),
+                    ))],
+                ))
+            }),
         );
     }
 
@@ -84,7 +79,6 @@ impl AgentFactoryRegistry {
         definition: AgentDefinition,
         tools_registry: Arc<LlmToolsRegistry>,
         executor: Arc<crate::agent::AgentExecutor>,
-        context: Arc<ExecutorContext>,
         session_store: Arc<Box<dyn SessionStore>>,
     ) -> Result<Box<dyn BaseAgent>, AgentError> {
         // Determine agent type from definition or use default
@@ -94,13 +88,7 @@ impl AgentFactoryRegistry {
             AgentError::NotFound(format!("Agent factory for type '{}' not found", agent_type))
         })?;
 
-        Ok(factory(
-            definition,
-            tools_registry,
-            executor,
-            context,
-            session_store,
-        ))
+        Ok(factory(definition, tools_registry, executor, session_store))
     }
 
     /// Check if a factory exists for the given agent type
