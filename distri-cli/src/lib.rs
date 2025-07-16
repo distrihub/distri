@@ -1,5 +1,8 @@
 use anyhow::Result;
-use distri::{agent::AgentExecutor, memory::TaskStep, types::Configuration};
+use distri::{
+    agent::AgentExecutor,
+    types::{Configuration, Message},
+};
 use distri_server::agent_server::{run_agent_server, DistriAgentServer};
 use dotenv::dotenv;
 use std::{env, path::PathBuf, sync::Arc};
@@ -97,10 +100,7 @@ pub async fn run_agent_cli(
 
     if background {
         let task = task
-            .map(|t| TaskStep {
-                task: t,
-                task_images: None,
-            })
+            .map(|t| Message::user(t, None))
             .unwrap_or_else(|| panic!("Task is needed for background mode"));
         background::run(&agent_name, executor, task).await?;
     } else {

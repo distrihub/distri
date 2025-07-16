@@ -37,25 +37,23 @@ macro_rules! delegate_base_agent {
 
             async fn invoke(
                 &self,
-                task: $crate::memory::TaskStep,
-                params: Option<serde_json::Value>,
+                message: $crate::types::Message,
                 context: std::sync::Arc<$crate::agent::ExecutorContext>,
                 event_tx: Option<tokio::sync::mpsc::Sender<$crate::agent::AgentEvent>>,
             ) -> Result<String, $crate::error::AgentError> {
                 self.$inner_field
-                    .invoke_with_hooks(task, params, context, event_tx, self.get_hooks())
+                    .invoke_with_hooks(message, context, event_tx, self.get_hooks())
                     .await
             }
 
             async fn invoke_stream(
                 &self,
-                task: $crate::memory::TaskStep,
-                params: Option<serde_json::Value>,
+                message: $crate::types::Message,
                 context: std::sync::Arc<$crate::agent::ExecutorContext>,
                 event_tx: tokio::sync::mpsc::Sender<$crate::agent::AgentEvent>,
             ) -> Result<(), $crate::error::AgentError> {
                 self.$inner_field
-                    .invoke_stream_with_hooks(task, params, context, event_tx, self.get_hooks())
+                    .invoke_stream_with_hooks(message, context, event_tx, self.get_hooks())
                     .await
             }
         }

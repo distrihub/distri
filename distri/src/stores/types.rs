@@ -1,12 +1,15 @@
 use async_trait::async_trait;
+use distri_a2a::Artifact;
 use uuid::Uuid;
 
 use crate::{
     agent::ExecutorContext,
     memory::MemoryStep,
-    types::{CreateThreadRequest, McpSession, Message, Thread, ThreadSummary, UpdateThreadRequest},
+    types::{
+        CreateThreadRequest, McpSession, Message, Task, TaskStatus, Thread, ThreadSummary,
+        UpdateThreadRequest,
+    },
 };
-use distri_a2a::{Artifact, EventKind, Message as A2aMessage, Task, TaskState, TaskStatus};
 
 #[async_trait]
 pub trait ToolSessionStore: Send + Sync {
@@ -81,26 +84,22 @@ pub trait TaskStore: Send + Sync {
     fn init_task(&self, context_id: &str, task_id: Option<&str>) -> Task {
         let task_id = task_id.unwrap_or(&Uuid::new_v4().to_string()).to_string();
         Task {
-            kind: EventKind::Task,
-            id: task_id.clone(),
-            context_id: context_id.to_string(),
-            status: TaskStatus {
-                state: TaskState::Submitted,
-                message: None,
-                timestamp: Some(chrono::Utc::now().to_rfc3339()),
-            },
-            artifacts: vec![],
-            history: vec![],
-            metadata: None,
+            id: task_id,
+            status: TaskStatus::Pending,
+            messages: vec![],
+            created_at: chrono::Utc::now().timestamp_millis(),
+            updated_at: chrono::Utc::now().timestamp_millis(),
+            thread_id: context_id.to_string(),
         }
     }
     async fn create_task(&self, context_id: &str, task_id: Option<&str>) -> anyhow::Result<Task>;
     async fn get_task(&self, task_id: &str) -> anyhow::Result<Option<Task>>;
     async fn update_task_status(&self, task_id: &str, status: TaskStatus) -> anyhow::Result<()>;
     async fn cancel_task(&self, task_id: &str) -> anyhow::Result<Task>;
-    async fn add_message_to_task(&self, task_id: &str, message: A2aMessage) -> anyhow::Result<()>;
+    async fn add_message_to_task(&self, task_id: &str, message: &Message) -> anyhow::Result<()>;
     async fn add_artifact_to_task(&self, task_id: &str, artifact: Artifact) -> anyhow::Result<()>;
     async fn list_tasks(&self, thread_id: Option<&str>) -> anyhow::Result<Vec<Task>>;
+    async fn get_messages(&self, thread_id: &str) -> anyhow::Result<Vec<Message>>;
 }
 
 // Thread Store trait for thread management

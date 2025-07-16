@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::any::Any;
 
-use crate::types::{Message, MessageContent, MessageRole, ToolCall};
+use crate::types::{Message, ToolCall};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AgentError {
@@ -144,16 +144,10 @@ impl MemoryStep {
     pub fn to_messages(&self, summary_mode: bool, show_model_input_messages: bool) -> Vec<Message> {
         match self {
             MemoryStep::Task(task_step) => {
-                vec![Message {
-                    role: MessageRole::User,
-                    name: Some("user".to_string()),
-                    content: vec![MessageContent {
-                        content_type: "text".to_string(),
-                        text: Some(task_step.task.clone()),
-                        image: None,
-                    }],
-                    tool_calls: Vec::new(),
-                }]
+                vec![Message::user(
+                    task_step.task.clone(),
+                    Some("user".to_string()),
+                )]
             }
             MemoryStep::Planning(planning_step) if !summary_mode => {
                 let mut messages = vec![planning_step.model_output_message_facts.clone()];
@@ -170,31 +164,13 @@ impl MemoryStep {
                 }
 
                 if let Some(output) = &step.model_output {
-                    messages.push(Message {
-                        role: MessageRole::Assistant,
-                        name: None,
-                        content: vec![MessageContent {
-                            content_type: "text".to_string(),
-                            text: Some(output.clone()),
-                            image: None,
-                        }],
-                        tool_calls: Vec::new(),
-                    });
+                    messages.push(Message::assistant(output.clone(), None));
                 }
 
                 messages
             }
             MemoryStep::System(system_step) => {
-                vec![Message {
-                    role: MessageRole::System,
-                    name: None,
-                    content: vec![MessageContent {
-                        content_type: "text".to_string(),
-                        text: Some(system_step.system_prompt.clone()),
-                        image: None,
-                    }],
-                    tool_calls: Vec::new(),
-                }]
+                vec![Message::system(system_step.system_prompt.clone(), None)]
             }
             _ => Vec::new(),
         }

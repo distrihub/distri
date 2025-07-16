@@ -5,19 +5,18 @@ use crate::{
     stores::{AgentStore, ThreadStore, ToolSessionStore},
     tools::{get_tools, BuiltInToolContext, LlmToolsRegistry},
     types::{
-        Configuration, CreateThreadRequest, StoreConfig, Thread, ThreadSummary, ToolCall,
+        Configuration, CreateThreadRequest, Message, StoreConfig, Thread, ThreadSummary, ToolCall,
         UpdateThreadRequest,
     },
     InitializedStores, SessionStore, TaskStore,
 };
-use serde_json;
+
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex, RwLock};
 
 use super::AgentEvent;
 use super::CoordinatorMessage;
 use super::ExecutorContext;
-use crate::memory::TaskStep;
 
 // Message types for coordinator communication
 
@@ -31,7 +30,6 @@ pub struct AgentExecutor {
     pub session_store: Arc<Box<dyn SessionStore>>,
     pub thread_store: Arc<dyn ThreadStore>,
     pub task_store: Arc<dyn TaskStore>,
-    pub context: Arc<ExecutorContext>,
     pub agent_factory: Arc<RwLock<AgentFactoryRegistry>>,
 }
 
@@ -43,7 +41,6 @@ pub struct AgentExecutorBuilder {
     agent_store: Option<Arc<dyn AgentStore>>,
     task_store: Option<Arc<dyn TaskStore>>,
     thread_store: Option<Arc<dyn ThreadStore>>,
-    context: Option<Arc<ExecutorContext>>,
     agent_factory: Option<Arc<RwLock<AgentFactoryRegistry>>>,
 }
 
@@ -75,11 +72,6 @@ impl AgentExecutorBuilder {
 
     pub fn with_thread_store(mut self, thread_store: Arc<dyn ThreadStore>) -> Self {
         self.thread_store = Some(thread_store);
-        self
-    }
-
-    pub fn with_context(mut self, context: Arc<ExecutorContext>) -> Self {
-        self.context = Some(context);
         self
     }
 
@@ -130,10 +122,6 @@ impl AgentExecutorBuilder {
             .thread_store
             .ok_or_else(|| anyhow::anyhow!("Thread store is required. Use with_stores() to initialize. Default is HashMapThreadStore."))?;
 
-        let context = self
-            .context
-            .unwrap_or_else(|| Arc::new(ExecutorContext::default()));
-
         let agent_factory = self
             .agent_factory
             .unwrap_or_else(|| Arc::new(RwLock::new(AgentFactoryRegistry::default())));
@@ -147,7 +135,6 @@ impl AgentExecutorBuilder {
             session_store,
             thread_store,
             task_store,
-            context,
             agent_factory,
         })
     }
@@ -288,44 +275,40 @@ impl AgentExecutor {
             match msg {
                 CoordinatorMessage::Execute {
                     agent_id,
-                    task,
-                    params,
+                    message,
                     context,
                     event_tx,
                     response_tx,
                 } => {
                     tracing::info!(
-                        "Handling Execute for agent: {} with messages: {:?}",
+                        "Handling Execute for agent: {} with message: {:?}",
                         agent_id,
-                        task
+                        message
                     );
                     let this = self.clone();
                     tokio::spawn(async move {
-                        let result = async {
-                            this.call_agent(&agent_id, task, params, context, event_tx)
-                                .await
-                        }
-                        .await;
+                        let result =
+                            async { this.call_agent(&agent_id, message, context, event_tx).await }
+                                .await;
 
                         let _ = response_tx.send(result);
                     });
                 }
                 CoordinatorMessage::ExecuteStream {
                     agent_id,
-                    task,
-                    params,
+                    message,
                     event_tx,
                     context,
                 } => {
                     tracing::info!(
-                        "Handling ExecuteStream for agent: {} with messages: {:?}",
+                        "Handling ExecuteStream for agent: {} with message: {:?}",
                         agent_id,
-                        task
+                        message
                     );
                     let this = self.clone();
                     tokio::spawn(async move {
                         let result = async {
-                            this.call_agent_stream(&agent_id, task, params, context, event_tx)
+                            this.call_agent_stream(&agent_id, message, context, event_tx)
                                 .await
                         }
                         .await;
@@ -350,7 +333,7 @@ impl AgentExecutor {
 
                     // Emit the AgentHandover event if event_tx is available
                     if let Some(event_tx) = event_tx {
-                        let run_id = context.run_id.lock().await.clone();
+                        let run_id = context.run_id.clone();
                         let handover_event = AgentEvent {
                             thread_id: context.thread_id.clone(),
                             run_id,
@@ -384,8 +367,7 @@ impl AgentExecutor {
     async fn call_agent(
         &self,
         agent_id: &str,
-        task: TaskStep,
-        params: Option<serde_json::Value>,
+        message: Message,
         context: Arc<ExecutorContext>,
         event_tx: Option<tokio::sync::mpsc::Sender<AgentEvent>>,
     ) -> Result<String, AgentError> {
@@ -407,14 +389,13 @@ impl AgentExecutor {
             agent.get_name(),
             agent.agent_type()
         );
-        agent.invoke(task, params, context, event_tx).await
+        agent.invoke(message, context, event_tx).await
     }
 
     async fn call_agent_stream(
         &self,
         agent_id: &str,
-        task: TaskStep,
-        params: Option<serde_json::Value>,
+        message: Message,
         context: Arc<ExecutorContext>,
         event_tx: mpsc::Sender<AgentEvent>,
     ) -> Result<(), AgentError> {
@@ -437,7 +418,7 @@ impl AgentExecutor {
             agent.get_name(),
             agent.agent_type()
         );
-        agent.invoke_stream(task, params, context, event_tx).await
+        agent.invoke_stream(message, context, event_tx).await
     }
 
     // Thread management methods
@@ -514,24 +495,48 @@ impl AgentExecutor {
     pub async fn execute(
         &self,
         agent_name: &str,
-        task: TaskStep,
-        params: Option<serde_json::Value>,
+        message: Message,
         context: Arc<ExecutorContext>,
         event_tx: Option<tokio::sync::mpsc::Sender<AgentEvent>>,
     ) -> Result<String, AgentError> {
-        self.call_agent(agent_name, task, params, context, event_tx)
+        self.append_message_to_task(&message, &context)
+            .await
+            .map_err(|e| AgentError::Session(e.to_string()))?;
+        self.call_agent(agent_name, message, context, event_tx)
             .await
     }
 
     pub async fn execute_stream(
         &self,
         agent_name: &str,
-        task: TaskStep,
-        params: Option<serde_json::Value>,
-        event_tx: mpsc::Sender<AgentEvent>,
+        message: Message,
         context: Arc<ExecutorContext>,
+        event_tx: mpsc::Sender<AgentEvent>,
     ) -> Result<(), AgentError> {
-        self.call_agent_stream(agent_name, task, params, context, event_tx)
+        self.append_message_to_task(&message, &context)
             .await
+            .map_err(|e| AgentError::Session(e.to_string()))?;
+        self.call_agent_stream(agent_name, message, context, event_tx)
+            .await
+    }
+
+    async fn append_message_to_task(
+        &self,
+        message: &Message,
+        context: &ExecutorContext,
+    ) -> Result<(), anyhow::Error> {
+        let task_id = { context.run_id.clone() };
+        let task = self.task_store.get_task(&task_id).await?;
+        if task.is_none() {
+            self.task_store
+                .create_task(&context.thread_id, Some(&context.run_id))
+                .await?;
+        }
+
+        self.task_store
+            .add_message_to_task(&context.thread_id, &message)
+            .await?;
+
+        Ok(())
     }
 }

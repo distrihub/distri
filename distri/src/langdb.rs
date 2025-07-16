@@ -94,10 +94,7 @@ impl Config for GatewayConfig {
         );
         if let Some(context) = &self.context {
             headers.insert("X-Thread-Id", context.thread_id.parse().unwrap());
-
-            if let Ok(run_id) = context.run_id.try_lock() {
-                headers.insert("X-Run-Id", run_id.parse().unwrap());
-            }
+            headers.insert("X-Run-Id", context.run_id.parse().unwrap());
         }
 
         if let Some(additional_headers) = &self.additional_headers {

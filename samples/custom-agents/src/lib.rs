@@ -2,9 +2,8 @@ use distri::{
     agent::{AgentEvent, AgentExecutor, AgentHooks, ExecutorContext, StandardAgent, StepResult},
     delegate_base_agent,
     error::AgentError,
-    memory::TaskStep,
     tools::LlmToolsRegistry,
-    types::AgentDefinition,
+    types::{AgentDefinition, Message},
     SessionStore,
 };
 use std::sync::Arc;
@@ -43,12 +42,11 @@ delegate_base_agent!(LoggingAgent, "LoggingAgent", inner);
 impl AgentHooks for LoggingAgent {
     async fn before_invoke(
         &self,
-        task: TaskStep,
-        _params: Option<serde_json::Value>,
+        message: Message,
         _context: Arc<ExecutorContext>,
         _event_tx: Option<tokio::sync::mpsc::Sender<AgentEvent>>,
     ) -> Result<(), AgentError> {
-        info!("🚀 LoggingAgent: Starting task - {}", task.task);
+        info!("🚀 LoggingAgent: Starting task - {:?}", message.as_text());
         Ok(())
     }
 }
@@ -98,7 +96,7 @@ delegate_base_agent!(FilteringAgent, "FilteringAgent", inner);
 
 #[async_trait::async_trait]
 impl AgentHooks for FilteringAgent {
-    async fn after_finish(&self, step_result: StepResult) -> Result<StepResult, AgentError> {
+    async fn before_step_result(&self, step_result: StepResult) -> Result<StepResult, AgentError> {
         match step_result {
             StepResult::Finish(content) => {
                 let filtered = self.filter_content(&content);

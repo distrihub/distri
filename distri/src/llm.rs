@@ -5,7 +5,7 @@ use crate::{
     error::AgentError,
     langdb::GatewayConfig,
     tools::LlmToolsRegistry,
-    types::{validate_parameters, LlmDefinition, Message, MessageRole, ModelProvider, ToolCall},
+    types::{LlmDefinition, Message, MessageMetadata, MessageRole, ModelProvider, ToolCall},
 };
 use async_openai::{
     config::OpenAIConfig,
@@ -20,7 +20,6 @@ use async_openai::{
     Client,
 };
 use futures::{Stream, StreamExt};
-use serde_json::Value;
 use tokio::sync::{mpsc, RwLock};
 
 pub struct StreamResult {
@@ -83,18 +82,8 @@ impl LLMExecutor {
     }
 
     /// Execute a single LLM call and return the complete response
-    pub async fn execute(
-        &self,
-        messages: &[Message],
-        params: Option<Value>,
-    ) -> Result<LLMResponse, AgentError> {
+    pub async fn execute(&self, messages: &[Message]) -> Result<LLMResponse, AgentError> {
         self.model_logger.log_messages(messages);
-        // Create normalized parameters
-        if let Some(schema) = self.llm_def.model_settings.parameters.as_ref() {
-            let mut schema = schema.clone();
-            validate_parameters(&mut schema, params.clone())
-                .map_err(|e| AgentError::Parameter(e.to_string()))?;
-        }
 
         tracing::info!("Executing LLM call with {} messages", messages.len());
         let llm_messages = self.map_messages(messages);
@@ -161,17 +150,9 @@ impl LLMExecutor {
     pub async fn execute_stream(
         &self,
         messages: &[Message],
-        params: Option<Value>,
         event_tx: mpsc::Sender<crate::agent::AgentEvent>,
     ) -> Result<StreamResult, AgentError> {
         self.model_logger.log_messages(messages);
-
-        // Create normalized parameters
-        if let Some(schema) = self.llm_def.model_settings.parameters.as_ref() {
-            let mut schema = schema.clone();
-            validate_parameters(&mut schema, params.clone())
-                .map_err(|e| AgentError::Parameter(e.to_string()))?;
-        }
 
         tracing::info!(
             "Executing streaming LLM call with {} messages",
@@ -197,7 +178,7 @@ impl LLMExecutor {
         );
 
         tracing::debug!("Sending streaming chat completion request");
-        let run_id = self.context.run_id.lock().await.clone();
+        let run_id = self.context.run_id.clone();
         let thread_id = self.context.thread_id.clone();
 
         let stream = completion_stream(
@@ -418,56 +399,77 @@ impl LLMExecutor {
     pub fn map_messages(&self, messages: &[Message]) -> Vec<ChatCompletionRequestMessage> {
         let messages = messages
             .iter()
-            .map(|m| match m.role {
-                MessageRole::User => {
-                    let mut msg = ChatCompletionRequestUserMessageArgs::default();
-                    msg.content(m.content[0].text.clone().unwrap_or_default());
-                    if let Some(name) = &m.name {
-                        msg.name(name);
+            .map(|m| {
+                if let Some(metadata) = &m.metadata {
+                    match metadata {
+                        // This is a user message with a tool response
+                        MessageMetadata::ToolResponse {
+                            tool_call_id,
+                            result,
+                        } => {
+                            let msg = ChatCompletionRequestToolMessage {
+                                content: ChatCompletionRequestToolMessageContent::Text(
+                                    result.clone(),
+                                ),
+                                tool_call_id: tool_call_id.clone(),
+                            };
+                            return ChatCompletionRequestMessage::Tool(msg);
+                        }
+                        // This is automatically an Assistant message
+                        MessageMetadata::ToolCalls { tool_calls } => {
+                            let mut msg = ChatCompletionRequestAssistantMessageArgs::default();
+                            let tool_calls: Vec<ChatCompletionMessageToolCall> = tool_calls
+                                .iter()
+                                .map(|tc| ChatCompletionMessageToolCall {
+                                    id: tc.tool_id.clone(),
+                                    r#type: async_openai::types::ChatCompletionToolType::Function,
+                                    function: async_openai::types::FunctionCall {
+                                        name: tc.tool_name.clone(),
+                                        arguments: tc.input.clone(),
+                                    },
+                                })
+                                .collect();
+                            msg.tool_calls(tool_calls);
+                            return ChatCompletionRequestMessage::Assistant(msg.build().unwrap());
+                        }
+                        // Just send these as assistant messages
+                        MessageMetadata::FinalResponse { .. } => {}
+                        MessageMetadata::PlanFacts { .. } => {}
+                        MessageMetadata::Plan { .. } => {}
                     }
-                    ChatCompletionRequestMessage::User(msg.build().unwrap())
                 }
-                MessageRole::Assistant => {
-                    let mut msg = ChatCompletionRequestAssistantMessageArgs::default();
-                    msg.content(m.content[0].text.clone().unwrap_or_default());
-                    if let Some(name) = &m.name {
-                        msg.name(name);
+                let msg = match m.role {
+                    MessageRole::User => {
+                        let mut msg = ChatCompletionRequestUserMessageArgs::default();
+                        msg.content(m.as_text().unwrap_or_default());
+                        if let Some(name) = &m.name {
+                            msg.name(name);
+                        }
+                        ChatCompletionRequestMessage::User(msg.build().unwrap())
                     }
-                    // Add tool calls if present
-                    if !m.tool_calls.is_empty() {
-                        let tool_calls: Vec<ChatCompletionMessageToolCall> = m
-                            .tool_calls
-                            .iter()
-                            .map(|tc| ChatCompletionMessageToolCall {
-                                id: tc.tool_id.clone(),
-                                r#type: async_openai::types::ChatCompletionToolType::Function,
-                                function: async_openai::types::FunctionCall {
-                                    name: tc.tool_name.clone(),
-                                    arguments: tc.input.clone(),
-                                },
-                            })
-                            .collect();
-                        msg.tool_calls(tool_calls);
+                    MessageRole::Assistant => {
+                        let mut msg = ChatCompletionRequestAssistantMessageArgs::default();
+
+                        if let Some(content) = m.as_text() {
+                            msg.content(content);
+                        }
+
+                        if let Some(name) = &m.name {
+                            msg.name(name);
+                        }
+
+                        ChatCompletionRequestMessage::Assistant(msg.build().unwrap())
                     }
-                    ChatCompletionRequestMessage::Assistant(msg.build().unwrap())
-                }
-                MessageRole::System => {
-                    let mut msg = ChatCompletionRequestSystemMessageArgs::default();
-                    msg.content(m.content[0].text.clone().unwrap_or_default());
-                    if let Some(name) = &m.name {
-                        msg.name(name);
+                    MessageRole::System => {
+                        let mut msg = ChatCompletionRequestSystemMessageArgs::default();
+                        msg.content(m.as_text().unwrap_or_default());
+                        if let Some(name) = &m.name {
+                            msg.name(name);
+                        }
+                        ChatCompletionRequestMessage::System(msg.build().unwrap())
                     }
-                    ChatCompletionRequestMessage::System(msg.build().unwrap())
-                }
-                MessageRole::ToolResponse => {
-                    let msg = ChatCompletionRequestToolMessage {
-                        content: ChatCompletionRequestToolMessageContent::Text(
-                            m.content[0].text.clone().unwrap_or_default(),
-                        ),
-                        tool_call_id: m.tool_calls[0].tool_id.clone(),
-                    };
-                    ChatCompletionRequestMessage::Tool(msg)
-                }
+                };
+                msg
             })
             .collect::<Vec<_>>();
         messages

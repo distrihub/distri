@@ -79,7 +79,7 @@ impl ModelLogger {
         let tools_str = tools_table(tools_registry).to_string();
 
         table.add_row(vec![llm_def.name.clone(), settings_str, tools_str]);
-        tracing::debug!("\n{}", table);
+        tracing::info!("\n{}", table);
     }
 
     pub fn log_messages(&self, messages: &[Message]) {
@@ -88,10 +88,10 @@ impl ModelLogger {
 
         for m in messages {
             let mut content = String::new();
-            for c in &m.content {
-                let content_str = match c.content_type.as_str() {
-                    "text" => c.text.clone().unwrap_or_default(),
-                    _ => c.content_type.clone(),
+            for c in &m.parts {
+                let content_str = match c {
+                    crate::types::MessagePart::Text(text) => text.clone(),
+                    _ => continue,
                 };
                 content.push_str(&content_str);
                 content.push_str("\n");
@@ -102,7 +102,7 @@ impl ModelLogger {
         table
             .load_preset(comfy_table::presets::UTF8_FULL)
             .set_content_arrangement(comfy_table::ContentArrangement::Dynamic);
-        tracing::debug!("{}", table);
+        tracing::info!("{}", table);
     }
     pub fn log_model_execution(
         &self,

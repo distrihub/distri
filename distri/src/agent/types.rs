@@ -6,7 +6,6 @@ use uuid::Uuid;
 
 use crate::{
     llm::{LLMResponse, StreamResult},
-    memory::TaskStep,
     tools::Tool,
     types::{Message, ToolCall},
     AgentDefinition, AgentError,
@@ -74,16 +73,14 @@ pub enum CoordinatorMessage {
     },
     Execute {
         agent_id: String,
-        task: crate::memory::TaskStep,
-        params: Option<serde_json::Value>,
+        message: Message,
         context: Arc<ExecutorContext>,
         event_tx: Option<mpsc::Sender<AgentEvent>>,
         response_tx: oneshot::Sender<Result<String, crate::error::AgentError>>,
     },
     ExecuteStream {
         agent_id: String,
-        task: crate::memory::TaskStep,
-        params: Option<serde_json::Value>,
+        message: Message,
         event_tx: mpsc::Sender<AgentEvent>,
         context: Arc<ExecutorContext>,
     },
@@ -107,7 +104,7 @@ pub struct ExecutorContextMetadata {
 #[derive(Debug, Clone)]
 pub struct ExecutorContext {
     pub thread_id: String,
-    pub run_id: Arc<tokio::sync::Mutex<String>>,
+    pub run_id: String,
     pub verbose: bool,
     pub user_id: Option<String>,
     pub metadata: Option<ExecutorContextMetadata>,
@@ -131,25 +128,12 @@ impl ExecutorContext {
     ) -> Self {
         Self {
             thread_id,
-            run_id: Arc::new(tokio::sync::Mutex::new(
-                run_id.unwrap_or_else(|| Uuid::new_v4().to_string()),
-            )),
+            run_id: run_id.unwrap_or_else(|| Uuid::new_v4().to_string()),
             verbose,
             user_id,
             metadata,
             req_id,
         }
-    }
-
-    pub async fn new_run(&self) -> String {
-        let new_run_id = Uuid::new_v4().to_string();
-        *self.run_id.lock().await = new_run_id.clone();
-        new_run_id
-    }
-
-    pub async fn update_run_id(&self, run_id: String) {
-        let mut run_id_guard = self.run_id.lock().await;
-        *run_id_guard = run_id;
     }
 }
 
@@ -160,8 +144,7 @@ pub const MAX_ITERATIONS: i32 = 10;
 pub trait AgentHooks: Send + Sync {
     async fn before_invoke(
         &self,
-        _task: TaskStep,
-        _params: Option<serde_json::Value>,
+        _message: Message,
         _context: Arc<ExecutorContext>,
         _event_tx: Option<mpsc::Sender<AgentEvent>>,
     ) -> Result<(), AgentError> {
@@ -197,7 +180,7 @@ pub trait AgentHooks: Send + Sync {
         Ok(tool_responses.to_vec())
     }
 
-    async fn after_finish(&self, step_result: StepResult) -> Result<StepResult, AgentError> {
+    async fn before_step_result(&self, step_result: StepResult) -> Result<StepResult, AgentError> {
         Ok(step_result)
     }
 }
@@ -213,16 +196,14 @@ pub trait BaseAgent: Send + Sync + std::fmt::Debug {
 
     async fn invoke(
         &self,
-        task: TaskStep,
-        params: Option<serde_json::Value>,
-        context: Arc<ExecutorContext>,
-        event_tx: Option<mpsc::Sender<AgentEvent>>,
+        _message: Message,
+        _context: Arc<ExecutorContext>,
+        _event_tx: Option<mpsc::Sender<AgentEvent>>,
     ) -> Result<String, AgentError>;
 
     async fn invoke_stream(
         &self,
-        _task: TaskStep,
-        _params: Option<serde_json::Value>,
+        _message: Message,
         _context: Arc<ExecutorContext>,
         _event_tx: mpsc::Sender<AgentEvent>,
     ) -> Result<(), AgentError> {
@@ -252,6 +233,8 @@ pub enum StepResult {
     Continue(Vec<Message>),
     /// Finish execution with this final response
     Finish(String),
+
+    ToolCalls(Vec<ToolCall>),
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]

@@ -1,8 +1,7 @@
 use custom_agents::{create_filtering_agent_factory, create_logging_agent_factory};
 use distri::{
     agent::AgentExecutorBuilder,
-    memory::TaskStep,
-    types::{AgentDefinition, Configuration, ModelSettings},
+    types::{AgentDefinition, Configuration, Message, ModelSettings},
 };
 use std::sync::Arc;
 
@@ -53,7 +52,7 @@ async fn main() -> anyhow::Result<()> {
         name: "logging-assistant".to_string(),
         description: "A helpful assistant with comprehensive logging".to_string(),
         agent_type: Some("logging".to_string()),
-        system_prompt: Some("You are a helpful assistant.".to_string()),
+        system_prompt: "You are a helpful assistant.".to_string(),
         mcp_servers: vec![],
         model_settings: ModelSettings::default(),
         history_size: Some(10),
@@ -65,7 +64,7 @@ async fn main() -> anyhow::Result<()> {
         name: "filtering-assistant".to_string(),
         description: "A helpful assistant that filters inappropriate content".to_string(),
         agent_type: Some("filtering".to_string()),
-        system_prompt: Some("You are a helpful assistant.".to_string()),
+        system_prompt: "You are a helpful assistant.".to_string(),
         mcp_servers: vec![],
         model_settings: ModelSettings::default(),
         history_size: Some(10),
@@ -82,10 +81,7 @@ async fn main() -> anyhow::Result<()> {
         .await?;
 
     // Test the agents
-    let task = TaskStep {
-        task: "Hello! Can you tell me a joke?".to_string(),
-        task_images: None,
-    };
+    let task = Message::user("Hello! Can you tell me a joke?".to_string(), None);
 
     let context = Arc::new(distri::agent::ExecutorContext::default());
 
@@ -94,14 +90,14 @@ async fn main() -> anyhow::Result<()> {
         .create_agent_from_definition(logging_agent_def)
         .await?;
     let _result = logging_agent
-        .invoke(task.clone(), None, context.clone(), None)
+        .invoke(task.clone(), context.clone(), None)
         .await?;
 
     println!("\nTesting FilteringAgent...");
     let filtering_agent = executor
         .create_agent_from_definition(filtering_agent_def)
         .await?;
-    let _result = filtering_agent.invoke(task, None, context, None).await?;
+    let _result = filtering_agent.invoke(task, context, None).await?;
 
     println!("\n✅ Custom agents test completed successfully!");
 

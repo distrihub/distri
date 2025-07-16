@@ -6,10 +6,13 @@ use uuid::Uuid;
 use crate::{
     agent::ExecutorContext,
     memory::{LocalAgentMemory, MemoryStep},
-    types::{CreateThreadRequest, McpSession, Thread, ThreadSummary, UpdateThreadRequest},
+    types::{
+        CreateThreadRequest, McpSession, Message, Task, TaskStatus, Thread, ThreadSummary,
+        UpdateThreadRequest,
+    },
     AgentStore, MemoryStore, SessionMemory, SessionStore, TaskStore, ThreadStore, ToolSessionStore,
 };
-use distri_a2a::{Artifact, Message as A2aMessage, Task, TaskState, TaskStatus};
+use distri_a2a::Artifact;
 
 // Example in-memory implementation
 #[derive(Default)]
@@ -216,6 +219,7 @@ impl TaskStore for HashMapTaskStore {
         let mut tasks = self.tasks.write().await;
         if let Some(task) = tasks.get_mut(task_id) {
             task.status = status;
+            task.updated_at = chrono::Utc::now().timestamp_millis();
         }
         Ok(())
     }
@@ -226,28 +230,28 @@ impl TaskStore for HashMapTaskStore {
             .get_mut(task_id)
             .ok_or_else(|| anyhow::anyhow!("Task not found"))?;
 
-        task.status = TaskStatus {
-            state: TaskState::Canceled,
-            message: None,
-            timestamp: Some(chrono::Utc::now().to_rfc3339()),
-        };
+        task.status = TaskStatus::Canceled;
 
         Ok(task.clone())
     }
 
-    async fn add_message_to_task(&self, task_id: &str, message: A2aMessage) -> anyhow::Result<()> {
+    async fn add_message_to_task(&self, task_id: &str, message: &Message) -> anyhow::Result<()> {
         let mut tasks = self.tasks.write().await;
         if let Some(task) = tasks.get_mut(task_id) {
-            task.history.push(message);
+            task.messages.push(message.clone());
         }
         Ok(())
     }
 
-    async fn add_artifact_to_task(&self, task_id: &str, artifact: Artifact) -> anyhow::Result<()> {
-        let mut tasks = self.tasks.write().await;
-        if let Some(task) = tasks.get_mut(task_id) {
-            task.artifacts.push(artifact);
-        }
+    async fn add_artifact_to_task(
+        &self,
+        _task_id: &str,
+        _artifact: Artifact,
+    ) -> anyhow::Result<()> {
+        // let mut tasks = self.tasks.write().await;
+        // if let Some(task) = tasks.get_mut(task_id) {
+        //     task.artifacts.push(artifact);
+        // }
         Ok(())
     }
     async fn list_tasks(&self, context_id: Option<&str>) -> anyhow::Result<Vec<Task>> {
@@ -255,13 +259,24 @@ impl TaskStore for HashMapTaskStore {
         let result = if let Some(context_id) = context_id {
             tasks
                 .values()
-                .filter(|task| task.context_id == context_id)
+                .filter(|task| task.thread_id == context_id)
                 .cloned()
                 .collect()
         } else {
             tasks.values().cloned().collect()
         };
         Ok(result)
+    }
+
+    async fn get_messages(&self, thread_id: &str) -> anyhow::Result<Vec<Message>> {
+        let tasks = self.tasks.read().await;
+        let result: Vec<Task> = tasks
+            .values()
+            .filter(|task| task.thread_id == thread_id)
+            .cloned()
+            .collect();
+        let messages = result.into_iter().flat_map(|task| task.messages).collect();
+        Ok(messages)
     }
 }
 

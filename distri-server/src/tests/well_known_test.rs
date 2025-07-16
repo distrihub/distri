@@ -23,7 +23,7 @@ async fn create_test_executor() -> Arc<AgentExecutor> {
     let agent1 = AgentDefinition {
         name: "test-agent-1".to_string(),
         description: "A test agent for A2A discovery".to_string(),
-        system_prompt: Some("You are a helpful test agent".to_string()),
+        system_prompt: "You are a helpful test agent".to_string(),
         mcp_servers: vec![],
         model_settings: ModelSettings::default(),
         history_size: Some(10),
@@ -36,7 +36,7 @@ async fn create_test_executor() -> Arc<AgentExecutor> {
     let agent2 = AgentDefinition {
         name: "test-agent-2".to_string(),
         description: "Another test agent for A2A discovery".to_string(),
-        system_prompt: Some("You are another helpful test agent".to_string()),
+        system_prompt: "You are another helpful test agent".to_string(),
         mcp_servers: vec![],
         model_settings: ModelSettings::default(),
         history_size: Some(10),

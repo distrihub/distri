@@ -142,11 +142,14 @@ impl AgentHooks for ToolParsingHooks {
         // Find and modify the system message to include XML tool call instructions
         for message in &mut modified_messages {
             if let crate::types::MessageRole::System = message.role {
-                if let Some(content) = message.content.first_mut() {
-                    if let Some(text) = &mut content.text {
-                        // Append format-specific tool call instructions to the system prompt
-                        let format_instructions = self.get_format_instructions();
-                        *text = format!("{}{}", text, format_instructions);
+                if let Some(content) = message.parts.first_mut() {
+                    match content {
+                        crate::types::MessagePart::Text(text) => {
+                            // Append format-specific tool call instructions to the system prompt
+                            let format_instructions = self.get_format_instructions();
+                            *text = format!("{}{}", text, format_instructions);
+                        }
+                        _ => {}
                     }
                 }
             }

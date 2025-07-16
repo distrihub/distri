@@ -10,7 +10,7 @@ use async_mcp::{
 };
 use serde_json::json;
 
-use crate::{error::AgentError, memory::TaskStep};
+use crate::{error::AgentError, types::Message};
 
 use super::{AgentExecutor, ExecutorContext};
 
@@ -59,7 +59,7 @@ pub fn build_server<T: Transport>(
             Box::pin(async move {
                 let agent_name = req.name.clone();
                 let args = req.arguments.unwrap_or_default();
-                let message = args["message"].as_str().unwrap().to_string();
+                let text = args["message"].as_str().unwrap().to_string();
 
                 let context = Arc::new(ExecutorContext::default());
 
@@ -69,16 +69,9 @@ pub fn build_server<T: Transport>(
                     .await
                     .map_err(|e| AgentError::ToolExecution(e.to_string()))?;
 
+                let message = Message::user(text, Some(agent_name));
                 let result = agent
-                    .invoke(
-                        TaskStep {
-                            task: message,
-                            task_images: None,
-                        },
-                        None,
-                        context,
-                        None,
-                    )
+                    .invoke(message, context, None)
                     .await
                     .map_err(|e| AgentError::ToolExecution(e.to_string()));
 
@@ -138,7 +131,6 @@ mod tests {
             .with_session_store(session_store)
             .with_registry(registry)
             .with_tool_sessions(tool_sessions)
-            .with_context(context.clone())
             .build()
             .unwrap();
 

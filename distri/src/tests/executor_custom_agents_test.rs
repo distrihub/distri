@@ -2,8 +2,7 @@ use std::sync::Arc;
 
 use crate::{
     agent::AgentExecutorBuilder,
-    memory::TaskStep,
-    types::{AgentDefinition, ModelSettings},
+    types::{AgentDefinition, Message, ModelSettings},
 };
 use anyhow::Result;
 use tracing::info;
@@ -28,7 +27,7 @@ async fn test_executor_with_custom_agents() -> Result<()> {
         name: "test-standard-agent".to_string(),
         description: "A test standard agent".to_string(),
         agent_type: Some("standard".to_string()),
-        system_prompt: Some("You are a helpful assistant.".to_string()),
+        system_prompt: "You are a helpful assistant.".to_string(),
         mcp_servers: vec![],
         model_settings: ModelSettings::default(),
         history_size: Some(10),
@@ -40,7 +39,7 @@ async fn test_executor_with_custom_agents() -> Result<()> {
         name: "test-custom-agent".to_string(),
         description: "A test custom agent".to_string(),
         agent_type: Some("custom".to_string()),
-        system_prompt: Some("You are a helpful assistant.".to_string()),
+        system_prompt: "You are a helpful assistant.".to_string(),
         mcp_servers: vec![],
         model_settings: ModelSettings::default(),
         history_size: Some(10),
@@ -57,23 +56,14 @@ async fn test_executor_with_custom_agents() -> Result<()> {
         .await?;
 
     // Test direct execution of standard agent
-    let task = TaskStep {
-        task: "Hello! Can you tell me a joke?".to_string(),
-        task_images: None,
-    };
+    let task = Message::user("Hello! Can you tell me a joke?".to_string(), None);
 
     let context = Arc::new(crate::agent::ExecutorContext::default());
 
     // Test standard agent execution
     info!("Testing StandardAgent execution...");
     let standard_result = executor
-        .execute(
-            "test-standard-agent",
-            task.clone(),
-            None,
-            context.clone(),
-            None,
-        )
+        .execute("test-standard-agent", task.clone(), context.clone(), None)
         .await?;
 
     assert!(!standard_result.is_empty());
@@ -82,7 +72,7 @@ async fn test_executor_with_custom_agents() -> Result<()> {
     // Test that custom agent type fails (no factory registered)
     info!("Testing custom agent type failure...");
     let custom_result = executor
-        .execute("test-custom-agent", task, None, context, None)
+        .execute("test-custom-agent", task, context, None)
         .await;
 
     assert!(custom_result.is_err());

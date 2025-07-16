@@ -1,16 +1,16 @@
-use distri::agent::AgentExecutor;
-use distri::memory::TaskStep;
+use distri::agent::{AgentExecutor, ExecutorContext};
 use rustyline::DefaultEditor;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::info;
 
-use distri::types::{Message, MessageContent, MessageRole};
+use distri::types::Message;
 
 pub async fn run(agent_name: &str, executor: Arc<AgentExecutor>) -> anyhow::Result<()> {
     // Create readline editor with history
     let mut rl = DefaultEditor::new()?;
 
+    let thread_id = uuid::Uuid::new_v4().to_string();
     // Set up history file in .distri folder in current directory
     let history_file = {
         let path = PathBuf::from(".distri").join(agent_name);
@@ -50,29 +50,16 @@ pub async fn run(agent_name: &str, executor: Arc<AgentExecutor>) -> anyhow::Resu
             continue;
         }
         // Create user message
-        let user_message = Message {
-            content: vec![MessageContent {
-                content_type: "text".to_string(),
-                text: Some(input.to_string()),
-                image: None,
-            }],
-            role: MessageRole::User,
-            name: None,
-            tool_calls: Vec::new(),
-        };
+        let user_message = Message::user(input.to_string(), None);
 
         info!("{agent_name}: {user_message:?}");
+        let context = ExecutorContext {
+            thread_id: thread_id.clone(),
+            run_id: uuid::Uuid::new_v4().to_string(),
+            ..Default::default()
+        };
         match executor
-            .execute(
-                agent_name,
-                TaskStep {
-                    task: user_message.content[0].text.clone().unwrap(),
-                    task_images: None,
-                },
-                None,
-                Arc::default(), // No thread context for CLI chat
-                None,
-            )
+            .execute(agent_name, user_message, Arc::new(context), None)
             .await
         {
             Ok(response) => {
@@ -80,10 +67,6 @@ pub async fn run(agent_name: &str, executor: Arc<AgentExecutor>) -> anyhow::Resu
             }
             Err(e) => eprintln!("Error from agent: {}", e),
         }
-        executor
-            .context
-            .update_run_id(uuid::Uuid::new_v4().to_string())
-            .await;
     }
 
     // Save history one final time before exiting
