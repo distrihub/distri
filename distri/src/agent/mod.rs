@@ -16,5 +16,7 @@ pub use log::ModelLogger;
 
 pub use server::{build_server, DISTRI_LOCAL_SERVER};
 
+pub mod code;
+
 mod types;
 pub use types::*;
