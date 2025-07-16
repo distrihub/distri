@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use distri_a2a::Artifact;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
@@ -17,6 +18,79 @@ pub trait ToolSessionStore: Send + Sync {
         server_name: &str,
         context: &ExecutorContext,
     ) -> anyhow::Result<Option<McpSession>>;
+}
+
+// AuthStore trait for OAuth authentication flows
+#[async_trait]
+pub trait AuthStore: Send + Sync {
+    /// Store OAuth tokens for a specific service and user
+    async fn store_oauth_tokens(
+        &self,
+        service_name: &str,
+        user_id: &str,
+        access_token: &str,
+        refresh_token: Option<&str>,
+        expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> anyhow::Result<()>;
+
+    /// Get OAuth tokens for a specific service and user
+    async fn get_oauth_tokens(
+        &self,
+        service_name: &str,
+        user_id: &str,
+    ) -> anyhow::Result<Option<OAuthTokens>>;
+
+    /// Remove OAuth tokens for a specific service and user
+    async fn remove_oauth_tokens(
+        &self,
+        service_name: &str,
+        user_id: &str,
+    ) -> anyhow::Result<()>;
+
+    /// Check if user has valid OAuth tokens for a service
+    async fn has_valid_oauth_tokens(
+        &self,
+        service_name: &str,
+        user_id: &str,
+    ) -> anyhow::Result<bool>;
+
+    /// Store OAuth state for callback verification
+    async fn store_oauth_state(
+        &self,
+        state: &str,
+        service_name: &str,
+        user_id: &str,
+        redirect_uri: &str,
+    ) -> anyhow::Result<()>;
+
+    /// Get OAuth state for callback verification
+    async fn get_oauth_state(
+        &self,
+        state: &str,
+    ) -> anyhow::Result<Option<OAuthState>>;
+
+    /// Remove OAuth state after use
+    async fn remove_oauth_state(
+        &self,
+        state: &str,
+    ) -> anyhow::Result<()>;
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OAuthTokens {
+    pub access_token: String,
+    pub refresh_token: Option<String>,
+    pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub token_type: String,
+    pub scope: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OAuthState {
+    pub service_name: String,
+    pub user_id: String,
+    pub redirect_uri: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
 // SessionStore trait - manages current conversation thread/run

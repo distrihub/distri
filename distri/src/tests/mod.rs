@@ -3,6 +3,7 @@ pub mod executor;
 pub mod executor_custom_agents_test;
 pub mod executor_test;
 pub mod extensible_agent_test;
+pub mod oauth_test;
 pub mod tool_call_format;
 pub mod tools;
 pub mod utils;
