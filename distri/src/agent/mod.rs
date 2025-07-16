@@ -2,6 +2,8 @@ pub mod agent;
 pub mod agents;
 pub mod executor;
 pub mod factory;
+pub mod hooked_agent;
+pub mod hooked_standard_agent;
 pub mod hooks;
 pub mod log;
 pub mod macros;
@@ -13,6 +15,8 @@ pub use agent::{BaseAgent, StandardAgentImpl, StepResult, MAX_ITERATIONS};
 pub use agents::{
     create_tool_parser_agent_factory, create_tool_parser_agent_factory_with_format, ToolParserAgent,
 };
+pub use hooked_agent::HookedAgent;
+pub use hooked_standard_agent::HookedStandardAgent;
 pub use plugin_agent::Agent;
 use async_openai::types::Role;
 pub use executor::{AgentExecutor, AgentExecutorBuilder};
