@@ -4,7 +4,6 @@ use crate::{
     },
     error::AgentError,
     llm::LLMExecutor,
-    memory::SystemStep,
     tools::{LlmToolsRegistry, Tool},
     types::{
         get_tool_descriptions, AgentDefinition, Message, MessageMetadata, MessagePart, MessageRole,
@@ -16,8 +15,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::info;
 
-use crate::agent::{reason::create_initial_plan, ExecutorContext, StepLogger};
-use crate::memory::MemoryStep;
+use crate::agent::{reason::create_initial_plan, ExecutorContext};
 
 /// Standard agent implementation
 #[derive(Clone)]
@@ -25,7 +23,7 @@ pub struct StandardAgent {
     pub definition: AgentDefinition,
     tools_registry: Arc<LlmToolsRegistry>, // This will be Arc::default() now
     executor: Arc<AgentExecutor>,
-    logger: StepLogger,
+    #[allow(dead_code)]
     session_store: Arc<Box<dyn SessionStore>>,
 }
 
@@ -49,7 +47,6 @@ impl StandardAgent {
             definition,
             tools_registry,
             executor,
-            logger: StepLogger::new(false),
             session_store,
         }
     }
@@ -59,7 +56,7 @@ impl StandardAgent {
         message: Message,
         plan_config: &PlanConfig,
         current_messages: &mut Vec<Message>,
-        iteration: i32,
+        iteration: usize,
         context: Arc<ExecutorContext>,
     ) -> Result<(), AgentError> {
         let tools_desc = get_tool_descriptions(
@@ -71,7 +68,7 @@ impl StandardAgent {
             "plan_step: iteration: {}, plan_config: {:?}",
             iteration, plan_config
         );
-        if (iteration - 1) % plan_config.interval == 0 {
+        if (iteration - 1) % plan_config.interval as usize == 0 {
             // Run either initial planning or planning update
             let (facts, plan) = if iteration == 1 {
                 create_initial_plan(&message, &tools_desc, &|msgs| {
@@ -101,16 +98,13 @@ impl StandardAgent {
                 })
                 .await
             } else {
-                let remaining_steps = plan_config.max_iterations.unwrap_or(10) - iteration + 1;
-                let previous_messages = self
-                    .session_store
-                    .get_messages(&context.thread_id)
-                    .await
-                    .map_err(|e| AgentError::Session(e.to_string()))?;
+                let remaining_steps =
+                    plan_config.max_iterations.unwrap_or(10) - iteration + 1 as usize;
+
                 crate::agent::reason::update_plan(
                     &message,
                     &tools_desc,
-                    &previous_messages,
+                    &current_messages,
                     remaining_steps,
                     &|msgs| {
                         let planning_executor = LLMExecutor::new(
@@ -168,19 +162,14 @@ impl StandardAgent {
     }
 
     async fn system_step(&self, context: Arc<ExecutorContext>) -> Result<Message, AgentError> {
-        let agent_id = &self.definition.name;
         // Store system message if present
 
-        let step = MemoryStep::System(SystemStep {
-            system_prompt: self.definition.system_prompt.clone(),
-        });
         let message = Message::system(self.definition.system_prompt.clone(), None);
         self.executor
             .task_store
             .add_message_to_task(&context.run_id, &message)
             .await
             .map_err(|e| AgentError::Session(e.to_string()))?;
-        self.logger.log_step(agent_id, &step);
         Ok(message)
     }
 
@@ -268,11 +257,6 @@ impl StandardAgent {
     ) -> Result<String, AgentError> {
         let run_id = context.run_id.clone();
         let thread_id = context.thread_id.clone();
-        let mut iterations = self
-            .session_store
-            .get_iteration(&run_id)
-            .await
-            .map_err(|e| AgentError::Session(e.to_string()))?;
 
         if let Some(hooks) = hooks {
             hooks
@@ -290,7 +274,14 @@ impl StandardAgent {
                 })
                 .await;
         }
+        let history = self
+            .executor
+            .task_store
+            .get_messages(&context.thread_id)
+            .await
+            .map_err(|e| AgentError::Session(e.to_string()))?;
 
+        let mut iterations = history.len();
         self.executor
             .task_store
             .update_task_status(&context.run_id, TaskStatus::Running)
@@ -298,23 +289,18 @@ impl StandardAgent {
             .map_err(|e| AgentError::Session(e.to_string()))?;
 
         let result = async {
-            let mut current_messages = vec![self.system_step(context.clone()).await?];
-            current_messages.extend(
-                self.session_store
-                    .get_messages(&context.thread_id)
-                    .await
-                    .map_err(|e| AgentError::Session(e.to_string()))?,
-            );
-            current_messages.push(message.clone());
+            let mut current_messages = vec![];
+            if iterations == 0 {
+                self.add_messages_to_current_messages(
+                    &[self.system_step(context.clone()).await?, message],
+                    &mut current_messages,
+                    context.clone(),
+                )
+                .await?;
+            }
+            current_messages.extend(history);
 
-            self.add_messages_to_current_messages(
-                &[message],
-                &mut current_messages,
-                context.clone(),
-            )
-            .await?;
-
-            let max_iterations = self.definition.max_iterations.unwrap_or(MAX_ITERATIONS);
+            let max_iterations = self.definition.max_iterations.unwrap_or(MAX_ITERATIONS) as usize;
             tracing::debug!("Max iterations per run set to: {}", max_iterations);
             loop {
                 if iterations >= max_iterations {
@@ -324,13 +310,14 @@ impl StandardAgent {
                     )));
                 }
 
-                let messages = if let Some(hooks) = hooks {
-                    hooks.before_llm_step(&current_messages.clone()).await?
+                current_messages = if let Some(hooks) = hooks {
+                    hooks.llm_messages(&current_messages).await?
                 } else {
-                    current_messages.clone()
+                    current_messages
                 };
+
                 let step_result = self
-                    .llm_step(&messages, context.clone(), event_tx.clone(), hooks)
+                    .llm_step(&current_messages, context.clone(), event_tx.clone(), hooks)
                     .await?;
 
                 let step_result = if let Some(hooks) = hooks {
@@ -349,11 +336,7 @@ impl StandardAgent {
                 if let StepResult::Finish(content) = &step_result {
                     break Ok(content.clone());
                 }
-                iterations = self
-                    .session_store
-                    .inc_iteration(&run_id)
-                    .await
-                    .map_err(|e| AgentError::Session(e.to_string()))?;
+                iterations += 1;
             }
         }
         .await;
@@ -494,15 +477,6 @@ impl StandardAgent {
                 .await?;
                 Ok(())
             }
-            StepResult::Continue(new_messages) => {
-                self.add_messages_to_current_messages(
-                    new_messages,
-                    current_messages,
-                    context.clone(),
-                )
-                .await?;
-                Ok(())
-            }
         }
     }
     pub async fn invoke_stream_with_hooks(
@@ -515,12 +489,7 @@ impl StandardAgent {
         let agent_id = &self.definition.name;
         let run_id = context.run_id.clone();
         let thread_id = context.thread_id.clone();
-        let max_iterations = self.definition.max_iterations.unwrap_or(MAX_ITERATIONS);
-        let mut iterations = self
-            .session_store
-            .get_iteration(&run_id)
-            .await
-            .map_err(|e| AgentError::Session(e.to_string()))?;
+        let max_iterations = self.definition.max_iterations.unwrap_or(MAX_ITERATIONS) as usize;
 
         if let Some(hooks) = hooks {
             hooks
@@ -536,26 +505,33 @@ impl StandardAgent {
             })
             .await;
 
+        let history = self
+            .executor
+            .task_store
+            .get_messages(&context.thread_id)
+            .await
+            .map_err(|e| AgentError::Session(e.to_string()))?;
+
+        let mut iterations = history.len();
+
         let result = async {
             tracing::info!(
                 "Invoking stream for agent: {}, Iterations: {}",
                 agent_id,
                 iterations
             );
-            let mut current_messages = vec![self.system_step(context.clone()).await?];
-            current_messages.extend(
-                self.session_store
-                    .get_messages(&context.thread_id)
-                    .await
-                    .map_err(|e| AgentError::Session(e.to_string()))?,
-            );
-            self.add_messages_to_current_messages(
-                &[message.clone()],
-                &mut current_messages,
-                context.clone(),
-            )
-            .await?;
+            let mut current_messages = vec![];
+            if iterations == 0 {
+                self.add_messages_to_current_messages(
+                    &[self.system_step(context.clone()).await?, message.clone()],
+                    &mut current_messages,
+                    context.clone(),
+                )
+                .await?;
+            }
+            current_messages.extend(history);
 
+            println!("{:?}", current_messages);
             loop {
                 if iterations > max_iterations {
                     return Err(AgentError::LLMError(format!(
@@ -573,13 +549,15 @@ impl StandardAgent {
                     )
                     .await?;
                 }
-                let messages = if let Some(hooks) = hooks {
-                    hooks.before_llm_step(&current_messages.clone()).await?
+                current_messages = if let Some(hooks) = hooks {
+                    hooks.llm_messages(&current_messages).await?
                 } else {
-                    current_messages.clone()
+                    current_messages
                 };
+
+                println!("current_messages after hooks: {:?}", current_messages);
                 let step_result = self
-                    .llm_step_stream(&messages, context.clone(), event_tx.clone(), hooks)
+                    .llm_step_stream(&current_messages, context.clone(), event_tx.clone(), hooks)
                     .await?;
 
                 let step_result = if let Some(hooks) = hooks {
@@ -601,11 +579,7 @@ impl StandardAgent {
                     return Ok(content.clone());
                 }
 
-                iterations = self
-                    .session_store
-                    .inc_iteration(&run_id)
-                    .await
-                    .map_err(|e| AgentError::Session(e.to_string()))?;
+                iterations += 1;
             }
         }
         .await;

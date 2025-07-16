@@ -58,7 +58,6 @@ pub async fn get_registry() -> Arc<RwLock<McpServerRegistry>> {
                 let server = build_mock_search_tool(transport)?;
                 Ok(Box::new(server) as Box<dyn ServerTrait>)
             })),
-            memories: HashMap::new(),
         },
     );
 
@@ -80,7 +79,6 @@ pub async fn register_coordinator(
                 let server = crate::agent::build_server(transport, coordinator)?;
                 Ok(Box::new(server) as Box<dyn ServerTrait>)
             })),
-            memories: HashMap::new(),
         },
     );
 }

@@ -12,7 +12,7 @@ pub use standard::StandardAgent;
 pub use agent::Agent;
 pub use executor::{AgentExecutor, AgentExecutorBuilder};
 pub use factory::AgentFactoryRegistry;
-pub use log::{ModelLogger, StepLogger};
+pub use log::ModelLogger;
 
 pub use server::{build_server, DISTRI_LOCAL_SERVER};
 

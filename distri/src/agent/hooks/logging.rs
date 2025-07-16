@@ -33,7 +33,7 @@ impl AgentHooks for LoggingHooks {
         Ok(())
     }
 
-    async fn before_llm_step(&self, messages: &[Message]) -> Result<Vec<Message>, AgentError> {
+    async fn llm_messages(&self, messages: &[Message]) -> Result<Vec<Message>, AgentError> {
         info!(
             "🔧 LoggingHooks: LLM step starting with {} messages (level: {})",
             messages.len(),

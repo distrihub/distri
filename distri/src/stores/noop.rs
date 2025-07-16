@@ -2,7 +2,6 @@ use async_trait::async_trait;
 
 use crate::{
     agent::ExecutorContext,
-    memory::MemoryStep,
     types::{
         CreateThreadRequest, McpSession, Message, Task, TaskStatus, Thread, ThreadSummary,
         UpdateThreadRequest,
@@ -32,24 +31,20 @@ pub struct NoopSessionStore;
 
 #[async_trait::async_trait]
 impl SessionStore for NoopSessionStore {
-    async fn get_steps(&self, _thread_id: &str) -> anyhow::Result<Vec<MemoryStep>> {
-        Ok(vec![])
-    }
-
-    async fn store_step(&self, _thread_id: &str, _step: MemoryStep) -> anyhow::Result<()> {
-        Ok(())
-    }
-
     async fn clear_session(&self, _thread_id: &str) -> anyhow::Result<()> {
         Ok(())
     }
 
-    async fn inc_iteration(&self, _thread_id: &str) -> anyhow::Result<i32> {
-        Ok(0)
+    async fn set_value(&self, _thread_id: &str, _key: &str, _value: &str) -> anyhow::Result<()> {
+        Ok(())
     }
 
-    async fn get_iteration(&self, _thread_id: &str) -> anyhow::Result<i32> {
-        Ok(0)
+    async fn get_value(&self, _thread_id: &str, _key: &str) -> anyhow::Result<Option<String>> {
+        Ok(None)
+    }
+
+    async fn delete_value(&self, _thread_id: &str, _key: &str) -> anyhow::Result<()> {
+        Ok(())
     }
 }
 

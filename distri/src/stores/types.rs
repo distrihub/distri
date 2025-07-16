@@ -4,7 +4,6 @@ use uuid::Uuid;
 
 use crate::{
     agent::ExecutorContext,
-    memory::MemoryStep,
     types::{
         CreateThreadRequest, McpSession, Message, Task, TaskStatus, Thread, ThreadSummary,
         UpdateThreadRequest,
@@ -23,24 +22,13 @@ pub trait ToolSessionStore: Send + Sync {
 // SessionStore trait - manages current conversation thread/run
 #[async_trait::async_trait]
 pub trait SessionStore: Send + Sync {
-    async fn get_messages(&self, thread_id: &str) -> anyhow::Result<Vec<Message>> {
-        let steps = self.get_steps(thread_id).await?;
-        let messages = steps
-            .iter()
-            .flat_map(|step| step.to_messages(false, false))
-            .collect();
-        Ok(messages)
-    }
-
-    async fn get_steps(&self, thread_id: &str) -> anyhow::Result<Vec<MemoryStep>>;
-
-    async fn store_step(&self, thread_id: &str, step: MemoryStep) -> anyhow::Result<()>;
-
     async fn clear_session(&self, thread_id: &str) -> anyhow::Result<()>;
 
-    async fn inc_iteration(&self, run_id: &str) -> anyhow::Result<i32>;
+    async fn set_value(&self, thread_id: &str, key: &str, value: &str) -> anyhow::Result<()>;
 
-    async fn get_iteration(&self, run_id: &str) -> anyhow::Result<i32>;
+    async fn get_value(&self, thread_id: &str, key: &str) -> anyhow::Result<Option<String>>;
+
+    async fn delete_value(&self, thread_id: &str, key: &str) -> anyhow::Result<()>;
 }
 
 // Higher-level MemoryStore trait - manages cross-session permanent memory using user_id

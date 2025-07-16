@@ -151,7 +151,7 @@ pub trait AgentHooks: Send + Sync {
         Ok(())
     }
 
-    async fn before_llm_step(&self, messages: &[Message]) -> Result<Vec<Message>, AgentError> {
+    async fn llm_messages(&self, messages: &[Message]) -> Result<Vec<Message>, AgentError> {
         Ok(messages.to_vec())
     }
 
@@ -229,8 +229,6 @@ pub trait BaseAgent: Send + Sync + std::fmt::Debug {
 /// Result of a single step execution
 #[derive(Debug)]
 pub enum StepResult {
-    /// Continue with more iterations, with new messages to add
-    Continue(Vec<Message>),
     /// Finish execution with this final response
     Finish(String),
 

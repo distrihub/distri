@@ -5,7 +5,6 @@ use tracing::info;
 use crate::{
     agent::{AgentEvent, AgentEventType, DISTRI_LOCAL_SERVER},
     init_logging,
-    memory::TaskStep,
     tests::utils::{get_search_tool, init_executor},
     types::{AgentDefinition, McpDefinition, Message, ModelSettings},
 };

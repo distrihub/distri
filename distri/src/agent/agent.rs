@@ -97,12 +97,12 @@ impl AgentHooks for Agent {
         Ok(())
     }
 
-    async fn before_llm_step(&self, messages: &[Message]) -> Result<Vec<Message>, AgentError> {
+    async fn llm_messages(&self, messages: &[Message]) -> Result<Vec<Message>, AgentError> {
         let mut processed_messages = messages.to_vec();
 
         // Chain hooks through all registered hooks
         for hook in &self.hooks {
-            processed_messages = hook.before_llm_step(&processed_messages).await?;
+            processed_messages = hook.llm_messages(&processed_messages).await?;
         }
 
         Ok(processed_messages)

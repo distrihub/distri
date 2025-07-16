@@ -7,14 +7,20 @@ use crate::{
     noop::{NoopSessionStore, NoopTaskStore, NoopThreadStore, NoopToolSessionStore},
     types::{EntityStoreType, SessionStoreType, StoreConfig},
 };
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 // Re-export the main store traits and types
 pub use file::*;
+use serde::{Deserialize, Serialize};
 pub use types::*;
 // Re-export memory implementations
 pub use memory::*;
 
 pub mod noop;
+
+#[derive(Clone, Serialize, Deserialize, Default)]
+pub struct LocalSession {
+    pub values: HashMap<String, String>,
+}
 
 #[cfg(feature = "redis")]
 pub mod redis;

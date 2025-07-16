@@ -5,12 +5,12 @@ use uuid::Uuid;
 
 use crate::{
     agent::ExecutorContext,
-    memory::{LocalAgentMemory, MemoryStep},
     types::{
         CreateThreadRequest, McpSession, Message, Task, TaskStatus, Thread, ThreadSummary,
         UpdateThreadRequest,
     },
-    AgentStore, MemoryStore, SessionMemory, SessionStore, TaskStore, ThreadStore, ToolSessionStore,
+    AgentStore, LocalSession, MemoryStore, SessionMemory, SessionStore, TaskStore, ThreadStore,
+    ToolSessionStore,
 };
 use distri_a2a::Artifact;
 
@@ -40,8 +40,7 @@ impl ToolSessionStore for InMemorySessionStore {
 // Local SessionStore implementation using HashMap with just thread_id
 #[derive(Clone)]
 pub struct LocalSessionStore {
-    sessions: Arc<RwLock<HashMap<String, LocalAgentMemory>>>,
-    iterations: Arc<RwLock<HashMap<String, i32>>>,
+    sessions: Arc<RwLock<HashMap<String, LocalSession>>>,
 }
 
 impl Default for LocalSessionStore {
@@ -54,52 +53,38 @@ impl LocalSessionStore {
     pub fn new() -> Self {
         Self {
             sessions: Arc::new(RwLock::new(HashMap::new())),
-            iterations: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 }
 
 #[async_trait::async_trait]
 impl SessionStore for LocalSessionStore {
-    async fn get_steps(&self, thread_id: &str) -> anyhow::Result<Vec<MemoryStep>> {
-        let sessions = self.sessions.read().await;
-        let memory = sessions
-            .get(thread_id)
-            .cloned()
-            .unwrap_or_else(LocalAgentMemory::default);
-        Ok(memory.get_steps())
-    }
-
-    async fn store_step(&self, thread_id: &str, step: MemoryStep) -> anyhow::Result<()> {
-        let mut sessions = self.sessions.write().await;
-        let memory = sessions
-            .entry(thread_id.to_string())
-            .or_insert_with(LocalAgentMemory::default);
-        memory.add_step(step);
-        Ok(())
-    }
-
     async fn clear_session(&self, thread_id: &str) -> anyhow::Result<()> {
         let mut sessions = self.sessions.write().await;
         sessions.remove(thread_id);
         Ok(())
     }
 
-    async fn inc_iteration(&self, thread_id: &str) -> anyhow::Result<i32> {
-        let mut iterations = self.iterations.write().await;
-        tracing::debug!(
-            "Incrementing iteration for thread: {}, iterations: {:#?}",
-            thread_id,
-            iterations
-        );
-        let count = iterations.entry(thread_id.to_string()).or_insert(0);
-        *count += 1;
-        Ok(*count)
+    async fn set_value(&self, thread_id: &str, key: &str, value: &str) -> anyhow::Result<()> {
+        let mut sessions = self.sessions.write().await;
+        let session = sessions
+            .entry(thread_id.to_string())
+            .or_insert_with(LocalSession::default);
+        session.values.insert(key.to_string(), value.to_string());
+        Ok(())
     }
 
-    async fn get_iteration(&self, thread_id: &str) -> anyhow::Result<i32> {
-        let iterations = self.iterations.read().await;
-        Ok(*iterations.get(thread_id).unwrap_or(&0))
+    async fn get_value(&self, thread_id: &str, key: &str) -> anyhow::Result<Option<String>> {
+        let sessions = self.sessions.read().await;
+        let session = sessions.get(thread_id).cloned().unwrap_or_default();
+        Ok(session.values.get(key).cloned())
+    }
+
+    async fn delete_value(&self, thread_id: &str, key: &str) -> anyhow::Result<()> {
+        let mut sessions = self.sessions.write().await;
+        let session = sessions.get_mut(thread_id).unwrap();
+        session.values.remove(key);
+        Ok(())
     }
 }
 

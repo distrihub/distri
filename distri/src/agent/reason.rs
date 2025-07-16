@@ -51,7 +51,7 @@ pub async fn update_plan(
     message: &Message,
     tools_description: &str,
     previous_steps: &[Message],
-    remaining_steps: i32,
+    remaining_steps: usize,
     model: &(dyn Fn(Vec<Message>) -> futures::future::BoxFuture<'static, anyhow::Result<String>>
           + Send
           + Sync),

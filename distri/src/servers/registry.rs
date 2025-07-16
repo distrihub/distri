@@ -1,6 +1,5 @@
 use crate::{
     agent::{self, AgentExecutor, DISTRI_LOCAL_SERVER},
-    memory::AgentMemory,
     types::TransportType,
 };
 use anyhow::Result;
@@ -8,7 +7,6 @@ use async_mcp::{server::Server, transport::Transport};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
 use crate::servers::tavily;
 use async_mcp::transport::ServerInMemoryTransport;
@@ -20,8 +18,6 @@ pub struct ServerMetadata {
     pub auth_session_key: Option<String>,
     #[serde(default = "default_transport_type", flatten)]
     pub mcp_transport: TransportType,
-    #[serde(skip)]
-    pub memories: HashMap<String, Arc<Mutex<dyn AgentMemory>>>,
     #[serde(skip)]
     pub builder: Option<Arc<BuilderFn>>,
 }
@@ -94,7 +90,6 @@ pub async fn register_tavily_mcp_server(executor: Arc<AgentExecutor>) {
                     let server = tavily::build(transport)?;
                     Ok(Box::new(server) as Box<dyn ServerTrait>)
                 })),
-                memories: HashMap::new(),
             },
         )
         .await;
@@ -114,7 +109,6 @@ pub async fn register_default_mcp_servers(executor: Arc<AgentExecutor>) -> Resul
                     let server = agent::build_server(transport, executor)?;
                     Ok(Box::new(server) as Box<dyn ServerTrait>)
                 })),
-                memories: HashMap::new(),
             },
         )
         .await;

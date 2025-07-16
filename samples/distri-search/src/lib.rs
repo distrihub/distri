@@ -35,7 +35,6 @@ pub fn custom_mcp_servers() -> HashMap<String, ServerMetadata> {
                 let server = mcp_tavily::build(transport)?;
                 Ok(Box::new(server) as Box<dyn ServerTrait>)
             })),
-            memories: HashMap::new(),
         },
     );
 
@@ -49,7 +48,6 @@ pub fn custom_mcp_servers() -> HashMap<String, ServerMetadata> {
                 let server = mcp_spider::build(transport)?;
                 Ok(Box::new(server) as Box<dyn ServerTrait>)
             })),
-            memories: HashMap::new(),
         },
     );
 
