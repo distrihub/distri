@@ -1,235 +1,280 @@
 # External Tools and Approval System
 
-This example demonstrates how to implement external tools and approval functionality in Distri, following the AG-UI protocol for frontend-defined tools.
+This example demonstrates how to use Distri's external tools and approval system. External tools allow the frontend to handle tool execution, while the approval system provides security controls for sensitive operations.
 
 ## Overview
 
-The external tools system allows you to:
-1. Define tools that are handled by the frontend rather than the backend
-2. Require approval for certain tool executions
-3. Use whitelist or blacklist modes for approval requirements
+The external tools and approval system uses **message metadata** to communicate between the backend and frontend, providing a consistent API that integrates seamlessly with the existing message flow.
 
-## Features
+### Key Features
 
-### External Tools
-- Tools that implement `dyn Tool` but delegate execution to the frontend
-- Frontend receives `ExternalToolCalls` metadata with tool calls
-- Frontend can send tool responses via API
-
-### Tool Approval
-- Configure approval requirements per agent
-- Support for whitelist and blacklist modes
-- Frontend receives `ToolApprovalRequest` metadata
-- Frontend can approve/deny via API
+- **External Tools**: Tools that are executed by the frontend rather than the backend
+- **Approval System**: Configurable approval workflows for sensitive operations
+- **Message-Based API**: Uses standard `sendMessage`/`sendMessageStream` endpoints with metadata
+- **Flexible Configuration**: Support for whitelist and blacklist approval modes
 
 ## Configuration
 
-### Agent Definition with External Tools
+### Agent Definition
 
 ```yaml
 agents:
-  - name: "my-agent"
-    description: "Agent with external tools"
-    system_prompt: "You can use external tools..."
+  - name: "external-tools-agent"
+    description: "Agent with external tools and approval system"
+    system_prompt: "You are a helpful assistant with access to external tools."
+    include_tools: true
     tool_approval:
       approval_required: true
-      use_whitelist: false  # Use blacklist mode
-      approval_blacklist:
-        - "external_file_upload"
-        - "external_api_call"
+      use_whitelist: true  # true for whitelist, false for blacklist
+      approval_whitelist: ["calculator", "email"]  # tools that don't need approval
+      approval_blacklist: ["dangerous_tool"]  # tools that need approval
 ```
 
-### Whitelist Mode
+### External Tools
+
+External tools are defined in the agent configuration and are handled by the frontend:
 
 ```yaml
-tool_approval:
-  approval_required: true
-  use_whitelist: true  # Use whitelist mode
-  approval_whitelist:
-    - "transfer_to_agent"
-    - "external_safe_tool"
+external_tools:
+  - name: "file_upload"
+    description: "Upload files to the system"
+    input_schema:
+      type: "object"
+      properties:
+        file_path:
+          type: "string"
+          description: "Path to the file to upload"
+      required: ["file_path"]
 ```
 
-## API Endpoints
+## Message Flow
 
-### Register External Tool
-```http
-POST /api/v1/agents/{agent_id}/external-tools
-Content-Type: application/json
+### 1. External Tool Execution
 
+When an agent requests an external tool, the backend sends a message with `ExternalToolCalls` metadata:
+
+```json
 {
-  "tool_name": "external_file_upload",
-  "description": "Upload files to the system",
-  "input_schema": {
-    "type": "object",
-    "properties": {
-      "file_path": {"type": "string"},
-      "content": {"type": "string"}
-    },
-    "required": ["file_path", "content"]
+  "role": "assistant",
+  "metadata": {
+    "type": "external_tool_calls",
+    "tool_calls": [
+      {
+        "tool_id": "call_123",
+        "tool_name": "file_upload",
+        "input": "{\"file_path\": \"/path/to/file.txt\"}"
+      }
+    ],
+    "requires_approval": false
   }
 }
 ```
 
-### Handle External Tool Response
-```http
-POST /api/v1/agents/{agent_id}/external-tools/response
-Content-Type: application/json
+### 2. Tool Approval Request
 
-{
-  "tool_call_id": "call_123",
-  "result": "File uploaded successfully",
-  "thread_id": "thread_456"
-}
-```
+If a tool requires approval, the backend sends a `ToolApprovalRequest` metadata:
 
-### Handle Tool Approval
-```http
-POST /api/v1/agents/{agent_id}/approval
-Content-Type: application/json
-
-{
-  "approval_id": "approval_789",
-  "approved": true,
-  "reason": "User approved the action",
-  "thread_id": "thread_456"
-}
-```
-
-## Message Metadata Types
-
-### ExternalToolCalls
-Sent when the agent wants to execute external tools:
 ```json
 {
-  "type": "external_tool_calls",
-  "tool_calls": [
-    {
-      "tool_id": "call_123",
-      "tool_name": "external_file_upload",
-      "input": "{\"file_path\": \"/tmp/test.txt\", \"content\": \"Hello World\"}"
-    }
-  ],
-  "requires_approval": false
+  "role": "assistant",
+  "metadata": {
+    "type": "tool_approval_request",
+    "tool_calls": [
+      {
+        "tool_id": "call_456",
+        "tool_name": "dangerous_tool",
+        "input": "{\"action\": \"delete_all\"}"
+      }
+    ],
+    "approval_id": "approval_123",
+    "reason": "This operation will delete all data"
+  }
 }
 ```
 
-### ToolApprovalRequest
-Sent when tool execution requires approval:
+### 3. Frontend Response
+
+The frontend responds with a message containing the appropriate metadata:
+
+**For external tool responses:**
 ```json
 {
-  "type": "tool_approval_request",
-  "tool_calls": [
-    {
-      "tool_id": "call_456",
-      "tool_name": "external_api_call",
-      "input": "{\"url\": \"https://api.example.com\", \"method\": \"POST\"}"
-    }
-  ],
-  "approval_id": "approval_789",
-  "reason": "Tool execution requires approval"
+  "role": "user",
+  "metadata": {
+    "type": "tool_response",
+    "tool_call_id": "call_123",
+    "result": "File uploaded successfully"
+  }
 }
 ```
 
-### ToolApprovalResponse
-Sent by frontend to approve/deny tool execution:
+**For approval responses:**
 ```json
 {
-  "type": "tool_approval_response",
-  "approval_id": "approval_789",
-  "approved": true,
-  "reason": "User approved the action"
+  "role": "user",
+  "metadata": {
+    "type": "tool_approval_response",
+    "approval_id": "approval_123",
+    "approved": true,
+    "reason": "Approved by user"
+  }
 }
 ```
 
-## Implementation Flow
+## API Usage
 
-1. **Agent Definition**: Configure agent with `tool_approval` settings
-2. **Tool Registration**: Register external tools via API
-3. **Tool Execution**: Agent generates tool calls
-4. **Classification**: System separates built-in, external, and approval-required tools
-5. **Frontend Handling**: Frontend receives appropriate metadata
-6. **Response**: Frontend sends tool responses or approval decisions
-7. **Continuation**: Agent continues execution with results
+### Standard Message Endpoints
 
-## Example Usage
+Use the existing message endpoints with metadata:
 
-### 1. Start the server with external tools configuration
 ```bash
-distri-server --config samples/external-tools-example.yaml
-```
-
-### 2. Register an external tool
-```bash
-curl -X POST http://localhost:8080/api/v1/agents/external-tools-agent/external-tools \
+# Send a message that may trigger external tools
+curl -X POST http://localhost:8080/api/v1/agents/external-tools-agent \
   -H "Content-Type: application/json" \
   -d '{
-    "tool_name": "external_file_upload",
-    "description": "Upload files to the system",
-    "input_schema": {
-      "type": "object",
-      "properties": {
-        "file_path": {"type": "string"},
-        "content": {"type": "string"}
-      },
-      "required": ["file_path", "content"]
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "sendMessage",
+    "params": {
+      "message": "Upload a file and then delete all data"
+    }
+  }'
+
+# Stream messages to receive real-time updates
+curl -X POST http://localhost:8080/api/v1/agents/external-tools-agent \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "sendMessageStream",
+    "params": {
+      "message": "Upload a file and then delete all data"
     }
   }'
 ```
 
-### 3. Send a message to the agent
+### Frontend Implementation
+
+The frontend should:
+
+1. **Listen for metadata**: Check message metadata for `ExternalToolCalls` and `ToolApprovalRequest`
+2. **Execute external tools**: Handle tool execution when `ExternalToolCalls` is received
+3. **Show approval UI**: Display approval dialogs when `ToolApprovalRequest` is received
+4. **Send responses**: Reply with appropriate metadata (`ToolResponse` or `ToolApprovalResponse`)
+
+```javascript
+// Example frontend handling
+function handleMessage(message) {
+  if (message.metadata) {
+    switch (message.metadata.type) {
+      case 'external_tool_calls':
+        // Execute external tools
+        executeExternalTools(message.metadata.tool_calls);
+        break;
+      
+      case 'tool_approval_request':
+        // Show approval dialog
+        showApprovalDialog(message.metadata);
+        break;
+    }
+  }
+}
+
+function executeExternalTools(toolCalls) {
+  toolCalls.forEach(async (toolCall) => {
+    const result = await executeTool(toolCall);
+    
+    // Send tool response
+    sendMessage({
+      role: 'user',
+      metadata: {
+        type: 'tool_response',
+        tool_call_id: toolCall.tool_id,
+        result: result
+      }
+    });
+  });
+}
+
+function showApprovalDialog(approvalRequest) {
+  const approved = confirm(`Approve: ${approvalRequest.reason}`);
+  
+  // Send approval response
+  sendMessage({
+    role: 'user',
+    metadata: {
+      type: 'tool_approval_response',
+      approval_id: approvalRequest.approval_id,
+      approved: approved,
+      reason: approved ? 'Approved by user' : 'Denied by user'
+    }
+  });
+}
+```
+
+## Benefits of Message-Based Approach
+
+1. **Consistent API**: Uses existing message infrastructure
+2. **Better Integration**: Seamless integration with streaming and real-time updates
+3. **Simplified Architecture**: No need for separate API endpoints
+4. **Event-Driven**: Natural fit for event-driven frontend architectures
+5. **Extensible**: Easy to add new metadata types for future features
+
+## Running the Example
+
+1. Start the server with the example configuration:
+
+```bash
+distri-server --config samples/external-tools-example.yaml
+```
+
+2. Send a message that triggers external tools:
+
 ```bash
 curl -X POST http://localhost:8080/api/v1/agents/external-tools-agent \
   -H "Content-Type: application/json" \
   -d '{
     "jsonrpc": "2.0",
     "id": 1,
-    "method": "execute",
+    "method": "sendMessage",
     "params": {
-      "message": "Please upload a file with content 'Hello World' to /tmp/test.txt'"
+      "message": "Please upload a file and then perform a dangerous operation"
     }
   }'
 ```
 
-### 4. Handle the response
-The agent will respond with either:
-- `ExternalToolCalls` metadata for external tools
-- `ToolApprovalRequest` metadata for tools requiring approval
+3. The server will respond with messages containing metadata for external tool execution and approval requests.
 
-### 5. Send tool response or approval
-```bash
-# For external tool response
-curl -X POST http://localhost:8080/api/v1/agents/external-tools-agent/external-tools/response \
-  -H "Content-Type: application/json" \
-  -d '{
-    "tool_call_id": "call_123",
-    "result": "File uploaded successfully",
-    "thread_id": "thread_456"
-  }'
+## Configuration Options
 
-# For tool approval
-curl -X POST http://localhost:8080/api/v1/agents/external-tools-agent/approval \
-  -H "Content-Type: application/json" \
-  -d '{
-    "approval_id": "approval_789",
-    "approved": true,
-    "reason": "User approved the action",
-    "thread_id": "thread_456"
-  }'
+### Approval Modes
+
+**Whitelist Mode** (`use_whitelist: true`):
+- Only tools in `approval_whitelist` are allowed without approval
+- All other tools require approval
+
+**Blacklist Mode** (`use_whitelist: false`):
+- Tools in `approval_blacklist` require approval
+- All other tools are allowed without approval
+
+### Timeout Configuration
+
+You can configure approval timeouts in the agent definition:
+
+```yaml
+tool_approval:
+  approval_required: true
+  timeout_seconds: 30  # Approval request timeout
 ```
 
 ## Best Practices
 
-1. **Tool Naming**: Use clear prefixes like `external_` for external tools
-2. **Schema Validation**: Provide detailed input schemas for external tools
-3. **Error Handling**: Handle cases where external tools fail
-4. **User Experience**: Provide clear feedback for approval requests
-5. **Security**: Carefully consider which tools require approval
+1. **Security**: Always require approval for dangerous operations
+2. **User Experience**: Provide clear reasons for approval requests
+3. **Error Handling**: Handle timeouts and denied approvals gracefully
+4. **Logging**: Log all approval decisions for audit purposes
+5. **Testing**: Test both approval flows and external tool execution
 
-## Integration with AG-UI
+## Integration with AG-UI Protocol
 
-This implementation follows the AG-UI protocol for frontend-defined tools:
-- Tools are defined in the frontend
-- Tool calls are propagated to the frontend
-- Frontend handles tool execution and sends responses
-- Backend coordinates the flow and maintains state
+This implementation is compatible with the AG-UI protocol and can be easily integrated with existing AG-UI frontends by handling the metadata appropriately.

@@ -1,89 +1,59 @@
-# Example configuration demonstrating external tools and approval functionality
+# Example configuration for external tools and approval system
+# This demonstrates the message-based approach for external tools and approvals
 
 agents:
   - name: "external-tools-agent"
-    description: "An agent that demonstrates external tools and approval functionality"
+    description: "Agent with external tools and approval system"
     system_prompt: |
-      You are an agent that can use both built-in and external tools.
-      
-      When you need to perform actions that require external tools:
-      1. Use tools that start with "external_" prefix
-      2. These will be handled by the frontend
-      3. Wait for the frontend to provide the results
-      
-      When you need to perform actions that require approval:
-      1. The system will automatically request approval
-      2. Wait for user confirmation before proceeding
-      
-      Available external tools:
-      - external_file_upload: Upload files to the system
-      - external_database_query: Query external databases
-      - external_api_call: Make API calls to external services
-      
-      Available built-in tools:
-      - transfer_to_agent: Transfer control to another agent
-      
-    mcp_servers: []
-    model_settings:
-      model: "gpt-4o-mini"
-      temperature: 0.7
-      max_tokens: 1000
-      max_iterations: 5
-    max_iterations: 5
-    tool_approval:
-      approval_required: true
-      use_whitelist: false  # Use blacklist mode
-      approval_blacklist:
-        - "external_file_upload"
-        - "external_database_query"
-        - "external_api_call"
-      approval_whitelist: []
-
-  - name: "whitelist-agent"
-    description: "An agent that uses whitelist mode for tool approval"
-    system_prompt: |
-      You are an agent that uses whitelist mode for tool approval.
-      Only tools in the whitelist can be executed without approval.
-      
-      Available tools:
-      - transfer_to_agent: Transfer control to another agent
-      - external_safe_tool: A safe external tool that doesn't require approval
-      - external_risky_tool: A risky external tool that requires approval
-      
-    mcp_servers: []
-    model_settings:
-      model: "gpt-4o-mini"
-      temperature: 0.7
-      max_tokens: 1000
-      max_iterations: 5
-    max_iterations: 5
+      You are a helpful assistant with access to external tools.
+      You can upload files, send emails, and perform calculations.
+      Some operations may require user approval for security reasons.
+    include_tools: true
     tool_approval:
       approval_required: true
       use_whitelist: true  # Use whitelist mode
       approval_whitelist:
-        - "transfer_to_agent"
-        - "external_safe_tool"
-      approval_blacklist: []
-
-# MCP server configurations
-mcp_servers: []
-
-# Session configurations
-sessions: {}
+        - "calculator"
+        - "email_sender"
+        - "file_reader"
+      # approval_blacklist: []  # Not used in whitelist mode
+    external_tools:
+      - name: "file_upload"
+        description: "Upload files to the system"
+        input_schema:
+          type: "object"
+          properties:
+            file_path:
+              type: "string"
+              description: "Path to the file to upload"
+            content:
+              type: "string"
+              description: "Content of the file"
+          required: ["file_path", "content"]
+      - name: "dangerous_operation"
+        description: "Perform a dangerous operation that requires approval"
+        input_schema:
+          type: "object"
+          properties:
+            action:
+              type: "string"
+              description: "The action to perform"
+              enum: ["delete_all", "shutdown", "format_disk"]
+          required: ["action"]
 
 # Server configuration
 server:
   server_url: "http://localhost:8080"
-  agent_provider:
-    organization: "Distri External Tools Example"
-    url: "https://github.com/distri-ai/distri"
+  agent_provider: "distri"
+  default_input_modes: ["text"]
+  default_output_modes: ["text"]
   capabilities:
-    streaming: true
-    push_notifications: false
-    state_transition_history: true
-  default_input_modes:
-    - "text"
-  default_output_modes:
-    - "text"
-  preferred_transport: "http"
-  documentation_url: "https://docs.distri.ai"
+    text: {}
+    image: {}
+    audio: {}
+    video: {}
+
+# Storage configuration
+stores:
+  entity: "InMemory"
+  session: "InMemory"
