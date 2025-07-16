@@ -472,6 +472,79 @@ impl LlmToolsRegistry {
     pub fn is_built_in_tool(&self, name: &str) -> bool {
         self.tools.contains_key(name)
     }
+
+    /// Check if a tool requires approval based on agent configuration
+    pub fn requires_approval(&self, tool_name: &str, agent_definition: &crate::types::AgentDefinition) -> bool {
+        if let Some(approval_config) = &agent_definition.tool_approval {
+            if approval_config.approval_required {
+                // If approval is required for all tools, check whitelist/blacklist
+                if approval_config.use_whitelist {
+                    // Whitelist mode: only tools in whitelist are allowed without approval
+                    !approval_config.approval_whitelist.contains(&tool_name.to_string())
+                } else {
+                    // Blacklist mode: tools in blacklist require approval
+                    approval_config.approval_blacklist.contains(&tool_name.to_string())
+                }
+            } else {
+                false
+            }
+        } else {
+            false
+        }
+    }
+}
+
+/// External tool that delegates execution to the frontend
+pub struct ExternalTool {
+    pub name: String,
+    pub description: String,
+    pub input_schema: serde_json::Value,
+}
+
+impl ExternalTool {
+    pub fn new(name: String, description: String, input_schema: serde_json::Value) -> Self {
+        Self {
+            name,
+            description,
+            input_schema,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl Tool for ExternalTool {
+    fn get_name(&self) -> String {
+        self.name.clone()
+    }
+
+    fn get_description(&self) -> String {
+        self.description.clone()
+    }
+
+    fn get_tool_definition(&self) -> async_openai::types::ChatCompletionTool {
+        async_openai::types::ChatCompletionTool {
+            r#type: async_openai::types::ChatCompletionToolType::Function,
+            function: async_openai::types::FunctionObject {
+                name: self.name.clone(),
+                description: Some(self.description.clone()),
+                parameters: Some(self.input_schema.clone()),
+                strict: None,
+            },
+        }
+    }
+
+    async fn execute(
+        &self,
+        _tool_call: ToolCall,
+        _context: BuiltInToolContext,
+    ) -> Result<String, AgentError> {
+        // External tools should not be executed directly by the backend
+        // They should be handled by the frontend through the ExternalToolCalls metadata
+        Err(AgentError::ToolExecution(format!(
+            "External tool '{}' should be handled by frontend",
+            self.name
+        )))
+    }
 }
 
 /// Implementation of the transfer_to_agent built-in tool

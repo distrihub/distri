@@ -695,83 +695,179 @@ pub async fn execute_tool_calls(
     context: Arc<ExecutorContext>,
     event_tx: Option<mpsc::Sender<AgentEvent>>,
 ) -> Result<Vec<Message>, AgentError> {
-    // Process all tool calls in parallel
-    let tool_responses = futures::future::join_all(tool_calls.iter().map(|mapped_tool_call| {
-        let executor = executor.clone();
-        let agent_id = agent_id.to_string();
-        let context = context.clone();
-        let event_tx = event_tx.clone();
+    // Get agent definition to check approval requirements
+    let definition = executor
+        .agent_store
+        .get(agent_id)
+        .await
+        .ok_or_else(|| AgentError::NotFound(format!("Agent {} not found", agent_id)))?;
 
-        async move {
-            let run_id = { context.run_id.clone() };
-            if let Some(event_tx) = &event_tx {
-                let _ = event_tx
-                    .send(AgentEvent {
-                        thread_id: context.thread_id.clone(),
-                        run_id: run_id.clone(),
-                        event: AgentEventType::ToolCallStart {
-                            tool_call_id: mapped_tool_call.tool_id.clone(),
-                            tool_call_name: mapped_tool_call.tool_name.clone(),
-                        },
-                    })
-                    .await
-                    .map_err(|e| {
-                        AgentError::LLMError(format!("Failed to send ToolCallStart event: {}", e))
-                    });
+    let agent = executor.create_agent_from_definition(definition.clone()).await?;
+    let tools_registry = agent.get_tools();
 
-                let _ = event_tx
-                    .send(AgentEvent {
-                        thread_id: context.thread_id.clone(),
-                        run_id: run_id.clone(),
-                        event: AgentEventType::ToolCallArgs {
-                            tool_call_id: mapped_tool_call.tool_id.clone(),
-                            delta: mapped_tool_call.input.clone(),
-                        },
-                    })
-                    .await
-                    .map_err(|e| {
-                        AgentError::LLMError(format!("Failed to send ToolCallStart event: {}", e))
-                    });
-            }
-            info!("Agent: Executing tool call: {:#?}", mapped_tool_call);
-            let content = executor
-                .execute_tool(
-                    agent_id,
-                    mapped_tool_call.clone(),
-                    event_tx.clone(),
-                    context.clone(),
-                )
-                .await
-                .unwrap_or_else(|err| format!("Error: {}", err));
-            info!("Agent: Tool response: {}", content);
+    // Separate built-in tools from external tools
+    let mut built_in_tool_calls = Vec::new();
+    let mut external_tool_calls = Vec::new();
+    let mut approval_required_tool_calls = Vec::new();
 
-            if let Some(event_tx) = &event_tx {
-                let _ = event_tx
-                    .send(AgentEvent {
-                        thread_id: context.thread_id.clone(),
-                        run_id: run_id.clone(),
-                        event: AgentEventType::ToolCallResult {
-                            tool_call_id: mapped_tool_call.tool_id.clone(),
-                            result: content.clone(),
-                        },
+    for tool_call in tool_calls {
+        if let Some(tool) = tools_registry.iter().find(|t| t.get_name() == tool_call.tool_name) {
+            // Check if this is an external tool
+            if tool.get_name().starts_with("external_") || tool.get_name().contains("frontend") {
+                external_tool_calls.push(tool_call);
+            } else {
+                // Check if approval is required for this tool
+                let requires_approval = tools_registry
+                    .iter()
+                    .find(|t| t.get_name() == tool_call.tool_name)
+                    .map(|_| {
+                        // This is a bit of a hack since we don't have direct access to the registry
+                        // We'll check the agent definition directly
+                        if let Some(approval_config) = &definition.tool_approval {
+                            if approval_config.approval_required {
+                                if approval_config.use_whitelist {
+                                    !approval_config.approval_whitelist.contains(&tool_call.tool_name)
+                                } else {
+                                    approval_config.approval_blacklist.contains(&tool_call.tool_name)
+                                }
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
+                        }
                     })
-                    .await
-                    .map_err(|e| {
-                        AgentError::LLMError(format!("Failed to send ToolCallResult event: {}", e))
-                    });
+                    .unwrap_or(false);
+
+                if requires_approval {
+                    approval_required_tool_calls.push(tool_call);
+                } else {
+                    built_in_tool_calls.push(tool_call);
+                }
             }
-            Message {
-                role: MessageRole::User,
-                name: Some(mapped_tool_call.tool_name.clone()),
-                metadata: Some(MessageMetadata::ToolResponse {
-                    tool_call_id: mapped_tool_call.tool_id.clone(),
-                    result: content.clone(),
-                }),
-                ..Default::default()
-            }
+        } else {
+            // Unknown tool - treat as external
+            external_tool_calls.push(tool_call);
         }
-    }))
-    .await;
+    }
 
-    Ok(tool_responses)
+    let mut all_responses = Vec::new();
+
+    // Handle approval-required tools first
+    if !approval_required_tool_calls.is_empty() {
+        let approval_id = uuid::Uuid::new_v4().to_string();
+        let approval_message = Message {
+            role: MessageRole::Assistant,
+            name: Some(agent_id.to_string()),
+            metadata: Some(MessageMetadata::ToolApprovalRequest {
+                tool_calls: approval_required_tool_calls.clone(),
+                approval_id: approval_id.clone(),
+                reason: Some("Tool execution requires approval".to_string()),
+            }),
+            ..Default::default()
+        };
+        all_responses.push(approval_message);
+
+        // For now, we'll wait for approval by returning early
+        // In a real implementation, you'd want to handle this asynchronously
+        return Ok(all_responses);
+    }
+
+    // Handle external tools
+    if !external_tool_calls.is_empty() {
+        let external_message = Message {
+            role: MessageRole::Assistant,
+            name: Some(agent_id.to_string()),
+            metadata: Some(MessageMetadata::ExternalToolCalls {
+                tool_calls: external_tool_calls.clone(),
+                requires_approval: false,
+            }),
+            ..Default::default()
+        };
+        all_responses.push(external_message);
+    }
+
+    // Process built-in tools in parallel
+    if !built_in_tool_calls.is_empty() {
+        let tool_responses = futures::future::join_all(built_in_tool_calls.iter().map(|mapped_tool_call| {
+            let executor = executor.clone();
+            let agent_id = agent_id.to_string();
+            let context = context.clone();
+            let event_tx = event_tx.clone();
+
+            async move {
+                let run_id = { context.run_id.clone() };
+                if let Some(event_tx) = &event_tx {
+                    let _ = event_tx
+                        .send(AgentEvent {
+                            thread_id: context.thread_id.clone(),
+                            run_id: run_id.clone(),
+                            event: AgentEventType::ToolCallStart {
+                                tool_call_id: mapped_tool_call.tool_id.clone(),
+                                tool_call_name: mapped_tool_call.tool_name.clone(),
+                            },
+                        })
+                        .await
+                        .map_err(|e| {
+                            AgentError::LLMError(format!("Failed to send ToolCallStart event: {}", e))
+                        });
+
+                    let _ = event_tx
+                        .send(AgentEvent {
+                            thread_id: context.thread_id.clone(),
+                            run_id: run_id.clone(),
+                            event: AgentEventType::ToolCallArgs {
+                                tool_call_id: mapped_tool_call.tool_id.clone(),
+                                delta: mapped_tool_call.input.clone(),
+                            },
+                        })
+                        .await
+                        .map_err(|e| {
+                            AgentError::LLMError(format!("Failed to send ToolCallStart event: {}", e))
+                        });
+                }
+                info!("Agent: Executing tool call: {:#?}", mapped_tool_call);
+                let content = executor
+                    .execute_tool(
+                        agent_id,
+                        mapped_tool_call.clone(),
+                        event_tx.clone(),
+                        context.clone(),
+                    )
+                    .await
+                    .unwrap_or_else(|err| format!("Error: {}", err));
+                info!("Agent: Tool response: {}", content);
+
+                if let Some(event_tx) = &event_tx {
+                    let _ = event_tx
+                        .send(AgentEvent {
+                            thread_id: context.thread_id.clone(),
+                            run_id: run_id.clone(),
+                            event: AgentEventType::ToolCallResult {
+                                tool_call_id: mapped_tool_call.tool_id.clone(),
+                                result: content.clone(),
+                            },
+                        })
+                        .await
+                        .map_err(|e| {
+                            AgentError::LLMError(format!("Failed to send ToolCallResult event: {}", e))
+                        });
+                }
+                Message {
+                    role: MessageRole::User,
+                    name: Some(mapped_tool_call.tool_name.clone()),
+                    metadata: Some(MessageMetadata::ToolResponse {
+                        tool_call_id: mapped_tool_call.tool_id.clone(),
+                        result: content.clone(),
+                    }),
+                    ..Default::default()
+                }
+            }
+        }))
+        .await;
+
+        all_responses.extend(tool_responses);
+    }
+
+    Ok(all_responses)
 }

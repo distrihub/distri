@@ -436,6 +436,10 @@ impl LLMExecutor {
                         MessageMetadata::FinalResponse { .. } => {}
                         MessageMetadata::PlanFacts { .. } => {}
                         MessageMetadata::Plan { .. } => {}
+                        // External tools and approval metadata are handled separately
+                        MessageMetadata::ExternalToolCalls { .. } => {}
+                        MessageMetadata::ToolApprovalRequest { .. } => {}
+                        MessageMetadata::ToolApprovalResponse { .. } => {}
                     }
                 }
                 let msg = match m.role {

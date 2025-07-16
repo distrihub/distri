@@ -1,8 +1,11 @@
 pub mod coordinator_test;
-pub mod executor;
 pub mod executor_custom_agents_test;
 pub mod executor_test;
+pub mod executor;
 pub mod extensible_agent_test;
+pub mod external_tools_test;
+pub mod external_tools_approval_test;
+pub mod plugin_agent_test;
 pub mod tool_call_format;
 pub mod tools;
 pub mod utils;

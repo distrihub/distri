@@ -48,7 +48,20 @@ pub fn distri(cfg: &mut web::ServiceConfig) {
                 web::resource("/threads/{thread_id}/messages")
                     .route(web::get().to(get_thread_messages)),
             )
-            .service(web::resource("/schema/agent").route(web::get().to(get_agent_schema))),
+            .service(web::resource("/schema/agent").route(web::get().to(get_agent_schema)))
+            // External tool and approval endpoints
+            .service(
+                web::resource("/agents/{id}/external-tools")
+                    .route(web::post().to(register_external_tool)),
+            )
+            .service(
+                web::resource("/agents/{id}/external-tools/response")
+                    .route(web::post().to(handle_external_tool_response)),
+            )
+            .service(
+                web::resource("/agents/{id}/approval")
+                    .route(web::post().to(handle_tool_approval)),
+            ),
     );
 }
 
@@ -299,4 +312,121 @@ async fn get_agent_schema() -> HttpResponse {
     use schemars::schema_for;
     let schema = schema_for!(AgentDefinition);
     HttpResponse::Ok().json(schema)
+}
+
+// External tool and approval handlers
+
+#[derive(Deserialize)]
+struct RegisterExternalToolRequest {
+    tool_name: String,
+    description: String,
+    input_schema: serde_json::Value,
+}
+
+async fn register_external_tool(
+    id: web::Path<String>,
+    req: web::Json<RegisterExternalToolRequest>,
+    executor: web::Data<Arc<AgentExecutor>>,
+) -> HttpResponse {
+    let agent_id = id.into_inner();
+    let req = req.into_inner();
+
+    match executor
+        .register_external_tool(
+            &agent_id,
+            req.tool_name,
+            req.description,
+            req.input_schema,
+        )
+        .await
+    {
+        Ok(_) => HttpResponse::Ok().json(json!({
+            "message": "External tool registered successfully"
+        })),
+        Err(e) => HttpResponse::BadRequest().json(json!({
+            "error": format!("Failed to register external tool: {}", e)
+        })),
+    }
+}
+
+#[derive(Deserialize)]
+struct ExternalToolResponseRequest {
+    tool_call_id: String,
+    result: String,
+    thread_id: Option<String>,
+}
+
+async fn handle_external_tool_response(
+    id: web::Path<String>,
+    req: web::Json<ExternalToolResponseRequest>,
+    executor: web::Data<Arc<AgentExecutor>>,
+) -> HttpResponse {
+    let agent_id = id.into_inner();
+    let req = req.into_inner();
+
+    let context = Arc::new(distri::agent::ExecutorContext::new(
+        req.thread_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+        None,
+        true,
+        None,
+        None,
+        None,
+    ));
+
+    match executor
+        .handle_external_tool_response(&agent_id, req.tool_call_id, req.result, context)
+        .await
+    {
+        Ok(_) => HttpResponse::Ok().json(json!({
+            "message": "External tool response handled successfully"
+        })),
+        Err(e) => HttpResponse::BadRequest().json(json!({
+            "error": format!("Failed to handle external tool response: {}", e)
+        })),
+    }
+}
+
+#[derive(Deserialize)]
+struct ToolApprovalRequest {
+    approval_id: String,
+    approved: bool,
+    reason: Option<String>,
+    thread_id: Option<String>,
+}
+
+async fn handle_tool_approval(
+    id: web::Path<String>,
+    req: web::Json<ToolApprovalRequest>,
+    executor: web::Data<Arc<AgentExecutor>>,
+) -> HttpResponse {
+    let agent_id = id.into_inner();
+    let req = req.into_inner();
+
+    let context = Arc::new(distri::agent::ExecutorContext::new(
+        req.thread_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+        None,
+        true,
+        None,
+        None,
+        None,
+    ));
+
+    match executor
+        .handle_tool_approval(
+            &agent_id,
+            req.approval_id,
+            req.approved,
+            req.reason,
+            context,
+            None,
+        )
+        .await
+    {
+        Ok(result) => HttpResponse::Ok().json(json!({
+            "message": result
+        })),
+        Err(e) => HttpResponse::BadRequest().json(json!({
+            "error": format!("Failed to handle tool approval: {}", e)
+        })),
+    }
 }

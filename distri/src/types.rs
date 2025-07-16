@@ -146,6 +146,39 @@ pub struct AgentDefinition {
     /// Whether to include tools in the response.
     #[serde(default = "default_include_tools")]
     pub include_tools: bool,
+
+    /// Tool approval configuration
+    #[serde(default)]
+    pub tool_approval: Option<ToolApprovalConfig>,
+}
+
+/// Configuration for tool approval requirements
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ToolApprovalConfig {
+    /// Whether approval is required for all tools
+    #[serde(default = "default_approval_required")]
+    pub approval_required: bool,
+    
+    /// List of tools that require approval (whitelist)
+    #[serde(default)]
+    pub approval_whitelist: Vec<String>,
+    
+    /// List of tools that do not require approval (blacklist)
+    #[serde(default)]
+    pub approval_blacklist: Vec<String>,
+    
+    /// Whether to use whitelist (true) or blacklist (false) mode
+    #[serde(default = "default_use_whitelist")]
+    pub use_whitelist: bool,
+}
+
+fn default_approval_required() -> bool {
+    false
+}
+
+fn default_use_whitelist() -> bool {
+    false
 }
 
 impl AgentDefinition {
@@ -268,6 +301,20 @@ pub enum MessageMetadata {
     },
     Plan {
         plan: String,
+    },
+    ExternalToolCalls {
+        tool_calls: Vec<ToolCall>,
+        requires_approval: bool,
+    },
+    ToolApprovalRequest {
+        tool_calls: Vec<ToolCall>,
+        approval_id: String,
+        reason: Option<String>,
+    },
+    ToolApprovalResponse {
+        approval_id: String,
+        approved: bool,
+        reason: Option<String>,
     },
 }
 

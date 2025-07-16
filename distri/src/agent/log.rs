@@ -66,6 +66,15 @@ impl ModelLogger {
                     crate::types::MessageMetadata::Plan { plan } => {
                         content.push_str(&format!("Plan: {}", plan));
                     }
+                    crate::types::MessageMetadata::ExternalToolCalls { tool_calls, .. } => {
+                        content.push_str(&format!("External tool calls: {:?}", tool_calls));
+                    }
+                    crate::types::MessageMetadata::ToolApprovalRequest { tool_calls, approval_id, .. } => {
+                        content.push_str(&format!("Tool approval request: {} (approval_id: {})", tool_calls.len(), approval_id));
+                    }
+                    crate::types::MessageMetadata::ToolApprovalResponse { approval_id, approved, .. } => {
+                        content.push_str(&format!("Tool approval response: {} (approved: {})", approval_id, approved));
+                    }
                 }
             }
             table.add_row(vec![format!("{:?}", m.role), content]);

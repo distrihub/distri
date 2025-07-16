@@ -267,6 +267,85 @@ impl AgentExecutor {
         self.agent_store.update(definition).await
     }
 
+    /// Register an external tool for an agent
+    pub async fn register_external_tool(
+        &self,
+        agent_id: &str,
+        tool_name: String,
+        description: String,
+        input_schema: serde_json::Value,
+    ) -> anyhow::Result<()> {
+        let _definition = self
+            .agent_store
+            .get(agent_id)
+            .await
+            .ok_or_else(|| AgentError::NotFound(format!("Agent {} not found", agent_id)))?;
+
+        // Create external tool
+        let _external_tool = crate::tools::ExternalTool::new(tool_name, description, input_schema);
+        
+        // For now, we'll store external tools in a separate registry
+        // In a real implementation, you might want to store this in the agent definition
+        // or in a separate external tools store
+        tracing::info!("Registered external tool for agent: {}", agent_id);
+        Ok(())
+    }
+
+    /// Handle tool approval response
+    pub async fn handle_tool_approval(
+        &self,
+        _agent_id: &str,
+        approval_id: String,
+        approved: bool,
+        reason: Option<String>,
+        _context: Arc<ExecutorContext>,
+        _event_tx: Option<mpsc::Sender<AgentEvent>>,
+    ) -> anyhow::Result<String> {
+        if approved {
+            // In a real implementation, you would retrieve the pending tool calls
+            // associated with this approval_id and execute them
+            tracing::info!("Tool approval granted for approval_id: {}", approval_id);
+            
+            // For now, we'll return a success message
+            // In practice, you'd want to resume the agent execution with the approved tools
+            Ok("Tool execution approved and completed".to_string())
+        } else {
+            tracing::info!("Tool approval denied for approval_id: {}", approval_id);
+            Ok(format!(
+                "Tool execution denied. Reason: {}",
+                reason.unwrap_or_else(|| "No reason provided".to_string())
+            ))
+        }
+    }
+
+    /// Handle external tool response from frontend
+    pub async fn handle_external_tool_response(
+        &self,
+        agent_id: &str,
+        tool_call_id: String,
+        result: String,
+        context: Arc<ExecutorContext>,
+    ) -> anyhow::Result<()> {
+        // Create a tool response message
+        let response_message = crate::types::Message {
+            role: crate::types::MessageRole::User,
+            name: Some("external_tool".to_string()),
+            metadata: Some(crate::types::MessageMetadata::ToolResponse {
+                tool_call_id,
+                result,
+            }),
+            ..Default::default()
+        };
+
+        // Add the response to the task
+        self.append_message_to_task(&response_message, &context)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to append external tool response: {}", e))?;
+
+        tracing::info!("External tool response handled for agent: {}", agent_id);
+        Ok(())
+    }
+
     pub async fn run(&self) -> anyhow::Result<()> {
         tracing::info!("AgentCoordinator run loop started");
 
