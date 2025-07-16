@@ -14,87 +14,86 @@ async fn test_executor_with_custom_agent_factories() -> Result<()> {
     let _ = tracing_subscriber::fmt::try_init();
 
     // Create a custom agent factory for testing
-    let custom_factory = Arc::new(
-        |definition, tools_registry, executor, context, session_store| {
-            use crate::agent::AgentEvent;
-            use crate::agent::{agent::AgentType, BaseAgent, StandardAgent};
-            use crate::error::AgentError;
-            use crate::tools::Tool;
-            use tokio::sync::mpsc;
+    let custom_factory = Arc::new(|definition, tools_registry, executor, session_store| {
+        use crate::agent::AgentEvent;
+        use crate::agent::{AgentHooks, AgentType, BaseAgent, StandardAgent};
+        use crate::error::AgentError;
+        use crate::tools::Tool;
+        use tokio::sync::mpsc;
 
-            #[derive(Clone)]
-            struct TestCustomAgent {
-                inner: StandardAgent,
+        #[derive(Clone)]
+        struct TestCustomAgent {
+            inner: StandardAgent,
+        }
+
+        impl std::fmt::Debug for TestCustomAgent {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.debug_struct("TestCustomAgent").finish()
+            }
+        }
+
+        #[async_trait::async_trait]
+        impl BaseAgent for TestCustomAgent {
+            fn agent_type(&self) -> AgentType {
+                AgentType::Custom("TestCustomAgent".to_string())
             }
 
-            impl std::fmt::Debug for TestCustomAgent {
-                fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                    f.debug_struct("TestCustomAgent").finish()
-                }
+            fn get_definition(&self) -> crate::types::AgentDefinition {
+                self.inner.get_definition()
             }
 
-            #[async_trait::async_trait]
-            impl BaseAgent for TestCustomAgent {
-                fn agent_type(&self) -> AgentType {
-                    AgentType::Custom("TestCustomAgent".to_string())
-                }
-
-                fn get_definition(&self) -> crate::types::AgentDefinition {
-                    self.inner.get_definition()
-                }
-
-                fn get_description(&self) -> &str {
-                    self.inner.get_description()
-                }
-
-                fn get_tools(&self) -> Vec<&Box<dyn Tool>> {
-                    self.inner.get_tools()
-                }
-
-                fn get_name(&self) -> &str {
-                    self.inner.get_name()
-                }
-
-                fn clone_box(&self) -> Box<dyn BaseAgent> {
-                    Box::new(self.clone())
-                }
-
-                async fn invoke(
-                    &self,
-                    task: TaskStep,
-                    params: Option<serde_json::Value>,
-                    context: Arc<crate::agent::ExecutorContext>,
-                    event_tx: Option<mpsc::Sender<AgentEvent>>,
-                ) -> Result<String, AgentError> {
-                    // Custom behavior: prepend "CUSTOM: " to the response
-                    let inner_result = self.inner.invoke(task, params, context, event_tx).await?;
-                    Ok(format!("CUSTOM: {}", inner_result))
-                }
-
-                async fn invoke_stream(
-                    &self,
-                    task: TaskStep,
-                    params: Option<serde_json::Value>,
-                    context: Arc<crate::agent::ExecutorContext>,
-                    event_tx: mpsc::Sender<AgentEvent>,
-                ) -> Result<(), AgentError> {
-                    self.inner
-                        .invoke_stream(task, params, context, event_tx)
-                        .await
-                }
+            fn get_description(&self) -> &str {
+                self.inner.get_description()
             }
 
-            Box::new(TestCustomAgent {
-                inner: StandardAgent::new(
-                    definition,
-                    tools_registry,
-                    executor,
-                    context,
-                    session_store,
-                ),
-            }) as Box<dyn BaseAgent>
-        },
-    );
+            fn get_tools(&self) -> Vec<&Box<dyn Tool>> {
+                self.inner.get_tools()
+            }
+
+            fn get_name(&self) -> &str {
+                self.inner.get_name()
+            }
+
+            fn clone_box(&self) -> Box<dyn BaseAgent> {
+                Box::new(self.clone())
+            }
+
+            fn get_hooks(&self) -> Option<&dyn AgentHooks> {
+                Some(self)
+            }
+
+            async fn invoke(
+                &self,
+                task: TaskStep,
+                params: Option<serde_json::Value>,
+                context: Arc<crate::agent::ExecutorContext>,
+                event_tx: Option<mpsc::Sender<AgentEvent>>,
+            ) -> Result<String, AgentError> {
+                // Custom behavior: prepend "CUSTOM: " to the response
+                let inner_result = self.inner.invoke(task, params, context, event_tx).await?;
+                Ok(format!("CUSTOM: {}", inner_result))
+            }
+
+            async fn invoke_stream(
+                &self,
+                task: TaskStep,
+                params: Option<serde_json::Value>,
+                context: Arc<crate::agent::ExecutorContext>,
+                event_tx: mpsc::Sender<AgentEvent>,
+            ) -> Result<(), AgentError> {
+                self.inner
+                    .invoke_stream(task, params, context, event_tx)
+                    .await
+            }
+        }
+
+        #[async_trait::async_trait]
+        impl AgentHooks for TestCustomAgent {}
+
+        Box::new(TestCustomAgent {
+            inner: StandardAgent::new(definition, tools_registry, executor, session_store),
+        }) as Box<dyn BaseAgent>
+    });
 
     // Create executor with custom factory
     let stores = crate::types::StoreConfig::default().initialize().await?;
@@ -129,7 +128,7 @@ async fn test_executor_with_custom_agent_factories() -> Result<()> {
     // Test creating agent from definition (should use standard factory by default)
     let agent = executor.create_agent_from_definition(agent_def).await?;
     assert_eq!(agent.get_name(), "test-custom-agent");
-    assert_eq!(agent.agent_type(), crate::agent::agent::AgentType::Standard);
+    assert_eq!(agent.agent_type(), crate::agent::AgentType::Standard);
 
     info!("✅ Executor with custom agent factories test completed successfully");
     Ok(())
