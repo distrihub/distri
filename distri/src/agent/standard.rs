@@ -219,6 +219,7 @@ impl StandardAgent {
         params: &Option<serde_json::Value>,
         context: Arc<ExecutorContext>,
         event_tx: Option<mpsc::Sender<AgentEvent>>,
+        hooks: Option<&dyn crate::agent::AgentHooks>,
     ) -> Result<StepResult, AgentError> {
         let agent_id = &self.definition.name;
 
@@ -242,6 +243,7 @@ impl StandardAgent {
                 agent_id,
                 context.clone(),
                 event_tx.clone(),
+                hooks,
             )
             .await?;
 
@@ -255,6 +257,7 @@ impl StandardAgent {
         params: &Option<serde_json::Value>,
         context: Arc<ExecutorContext>,
         event_tx: mpsc::Sender<AgentEvent>,
+        hooks: Option<&dyn crate::agent::AgentHooks>,
     ) -> Result<StepResult, AgentError> {
         let agent_id = &self.definition.name;
 
@@ -278,6 +281,7 @@ impl StandardAgent {
                 agent_id,
                 context.clone(),
                 Some(event_tx.clone()),
+                hooks,
             )
             .await?;
 
@@ -326,14 +330,138 @@ impl StandardAgent {
             .await;
     }
 
-    pub async fn invoke_stream(
+    pub async fn invoke_with_hooks(
+        &self,
+        task: TaskStep,
+        params: Option<serde_json::Value>,
+        context: Arc<ExecutorContext>,
+        event_tx: Option<mpsc::Sender<AgentEvent>>,
+        hooks: Option<&dyn crate::agent::AgentHooks>,
+    ) -> Result<String, AgentError> {
+        let agent_id = &self.definition.name;
+        let run_id = context.run_id.lock().await.clone();
+        let thread_id = context.thread_id.clone();
+        let mut iterations = self
+            .session_store
+            .get_iteration(&run_id)
+            .await
+            .map_err(|e| AgentError::Session(e.to_string()))?;
+        // Send RunStarted event if event_tx is provided
+        if let Some(event_tx) = &event_tx {
+            let _ = event_tx
+                .send(AgentEvent {
+                    thread_id: thread_id.clone(),
+                    run_id: run_id.clone(),
+                    event: AgentEventType::RunStarted {},
+                })
+                .await;
+        }
+        let result = async {
+            if iterations == 0 {
+                self.system_step(context.clone()).await?;
+                self.task_step(&task, context.clone()).await?;
+                // Call after_task_step hook
+                if let Some(hooks) = hooks {
+                    hooks.after_task_step(task.clone(), context.clone()).await?;
+                }
+            }
+            let mut current_messages = self
+                .session_store
+                .get_messages(&context.thread_id)
+                .await
+                .map_err(|e| AgentError::Session(e.to_string()))?;
+
+            let max_iterations = self.definition.max_iterations.unwrap_or(MAX_ITERATIONS);
+            tracing::debug!("Max iterations per run set to: {}", max_iterations);
+            loop {
+                if iterations >= max_iterations {
+                    tracing::warn!("Max iterations limit reached: {}", max_iterations);
+                    return Err(AgentError::LLMError(format!(
+                        "Max iterations reached: {max_iterations}",
+                    )));
+                }
+                iterations = self
+                    .session_store
+                    .inc_iteration(&run_id)
+                    .await
+                    .map_err(|e| AgentError::Session(e.to_string()))?;
+
+                let messages = if let Some(hooks) = hooks {
+                    hooks
+                        .before_llm_step(&current_messages.clone(), &params, context.clone())
+                        .await?
+                } else {
+                    current_messages.clone()
+                };
+                let step_result = self
+                    .llm_step(&messages, &params, context.clone(), event_tx.clone(), hooks)
+                    .await?;
+
+                let step_result = if let Some(hooks) = hooks {
+                    hooks.after_finish(step_result, context.clone()).await?
+                } else {
+                    step_result
+                };
+                match step_result {
+                    StepResult::Finish(content) => {
+                        // Store final response as action step
+                        let action_step = MemoryStep::Action(ActionStep {
+                            model_input_messages: Some(current_messages),
+                            model_output: Some(content.clone()),
+                            ..Default::default()
+                        });
+                        self.session_store
+                            .store_step(&context.thread_id, action_step.clone())
+                            .await
+                            .map_err(|e| AgentError::Session(e.to_string()))?;
+                        self.logger.log_step(agent_id, &action_step);
+                        break Ok(content);
+                    }
+                    StepResult::Continue(new_messages) => {
+                        current_messages.extend(new_messages);
+                        continue;
+                    }
+                }
+            }
+        }
+        .await;
+        // Send RunFinished or RunError event
+        if let Some(event_tx) = &event_tx {
+            match &result {
+                Ok(_) => {
+                    let _ = event_tx
+                        .send(AgentEvent {
+                            thread_id: thread_id.clone(),
+                            run_id: run_id.clone(),
+                            event: AgentEventType::RunFinished {},
+                        })
+                        .await;
+                }
+                Err(e) => {
+                    let _ = event_tx
+                        .send(AgentEvent {
+                            thread_id: thread_id.clone(),
+                            run_id: run_id.clone(),
+                            event: AgentEventType::RunError {
+                                message: e.to_string(),
+                                code: None,
+                            },
+                        })
+                        .await;
+                }
+            }
+        }
+        result
+    }
+
+    pub async fn invoke_stream_with_hooks(
         &self,
         task: TaskStep,
         params: Option<serde_json::Value>,
         context: Arc<ExecutorContext>,
         event_tx: mpsc::Sender<AgentEvent>,
+        hooks: Option<&dyn crate::agent::AgentHooks>,
     ) -> Result<(), AgentError> {
-        self.validate().await?;
         let agent_id = &self.definition.name;
         let run_id = context.run_id.lock().await.clone();
         let thread_id = context.thread_id.clone();
@@ -363,10 +491,8 @@ impl StandardAgent {
                 self.system_step(context.clone()).await?;
                 self.task_step(&task, context.clone()).await?;
                 // Call after_task_step hook
-                if let Some(hooks) = self.get_hooks() {
-                    hooks.after_task_step(task.clone(), context.clone()).await?
-                } else {
-                    self.after_task_step(task.clone(), context.clone()).await?
+                if let Some(hooks) = hooks {
+                    hooks.after_task_step(task.clone(), context.clone()).await?;
                 }
             }
             let mut current_messages = self
@@ -385,25 +511,25 @@ impl StandardAgent {
                     self.plan_step(task.clone(), plan_config, iterations, context.clone())
                         .await?;
                 }
-                let messages = if let Some(hooks) = self.get_hooks() {
+                let messages = if let Some(hooks) = hooks {
                     hooks
-                        .before_llm_step(&current_messages, &params, context.clone())
+                        .before_llm_step(&current_messages.clone(), &params, context.clone())
                         .await?
                 } else {
-                    self.before_llm_step(&current_messages, &params, context.clone())
-                        .await?
+                    current_messages.clone()
                 };
                 let step_result = self
-                    .llm_step_stream(&messages, &params, context.clone(), event_tx.clone())
+                    .llm_step_stream(&messages, &params, context.clone(), event_tx.clone(), hooks)
                     .await?;
-                let step_result = if let Some(hooks) = self.get_hooks() {
+
+                let step_result = if let Some(hooks) = hooks {
                     hooks.after_finish(step_result, context.clone()).await?
                 } else {
-                    self.after_finish(step_result, context.clone()).await?
+                    step_result
                 };
+
                 match step_result {
                     StepResult::Finish(content) => {
-                        // Call after_finish hook
                         // Store final response as action step
                         let action_step = MemoryStep::Action(ActionStep {
                             model_input_messages: Some(current_messages),
@@ -415,7 +541,6 @@ impl StandardAgent {
                             .await
                             .map_err(|e| AgentError::Session(e.to_string()))?;
                         self.logger.log_step(agent_id, &action_step);
-
                         break Ok(());
                     }
                     StepResult::Continue(new_messages) => {
@@ -459,150 +584,21 @@ impl StandardAgent {
         result
     }
 
-    pub async fn invoke(
-        &self,
-        task: TaskStep,
-        params: Option<serde_json::Value>,
-        context: Arc<ExecutorContext>,
-        event_tx: Option<mpsc::Sender<AgentEvent>>,
-    ) -> Result<String, AgentError> {
-        self.validate().await?;
-        let agent_id = &self.definition.name;
-        let run_id = context.run_id.lock().await.clone();
-        let thread_id = context.thread_id.clone();
-        let mut iterations = self
-            .session_store
-            .get_iteration(&run_id)
-            .await
-            .map_err(|e| AgentError::Session(e.to_string()))?;
-        // Send RunStarted event if event_tx is provided
-        if let Some(event_tx) = &event_tx {
-            let _ = event_tx
-                .send(AgentEvent {
-                    thread_id: thread_id.clone(),
-                    run_id: run_id.clone(),
-                    event: AgentEventType::RunStarted {},
-                })
-                .await;
-        }
-        let result = async {
-            if iterations == 0 {
-                self.system_step(context.clone()).await?;
-                self.task_step(&task, context.clone()).await?;
-                // Call after_task_step hook
-                if let Some(hooks) = self.get_hooks() {
-                    hooks.after_task_step(task.clone(), context.clone()).await?
-                } else {
-                    self.after_task_step(task.clone(), context.clone()).await?
-                }
-            }
-            let mut current_messages = self
-                .session_store
-                .get_messages(&context.thread_id)
-                .await
-                .map_err(|e| AgentError::Session(e.to_string()))?;
-            let max_iterations = self.definition.max_iterations.unwrap_or(MAX_ITERATIONS);
-            tracing::debug!("Max iterations per run set to: {}", max_iterations);
-            loop {
-                if iterations >= max_iterations {
-                    tracing::warn!("Max iterations limit reached: {}", max_iterations);
-                    return Err(AgentError::LLMError(format!(
-                        "Max iterations reached: {max_iterations}",
-                    )));
-                }
-                iterations = self
-                    .session_store
-                    .inc_iteration(&run_id)
-                    .await
-                    .map_err(|e| AgentError::Session(e.to_string()))?;
-
-                let messages = if let Some(hooks) = self.get_hooks() {
-                    hooks
-                        .before_llm_step(&current_messages, &params, context.clone())
-                        .await?
-                } else {
-                    self.before_llm_step(&current_messages, &params, context.clone())
-                        .await?
-                };
-                let step_result = self
-                    .llm_step(&messages, &params, context.clone(), event_tx.clone())
-                    .await?;
-
-                let step_result = if let Some(hooks) = self.get_hooks() {
-                    hooks.after_finish(step_result, context.clone()).await?
-                } else {
-                    self.after_finish(step_result, context.clone()).await?
-                };
-                match step_result {
-                    StepResult::Finish(content) => {
-                        tracing::info!("Agent execution completed successfully");
-                        let action_step = MemoryStep::Action(ActionStep {
-                            model_input_messages: Some(current_messages),
-                            model_output: Some(content.clone()),
-                            ..Default::default()
-                        });
-                        self.session_store
-                            .store_step(&context.thread_id, action_step.clone())
-                            .await
-                            .map_err(|e| AgentError::Session(e.to_string()))?;
-                        self.logger.log_step(agent_id, &action_step);
-                        // Emit text message events if event_tx is provided
-                        if let Some(event_tx) = &event_tx {
-                            self.emit_text_message_events(
-                                event_tx,
-                                &context,
-                                &content,
-                                &Role::Assistant,
-                            )
-                            .await;
-                        }
-                        return Ok(content);
-                    }
-                    StepResult::Continue(new_messages) => {
-                        current_messages.extend(new_messages);
-                        continue;
-                    }
-                }
-            }
-        }
-        .await;
-        // Send RunFinished or RunError event if event_tx is provided
-        if let Some(event_tx) = &event_tx {
-            match &result {
-                Ok(_) => {
-                    let _ = event_tx
-                        .send(AgentEvent {
-                            thread_id: thread_id.clone(),
-                            run_id: run_id.clone(),
-                            event: AgentEventType::RunFinished {},
-                        })
-                        .await;
-                }
-                Err(e) => {
-                    let _ = event_tx
-                        .send(AgentEvent {
-                            thread_id: thread_id.clone(),
-                            run_id: run_id.clone(),
-                            event: AgentEventType::RunError {
-                                message: e.to_string(),
-                                code: None,
-                            },
-                        })
-                        .await;
-                }
-            }
-        }
-        result
-    }
-
     pub async fn execute_tool_calls(
         &self,
         tool_calls: Vec<ToolCall>,
         agent_id: &str,
         context: Arc<ExecutorContext>,
         event_tx: Option<mpsc::Sender<AgentEvent>>,
+        hooks: Option<&dyn crate::agent::AgentHooks>,
     ) -> Result<Vec<Message>, AgentError> {
-        let tool_calls = self.before_tool_calls(&tool_calls, context.clone()).await?;
+        let tool_calls = if let Some(hooks) = hooks {
+            hooks
+                .before_tool_calls(&tool_calls, context.clone())
+                .await?
+        } else {
+            tool_calls
+        };
 
         // Process all tool calls in parallel
         let tool_responses = futures::future::join_all(tool_calls.iter().map(|mapped_tool_call| {
@@ -703,8 +699,11 @@ impl StandardAgent {
             .collect();
 
         // Call after_tool_calls hook
-        self.after_tool_calls(&tool_response_contents, context)
-            .await?;
+        if let Some(hooks) = hooks {
+            hooks
+                .after_tool_calls(&tool_response_contents, context.clone())
+                .await?;
+        }
 
         Ok(tool_responses)
     }
@@ -717,6 +716,7 @@ impl StandardAgent {
         agent_id: &str,
         context: Arc<ExecutorContext>,
         event_tx: Option<mpsc::Sender<AgentEvent>>,
+        hooks: Option<&dyn crate::agent::AgentHooks>,
     ) -> Result<StepResult, AgentError> {
         match finish_reason {
             async_openai::types::FinishReason::Stop => {
@@ -738,7 +738,7 @@ impl StandardAgent {
                     }];
 
                     let tool_responses = self
-                        .execute_tool_calls(tool_calls, agent_id, context, event_tx)
+                        .execute_tool_calls(tool_calls, agent_id, context, event_tx, hooks)
                         .await?;
 
                     // Add tool responses
@@ -757,8 +757,6 @@ impl StandardAgent {
         }
     }
 }
-#[async_trait::async_trait]
-impl AgentHooks for StandardAgent {}
 
 #[async_trait::async_trait]
 impl BaseAgent for StandardAgent {
@@ -785,7 +783,7 @@ impl BaseAgent for StandardAgent {
         context: Arc<ExecutorContext>,
         event_tx: Option<mpsc::Sender<AgentEvent>>,
     ) -> Result<String, AgentError> {
-        StandardAgent::invoke(self, task, params, context, event_tx).await
+        StandardAgent::invoke_with_hooks(self, task, params, context, event_tx, None).await
     }
 
     fn clone_box(&self) -> Box<dyn BaseAgent> {
@@ -803,6 +801,6 @@ impl BaseAgent for StandardAgent {
         context: Arc<ExecutorContext>,
         event_tx: mpsc::Sender<AgentEvent>,
     ) -> Result<(), AgentError> {
-        StandardAgent::invoke_stream(self, task, params, context, event_tx).await
+        StandardAgent::invoke_stream_with_hooks(self, task, params, context, event_tx, None).await
     }
 }

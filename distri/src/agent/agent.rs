@@ -67,11 +67,6 @@ impl Agent {
         self
     }
 
-    /// Get all hooks
-    pub fn get_hooks(&self) -> &[Arc<dyn AgentHooks>] {
-        &self.hooks
-    }
-
     /// Get the base agent implementation
     pub fn get_base(&self) -> &StandardAgent {
         &self.base

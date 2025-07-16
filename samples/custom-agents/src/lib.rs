@@ -44,53 +44,53 @@ impl AgentHooks for LoggingAgent {
     async fn after_task_step(
         &self,
         task: TaskStep,
-        context: Arc<ExecutorContext>,
+        _context: Arc<ExecutorContext>,
     ) -> Result<(), AgentError> {
         info!("🚀 LoggingAgent: Starting task - {}", task.task);
-        self.inner.after_task_step(task, context).await
+        Ok(())
     }
 
     async fn before_llm_step(
         &self,
         messages: &[Message],
-        params: &Option<serde_json::Value>,
-        context: Arc<ExecutorContext>,
+        _params: &Option<serde_json::Value>,
+        _context: Arc<ExecutorContext>,
     ) -> Result<Vec<Message>, AgentError> {
         info!(
             "🤖 LoggingAgent: About to call LLM with {} messages",
             messages.len()
         );
-        self.inner.before_llm_step(messages, params, context).await
+        Ok(messages.to_vec())
     }
 
     async fn before_tool_calls(
         &self,
         tool_calls: &[ToolCall],
-        context: Arc<ExecutorContext>,
+        _context: Arc<ExecutorContext>,
     ) -> Result<Vec<ToolCall>, AgentError> {
         info!(
             "🔧 LoggingAgent: About to execute {} tool calls",
             tool_calls.len()
         );
-        self.inner.before_tool_calls(tool_calls, context).await
+        Ok(tool_calls.to_vec())
     }
 
     async fn after_tool_calls(
         &self,
         tool_responses: &[String],
-        context: Arc<ExecutorContext>,
+        _context: Arc<ExecutorContext>,
     ) -> Result<(), AgentError> {
         info!(
             "✅ LoggingAgent: Received {} tool responses",
             tool_responses.len()
         );
-        self.inner.after_tool_calls(tool_responses, context).await
+        Ok(())
     }
 
     async fn after_finish(
         &self,
         step_result: StepResult,
-        context: Arc<ExecutorContext>,
+        _context: Arc<ExecutorContext>,
     ) -> Result<StepResult, AgentError> {
         match &step_result {
             StepResult::Finish(content) => {
@@ -101,7 +101,7 @@ impl AgentHooks for LoggingAgent {
             }
             _ => {}
         }
-        self.inner.after_finish(step_result, context).await
+        Ok(step_result)
     }
 }
 
@@ -153,7 +153,7 @@ impl AgentHooks for FilteringAgent {
     async fn after_finish(
         &self,
         step_result: StepResult,
-        context: Arc<ExecutorContext>,
+        _context: Arc<ExecutorContext>,
     ) -> Result<StepResult, AgentError> {
         match step_result {
             StepResult::Finish(content) => {
@@ -163,11 +163,9 @@ impl AgentHooks for FilteringAgent {
                     content.len(),
                     filtered.len()
                 );
-                self.inner
-                    .after_finish(StepResult::Finish(filtered), context)
-                    .await
+                Ok(StepResult::Finish(filtered))
             }
-            _ => self.inner.after_finish(step_result, context).await,
+            _ => Ok(step_result),
         }
     }
 }

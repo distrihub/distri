@@ -3,6 +3,12 @@
 #[macro_export]
 macro_rules! delegate_base_agent {
     ($agent_type:ty, $agent_name:expr, $inner_field:ident) => {
+        impl $agent_type {
+            pub fn get_hooks(&self) -> Option<&dyn $crate::agent::AgentHooks> {
+                Some(self)
+            }
+        }
+
         #[async_trait::async_trait]
         impl $crate::agent::BaseAgent for $agent_type {
             fn agent_type(&self) -> $crate::agent::AgentType {
@@ -29,10 +35,6 @@ macro_rules! delegate_base_agent {
                 Box::new(self.clone())
             }
 
-            fn get_hooks(&self) -> Option<&dyn $crate::agent::AgentHooks> {
-                Some(self)
-            }
-
             async fn invoke(
                 &self,
                 task: $crate::memory::TaskStep,
@@ -41,7 +43,7 @@ macro_rules! delegate_base_agent {
                 event_tx: Option<tokio::sync::mpsc::Sender<$crate::agent::AgentEvent>>,
             ) -> Result<String, $crate::error::AgentError> {
                 self.$inner_field
-                    .invoke(task, params, context, event_tx)
+                    .invoke_with_hooks(task, params, context, event_tx, self.get_hooks())
                     .await
             }
 
@@ -53,7 +55,7 @@ macro_rules! delegate_base_agent {
                 event_tx: tokio::sync::mpsc::Sender<$crate::agent::AgentEvent>,
             ) -> Result<(), $crate::error::AgentError> {
                 self.$inner_field
-                    .invoke_stream(task, params, context, event_tx)
+                    .invoke_stream_with_hooks(task, params, context, event_tx, self.get_hooks())
                     .await
             }
         }

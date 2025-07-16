@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::{
     agent::{AgentExecutorBuilder, AgentFactoryRegistry},
-    memory::TaskStep,
+    delegate_base_agent,
     tests::utils::init_executor,
     types::{AgentDefinition, ModelSettings},
 };
@@ -15,11 +15,7 @@ async fn test_executor_with_custom_agent_factories() -> Result<()> {
 
     // Create a custom agent factory for testing
     let custom_factory = Arc::new(|definition, tools_registry, executor, session_store| {
-        use crate::agent::AgentEvent;
-        use crate::agent::{AgentHooks, AgentType, BaseAgent, StandardAgent};
-        use crate::error::AgentError;
-        use crate::tools::Tool;
-        use tokio::sync::mpsc;
+        use crate::agent::{AgentHooks, BaseAgent, StandardAgent};
 
         #[derive(Clone)]
         struct TestCustomAgent {
@@ -32,60 +28,7 @@ async fn test_executor_with_custom_agent_factories() -> Result<()> {
             }
         }
 
-        #[async_trait::async_trait]
-        impl BaseAgent for TestCustomAgent {
-            fn agent_type(&self) -> AgentType {
-                AgentType::Custom("TestCustomAgent".to_string())
-            }
-
-            fn get_definition(&self) -> crate::types::AgentDefinition {
-                self.inner.get_definition()
-            }
-
-            fn get_description(&self) -> &str {
-                self.inner.get_description()
-            }
-
-            fn get_tools(&self) -> Vec<&Box<dyn Tool>> {
-                self.inner.get_tools()
-            }
-
-            fn get_name(&self) -> &str {
-                self.inner.get_name()
-            }
-
-            fn clone_box(&self) -> Box<dyn BaseAgent> {
-                Box::new(self.clone())
-            }
-
-            fn get_hooks(&self) -> Option<&dyn AgentHooks> {
-                Some(self)
-            }
-
-            async fn invoke(
-                &self,
-                task: TaskStep,
-                params: Option<serde_json::Value>,
-                context: Arc<crate::agent::ExecutorContext>,
-                event_tx: Option<mpsc::Sender<AgentEvent>>,
-            ) -> Result<String, AgentError> {
-                // Custom behavior: prepend "CUSTOM: " to the response
-                let inner_result = self.inner.invoke(task, params, context, event_tx).await?;
-                Ok(format!("CUSTOM: {}", inner_result))
-            }
-
-            async fn invoke_stream(
-                &self,
-                task: TaskStep,
-                params: Option<serde_json::Value>,
-                context: Arc<crate::agent::ExecutorContext>,
-                event_tx: mpsc::Sender<AgentEvent>,
-            ) -> Result<(), AgentError> {
-                self.inner
-                    .invoke_stream(task, params, context, event_tx)
-                    .await
-            }
-        }
+        delegate_base_agent!(TestCustomAgent, "test-custom-agent", inner);
 
         #[async_trait::async_trait]
         impl AgentHooks for TestCustomAgent {}

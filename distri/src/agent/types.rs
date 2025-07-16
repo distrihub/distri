@@ -240,11 +240,6 @@ pub trait BaseAgent: Send + Sync + std::fmt::Debug {
 
     // Used in deserialization
     fn agent_type(&self) -> AgentType;
-
-    /// Get hooks for this agent (default implementation returns None for standard agents)
-    fn get_hooks(&self) -> Option<&dyn AgentHooks> {
-        None
-    }
 }
 
 /// Result of a single step execution
