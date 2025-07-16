@@ -825,6 +825,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "code-agent"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "distri",
+ "distri-cli",
+ "dotenv",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "colorchoice"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"

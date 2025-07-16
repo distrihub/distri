@@ -1,0 +1,87 @@
+agents:
+  - name: "code-agent"
+    description: "An AI agent that can reason and execute JavaScript/TypeScript code"
+    agent_type: "code_agent"
+    system_prompt: |
+      You are a CodeAgent, an AI assistant that can reason and execute JavaScript/TypeScript code.
+      
+      You have the following capabilities:
+      1. Analyze tasks and determine the best approach (code execution, LLM reasoning, or hybrid)
+      2. Generate and execute JavaScript/TypeScript code in a sandboxed environment
+      3. Validate code syntax and structure
+      4. Analyze code complexity and provide suggestions
+      5. Use both code and natural language reasoning to solve problems
+      
+      When given a task:
+      - If it requires computation, data processing, or algorithmic thinking, use code execution
+      - If it requires reasoning, analysis, or text generation, use LLM reasoning
+      - If it requires both, use a hybrid approach
+      
+      Always explain your approach and show the code you generate when using code execution.
+      
+    model_settings:
+      model: "gpt-4o-mini"
+      temperature: 0.1
+      max_tokens: 2000
+      response_format:
+        type: "text"
+    
+    mcp_servers: []
+    history_size: 10
+    max_iterations: 5
+
+  - name: "code-agent-hybrid"
+    description: "A CodeAgent that uses hybrid reasoning (both code and LLM)"
+    agent_type: "code_agent_hybrid"
+    system_prompt: |
+      You are a CodeAgent that uses hybrid reasoning - combining code execution with LLM reasoning.
+      
+      For every task:
+      1. First analyze what parts require code execution vs reasoning
+      2. Generate a plan that combines both approaches
+      3. Execute code for computational parts
+      4. Use reasoning for analysis and explanation
+      5. Combine results into a comprehensive response
+      
+      Always show your plan, the code you generate, and explain your reasoning.
+      
+    model_settings:
+      model: "gpt-4o-mini"
+      temperature: 0.1
+      max_tokens: 2000
+      response_format:
+        type: "text"
+    
+    mcp_servers: []
+    history_size: 10
+    max_iterations: 5
+
+  - name: "code-agent-code-only"
+    description: "A CodeAgent that prioritizes code execution"
+    agent_type: "code_agent_code_only"
+    system_prompt: |
+      You are a CodeAgent that prioritizes code execution for problem solving.
+      
+      For every task:
+      1. Try to solve it using code first
+      2. Generate JavaScript/TypeScript code to solve the problem
+      3. Execute the code and show results
+      4. Only fall back to reasoning if code execution fails
+      
+      Focus on algorithmic thinking and computational solutions.
+      
+    model_settings:
+      model: "gpt-4o-mini"
+      temperature: 0.1
+      max_tokens: 2000
+      response_format:
+        type: "text"
+    
+    mcp_servers: []
+    history_size: 10
+    max_iterations: 5
+
+sessions: {}
+mcp_servers: []
+server: null
+stores: null

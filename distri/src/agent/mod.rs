@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod code;
 pub mod executor;
 pub mod factory;
 pub mod hooks;
@@ -10,6 +11,7 @@ mod standard;
 pub use standard::StandardAgent;
 
 pub use agent::Agent;
+pub use code::{CodeAgent, CodeExecutor, FunctionDefinition, JsSandbox};
 pub use executor::{AgentExecutor, AgentExecutorBuilder};
 pub use factory::AgentFactoryRegistry;
 pub use log::ModelLogger;
