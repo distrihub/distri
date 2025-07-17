@@ -703,7 +703,7 @@ pub async fn execute_tool_calls(
         .ok_or_else(|| AgentError::NotFound(format!("Agent {} not found", agent_id)))?;
 
     let agent = executor.create_agent_from_definition(definition.clone()).await?;
-    let tools_registry = agent.get_tools();
+    let tools = agent.get_tools();
 
     // Separate built-in tools from external tools
     let mut built_in_tool_calls = Vec::new();
@@ -711,33 +711,30 @@ pub async fn execute_tool_calls(
     let mut approval_required_tool_calls = Vec::new();
 
     for tool_call in tool_calls {
-        if let Some(tool) = tools_registry.iter().find(|t| t.get_name() == tool_call.tool_name) {
-            // Check if this is an external tool
-            if tool.get_name().starts_with("external_") || tool.get_name().contains("frontend") {
+        if let Some(tool) = tools.iter().find(|t| t.get_name() == tool_call.tool_name) {
+            // Check if this is an external tool using the is_external() method
+            if tool.is_external() {
                 external_tool_calls.push(tool_call);
             } else {
                 // Check if approval is required for this tool
-                let requires_approval = tools_registry
-                    .iter()
-                    .find(|t| t.get_name() == tool_call.tool_name)
-                    .map(|_| {
-                        // This is a bit of a hack since we don't have direct access to the registry
-                        // We'll check the agent definition directly
-                        if let Some(approval_config) = &definition.tool_approval {
-                            if approval_config.approval_required {
-                                if approval_config.use_whitelist {
-                                    !approval_config.approval_whitelist.contains(&tool_call.tool_name)
-                                } else {
-                                    approval_config.approval_blacklist.contains(&tool_call.tool_name)
-                                }
+                // We need to check the agent definition directly since we don't have access to the registry
+                let requires_approval = if let Some(approval_config) = &definition.tool_approval {
+                    match &approval_config.approval_mode {
+                        crate::types::ApprovalMode::None => false,
+                        crate::types::ApprovalMode::All => true,
+                        crate::types::ApprovalMode::Some { approval_whitelist, approval_blacklist, use_whitelist } => {
+                            if *use_whitelist {
+                                // Whitelist mode: only tools in whitelist are allowed without approval
+                                !approval_whitelist.contains(&tool_call.tool_name)
                             } else {
-                                false
+                                // Blacklist mode: tools in blacklist require approval
+                                approval_blacklist.contains(&tool_call.tool_name)
                             }
-                        } else {
-                            false
                         }
-                    })
-                    .unwrap_or(false);
+                    }
+                } else {
+                    false
+                };
 
                 if requires_approval {
                     approval_required_tool_calls.push(tool_call);

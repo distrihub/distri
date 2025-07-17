@@ -24,10 +24,20 @@ agents:
     system_prompt: "You are a helpful assistant with access to external tools."
     include_tools: true
     tool_approval:
-      approval_required: true
-      use_whitelist: true  # true for whitelist, false for blacklist
-      approval_whitelist: ["calculator", "email"]  # tools that don't need approval
-      approval_blacklist: ["dangerous_tool"]  # tools that need approval
+      approval_mode:
+        some:
+          approval_whitelist: ["calculator", "email"]  # tools that don't need approval
+          use_whitelist: true  # true for whitelist, false for blacklist
+    external_tools:
+      - name: "file_upload"
+        description: "Upload files to the system"
+        input_schema:
+          type: "object"
+          properties:
+            file_path:
+              type: "string"
+              description: "Path to the file to upload"
+          required: ["file_path"]
 ```
 
 ### External Tools
@@ -249,22 +259,45 @@ curl -X POST http://localhost:8080/api/v1/agents/external-tools-agent \
 
 ### Approval Modes
 
-**Whitelist Mode** (`use_whitelist: true`):
-- Only tools in `approval_whitelist` are allowed without approval
-- All other tools require approval
+The `approval_mode` enum provides three levels of approval control:
 
-**Blacklist Mode** (`use_whitelist: false`):
-- Tools in `approval_blacklist` require approval
-- All other tools are allowed without approval
+**None** (`approval_mode: none`):
+- No approval required for any tools
+- All tools can be executed directly
 
-### Timeout Configuration
+**All** (`approval_mode: all`):
+- Approval required for all tools
+- Every tool execution must be approved
 
-You can configure approval timeouts in the agent definition:
+**Some** (`approval_mode: some`):
+- Approval required for specific tools based on whitelist/blacklist
+- **Whitelist Mode** (`use_whitelist: true`): Only tools in `approval_whitelist` are allowed without approval
+- **Blacklist Mode** (`use_whitelist: false`): Tools in `approval_blacklist` require approval
+
+Example configurations:
 
 ```yaml
+# No approval required
 tool_approval:
-  approval_required: true
-  timeout_seconds: 30  # Approval request timeout
+  approval_mode: none
+
+# All tools require approval
+tool_approval:
+  approval_mode: all
+
+# Some tools require approval (whitelist mode)
+tool_approval:
+  approval_mode:
+    some:
+      approval_whitelist: ["calculator", "email"]
+      use_whitelist: true
+
+# Some tools require approval (blacklist mode)
+tool_approval:
+  approval_mode:
+    some:
+      approval_blacklist: ["dangerous_tool"]
+      use_whitelist: false
 ```
 
 ## Best Practices

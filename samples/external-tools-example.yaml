@@ -10,13 +10,13 @@ agents:
       Some operations may require user approval for security reasons.
     include_tools: true
     tool_approval:
-      approval_required: true
-      use_whitelist: true  # Use whitelist mode
-      approval_whitelist:
-        - "calculator"
-        - "email_sender"
-        - "file_reader"
-      # approval_blacklist: []  # Not used in whitelist mode
+      approval_mode:
+        some:
+          approval_whitelist:
+            - "calculator"
+            - "email_sender"
+            - "file_reader"
+          use_whitelist: true  # true for whitelist, false for blacklist
     external_tools:
       - name: "file_upload"
         description: "Upload files to the system"

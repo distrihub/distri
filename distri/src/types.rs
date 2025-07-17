@@ -150,35 +150,63 @@ pub struct AgentDefinition {
     /// Tool approval configuration
     #[serde(default)]
     pub tool_approval: Option<ToolApprovalConfig>,
+
+    /// External tools that are handled by the frontend
+    #[serde(default)]
+    pub external_tools: Vec<ExternalToolDefinition>,
+}
+
+/// Mode for tool approval requirements
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ApprovalMode {
+    /// No approval required for any tools
+    None,
+    /// Approval required for all tools
+    All,
+    /// Approval required for some tools (specified in the config)
+    Some {
+        /// List of tools that require approval (whitelist mode)
+        #[serde(default)]
+        approval_whitelist: Vec<String>,
+        /// List of tools that do not require approval (blacklist mode)
+        #[serde(default)]
+        approval_blacklist: Vec<String>,
+        /// Whether to use whitelist (true) or blacklist (false) mode
+        #[serde(default = "default_use_whitelist")]
+        use_whitelist: bool,
+    },
 }
 
 /// Configuration for tool approval requirements
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ToolApprovalConfig {
-    /// Whether approval is required for all tools
-    #[serde(default = "default_approval_required")]
-    pub approval_required: bool,
-    
-    /// List of tools that require approval (whitelist)
-    #[serde(default)]
-    pub approval_whitelist: Vec<String>,
-    
-    /// List of tools that do not require approval (blacklist)
-    #[serde(default)]
-    pub approval_blacklist: Vec<String>,
-    
-    /// Whether to use whitelist (true) or blacklist (false) mode
-    #[serde(default = "default_use_whitelist")]
-    pub use_whitelist: bool,
+    /// The approval mode for tools
+    #[serde(default = "default_approval_mode")]
+    pub approval_mode: ApprovalMode,
 }
 
-fn default_approval_required() -> bool {
-    false
+fn default_approval_mode() -> ApprovalMode {
+    ApprovalMode::None
 }
 
 fn default_use_whitelist() -> bool {
     false
+}
+
+/// Definition of an external tool that is handled by the frontend
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ExternalToolDefinition {
+    /// The name of the external tool
+    pub name: String,
+    
+    /// Description of what the tool does
+    pub description: String,
+    
+    /// JSON schema for the tool's input parameters
+    pub input_schema: serde_json::Value,
 }
 
 impl AgentDefinition {

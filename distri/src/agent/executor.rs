@@ -235,9 +235,20 @@ impl AgentExecutor {
         &self,
         definition: crate::types::AgentDefinition,
     ) -> Result<Box<dyn BaseAgent>, AgentError> {
-        let tools = get_tools(&definition.mcp_servers, self.registry.clone())
+        let mut tools = get_tools(&definition.mcp_servers, self.registry.clone())
             .await
             .map_err(|e| AgentError::ToolExecution(e.to_string()))?;
+        
+        // Add external tools from the agent definition
+        for external_tool_def in &definition.external_tools {
+            let external_tool = crate::tools::ExternalTool::new(
+                external_tool_def.name.clone(),
+                external_tool_def.description.clone(),
+                external_tool_def.input_schema.clone(),
+            );
+            tools.insert(external_tool_def.name.clone(), Box::new(external_tool));
+        }
+        
         let tools_registry = LlmToolsRegistry::new(tools);
 
         let factory = self.agent_factory.read().await;
@@ -267,29 +278,8 @@ impl AgentExecutor {
         self.agent_store.update(definition).await
     }
 
-    /// Register an external tool for an agent
-    pub async fn register_external_tool(
-        &self,
-        agent_id: &str,
-        tool_name: String,
-        description: String,
-        input_schema: serde_json::Value,
-    ) -> anyhow::Result<()> {
-        let _definition = self
-            .agent_store
-            .get(agent_id)
-            .await
-            .ok_or_else(|| AgentError::NotFound(format!("Agent {} not found", agent_id)))?;
-
-        // Create external tool
-        let _external_tool = crate::tools::ExternalTool::new(tool_name, description, input_schema);
-        
-        // For now, we'll store external tools in a separate registry
-        // In a real implementation, you might want to store this in the agent definition
-        // or in a separate external tools store
-        tracing::info!("Registered external tool for agent: {}", agent_id);
-        Ok(())
-    }
+    // Note: External tools are now defined in the agent definition
+    // Use update_agent_definition to add external tools
 
     /// Handle external tool response from frontend via message metadata
     pub async fn handle_external_tool_response(

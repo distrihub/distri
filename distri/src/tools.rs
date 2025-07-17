@@ -380,6 +380,11 @@ pub trait Tool: Send + Sync {
 
     fn get_description(&self) -> String;
 
+    /// Check if this tool is external (handled by frontend)
+    fn is_external(&self) -> bool {
+        false // Default to false for built-in tools
+    }
+
     /// Execute the tool with given arguments
     async fn execute(
         &self,
@@ -476,17 +481,18 @@ impl LlmToolsRegistry {
     /// Check if a tool requires approval based on agent configuration
     pub fn requires_approval(&self, tool_name: &str, agent_definition: &crate::types::AgentDefinition) -> bool {
         if let Some(approval_config) = &agent_definition.tool_approval {
-            if approval_config.approval_required {
-                // If approval is required for all tools, check whitelist/blacklist
-                if approval_config.use_whitelist {
-                    // Whitelist mode: only tools in whitelist are allowed without approval
-                    !approval_config.approval_whitelist.contains(&tool_name.to_string())
-                } else {
-                    // Blacklist mode: tools in blacklist require approval
-                    approval_config.approval_blacklist.contains(&tool_name.to_string())
+            match &approval_config.approval_mode {
+                crate::types::ApprovalMode::None => false,
+                crate::types::ApprovalMode::All => true,
+                crate::types::ApprovalMode::Some { approval_whitelist, approval_blacklist, use_whitelist } => {
+                    if *use_whitelist {
+                        // Whitelist mode: only tools in whitelist are allowed without approval
+                        !approval_whitelist.contains(&tool_name.to_string())
+                    } else {
+                        // Blacklist mode: tools in blacklist require approval
+                        approval_blacklist.contains(&tool_name.to_string())
+                    }
                 }
-            } else {
-                false
             }
         } else {
             false
@@ -519,6 +525,10 @@ impl Tool for ExternalTool {
 
     fn get_description(&self) -> String {
         self.description.clone()
+    }
+
+    fn is_external(&self) -> bool {
+        true
     }
 
     fn get_tool_definition(&self) -> async_openai::types::ChatCompletionTool {
