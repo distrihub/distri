@@ -143,7 +143,7 @@ impl AgentHooks for ToolParsingHooks {
             if let crate::types::MessageRole::System = message.role {
                 if let Some(content) = message.parts.first_mut() {
                     match content {
-                        crate::types::MessagePart::Text(text) => {
+                        crate::types::Part::Text(text) => {
                             // Append format-specific tool call instructions to the system prompt
                             let format_instructions = self.get_format_instructions();
                             *text = format!("{}{}", text, format_instructions);

@@ -48,7 +48,9 @@ pub fn distri(cfg: &mut web::ServiceConfig) {
                 web::resource("/threads/{thread_id}/messages")
                     .route(web::get().to(get_thread_messages)),
             )
-            .service(web::resource("/schema/agent").route(web::get().to(get_agent_schema))),
+            .service(web::resource("/schema/agent").route(web::get().to(get_agent_schema)))
+            // Note: External tools and approvals are now handled via message metadata
+            // through the standard sendMessage/sendMessageStream endpoints
     );
 }
 
@@ -300,3 +302,8 @@ async fn get_agent_schema() -> HttpResponse {
     let schema = schema_for!(AgentDefinition);
     HttpResponse::Ok().json(schema)
 }
+
+// Note: External tools and approvals are now handled via message metadata
+// through the standard sendMessage/sendMessageStream endpoints
+// This provides a more consistent API and better integration with the existing
+// message flow system.

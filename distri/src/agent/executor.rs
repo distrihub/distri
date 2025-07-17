@@ -235,9 +235,20 @@ impl AgentExecutor {
         &self,
         definition: crate::types::AgentDefinition,
     ) -> Result<Box<dyn BaseAgent>, AgentError> {
-        let tools = get_tools(&definition.mcp_servers, self.registry.clone())
+        let mut tools = get_tools(&definition.mcp_servers, self.registry.clone())
             .await
             .map_err(|e| AgentError::ToolExecution(e.to_string()))?;
+
+        // Add external tools from the agent definition
+        for external_tool_def in &definition.external_tools {
+            let external_tool = crate::tools::ExternalTool::new(
+                external_tool_def.name.clone(),
+                external_tool_def.description.clone(),
+                external_tool_def.input_schema.clone(),
+            );
+            tools.insert(external_tool_def.name.clone(), Box::new(external_tool));
+        }
+
         let tools_registry = LlmToolsRegistry::new(tools);
 
         let factory = self.agent_factory.read().await;

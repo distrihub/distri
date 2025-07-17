@@ -1,0 +1,58 @@
+# Example configuration for external tools and approval system
+# This demonstrates the message-based approach for external tools and approvals
+
+agents:
+  - name: "external-tools-agent"
+    description: "Agent with external tools and approval system"
+    system_prompt: |
+      You are a helpful assistant with access to external tools.
+      You can upload files, send emails, and perform calculations.
+      Some operations may require user approval for security reasons.
+    include_tools: true
+    tool_approval:
+      mode: filter
+      tools:
+        - "calculator"
+        - "email_sender"
+        - "file_reader"
+
+    external_tools:
+      - name: "file_upload"
+        description: "Upload files to the system"
+        input_schema:
+          type: "object"
+          properties:
+            file_path:
+              type: "string"
+              description: "Path to the file to upload"
+            content:
+              type: "string"
+              description: "Content of the file"
+          required: ["file_path", "content"]
+      - name: "dangerous_operation"
+        description: "Perform a dangerous operation that requires approval"
+        input_schema:
+          type: "object"
+          properties:
+            action:
+              type: "string"
+              description: "The action to perform"
+              enum: ["delete_all", "shutdown", "format_disk"]
+          required: ["action"]
+
+# Server configuration
+server:
+  server_url: "http://localhost:8080"
+  agent_provider: "distri"
+  default_input_modes: ["text"]
+  default_output_modes: ["text"]
+  capabilities:
+    text: {}
+    image: {}
+    audio: {}
+    video: {}
+
+# Storage configuration
+stores:
+  entity: "InMemory"
+  session: "InMemory"

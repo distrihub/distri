@@ -63,7 +63,7 @@ impl From<Message> for crate::types::Message {
                 for part in message.parts {
                     match part {
                         Part::Text(t) => {
-                            content.push(crate::types::MessagePart::Text(t.text.clone()))
+                            content.push(crate::types::Part::Text(t.text.clone()))
                         }
                         _ => continue,
                     }
@@ -107,11 +107,11 @@ pub fn from_message_and_task(
     }
 }
 
-impl From<crate::types::MessagePart> for Part {
-    fn from(part: crate::types::MessagePart) -> Self {
+impl From<crate::types::Part> for Part {
+    fn from(part: crate::types::Part) -> Self {
         match part {
-            crate::types::MessagePart::Text(text) => Part::Text(TextPart { text: text }),
-            crate::types::MessagePart::Image(image) => Part::File(FilePart {
+            crate::types::Part::Text(text) => Part::Text(TextPart { text: text }),
+            crate::types::Part::Image(image) => Part::File(FilePart {
                 file: image.into(),
                 metadata: None,
             }),

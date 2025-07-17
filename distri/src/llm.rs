@@ -272,7 +272,7 @@ impl LLMExecutor {
                                     {
                                         let mut tool_calls = aggregated_tool_calls.write().await;
                                         tool_calls.push(ToolCall {
-                                            tool_id: tool_call_id.clone(),
+                                            tool_call_id: tool_call_id.clone(),
                                             tool_name: tool_call_name.clone(),
                                             input: arguments.clone(),
                                         });
@@ -390,7 +390,7 @@ impl LLMExecutor {
 
     pub fn map_tool_call(tool_call: &ChatCompletionMessageToolCall) -> ToolCall {
         ToolCall {
-            tool_id: tool_call.id.clone(),
+            tool_call_id: tool_call.id.clone(),
             tool_name: tool_call.function.name.clone(),
             input: tool_call.function.arguments.clone(),
         }
@@ -421,7 +421,7 @@ impl LLMExecutor {
                             let tool_calls: Vec<ChatCompletionMessageToolCall> = tool_calls
                                 .iter()
                                 .map(|tc| ChatCompletionMessageToolCall {
-                                    id: tc.tool_id.clone(),
+                                    id: tc.tool_call_id.clone(),
                                     r#type: async_openai::types::ChatCompletionToolType::Function,
                                     function: async_openai::types::FunctionCall {
                                         name: tc.tool_name.clone(),
@@ -440,6 +440,11 @@ impl LLMExecutor {
                         }
                         // Just send these as assistant messages
                         MessageMetadata::FinalResponse { .. } => {}
+                        MessageMetadata::Plan { .. } => {}
+                        // External tools and approval metadata are handled separately
+                        MessageMetadata::ExternalToolCalls { .. } => {}
+                        MessageMetadata::ToolApprovalRequest { .. } => {}
+                        MessageMetadata::ToolApprovalResponse { .. } => {}
                     }
                 }
                 let msg = match m.role {
