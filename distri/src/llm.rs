@@ -440,7 +440,6 @@ impl LLMExecutor {
                         }
                         // Just send these as assistant messages
                         MessageMetadata::FinalResponse { .. } => {}
-                        MessageMetadata::Plan { .. } => {}
                         // External tools and approval metadata are handled separately
                         MessageMetadata::ExternalToolCalls { .. } => {}
                         MessageMetadata::ToolApprovalRequest { .. } => {}

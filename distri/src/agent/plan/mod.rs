@@ -110,6 +110,56 @@ pub fn convert_messages_to_steps(messages: &[Message]) -> String {
                 MessageMetadata::FinalResponse { .. } => {
                     steps.push(Step::Observation(message.as_text().unwrap_or_default()));
                 }
+                MessageMetadata::ExternalToolCalls {
+                    tool_calls,
+                    requires_approval,
+                } => {
+                    steps.push(Step::Action(format!(
+                        "{}: {}",
+                        tool_calls
+                            .iter()
+                            .map(|tool_call| {
+                                format!("{}: {}", tool_call.tool_name, tool_call.input)
+                            })
+                            .collect::<Vec<String>>()
+                            .join("\n"),
+                        if *requires_approval {
+                            "requires approval"
+                        } else {
+                            "no approval required"
+                        },
+                    )));
+                }
+                MessageMetadata::ToolApprovalRequest {
+                    tool_calls,
+                    approval_id,
+                    reason,
+                } => {
+                    steps.push(Step::Action(format!(
+                        "Tool approval request: {}\nreason: {}\n{}",
+                        approval_id,
+                        reason.as_ref().unwrap_or(&"".to_string()),
+                        tool_calls
+                            .iter()
+                            .map(|tool_call| {
+                                format!("{}: {}", tool_call.tool_name, tool_call.input)
+                            })
+                            .collect::<Vec<String>>()
+                            .join("\n"),
+                    )));
+                }
+                MessageMetadata::ToolApprovalResponse {
+                    approval_id,
+                    approved,
+                    reason,
+                } => {
+                    steps.push(Step::Action(format!(
+                        "Tool approval response: {}\nreason: {}\napproved: {}",
+                        approval_id,
+                        reason.as_ref().unwrap_or(&"".to_string()),
+                        format!("approved: {}", approved),
+                    )));
+                }
             }
         }
 

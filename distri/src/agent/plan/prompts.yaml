@@ -37,31 +37,14 @@ default_update: |
   Example:
   Task: Find the population of Paris and plot it on a chart.
 
-  Execution history:
-  ```xml
-  <history>
-  <plan>
-    - 1. Use the 'search' tool to find the current population of Paris.
-    - 2. Use the 'chart' tool to plot the population on a chart.
-    - 3. Return the chart to the user.
-  </plan>
-  <action>search Paris</action>
-  <observation>The population of Paris is 6,741,332.</observation>
-  <action>plot 6,741,332 on a chart</action>
-  <observation>The chart is generated.</observation>
-  </history>
-  ```
+  Facts:
+    - The population of Paris is 6,741,332.
+    - The chart is generated
 
-  Output format:
-  ```xml
-  <output>
-  <plan>
-    - 1. Use the 'search' tool to find the current population of Paris.
-    - 2. Use the 'chart' tool to plot the population on a chart.
-    - 3. Return the chart to the user.
-  </plan>
-  </output>
-  ```
+  New Plan:
+  - 1. Use the 'search' tool to find the current population of Paris.
+  - 2. Use the 'chart' tool to plot the population on a chart.
+  - 3. Return the chart to the user.
 
 ################## --- React --- ##################
 

@@ -15,6 +15,7 @@ pub use log::ModelLogger;
 
 pub use server::{build_server, DISTRI_LOCAL_SERVER};
 
+#[cfg(feature = "code")]
 pub mod code;
 
 mod types;

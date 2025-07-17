@@ -7,10 +7,11 @@ edition = "2021"
 default = ["inmemory"]
 inmemory = []
 redis = ["dep:redis", "dep:bb8", "dep:bb8-redis"]
+code = ["dep:distri-js-sandbox"]
 
 [dependencies]
 distri-a2a = { path = "../distri-a2a" }
-distri-js-sandbox = { workspace = true }
+distri-js-sandbox = { workspace = true, optional = true }
 async-trait = "0.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

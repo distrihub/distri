@@ -535,12 +535,6 @@ impl StandardAgent {
                 .await?;
 
                 if let StepResult::Finish(content) = &step_result {
-                    let history = self
-                        .executor
-                        .task_store
-                        .get_messages(&context.thread_id)
-                        .await
-                        .map_err(|e| AgentError::Session(e.to_string()))?;
                     return Ok(content.clone());
                 }
 

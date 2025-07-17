@@ -48,9 +48,8 @@ pub fn distri(cfg: &mut web::ServiceConfig) {
                 web::resource("/threads/{thread_id}/messages")
                     .route(web::get().to(get_thread_messages)),
             )
-            .service(web::resource("/schema/agent").route(web::get().to(get_agent_schema)))
-            // Note: External tools and approvals are now handled via message metadata
-            // through the standard sendMessage/sendMessageStream endpoints
+            .service(web::resource("/schema/agent").route(web::get().to(get_agent_schema))), // Note: External tools and approvals are now handled via message metadata
+                                                                                             // through the standard sendMessage/sendMessageStream endpoints
     );
 }
 
