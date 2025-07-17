@@ -26,6 +26,12 @@ pub struct AgentEvent {
 pub enum AgentEventType {
     RunStarted {},
     RunFinished {},
+    PlanStarted {
+        initial_plan: bool,
+    },
+    PlanFinished {
+        plan: String,
+    },
     RunError {
         message: String,
         code: Option<String>,

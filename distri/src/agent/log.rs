@@ -60,9 +60,7 @@ impl ModelLogger {
                     crate::types::MessageMetadata::FinalResponse { final_response } => {
                         content.push_str(&format!("Final response: {}", final_response));
                     }
-                    crate::types::MessageMetadata::PlanFacts { facts } => {
-                        content.push_str(&format!("Plan facts: {}", facts));
-                    }
+
                     crate::types::MessageMetadata::Plan { plan } => {
                         content.push_str(&format!("Plan: {}", plan));
                     }

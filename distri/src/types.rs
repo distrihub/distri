@@ -1,13 +1,11 @@
 use anyhow::Context;
 use async_mcp::types::Tool as McpToolDefinition;
+use chrono;
 use distri_a2a::{AgentCapabilities, AgentProvider, AgentSkill, SecurityScheme};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{self, json};
 use std::{collections::HashMap, time::SystemTime};
-// Removed unused OpenAI imports
-// Removed unused A2A imports
-use chrono;
 use uuid;
 
 pub mod a2a {
@@ -171,6 +169,13 @@ pub struct PlanConfig {
     /// The model settings for the planning agent.
     #[serde(default)]
     pub model_settings: ModelSettings,
+
+    #[serde(default = "default_plan_strategy")]
+    pub strategy: Option<String>,
+}
+
+fn default_plan_strategy() -> Option<String> {
+    Some("default".to_string())
 }
 
 fn default_plan_interval() -> i32 {
@@ -182,11 +187,17 @@ fn default_plan_max_iterations() -> Option<usize> {
 }
 
 impl PlanConfig {
-    pub fn new(interval: i32, max_iterations: usize, model_settings: ModelSettings) -> Self {
+    pub fn new(
+        interval: i32,
+        max_iterations: usize,
+        model_settings: ModelSettings,
+        strategy: Option<String>,
+    ) -> Self {
         Self {
             interval: interval,
             max_iterations: Some(max_iterations),
             model_settings,
+            strategy,
         }
     }
 }
@@ -262,9 +273,6 @@ pub enum MessageMetadata {
     },
     FinalResponse {
         final_response: bool,
-    },
-    PlanFacts {
-        facts: String,
     },
     Plan {
         plan: String,

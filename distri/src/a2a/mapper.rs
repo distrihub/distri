@@ -39,6 +39,8 @@ pub fn map_agent_event(event: &AgentEvent) -> Message {
             role: Role::Agent,
             ..Default::default()
         },
+        AgentEventType::PlanStarted { .. } => Message::default(),
+        AgentEventType::PlanFinished { .. } => Message::default(),
     };
     message.metadata = Some(meta);
     message.context_id = Some(event.thread_id.clone());

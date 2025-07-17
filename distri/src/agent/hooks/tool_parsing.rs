@@ -50,13 +50,15 @@ impl ToolParsingHooks {
     fn get_format_instructions(&self) -> String {
         let mut instructions = r#"
 IMPORTANT: When you need to use tools, format your response as XML with the following structure:
+```xml
 <tool_calls>
   <tool_name>
     <param1>value1</param1>
     <param2>value2</param2>
   </tool_name>
 </tool_calls>
-Do not include any other text in your response when using tools. Only return the XML tool call structure.
+```
+Do not include any other text in your response when using tools. Only return the XML tool call structure within the code block.
 "#.to_string();
         // Add available tools in markdown code block, Cline-style
         let tools_content = self.print_tools_xml_example();
