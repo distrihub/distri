@@ -4,12 +4,14 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-default = ["inmemory"]
+default = ["inmemory", "code"]
 inmemory = []
 redis = ["dep:redis", "dep:bb8", "dep:bb8-redis"]
+code = ["dep:distri-js-sandbox", "dep:rustyscript"]
 
 [dependencies]
 distri-a2a = { path = "../distri-a2a" }
+distri-js-sandbox = { workspace = true, optional = true }
 async-trait = "0.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -32,12 +34,14 @@ chrono = { version = "0.4", features = ["serde"] }
 comfy-table = "7.0"
 futures-util = "0.3"
 async-stream = "0.3"
-quick-xml = "0.31"
+quick-xml = { version = "0.31", features = ["serialize"] }
 
 # Redis dependencies (optional)
 redis = { version = "0.24", optional = true }
 bb8 = { version = "0.8", optional = true }
 bb8-redis = { version = "0.14", optional = true }
+
+rustyscript = { git = "https://github.com/rscarson/rustyscript.git", version = "0.11.0", optional = true }
 
 [dev-dependencies]
 dotenv = "0.15"

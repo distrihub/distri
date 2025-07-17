@@ -20,4 +20,6 @@ pub enum AgentError {
     NotImplemented(String),
     #[error("Validation error: {0}")]
     Validation(String),
+    #[error("Plan error: {0}")]
+    Plan(String),
 }

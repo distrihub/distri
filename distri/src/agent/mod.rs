@@ -4,7 +4,6 @@ pub mod factory;
 pub mod hooks;
 pub mod log;
 pub mod macros;
-pub mod reason;
 pub mod server;
 mod standard;
 pub use standard::StandardAgent;
@@ -16,5 +15,10 @@ pub use log::ModelLogger;
 
 pub use server::{build_server, DISTRI_LOCAL_SERVER};
 
+#[cfg(feature = "code")]
+pub mod code;
+
 mod types;
 pub use types::*;
+
+pub mod plan;

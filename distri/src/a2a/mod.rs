@@ -62,9 +62,7 @@ impl From<Message> for crate::types::Message {
                 let mut content = Vec::new();
                 for part in message.parts {
                     match part {
-                        Part::Text(t) => {
-                            content.push(crate::types::Part::Text(t.text.clone()))
-                        }
+                        Part::Text(t) => content.push(crate::types::Part::Text(t.text.clone())),
                         _ => continue,
                     }
                 }

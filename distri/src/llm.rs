@@ -432,10 +432,14 @@ impl LLMExecutor {
                             msg.tool_calls(tool_calls);
                             return ChatCompletionRequestMessage::Assistant(msg.build().unwrap());
                         }
+                        MessageMetadata::Plan { plan } => {
+                            let mut msg = ChatCompletionRequestAssistantMessageArgs::default();
+                            msg.content(plan.to_string());
+                            msg.name("plan");
+                            return ChatCompletionRequestMessage::Assistant(msg.build().unwrap());
+                        }
                         // Just send these as assistant messages
                         MessageMetadata::FinalResponse { .. } => {}
-                        MessageMetadata::PlanFacts { .. } => {}
-                        MessageMetadata::Plan { .. } => {}
                         // External tools and approval metadata are handled separately
                         MessageMetadata::ExternalToolCalls { .. } => {}
                         MessageMetadata::ToolApprovalRequest { .. } => {}

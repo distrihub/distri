@@ -1,3 +1,4 @@
+use regex::Regex;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -19,6 +20,13 @@ pub struct ToolCallWrapper {
     pub tool_calls: Vec<ToolCall>,
 }
 
+fn find_xml_block(text: &str) -> Option<&str> {
+    // This regex matches a markdown code block with xml, e.g. ```xml ... ```
+    let re = Regex::new(r"```xml\s*([\s\S]*?)\s*```").unwrap();
+    re.captures(text)
+        .and_then(|caps| caps.get(1).map(|m| m.as_str()))
+}
+
 impl ToolCallWrapper {
     /// Parse tool calls from XML content with specified format
     pub fn parse_from_xml(
@@ -29,12 +37,13 @@ impl ToolCallWrapper {
             ToolCallFormat::Xml => Self::parse_xml_format(content),
         }
     }
-
     /// Parse Cline-style XML: <tool_name><param1>value</param1>...</tool_name>
     fn parse_xml_format(content: &str) -> Result<Vec<ToolCall>, anyhow::Error> {
         use quick_xml::events::Event;
         use quick_xml::Reader;
         use std::collections::HashMap;
+
+        let content = find_xml_block(content).unwrap_or(content);
 
         let mut tool_calls = Vec::new();
         let mut reader = Reader::from_str(content);
@@ -91,31 +100,5 @@ impl ToolCallWrapper {
             buf.clear();
         }
         Ok(tool_calls)
-    }
-
-    /// Generate XML representation of tool calls in the specified format
-    pub fn to_xml(&self, format: &ToolCallFormat) -> String {
-        match format {
-            ToolCallFormat::Xml => self.to_current_format_xml(),
-        }
-    }
-
-    fn to_current_format_xml(&self) -> String {
-        if self.tool_calls.is_empty() {
-            return String::new();
-        }
-
-        let tool_calls_xml: Vec<String> = self
-            .tool_calls
-            .iter()
-            .map(|tc| {
-                format!(
-                    "<tool_call name=\"{}\" args='{}' />",
-                    tc.tool_name, tc.input
-                )
-            })
-            .collect();
-
-        format!("<tool_calls>\n{}\n</tool_calls>", tool_calls_xml.join("\n"))
     }
 }

@@ -118,7 +118,7 @@ mod tests {
     use serde_json::json;
     use tracing::info;
 
-    async fn async_server(transport: ServerInMemoryTransport, context: Arc<ExecutorContext>) {
+    async fn async_server(transport: ServerInMemoryTransport, _context: Arc<ExecutorContext>) {
         let registry = get_registry().await;
         let session_store = Arc::new(Box::new(LocalSessionStore::new()) as Box<dyn SessionStore>);
         let agent_store = Arc::new(InMemoryAgentStore::new());

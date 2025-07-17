@@ -1,7 +1,7 @@
 use crate::{
     agent::{
-        AgentEvent, AgentEventType, AgentExecutor, AgentType, BaseAgent, ModelLogger, StepResult,
-        MAX_ITERATIONS,
+        plan::get_planner, AgentEvent, AgentEventType, AgentExecutor, AgentType, BaseAgent,
+        StepResult, MAX_ITERATIONS,
     },
     error::AgentError,
     llm::LLMExecutor,
@@ -16,7 +16,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::info;
 
-use crate::agent::{reason::create_initial_plan, ExecutorContext};
+use crate::agent::ExecutorContext;
 
 /// Standard agent implementation
 #[derive(Clone)]
@@ -59,100 +59,61 @@ impl StandardAgent {
         current_messages: &mut Vec<Message>,
         iteration: usize,
         context: Arc<ExecutorContext>,
+        event_tx: Option<mpsc::Sender<AgentEvent>>,
     ) -> Result<(), AgentError> {
         let tools_desc = get_tool_descriptions(
             &self.tools_registry.tools,
             Some(DEFAULT_TOOL_DESCRIPTION_TEMPLATE),
         );
-
+        let thread_id = context.thread_id.clone();
+        let run_id = context.run_id.clone();
         info!(
             "plan_step: iteration: {}, plan_config: {:?}",
             iteration, plan_config
         );
-        if (iteration - 1) % plan_config.interval as usize == 0 {
-            // Run either initial planning or planning update
-            let (facts, plan) = if iteration == 1 {
-                create_initial_plan(&message, &tools_desc, &|msgs| {
-                    let planning_executor = LLMExecutor::new(
-                        crate::agent::reason::get_planning_definition(
-                            plan_config.model_settings.clone(),
-                        ),
-                        Arc::default(),
-                        context.clone(),
-                        None,
-                        Some("initial_plan".to_string()),
-                    );
-                    Box::pin(async move {
-                        let response = planning_executor.execute(&msgs).await;
-                        match response {
-                            Ok(response) => {
-                                // Extract just the content string
-                                let content = response.content.clone();
-                                Ok(content)
-                            }
-                            Err(e) => {
-                                tracing::error!("Planning execution failed: {}", e);
-                                Ok(format!("Planning execution failed: {}", e))
-                            }
-                        }
-                    })
-                })
-                .await
-            } else {
-                let remaining_steps =
-                    plan_config.max_iterations.unwrap_or(10) - iteration + 1 as usize;
 
-                crate::agent::reason::update_plan(
-                    &message,
-                    &tools_desc,
-                    &current_messages,
-                    remaining_steps,
-                    &|msgs| {
-                        let planning_executor = LLMExecutor::new(
-                            crate::agent::reason::get_planning_definition(
-                                plan_config.model_settings.clone(),
-                            ),
-                            Arc::default(),
-                            context.clone(),
-                            None,
-                            Some("update_plan".to_string()),
-                        );
-                        Box::pin(async move {
-                            let response = planning_executor.execute(&msgs).await;
-                            match response {
-                                Ok(response) => {
-                                    // Extract just the content string
-                                    let content = response.content.clone();
-                                    Ok(content)
-                                }
-                                Err(e) => {
-                                    tracing::error!("Planning execution failed: {}", e);
-                                    Ok(format!("Planning execution failed: {}", e))
-                                }
-                            }
-                        })
+        if let Some(event_tx) = &event_tx {
+            let _ = event_tx
+                .send(AgentEvent {
+                    thread_id: context.thread_id.clone(),
+                    run_id: context.run_id.clone(),
+                    event: AgentEventType::PlanStarted {
+                        initial_plan: iteration == 0,
                     },
+                })
+                .await;
+        }
+        if iteration == 0 || (iteration - 1) % plan_config.interval as usize == 0 {
+            let planner = get_planner(plan_config.strategy.as_deref());
+            let plan = planner
+                .plan(
+                    &message,
+                    plan_config,
+                    current_messages,
+                    iteration,
+                    context.clone(),
+                    &tools_desc,
                 )
-                .await
+                .await?;
+
+            let plan = plan.as_string();
+            if let Some(event_tx) = &event_tx {
+                let _ = event_tx
+                    .send(AgentEvent {
+                        thread_id: thread_id.clone(),
+                        run_id: run_id.clone(),
+                        event: AgentEventType::PlanFinished { plan: plan.clone() },
+                    })
+                    .await;
             }
-            .map_err(|e| AgentError::Session(e.to_string()))?;
 
             // Store planning step
             self.add_messages_to_current_messages(
-                &[
-                    Message {
-                        role: MessageRole::Assistant,
-                        metadata: Some(MessageMetadata::PlanFacts {
-                            facts: facts.clone(),
-                        }),
-                        ..Default::default()
-                    },
-                    Message {
-                        role: MessageRole::Assistant,
-                        parts: vec![Part::Text(plan.clone())],
-                        ..Default::default()
-                    },
-                ],
+                &[Message {
+                    role: MessageRole::Assistant,
+                    metadata: Some(MessageMetadata::Plan { plan }),
+                    ..Default::default()
+                }],
                 current_messages,
                 context.clone(),
             )
@@ -543,6 +504,7 @@ impl StandardAgent {
                         &mut current_messages,
                         iterations,
                         context.clone(),
+                        Some(event_tx.clone()),
                     )
                     .await?;
                 }
@@ -573,15 +535,6 @@ impl StandardAgent {
                 .await?;
 
                 if let StepResult::Finish(content) = &step_result {
-                    let history = self
-                        .executor
-                        .task_store
-                        .get_messages(&context.thread_id)
-                        .await
-                        .map_err(|e| AgentError::Session(e.to_string()))?;
-                    println!("[[Finish]] {:?}", history);
-                    let log = ModelLogger::new(true);
-                    log.log_messages(&history);
                     return Ok(content.clone());
                 }
 
