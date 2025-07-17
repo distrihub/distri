@@ -24,7 +24,7 @@ async fn execute_tool_test() {
     init_logging("debug");
     let tool_def = get_search_tool();
     let tool_call = ToolCall {
-        tool_id: "1".to_string(),
+        tool_call_id: "1".to_string(),
         tool_name: "get_timeline".to_string(),
         input: "".to_string(),
     };

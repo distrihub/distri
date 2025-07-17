@@ -80,7 +80,7 @@ impl ToolCallWrapper {
                     // Convert params to JSON
                     let input = serde_json::to_string(&params)?;
                     tool_calls.push(ToolCall {
-                        tool_id: uuid::Uuid::new_v4().to_string(),
+                        tool_call_id: uuid::Uuid::new_v4().to_string(),
                         tool_name,
                         input,
                     });

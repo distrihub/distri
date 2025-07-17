@@ -151,7 +151,7 @@ async fn test_executor_tool_execution_with_agent_definitions() -> Result<()> {
 
     // Test tool execution (this should create agent instance from definition)
     let tool_call = crate::types::ToolCall {
-        tool_id: "test-tool".to_string(),
+        tool_call_id: "test-tool".to_string(),
         tool_name: "test_tool".to_string(),
         input: "test input".to_string(),
     };

@@ -146,6 +146,43 @@ pub struct AgentDefinition {
     /// Whether to include tools in the response.
     #[serde(default = "default_include_tools")]
     pub include_tools: bool,
+
+    /// Tool approval configuration
+    #[serde(default)]
+    pub tool_approval: Option<ApprovalMode>,
+
+    /// External tools that are handled by the frontend
+    #[serde(default)]
+    pub external_tools: Vec<ExternalToolDefinition>,
+}
+
+/// Mode for tool approval requirements
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase", tag = "mode")]
+pub enum ApprovalMode {
+    /// No approval required for any tools
+    None,
+    /// Approval required for all tools
+    All,
+    /// Approval required for some tools (specified in the config)
+    Filter {
+        #[serde(default)]
+        tools: Vec<String>,
+    },
+}
+
+/// Definition of an external tool that is handled by the frontend
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ExternalToolDefinition {
+    /// The name of the external tool
+    pub name: String,
+
+    /// Description of what the tool does
+    pub description: String,
+
+    /// JSON schema for the tool's input parameters
+    pub input_schema: serde_json::Value,
 }
 
 impl AgentDefinition {
@@ -203,7 +240,7 @@ pub enum MessageRole {
 
 #[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, PartialEq)]
 #[serde(rename_all = "lowercase")]
-pub enum MessagePart {
+pub enum Part {
     Text(String),
     Image(FileType),
 }
@@ -228,7 +265,7 @@ pub struct Message {
     pub id: String,
     pub role: MessageRole,
     pub name: Option<String>,
-    pub parts: Vec<MessagePart>,
+    pub parts: Vec<Part>,
     pub metadata: Option<MessageMetadata>,
 }
 
@@ -269,6 +306,20 @@ pub enum MessageMetadata {
     Plan {
         plan: String,
     },
+    ExternalToolCalls {
+        tool_calls: Vec<ToolCall>,
+        requires_approval: bool,
+    },
+    ToolApprovalRequest {
+        tool_calls: Vec<ToolCall>,
+        approval_id: String,
+        reason: Option<String>,
+    },
+    ToolApprovalResponse {
+        approval_id: String,
+        approved: bool,
+        reason: Option<String>,
+    },
 }
 
 impl Message {
@@ -276,7 +327,7 @@ impl Message {
         Self {
             role: MessageRole::User,
             name,
-            parts: vec![MessagePart::Text(task)],
+            parts: vec![Part::Text(task)],
             ..Default::default()
         }
     }
@@ -284,7 +335,7 @@ impl Message {
         Self {
             role: MessageRole::System,
             name,
-            parts: vec![MessagePart::Text(task)],
+            parts: vec![Part::Text(task)],
             ..Default::default()
         }
     }
@@ -293,14 +344,14 @@ impl Message {
         Self {
             role: MessageRole::Assistant,
             name,
-            parts: vec![MessagePart::Text(task)],
+            parts: vec![Part::Text(task)],
             ..Default::default()
         }
     }
 
     pub fn as_text(&self) -> Option<String> {
         let part = self.parts.iter().next();
-        if let Some(MessagePart::Text(text)) = part {
+        if let Some(Part::Text(text)) = part {
             Some(text.clone())
         } else {
             None
@@ -367,7 +418,7 @@ pub struct ServerTools {
 #[derive(Debug, Serialize, Deserialize, Clone, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ToolCall {
-    pub tool_id: String,
+    pub tool_call_id: String,
     pub tool_name: String,
     pub input: String,
 }

@@ -27,12 +27,12 @@ fn test_current_format_parsing() {
 fn test_current_format_generation() {
     let tool_calls = vec![
         ToolCall {
-            tool_id: "1".to_string(),
+            tool_call_id: "1".to_string(),
             tool_name: "search".to_string(),
             input: r#"{"query": "test"}"#.to_string(),
         },
         ToolCall {
-            tool_id: "2".to_string(),
+            tool_call_id: "2".to_string(),
             tool_name: "scrape".to_string(),
             input: r#"{"url": "https://example.com"}"#.to_string(),
         },

@@ -1,4 +1,4 @@
-use crate::types::{LlmDefinition, Message, MessagePart, MessageRole, ModelSettings};
+use crate::types::{LlmDefinition, Message, Part, MessageRole, ModelSettings};
 
 pub async fn create_initial_plan(
     message: &Message,
@@ -12,7 +12,7 @@ pub async fn create_initial_plan(
         Message {
             role: MessageRole::System,
             name: Some("facts".to_string()),
-            parts: vec![MessagePart::Text(
+            parts: vec![Part::Text(
                 "Analyze the given task and list the key facts and requirements.".to_string(),
             )],
             ..Default::default()
@@ -28,7 +28,7 @@ pub async fn create_initial_plan(
             id: uuid::Uuid::new_v4().to_string(),
             role: MessageRole::System,
             name: Some("plan".to_string()),
-            parts: vec![MessagePart::Text(format!(
+            parts: vec![Part::Text(format!(
                 "Create a detailed plan to solve the task. Available tools:\n{}",
                 tools_description
             ))],
@@ -60,7 +60,7 @@ pub async fn update_plan(
     let facts_update_messages = vec![Message {
         role: MessageRole::System,
         name: Some("facts_update".to_string()),
-        parts: vec![MessagePart::Text(
+        parts: vec![Part::Text(
             "Based on the execution history, update the list of known facts.".to_string(),
         )],
         ..Default::default()
@@ -76,7 +76,7 @@ pub async fn update_plan(
         role: MessageRole::System,
         name: Some("plan_update".to_string()),
         parts: vec![
-            MessagePart::Text(format!(
+            Part::Text(format!(
                     "Update the execution plan based on progress. You have {} steps remaining. Available tools:\n{}",
                     remaining_steps, tools_description)
         )],
@@ -87,15 +87,15 @@ pub async fn update_plan(
     all_messages.push(Message {
         role: MessageRole::User,
         name: Some("task".to_string()),
-        parts: vec![MessagePart::Text(format!(
+        parts: vec![Part::Text(format!(
             "Updated facts:\n{}\n\nProvide updated plan for completing the task: {}",
             updated_facts,
             message
                 .parts
                 .iter()
-                .find(|p| matches!(p, MessagePart::Text(_)))
+                .find(|p| matches!(p, Part::Text(_)))
                 .map(|p| {
-                    if let MessagePart::Text(text) = p {
+                    if let Part::Text(text) = p {
                         text.clone()
                     } else {
                         String::new()

@@ -43,7 +43,7 @@ impl ModelLogger {
             let mut content = String::new();
             for c in &m.parts {
                 let content_str = match c {
-                    crate::types::MessagePart::Text(text) => text.clone(),
+                    crate::types::Part::Text(text) => text.clone(),
                     _ => continue,
                 };
                 content.push_str(&content_str);
@@ -65,6 +65,30 @@ impl ModelLogger {
                     }
                     crate::types::MessageMetadata::Plan { plan } => {
                         content.push_str(&format!("Plan: {}", plan));
+                    }
+                    crate::types::MessageMetadata::ExternalToolCalls { tool_calls, .. } => {
+                        content.push_str(&format!("External tool calls: {:?}", tool_calls));
+                    }
+                    crate::types::MessageMetadata::ToolApprovalRequest {
+                        tool_calls,
+                        approval_id,
+                        ..
+                    } => {
+                        content.push_str(&format!(
+                            "Tool approval request: {} (approval_id: {})",
+                            tool_calls.len(),
+                            approval_id
+                        ));
+                    }
+                    crate::types::MessageMetadata::ToolApprovalResponse {
+                        approval_id,
+                        approved,
+                        ..
+                    } => {
+                        content.push_str(&format!(
+                            "Tool approval response: {} (approved: {})",
+                            approval_id, approved
+                        ));
                     }
                 }
             }
