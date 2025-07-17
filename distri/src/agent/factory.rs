@@ -70,6 +70,23 @@ impl AgentFactoryRegistry {
                 ))
             }),
         );
+
+        // Register code agent factory when code feature is enabled
+        #[cfg(feature = "code")]
+        self.register_factory(
+            "code".to_string(),
+            Arc::new(|definition, tools_registry, executor, session_store| {
+                let mut definition = definition.clone();
+                // skip tools in llm definition for code agents
+                definition.include_tools = false;
+                Box::new(crate::agent::code::agent::CodeAgent::new(
+                    definition,
+                    tools_registry,
+                    executor,
+                    session_store,
+                ))
+            }),
+        );
     }
 
     /// Register a factory for a specific agent type
