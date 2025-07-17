@@ -62,16 +62,9 @@ pub enum TransportAuth {
 pub struct LlmDefinition {
     /// The name of the agent.
     pub name: String,
-
-    /// The system prompt for the agent, if any.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub system_prompt: Option<String>,
     /// Settings related to the model used by the agent.
     #[serde(default)]
     pub model_settings: ModelSettings,
-    /// The size of the history to maintain for the agent.
-    #[serde(default = "default_history_size")]
-    pub history_size: Option<usize>,
 
     /// Whether to include tools in the response.
     #[serde(default = "default_include_tools")]
@@ -86,9 +79,7 @@ impl From<AgentDefinition> for LlmDefinition {
     fn from(definition: AgentDefinition) -> Self {
         Self {
             name: definition.name,
-            system_prompt: Some(definition.system_prompt),
             model_settings: definition.model_settings,
-            history_size: definition.history_size,
             include_tools: definition.include_tools,
         }
     }

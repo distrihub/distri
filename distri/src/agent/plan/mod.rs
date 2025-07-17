@@ -4,8 +4,8 @@ use std::{collections::HashMap, fmt::Display, sync::Arc};
 use crate::{
     agent::ExecutorContext,
     llm::LLMExecutor,
-    types::{Message, MessageMetadata, MessageRole, PlanConfig},
-    AgentError,
+    types::{LlmDefinition, Message, MessageMetadata, MessageRole, PlanConfig},
+    AgentError, ModelSettings,
 };
 
 mod default;
@@ -47,11 +47,11 @@ pub trait Planner: Send + Sync {
         context: Arc<ExecutorContext>,
     ) -> Result<String, AgentError> {
         let planning_executor = LLMExecutor::new(
-            crate::agent::reason::get_planning_definition(plan_config.model_settings.clone()),
+            get_planning_definition(plan_config.model_settings.clone()),
             Arc::default(),
             context.clone(),
             None,
-            Some("initial_plan".to_string()),
+            Some("plan".to_string()),
         );
 
         let response = planning_executor.execute(&messages).await;
@@ -147,5 +147,13 @@ impl Display for Step {
             Step::Action(action) => write!(f, "Action: {}", action),
             Step::Observation(observation) => write!(f, "Observation: {}", observation),
         }
+    }
+}
+
+pub fn get_planning_definition(model_settings: ModelSettings) -> LlmDefinition {
+    LlmDefinition {
+        name: "planner".to_string(),
+        model_settings: model_settings.clone(),
+        ..Default::default()
     }
 }

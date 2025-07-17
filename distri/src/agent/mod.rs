@@ -4,7 +4,6 @@ pub mod factory;
 pub mod hooks;
 pub mod log;
 pub mod macros;
-pub mod reason;
 pub mod server;
 mod standard;
 pub use standard::StandardAgent;
