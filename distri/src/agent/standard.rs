@@ -65,10 +65,6 @@ impl StandardAgent {
             get_tool_descriptions(&self.tools, Some(DEFAULT_TOOL_DESCRIPTION_TEMPLATE));
         let thread_id = context.thread_id.clone();
         let run_id = context.run_id.clone();
-        info!(
-            "plan_step: iteration: {}, plan_config: {:?}",
-            iteration, plan_config
-        );
 
         if let Some(event_tx) = &event_tx {
             let _ = event_tx
@@ -239,7 +235,6 @@ impl StandardAgent {
         let result = async {
             let mut current_messages = vec![];
             if iterations == 0 {
-                println!("[[Adding system step]]");
                 self.add_messages_to_current_messages(
                     &[
                         Message::system(self.definition.system_prompt.clone(), None),
@@ -474,7 +469,6 @@ impl StandardAgent {
             );
             let mut current_messages = vec![];
             if iterations == 0 {
-                println!("[[Adding system step]]");
                 self.add_messages_to_current_messages(
                     &[
                         Message::system(self.definition.system_prompt.clone(), None),
@@ -486,8 +480,6 @@ impl StandardAgent {
                 .await?;
             }
             current_messages.extend(history);
-
-            println!("{:?}", current_messages);
             loop {
                 if iterations > max_iterations {
                     return Err(AgentError::LLMError(format!(
@@ -512,7 +504,6 @@ impl StandardAgent {
                     current_messages
                 };
 
-                println!("current_messages after hooks: {:?}", current_messages);
                 let step_result = self
                     .llm_step_stream(&current_messages, context.clone(), event_tx.clone(), hooks)
                     .await?;
@@ -793,7 +784,6 @@ pub async fn execute_tool_calls(
                         )
                         .await
                         .unwrap_or_else(|err| serde_json::Value::String(format!("Error: {}", err)));
-                    info!("Agent: Tool response: {}", content);
 
                     if let Some(event_tx) = &event_tx {
                         let _ = event_tx

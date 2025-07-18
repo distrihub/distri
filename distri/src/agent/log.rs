@@ -38,6 +38,10 @@ impl ModelLogger {
     }
 
     pub fn log_messages(&self, messages: &[Message]) {
+        if !self.verbose {
+            return;
+        }
+
         let mut table = Table::new();
         table.set_header(vec!["Role", "Content"]);
 
@@ -53,8 +57,15 @@ impl ModelLogger {
             }
             if let Some(metadata) = &m.metadata {
                 match metadata {
-                    crate::types::MessageMetadata::ToolResponse { tool_call_id, .. } => {
-                        content.push_str(&format!("Tool response: {}", tool_call_id));
+                    crate::types::MessageMetadata::ToolResponse {
+                        tool_call_id,
+                        result,
+                        ..
+                    } => {
+                        content.push_str(&format!(
+                            "Tool response: {} (tool_call_id: {}) \n",
+                            tool_call_id, result,
+                        ));
                     }
                     crate::types::MessageMetadata::ToolCalls { tool_calls } => {
                         content.push_str(&format!("Tool calls: {:?}", tool_calls));

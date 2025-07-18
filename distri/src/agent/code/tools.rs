@@ -1,13 +1,21 @@
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
+use tokio::sync::mpsc;
 
 use crate::tools::{Tool, ToolContext};
 use crate::types::ToolCall;
 use crate::AgentError;
 
 /// Implementation of the final_answer built-in tool for code agents
-pub struct FinalAnswerTool;
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub enum CodeResponse {
+    FinalAnswer(Value),
+    ConsoleLog(Value),
+}
+
+pub struct FinalAnswerTool(pub mpsc::Sender<CodeResponse>);
 
 #[async_trait::async_trait]
 impl Tool for FinalAnswerTool {
@@ -41,7 +49,13 @@ impl Tool for FinalAnswerTool {
     ) -> Result<Value, AgentError> {
         let value = serde_json::from_str(&tool_call.input)
             .map_err(|e| AgentError::ToolExecution(format!("Invalid input: {}", e)))?;
-        Ok(value)
+        self.0
+            .send(CodeResponse::FinalAnswer(value))
+            .await
+            .map_err(|e| {
+                AgentError::ToolExecution(format!("Failed to send final answer: {}", e))
+            })?;
+        Ok(Value::Null)
     }
 }
 
@@ -101,15 +115,80 @@ impl Tool for ExecuteCodeTool {
             .and_then(|v| v.as_str())
             .unwrap_or("No thought provided");
 
+        tracing::debug!("🔧 ExecuteCodeTool: Executing code: {}", code);
+        tracing::debug!(
+            "🔧 ExecuteCodeTool: Available tools: {:?}",
+            self.0.iter().map(|t| t.get_name()).collect::<Vec<_>>()
+        );
+
         // Execute the code using the CodeExecutor and available tools
         match crate::agent::code::execute_code_with_tools(code, context.clone(), self.0.clone())
             .await
         {
-            Ok(result) => Ok(result),
-            Err(e) => Err(AgentError::ToolExecution(format!(
-                "Code execution failed: {}",
-                e
-            ))),
+            Ok(result) => {
+                tracing::debug!(
+                    "🔧 ExecuteCodeTool: Code execution successful, result: {:?}",
+                    result
+                );
+                Ok(result)
+            }
+            Err(e) => {
+                tracing::error!("🔧 ExecuteCodeTool: Code execution failed: {}", e);
+                Err(AgentError::ToolExecution(format!(
+                    "Code execution failed: {}",
+                    e
+                )))
+            }
         }
+    }
+}
+
+pub struct ConsoleLogTool(pub mpsc::Sender<CodeResponse>);
+
+#[async_trait::async_trait]
+impl Tool for ConsoleLogTool {
+    fn get_name(&self) -> String {
+        "console_log".to_string()
+    }
+
+    fn get_description(&self) -> String {
+        "Log a message to the console".to_string()
+    }
+
+    fn get_tool_definition(&self) -> async_openai::types::ChatCompletionTool {
+        async_openai::types::ChatCompletionTool {
+            r#type: async_openai::types::ChatCompletionToolType::Function,
+            function: async_openai::types::FunctionObject {
+                name: "console_log".to_string(),
+                description: Some("Log a message to the console".to_string()),
+                parameters: Some(json!({
+                    "type": "string",
+                    "description": "The message to log to the console"
+                })),
+                strict: None,
+            },
+        }
+    }
+
+    async fn execute(
+        &self,
+        tool_call: ToolCall,
+        _context: ToolContext,
+    ) -> Result<Value, AgentError> {
+        let value = serde_json::from_str(&tool_call.input)
+            .map_err(|e| AgentError::ToolExecution(format!("Invalid input: {}", e)))?;
+
+        tracing::debug!(
+            "🔧 ConsoleLogTool: Executing console.log with value: {:?}",
+            value
+        );
+
+        self.0
+            .send(CodeResponse::ConsoleLog(value))
+            .await
+            .map_err(|e| AgentError::ToolExecution(format!("Failed to send console log: {}", e)))?;
+
+        tracing::debug!("🔧 ConsoleLogTool: Successfully sent console log through channel");
+        Ok(Value::Null)
     }
 }

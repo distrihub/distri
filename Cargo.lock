@@ -1714,7 +1714,7 @@ dependencies = [
 [[package]]
 name = "distri-js-sandbox"
 version = "0.1.1"
-source = "git+https://github.com/distrihub/js-sandbox?rev=efc1133#efc11331f7dc3198a6f77c98b1dd705a1376973a"
+source = "git+https://github.com/distrihub/js-sandbox?rev=aff7423#aff74233886de74bc3b09db485dc6aaaa32257ff"
 dependencies = [
  "anyhow",
  "async-trait",

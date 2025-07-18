@@ -15,9 +15,6 @@ agents:
 
       Keep your summaries concise but informative. Use markdown formatting to make the output readable.
 
-      Available tools:
-      - twitter: Access Twitter and get the timeline
-
     icon_url: "https://example.com/deep-search-icon.png"
     mcp_servers:
       - name: "twitter"

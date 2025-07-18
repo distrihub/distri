@@ -1,4 +1,4 @@
-use distri::agent::{AgentEvent, AgentEventType, AgentExecutor};
+use distri::agent::{AgentEvent, AgentEventType, AgentExecutor, ExecutorContext};
 use distri::types::Message;
 use std::sync::Arc;
 use tracing::{error, info};
@@ -7,15 +7,20 @@ pub async fn run(
     agent_name: &str,
     executor: Arc<AgentExecutor>,
     task: Message,
+    verbose: bool,
 ) -> anyhow::Result<()> {
     info!("Executing agent run");
 
     let (tx, mut rx) = tokio::sync::mpsc::channel(100);
 
+    let context = Arc::new(ExecutorContext {
+        verbose,
+        ..Default::default()
+    });
     let agent_name = agent_name.to_string();
     let handle = tokio::spawn(async move {
         let res = executor
-            .execute_stream(&agent_name, task, Arc::default(), tx)
+            .execute_stream(&agent_name, task, context, tx)
             .await;
         if let Err(e) = res {
             error!("Error from agent: {}", e);
@@ -41,6 +46,12 @@ pub async fn run(
                 ..
             } => {
                 println!();
+            }
+            AgentEvent {
+                event: AgentEventType::ToolCallResult { tool_call_id, .. },
+                ..
+            } => {
+                println!("Tool call result: (tool_call_id: {})", tool_call_id);
             }
             x => {
                 println!("{x:?}");

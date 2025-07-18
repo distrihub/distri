@@ -7,12 +7,14 @@ use crate::{
 };
 use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};
+use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, info};
 
 #[derive(Clone)]
 pub struct CodeParsingHooks {
     pub tools: Vec<Arc<dyn Tool>>,
     pub observations: Arc<std::sync::Mutex<Vec<String>>>,
+    pub rx: Arc<Mutex<mpsc::Receiver<crate::agent::code::tools::CodeResponse>>>,
 }
 
 impl std::fmt::Debug for CodeParsingHooks {
@@ -34,11 +36,63 @@ impl CodeParsingHooks {
         )
     }
 
-    pub fn new(tools: Vec<Arc<dyn Tool>>) -> Self {
+    pub fn new(
+        tools: Vec<Arc<dyn Tool>>,
+        rx: mpsc::Receiver<crate::agent::code::tools::CodeResponse>,
+    ) -> Self {
         Self {
             tools,
             observations: Arc::new(std::sync::Mutex::new(Vec::new())),
+            rx: Arc::new(Mutex::new(rx)),
         }
+    }
+
+    /// Process incoming CodeResponse messages from the channel
+    async fn process_code_responses(
+        &self,
+    ) -> Result<Option<crate::agent::code::tools::CodeResponse>, AgentError> {
+        let mut rx_guard = self.rx.lock().await;
+        let mut final_answer = None;
+
+        // Process all available messages in the channel
+        loop {
+            match rx_guard.try_recv() {
+                Ok(response) => {
+                    match &response {
+                        crate::agent::code::tools::CodeResponse::ConsoleLog(value) => {
+                            let observation = format!("Observation: {}", value);
+                            self.observations.lock().unwrap().push(observation);
+                            debug!(
+                                "🔧 CodeParsingHooks: Added console log observation: {}",
+                                value
+                            );
+                        }
+                        crate::agent::code::tools::CodeResponse::FinalAnswer(value) => {
+                            let observation = format!("Final Answer: {}", value);
+                            self.observations.lock().unwrap().push(observation);
+                            debug!(
+                                "🔧 CodeParsingHooks: Added final answer observation: {}",
+                                value
+                            );
+                            // Store the final answer to return later
+                            final_answer = Some(response.clone());
+                        }
+                    }
+                }
+                Err(mpsc::error::TryRecvError::Empty) => {
+                    // No more messages available
+                    break;
+                }
+                Err(mpsc::error::TryRecvError::Disconnected) => {
+                    // Channel is closed
+                    return Err(AgentError::ToolExecution(
+                        "Code response channel disconnected".to_string(),
+                    ));
+                }
+            }
+        }
+
+        Ok(final_answer)
     }
 
     /// Parse code execution response from the LLM
@@ -137,6 +191,23 @@ impl AgentHooks for CodeParsingHooks {
         use async_openai::types::FinishReason;
         debug!("🔧 CodeParsingHooks: Processing LLM response for code execution");
 
+        // First, process any pending code responses from the channel
+        if let Some(code_response) = self.process_code_responses().await? {
+            match code_response {
+                crate::agent::code::tools::CodeResponse::FinalAnswer(value) => {
+                    // Convert final answer to finish response
+                    return Ok(crate::llm::LLMResponse {
+                        finish_reason: FinishReason::Stop,
+                        content: value.to_string(),
+                        ..response
+                    });
+                }
+                crate::agent::code::tools::CodeResponse::ConsoleLog(_) => {
+                    // Console logs are already stored as observations, continue processing
+                }
+            }
+        }
+
         if let FinishReason::Stop = response.finish_reason {
             match self.parse_code_response(&response.content) {
                 Ok(code_response) => {
@@ -178,6 +249,23 @@ impl AgentHooks for CodeParsingHooks {
         use async_openai::types::FinishReason;
         debug!("🔧 CodeParsingHooks: Processing stream response for code execution");
 
+        // First, process any pending code responses from the channel
+        if let Some(code_response) = self.process_code_responses().await? {
+            match code_response {
+                crate::agent::code::tools::CodeResponse::FinalAnswer(value) => {
+                    // Convert final answer to finish response
+                    return Ok(crate::llm::StreamResult {
+                        finish_reason: FinishReason::Stop,
+                        content: value.to_string(),
+                        ..response
+                    });
+                }
+                crate::agent::code::tools::CodeResponse::ConsoleLog(_) => {
+                    // Console logs are already stored as observations, continue processing
+                }
+            }
+        }
+
         if let FinishReason::Stop = response.finish_reason {
             match self.parse_code_response(&response.content) {
                 Ok(code_response) => {
@@ -208,5 +296,125 @@ impl AgentHooks for CodeParsingHooks {
         } else {
             Ok(response)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::sync::mpsc;
+
+    #[tokio::test]
+    async fn test_code_parsing_hooks_with_channel() {
+        let (tx, rx) = mpsc::channel::<crate::agent::code::tools::CodeResponse>(100);
+        let hooks = CodeParsingHooks::new(vec![], rx);
+
+        // Send multiple console logs through the channel
+        tx.send(crate::agent::code::tools::CodeResponse::ConsoleLog(
+            serde_json::json!("Test observation 1"),
+        ))
+        .await
+        .unwrap();
+
+        tx.send(crate::agent::code::tools::CodeResponse::ConsoleLog(
+            serde_json::json!("Test observation 2"),
+        ))
+        .await
+        .unwrap();
+
+        // Process the responses
+        let response = hooks.process_code_responses().await.unwrap();
+        assert!(response.is_none()); // No final answer, so should be None
+
+        // Check that both observations were stored
+        let observations = hooks.observations.lock().unwrap();
+        assert_eq!(observations.len(), 2);
+        assert!(observations[0].contains("Test observation 1"));
+        assert!(observations[1].contains("Test observation 2"));
+    }
+
+    #[tokio::test]
+    async fn test_code_parsing_hooks_final_answer() {
+        let (tx, rx) = mpsc::channel::<crate::agent::code::tools::CodeResponse>(100);
+        let hooks = CodeParsingHooks::new(vec![], rx);
+
+        // Send a final answer through the channel
+        tx.send(crate::agent::code::tools::CodeResponse::FinalAnswer(
+            serde_json::json!("Final result"),
+        ))
+        .await
+        .unwrap();
+
+        // Process the response
+        let response = hooks.process_code_responses().await.unwrap();
+        assert!(response.is_some());
+
+        // Check that the observation was stored
+        let observations = hooks.observations.lock().unwrap();
+        assert_eq!(observations.len(), 1);
+        assert!(observations[0].contains("Final result"));
+    }
+
+    #[tokio::test]
+    async fn test_code_parsing_hooks_mixed_responses() {
+        let (tx, rx) = mpsc::channel::<crate::agent::code::tools::CodeResponse>(100);
+        let hooks = CodeParsingHooks::new(vec![], rx);
+
+        // Send multiple mixed responses through the channel
+        tx.send(crate::agent::code::tools::CodeResponse::ConsoleLog(
+            serde_json::json!("Step 1 result"),
+        ))
+        .await
+        .unwrap();
+
+        tx.send(crate::agent::code::tools::CodeResponse::ConsoleLog(
+            serde_json::json!("Step 2 result"),
+        ))
+        .await
+        .unwrap();
+
+        tx.send(crate::agent::code::tools::CodeResponse::FinalAnswer(
+            serde_json::json!("Final result"),
+        ))
+        .await
+        .unwrap();
+
+        // Process all responses
+        let response = hooks.process_code_responses().await.unwrap();
+        assert!(response.is_some()); // Should have a final answer
+
+        // Check that all observations were stored
+        let observations = hooks.observations.lock().unwrap();
+        assert_eq!(observations.len(), 3);
+        assert!(observations[0].contains("Step 1 result"));
+        assert!(observations[1].contains("Step 2 result"));
+        assert!(observations[2].contains("Final result"));
+
+        // Verify the returned response is the final answer
+        if let Some(crate::agent::code::tools::CodeResponse::FinalAnswer(value)) = response {
+            assert_eq!(value, serde_json::json!("Final result"));
+        } else {
+            panic!("Expected FinalAnswer response");
+        }
+    }
+
+    #[test]
+    fn test_parse_code_response() {
+        let (_, rx) = mpsc::channel::<crate::agent::code::tools::CodeResponse>(100);
+        let hooks = CodeParsingHooks::new(vec![], rx);
+
+        // Test valid JSON response
+        let content = r#"{"thought": "I need to calculate", "code": "console.log(2 + 2)"}"#;
+        let result = hooks.parse_code_response(content).unwrap();
+        assert_eq!(result.thought, "I need to calculate");
+        assert_eq!(result.code, "console.log(2 + 2)");
+
+        // Test JSON in code blocks
+        let content = r#"```json
+{"thought": "Another calculation", "code": "console.log(3 * 3)"}
+```"#;
+        let result = hooks.parse_code_response(content).unwrap();
+        assert_eq!(result.thought, "Another calculation");
+        assert_eq!(result.code, "console.log(3 * 3)");
     }
 }

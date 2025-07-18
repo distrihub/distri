@@ -30,12 +30,29 @@ impl JsExecutor for CodeExecutor {
         name: &str,
         args: Vec<serde_json::Value>,
     ) -> Result<serde_json::Value, JsWorkerError> {
+        tracing::debug!(
+            "🔧 CodeExecutor: Executing tool '{}' with args: {:?}",
+            name,
+            args
+        );
+
         // Handle tool calls by delegating to the actual tools
         let tool_def = self
             .tools
             .iter()
             .find(|t| t.get_name() == name)
-            .ok_or(JsWorkerError::Other(format!("Tool {} not found", name)))?;
+            .ok_or_else(|| {
+                let available_tools: Vec<_> = self.tools.iter().map(|t| t.get_name()).collect();
+                tracing::error!(
+                    "🔧 CodeExecutor: Tool '{}' not found. Available tools: {:?}",
+                    name,
+                    available_tools
+                );
+                JsWorkerError::Other(format!(
+                    "Tool {} not found. Available tools: {:?}",
+                    name, available_tools
+                ))
+            })?;
 
         let result = tool_def
             .execute(
@@ -48,6 +65,12 @@ impl JsExecutor for CodeExecutor {
             )
             .await
             .map_err(|e| JsWorkerError::Other(e.to_string()))?;
+
+        tracing::debug!(
+            "🔧 CodeExecutor: Tool '{}' execution successful, result: {:?}",
+            name,
+            result
+        );
         Ok(result)
     }
 }

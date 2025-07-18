@@ -29,6 +29,11 @@ pub enum Commands {
         #[clap(help = "The name of the agent to run")]
         agent: Option<String>,
 
+        /// Verbose output
+        #[clap(long, short, help = "Verbose output")]
+        verbose: bool,
+
+        /// Background mode
         #[clap(
             long,
             short,
@@ -86,6 +91,10 @@ pub enum EmbeddedCommands {
         /// Agent name (uses first agent if not specified)
         #[clap(help = "The name of the agent to run")]
         agent: Option<String>,
+
+        /// Verbose output
+        #[clap(long, short, help = "Verbose output")]
+        verbose: bool,
 
         #[clap(
             long,

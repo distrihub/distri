@@ -1,8 +1,10 @@
 use std::sync::Arc;
 
+use tokio::sync::mpsc;
+
 use crate::{
     agent::{
-        code::tools::{ExecuteCodeTool, FinalAnswerTool},
+        code::tools::{CodeResponse, ConsoleLogTool, ExecuteCodeTool, FinalAnswerTool},
         hooks::CodeParsingHooks,
         AgentExecutor, AgentHooks, StandardAgent,
     },
@@ -24,18 +26,23 @@ impl CodeAgent {
         coordinator: Arc<AgentExecutor>,
         session_store: Arc<Box<dyn SessionStore>>,
     ) -> Self {
+        let (tx, rx) = tokio::sync::mpsc::channel(100);
         // Create code parsing hooks
-        let code_hooks = Arc::new(CodeParsingHooks::new(tools.clone()));
-        let tools = Self::init_tools(tools.clone());
+        let code_hooks = Arc::new(CodeParsingHooks::new(tools.clone(), rx));
+        let tools = Self::init_tools(tools.clone(), tx.clone());
         // Create StandardAgent
         let base = StandardAgent::new(definition, tools, coordinator, session_store);
 
         Self { base, code_hooks }
     }
 
-    pub fn init_tools(tools: Vec<Arc<dyn Tool>>) -> Vec<Arc<dyn Tool>> {
+    pub fn init_tools(
+        tools: Vec<Arc<dyn Tool>>,
+        tx: mpsc::Sender<CodeResponse>,
+    ) -> Vec<Arc<dyn Tool>> {
         let mut tools = tools;
-        tools.push(Arc::new(FinalAnswerTool));
+        tools.push(Arc::new(FinalAnswerTool(tx.clone())));
+        tools.push(Arc::new(ConsoleLogTool(tx.clone())));
 
         let inner_tools = tools.clone();
         tools.push(Arc::new(ExecuteCodeTool(inner_tools)));
