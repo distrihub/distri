@@ -1,5 +1,4 @@
 use serde_json::Value;
-use tokio::sync::mpsc;
 
 use crate::agent::code::executor::execute_code_with_tools;
 use crate::agent::code::tools::{CodeResponse, ConsoleLogTool, FinalAnswerTool};
@@ -34,7 +33,7 @@ async fn test_execute_code_with_final_answer() {
 
     // Test code with final_answer
     let code = r#" final_answer(42)"#;
-    let (tx, mut rx) = mpsc::channel::<CodeResponse>(100);
+    let (tx, rx) = crossbeam_channel::bounded::<CodeResponse>(100);
     let result = execute_code_with_tools(
         code,
         context,
@@ -47,7 +46,7 @@ async fn test_execute_code_with_final_answer() {
     assert_eq!(result, Value::Null);
 
     // Check that we received the final answer through the channel
-    let response = rx.recv().await.unwrap();
+    let response = rx.recv().unwrap();
     match response {
         CodeResponse::FinalAnswer(value) => {
             assert_eq!(value, Value::Number(42.into()));
@@ -87,7 +86,7 @@ async fn test_execute_code_with_console_log() {
         console.log("Test observation");
         final_answer("Success");
     "#;
-    let (tx, mut rx) = mpsc::channel::<CodeResponse>(100);
+    let (tx, rx) = crossbeam_channel::bounded::<CodeResponse>(100);
     let result = execute_code_with_tools(
         code,
         context,
@@ -105,10 +104,11 @@ async fn test_execute_code_with_console_log() {
     let mut msgs = Vec::new();
 
     // Collect all messages from the channel
-    while let Some(response) = rx.recv().await {
+    while let Ok(response) = rx.recv() {
         msgs.push(response);
     }
 
+    println!("msgs: {:?}", msgs);
     assert!(msgs[0].as_value().to_string().contains("Hello, world!"));
     assert!(msgs[1].as_value().to_string().contains("Test observation"));
     assert_eq!(

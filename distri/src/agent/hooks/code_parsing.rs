@@ -7,14 +7,14 @@ use crate::{
 };
 use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::Mutex;
 use tracing::debug;
 
 #[derive(Clone)]
 pub struct CodeParsingHooks {
     pub tools: Vec<Arc<dyn Tool>>,
     pub observations: Arc<std::sync::Mutex<Vec<String>>>,
-    pub rx: Arc<Mutex<mpsc::Receiver<crate::agent::code::tools::CodeResponse>>>,
+    pub rx: Arc<Mutex<crossbeam_channel::Receiver<crate::agent::code::tools::CodeResponse>>>,
 }
 
 impl std::fmt::Debug for CodeParsingHooks {
@@ -38,7 +38,7 @@ impl CodeParsingHooks {
 
     pub fn new(
         tools: Vec<Arc<dyn Tool>>,
-        rx: mpsc::Receiver<crate::agent::code::tools::CodeResponse>,
+        rx: crossbeam_channel::Receiver<crate::agent::code::tools::CodeResponse>,
     ) -> Self {
         Self {
             tools,
@@ -51,12 +51,12 @@ impl CodeParsingHooks {
     async fn process_code_responses(
         &self,
     ) -> Result<Option<crate::agent::code::tools::CodeResponse>, AgentError> {
-        let mut rx_guard = self.rx.lock().await;
         let mut final_answer = None;
 
+        let rx = self.rx.lock().await;
         // Process all available messages in the channel
         loop {
-            match rx_guard.try_recv() {
+            match rx.recv() {
                 Ok(response) => {
                     match &response {
                         crate::agent::code::tools::CodeResponse::ConsoleLog(value) => {
@@ -79,15 +79,9 @@ impl CodeParsingHooks {
                         }
                     }
                 }
-                Err(mpsc::error::TryRecvError::Empty) => {
+                Err(crossbeam_channel::RecvError) => {
                     // No more messages available
                     break;
-                }
-                Err(mpsc::error::TryRecvError::Disconnected) => {
-                    // Channel is closed
-                    return Err(AgentError::ToolExecution(
-                        "Code response channel disconnected".to_string(),
-                    ));
                 }
             }
         }
@@ -302,24 +296,21 @@ impl AgentHooks for CodeParsingHooks {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::sync::mpsc;
 
     #[tokio::test]
     async fn test_code_parsing_hooks_with_channel() {
-        let (tx, rx) = mpsc::channel::<crate::agent::code::tools::CodeResponse>(100);
+        let (tx, rx) = crossbeam_channel::bounded::<crate::agent::code::tools::CodeResponse>(100);
         let hooks = CodeParsingHooks::new(vec![], rx);
 
         // Send multiple console logs through the channel
         tx.send(crate::agent::code::tools::CodeResponse::ConsoleLog(
             serde_json::json!("Test observation 1"),
         ))
-        .await
         .unwrap();
 
         tx.send(crate::agent::code::tools::CodeResponse::ConsoleLog(
             serde_json::json!("Test observation 2"),
         ))
-        .await
         .unwrap();
 
         // Process the responses
@@ -335,14 +326,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_code_parsing_hooks_final_answer() {
-        let (tx, rx) = mpsc::channel::<crate::agent::code::tools::CodeResponse>(100);
+        let (tx, rx) = crossbeam_channel::bounded::<crate::agent::code::tools::CodeResponse>(100);
         let hooks = CodeParsingHooks::new(vec![], rx);
 
         // Send a final answer through the channel
         tx.send(crate::agent::code::tools::CodeResponse::FinalAnswer(
             serde_json::json!("Final result"),
         ))
-        .await
         .unwrap();
 
         // Process the response
@@ -357,26 +347,23 @@ mod tests {
 
     #[tokio::test]
     async fn test_code_parsing_hooks_mixed_responses() {
-        let (tx, rx) = mpsc::channel::<crate::agent::code::tools::CodeResponse>(100);
+        let (tx, rx) = crossbeam_channel::bounded::<crate::agent::code::tools::CodeResponse>(100);
         let hooks = CodeParsingHooks::new(vec![], rx);
 
         // Send multiple mixed responses through the channel
         tx.send(crate::agent::code::tools::CodeResponse::ConsoleLog(
             serde_json::json!("Step 1 result"),
         ))
-        .await
         .unwrap();
 
         tx.send(crate::agent::code::tools::CodeResponse::ConsoleLog(
             serde_json::json!("Step 2 result"),
         ))
-        .await
         .unwrap();
 
         tx.send(crate::agent::code::tools::CodeResponse::FinalAnswer(
             serde_json::json!("Final result"),
         ))
-        .await
         .unwrap();
 
         // Process all responses
@@ -400,7 +387,7 @@ mod tests {
 
     #[test]
     fn test_parse_code_response() {
-        let (_, rx) = mpsc::channel::<crate::agent::code::tools::CodeResponse>(100);
+        let (_, rx) = crossbeam_channel::bounded::<crate::agent::code::tools::CodeResponse>(100);
         let hooks = CodeParsingHooks::new(vec![], rx);
 
         // Test valid JSON response

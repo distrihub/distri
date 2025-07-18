@@ -2,9 +2,28 @@ use distri::agent::{AgentEventType, AgentExecutor, ExecutorContext};
 
 use distri::types::{Message, MessageRole};
 
+use serde_json;
 use std::io::{self, Write};
 use std::sync::Arc;
-use tracing::{error, info};
+use tracing::error;
+
+/// Parse and format distri_execute_code tool arguments
+fn parse_execute_code(args: &str) -> bool {
+    if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(args) {
+        if let (Some(thought), Some(code)) = (
+            json_value.get("thought").and_then(|v| v.as_str()),
+            json_value.get("code").and_then(|v| v.as_str()),
+        ) {
+            // Clear the line and show formatted output
+            print!("\r");
+            println!("💭 Thought: {}", thought);
+            println!("💻 Code:");
+            println!("{}", code);
+            return true;
+        }
+    }
+    false
+}
 
 #[derive(Debug)]
 struct MessageBuffer {
@@ -24,8 +43,6 @@ pub async fn run(
     task: Message,
     verbose: bool,
 ) -> anyhow::Result<()> {
-    info!("Executing agent run");
-
     let (tx, mut rx) = tokio::sync::mpsc::channel(100);
 
     let context = Arc::new(ExecutorContext {
@@ -47,6 +64,8 @@ pub async fn run(
         is_active: false,
         content: String::new(),
     };
+    let mut current_tool_call: Option<String> = None;
+    let mut tool_args_buffer = String::new();
 
     while let Some(event) = rx.recv().await {
         match event.event {
@@ -94,6 +113,8 @@ pub async fn run(
             AgentEventType::TextMessageContent { delta, .. } => {
                 if let Some(ref mut msg) = current_message {
                     msg.content.push_str(&delta);
+
+                    // Default behavior - print the delta
                     print!("{}", delta);
                     io::stdout().flush().unwrap();
                 }
@@ -101,7 +122,19 @@ pub async fn run(
             AgentEventType::TextMessageEnd { .. } => {
                 if let Some(ref mut msg) = current_message {
                     msg.is_complete = true;
-                    println!();
+
+                    // Check if this complete message contains distri_execute_code JSON
+                    if msg.content.contains("\"thought\"") && msg.content.contains("\"code\"") {
+                        // Clear the line and try to parse
+                        print!("\r");
+                        if !parse_execute_code(&msg.content) {
+                            // If parsing fails, show the original content
+                            println!("{}", msg.content);
+                        }
+                    } else {
+                        // Normal message end
+                        println!();
+                    }
                 }
             }
             AgentEventType::ToolCallStart { tool_call_name, .. } => {
@@ -111,19 +144,41 @@ pub async fn run(
                         println!();
                     }
                 }
-                println!("🔧 Calling tool: {}", tool_call_name);
+                current_tool_call = Some(tool_call_name.clone());
+                tool_args_buffer.clear();
+                println!("🔧 Calling tool: {} \n", tool_call_name);
             }
             AgentEventType::ToolCallArgs { delta, .. } => {
-                // Optionally show tool arguments as they stream
-                if verbose && !delta.is_empty() {
-                    print!("{}", delta);
-                    io::stdout().flush().unwrap();
+                // Accumulate tool arguments
+                tool_args_buffer.push_str(&delta);
+
+                // Show raw delta for non-distri_execute_code tools
+                if let Some(ref tool_name) = current_tool_call {
+                    if tool_name != "execute_code" && !delta.is_empty() {
+                        print!("{}", delta);
+                        io::stdout().flush().unwrap();
+                    }
                 }
             }
             AgentEventType::ToolCallEnd { .. } => {
-                if verbose {
-                    println!();
+                // For distri_execute_code, parse and format the complete arguments
+                if let Some(ref tool_name) = current_tool_call {
+                    if tool_name == "execute_code" {
+                        if !parse_execute_code(&tool_args_buffer) {
+                            // Fallback if parsing fails
+                            println!("🔧 Tool arguments: {}", tool_args_buffer);
+                        }
+                    } else {
+                        // For other tools, just add a newline if verbose
+                        if verbose {
+                            println!();
+                        }
+                    }
                 }
+
+                // Clear tool call state
+                current_tool_call = None;
+                tool_args_buffer.clear();
             }
             AgentEventType::ToolCallResult {
                 tool_call_id,

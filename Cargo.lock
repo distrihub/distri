@@ -1164,6 +1164,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "crossbeam-channel"
+version = "0.5.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "82b8f8f868b36967f9606790d1903570de9ceaf870a7bf9fbbd3016d636a2cb2"
+dependencies = [
+ "crossbeam-utils",
+]
+
+[[package]]
+name = "crossbeam-utils"
+version = "0.8.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d0a5c400df2834b80a4c3327b3aad3a4c4cd4de0629063962b03235697506a28"
+
+[[package]]
 name = "crossterm"
 version = "0.28.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1651,6 +1666,7 @@ dependencies = [
  "bb8-redis",
  "chrono",
  "comfy-table",
+ "crossbeam-channel",
  "distri-a2a",
  "distri-js-sandbox",
  "dotenv",
@@ -1714,7 +1730,7 @@ dependencies = [
 [[package]]
 name = "distri-js-sandbox"
 version = "0.1.1"
-source = "git+https://github.com/distrihub/js-sandbox?rev=aff7423#aff74233886de74bc3b09db485dc6aaaa32257ff"
+source = "git+https://github.com/distrihub/js-sandbox?rev=19b05ad#19b05ad7b7cec1387c973f9dd3cf904b09c844e5"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2908,7 +2924,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "07033963ba89ebaf1584d767badaa2e8fcec21aedea6b8c0346d487d49c28667"
 dependencies = [
  "cfg-if",
- "windows-targets 0.48.5",
+ "windows-targets 0.53.2",
 ]
 
 [[package]]
@@ -4812,7 +4828,7 @@ dependencies = [
  "cfg-if",
  "libc",
  "psm",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -6329,7 +6345,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

@@ -280,10 +280,10 @@ impl AgentExecutor {
     }
 
     pub async fn run(&self) -> anyhow::Result<()> {
-        tracing::info!("AgentCoordinator run loop started");
+        tracing::debug!("AgentCoordinator run loop started");
 
         while let Some(msg) = self.coordinator_rx.lock().await.recv().await {
-            tracing::info!("AgentCoordinator received a message: {:?}", msg);
+            tracing::debug!("AgentCoordinator received a message: {:?}", msg);
             match msg {
                 CoordinatorMessage::Execute {
                     agent_id,
@@ -292,7 +292,7 @@ impl AgentExecutor {
                     event_tx,
                     response_tx,
                 } => {
-                    tracing::info!(
+                    tracing::debug!(
                         "Handling Execute for agent: {} with message: {:?}",
                         agent_id,
                         message
@@ -312,7 +312,7 @@ impl AgentExecutor {
                     event_tx,
                     context,
                 } => {
-                    tracing::info!(
+                    tracing::debug!(
                         "Handling ExecuteStream for agent: {} with message: {:?}",
                         agent_id,
                         message
@@ -337,7 +337,7 @@ impl AgentExecutor {
                     context,
                     event_tx,
                 } => {
-                    tracing::info!(
+                    tracing::debug!(
                         "Handling agent handover from {} to {}",
                         from_agent,
                         to_agent
@@ -390,17 +390,8 @@ impl AgentExecutor {
             .await
             .ok_or_else(|| AgentError::NotFound(format!("Agent {} not found", agent_id)))?;
 
-        let agent_type = definition
-            .agent_type
-            .clone()
-            .unwrap_or("standard".to_string());
         let agent = self.create_agent_from_definition(definition).await?;
-        tracing::info!(
-            "Invoking agent: {}, {}, {:?}",
-            agent_type,
-            agent.get_name(),
-            agent.agent_type()
-        );
+
         agent.invoke(message, context, event_tx).await
     }
 
@@ -418,18 +409,7 @@ impl AgentExecutor {
             .await
             .ok_or_else(|| AgentError::NotFound(format!("Agent {} not found", agent_id)))?;
 
-        let agent_type = definition
-            .agent_type
-            .clone()
-            .unwrap_or("standard".to_string());
-
         let agent: Box<dyn BaseAgent> = self.create_agent_from_definition(definition).await?;
-        tracing::info!(
-            "Invoking agent: {}, {}, {:?}",
-            agent_type,
-            agent.get_name(),
-            agent.agent_type()
-        );
         agent.invoke_stream(message, context, event_tx).await
     }
 

@@ -35,6 +35,7 @@ comfy-table = "7.0"
 futures-util = "0.3"
 async-stream = "0.3"
 quick-xml = { version = "0.31", features = ["serialize"] }
+crossbeam-channel = "0.5"
 
 # Redis dependencies (optional)
 redis = { version = "0.24", optional = true }

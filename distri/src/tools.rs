@@ -384,9 +384,23 @@ pub trait Tool: Send + Sync {
         false // Default to false for built-in tools
     }
 
+    fn is_sync(&self) -> bool {
+        false // Default to false for built-in tools
+    }
+
     /// Execute the tool with given arguments
     async fn execute(&self, tool_call: ToolCall, context: ToolContext)
         -> Result<Value, AgentError>;
+
+    fn execute_sync(
+        &self,
+        _tool_call: ToolCall,
+        _context: ToolContext,
+    ) -> Result<Value, AgentError> {
+        return Err(AgentError::ToolExecution(
+            "Sync execution not supported".to_string(),
+        ));
+    }
 }
 
 pub struct McpTool {

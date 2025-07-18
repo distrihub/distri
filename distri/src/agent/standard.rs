@@ -461,7 +461,7 @@ impl StandardAgent {
         let mut iterations = history.len();
 
         let result = async {
-            tracing::info!(
+            tracing::debug!(
                 "Invoking stream for agent: {}, Iterations: {}",
                 agent_id,
                 iterations

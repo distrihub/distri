@@ -22,21 +22,8 @@ impl CodeExecutor {
             tools,
         }
     }
-}
-#[async_trait::async_trait]
-impl JsExecutor for CodeExecutor {
-    async fn execute(
-        &self,
-        name: &str,
-        args: Vec<serde_json::Value>,
-    ) -> Result<serde_json::Value, JsWorkerError> {
-        tracing::debug!(
-            "🔧 CodeExecutor: Executing tool '{}' with args: {:?}",
-            name,
-            args
-        );
 
-        // Handle tool calls by delegating to the actual tools
+    fn get_tool_def(&self, name: &str) -> Result<&Arc<dyn Tool>, JsWorkerError> {
         let tool_def = self
             .tools
             .iter()
@@ -53,7 +40,62 @@ impl JsExecutor for CodeExecutor {
                     name, available_tools
                 ))
             })?;
+        Ok(tool_def)
+    }
+}
 
+#[async_trait::async_trait]
+impl JsExecutor for CodeExecutor {
+    fn execute_sync(
+        &self,
+        name: &str,
+        args: Vec<serde_json::Value>,
+    ) -> Result<serde_json::Value, JsWorkerError> {
+        tracing::debug!(
+            "🔧 CodeExecutor: Executing tool '{}' with args: {:?}",
+            name,
+            args
+        );
+
+        // Handle tool calls by delegating to the actual tools
+        let tool_def = self.get_tool_def(name)?;
+        if !tool_def.is_sync() {
+            return Err(JsWorkerError::Other(format!("Tool {} is not sync", name)));
+        }
+        let result = tool_def
+            .execute_sync(
+                ToolCall {
+                    tool_call_id: uuid::Uuid::new_v4().to_string(),
+                    tool_name: name.to_string(),
+                    input: args.into_iter().map(|arg| arg.to_string()).collect(),
+                },
+                self.tools_context.clone(),
+            )
+            .map_err(|e| JsWorkerError::Other(e.to_string()))?;
+
+        tracing::debug!(
+            "🔧 CodeExecutor: Tool '{}' execution successful, result: {:?}",
+            name,
+            result
+        );
+        Ok(result)
+    }
+    async fn execute(
+        &self,
+        name: &str,
+        args: Vec<serde_json::Value>,
+    ) -> Result<serde_json::Value, JsWorkerError> {
+        tracing::debug!(
+            "🔧 CodeExecutor: Executing tool '{}' with args: {:?}",
+            name,
+            args
+        );
+
+        // Handle tool calls by delegating to the actual tools
+        let tool_def = self.get_tool_def(name)?;
+        if tool_def.is_sync() {
+            return Err(JsWorkerError::Other(format!("Tool {} is not async", name)));
+        }
         let result = tool_def
             .execute(
                 ToolCall {
@@ -89,7 +131,7 @@ pub async fn execute_code_with_tools(
     let functions = tools.iter().map(to_function_definition).collect();
     let executor = CodeExecutor::new(context, tools);
 
-    let append_console = "globalThis.console = {log: rustyscript.async_functions['console_log']}";
+    let append_console = "globalThis.console = {log: rustyscript.functions['console_log']}";
     let wrapped_code = format!("{}\n {}", append_console, code);
     let worker = JsWorker::new(JsWorkerOptions {
         timeout: std::time::Duration::from_secs(10),
@@ -105,10 +147,12 @@ pub async fn execute_code_with_tools(
 }
 
 fn to_function_definition(tool: &Arc<dyn Tool>) -> FunctionDefinition {
+    // special sync functions;
+
     FunctionDefinition {
         name: tool.get_name(),
         description: Some(tool.get_description()),
         parameters: serde_json::json!({}),
-        returns: None,
+        is_async: !tool.is_sync(),
     }
 }

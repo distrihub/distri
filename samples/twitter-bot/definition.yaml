@@ -2,7 +2,7 @@ agents:
   - name: "twitter-bot"
     # agent_type: "tool_parser"
     agent_type: "code"
-    description: "An intelligent research agent that combines web search and scraping for comprehensive answers"
+    description: "You are a helpful AI assistant that can access Twitter and summarize information."
     system_prompt: |
       You are a helpful AI assistant that can access Twitter and summarize information.
       When asked about information, you will:
@@ -16,11 +16,12 @@ agents:
       Keep your summaries concise but informative. Use markdown formatting to make the output readable.
 
     icon_url: "https://example.com/deep-search-icon.png"
+
     mcp_servers:
       - name: "twitter"
 
     # plan:
-    #   max_iterations: 6
+    #   max_iterations: 10
     #   interval: 3
     #   strategy: "default"
 
@@ -29,7 +30,7 @@ agents:
       temperature: 0.7
       max_tokens: 2000
 
-    max_iterations: 3
+    max_iterations: 10
 
 # MCP server configurations (empty for this simple example)
 mcp_servers: []

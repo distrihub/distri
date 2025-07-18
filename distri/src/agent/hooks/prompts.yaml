@@ -11,7 +11,7 @@ code: |-
 
   Important TypeScript guidelines:
   - Use 'const' and 'let' for variable declarations
-  - Dont use 'await' even for asynchronous function calls. Everything is synchronous.
+  - Always use 'await' even for all tool calls except for the `final_answer` and `console_log` functions.
   - Use 'console.log()' for recording important information.
   - Use proper TypeScript object syntax for function parameters
   - Always use semicolons at the end of statements

@@ -1,7 +1,5 @@
 use std::sync::Arc;
 
-use tokio::sync::mpsc;
-
 use crate::{
     agent::{
         code::tools::{CodeResponse, ConsoleLogTool, ExecuteCodeTool, FinalAnswerTool},
@@ -26,7 +24,7 @@ impl CodeAgent {
         coordinator: Arc<AgentExecutor>,
         session_store: Arc<Box<dyn SessionStore>>,
     ) -> Self {
-        let (tx, rx) = tokio::sync::mpsc::channel(100);
+        let (tx, rx) = crossbeam_channel::bounded(100);
         // Create code parsing hooks
         let code_hooks = Arc::new(CodeParsingHooks::new(tools.clone(), rx));
         let tools = Self::init_tools(tools.clone(), tx.clone());
@@ -38,7 +36,7 @@ impl CodeAgent {
 
     pub fn init_tools(
         tools: Vec<Arc<dyn Tool>>,
-        tx: mpsc::Sender<CodeResponse>,
+        tx: crossbeam_channel::Sender<CodeResponse>,
     ) -> Vec<Arc<dyn Tool>> {
         let mut tools = tools;
         tools.push(Arc::new(FinalAnswerTool(tx.clone())));

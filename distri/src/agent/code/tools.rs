@@ -2,7 +2,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::mpsc;
 
 use crate::tools::{Tool, ToolContext};
 use crate::types::ToolCall;
@@ -23,12 +22,16 @@ impl CodeResponse {
     }
 }
 
-pub struct FinalAnswerTool(pub mpsc::Sender<CodeResponse>);
+pub struct FinalAnswerTool(pub crossbeam_channel::Sender<CodeResponse>);
 
 #[async_trait::async_trait]
 impl Tool for FinalAnswerTool {
     fn get_name(&self) -> String {
         "final_answer".to_string()
+    }
+
+    fn is_sync(&self) -> bool {
+        true
     }
 
     fn get_description(&self) -> String {
@@ -50,20 +53,27 @@ impl Tool for FinalAnswerTool {
         }
     }
 
-    async fn execute(
+    fn execute_sync(
         &self,
         tool_call: ToolCall,
         _context: ToolContext,
     ) -> Result<Value, AgentError> {
         let value = serde_json::from_str(&tool_call.input)
             .map_err(|e| AgentError::ToolExecution(format!("Invalid input: {}", e)))?;
-        self.0
-            .send(CodeResponse::FinalAnswer(value))
-            .await
-            .map_err(|e| {
-                AgentError::ToolExecution(format!("Failed to send final answer: {}", e))
-            })?;
+        self.0.send(CodeResponse::FinalAnswer(value)).map_err(|e| {
+            AgentError::ToolExecution(format!("Failed to send final answer: {}", e))
+        })?;
         Ok(Value::Null)
+    }
+
+    async fn execute(
+        &self,
+        _tool_call: ToolCall,
+        _context: ToolContext,
+    ) -> Result<Value, AgentError> {
+        return Err(AgentError::ToolExecution(
+            "Async execution not supported".to_string(),
+        ));
     }
 }
 
@@ -77,7 +87,7 @@ impl Tool for ExecuteCodeTool {
     }
 
     fn get_description(&self) -> String {
-        "Execute Python code and return the result".to_string()
+        "Execute Typescript code and return the result".to_string()
     }
 
     fn get_tool_definition(&self) -> async_openai::types::ChatCompletionTool {
@@ -85,13 +95,13 @@ impl Tool for ExecuteCodeTool {
             r#type: async_openai::types::ChatCompletionToolType::Function,
             function: async_openai::types::FunctionObject {
                 name: "execute_code".to_string(),
-                description: Some("Execute Python code and return the result".to_string()),
+                description: Some("Execute Typescript code and return the result".to_string()),
                 parameters: Some(json!({
                     "type": "object",
                     "properties": {
                         "code": {
                             "type": "string",
-                            "description": "Python code to execute"
+                            "description": "Typescript code to execute"
                         },
                         "thought": {
                             "type": "string",
@@ -151,10 +161,14 @@ impl Tool for ExecuteCodeTool {
     }
 }
 
-pub struct ConsoleLogTool(pub mpsc::Sender<CodeResponse>);
+pub struct ConsoleLogTool(pub crossbeam_channel::Sender<CodeResponse>);
 
 #[async_trait::async_trait]
 impl Tool for ConsoleLogTool {
+    fn is_sync(&self) -> bool {
+        true
+    }
+
     fn get_name(&self) -> String {
         "console_log".to_string()
     }
@@ -177,8 +191,17 @@ impl Tool for ConsoleLogTool {
             },
         }
     }
-
     async fn execute(
+        &self,
+        _tool_call: ToolCall,
+        _context: ToolContext,
+    ) -> Result<Value, AgentError> {
+        return Err(AgentError::ToolExecution(
+            "Async execution not supported".to_string(),
+        ));
+    }
+
+    fn execute_sync(
         &self,
         tool_call: ToolCall,
         _context: ToolContext,
@@ -186,17 +209,16 @@ impl Tool for ConsoleLogTool {
         let value = serde_json::from_str(&tool_call.input)
             .map_err(|e| AgentError::ToolExecution(format!("Invalid input: {}", e)))?;
 
-        tracing::info!(
-            "🔧 ConsoleLogTool: Executing console.log with value: {:?}",
-            value
+        tracing::debug!(
+            "🔧 ConsoleLogTool: Executing console.log for tool call: {:?}",
+            tool_call
         );
 
         self.0
             .send(CodeResponse::ConsoleLog(value))
-            .await
             .map_err(|e| AgentError::ToolExecution(format!("Failed to send console log: {}", e)))?;
 
-        tracing::info!("🔧 ConsoleLogTool: Successfully sent console log through channel");
+        tracing::debug!("🔧 ConsoleLogTool: Successfully sent console log through channel");
         Ok(Value::Null)
     }
 }
