@@ -16,11 +16,10 @@ use regex::Regex;
 use serde_json::{json, Value};
 use tokio::sync::{mpsc, RwLock};
 use tracing::debug;
-
 use crate::agent::ExecutorContext;
 use crate::error::AgentError;
 use crate::servers::registry::{McpServerRegistry, ServerMetadata};
-use crate::stores::{AgentStore, ToolSessionStore};
+use crate::stores::{AgentStore, MemoryStore, SessionMemory, ToolSessionStore};
 use crate::types::ServerTools;
 use crate::types::TransportType;
 use crate::types::{McpDefinition, ToolCall};
@@ -131,6 +130,13 @@ pub async fn get_tools(
         "transfer_to_agent".to_string(),
         Arc::new(TransferToAgentTool) as Arc<dyn Tool>,
     );
+    
+    // Add the new store memory tool
+    all_tools.insert(
+        "store_memory".to_string(),
+        Arc::new(StoreMemoryTool) as Arc<dyn Tool>,
+    );
+    
     Ok(all_tools)
 }
 
@@ -451,6 +457,7 @@ impl Tool for McpTool {
 pub struct ToolContext {
     pub agent_id: String,
     pub agent_store: Arc<dyn AgentStore>,
+    pub memory_store: Option<Arc<Box<dyn MemoryStore>>>,
     pub context: Arc<ExecutorContext>,
     pub event_tx: Option<mpsc::Sender<crate::agent::AgentEvent>>,
     pub coordinator_tx: mpsc::Sender<crate::agent::CoordinatorMessage>,
@@ -463,6 +470,7 @@ impl std::fmt::Debug for ToolContext {
         f.debug_struct("BuiltInToolContext")
             .field("agent_id", &self.agent_id)
             .field("context", &self.context)
+            .field("memory_store", &"<memory_store>")
             .field("tool_sessions", &"<tool_sessions>")
             .field("registry", &"<registry>")
             .finish()
@@ -678,5 +686,208 @@ impl Tool for TransferToAgentTool {
                 target_agent
             )))
         }
+    }
+}
+
+/// Store Memory Tool - persists important facts to memory with optional approval
+pub struct StoreMemoryTool;
+
+#[async_trait::async_trait]
+impl Tool for StoreMemoryTool {
+    fn get_name(&self) -> String {
+        "store_memory".to_string()
+    }
+
+    fn get_description(&self) -> String {
+        "Store important facts or information to persistent memory for future reference".to_string()
+    }
+
+    fn get_tool_definition(&self) -> async_openai::types::ChatCompletionTool {
+        async_openai::types::ChatCompletionTool {
+            r#type: async_openai::types::ChatCompletionToolType::Function,
+            function: async_openai::types::FunctionObject {
+                name: "store_memory".to_string(),
+                description: Some("Store important facts or information to persistent memory for future reference".to_string()),
+                parameters: Some(json!({
+                    "type": "object",
+                    "properties": {
+                        "facts": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            },
+                            "description": "List of important facts or information to store in memory"
+                        },
+                        "summary": {
+                            "type": "string",
+                            "description": "A brief summary of what these facts are about"
+                        },
+                        "importance": {
+                            "type": "string",
+                            "enum": ["low", "medium", "high"],
+                            "description": "Importance level of these facts"
+                        }
+                    },
+                    "required": ["facts", "summary"]
+                })),
+                strict: None,
+            },
+        }
+    }
+
+    async fn execute(&self, tool_call: ToolCall, context: ToolContext) -> Result<Value, AgentError> {
+        // Parse the input arguments
+        let args: HashMap<String, Value> = serde_json::from_str(&tool_call.input)
+            .map_err(|e| AgentError::ToolExecution(format!("Invalid input: {}", e)))?;
+
+        let facts: Vec<String> = args
+            .get("facts")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| AgentError::ToolExecution("Missing 'facts' parameter".to_string()))?
+            .iter()
+            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+            .collect();
+
+        let summary = args
+            .get("summary")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| AgentError::ToolExecution("Missing 'summary' parameter".to_string()))?
+            .to_string();
+
+        let importance = args
+            .get("importance")
+            .and_then(|v| v.as_str())
+            .unwrap_or("medium")
+            .to_string();
+
+        if facts.is_empty() {
+            return Err(AgentError::ToolExecution("No facts provided".to_string()));
+        }
+
+        // Check if this tool requires approval
+        let agent_definition = context.agent_store
+            .get(&context.agent_id)
+            .await
+            .ok_or_else(|| AgentError::NotFound(format!("Agent {} not found", context.agent_id)))?;
+
+        let requires_approval = if let Some(mode) = &agent_definition.tool_approval {
+            match mode {
+                crate::types::ApprovalMode::None => false,
+                crate::types::ApprovalMode::All => true,
+                crate::types::ApprovalMode::Filter { tools } => {
+                    tools.contains(&"store_memory".to_string())
+                }
+            }
+        } else {
+            false
+        };
+
+        if requires_approval {
+            // For approval-required tools, we should not execute directly
+            // Instead, return an error indicating that this tool requires approval
+            // The approval logic is handled at the execute_tool_calls level in standard.rs
+            return Err(AgentError::ToolExecution(
+                "This tool requires approval. Approval should be handled at the coordinator level.".to_string(),
+            ));
+        }
+
+        // If no approval required, proceed with storing the memory
+        Self::store_facts_to_memory(&facts, &summary, &importance, &context).await
+    }
+}
+
+impl StoreMemoryTool {
+    async fn store_facts_to_memory(
+        facts: &[String],
+        summary: &str,
+        importance: &str,
+        context: &ToolContext,
+    ) -> Result<Value, AgentError> {
+        // Get the user_id from context or default to thread_id
+        let user_id = context.context.user_id.as_ref()
+            .unwrap_or(&context.context.thread_id)
+            .clone();
+
+        // Create a SessionMemory object
+        let session_memory = SessionMemory {
+            agent_id: context.agent_id.clone(),
+            thread_id: context.context.thread_id.clone(),
+            session_summary: summary.to_string(),
+            key_insights: vec![], // Could be enhanced to extract insights from facts
+            important_facts: facts.to_vec(),
+            timestamp: chrono::Utc::now(),
+        };
+
+        // Store the memory if MemoryStore is available
+        if let Some(memory_store) = &context.memory_store {
+            memory_store.store_memory(&user_id, session_memory).await
+                .map_err(|e| AgentError::ToolExecution(format!("Failed to store memory: {}", e)))?;
+            
+            tracing::info!(
+                "Successfully stored {} facts to memory for user {} (importance: {}): {}",
+                facts.len(),
+                user_id,
+                importance,
+                summary
+            );
+        } else {
+            tracing::warn!("No memory store available, facts not persisted");
+        }
+
+        // Log the facts being stored
+        for (i, fact) in facts.iter().enumerate() {
+            tracing::debug!("Fact {}: {}", i + 1, fact);
+        }
+
+        Ok(json!({
+            "status": "success",
+            "message": format!("Successfully stored {} facts to memory", facts.len()),
+            "facts_stored": facts.len(),
+            "summary": summary,
+            "importance": importance,
+            "timestamp": chrono::Utc::now().to_rfc3339(),
+            "persisted": context.memory_store.is_some()
+        }))
+    }
+
+    /// Handle approval response for memory storage
+    pub async fn handle_approval_response(
+        tool_call: ToolCall,
+        approved: bool,
+        context: &ToolContext,
+    ) -> Result<Value, AgentError> {
+        if !approved {
+            return Ok(json!({
+                "status": "denied",
+                "message": "Memory storage request was denied"
+            }));
+        }
+
+        // Parse the original tool call arguments
+        let args: HashMap<String, Value> = serde_json::from_str(&tool_call.input)
+            .map_err(|e| AgentError::ToolExecution(format!("Invalid input: {}", e)))?;
+
+        let facts: Vec<String> = args
+            .get("facts")
+            .and_then(|v| v.as_array())
+            .unwrap_or(&vec![])
+            .iter()
+            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+            .collect();
+
+        let summary = args
+            .get("summary")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Approved memory storage")
+            .to_string();
+
+        let importance = args
+            .get("importance")
+            .and_then(|v| v.as_str())
+            .unwrap_or("medium")
+            .to_string();
+
+        // Now store the approved facts
+        Self::store_facts_to_memory(&facts, &summary, &importance, context).await
     }
 }

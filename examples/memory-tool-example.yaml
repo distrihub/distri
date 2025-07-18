@@ -1,0 +1,68 @@
+# Example configuration for the store_memory tool
+# This demonstrates how to use the built-in memory storage tool with approval
+
+agents:
+  - name: "memory-assistant"
+    description: "AI assistant that can store important facts to memory"
+    system_prompt: |
+      You are a helpful AI assistant with the ability to store important information to persistent memory.
+      
+      When you encounter important facts, insights, or information that might be useful for future conversations,
+      you can use the store_memory tool to persist this information.
+      
+      The store_memory tool accepts:
+      - facts: An array of important facts or information
+      - summary: A brief summary of what these facts are about  
+      - importance: The importance level (low, medium, high)
+      
+      Example usage scenarios:
+      - User shares personal preferences 
+      - Important project details are discussed
+      - Key insights are discovered during analysis
+      - User provides context about their work or life
+      
+      Always ask yourself: "Is this information important enough to remember for future conversations?"
+    include_tools: true
+    
+    # Configure approval for the store_memory tool
+    tool_approval:
+      mode: filter
+      tools:
+        - "store_memory"  # This tool will require approval
+
+    # Optional: You can also set it to require approval for all tools
+    # tool_approval:
+    #   mode: all
+    
+    # Or no approval required
+    # tool_approval:
+    #   mode: none
+
+# Server configuration
+server:
+  server_url: "http://localhost:8080"
+  agent_provider: "distri"
+  default_input_modes: ["text"]
+  default_output_modes: ["text"]
+  capabilities:
+    text: {}
+
+# Storage configuration
+stores:
+  # Entity storage (agents, tasks, threads)
+  entity: "InMemory"
+  
+  # Session storage (includes memory persistence)
+  # Use "InMemory" for testing, "File" for local persistence, or "Redis" for distributed setup
+  session: "InMemory"
+  
+  # Example with file-based persistence:
+  # session:
+  #   File:
+  #     path: "./data/sessions"
+  
+  # Example with Redis:
+  # session: "Redis"
+  # redis:
+  #   url: "redis://localhost:6379"
+  #   prefix: "distri"

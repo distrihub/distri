@@ -14,6 +14,7 @@ async fn test_execute_code_with_final_answer() {
     let context = ToolContext {
         agent_id: "test_agent".to_string(),
         agent_store,
+        memory_store: None,
         context: Arc::new(ExecutorContext::default()),
         event_tx: None,
         coordinator_tx: tokio::sync::mpsc::channel(1).0,
@@ -63,6 +64,7 @@ async fn test_execute_code_with_console_log() {
     let context = ToolContext {
         agent_id: "test_agent".to_string(),
         agent_store,
+        memory_store: None,
         context: Arc::new(ExecutorContext::default()),
         event_tx: None,
         coordinator_tx: tokio::sync::mpsc::channel(1).0,

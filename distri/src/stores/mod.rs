@@ -4,7 +4,7 @@ pub mod memory;
 mod types;
 
 use crate::{
-    noop::{NoopSessionStore, NoopTaskStore, NoopThreadStore, NoopToolSessionStore},
+    noop::{NoopMemoryStore, NoopSessionStore, NoopTaskStore, NoopThreadStore, NoopToolSessionStore},
     types::{EntityStoreType, SessionStoreType, StoreConfig},
 };
 use std::{collections::HashMap, sync::Arc};
@@ -33,6 +33,7 @@ pub use redis::*;
 pub struct InitializedStores {
     pub session_store: Arc<Box<dyn SessionStore>>,
     pub agent_store: Arc<dyn AgentStore>,
+    pub memory_store: Option<Arc<Box<dyn MemoryStore>>>,
     pub task_store: Arc<dyn TaskStore>,
     pub thread_store: Arc<dyn ThreadStore>,
     pub tool_session_store: Option<Arc<Box<dyn ToolSessionStore>>>,
@@ -139,9 +140,39 @@ impl StoreConfig {
             }
         };
 
+        // Initialize memory store (follows the same pattern as session stores)
+        let memory_store = match session_type {
+            SessionStoreType::InMemory => {
+                Some(Arc::new(Box::new(LocalMemoryStore::new()) as Box<dyn MemoryStore>))
+            }
+            SessionStoreType::File { path } => {
+                Some(Arc::new(Box::new(FileMemoryStore::new(path.clone())) as Box<dyn MemoryStore>))
+            }
+            #[cfg(feature = "redis")]
+            SessionStoreType::Redis => {
+                let redis_config = self.redis.as_ref().ok_or_else(|| {
+                    anyhow::anyhow!("Redis config required when using Redis stores")
+                })?;
+                Some(Arc::new(Box::new(redis::RedisMemoryStore::new(
+                    &redis_config.url,
+                    redis_config.prefix.clone(),
+                )?) as Box<dyn MemoryStore>))
+            }
+            #[cfg(not(feature = "redis"))]
+            SessionStoreType::Redis => {
+                return Err(anyhow::anyhow!(
+                    "Redis feature not enabled. Compile with --features redis"
+                ));
+            }
+            SessionStoreType::Noop => {
+                Some(Arc::new(Box::new(NoopMemoryStore::default()) as Box<dyn MemoryStore>))
+            }
+        };
+
         Ok(InitializedStores {
             session_store,
             agent_store,
+            memory_store,
             task_store,
             thread_store,
             tool_session_store,

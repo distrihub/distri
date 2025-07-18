@@ -2,7 +2,7 @@ use crate::{
     agent::{AgentEventType, AgentFactoryRegistry, BaseAgent},
     error::AgentError,
     servers::registry::{McpServerRegistry, ServerMetadata},
-    stores::{AgentStore, ThreadStore, ToolSessionStore},
+    stores::{AgentStore, MemoryStore, ThreadStore, ToolSessionStore},
     tools::{get_tools, LlmToolsRegistry, ToolContext},
     types::{
         Configuration, CreateThreadRequest, Message, StoreConfig, Thread, ThreadSummary, ToolCall,
@@ -23,6 +23,7 @@ use super::ExecutorContext;
 #[derive(Clone)]
 pub struct AgentExecutor {
     pub agent_store: Arc<dyn AgentStore>,
+    pub memory_store: Option<Arc<Box<dyn MemoryStore>>>,
     pub tool_sessions: Option<Arc<Box<dyn ToolSessionStore>>>,
     pub registry: Arc<RwLock<McpServerRegistry>>,
     pub coordinator_rx: Arc<Mutex<mpsc::Receiver<CoordinatorMessage>>>,
@@ -36,6 +37,7 @@ pub struct AgentExecutor {
 #[derive(Default)]
 pub struct AgentExecutorBuilder {
     registry: Option<Arc<RwLock<McpServerRegistry>>>,
+    memory_store: Option<Arc<Box<dyn MemoryStore>>>,
     tool_sessions: Option<Arc<Box<dyn ToolSessionStore>>>,
     session_store: Option<Arc<Box<dyn SessionStore>>>,
     agent_store: Option<Arc<dyn AgentStore>>,
@@ -88,6 +90,9 @@ impl AgentExecutorBuilder {
         if self.agent_store.is_none() {
             self.agent_store = Some(stores.agent_store);
         }
+        if self.memory_store.is_none() {
+            self.memory_store = stores.memory_store;
+        }
         if self.task_store.is_none() {
             self.task_store = Some(stores.task_store);
         }
@@ -128,6 +133,7 @@ impl AgentExecutorBuilder {
 
         Ok(AgentExecutor {
             agent_store,
+            memory_store: self.memory_store,
             tool_sessions: self.tool_sessions,
             registry,
             coordinator_rx: Arc::new(Mutex::new(coordinator_rx)),
@@ -195,6 +201,7 @@ impl AgentExecutor {
             let tool_context = ToolContext {
                 agent_id: agent_id.clone(),
                 agent_store: self.agent_store.clone(),
+                memory_store: self.memory_store.clone(),
                 context: context.clone(),
                 event_tx,
                 coordinator_tx: self.coordinator_tx.clone(),
