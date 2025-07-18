@@ -88,6 +88,9 @@ pub async fn execute_code_with_tools(
 ) -> Result<Value, JsWorkerError> {
     let functions = tools.iter().map(to_function_definition).collect();
     let executor = CodeExecutor::new(context, tools);
+
+    let append_console = "globalThis.console = {log: rustyscript.async_functions['console_log']}";
+    let wrapped_code = format!("{}\n {}", append_console, code);
     let worker = JsWorker::new(JsWorkerOptions {
         timeout: std::time::Duration::from_secs(10),
         functions,
@@ -96,7 +99,7 @@ pub async fn execute_code_with_tools(
     .map_err(|e| JsWorkerError::JsError(e.to_string()))?;
 
     let result = worker
-        .execute(code)
+        .execute(&wrapped_code)
         .map_err(|e| JsWorkerError::Other(e.to_string()))?;
     Ok(result)
 }

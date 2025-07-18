@@ -14,6 +14,14 @@ pub enum CodeResponse {
     FinalAnswer(Value),
     ConsoleLog(Value),
 }
+impl CodeResponse {
+    pub fn as_value(&self) -> &Value {
+        match self {
+            CodeResponse::FinalAnswer(value) => value,
+            CodeResponse::ConsoleLog(value) => value,
+        }
+    }
+}
 
 pub struct FinalAnswerTool(pub mpsc::Sender<CodeResponse>);
 
@@ -178,7 +186,7 @@ impl Tool for ConsoleLogTool {
         let value = serde_json::from_str(&tool_call.input)
             .map_err(|e| AgentError::ToolExecution(format!("Invalid input: {}", e)))?;
 
-        tracing::debug!(
+        tracing::info!(
             "🔧 ConsoleLogTool: Executing console.log with value: {:?}",
             value
         );
@@ -188,7 +196,7 @@ impl Tool for ConsoleLogTool {
             .await
             .map_err(|e| AgentError::ToolExecution(format!("Failed to send console log: {}", e)))?;
 
-        tracing::debug!("🔧 ConsoleLogTool: Successfully sent console log through channel");
+        tracing::info!("🔧 ConsoleLogTool: Successfully sent console log through channel");
         Ok(Value::Null)
     }
 }

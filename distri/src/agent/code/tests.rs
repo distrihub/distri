@@ -58,6 +58,7 @@ async fn test_execute_code_with_final_answer() {
 
 #[tokio::test]
 async fn test_execute_code_with_console_log() {
+    tracing_subscriber::fmt::init();
     // Create a mock context for testing
     let agent_store = Arc::new(InMemoryAgentStore::new()) as Arc<dyn crate::stores::AgentStore>;
     let context = ToolContext {
@@ -101,27 +102,17 @@ async fn test_execute_code_with_console_log() {
     // The function should return null, but we should receive messages through the channel
     assert_eq!(result, Value::Null);
 
-    // Check that we received console log messages
-    let mut console_logs = Vec::new();
-    let mut final_answer = None;
+    let mut msgs = Vec::new();
 
     // Collect all messages from the channel
-    while let Ok(response) = rx.try_recv() {
-        match response {
-            CodeResponse::ConsoleLog(value) => {
-                console_logs.push(value);
-            }
-            CodeResponse::FinalAnswer(value) => {
-                final_answer = Some(value);
-            }
-        }
+    while let Some(response) = rx.recv().await {
+        msgs.push(response);
     }
 
-    // Verify console logs were captured
-    assert_eq!(console_logs.len(), 2);
-    assert!(console_logs[0].to_string().contains("Hello, world!"));
-    assert!(console_logs[1].to_string().contains("Test observation"));
-
-    // Verify final answer was received
-    assert_eq!(final_answer, Some(Value::String("Success".to_string())));
+    assert!(msgs[0].as_value().to_string().contains("Hello, world!"));
+    assert!(msgs[1].as_value().to_string().contains("Test observation"));
+    assert_eq!(
+        msgs[2].as_value().clone(),
+        Value::String("Success".to_string())
+    );
 }
