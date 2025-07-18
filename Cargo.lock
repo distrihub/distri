@@ -1743,6 +1743,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "distri-scraper"
+version = "0.1.0"
+dependencies = [
+ "actix-cors",
+ "actix-web",
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "clap",
+ "distri",
+ "distri-cli",
+ "distri-server",
+ "dotenv",
+ "mcp-spider",
+ "mcp-tavily",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
 name = "distri-search"
 version = "0.1.0"
 dependencies = [
