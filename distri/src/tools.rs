@@ -234,7 +234,7 @@ pub async fn execute_tool(
     registry: Arc<RwLock<McpServerRegistry>>,
     tool_sessions: Option<Arc<Box<dyn ToolSessionStore>>>,
     context: Arc<ExecutorContext>,
-) -> Result<String> {
+) -> Result<Value> {
     tracing::info!(
         "Executing tool '{}' with ID: {}",
         tool_call.tool_name,
@@ -279,7 +279,7 @@ impl<T: Transport + Clone> ToolExecutor<T> {
         mcp_server: &str,
         metadata: &ServerMetadata,
         tool_sessions: Option<Arc<Box<dyn ToolSessionStore>>>,
-    ) -> Result<String> {
+    ) -> Result<Value> {
         let name = tool_call.tool_name.clone();
         tracing::info!("Executing tool: {name}, mcp_server: {mcp_server}");
 
@@ -357,7 +357,7 @@ impl<T: Transport + Clone> ToolExecutor<T> {
             .content
             .first()
             .and_then(|c| match c {
-                ToolResponseContent::Text { text } => Some(text.clone()),
+                ToolResponseContent::Text { text } => Some(Value::String(text.clone())),
                 _ => None,
             })
             .ok_or_else(|| {
@@ -385,11 +385,8 @@ pub trait Tool: Send + Sync {
     }
 
     /// Execute the tool with given arguments
-    async fn execute(
-        &self,
-        tool_call: ToolCall,
-        context: ToolContext,
-    ) -> Result<String, AgentError>;
+    async fn execute(&self, tool_call: ToolCall, context: ToolContext)
+        -> Result<Value, AgentError>;
 }
 
 pub struct McpTool {
@@ -422,7 +419,7 @@ impl Tool for McpTool {
         &self,
         tool_call: ToolCall,
         context: ToolContext,
-    ) -> Result<String, AgentError> {
+    ) -> Result<Value, AgentError> {
         execute_tool(
             &tool_call,
             &self.mcp_definition,
@@ -563,7 +560,7 @@ impl Tool for ExternalTool {
         &self,
         _tool_call: ToolCall,
         _context: ToolContext,
-    ) -> Result<String, AgentError> {
+    ) -> Result<Value, AgentError> {
         // External tools should not be executed directly by the backend
         // They should be handled by the frontend through the ExternalToolCalls metadata
         Err(AgentError::ToolExecution(format!(
@@ -614,7 +611,7 @@ impl Tool for TransferToAgentTool {
         &self,
         tool_call: ToolCall,
         context: ToolContext,
-    ) -> Result<String, AgentError> {
+    ) -> Result<Value, AgentError> {
         let args = tool_call.input;
         let args: HashMap<String, Value> = serde_json::from_str(&args).unwrap_or_default();
         let target_agent = args
@@ -653,11 +650,14 @@ impl Tool for TransferToAgentTool {
                 context.agent_id,
                 target_agent
             );
-            Ok(format!(
-                "Transfer initiated to agent '{}'. Reason: {}",
-                target_agent,
-                reason.unwrap_or_else(|| "No reason provided".to_string())
-            ))
+            Ok(json!({
+                "status": "success",
+                "message": format!(
+                    "Transfer initiated to agent '{}'. Reason: {}",
+                    target_agent,
+                    reason.unwrap_or_else(|| "No reason provided".to_string())
+                )
+            }))
         } else {
             Err(AgentError::ToolExecution(format!(
                 "Target agent '{}' not found",

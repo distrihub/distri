@@ -174,7 +174,7 @@ impl AgentExecutor {
         tool_call: ToolCall,
         event_tx: Option<mpsc::Sender<AgentEvent>>,
         context: Arc<ExecutorContext>,
-    ) -> Result<String, AgentError> {
+    ) -> Result<serde_json::Value, AgentError> {
         // Get agent definition and create agent instance
         let definition = self
             .agent_store

@@ -48,8 +48,13 @@ impl JsExecutor for CodeExecutor {
             )
             .await
             .map_err(|e| JsWorkerError::Other(e.to_string()))?;
-        Ok(serde_json::Value::String(result))
+        Ok(result)
     }
+}
+
+pub struct CodeExecutionResult {
+    pub result: Value,
+    pub observations: Vec<Value>,
 }
 
 /// Execute Python-like code with tool injection (simplified version for demonstration)
@@ -60,7 +65,6 @@ pub async fn execute_code_with_tools(
 ) -> Result<Value, JsWorkerError> {
     let functions = tools.iter().map(to_function_definition).collect();
     let executor = CodeExecutor::new(context, tools);
-
     let worker = JsWorker::new(JsWorkerOptions {
         timeout: std::time::Duration::from_secs(10),
         functions,
@@ -68,7 +72,10 @@ pub async fn execute_code_with_tools(
     })
     .map_err(|e| JsWorkerError::JsError(e.to_string()))?;
 
-    worker.execute(code)
+    let result = worker
+        .execute(code)
+        .map_err(|e| JsWorkerError::Other(e.to_string()))?;
+    Ok(result)
 }
 
 fn to_function_definition(tool: &Arc<dyn Tool>) -> FunctionDefinition {

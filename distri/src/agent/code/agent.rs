@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::{
     agent::{
-        code::tools::{ExecuteCodeTool, FinalAnswerTool, PrintTool},
+        code::tools::{ExecuteCodeTool, FinalAnswerTool},
         hooks::CodeParsingHooks,
         AgentExecutor, AgentHooks, StandardAgent,
     },
@@ -36,7 +36,6 @@ impl CodeAgent {
     pub fn init_tools(tools: Vec<Arc<dyn Tool>>) -> Vec<Arc<dyn Tool>> {
         let mut tools = tools;
         tools.push(Arc::new(FinalAnswerTool));
-        tools.push(Arc::new(PrintTool));
 
         let inner_tools = tools.clone();
         tools.push(Arc::new(ExecuteCodeTool(inner_tools)));

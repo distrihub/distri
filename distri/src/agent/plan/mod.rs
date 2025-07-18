@@ -77,14 +77,6 @@ pub fn get_planner(strategy: Option<&str>) -> Arc<dyn Planner> {
     }
 }
 
-fn replace_variables(prompt: &str, variables: &HashMap<String, String>) -> String {
-    let mut prompt = prompt.to_owned();
-    for (key, value) in variables {
-        prompt = prompt.replace(&format!("{{{}}}", key), value);
-    }
-    prompt
-}
-
 pub fn convert_messages_to_steps(messages: &[Message]) -> String {
     let mut steps = Vec::new();
     for message in messages {

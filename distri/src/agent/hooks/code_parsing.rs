@@ -1,6 +1,12 @@
-use crate::{agent::AgentHooks, error::AgentError, tools::Tool, types::Message};
+use crate::{
+    agent::{hooks::get_prompts, AgentHooks},
+    error::AgentError,
+    prompt_utils::replace_variables,
+    tools::Tool,
+    types::{get_tool_descriptions, Message},
+};
 use serde_json::Value;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 use tracing::{debug, info};
 
 #[derive(Clone)]
@@ -19,6 +25,15 @@ impl std::fmt::Debug for CodeParsingHooks {
 }
 
 impl CodeParsingHooks {
+    pub fn get_prompt(&self, tools: &str) -> String {
+        let prompt = get_prompts();
+        let prompt = prompt.get("code").unwrap();
+        replace_variables(
+            &prompt,
+            &HashMap::from([("tools".to_string(), tools.to_string())]),
+        )
+    }
+
     pub fn new(tools: Vec<Arc<dyn Tool>>) -> Self {
         Self {
             tools,
@@ -72,41 +87,9 @@ impl CodeParsingHooks {
             observations.join("\n")
         };
 
-        let mut instructions = format!(
-            r#"
-You are an expert assistant who can solve any task using code. You will be given a task to solve as best you can.
-To do so, you have access to a list of tools: these tools are Python functions which you can call with code.
-To solve the task, you must plan forward to proceed in a series of steps, in a cycle of 'Thought:', 'Code:', and 'Observation:' sequences.
+        let tools_str = get_tool_descriptions(&self.tools, None);
 
-At each step, in the 'Thought:' attribute, you should first explain your reasoning towards solving the task and the tools that you want to use.
-Then in the 'Code' attribute, you should write the code in simple Python.
-During each intermediate step, you can use 'print()' to save whatever important information you will then need.
-These print outputs will then appear in the 'Observation:' field, which will be available as input for the next step.
-In the end you have to return a final answer using the `final_answer` tool.
-
-You MUST generate a JSON object with the following structure:
-```json
-{{
-  "thought": "Your reasoning and plan for this step",
-  "code": "Python code to execute"
-}}
-```
-
-Available tools in Python:
-"#
-        );
-
-        // Add available tools
-        for tool in self.tools.iter() {
-            let def = tool.get_tool_definition();
-            let name = &def.function.name;
-            let description = def
-                .function
-                .description
-                .as_deref()
-                .unwrap_or("No description");
-            instructions.push_str(&format!("- {}: {}\n", name, description));
-        }
+        let mut instructions = self.get_prompt(&tools_str);
 
         instructions.push_str(&format!("\nPrevious observations:\n{}\n", observations_str));
 

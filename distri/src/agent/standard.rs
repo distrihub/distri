@@ -792,7 +792,7 @@ pub async fn execute_tool_calls(
                             context.clone(),
                         )
                         .await
-                        .unwrap_or_else(|err| format!("Error: {}", err));
+                        .unwrap_or_else(|err| serde_json::Value::String(format!("Error: {}", err)));
                     info!("Agent: Tool response: {}", content);
 
                     if let Some(event_tx) = &event_tx {
@@ -802,7 +802,7 @@ pub async fn execute_tool_calls(
                                 run_id: run_id.clone(),
                                 event: AgentEventType::ToolCallResult {
                                     tool_call_id: mapped_tool_call.tool_call_id.clone(),
-                                    result: content.clone(),
+                                    result: content.to_string(),
                                 },
                             })
                             .await
@@ -818,7 +818,7 @@ pub async fn execute_tool_calls(
                         name: Some(mapped_tool_call.tool_name.clone()),
                         metadata: Some(MessageMetadata::ToolResponse {
                             tool_call_id: mapped_tool_call.tool_call_id.clone(),
-                            result: content.clone(),
+                            result: content.to_string(),
                         }),
                         ..Default::default()
                     }

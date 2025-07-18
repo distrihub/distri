@@ -26,59 +26,8 @@ impl Tool for FinalAnswerTool {
                 name: "final_answer".to_string(),
                 description: Some("Return the final answer to complete the task".to_string()),
                 parameters: Some(json!({
-                    "type": "object",
-                    "properties": {
-                        "answer": {
-                            "type": "string",
-                            "description": "The final answer to the task"
-                        }
-                    },
-                    "required": ["answer"]
-                })),
-                strict: None,
-            },
-        }
-    }
-
-    async fn execute(
-        &self,
-        tool_call: ToolCall,
-        _context: ToolContext,
-    ) -> Result<String, AgentError> {
-        let args: HashMap<String, Value> = serde_json::from_str(&tool_call.input)
-            .map_err(|e| AgentError::ToolExecution(format!("Invalid input: {}", e)))?;
-
-        let answer = args
-            .get("answer")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| AgentError::ToolExecution("Missing answer parameter".to_string()))?;
-
-        Ok(answer.to_string())
-    }
-}
-
-/// Implementation of the print built-in tool for code agents
-pub struct PrintTool;
-
-#[async_trait::async_trait]
-impl Tool for PrintTool {
-    fn get_name(&self) -> String {
-        "print".to_string()
-    }
-
-    fn get_description(&self) -> String {
-        "Print output to record observations".to_string()
-    }
-
-    fn get_tool_definition(&self) -> async_openai::types::ChatCompletionTool {
-        async_openai::types::ChatCompletionTool {
-            r#type: async_openai::types::ChatCompletionToolType::Function,
-            function: async_openai::types::FunctionObject {
-                name: "print".to_string(),
-                description: Some("Print output to record observations".to_string()),
-                parameters: Some(json!({
                     "type": "string",
-                    "description": "The text to print/output"
+                    "description": "The final answer to the task"
                 })),
                 strict: None,
             },
@@ -89,8 +38,10 @@ impl Tool for PrintTool {
         &self,
         tool_call: ToolCall,
         _context: ToolContext,
-    ) -> Result<String, AgentError> {
-        Ok(format!("Observation: {}", tool_call.input))
+    ) -> Result<Value, AgentError> {
+        let value = serde_json::from_str(&tool_call.input)
+            .map_err(|e| AgentError::ToolExecution(format!("Invalid input: {}", e)))?;
+        Ok(value)
     }
 }
 
@@ -136,7 +87,7 @@ impl Tool for ExecuteCodeTool {
         &self,
         tool_call: ToolCall,
         context: ToolContext,
-    ) -> Result<String, AgentError> {
+    ) -> Result<Value, AgentError> {
         let args: HashMap<String, Value> = serde_json::from_str(&tool_call.input)
             .map_err(|e| AgentError::ToolExecution(format!("Invalid input: {}", e)))?;
 
@@ -154,7 +105,7 @@ impl Tool for ExecuteCodeTool {
         match crate::agent::code::execute_code_with_tools(code, context.clone(), self.0.clone())
             .await
         {
-            Ok(result) => Ok(result.to_string()),
+            Ok(result) => Ok(result),
             Err(e) => Err(AgentError::ToolExecution(format!(
                 "Code execution failed: {}",
                 e

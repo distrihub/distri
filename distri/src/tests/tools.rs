@@ -40,7 +40,7 @@ async fn execute_tool_test() {
     .unwrap();
 
     println!("{result}");
-    assert!(!result.contains("Error"));
+    assert!(!result.to_string().contains("Error"));
 }
 
 #[tokio::test]

@@ -2,9 +2,10 @@ use std::{collections::HashMap, sync::Arc};
 
 use crate::{
     agent::{
-        plan::{convert_messages_to_steps, replace_variables, Plan, Planner},
+        plan::{convert_messages_to_steps, Plan, Planner},
         ExecutorContext,
     },
+    prompt_utils::replace_variables,
     types::{Message, PlanConfig},
     AgentError,
 };
