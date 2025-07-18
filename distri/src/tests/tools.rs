@@ -162,3 +162,240 @@ fn register_tools<T: Transport>(server: &mut ServerBuilder<T>) -> Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        agent::ExecutorContext,
+        tools::{SessionDataTool, Tool, ToolContext},
+        types::ToolCall,
+        LocalSessionStore, SessionStore,
+    };
+    use std::sync::Arc;
+    use tokio::sync::mpsc;
+
+    async fn create_test_context() -> ToolContext {
+        let session_store = Arc::new(Box::new(LocalSessionStore::new()) as Box<dyn SessionStore>);
+        let executor_context = Arc::new(ExecutorContext {
+            thread_id: "test-thread".to_string(),
+            user_id: Some("test-user".to_string()),
+            session_store,
+            metadata: None,
+        });
+
+        let (coordinator_tx, _coordinator_rx) = mpsc::channel(100);
+        let agent_store = Arc::new(crate::stores::memory::InMemoryAgentStore::new());
+
+        ToolContext {
+            agent_id: "test-agent".to_string(),
+            agent_store,
+            context: executor_context,
+            event_tx: None,
+            coordinator_tx,
+            tool_sessions: None,
+            registry: Arc::new(tokio::sync::RwLock::new(
+                crate::servers::registry::McpServerRegistry::new(),
+            )),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_session_data_tool_set_and_get() {
+        let tool = SessionDataTool;
+        let context = create_test_context().await;
+
+        // Test setting a value
+        let set_call = ToolCall {
+            tool_call_id: "test-set".to_string(),
+            tool_name: "session_data".to_string(),
+            input: r#"{"action": "set", "key": "test_key", "value": "test_value"}"#.to_string(),
+        };
+
+        let result = tool.execute(set_call, context.clone()).await.unwrap();
+        assert_eq!(result["status"], "success");
+        assert_eq!(result["key"], "test_key");
+        assert_eq!(result["value"], "test_value");
+
+        // Test getting the value
+        let get_call = ToolCall {
+            tool_call_id: "test-get".to_string(),
+            tool_name: "session_data".to_string(),
+            input: r#"{"action": "get", "key": "test_key"}"#.to_string(),
+        };
+
+        let result = tool.execute(get_call, context.clone()).await.unwrap();
+        assert_eq!(result["status"], "success");
+        assert_eq!(result["key"], "test_key");
+        assert_eq!(result["value"], "test_value");
+        assert_eq!(result["found"], true);
+    }
+
+    #[tokio::test]
+    async fn test_session_data_tool_get_nonexistent() {
+        let tool = SessionDataTool;
+        let context = create_test_context().await;
+
+        // Test getting a non-existent value
+        let get_call = ToolCall {
+            tool_call_id: "test-get-missing".to_string(),
+            tool_name: "session_data".to_string(),
+            input: r#"{"action": "get", "key": "missing_key"}"#.to_string(),
+        };
+
+        let result = tool.execute(get_call, context).await.unwrap();
+        assert_eq!(result["status"], "success");
+        assert_eq!(result["key"], "missing_key");
+        assert_eq!(result["found"], false);
+        assert!(result["value"].is_null());
+    }
+
+    #[tokio::test]
+    async fn test_session_data_tool_delete() {
+        let tool = SessionDataTool;
+        let context = create_test_context().await;
+
+        // First set a value
+        let set_call = ToolCall {
+            tool_call_id: "test-set".to_string(),
+            tool_name: "session_data".to_string(),
+            input: r#"{"action": "set", "key": "delete_me", "value": "temporary"}"#.to_string(),
+        };
+        tool.execute(set_call, context.clone()).await.unwrap();
+
+        // Now delete it
+        let delete_call = ToolCall {
+            tool_call_id: "test-delete".to_string(),
+            tool_name: "session_data".to_string(),
+            input: r#"{"action": "delete", "key": "delete_me"}"#.to_string(),
+        };
+
+        let result = tool.execute(delete_call, context.clone()).await.unwrap();
+        assert_eq!(result["status"], "success");
+        assert_eq!(result["key"], "delete_me");
+
+        // Verify it's gone
+        let get_call = ToolCall {
+            tool_call_id: "test-get-deleted".to_string(),
+            tool_name: "session_data".to_string(),
+            input: r#"{"action": "get", "key": "delete_me"}"#.to_string(),
+        };
+
+        let result = tool.execute(get_call, context).await.unwrap();
+        assert_eq!(result["found"], false);
+    }
+
+    #[tokio::test]
+    async fn test_session_data_tool_clear() {
+        let tool = SessionDataTool;
+        let context = create_test_context().await;
+
+        // Set multiple values
+        for i in 1..=3 {
+            let set_call = ToolCall {
+                tool_call_id: format!("test-set-{}", i),
+                tool_name: "session_data".to_string(),
+                input: format!(
+                    r#"{{"action": "set", "key": "key{}", "value": "value{}"}}"#,
+                    i, i
+                ),
+            };
+            tool.execute(set_call, context.clone()).await.unwrap();
+        }
+
+        // Clear all
+        let clear_call = ToolCall {
+            tool_call_id: "test-clear".to_string(),
+            tool_name: "session_data".to_string(),
+            input: r#"{"action": "clear"}"#.to_string(),
+        };
+
+        let result = tool.execute(clear_call, context.clone()).await.unwrap();
+        assert_eq!(result["status"], "success");
+
+        // Verify all are gone
+        for i in 1..=3 {
+            let get_call = ToolCall {
+                tool_call_id: format!("test-get-cleared-{}", i),
+                tool_name: "session_data".to_string(),
+                input: format!(r#"{{"action": "get", "key": "key{}"}}"#, i),
+            };
+
+            let result = tool.execute(get_call, context.clone()).await.unwrap();
+            assert_eq!(result["found"], false);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_session_data_tool_list() {
+        let tool = SessionDataTool;
+        let context = create_test_context().await;
+
+        // Test list operation (should return partial success due to limitation)
+        let list_call = ToolCall {
+            tool_call_id: "test-list".to_string(),
+            tool_name: "session_data".to_string(),
+            input: r#"{"action": "list"}"#.to_string(),
+        };
+
+        let result = tool.execute(list_call, context).await.unwrap();
+        assert_eq!(result["status"], "partial_success");
+        assert!(result["message"]
+            .as_str()
+            .unwrap()
+            .contains("not fully supported"));
+    }
+
+    #[tokio::test]
+    async fn test_session_data_tool_invalid_action() {
+        let tool = SessionDataTool;
+        let context = create_test_context().await;
+
+        let invalid_call = ToolCall {
+            tool_call_id: "test-invalid".to_string(),
+            tool_name: "session_data".to_string(),
+            input: r#"{"action": "invalid_action"}"#.to_string(),
+        };
+
+        let result = tool.execute(invalid_call, context).await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Invalid action 'invalid_action'"));
+    }
+
+    #[tokio::test]
+    async fn test_session_data_tool_missing_parameters() {
+        let tool = SessionDataTool;
+        let context = create_test_context().await;
+
+        // Test missing key for set action
+        let set_call = ToolCall {
+            tool_call_id: "test-missing-key".to_string(),
+            tool_name: "session_data".to_string(),
+            input: r#"{"action": "set", "value": "some_value"}"#.to_string(),
+        };
+
+        let result = tool.execute(set_call, context.clone()).await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Missing key parameter"));
+
+        // Test missing value for set action
+        let set_call = ToolCall {
+            tool_call_id: "test-missing-value".to_string(),
+            tool_name: "session_data".to_string(),
+            input: r#"{"action": "set", "key": "some_key"}"#.to_string(),
+        };
+
+        let result = tool.execute(set_call, context).await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Missing value parameter"));
+    }
+}

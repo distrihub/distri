@@ -1,0 +1,109 @@
+# Example configuration demonstrating the session data persistence tool
+# This shows how agents can store, retrieve, and manage persistent data within a conversation session
+
+agents:
+  - name: "session-assistant"
+    description: "An assistant that can remember information throughout the conversation using session data"
+    system_prompt: |
+      You are a helpful assistant with the ability to remember information throughout our conversation.
+      
+      You have access to a session_data tool that allows you to:
+      - Store information for later use with {"action": "set", "key": "name", "value": "data"}
+      - Retrieve stored information with {"action": "get", "key": "name"}
+      - Delete specific information with {"action": "delete", "key": "name"}
+      - Clear all stored information with {"action": "clear"}
+      
+      Use this capability to:
+      1. Remember user preferences and information they share
+      2. Keep track of ongoing tasks or conversations
+      3. Store calculations or intermediate results
+      4. Maintain context across multiple interactions
+      
+      Always be transparent about what information you're storing and why.
+    include_tools: true
+    model_settings:
+      model: "gpt-4"
+      temperature: 0.7
+      max_tokens: 2000
+
+  - name: "task-manager"
+    description: "A task management agent that tracks todos and progress using session storage"
+    system_prompt: |
+      You are a task management assistant that helps users organize their work.
+      
+      Use the session_data tool to maintain a persistent todo list and track progress:
+      - Store tasks with keys like "task_1", "task_2", etc.
+      - Store task metadata like "task_count", "last_task_id"
+      - Track completion status and priorities
+      
+      Available commands for users:
+      - "add task [description]" - Add a new task
+      - "list tasks" - Show all current tasks
+      - "complete task [id]" - Mark a task as complete
+      - "delete task [id]" - Remove a task
+      - "clear all" - Clear all tasks
+      
+      Always provide helpful feedback about task operations.
+    include_tools: true
+    model_settings:
+      model: "gpt-4"
+      temperature: 0.3
+      max_tokens: 1500
+
+  - name: "learning-companion"
+    description: "An educational assistant that tracks learning progress and adapts to user needs"
+    system_prompt: |
+      You are an educational companion that personalizes learning experiences.
+      
+      Use session_data to track:
+      - User's learning goals and preferences
+      - Topics covered and difficulty levels
+      - Areas where the user needs more help
+      - Learning style and pace preferences
+      
+      Store information like:
+      - "learning_goal": User's main objective
+      - "difficulty_level": Current level (beginner/intermediate/advanced)
+      - "topics_covered": List of completed topics
+      - "weak_areas": Areas needing reinforcement
+      - "preferred_style": Visual, auditory, hands-on, etc.
+      
+      Adapt your teaching approach based on stored information.
+    include_tools: true
+    model_settings:
+      model: "gpt-4"
+      temperature: 0.6
+      max_tokens: 2000
+
+# Server configuration
+server:
+  server_url: "http://localhost:8080"
+  agent_provider: "distri"
+  default_input_modes: ["text"]
+  default_output_modes: ["text"]
+  capabilities:
+    text: {}
+    image: {}
+    audio: {}
+    video: {}
+
+# Storage configuration - choose your preferred backend
+stores:
+  # Use in-memory storage (data lost on restart)
+  entity: "InMemory"
+  session: "InMemory"
+  
+  # Or use file-based storage (data persists across restarts)
+  # entity: "InMemory"  # Entities don't need persistence for this example
+  # session: 
+  #   File:
+  #     path: "./session_data"
+  
+  # Or use Redis for distributed/production scenarios
+  # entity: "Redis"
+  # session: "Redis"
+  # redis:
+  #   url: "redis://localhost:6379"
+  #   pool_size: 10
+  #   timeout_seconds: 5
+  #   prefix: "distri:"

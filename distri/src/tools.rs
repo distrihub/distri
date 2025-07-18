@@ -131,6 +131,10 @@ pub async fn get_tools(
         "transfer_to_agent".to_string(),
         Arc::new(TransferToAgentTool) as Arc<dyn Tool>,
     );
+    all_tools.insert(
+        "session_data".to_string(),
+        Arc::new(SessionDataTool) as Arc<dyn Tool>,
+    );
     Ok(all_tools)
 }
 
@@ -677,6 +681,172 @@ impl Tool for TransferToAgentTool {
                 "Target agent '{}' not found",
                 target_agent
             )))
+        }
+    }
+}
+
+/// Implementation of the session data persistence tool
+pub struct SessionDataTool;
+
+#[async_trait::async_trait]
+impl Tool for SessionDataTool {
+    fn get_name(&self) -> String {
+        "session_data".to_string()
+    }
+
+    fn get_description(&self) -> String {
+        "Store, retrieve, and manage key-value data that persists throughout the conversation session".to_string()
+    }
+
+    fn get_tool_definition(&self) -> async_openai::types::ChatCompletionTool {
+        let description = self.get_description();
+        async_openai::types::ChatCompletionTool {
+            r#type: async_openai::types::ChatCompletionToolType::Function,
+            function: async_openai::types::FunctionObject {
+                name: "session_data".to_string(),
+                description: Some(description),
+                parameters: Some(json!({
+                    "type": "object",
+                    "properties": {
+                        "action": {
+                            "type": "string",
+                            "enum": ["set", "get", "delete", "list", "clear"],
+                            "description": "The action to perform: 'set' to store data, 'get' to retrieve data, 'delete' to remove a key, 'list' to show all keys, 'clear' to remove all data"
+                        },
+                        "key": {
+                            "type": "string",
+                            "description": "The key to store or retrieve data (required for set, get, delete actions)"
+                        },
+                        "value": {
+                            "type": "string",
+                            "description": "The value to store (required for set action)"
+                        }
+                    },
+                    "required": ["action"]
+                })),
+                strict: None,
+            },
+        }
+    }
+
+    async fn execute(
+        &self,
+        tool_call: ToolCall,
+        context: ToolContext,
+    ) -> Result<Value, AgentError> {
+        let args = tool_call.input;
+        let args: HashMap<String, Value> = serde_json::from_str(&args).unwrap_or_default();
+        
+        let action = args
+            .get("action")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| AgentError::ToolExecution("Missing action parameter".to_string()))?;
+
+        let thread_id = &context.context.thread_id;
+
+        match action {
+            "set" => {
+                let key = args
+                    .get("key")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| AgentError::ToolExecution("Missing key parameter for set action".to_string()))?;
+                
+                let value = args
+                    .get("value")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| AgentError::ToolExecution("Missing value parameter for set action".to_string()))?;
+
+                context.context.session_store
+                    .set_value(thread_id, key, value)
+                    .await
+                    .map_err(|e| AgentError::ToolExecution(format!("Failed to set value: {}", e)))?;
+
+                tracing::info!("Set session data: {}={} for thread {}", key, value, thread_id);
+                Ok(json!({
+                    "status": "success",
+                    "message": format!("Successfully stored data for key '{}'", key),
+                    "key": key,
+                    "value": value
+                }))
+            }
+            "get" => {
+                let key = args
+                    .get("key")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| AgentError::ToolExecution("Missing key parameter for get action".to_string()))?;
+
+                let value = context.context.session_store
+                    .get_value(thread_id, key)
+                    .await
+                    .map_err(|e| AgentError::ToolExecution(format!("Failed to get value: {}", e)))?;
+
+                match value {
+                    Some(val) => {
+                        tracing::info!("Retrieved session data: {}={} for thread {}", key, val, thread_id);
+                        Ok(json!({
+                            "status": "success",
+                            "key": key,
+                            "value": val,
+                            "found": true
+                        }))
+                    }
+                    None => {
+                        tracing::info!("Session data not found for key: {} in thread {}", key, thread_id);
+                        Ok(json!({
+                            "status": "success",
+                            "key": key,
+                            "value": null,
+                            "found": false,
+                            "message": format!("No data found for key '{}'", key)
+                        }))
+                    }
+                }
+            }
+            "delete" => {
+                let key = args
+                    .get("key")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| AgentError::ToolExecution("Missing key parameter for delete action".to_string()))?;
+
+                context.context.session_store
+                    .delete_value(thread_id, key)
+                    .await
+                    .map_err(|e| AgentError::ToolExecution(format!("Failed to delete value: {}", e)))?;
+
+                tracing::info!("Deleted session data for key: {} in thread {}", key, thread_id);
+                Ok(json!({
+                    "status": "success",
+                    "message": format!("Successfully deleted data for key '{}'", key),
+                    "key": key
+                }))
+            }
+            "list" => {
+                // Note: The SessionStore trait doesn't have a list_keys method, so we'll note this limitation
+                tracing::info!("List operation requested for thread {}", thread_id);
+                Ok(json!({
+                    "status": "partial_success",
+                    "message": "List operation is not fully supported by the current SessionStore implementation. You can only retrieve data if you know the specific keys.",
+                    "suggestion": "Use specific keys with 'get' action to retrieve stored data"
+                }))
+            }
+            "clear" => {
+                context.context.session_store
+                    .clear_session(thread_id)
+                    .await
+                    .map_err(|e| AgentError::ToolExecution(format!("Failed to clear session: {}", e)))?;
+
+                tracing::info!("Cleared all session data for thread {}", thread_id);
+                Ok(json!({
+                    "status": "success",
+                    "message": "Successfully cleared all session data"
+                }))
+            }
+            _ => {
+                Err(AgentError::ToolExecution(format!(
+                    "Invalid action '{}'. Valid actions are: set, get, delete, list, clear",
+                    action
+                )))
+            }
         }
     }
 }
