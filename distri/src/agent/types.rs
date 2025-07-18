@@ -226,7 +226,7 @@ pub trait BaseAgent: Send + Sync + std::fmt::Debug {
 
     fn get_description(&self) -> &str;
     fn get_definition(&self) -> AgentDefinition;
-    fn get_tools(&self) -> Vec<&Box<dyn Tool>>;
+    fn get_tools(&self) -> Vec<Arc<dyn Tool>>;
 
     // Used in deserialization
     fn agent_type(&self) -> AgentType;

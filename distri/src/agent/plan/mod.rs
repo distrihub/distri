@@ -48,7 +48,7 @@ pub trait Planner: Send + Sync {
     ) -> Result<String, AgentError> {
         let planning_executor = LLMExecutor::new(
             get_planning_definition(plan_config.model_settings.clone()),
-            Arc::default(),
+            vec![],
             context.clone(),
             None,
             Some("plan".to_string()),

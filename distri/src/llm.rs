@@ -4,7 +4,7 @@ use crate::{
     agent::{AgentEventType, ExecutorContext, ModelLogger},
     error::AgentError,
     langdb::GatewayConfig,
-    tools::LlmToolsRegistry,
+    tools::Tool,
     types::{LlmDefinition, Message, MessageMetadata, MessageRole, ModelProvider, ToolCall},
 };
 use async_openai::{
@@ -37,7 +37,7 @@ pub struct LLMResponse {
 
 pub struct LLMExecutor {
     llm_def: LlmDefinition,
-    tools_registry: Arc<LlmToolsRegistry>,
+    tools: Vec<Arc<dyn Tool>>,
     model_logger: ModelLogger,
     context: Arc<ExecutorContext>,
     additional_headers: Option<HashMap<String, String>>,
@@ -50,24 +50,21 @@ pub const DEFAULT_MODEL: &str = "gpt-4o-mini";
 impl LLMExecutor {
     pub fn new(
         llm_def: LlmDefinition,
-        tools_registry: Arc<LlmToolsRegistry>,
+        tools: Vec<Arc<dyn Tool>>,
         context: Arc<ExecutorContext>,
         additional_headers: Option<HashMap<String, String>>,
         label: Option<String>,
     ) -> Self {
         let name = &llm_def.name;
         // Log the number of tools being passed
-        tracing::debug!(
-            "Initializing LLM {name} with {} server tools",
-            tools_registry.tools.len()
-        );
+        tracing::debug!("Initializing LLM {name} with {} server tools", tools.len());
 
         let model_logger = ModelLogger::new(context.verbose);
-        model_logger.log_llm_definition(&llm_def, &tools_registry);
+        model_logger.log_llm_definition(&llm_def, &tools);
 
         Self {
             llm_def,
-            tools_registry,
+            tools,
             model_logger,
             context,
             additional_headers,
@@ -359,7 +356,8 @@ impl LLMExecutor {
             settings.model
         );
 
-        let tools = self.tools_registry.get_definitions();
+        let tools: Vec<async_openai::types::ChatCompletionTool> =
+            self.tools.iter().map(|t| t.get_tool_definition()).collect();
         tracing::debug!("Tools: {tools:?}",);
 
         let name = format!("{}_schema", self.llm_def.name);

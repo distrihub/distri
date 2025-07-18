@@ -23,7 +23,7 @@ macro_rules! delegate_base_agent {
                 self.$inner_field.get_description()
             }
 
-            fn get_tools(&self) -> Vec<&Box<dyn $crate::tools::Tool>> {
+            fn get_tools(&self) -> Vec<Arc<dyn $crate::tools::Tool>> {
                 self.$inner_field.get_tools()
             }
 

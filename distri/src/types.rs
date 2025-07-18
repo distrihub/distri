@@ -5,7 +5,7 @@ use distri_a2a::{AgentCapabilities, AgentProvider, AgentSkill, SecurityScheme};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{self, json};
-use std::{collections::HashMap, time::SystemTime};
+use std::{collections::HashMap, sync::Arc, time::SystemTime};
 use uuid;
 
 pub mod a2a {
@@ -557,20 +557,17 @@ pub const DEFAULT_TOOL_DESCRIPTION_TEMPLATE: &str = r#"
     Returns an output of type: {output_type}
 "#;
 
-pub fn get_tool_descriptions(
-    tools: &HashMap<String, Box<dyn Tool>>,
-    template: Option<&str>,
-) -> String {
+pub fn get_tool_descriptions(tools: &Vec<Arc<dyn Tool>>, template: Option<&str>) -> String {
     let template = template.unwrap_or(DEFAULT_TOOL_DESCRIPTION_TEMPLATE);
 
     tools
         .iter()
-        .map(|(_, t)| get_tool_description(t, template))
+        .map(|t| get_tool_description(t, template))
         .collect::<Vec<String>>()
         .join("\n")
 }
 
-pub fn get_tool_description(tool: &Box<dyn Tool>, template: &str) -> String {
+pub fn get_tool_description(tool: &Arc<dyn Tool>, template: &str) -> String {
     let definition = tool.get_tool_definition();
     template
         .replace("{name}", &tool.get_name())

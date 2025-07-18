@@ -2,6 +2,7 @@ use crate::{
     agent::{AgentEvent, AgentHooks, StandardAgent},
     delegate_base_agent,
     error::AgentError,
+    tools::Tool,
     types::{AgentDefinition, Message},
     SessionStore,
 };
@@ -27,12 +28,12 @@ impl Agent {
     /// Create a new agent with the given hooks
     pub fn new(
         definition: AgentDefinition,
-        tools_registry: Arc<crate::tools::LlmToolsRegistry>,
+        tools: Vec<Arc<dyn Tool>>,
         coordinator: Arc<crate::agent::AgentExecutor>,
         session_store: Arc<Box<dyn SessionStore>>,
         hooks: Vec<Arc<dyn AgentHooks>>,
     ) -> Self {
-        let base = StandardAgent::new(definition, tools_registry, coordinator, session_store);
+        let base = StandardAgent::new(definition, tools, coordinator, session_store);
 
         Self { base, hooks }
     }
@@ -40,18 +41,12 @@ impl Agent {
     /// Create a standard agent (no additional hooks)
     pub fn standard(
         definition: AgentDefinition,
-        tools_registry: Arc<crate::tools::LlmToolsRegistry>,
+        tools: Vec<Arc<dyn Tool>>,
         coordinator: Arc<crate::agent::AgentExecutor>,
 
         session_store: Arc<Box<dyn SessionStore>>,
     ) -> Self {
-        Self::new(
-            definition,
-            tools_registry,
-            coordinator,
-            session_store,
-            Vec::new(),
-        )
+        Self::new(definition, tools, coordinator, session_store, Vec::new())
     }
 
     /// Add a hook to the agent

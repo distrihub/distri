@@ -1,8 +1,10 @@
+use std::sync::Arc;
+
 use comfy_table::{modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL, ContentArrangement, Table};
 use tracing::info;
 
 use crate::{
-    tools::LlmToolsRegistry,
+    tools::Tool,
     types::{LlmDefinition, Message},
 };
 
@@ -16,7 +18,7 @@ impl ModelLogger {
         Self { verbose }
     }
 
-    pub fn log_llm_definition(&self, llm_def: &LlmDefinition, tools_registry: &LlmToolsRegistry) {
+    pub fn log_llm_definition(&self, llm_def: &LlmDefinition, tools: &Vec<Arc<dyn Tool>>) {
         if !self.verbose {
             return;
         }
@@ -29,7 +31,7 @@ impl ModelLogger {
         table.set_header(vec!["Model", "Settings", "Tools"]);
 
         let settings_str = format!("{:#?}", llm_def);
-        let tools_str = tools_table(tools_registry).to_string();
+        let tools_str = tools_table(tools).to_string();
 
         table.add_row(vec![llm_def.name.clone(), settings_str, tools_str]);
         tracing::info!("\n{}", table);
@@ -138,7 +140,7 @@ impl ModelLogger {
     }
 }
 
-pub fn tools_table(tools_registry: &LlmToolsRegistry) -> Table {
+pub fn tools_table(tools: &Vec<Arc<dyn Tool>>) -> Table {
     let mut table = Table::new()
         .load_preset(UTF8_FULL)
         .apply_modifier(UTF8_ROUND_CORNERS)
@@ -146,7 +148,8 @@ pub fn tools_table(tools_registry: &LlmToolsRegistry) -> Table {
         .to_owned();
 
     table.add_row(vec!["Server", "Tools"]);
-    for (name, tool) in tools_registry.tools.iter() {
+    for tool in tools {
+        let name = tool.get_name();
         let mut inner_table = Table::new()
             .load_preset(UTF8_FULL)
             .apply_modifier(UTF8_ROUND_CORNERS)

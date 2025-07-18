@@ -2,7 +2,7 @@ use distri::{
     agent::{AgentEvent, AgentExecutor, AgentHooks, ExecutorContext, StandardAgent, StepResult},
     delegate_base_agent,
     error::AgentError,
-    tools::LlmToolsRegistry,
+    tools::Tool,
     types::{AgentDefinition, Message},
     SessionStore,
 };
@@ -27,11 +27,11 @@ impl std::fmt::Debug for LoggingAgent {
 impl LoggingAgent {
     pub fn new(
         definition: AgentDefinition,
-        tools_registry: Arc<LlmToolsRegistry>,
+        tools: Vec<Arc<dyn Tool>>,
         coordinator: Arc<AgentExecutor>,
         session_store: Arc<Box<dyn SessionStore>>,
     ) -> Self {
-        let inner = StandardAgent::new(definition, tools_registry, coordinator, session_store);
+        let inner = StandardAgent::new(definition, tools, coordinator, session_store);
         Self { inner }
     }
 }
@@ -70,12 +70,12 @@ impl std::fmt::Debug for FilteringAgent {
 impl FilteringAgent {
     pub fn new(
         definition: AgentDefinition,
-        tools_registry: Arc<LlmToolsRegistry>,
+        tools: Vec<Arc<dyn Tool>>,
         coordinator: Arc<AgentExecutor>,
         session_store: Arc<Box<dyn SessionStore>>,
         banned_words: Vec<String>,
     ) -> Self {
-        let inner = StandardAgent::new(definition, tools_registry, coordinator, session_store);
+        let inner = StandardAgent::new(definition, tools, coordinator, session_store);
         Self {
             inner,
             banned_words,
@@ -114,10 +114,10 @@ impl AgentHooks for FilteringAgent {
 
 /// Factory functions for custom agents
 pub fn create_logging_agent_factory() -> Arc<distri::agent::factory::AgentFactoryFn> {
-    Arc::new(|definition, tools_registry, executor, session_store| {
+    Arc::new(|definition, tools, executor, session_store| {
         Box::new(LoggingAgent::new(
             definition,
-            tools_registry,
+            tools,
             executor,
             session_store,
         ))
@@ -127,10 +127,10 @@ pub fn create_logging_agent_factory() -> Arc<distri::agent::factory::AgentFactor
 pub fn create_filtering_agent_factory(
     banned_words: Vec<String>,
 ) -> Arc<distri::agent::factory::AgentFactoryFn> {
-    Arc::new(move |definition, tools_registry, executor, session_store| {
+    Arc::new(move |definition, tools, executor, session_store| {
         Box::new(FilteringAgent::new(
             definition,
-            tools_registry,
+            tools,
             executor,
             session_store,
             banned_words.clone(),

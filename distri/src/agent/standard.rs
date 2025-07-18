@@ -5,7 +5,7 @@ use crate::{
     },
     error::AgentError,
     llm::LLMExecutor,
-    tools::{LlmToolsRegistry, Tool},
+    tools::Tool,
     types::{
         get_tool_descriptions, AgentDefinition, Message, MessageMetadata, MessageRole, Part,
         PlanConfig, TaskStatus, ToolCall, DEFAULT_TOOL_DESCRIPTION_TEMPLATE,
@@ -22,7 +22,7 @@ use crate::agent::ExecutorContext;
 #[derive(Clone)]
 pub struct StandardAgent {
     pub definition: AgentDefinition,
-    tools_registry: Arc<LlmToolsRegistry>, // This will be Arc::default() now
+    tools: Vec<Arc<dyn Tool>>,
     executor: Arc<AgentExecutor>,
     #[allow(dead_code)]
     session_store: Arc<Box<dyn SessionStore>>,
@@ -40,13 +40,13 @@ impl std::fmt::Debug for StandardAgent {
 impl StandardAgent {
     pub fn new(
         definition: AgentDefinition,
-        tools_registry: Arc<LlmToolsRegistry>, // pass Arc::default() here
+        tools: Vec<Arc<dyn Tool>>,
         executor: Arc<AgentExecutor>,
         session_store: Arc<Box<dyn SessionStore>>,
     ) -> Self {
         Self {
             definition,
-            tools_registry,
+            tools,
             executor,
             session_store,
         }
@@ -61,10 +61,8 @@ impl StandardAgent {
         context: Arc<ExecutorContext>,
         event_tx: Option<mpsc::Sender<AgentEvent>>,
     ) -> Result<(), AgentError> {
-        let tools_desc = get_tool_descriptions(
-            &self.tools_registry.tools,
-            Some(DEFAULT_TOOL_DESCRIPTION_TEMPLATE),
-        );
+        let tools_desc =
+            get_tool_descriptions(&self.tools, Some(DEFAULT_TOOL_DESCRIPTION_TEMPLATE));
         let thread_id = context.thread_id.clone();
         let run_id = context.run_id.clone();
         info!(
@@ -136,7 +134,7 @@ impl StandardAgent {
         // Create executor for LLM call
         let executor = LLMExecutor::new(
             self.definition.clone().into(),
-            self.tools_registry.clone(),
+            self.tools.clone(),
             context.clone(),
             None,
             Some(format!("{}:{}", agent_id, "step")),
@@ -174,7 +172,7 @@ impl StandardAgent {
 
         let executor = LLMExecutor::new(
             self.definition.clone().into(),
-            self.tools_registry.clone(),
+            self.tools.clone(),
             context.clone(),
             None,
             Some(agent_id.to_string()),
@@ -616,8 +614,8 @@ impl BaseAgent for StandardAgent {
         &self.definition.description
     }
 
-    fn get_tools(&self) -> Vec<&Box<dyn Tool>> {
-        self.tools_registry.tools.values().collect()
+    fn get_tools(&self) -> Vec<Arc<dyn Tool>> {
+        self.tools.clone()
     }
 
     async fn invoke(
