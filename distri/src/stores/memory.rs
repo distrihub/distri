@@ -387,6 +387,7 @@ impl ThreadStore for HashMapThreadStore {
     }
 }
 
+#[derive(Default)]
 pub struct InMemoryAgentStore {
     agents: Arc<RwLock<HashMap<String, crate::types::AgentDefinition>>>,
 }

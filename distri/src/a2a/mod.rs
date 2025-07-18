@@ -174,3 +174,13 @@ impl From<crate::types::Task> for Task {
         }
     }
 }
+
+impl From<crate::types::MessageRole> for Role {
+    fn from(role: crate::types::MessageRole) -> Self {
+        match role {
+            crate::types::MessageRole::User => Role::User,
+            crate::types::MessageRole::Assistant => Role::Agent,
+            _ => Role::Agent,
+        }
+    }
+}

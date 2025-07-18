@@ -1,9 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::{
-        agent::hooks::ToolParsingHooks, tool_formatter::ToolCallFormat, tools::LlmToolsRegistry,
-    };
-    use std::sync::Arc;
+    use crate::{agent::hooks::ToolParsingHooks, tool_formatter::ToolCallFormat};
 
     #[test]
     fn test_parse_xml_tool_calls() {
@@ -66,9 +63,6 @@ mod tests {
     }
 
     fn create_tool_parsing_hook() -> ToolParsingHooks {
-        ToolParsingHooks {
-            tool_call_format: ToolCallFormat::Xml,
-            tools_registry: Arc::new(LlmToolsRegistry::default()),
-        }
+        ToolParsingHooks::new(ToolCallFormat::Xml, vec![])
     }
 }

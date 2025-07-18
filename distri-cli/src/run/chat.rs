@@ -6,7 +6,11 @@ use tracing::info;
 
 use distri::types::Message;
 
-pub async fn run(agent_name: &str, executor: Arc<AgentExecutor>) -> anyhow::Result<()> {
+pub async fn run(
+    agent_name: &str,
+    executor: Arc<AgentExecutor>,
+    verbose: bool,
+) -> anyhow::Result<()> {
     // Create readline editor with history
     let mut rl = DefaultEditor::new()?;
 
@@ -56,6 +60,7 @@ pub async fn run(agent_name: &str, executor: Arc<AgentExecutor>) -> anyhow::Resu
         let context = ExecutorContext {
             thread_id: thread_id.clone(),
             run_id: uuid::Uuid::new_v4().to_string(),
+            verbose,
             ..Default::default()
         };
         match executor

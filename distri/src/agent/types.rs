@@ -7,10 +7,9 @@ use uuid::Uuid;
 use crate::{
     llm::{LLMResponse, StreamResult},
     tools::Tool,
-    types::{Message, ToolCall},
+    types::{Message, MessageRole, ToolCall},
     AgentDefinition, AgentError,
 };
-use async_openai::types::Role;
 
 use serde_json::Value;
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -38,7 +37,7 @@ pub enum AgentEventType {
     },
     TextMessageStart {
         message_id: String,
-        role: Role,
+        role: MessageRole,
     },
     TextMessageContent {
         message_id: String,
@@ -226,7 +225,7 @@ pub trait BaseAgent: Send + Sync + std::fmt::Debug {
 
     fn get_description(&self) -> &str;
     fn get_definition(&self) -> AgentDefinition;
-    fn get_tools(&self) -> Vec<&Box<dyn Tool>>;
+    fn get_tools(&self) -> Vec<Arc<dyn Tool>>;
 
     // Used in deserialization
     fn agent_type(&self) -> AgentType;

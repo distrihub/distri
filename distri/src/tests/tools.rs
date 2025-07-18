@@ -40,7 +40,7 @@ async fn execute_tool_test() {
     .unwrap();
 
     println!("{result}");
-    assert!(!result.contains("Error"));
+    assert!(!result.to_string().contains("Error"));
 }
 
 #[tokio::test]
@@ -112,7 +112,7 @@ fn register_tools<T: Transport>(server: &mut ServerBuilder<T>) -> Result<()> {
     // Register search tool
     server.register_tool(search_tool, |req: CallToolRequest| {
         Box::pin(async move {
-            let args = req.arguments.unwrap_or_default();
+            let _args = req.arguments.unwrap_or_default();
 
             let result: Result<CallToolResponse, anyhow::Error> = async {
                 let search_results = json!({

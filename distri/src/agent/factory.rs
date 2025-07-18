@@ -1,7 +1,7 @@
 use crate::{
     agent::{hooks::ToolParsingHooks, Agent, BaseAgent},
     error::AgentError,
-    tools::LlmToolsRegistry,
+    tools::Tool,
     types::AgentDefinition,
     SessionStore,
 };
@@ -10,7 +10,7 @@ use std::sync::Arc;
 /// Factory function type for creating agents
 pub type AgentFactoryFn = dyn Fn(
         AgentDefinition,
-        Arc<LlmToolsRegistry>,
+        Vec<Arc<dyn Tool>>,
         Arc<crate::agent::AgentExecutor>,
         Arc<Box<dyn SessionStore>>,
     ) -> Box<dyn BaseAgent>
@@ -54,19 +54,36 @@ impl AgentFactoryRegistry {
 
         self.register_factory(
             "tool_parser".to_string(),
-            Arc::new(|definition, tools_registry, executor, session_store| {
+            Arc::new(|definition, tools, executor, session_store| {
                 let mut definition = definition.clone();
                 // skip tools in llm definition
                 definition.include_tools = false;
                 Box::new(Agent::new(
                     definition,
-                    tools_registry.clone(),
+                    tools.clone(),
                     executor.clone(),
                     session_store,
                     vec![Arc::new(ToolParsingHooks {
                         tool_call_format: crate::tool_formatter::ToolCallFormat::Xml,
-                        tools_registry,
+                        tools,
                     })],
+                ))
+            }),
+        );
+
+        // Register code agent factory when code feature is enabled
+        #[cfg(feature = "code")]
+        self.register_factory(
+            "code".to_string(),
+            Arc::new(|definition, tools, executor, session_store| {
+                let mut definition = definition.clone();
+                // skip tools in llm definition for code agents
+                definition.include_tools = false;
+                Box::new(crate::agent::code::agent::CodeAgent::new(
+                    definition,
+                    tools,
+                    executor,
+                    session_store,
                 ))
             }),
         );
@@ -81,7 +98,7 @@ impl AgentFactoryRegistry {
     pub fn create_agent(
         &self,
         definition: AgentDefinition,
-        tools_registry: Arc<LlmToolsRegistry>,
+        tools: Vec<Arc<dyn Tool>>,
         executor: Arc<crate::agent::AgentExecutor>,
         session_store: Arc<Box<dyn SessionStore>>,
     ) -> Result<Box<dyn BaseAgent>, AgentError> {
@@ -92,7 +109,7 @@ impl AgentFactoryRegistry {
             AgentError::NotFound(format!("Agent factory for type '{}' not found", agent_type))
         })?;
 
-        Ok(factory(definition, tools_registry, executor, session_store))
+        Ok(factory(definition, tools, executor, session_store))
     }
 
     /// Check if a factory exists for the given agent type

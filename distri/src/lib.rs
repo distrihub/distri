@@ -1,12 +1,12 @@
 pub mod a2a;
 pub mod agent;
-
 pub mod engine;
 pub mod error;
 pub mod langdb;
 pub mod llm;
 pub mod logging;
 pub mod memory;
+pub mod prompt_utils;
 pub mod servers;
 pub mod stores;
 pub mod tool_formatter;

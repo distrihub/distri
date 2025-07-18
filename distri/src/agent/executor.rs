@@ -3,7 +3,7 @@ use crate::{
     error::AgentError,
     servers::registry::{McpServerRegistry, ServerMetadata},
     stores::{AgentStore, ThreadStore, ToolSessionStore},
-    tools::{get_tools, BuiltInToolContext, LlmToolsRegistry},
+    tools::{get_tools, LlmToolsRegistry, ToolContext},
     types::{
         Configuration, CreateThreadRequest, Message, StoreConfig, Thread, ThreadSummary, ToolCall,
         UpdateThreadRequest,
@@ -174,7 +174,7 @@ impl AgentExecutor {
         tool_call: ToolCall,
         event_tx: Option<mpsc::Sender<AgentEvent>>,
         context: Arc<ExecutorContext>,
-    ) -> Result<String, AgentError> {
+    ) -> Result<serde_json::Value, AgentError> {
         // Get agent definition and create agent instance
         let definition = self
             .agent_store
@@ -192,7 +192,7 @@ impl AgentExecutor {
             let context = context.clone();
             let event_tx = event_tx.clone();
 
-            let tool_context = BuiltInToolContext {
+            let tool_context = ToolContext {
                 agent_id: agent_id.clone(),
                 agent_store: self.agent_store.clone(),
                 context: context.clone(),
@@ -202,7 +202,7 @@ impl AgentExecutor {
                 registry,
             };
 
-            tracing::info!("Executing tool call: {:#?}", tool_call);
+            tracing::debug!("Executing tool call: {:#?}", tool_call);
             let res = tool.execute(tool_call, tool_context).await;
             match res {
                 Ok(content) => {
@@ -246,15 +246,16 @@ impl AgentExecutor {
                 external_tool_def.description.clone(),
                 external_tool_def.input_schema.clone(),
             );
-            tools.insert(external_tool_def.name.clone(), Box::new(external_tool));
+            tools.insert(external_tool_def.name.clone(), Arc::new(external_tool));
         }
 
         let tools_registry = LlmToolsRegistry::new(tools);
 
         let factory = self.agent_factory.read().await;
+        let tools = tools_registry.get_tools().await;
         factory.create_agent(
             definition,
-            Arc::new(tools_registry),
+            tools,
             Arc::new(self.clone()),
             self.session_store.clone(),
         )

@@ -86,6 +86,7 @@ pub async fn run_agent_cli(
     config: &Configuration,
     task: Option<String>,
     background: bool,
+    verbose: bool,
 ) -> Result<()> {
     debug!("Running agent: {:?}", agent);
 
@@ -102,9 +103,9 @@ pub async fn run_agent_cli(
         let task = task
             .map(|t| Message::user(t, None))
             .unwrap_or_else(|| panic!("Task is needed for background mode"));
-        background::run(&agent_name, executor, task).await?;
+        background::run(&agent_name, executor, task, verbose).await?;
     } else {
-        chat::run(&agent_name, executor).await?;
+        chat::run(&agent_name, executor, verbose).await?;
     }
     executor_handle.abort();
 
@@ -157,7 +158,8 @@ pub async fn run_agent(
             agent,
             task,
             background,
-        } => run_agent_cli(executor, agent, config, task, background).await,
+            verbose,
+        } => run_agent_cli(executor, agent, config, task, background, verbose).await,
         EmbeddedCommands::List => list_agents(executor, config).await,
         EmbeddedCommands::Serve { host, port } => {
             run_agent_server(server, executor, config, &host, port).await

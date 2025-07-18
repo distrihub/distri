@@ -95,11 +95,12 @@ async fn main() -> Result<()> {
             agent,
             background,
             task,
+            verbose,
         } => {
             let config = load_config(cli.config.to_str().unwrap())?;
             let executor = init_all(&config).await?;
 
-            run_agent_cli(executor, agent, &config, task, background).await?;
+            run_agent_cli(executor, agent, &config, task, background, verbose).await?;
         }
         Commands::UpdateAgents => {
             let config = load_config(cli.config.to_str().unwrap())?;

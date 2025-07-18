@@ -1,29 +1,118 @@
+use serde_json::Value;
+use tokio::sync::mpsc;
+
+use crate::agent::code::executor::execute_code_with_tools;
+use crate::agent::code::tools::{CodeResponse, ConsoleLogTool, FinalAnswerTool};
+use crate::agent::ExecutorContext;
+use crate::tools::{Tool, ToolContext};
+use crate::InMemoryAgentStore;
 use std::sync::Arc;
 
-use distri_js_sandbox::{FunctionDefinition, JsWorker, JsWorkerOptions};
+#[tokio::test]
+async fn test_execute_code_with_final_answer() {
+    // Create a mock context for testing
+    let agent_store = Arc::new(InMemoryAgentStore::new()) as Arc<dyn crate::stores::AgentStore>;
+    let context = ToolContext {
+        agent_id: "test_agent".to_string(),
+        agent_store,
+        context: Arc::new(ExecutorContext::default()),
+        event_tx: None,
+        coordinator_tx: tokio::sync::mpsc::channel(1).0,
+        tool_sessions: None,
+        registry: Arc::new(tokio::sync::RwLock::new(
+            crate::servers::registry::McpServerRegistry::new(),
+        )),
+    };
 
-use rustyscript::Error;
-use serde_json::Value;
+    // Register a test agent
+    let agent_def = crate::types::AgentDefinition {
+        name: "test_agent".to_string(),
+        description: "Test agent".to_string(),
+        ..Default::default()
+    };
+    context.agent_store.register(agent_def).await.unwrap();
 
-use crate::agent::code::executor::CodeExecutor;
+    // Test code with final_answer
+    let code = r#" final_answer(42)"#;
+    let (tx, mut rx) = mpsc::channel::<CodeResponse>(100);
+    let result = execute_code_with_tools(
+        code,
+        context,
+        vec![Arc::new(FinalAnswerTool(tx)) as Arc<dyn Tool>],
+    )
+    .await
+    .unwrap();
+
+    // The function should return null, but we should receive the value through the channel
+    assert_eq!(result, Value::Null);
+
+    // Check that we received the final answer through the channel
+    let response = rx.recv().await.unwrap();
+    match response {
+        CodeResponse::FinalAnswer(value) => {
+            assert_eq!(value, Value::Number(42.into()));
+        }
+        _ => panic!("Expected FinalAnswer response"),
+    }
+}
 
 #[tokio::test]
-async fn test_echo_async() -> Result<(), Error> {
-    let executor = CodeExecutor::default();
-    let worker = JsWorker::new(JsWorkerOptions {
-        timeout: std::time::Duration::from_secs(1),
-        functions: vec![FunctionDefinition {
-            name: "echo".to_string(),
-            description: Some("Echo a message".to_string()),
-            parameters: serde_json::json!({}),
-            returns: Some("The echoed message".to_string()),
-        }],
-        executor: Arc::new(executor),
-    })?;
+async fn test_execute_code_with_console_log() {
+    tracing_subscriber::fmt::init();
+    // Create a mock context for testing
+    let agent_store = Arc::new(InMemoryAgentStore::new()) as Arc<dyn crate::stores::AgentStore>;
+    let context = ToolContext {
+        agent_id: "test_agent".to_string(),
+        agent_store,
+        context: Arc::new(ExecutorContext::default()),
+        event_tx: None,
+        coordinator_tx: tokio::sync::mpsc::channel(1).0,
+        tool_sessions: None,
+        registry: Arc::new(tokio::sync::RwLock::new(
+            crate::servers::registry::McpServerRegistry::new(),
+        )),
+    };
 
-    let result: Value = worker.execute("echo('Hello, world!');").unwrap();
+    // Register a test agent
+    let agent_def = crate::types::AgentDefinition {
+        name: "test_agent".to_string(),
+        description: "Test agent".to_string(),
+        ..Default::default()
+    };
+    context.agent_store.register(agent_def).await.unwrap();
 
-    assert_eq!(result, "Hello, world!");
+    // Test code with console.log
+    let code = r#"
+        console.log("Hello, world!");
+        console.log("Test observation");
+        final_answer("Success");
+    "#;
+    let (tx, mut rx) = mpsc::channel::<CodeResponse>(100);
+    let result = execute_code_with_tools(
+        code,
+        context,
+        vec![
+            Arc::new(ConsoleLogTool(tx.clone())) as Arc<dyn Tool>,
+            Arc::new(FinalAnswerTool(tx)) as Arc<dyn Tool>,
+        ],
+    )
+    .await
+    .unwrap();
 
-    Ok(())
+    // The function should return null, but we should receive messages through the channel
+    assert_eq!(result, Value::Null);
+
+    let mut msgs = Vec::new();
+
+    // Collect all messages from the channel
+    while let Some(response) = rx.recv().await {
+        msgs.push(response);
+    }
+
+    assert!(msgs[0].as_value().to_string().contains("Hello, world!"));
+    assert!(msgs[1].as_value().to_string().contains("Test observation"));
+    assert_eq!(
+        msgs[2].as_value().clone(),
+        Value::String("Success".to_string())
+    );
 }

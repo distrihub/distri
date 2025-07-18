@@ -112,16 +112,16 @@ macro_rules! with_transport {
 pub async fn get_tools(
     definitions: &[McpDefinition],
     registry: Arc<RwLock<McpServerRegistry>>,
-) -> Result<HashMap<String, Box<dyn Tool>>> {
+) -> Result<HashMap<String, Arc<dyn Tool>>> {
     let mut all_tools = HashMap::new();
     let mcp_tools = get_mcp_tools(definitions, registry).await?;
 
     for server_tools in mcp_tools {
         for tool in server_tools.tools {
-            let mcp_tool = Box::new(McpTool {
+            let mcp_tool = Arc::new(McpTool {
                 mcp_definition: server_tools.definition.clone(),
                 tool: tool,
-            }) as Box<dyn Tool>;
+            }) as Arc<dyn Tool>;
             all_tools.insert(mcp_tool.get_name(), mcp_tool);
         }
     }
@@ -129,9 +129,8 @@ pub async fn get_tools(
     // Add built-in tools
     all_tools.insert(
         "transfer_to_agent".to_string(),
-        Box::new(TransferToAgentTool),
+        Arc::new(TransferToAgentTool) as Arc<dyn Tool>,
     );
-
     Ok(all_tools)
 }
 
@@ -235,8 +234,8 @@ pub async fn execute_tool(
     registry: Arc<RwLock<McpServerRegistry>>,
     tool_sessions: Option<Arc<Box<dyn ToolSessionStore>>>,
     context: Arc<ExecutorContext>,
-) -> Result<String> {
-    tracing::info!(
+) -> Result<Value> {
+    tracing::debug!(
         "Executing tool '{}' with ID: {}",
         tool_call.tool_name,
         tool_call.tool_call_id
@@ -280,11 +279,11 @@ impl<T: Transport + Clone> ToolExecutor<T> {
         mcp_server: &str,
         metadata: &ServerMetadata,
         tool_sessions: Option<Arc<Box<dyn ToolSessionStore>>>,
-    ) -> Result<String> {
+    ) -> Result<Value> {
         let name = tool_call.tool_name.clone();
-        tracing::info!("Executing tool: {name}, mcp_server: {mcp_server}");
+        tracing::debug!("Executing tool: {name}, mcp_server: {mcp_server}");
 
-        tracing::info!("Parsing tool arguments: {}", tool_call.input);
+        tracing::debug!("Parsing tool arguments: {}", tool_call.input);
         let args: HashMap<String, Value> =
             serde_json::from_str(&tool_call.input).unwrap_or_default();
 
@@ -358,7 +357,7 @@ impl<T: Transport + Clone> ToolExecutor<T> {
             .content
             .first()
             .and_then(|c| match c {
-                ToolResponseContent::Text { text } => Some(text.clone()),
+                ToolResponseContent::Text { text } => Some(Value::String(text.clone())),
                 _ => None,
             })
             .ok_or_else(|| {
@@ -386,11 +385,8 @@ pub trait Tool: Send + Sync {
     }
 
     /// Execute the tool with given arguments
-    async fn execute(
-        &self,
-        tool_call: ToolCall,
-        context: BuiltInToolContext,
-    ) -> Result<String, AgentError>;
+    async fn execute(&self, tool_call: ToolCall, context: ToolContext)
+        -> Result<Value, AgentError>;
 }
 
 pub struct McpTool {
@@ -422,8 +418,8 @@ impl Tool for McpTool {
     async fn execute(
         &self,
         tool_call: ToolCall,
-        context: BuiltInToolContext,
-    ) -> Result<String, AgentError> {
+        context: ToolContext,
+    ) -> Result<Value, AgentError> {
         execute_tool(
             &tool_call,
             &self.mcp_definition,
@@ -438,7 +434,7 @@ impl Tool for McpTool {
 
 /// Context passed to built-in tools during execution
 #[derive(Clone)]
-pub struct BuiltInToolContext {
+pub struct ToolContext {
     pub agent_id: String,
     pub agent_store: Arc<dyn AgentStore>,
     pub context: Arc<ExecutorContext>,
@@ -448,34 +444,53 @@ pub struct BuiltInToolContext {
     pub registry: Arc<RwLock<McpServerRegistry>>,
 }
 
+impl std::fmt::Debug for ToolContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BuiltInToolContext")
+            .field("agent_id", &self.agent_id)
+            .field("context", &self.context)
+            .field("tool_sessions", &"<tool_sessions>")
+            .field("registry", &"<registry>")
+            .finish()
+    }
+}
+
 /// Built-in tool registry
 #[derive(Default)]
 pub struct LlmToolsRegistry {
-    pub tools: HashMap<String, Box<dyn Tool>>,
+    pub tools: RwLock<HashMap<String, Arc<dyn Tool>>>,
 }
 
 impl LlmToolsRegistry {
-    pub fn new(all_tools: HashMap<String, Box<dyn Tool>>) -> Self {
-        Self { tools: all_tools }
+    pub fn new(all_tools: HashMap<String, Arc<dyn Tool>>) -> Self {
+        Self {
+            tools: RwLock::new(all_tools),
+        }
     }
 
-    pub fn register(&mut self, name: &str, tool: Box<dyn Tool>) {
-        self.tools.insert(name.to_string(), tool);
+    pub async fn register(&self, name: &str, tool: Arc<dyn Tool>) {
+        self.tools.write().await.insert(name.to_string(), tool);
     }
 
-    pub fn get_tool(&self, name: &str) -> Option<&dyn Tool> {
-        self.tools.get(name).map(|t| t.as_ref())
+    pub async fn get_tool(&self, name: &str) -> Option<Arc<dyn Tool>> {
+        self.tools.read().await.get(name).map(|t| t.clone())
     }
 
-    pub fn get_definitions(&self) -> Vec<async_openai::types::ChatCompletionTool> {
+    pub async fn get_tools(&self) -> Vec<Arc<dyn Tool>> {
+        self.tools.read().await.values().cloned().collect()
+    }
+
+    pub async fn get_definitions(&self) -> Vec<async_openai::types::ChatCompletionTool> {
         self.tools
+            .read()
+            .await
             .values()
             .map(|tool| tool.get_tool_definition())
             .collect()
     }
 
-    pub fn is_built_in_tool(&self, name: &str) -> bool {
-        self.tools.contains_key(name)
+    pub async fn is_built_in_tool(&self, name: &str) -> bool {
+        self.tools.read().await.contains_key(name)
     }
 
     /// Check if a tool requires approval based on agent configuration
@@ -544,8 +559,8 @@ impl Tool for ExternalTool {
     async fn execute(
         &self,
         _tool_call: ToolCall,
-        _context: BuiltInToolContext,
-    ) -> Result<String, AgentError> {
+        _context: ToolContext,
+    ) -> Result<Value, AgentError> {
         // External tools should not be executed directly by the backend
         // They should be handled by the frontend through the ExternalToolCalls metadata
         Err(AgentError::ToolExecution(format!(
@@ -595,8 +610,8 @@ impl Tool for TransferToAgentTool {
     async fn execute(
         &self,
         tool_call: ToolCall,
-        context: BuiltInToolContext,
-    ) -> Result<String, AgentError> {
+        context: ToolContext,
+    ) -> Result<Value, AgentError> {
         let args = tool_call.input;
         let args: HashMap<String, Value> = serde_json::from_str(&args).unwrap_or_default();
         let target_agent = args
@@ -635,11 +650,14 @@ impl Tool for TransferToAgentTool {
                 context.agent_id,
                 target_agent
             );
-            Ok(format!(
-                "Transfer initiated to agent '{}'. Reason: {}",
-                target_agent,
-                reason.unwrap_or_else(|| "No reason provided".to_string())
-            ))
+            Ok(json!({
+                "status": "success",
+                "message": format!(
+                    "Transfer initiated to agent '{}'. Reason: {}",
+                    target_agent,
+                    reason.unwrap_or_else(|| "No reason provided".to_string())
+                )
+            }))
         } else {
             Err(AgentError::ToolExecution(format!(
                 "Target agent '{}' not found",

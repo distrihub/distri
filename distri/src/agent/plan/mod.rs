@@ -48,7 +48,7 @@ pub trait Planner: Send + Sync {
     ) -> Result<String, AgentError> {
         let planning_executor = LLMExecutor::new(
             get_planning_definition(plan_config.model_settings.clone()),
-            Arc::default(),
+            vec![],
             context.clone(),
             None,
             Some("plan".to_string()),
@@ -75,14 +75,6 @@ pub fn get_planner(strategy: Option<&str>) -> Arc<dyn Planner> {
         Some("react") => todo!(),
         _ => Arc::new(DefaultPlanner),
     }
-}
-
-fn replace_variables(prompt: &str, variables: &HashMap<String, String>) -> String {
-    let mut prompt = prompt.to_owned();
-    for (key, value) in variables {
-        prompt = prompt.replace(&format!("{{{}}}", key), value);
-    }
-    prompt
 }
 
 pub fn convert_messages_to_steps(messages: &[Message]) -> String {

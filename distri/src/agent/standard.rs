@@ -5,7 +5,7 @@ use crate::{
     },
     error::AgentError,
     llm::LLMExecutor,
-    tools::{LlmToolsRegistry, Tool},
+    tools::Tool,
     types::{
         get_tool_descriptions, AgentDefinition, Message, MessageMetadata, MessageRole, Part,
         PlanConfig, TaskStatus, ToolCall, DEFAULT_TOOL_DESCRIPTION_TEMPLATE,
@@ -14,7 +14,6 @@ use crate::{
 };
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::info;
 
 use crate::agent::ExecutorContext;
 
@@ -22,7 +21,7 @@ use crate::agent::ExecutorContext;
 #[derive(Clone)]
 pub struct StandardAgent {
     pub definition: AgentDefinition,
-    tools_registry: Arc<LlmToolsRegistry>, // This will be Arc::default() now
+    tools: Vec<Arc<dyn Tool>>,
     executor: Arc<AgentExecutor>,
     #[allow(dead_code)]
     session_store: Arc<Box<dyn SessionStore>>,
@@ -40,13 +39,13 @@ impl std::fmt::Debug for StandardAgent {
 impl StandardAgent {
     pub fn new(
         definition: AgentDefinition,
-        tools_registry: Arc<LlmToolsRegistry>, // pass Arc::default() here
+        tools: Vec<Arc<dyn Tool>>,
         executor: Arc<AgentExecutor>,
         session_store: Arc<Box<dyn SessionStore>>,
     ) -> Self {
         Self {
             definition,
-            tools_registry,
+            tools,
             executor,
             session_store,
         }
@@ -61,16 +60,10 @@ impl StandardAgent {
         context: Arc<ExecutorContext>,
         event_tx: Option<mpsc::Sender<AgentEvent>>,
     ) -> Result<(), AgentError> {
-        let tools_desc = get_tool_descriptions(
-            &self.tools_registry.tools,
-            Some(DEFAULT_TOOL_DESCRIPTION_TEMPLATE),
-        );
+        let tools_desc =
+            get_tool_descriptions(&self.tools, Some(DEFAULT_TOOL_DESCRIPTION_TEMPLATE));
         let thread_id = context.thread_id.clone();
         let run_id = context.run_id.clone();
-        info!(
-            "plan_step: iteration: {}, plan_config: {:?}",
-            iteration, plan_config
-        );
 
         if let Some(event_tx) = &event_tx {
             let _ = event_tx
@@ -136,7 +129,7 @@ impl StandardAgent {
         // Create executor for LLM call
         let executor = LLMExecutor::new(
             self.definition.clone().into(),
-            self.tools_registry.clone(),
+            self.tools.clone(),
             context.clone(),
             None,
             Some(format!("{}:{}", agent_id, "step")),
@@ -174,7 +167,7 @@ impl StandardAgent {
 
         let executor = LLMExecutor::new(
             self.definition.clone().into(),
-            self.tools_registry.clone(),
+            self.tools.clone(),
             context.clone(),
             None,
             Some(agent_id.to_string()),
@@ -241,7 +234,6 @@ impl StandardAgent {
         let result = async {
             let mut current_messages = vec![];
             if iterations == 0 {
-                println!("[[Adding system step]]");
                 self.add_messages_to_current_messages(
                     &[
                         Message::system(self.definition.system_prompt.clone(), None),
@@ -476,7 +468,6 @@ impl StandardAgent {
             );
             let mut current_messages = vec![];
             if iterations == 0 {
-                println!("[[Adding system step]]");
                 self.add_messages_to_current_messages(
                     &[
                         Message::system(self.definition.system_prompt.clone(), None),
@@ -488,8 +479,6 @@ impl StandardAgent {
                 .await?;
             }
             current_messages.extend(history);
-
-            println!("{:?}", current_messages);
             loop {
                 if iterations > max_iterations {
                     return Err(AgentError::LLMError(format!(
@@ -514,7 +503,6 @@ impl StandardAgent {
                     current_messages
                 };
 
-                println!("current_messages after hooks: {:?}", current_messages);
                 let step_result = self
                     .llm_step_stream(&current_messages, context.clone(), event_tx.clone(), hooks)
                     .await?;
@@ -616,8 +604,8 @@ impl BaseAgent for StandardAgent {
         &self.definition.description
     }
 
-    fn get_tools(&self) -> Vec<&Box<dyn Tool>> {
-        self.tools_registry.tools.values().collect()
+    fn get_tools(&self) -> Vec<Arc<dyn Tool>> {
+        self.tools.clone()
     }
 
     async fn invoke(
@@ -785,7 +773,6 @@ pub async fn execute_tool_calls(
                                 ))
                             });
                     }
-                    info!("Agent: Executing tool call: {:#?}", mapped_tool_call);
                     let content = executor
                         .execute_tool(
                             agent_id,
@@ -794,8 +781,7 @@ pub async fn execute_tool_calls(
                             context.clone(),
                         )
                         .await
-                        .unwrap_or_else(|err| format!("Error: {}", err));
-                    info!("Agent: Tool response: {}", content);
+                        .unwrap_or_else(|err| serde_json::Value::String(format!("Error: {}", err)));
 
                     if let Some(event_tx) = &event_tx {
                         let _ = event_tx
@@ -804,7 +790,7 @@ pub async fn execute_tool_calls(
                                 run_id: run_id.clone(),
                                 event: AgentEventType::ToolCallResult {
                                     tool_call_id: mapped_tool_call.tool_call_id.clone(),
-                                    result: content.clone(),
+                                    result: content.to_string(),
                                 },
                             })
                             .await
@@ -820,7 +806,7 @@ pub async fn execute_tool_calls(
                         name: Some(mapped_tool_call.tool_name.clone()),
                         metadata: Some(MessageMetadata::ToolResponse {
                             tool_call_id: mapped_tool_call.tool_call_id.clone(),
-                            result: content.clone(),
+                            result: content.to_string(),
                         }),
                         ..Default::default()
                     }

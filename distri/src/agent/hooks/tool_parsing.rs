@@ -2,7 +2,7 @@ use crate::{
     agent::AgentHooks,
     error::AgentError,
     tool_formatter::{ToolCallFormat, ToolCallWrapper},
-    tools::LlmToolsRegistry,
+    tools::Tool,
     types::{Message, ToolCall},
 };
 use std::sync::Arc;
@@ -11,14 +11,14 @@ use tracing::{debug, error, info, warn};
 #[derive(Clone)]
 pub struct ToolParsingHooks {
     pub tool_call_format: ToolCallFormat,
-    pub tools_registry: Arc<LlmToolsRegistry>,
+    pub tools: Vec<Arc<dyn Tool>>,
 }
 
 impl ToolParsingHooks {
-    pub fn new(tool_call_format: ToolCallFormat, tools_registry: Arc<LlmToolsRegistry>) -> Self {
+    pub fn new(tool_call_format: ToolCallFormat, tools: Vec<Arc<dyn Tool>>) -> Self {
         Self {
             tool_call_format,
-            tools_registry,
+            tools,
         }
     }
     /// Parse tool calls from the LLM response using the configured format
@@ -70,7 +70,7 @@ Do not include any other text in your response when using tools. Only return the
     /// Print all tools as Cline-style documentation with XML example
     fn print_tools_xml_example(&self) -> String {
         let mut out = String::new();
-        for tool in self.tools_registry.tools.values() {
+        for tool in self.tools.iter() {
             let def = tool.get_tool_definition();
             let name = def.function.name;
             let description = def.function.description.unwrap_or_default();
@@ -109,7 +109,7 @@ Do not include any other text in your response when using tools. Only return the
         let mut example_count = 0;
         out.push_str("Example invocations:\n");
         out.push_str("```xml\n");
-        for tool in self.tools_registry.tools.values() {
+        for tool in self.tools.iter() {
             if example_count >= 2 {
                 break;
             }
