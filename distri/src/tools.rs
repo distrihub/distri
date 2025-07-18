@@ -235,7 +235,7 @@ pub async fn execute_tool(
     tool_sessions: Option<Arc<Box<dyn ToolSessionStore>>>,
     context: Arc<ExecutorContext>,
 ) -> Result<Value> {
-    tracing::info!(
+    tracing::debug!(
         "Executing tool '{}' with ID: {}",
         tool_call.tool_name,
         tool_call.tool_call_id
@@ -281,9 +281,9 @@ impl<T: Transport + Clone> ToolExecutor<T> {
         tool_sessions: Option<Arc<Box<dyn ToolSessionStore>>>,
     ) -> Result<Value> {
         let name = tool_call.tool_name.clone();
-        tracing::info!("Executing tool: {name}, mcp_server: {mcp_server}");
+        tracing::debug!("Executing tool: {name}, mcp_server: {mcp_server}");
 
-        tracing::info!("Parsing tool arguments: {}", tool_call.input);
+        tracing::debug!("Parsing tool arguments: {}", tool_call.input);
         let args: HashMap<String, Value> =
             serde_json::from_str(&tool_call.input).unwrap_or_default();
 

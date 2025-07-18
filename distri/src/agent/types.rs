@@ -7,10 +7,9 @@ use uuid::Uuid;
 use crate::{
     llm::{LLMResponse, StreamResult},
     tools::Tool,
-    types::{Message, ToolCall},
+    types::{Message, MessageRole, ToolCall},
     AgentDefinition, AgentError,
 };
-use async_openai::types::Role;
 
 use serde_json::Value;
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -38,7 +37,7 @@ pub enum AgentEventType {
     },
     TextMessageStart {
         message_id: String,
-        role: Role,
+        role: MessageRole,
     },
     TextMessageContent {
         message_id: String,

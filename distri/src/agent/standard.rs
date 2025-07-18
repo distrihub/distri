@@ -14,7 +14,6 @@ use crate::{
 };
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::info;
 
 use crate::agent::ExecutorContext;
 
@@ -774,7 +773,6 @@ pub async fn execute_tool_calls(
                                 ))
                             });
                     }
-                    info!("Agent: Executing tool call: {:#?}", mapped_tool_call);
                     let content = executor
                         .execute_tool(
                             agent_id,

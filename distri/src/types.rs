@@ -240,6 +240,17 @@ pub enum MessageRole {
     User,
 }
 
+impl From<async_openai::types::Role> for MessageRole {
+    fn from(role: async_openai::types::Role) -> Self {
+        match role {
+            async_openai::types::Role::User => MessageRole::User,
+            async_openai::types::Role::Assistant => MessageRole::Assistant,
+            async_openai::types::Role::System => MessageRole::System,
+            _ => MessageRole::Assistant,
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum Part {

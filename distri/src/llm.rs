@@ -82,7 +82,7 @@ impl LLMExecutor {
     pub async fn execute(&self, messages: &[Message]) -> Result<LLMResponse, AgentError> {
         self.model_logger.log_messages(messages);
 
-        tracing::info!("Executing LLM call with {} messages", messages.len());
+        tracing::debug!("Executing LLM call with {} messages", messages.len());
         let llm_messages = self.map_messages(messages);
         let request = self.build_request(llm_messages);
         let message_count = request.messages.len();
@@ -151,7 +151,7 @@ impl LLMExecutor {
     ) -> Result<StreamResult, AgentError> {
         self.model_logger.log_messages(messages);
 
-        tracing::info!(
+        tracing::debug!(
             "Executing streaming LLM call with {} messages",
             messages.len()
         );
@@ -217,7 +217,7 @@ impl LLMExecutor {
                                         run_id: run_id.clone(),
                                         event: AgentEventType::TextMessageStart {
                                             message_id: message_id.clone(),
-                                            role: Role::Assistant,
+                                            role: Role::Assistant.into(),
                                         },
                                     })
                                     .await

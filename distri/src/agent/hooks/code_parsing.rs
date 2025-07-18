@@ -8,7 +8,7 @@ use crate::{
 use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{mpsc, Mutex};
-use tracing::{debug, info};
+use tracing::debug;
 
 #[derive(Clone)]
 pub struct CodeParsingHooks {
@@ -160,7 +160,7 @@ pub struct CodeResponse {
 #[async_trait::async_trait]
 impl AgentHooks for CodeParsingHooks {
     async fn llm_messages(&self, messages: &[Message]) -> Result<Vec<Message>, AgentError> {
-        info!(
+        debug!(
             "🔧 CodeParsingHooks: Modifying system prompt to include code execution instructions"
         );
 
@@ -211,7 +211,7 @@ impl AgentHooks for CodeParsingHooks {
         if let FinishReason::Stop = response.finish_reason {
             match self.parse_code_response(&response.content) {
                 Ok(code_response) => {
-                    info!("🔧 CodeParsingHooks: Parsed code execution request");
+                    debug!("🔧 CodeParsingHooks: Parsed code execution request");
                     debug!("Thought: {}", code_response.thought);
                     debug!("Code: {}", code_response.code);
 
@@ -269,7 +269,7 @@ impl AgentHooks for CodeParsingHooks {
         if let FinishReason::Stop = response.finish_reason {
             match self.parse_code_response(&response.content) {
                 Ok(code_response) => {
-                    info!("🔧 CodeParsingHooks: Parsed code execution request from stream");
+                    debug!("🔧 CodeParsingHooks: Parsed code execution request from stream");
 
                     // Convert code execution to a tool call
                     let tool_call = crate::types::ToolCall {

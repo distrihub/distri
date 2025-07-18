@@ -202,7 +202,7 @@ impl AgentExecutor {
                 registry,
             };
 
-            tracing::info!("Executing tool call: {:#?}", tool_call);
+            tracing::debug!("Executing tool call: {:#?}", tool_call);
             let res = tool.execute(tool_call, tool_context).await;
             match res {
                 Ok(content) => {

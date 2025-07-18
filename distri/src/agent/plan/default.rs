@@ -80,7 +80,10 @@ impl DefaultPlanner {
         context: Arc<ExecutorContext>,
     ) -> Result<DefaultPlan, AgentError> {
         let prompt = self.get_prompt("default_update");
-        let remaining_steps = plan_config.max_iterations.unwrap_or(10) - iteration as usize;
+        let remaining_steps = match plan_config.max_iterations {
+            Some(max_iterations) => max_iterations.checked_sub(iteration as usize).unwrap_or(0),
+            None => (10 as usize).checked_sub(iteration as usize).unwrap_or(0),
+        };
         let prompt = replace_variables(
             &prompt,
             &HashMap::from([
