@@ -1,0 +1,15 @@
+name = "google-docs"
+version = "1.0.0"
+description = "Google Docs helper tools for content generation workflows."
+
+tags = ["documents", "productivity", "google"]
+
+[[integrations]]
+name = "google_docs"
+tools = ["create_document"]
+
+[auth]
+provider = "google"
+type = "oauth"
+scopes = ["https://www.googleapis.com/auth/documents"]
+docs = "https://developers.google.com/docs/api/how-tos/overview"

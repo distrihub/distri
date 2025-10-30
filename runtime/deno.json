@@ -1,0 +1,20 @@
+{
+  "name": "@distri/runtime",
+  "version": "0.1.0",
+  "exports": {
+    ".": "./mod.ts"
+  },
+  "fmt": {
+    "lineWidth": 100,
+    "indentWidth": 2
+  },
+  "lint": {
+    "rules": {
+      "tags": ["recommended"]
+    }
+  },
+  "tasks": {
+    "fmt": "deno fmt",
+    "lint": "deno lint"
+  }
+}

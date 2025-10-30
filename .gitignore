@@ -1,0 +1,15 @@
+# General
+.DS_Store
+Thumbs.db
+*.log
+
+# Deno caches and build outputs
+.deno/
+dist/
+
+# Editor settings
+.vscode/
+.idea/
+
+# Runtime publishing artifacts
+runtime/deno.lock

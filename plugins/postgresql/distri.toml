@@ -1,0 +1,14 @@
+name = "postgresql"
+version = "1.0.0"
+description = "PostgreSQL integration templates for distri tool developers."
+
+tags = ["database", "sql", "postgresql"]
+
+[[integrations]]
+name = "postgresql"
+tools = ["execute_query", "list_tables"]
+
+[auth]
+provider = "postgresql"
+type = "connection_string"
+docs = "https://www.postgresql.org/docs/current/libpq-connect.html"

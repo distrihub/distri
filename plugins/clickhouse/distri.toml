@@ -1,0 +1,14 @@
+name = "clickhouse"
+version = "1.0.0"
+description = "Minimal ClickHouse toolset for analytics workflows."
+
+tags = ["database", "analytics", "clickhouse"]
+
+[[integrations]]
+name = "clickhouse"
+tools = ["execute_query", "show_tables"]
+
+[auth]
+provider = "clickhouse"
+type = "http_basic"
+docs = "https://clickhouse.com/docs/en/interfaces/http"

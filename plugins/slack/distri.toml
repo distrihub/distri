@@ -1,0 +1,23 @@
+name = "slack"
+version = "1.0.0"
+description = "Slack messaging integration and utility toolkit for distri plugins."
+
+tags = ["messaging", "slack", "collaboration"]
+
+[[integrations]]
+name = "slack"
+tools = [
+  "send_message",
+  "list_channels",
+  "get_user_info",
+  "get_channel_info",
+  "upload_file",
+  "update_message",
+  "delete_message",
+  "test_connection",
+]
+
+[auth]
+provider = "slack"
+type = "token"
+docs = "https://api.slack.com/authentication/token-types#bot"

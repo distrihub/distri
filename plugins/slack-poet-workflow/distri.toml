@@ -1,0 +1,9 @@
+name = "slack-poet"
+version = "1.0.0"
+description = "Workflow that generates a poem with an agent and posts it to Slack."
+
+tags = ["workflows", "slack", "creativity"]
+
+[[workflows]]
+name = "slack_poet"
+depends_on = ["slack.send_message"]

@@ -1,0 +1,14 @@
+name = "notion"
+version = "1.0.0"
+description = "Notion automation helpers for search and page creation."
+
+tags = ["knowledge", "notes", "notion"]
+
+[[integrations]]
+name = "notion"
+tools = ["search_pages", "create_page"]
+
+[auth]
+provider = "notion"
+type = "token"
+docs = "https://developers.notion.com/docs/authorization"
