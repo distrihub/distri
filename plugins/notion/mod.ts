@@ -4,7 +4,7 @@ import {
   DapTool,
   DistriPlugin,
   ExecutionContext,
-} from "jsr:@distri/runtime@0.1.0";
+} from "https://distri.dev/base.ts";
 
 interface NotionPage {
   id: string;
@@ -84,26 +84,26 @@ async function createNotionPage(params: {
 
   const properties: Record<string, unknown> = params.parent_database_id
     ? {
-        Name: {
-          title: [{ text: { content: params.title } }],
-        },
-      }
+      Name: {
+        title: [{ text: { content: params.title } }],
+      },
+    }
     : {
-        title: {
-          title: [{ text: { content: params.title } }],
-        },
-      };
+      title: {
+        title: [{ text: { content: params.title } }],
+      },
+    };
 
   const children = params.content
     ? [
-        {
-          object: "block",
-          type: "paragraph",
-          paragraph: {
-            rich_text: [{ text: { content: params.content } }],
-          },
+      {
+        object: "block",
+        type: "paragraph",
+        paragraph: {
+          rich_text: [{ text: { content: params.content } }],
         },
-      ]
+      },
+    ]
     : [];
 
   const response = await fetch("https://api.notion.com/v1/pages", {
@@ -172,6 +172,11 @@ const notionPlugin: DistriPlugin = {
       description: "Notion integration for knowledge management.",
       version: "1.0.0",
       tools: getNotionTools(),
+      auth: {
+        type: "secret",
+        provider: "notion",
+        fields: [{ key: "api_key" }],
+      },
       metadata: {
         category: "knowledge",
         documentation: "https://developers.notion.com/",

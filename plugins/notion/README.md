@@ -17,7 +17,7 @@ Provide a Notion integration token via context secrets (`NOTION_API_KEY`, `notio
 
 ```ts
 import notionPlugin from "./mod.ts";
-import { registerPlugin, callTool } from "jsr:@distri/runtime@0.1.0";
+import { registerPlugin, callTool } from "https://distri.dev/base.ts";
 
 registerPlugin(notionPlugin);
 const results = await callTool({

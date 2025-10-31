@@ -1,28 +1,13 @@
 name = "google-calendar"
 version = "1.0.0"
 description = "Google Calendar integration toolkit for scheduling workflows."
+license = "MIT"
 
-tags = ["calendar", "productivity", "google"]
+keywords = ["calendar", "productivity", "google"]
 
-[[integrations]]
-name = "google_calendar"
-tools = [
-  "list_events",
-  "create_event",
-  "update_event",
-  "delete_event",
-  "get_event",
-  "list_calendars",
-  "free_busy",
-  "test_connection",
-]
+[entrypoints]
+type = "ts"
+path = "mod.ts"
 
-[auth]
-provider = "google"
-type = "oauth"
-scopes = [
-  "https://www.googleapis.com/auth/calendar",
-  "https://www.googleapis.com/auth/calendar.readonly",
-  "https://www.googleapis.com/auth/calendar.events",
-]
-docs = "https://developers.google.com/calendar/api/auth"
+[distri]
+engine = ">=0.1.0"

@@ -1,18 +1,13 @@
 name = "gmail"
 version = "1.0.0"
 description = "Gmail integration helpers for distri workflows."
+license = "MIT"
 
-tags = ["email", "communications", "gmail"]
+keywords = ["email", "communications", "gmail"]
 
-[[integrations]]
-name = "gmail"
-tools = ["list_emails", "send_email"]
+[entrypoints]
+type = "ts"
+path = "mod.ts"
 
-[auth]
-provider = "google"
-type = "oauth"
-scopes = [
-  "https://www.googleapis.com/auth/gmail.readonly",
-  "https://www.googleapis.com/auth/gmail.send",
-]
-docs = "https://developers.google.com/gmail/api/auth/about-auth"
+[distri]
+engine = ">=0.1.0"

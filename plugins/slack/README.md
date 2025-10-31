@@ -10,7 +10,7 @@ Slack tools for sending messages, managing channels, and uploading files from di
 
 ## Authentication
 
-Set a Slack bot token via the execution context secrets (e.g. `SLACK_BOT_TOKEN`) or pass `token` in individual tool calls.
+Set a Slack bot token via the execution context secrets (e.g. `slack_bot_token`) or pass `token` in individual tool calls.
 
 ## Tools
 
@@ -31,13 +31,13 @@ Register the plugin with the Deno runtime helper and call tools directly:
 
 ```ts
 import slackPlugin from "./mod.ts";
-import { registerPlugin, callTool } from "jsr:@distri/runtime@0.1.0";
+import { registerPlugin, callTool } from "https://distri.dev/base.ts";
 
 registerPlugin(slackPlugin);
 await callTool({
   integration: "slack",
   tool_name: "send_message",
   input: { channel: "#general", text: "Hello team" },
-  context: { secrets: { SLACK_BOT_TOKEN: "xoxb-..." } },
+  context: { secrets: { slack_bot_token: "xoxb-..." } },
 });
 ```

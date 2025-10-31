@@ -4,7 +4,7 @@ import {
   DapTool,
   DistriPlugin,
   ExecutionContext,
-} from "jsr:@distri/runtime@0.1.0";
+} from "https://distri.dev/base.ts";
 
 interface QueryResult {
   rows: unknown[];

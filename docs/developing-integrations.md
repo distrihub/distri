@@ -23,7 +23,7 @@ This guide packages the learnings from the main `distri` repository so an LLM pa
 4. **Log meaningfully** but tersely; prefer one-line summaries that help a human trace execution.
 5. **Document** required auth/secrets in the plugin README and `distri.toml`.
 6. **Register & test** locally using the runtime helpers.
-7. **Review** for parity with the expectations of the Rust executor (e.g. optional `requiresAuth`, metadata fields, error messages).
+7. **Review** for parity with the expectations of the Rust executor (e.g. optional `auth`, metadata fields, error messages).
 
 ---
 
@@ -36,7 +36,7 @@ Use these snippets when guiding an LLM through a task.
 Goal: create a <service> integration.
 Constraints:
 - Export a DistriPlugin from plugins/<service>/mod.ts
-- Use createTool from jsr:@distri/runtime@0.1.0
+- Use createTool from https://distri.dev/base.ts
 - Read secrets from context.secrets (list keys)
 - Provide JSON Schema parameters and describe required authentication
 Deliver: TypeScript implementation + README + distri.toml metadata.
@@ -48,7 +48,7 @@ Goal: author a workflow that consumes tools X, Y.
 Requirements:
 - New package under plugins/<name>/
 - DapWorkflow with execute(params, context)
-- Use callTool/callAgent from jsr:@distri/runtime@0.1.0
+- Use callTool/callAgent from https://distri.dev/base.ts
 - Add at least one example entry and document dependencies in README/distri.toml
 ```
 
@@ -65,7 +65,7 @@ Before final answer:
 ## 4. Testing with the Local Runtime
 
 ```ts
-import { registerPlugin, callTool, clearRuntime } from "jsr:@distri/runtime@0.1.0";
+import { registerPlugin, callTool, clearRuntime } from "https://distri.dev/base.ts";
 import plugin from "./plugins/notion/mod.ts";
 
 clearRuntime();

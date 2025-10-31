@@ -1,15 +1,13 @@
 name = "google-docs"
 version = "1.0.0"
 description = "Google Docs helper tools for content generation workflows."
+license = "MIT"
 
-tags = ["documents", "productivity", "google"]
+keywords = ["documents", "productivity", "google"]
 
-[[integrations]]
-name = "google_docs"
-tools = ["create_document"]
+[entrypoints]
+type = "ts"
+path = "mod.ts"
 
-[auth]
-provider = "google"
-type = "oauth"
-scopes = ["https://www.googleapis.com/auth/documents"]
-docs = "https://developers.google.com/docs/api/how-tos/overview"
+[distri]
+engine = ">=0.1.0"

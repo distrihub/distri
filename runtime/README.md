@@ -12,7 +12,7 @@ import {
   callWorkflow,
   registerAgentHandler,
   registerPlugin,
-} from "jsr:@distri/runtime@0.1.0";
+} from "https://distri.dev/base.ts";
 ```
 
 See `mod.ts` for the full list of exported types and helpers.
@@ -40,4 +40,4 @@ rules.
 4. **Verify** – import the new tag in a scratch Deno script to make sure the CDN serves the package.
 
 Keep plugin imports pinned to an explicit version, e.g.
-`jsr:@distri/runtime@0.1.0`, so workflow code remains deterministic.
+`https://distri.dev/base.ts`, so workflow code remains deterministic.

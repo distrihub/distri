@@ -4,7 +4,7 @@ import {
   DapTool,
   DistriPlugin,
   ExecutionContext,
-} from "jsr:@distri/runtime@0.1.0";
+} from "https://distri.dev/base.ts";
 
 interface CalendarEvent {
   id?: string;
@@ -196,7 +196,8 @@ function getCalendarTools(): DapTool[] {
     createTool({
       name: "list_events",
       description: "List upcoming events from Google Calendar.",
-      requiresAuth: {
+      auth: {
+        type: "oauth2",
         provider: "google",
         scopes: ["https://www.googleapis.com/auth/calendar.readonly"],
       },
@@ -419,22 +420,22 @@ const googleCalendarPlugin: DistriPlugin = {
       description: "Google Calendar integration for scheduling workflows.",
       version: "1.0.0",
       tools: getCalendarTools(),
-      authProvider: {
-        type: "oauth",
+      auth: {
+        type: "oauth2",
         provider: "google",
-        authorization_url: "https://accounts.google.com/o/oauth2/v2/auth",
-        token_url: "https://oauth2.googleapis.com/token",
-        refresh_url: "https://oauth2.googleapis.com/token",
+        authorizationUrl: "https://accounts.google.com/o/oauth2/v2/auth",
+        tokenUrl: "https://oauth2.googleapis.com/token",
+        refreshUrl: "https://oauth2.googleapis.com/token",
         scopes: [
           "https://www.googleapis.com/auth/calendar",
           "https://www.googleapis.com/auth/calendar.readonly",
           "https://www.googleapis.com/auth/calendar.events",
         ],
-        redirect_uri: "/auth/google/callback",
       },
       metadata: {
         category: "productivity",
         documentation: "https://developers.google.com/calendar/api",
+        redirect_uri: "/auth/google/callback",
       },
     }),
   ],

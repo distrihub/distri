@@ -4,7 +4,7 @@ import {
   DapTool,
   DistriPlugin,
   ExecutionContext,
-} from "jsr:@distri/runtime@0.1.0";
+} from "https://distri.dev/base.ts";
 
 function resolveAccessToken(context?: ExecutionContext) {
   const token = context?.auth_session?.access_token;
@@ -87,11 +87,11 @@ const googleDocsPlugin: DistriPlugin = {
       description: "Google Docs integration for document creation.",
       version: "1.0.0",
       tools: getDocsTools(),
-      authProvider: {
-        type: "oauth",
+      auth: {
+        type: "oauth2",
         provider: "google",
-        authorization_url: "https://accounts.google.com/o/oauth2/v2/auth",
-        token_url: "https://oauth2.googleapis.com/token",
+        authorizationUrl: "https://accounts.google.com/o/oauth2/v2/auth",
+        tokenUrl: "https://oauth2.googleapis.com/token",
         scopes: ["https://www.googleapis.com/auth/documents"],
       },
       metadata: {

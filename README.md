@@ -11,7 +11,7 @@ Workspace for building and testing distri TypeScript plugins in isolation. Each 
 ## Quick Start (Deno)
 
 ```ts
-import { registerPlugin, registerAgentHandler, callTool } from "jsr:@distri/runtime@0.1.0";
+import { registerPlugin, registerAgentHandler, callTool } from "https://distri.dev/base.ts";
 import slackPlugin from "./plugins/slack/mod.ts";
 
 registerPlugin(slackPlugin);
@@ -21,7 +21,7 @@ await callTool({
   integration: "slack",
   tool_name: "send_message",
   input: { channel: "#general", text: "Hello distri" },
-  context: { secrets: { SLACK_BOT_TOKEN: "xoxb-..." } },
+  context: { secrets: { slack_bot_token: "xoxb-..." } },
 });
 ```
 

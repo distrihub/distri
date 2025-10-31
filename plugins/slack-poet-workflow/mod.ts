@@ -3,7 +3,7 @@ import {
   callTool,
   DapWorkflow,
   DistriPlugin,
-} from "jsr:@distri/runtime@0.1.0";
+} from "https://distri.dev/base.ts";
 
 async function run(input: any, context: any) {
   const channel = input.channel || "#poetry";

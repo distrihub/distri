@@ -5,7 +5,7 @@ import {
   DapTool,
   DistriPlugin,
   ExecutionContext,
-} from "jsr:@distri/runtime@0.1.0";
+} from "https://distri.dev/base.ts";
 
 interface SlackConfig {
   token?: string;
@@ -61,9 +61,9 @@ class SlackIntegration {
   static getTokenFromContext(context?: ExecutionContext): string | undefined {
     const secrets = context?.secrets || {};
     const candidates = [
-      "SLACK_BOT_TOKEN",
+      "slack_bot_token",
+      "bot_token",
       "slack",
-      "SLACK_BOT_TOKEN:default",
       "slack:default",
     ];
 
@@ -197,7 +197,7 @@ async function initializeSlack(params: Record<string, unknown>, context?: Execut
   const token = (params.token as string | undefined) || SlackIntegration.getTokenFromContext(context);
 
   if (!token) {
-    throw new Error("Slack token missing. Provide token parameter or configure SLACK_BOT_TOKEN secret.");
+    throw new Error("Slack token missing. Provide token parameter or configure slack_bot_token secret.");
   }
 
   const slack = new SlackIntegration({ token });
@@ -358,6 +358,11 @@ const slackPlugin: DistriPlugin = {
       description: "Slack messaging integration.",
       version: "1.0.0",
       tools: getSlackTools(),
+      auth: {
+        type: "secret",
+        provider: "slack",
+        fields: [{ key: "bot_token" }],
+      },
       metadata: {
         category: "messaging",
         documentation: "https://api.slack.com/",

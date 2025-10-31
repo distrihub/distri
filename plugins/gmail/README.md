@@ -17,7 +17,7 @@ Populate `context.auth_session.access_token` with a valid Gmail token that inclu
 
 ```ts
 import gmailPlugin from "./mod.ts";
-import { registerPlugin, callTool } from "jsr:@distri/runtime@0.1.0";
+import { registerPlugin, callTool } from "https://distri.dev/base.ts";
 
 registerPlugin(gmailPlugin);
 await callTool({

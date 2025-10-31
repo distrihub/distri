@@ -1,15 +1,13 @@
 name = "google-sheets"
 version = "1.0.0"
 description = "Google Sheets tooling for spreadsheet-centric automations."
+license = "MIT"
 
-tags = ["spreadsheets", "productivity", "google"]
+keywords = ["spreadsheets", "productivity", "google"]
 
-[[integrations]]
-name = "google_sheets"
-tools = ["create_spreadsheet", "write_to_sheet"]
+[entrypoints]
+type = "ts"
+path = "mod.ts"
 
-[auth]
-provider = "google"
-type = "oauth"
-scopes = ["https://www.googleapis.com/auth/spreadsheets"]
-docs = "https://developers.google.com/sheets/api"
+[distri]
+engine = ">=0.1.0"

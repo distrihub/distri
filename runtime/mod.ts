@@ -1,18 +1,27 @@
-export interface AuthRequirement {
+export interface OAuth2Requirement {
+  type: 'oauth2';
   provider: string;
   scopes?: string[];
+  authorizationUrl?: string;
+  tokenUrl?: string;
+  refreshUrl?: string;
+  sendRedirectUri?: boolean;
 }
 
-export interface AuthProviderConfig {
-  type: string;
-  provider: string;
-  authorization_url?: string;
-  token_url?: string;
-  refresh_url?: string;
-  scopes?: string[];
-  redirect_uri?: string;
+export interface SecretFieldRequirement {
+  key: string;
+  label?: string;
   description?: string;
+  optional?: boolean;
 }
+
+export interface SecretRequirement {
+  type: 'secret';
+  provider: string;
+  fields?: SecretFieldRequirement[];
+}
+
+export type AuthRequirement = OAuth2Requirement | SecretRequirement;
 
 export interface ExecutionContext {
   session_id?: string;
@@ -28,7 +37,7 @@ export interface DapTool {
   name: string;
   description: string;
   parameters: unknown;
-  requiresAuth?: AuthRequirement;
+  auth?: AuthRequirement;
   execute: (parameters: any, context?: ExecutionContext) => Promise<any>;
 }
 
@@ -37,8 +46,7 @@ export interface Integration {
   description: string;
   version?: string;
   tools: DapTool[];
-  authProvider?: AuthProviderConfig;
-  requiresAuth?: AuthRequirement;
+  auth?: AuthRequirement;
   notifications?: string[];
   metadata?: Record<string, unknown>;
 }
@@ -54,7 +62,7 @@ export interface DapWorkflow {
 
 export interface DistriPlugin {
   integrations: Integration[];
-  workflows: DapWorkflow[];
+  workflows?: DapWorkflow[];
 }
 
 export interface RegisterPluginOptions {
@@ -104,13 +112,13 @@ export function createTool(config: {
   description: string;
   parameters: unknown;
   execute: (parameters: any, context?: ExecutionContext) => Promise<any>;
-  requiresAuth?: AuthRequirement;
+  auth?: AuthRequirement;
 }): DapTool {
   return {
     name: config.name,
     description: config.description,
     parameters: config.parameters,
-    requiresAuth: config.requiresAuth,
+    auth: config.auth,
     execute: config.execute,
   };
 }
@@ -120,8 +128,7 @@ export function createIntegration(config: {
   description: string;
   version?: string;
   tools: DapTool[];
-  authProvider?: AuthProviderConfig;
-  requiresAuth?: AuthRequirement;
+  auth?: AuthRequirement;
   notifications?: string[];
   metadata?: Record<string, unknown>;
 }): Integration {
@@ -130,8 +137,7 @@ export function createIntegration(config: {
     description: config.description,
     version: config.version || "1.0.0",
     tools: config.tools,
-    authProvider: config.authProvider,
-    requiresAuth: config.requiresAuth,
+    auth: config.auth,
     notifications: config.notifications || [],
     metadata: config.metadata || {},
   };
@@ -190,7 +196,8 @@ export function registerPlugin(plugin: DistriPlugin, options: RegisterPluginOpti
     }
   }
 
-  for (const workflow of plugin.workflows) {
+  const workflows = plugin.workflows || [];
+  for (const workflow of workflows) {
     registerWorkflowAliases(namespace, workflow);
   }
 }
