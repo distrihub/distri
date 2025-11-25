@@ -1,55 +1,66 @@
-# distri-plugins
+# Distri Releases
 
-Workspace for building and testing distri TypeScript plugins in isolation. Each package follows the conventions used by the main [`blinklogic/distri`](../distri) repository’s `ts-executor`: plugins export a `DistriPlugin` object that exposes integrations (collections of tools) and workflows. This repo adds a Deno-based harness so you can prototype locally without booting the Rust runtime.
+![](https://img.shields.io/badge/Platform-macOS%20%7C%20Linux%20%7C%20Windows-blue?style=flat-square) ![](https://img.shields.io/badge/Runtime-Distri%20CLI-orange?style=flat-square)
 
-## What’s Inside
+Distri is a programmable automation runtime for shipping AI-native workflows across your stack. This repository is the public home for official Distri releases plus a curated set of sample plugins you can use as starting points for your own automations.
 
-- `runtime/` – lightweight TypeScript helpers that mirror the executor runtime (`callTool`, `callWorkflow`, `registerPlugin`, `createTool`, `createIntegration`). They emulate the behaviour of `distri-plugin-executor/src/executors/ts_executor/modules/base.ts` by normalising tool names, injecting execution context, and supporting agent callbacks.
-- `plugins/` – one directory per integration or workflow package (Slack, Notion, Google, Slack poet demo, etc.). Each package owns its `README.md` and `distri.toml` for discovery metadata.
-- `docs/` – guides and reference material, including an LLM-friendly integration checklist.
+**Learn more in the [official documentation](https://distri.dev/docs/)** and explore product updates at [distri.dev](https://distri.dev/).
 
-## Quick Start (Deno)
+![Distri CLI demo](https://distri.dev/img/social.png)
 
-```ts
-import { registerPlugin, registerAgentHandler, callTool } from "https://distri.dev/base.ts";
-import slackPlugin from "./plugins/slack/mod.ts";
+## Get started
 
-registerPlugin(slackPlugin);
-registerAgentHandler(async ({ task }) => `Echo: ${task}`);
+1. Install the Distri CLI using your preferred method.
+2. Verify the install and explore the built-in help.
+3. Point Distri at your repo or workspace and start running workflows.
 
-await callTool({
-  integration: "slack",
-  tool_name: "send_message",
-  input: { channel: "#general", text: "Hello distri" },
-  context: { secrets: { slack_bot_token: "xoxb-..." } },
-});
+### Homebrew (macOS / Linux)
+```bash
+brew tap distrihub/distri
+brew install distri
 ```
 
-- Tools are registered under multiple aliases (e.g. `slack_send_message`, `slack.send_message`, `send_message`).
-- `callWorkflow` works the same way and delegates to the workflow’s `execute` method.
-- Provide an agent handler to unblock workflows that invoke `callAgent`.
+### Direct download (macOS / Linux)
+Download the latest archive from [GitHub Releases](https://github.com/distrihub/distri-public/releases), then:
+```bash
+curl -L https://github.com/distrihub/distri-public/releases/latest/download/distri-darwin-arm64.tar.gz -o distri.tar.gz   # pick the right OS/arch
+sudo tar -xzf distri.tar.gz -C /usr/local/bin distri
+```
+For Linux `x86_64`, swap the archive for `distri-linux-x86_64.tar.gz` and adjust the extraction path as needed.
 
-## Packaging Conventions
+### Windows (PowerShell)
+```powershell
+Invoke-WebRequest https://github.com/distrihub/distri-public/releases/latest/download/distri-windows-x86_64.zip -OutFile distri.zip
+Expand-Archive distri.zip -DestinationPath $Env:LOCALAPPDATA\distri -Force
+$Env:Path += ";$Env:LOCALAPPDATA\distri"
+```
 
-1. **Structure** – export `default` as a `DistriPlugin` with `integrations` and `workflows` arrays. Tools are created with `createTool`, workflows with `DapWorkflow` objects.
-2. **Metadata** – capture registry-ready information in `distri.toml` (name, tags, tool list, auth hints). This keeps parity with the manifest processing performed by the Rust executor.
-3. **Auth & Secrets** – tools read from `context.secrets` and `context.auth_session`, matching the context shape passed by `ts-executor` inside `distri-plugin-executor`.
-4. **Logging** – prefer concise `console.log` messages that help during local testing; swap them for `debug!`/structured logging inside the real runtime if needed.
+### Verify & explore
+```bash
+distri --version
+distri help
+```
 
-## Learning Resources
+### Run your first workflow
+```bash
+cd path/to/your/project
+distri run
+```
 
-- `docs/developing-integrations.md` – step-by-step integration guide tailored for LLM co-pilots, including prompts, checklists, and testing hints.
-- Parent repo references:
-  - `distri-plugin-executor/src/executors/ts_executor/modules/base.ts` – definitions of `createTool`, `createIntegration`, `callTool`, and plugin processing.
-  - `notes/typescript-plugins.md` – canonical structure for TypeScript plugins and guidance on agent configuration.
-  - `notes/PLUGIN_ARCHITECTURE.md` – broader overview of plugin loading, validation, and planned WASM component support.
+## Sample plugins
 
-## Contributing Workflow
+This repo ships ready-to-run examples that mirror how production Distri plugins are authored:
 
-1. Create a new folder in `plugins/` for your integration or workflow package.
-2. Implement tools/workflows with the local runtime helpers.
-3. Document behaviour in a package README and capture metadata in `distri.toml`.
-4. Run scripts or snippets with Deno to validate your tool invocations.
-5. When satisfied, port the module into the main `distri` repository or publish your package.
+- `plugins/` – complete integrations and workflows (Slack, Notion, Google, etc.) including their `distri.toml` metadata files.
+- `runtime/` – lightweight TypeScript helpers (`registerPlugin`, `createTool`, `callTool`, etc.) that emulate the executor runtime so you can iterate locally without booting the Rust host.
+- `docs/` – integration checklists, plugin conventions, and guidance for crafting LLM-friendly workflows.
 
-Maintaining parity with the core executor ensures the code written here drops into production with minimal changes.
+Clone the repo, open any plugin directory, and run the Deno snippets in the README to experiment, or copy the structure into your own repo when building new integrations.
+
+## Releases & updates
+
+Each tagged release in this repo corresponds to a shipped Distri build. Check the [GitHub Releases](https://github.com/distrihub/distri-public/releases) page for the latest binaries, changelog notes, and signing artifacts.
+
+## Support & feedback
+
+Questions or ideas? Open an issue in this repository or reach out through [distri.dev/contact](https://distri.dev/contact/). The team actively monitors bug reports and feature requests from the community.
