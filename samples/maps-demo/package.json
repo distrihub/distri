@@ -1,0 +1,39 @@
+{
+  "name": "distri-maps-chat",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@distri/react": "workspace:*",
+    "@distri/core": "workspace:*",
+    "@distri/components": "workspace:*",
+    "@vis.gl/react-google-maps": "^1.3.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "lucide-react": "^0.263.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^3.4.0",
+    "typescript": "^5.8.3",
+    "vite": "^4.5.14"
+  },
+  "description": "Google Maps integration sample for Distri Framework using react-google-maps",
+  "keywords": [
+    "distri",
+    "google-maps",
+    "react",
+    "chat",
+    "assistant"
+  ],
+  "author": "Distri Team",
+  "license": "MIT"
+}

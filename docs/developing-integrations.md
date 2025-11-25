@@ -107,7 +107,7 @@ console.log(result);
 
 ## 7. Handoff Notes
 
-When you’re ready to move code back into `blinklogic/distri`:
+When you’re ready to move code back into `distrihub/distri-public`:
 
 1. Copy the package into the main repo’s plugin directory.
 2. Replace the local runtime import with `https://distri.dev/base.ts` (or the internal path used by the executor).
