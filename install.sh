@@ -35,13 +35,13 @@ esac
 
 ARCH_RAW=$(uname -m 2>/dev/null || echo unknown)
 case "$ARCH_RAW" in
-  x86_64 | amd64) ARCH="x86_64" ;;
-  arm64 | aarch64) ARCH="arm64" ;;
+  x86_64 | amd64) ARCH="x86_64"; ASSET_ARCH="amd64" ;;
+  arm64 | aarch64) ARCH="arm64"; ASSET_ARCH="arm64" ;;
   *) fatal "unsupported architecture: $ARCH_RAW. Only x86_64 and arm64 are supported." ;;
 esac
 
 VERSION=${DISTRI_VERSION:-latest}
-ASSET="distri-${PLATFORM}-${ARCH}.tar.gz"
+ASSET="distri-${PLATFORM}-${ASSET_ARCH}.tar.gz"
 
 if [ "$VERSION" = "latest" ]; then
   TAG_LABEL="latest"
