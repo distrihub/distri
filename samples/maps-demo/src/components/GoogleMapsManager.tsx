@@ -21,6 +21,9 @@ export interface GoogleMapsManagerRef {
   addMarker: (params: { latitude: number; longitude: number; title: string; description?: string }) => Promise<{ success: boolean; message: string; markerId: string }>;
   getDirections: (params: { origin: string; destination: string; travel_mode?: string }) => Promise<{ success: boolean; message: string; directions?: any }>;
   searchPlaces: (params: { query: string; latitude: number; longitude: number; radius?: number }) => Promise<{ success: boolean; message: string; places?: any[] }>;
+  searchPlaceByName: (params: { query: string; location?: { latitude: number; longitude: number }; radius?: number }) => Promise<{ success: boolean; message: string; places?: any[] }>;
+  geocodeAddress: (params: { address: string }) => Promise<{ success: boolean; message: string; coordinates?: { latitude: number; longitude: number; formatted_address?: string } }>;
+  getPlaceDetails: (params: { place_id: string }) => Promise<{ success: boolean; message: string; place?: any }>;
   clearMap: () => Promise<{ success: boolean; message: string }>;
 }
 
@@ -224,7 +227,8 @@ const MapController: React.FC<MapControllerProps> = ({
         name: place.name,
         address: place.vicinity,
         rating: place.rating,
-        priceLevel: place.price_level
+        priceLevel: place.price_level,
+        place_id: place.place_id
       }));
 
       return {
@@ -240,6 +244,214 @@ const MapController: React.FC<MapControllerProps> = ({
       };
     }
   }, [placesService, setMarkers]);
+
+  const searchPlaceByName = useCallback(async (params: { query: string; location?: { latitude: number; longitude: number }; radius?: number }) => {
+    try {
+      if (!placesService) {
+        return {
+          success: false,
+          message: 'Places service not available'
+        };
+      }
+
+      const request: google.maps.places.TextSearchRequest = {
+        query: params.query
+      };
+
+      // Use provided location, or fall back to map's current center, or use map bounds for better results
+      let searchLocation = params.location;
+      if (!searchLocation && map) {
+        const mapCenter = map.getCenter();
+        if (mapCenter) {
+          searchLocation = {
+            latitude: mapCenter.lat(),
+            longitude: mapCenter.lng()
+          };
+        }
+      }
+
+      // Add location bias if we have a location (either provided or from map center)
+      if (searchLocation) {
+        request.location = new google.maps.LatLng(searchLocation.latitude, searchLocation.longitude);
+        request.radius = params.radius || 50000; // Default to 50km if location is provided
+      }
+
+      const results = await new Promise<google.maps.places.PlaceResult[]>((resolve, reject) => {
+        placesService.textSearch(request, (results: google.maps.places.PlaceResult[] | null, status: google.maps.places.PlacesServiceStatus) => {
+          if (status === google.maps.places.PlacesServiceStatus.OK && results) {
+            resolve(results);
+          } else {
+            reject(new Error(`Text search failed: ${status}`));
+          }
+        });
+      });
+
+      // Add markers for found places
+      const placeMarkers: MapMarker[] = results.slice(0, 10).map((place, index) => ({
+        id: `place-text-${Date.now()}-${index}`,
+        position: {
+          lat: place.geometry?.location?.lat() || 0,
+          lng: place.geometry?.location?.lng() || 0
+        },
+        title: place.name || 'Unknown Place',
+        description: `${place.formatted_address || place.vicinity || ''} • Rating: ${place.rating || 'N/A'}`
+      }));
+
+      setMarkers(prev => [...prev, ...placeMarkers]);
+
+      // Format places info with place_id for get_place_details
+      const placesInfo = results.slice(0, 10).map(place => ({
+        name: place.name,
+        formatted_address: place.formatted_address,
+        address: place.vicinity || place.formatted_address,
+        rating: place.rating,
+        user_ratings_total: place.user_ratings_total,
+        priceLevel: place.price_level,
+        place_id: place.place_id,
+        location: place.geometry?.location ? {
+          latitude: place.geometry.location.lat(),
+          longitude: place.geometry.location.lng()
+        } : undefined
+      }));
+
+      return {
+        success: true,
+        message: `Found ${results.length} places for "${params.query}". Added ${placeMarkers.length} markers.`,
+        places: placesInfo
+      };
+    } catch (error) {
+      console.error('Error searching place by name:', error);
+      return {
+        success: false,
+        message: `Failed to search place by name: ${error instanceof Error ? error.message : 'Unknown error'}`
+      };
+    }
+  }, [placesService, setMarkers, map]);
+
+  const geocodeAddress = useCallback(async (params: { address: string }) => {
+    try {
+      if (!map) {
+        return {
+          success: false,
+          message: 'Map not available'
+        };
+      }
+
+      const geocoder = new google.maps.Geocoder();
+      const result = await new Promise<google.maps.GeocoderResult[]>((resolve, reject) => {
+        geocoder.geocode({ address: params.address }, (results: google.maps.GeocoderResult[] | null, status: google.maps.GeocoderStatus) => {
+          if (status === google.maps.GeocoderStatus.OK && results && results.length > 0) {
+            resolve(results);
+          } else {
+            reject(new Error(`Geocoding failed: ${status}`));
+          }
+        });
+      });
+
+      const firstResult = result[0];
+      const location = firstResult.geometry.location;
+      const coordinates = {
+        latitude: location.lat(),
+        longitude: location.lng(),
+        formatted_address: firstResult.formatted_address
+      };
+
+      return {
+        success: true,
+        message: `Geocoded "${params.address}" to ${coordinates.latitude}, ${coordinates.longitude}`,
+        coordinates
+      };
+    } catch (error) {
+      console.error('Error geocoding address:', error);
+      return {
+        success: false,
+        message: `Failed to geocode address: ${error instanceof Error ? error.message : 'Unknown error'}`
+      };
+    }
+  }, [map]);
+
+  const getPlaceDetails = useCallback(async (params: { place_id: string }) => {
+    try {
+      if (!placesService) {
+        return {
+          success: false,
+          message: 'Places service not available'
+        };
+      }
+
+      const request = {
+        placeId: params.place_id,
+        fields: [
+          'name',
+          'formatted_address',
+          'formatted_phone_number',
+          'international_phone_number',
+          'website',
+          'rating',
+          'user_ratings_total',
+          'price_level',
+          'opening_hours',
+          'photos',
+          'reviews',
+          'geometry',
+          'types',
+          'vicinity'
+        ]
+      };
+
+      const result = await new Promise<google.maps.places.PlaceResult>((resolve, reject) => {
+        placesService.getDetails(request, (place: google.maps.places.PlaceResult | null, status: google.maps.places.PlacesServiceStatus) => {
+          if (status === google.maps.places.PlacesServiceStatus.OK && place) {
+            resolve(place);
+          } else {
+            reject(new Error(`Place details request failed: ${status}`));
+          }
+        });
+      });
+
+      // Format the place details for easier consumption
+      const placeDetails = {
+        name: result.name,
+        formatted_address: result.formatted_address,
+        phone: result.formatted_phone_number || result.international_phone_number,
+        website: result.website?.toString(),
+        rating: result.rating,
+        user_ratings_total: result.user_ratings_total,
+        price_level: result.price_level,
+        opening_hours: result.opening_hours ? {
+          open_now: result.opening_hours.open_now,
+          weekday_text: result.opening_hours.weekday_text
+        } : undefined,
+        photos: result.photos?.slice(0, 3).map((photo: google.maps.places.PlacePhoto) => ({
+          url: photo.getUrl({ maxWidth: 400, maxHeight: 400 })
+        })),
+        reviews: result.reviews?.slice(0, 5).map((review: google.maps.places.PlaceReview) => ({
+          author_name: review.author_name,
+          rating: review.rating,
+          text: review.text,
+          relative_time_description: review.relative_time_description
+        })),
+        location: result.geometry?.location ? {
+          latitude: result.geometry.location.lat(),
+          longitude: result.geometry.location.lng()
+        } : undefined,
+        types: result.types,
+        vicinity: result.vicinity
+      };
+
+      return {
+        success: true,
+        message: `Retrieved details for "${result.name || 'place'}"`,
+        place: placeDetails
+      };
+    } catch (error) {
+      console.error('Error getting place details:', error);
+      return {
+        success: false,
+        message: `Failed to get place details: ${error instanceof Error ? error.message : 'Unknown error'}`
+      };
+    }
+  }, [placesService]);
 
   const clearMap = useCallback(async () => {
     try {
@@ -272,11 +484,14 @@ const MapController: React.FC<MapControllerProps> = ({
         addMarker,
         getDirections,
         searchPlaces,
+        searchPlaceByName,
+        geocodeAddress,
+        getPlaceDetails,
         clearMap
       };
       console.log('mapRef.current set:', mapRef.current);
     }
-  }, [map, setMapCenter, addMarker, getDirections, searchPlaces, clearMap]); // Include all methods so ref updates when they change
+  }, [map, setMapCenter, addMarker, getDirections, searchPlaces, searchPlaceByName, geocodeAddress, getPlaceDetails, clearMap]); // Include all methods so ref updates when they change
 
   return null; // This component doesn't render anything
 };

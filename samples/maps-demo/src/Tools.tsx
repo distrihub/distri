@@ -105,6 +105,33 @@ export const getTools = (mapManagerRef: GoogleMapsManagerRef): DistriFnTool[] =>
     } as DistriFnTool,
 
     {
+      name: 'search_place_by_name',
+      description: 'Search for places by name or text query (e.g., "Starbucks", "McDonalds near Times Square", "restaurants in Paris"). Automatically uses the map\'s current center as location bias if no location is provided. Returns place results with place_id.',
+      type: 'function',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Text query to search for (e.g., "Starbucks", "Italian restaurants in New York", "McDonalds near Times Square")' },
+          latitude: { type: 'number', description: 'Optional: Latitude for location bias (if not provided, uses map\'s current center automatically)' },
+          longitude: { type: 'number', description: 'Optional: Longitude for location bias (if not provided, uses map\'s current center automatically)' },
+          radius: { type: 'number', description: 'Optional: Search radius in meters when location is provided (default: 50000)' }
+        },
+        required: ['query']
+      },
+      handler: async (input: object) => {
+        const { query, latitude, longitude, radius } = input as { query: string; latitude?: number; longitude?: number; radius?: number };
+        if (!query) {
+          return "Invalid input: query is required";
+        }
+        const location = (latitude !== undefined && longitude !== undefined) 
+          ? { latitude, longitude } 
+          : undefined;
+        const result = await mapManagerRef.searchPlaceByName({ query, location, radius });
+        return JSON.stringify(result);
+      }
+    } as DistriFnTool,
+
+    {
       name: 'geocode_address',
       description: 'Convert an address or place name to latitude and longitude coordinates',
       type: 'function',
