@@ -105,6 +105,57 @@ export const getTools = (mapManagerRef: GoogleMapsManagerRef): DistriFnTool[] =>
     } as DistriFnTool,
 
     {
+      name: 'geocode_address',
+      description: 'Convert an address or place name to latitude and longitude coordinates',
+      type: 'function',
+      parameters: {
+        type: 'object',
+        properties: {
+          address: { type: 'string', description: 'Address or place name to geocode (e.g., "1600 Amphitheatre Parkway, Mountain View, CA" or "Eiffel Tower, Paris")' }
+        },
+        required: ['address']
+      },
+      handler: async (input: object) => {
+        const { address } = input as { address: string };
+        if (!address) {
+          return "Invalid input: address is required";
+        }
+        const result = await mapManagerRef.geocodeAddress({ address });
+        if (result.success && result.coordinates) {
+          return JSON.stringify({
+            success: true,
+            message: result.message,
+            latitude: result.coordinates.latitude,
+            longitude: result.coordinates.longitude,
+            formatted_address: result.coordinates.formatted_address
+          });
+        }
+        return JSON.stringify(result);
+      }
+    } as DistriFnTool,
+
+    {
+      name: 'get_place_details',
+      description: 'Get detailed information about a place using its place_id (obtained from search_places results)',
+      type: 'function',
+      parameters: {
+        type: 'object',
+        properties: {
+          place_id: { type: 'string', description: 'Place ID from Google Places API (obtained from search_places results)' }
+        },
+        required: ['place_id']
+      },
+      handler: async (input: object) => {
+        const { place_id } = input as { place_id: string };
+        if (!place_id) {
+          return "Invalid input: place_id is required";
+        }
+        const result = await mapManagerRef.getPlaceDetails({ place_id });
+        return JSON.stringify(result);
+      }
+    } as DistriFnTool,
+
+    {
       name: 'clear_map',
       description: 'Clear all markers and directions from the map',
       type: 'function',
