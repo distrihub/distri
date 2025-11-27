@@ -136,7 +136,7 @@ function MapsContent() {
             </button>
           </div>
 
-          <div className="flex-1 overflow-hidden">
+          <div className="w-96 overflow-hidden">
             <Chat
               agent={agent}
               externalTools={tools}
@@ -144,6 +144,7 @@ function MapsContent() {
               theme="dark"
               threadId={selectedThreadId}
               voiceEnabled={voiceEnabled}
+              maxWidth="384px"
               ttsConfig={{
                 model: 'openai',
                 voice: 'alloy',

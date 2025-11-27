@@ -20,15 +20,7 @@
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
-    "noFallthroughCasesInSwitch": true,
-    "paths": {
-      "@distri/react": [
-        "../../packages/react/src"
-      ],
-      "@distri/core": [
-        "../../packages/core/src"
-      ]
-    }
+    "noFallthroughCasesInSwitch": true
   },
   "include": [
     "src"
