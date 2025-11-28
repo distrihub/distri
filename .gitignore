@@ -13,3 +13,5 @@ dist/
 
 # Runtime publishing artifacts
 runtime/deno.lock
+node_modules/**
+samples/**/node_modules/**
