@@ -42,6 +42,7 @@ esac
 
 VERSION=${DISTRI_VERSION:-latest}
 ASSET="distri-${PLATFORM}-${ASSET_ARCH}.tar.gz"
+SLUG="${PLATFORM}-${ASSET_ARCH}"
 
 if [ "$VERSION" = "latest" ]; then
   TAG_LABEL="latest"
@@ -96,7 +97,12 @@ if ! curl -fL "$DOWNLOAD_URL" -o "$TARBALL"; then
 fi
 
 tar -xzf "$TARBALL" -C "$TMPDIR"
-BIN_PATH=$(find "$TMPDIR" -type f -name "distri" | head -n 1)
+EXTRACT_ROOT="$TMPDIR/$SLUG"
+BIN_PATH="$EXTRACT_ROOT/distri"
+
+if [ ! -f "$BIN_PATH" ]; then
+  BIN_PATH=$(find "$TMPDIR" -type f -name "distri" | head -n 1)
+fi
 
 if [ -z "$BIN_PATH" ]; then
   fatal "distri binary not found in downloaded archive."
@@ -104,10 +110,26 @@ fi
 
 install -m 0755 "$BIN_PATH" "$INSTALL_DIR/distri"
 
+SERVER_BIN_PATH="$EXTRACT_ROOT/server/distri-server"
+if [ -f "$SERVER_BIN_PATH" ]; then
+  install -m 0755 "$SERVER_BIN_PATH" "$INSTALL_DIR/distri-server"
+  INSTALLED_SERVER=1
+else
+  SERVER_BIN_PATH=$(find "$TMPDIR" -type f -name "distri-server" | head -n 1)
+  if [ -n "$SERVER_BIN_PATH" ]; then
+    install -m 0755 "$SERVER_BIN_PATH" "$INSTALL_DIR/distri-server"
+    INSTALLED_SERVER=1
+  fi
+fi
+
 if ! printf "%s" "$PATH" | tr ":" "\n" | grep -qx "$INSTALL_DIR"; then
   log "added distri to ${INSTALL_DIR}, but that directory is not on your PATH."
   log "Add the following line to your shell profile:"
   log "  export PATH=\"$INSTALL_DIR:\$PATH\""
 fi
 
-log "Distri installed successfully. Run 'distri --version' to verify."
+if [ -n "${INSTALLED_SERVER:-}" ]; then
+  log "Distri and distri-server installed successfully. Run 'distri --version' to verify."
+else
+  log "Distri installed successfully. Run 'distri --version' to verify."
+fi
