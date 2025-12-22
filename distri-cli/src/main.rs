@@ -12,11 +12,8 @@ use distri_a2a::{
 };
 use tokio::fs;
 
-const DEFAULT_SERVE_HOST: &str = "127.0.0.1";
-const DEFAULT_SERVE_PORT: u16 = 8081;
-
 #[derive(Parser, Debug, Clone)]
-#[clap(author, version, about)]
+#[clap(author, version, about, arg_required_else_help = true)]
 struct Cli {
     /// Optional base URL (defaults to DISTRI_BASE_URL)
     #[clap(long)]
@@ -71,14 +68,6 @@ enum Commands {
         /// Run headless (do not open the web UI automatically)
         #[clap(long, help = "Skip opening the web UI in your browser")]
         headless: bool,
-        /// Run the shared browser in headless mode (default true). Use --no-headless-browser to show Chrome.
-        #[clap(
-            long,
-            default_value_t = true,
-            action = clap::ArgAction::Set,
-            help = "Run the shared browser headless (default true). Use --no-headless-browser to show Chrome."
-        )]
-        headless_browser: bool,
         /// Disable loading plugins and their agents/tools
         #[clap(long, help = "Disable loading plugins (plugins, agents/tools)")]
         disable_plugins: bool,
@@ -124,27 +113,18 @@ async fn main() -> Result<()> {
     dotenv::dotenv().ok();
 
     let cli = parse_cli_with_default_serve();
-    let command = cli
-        .command
-        .clone()
-        .expect("command is set by default parser");
+
+    let command = Cli::parse().command.clone().expect("command is expected");
 
     if let Commands::Serve {
         host,
         port,
         headless,
-        headless_browser,
+
         disable_plugins,
     } = &command
     {
-        run_distri_server(
-            &cli,
-            host.clone(),
-            *port,
-            *headless,
-            *headless_browser,
-            *disable_plugins,
-        )?;
+        run_distri_server(&cli, host.clone(), *port, *headless, *disable_plugins)?;
         return Ok(());
     }
 
@@ -264,28 +244,7 @@ async fn main() -> Result<()> {
 }
 
 fn parse_cli_with_default_serve() -> Cli {
-    let mut cli = Cli::parse();
-
-    if cli.command.is_none() {
-        let host = std::env::var("DISTRI_HOST").unwrap_or_else(|_| DEFAULT_SERVE_HOST.to_string());
-        let port = std::env::var("DISTRI_PORT")
-            .ok()
-            .and_then(|value| value.parse().ok())
-            .unwrap_or(DEFAULT_SERVE_PORT);
-
-        println!(
-            "No command provided; starting distri server with UI at http://{}:{}/ui/",
-            host, port
-        );
-
-        cli.command = Some(Commands::Serve {
-            host: Some(host),
-            port: Some(port),
-            headless: false,
-            headless_browser: true,
-            disable_plugins: false,
-        });
-    }
+    let cli = Cli::parse();
 
     cli
 }
@@ -302,7 +261,6 @@ fn run_distri_server(
     host: Option<String>,
     port: Option<u16>,
     headless: bool,
-    headless_browser: bool,
     disable_plugins: bool,
 ) -> Result<()> {
     let mut cmd = Command::new(resolve_distri_server_binary());
@@ -315,9 +273,6 @@ fn run_distri_server(
     }
     if disable_plugins {
         cmd.arg("--disable-plugins");
-    }
-    if !headless_browser {
-        cmd.arg("--no-headless-browser");
     }
 
     cmd.arg("serve");
