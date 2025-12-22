@@ -2,6 +2,14 @@
 name = "distri-types"
 version = "0.2.4"
 edition = "2024"
+description = "Shared message, tool, and config types for Distri"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/distrihub/distri"
+homepage = "https://distri.dev"
+documentation = "https://docs.rs/distri-types"
+keywords = ["distri", "agent", "types", "llm"]
+categories = ["api-bindings", "data-structures"]
 
 [dependencies]
 browsr-types = { workspace = true }

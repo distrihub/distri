@@ -144,10 +144,6 @@ impl PromptRegistry {
                 "reasoning",
                 include_str!("../../prompt_templates/partials/reasoning.hbs"),
             ),
-            (
-                "browser_steps",
-                include_str!("../../prompt_templates/partials/browser_steps.hbs"),
-            ),
         ];
 
         let mut partials_lock = self.partials.write().await;

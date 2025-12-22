@@ -1,4 +1,4 @@
-use crate::{Distri, LlmExecuteResponse};
+use crate::{Distri, DistriConfig, LlmExecuteResponse};
 use actix_web::{App, HttpResponse, HttpServer, dev::ServerHandle, web};
 use distri_a2a::{EventKind, Message as A2aMessage, MessageKind, Part as A2aPart, TextPart};
 use distri_types::{
@@ -8,7 +8,7 @@ use distri_types::{
 #[tokio::test]
 async fn invoke_returns_distri_messages() {
     let server = spawn_test_server().await;
-    let client = Distri::new(&server.base_url);
+    let client = Distri::from_config(DistriConfig::new(&server.base_url));
 
     let messages = vec![Message {
         role: MessageRole::User,
@@ -24,7 +24,7 @@ async fn invoke_returns_distri_messages() {
 #[tokio::test]
 async fn invoke_stream_yields_events() {
     let server = spawn_test_server().await;
-    let client = Distri::new(&server.base_url);
+    let client = Distri::from_config(DistriConfig::new(&server.base_url));
     let messages = vec![Message::user("stream me".into(), None)];
 
     let seen = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -45,7 +45,7 @@ async fn invoke_stream_yields_events() {
 #[tokio::test]
 async fn call_tool_round_trips() {
     let server = spawn_test_server().await;
-    let client = Distri::new(&server.base_url);
+    let client = Distri::from_config(DistriConfig::new(&server.base_url));
     let tool_call = ToolCall {
         tool_call_id: "abc".into(),
         tool_name: "echo".into(),
@@ -63,7 +63,7 @@ async fn call_tool_round_trips() {
 #[tokio::test]
 async fn llm_execute_returns_payload() {
     let server = spawn_test_server().await;
-    let client = Distri::new(&server.base_url);
+    let client = Distri::from_config(DistriConfig::new(&server.base_url));
     let llm_def = LlmDefinition {
         name: "unit-llm".into(),
         model_settings: ModelSettings {

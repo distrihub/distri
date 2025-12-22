@@ -19,17 +19,19 @@ use std::collections::HashMap;
 /// # Example
 ///
 /// ```rust
-/// use distri::DistriClient;
+/// use distri::{Distri, DistriConfig};
+///
+/// // Default cloud endpoint (https://api.distri.dev)
+/// let client = Distri::new();
 ///
 /// // From environment variables (DISTRI_BASE_URL, DISTRI_API_KEY)
 /// let client = Distri::from_env();
 ///
 /// // From explicit URL (for local development)
-/// let client = Distri::new("http://localhost:3033");
+/// let client = Distri::from_config(DistriConfig::new("http://localhost:3033"));
 ///
 /// // With API key authentication
-/// let client = Distri::new("https://api.distri.dev")
-///     .with_api_key("your-api-key");
+/// let client = Distri::new().with_api_key("your-api-key");
 /// ```
 #[derive(Clone)]
 pub struct Distri {
@@ -40,10 +42,9 @@ pub struct Distri {
 }
 
 impl Distri {
-    /// Create a new client with the specified base URL (no authentication).
-    /// For local development, use this method.
-    pub fn new(base_url: impl Into<String>) -> Self {
-        let config = DistriConfig::new(base_url);
+    /// Create a new client using the default base URL (https://api.distri.dev).
+    pub fn new() -> Self {
+        let config = DistriConfig::default();
         Self::from_config(config)
     }
 

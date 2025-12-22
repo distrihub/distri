@@ -67,6 +67,14 @@ This repo ships ready-to-run examples that mirror how production Distri plugins 
 
 Clone the repo, open any plugin directory, and run the Deno snippets in the README to experiment, or copy the structure into your own repo when building new integrations.
 
+## Developing
+
+```bash
+cargo publish -p distri-a2a
+cargo publish -p distri-types
+cargo publish -p distri-filesystem
+```
+
 ## Releases & updates
 
 Each tagged release in this repo corresponds to a shipped Distri build. Check the [GitHub Releases](https://github.com/distrihub/distri/releases) page for the latest binaries, changelog notes, and signing artifacts.

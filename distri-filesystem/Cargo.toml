@@ -2,6 +2,14 @@
 name = "distri-filesystem"
 version = "0.2.4"
 edition = "2021"
+description = "Filesystem and artifact tools for Distri agents"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/distrihub/distri"
+homepage = "https://distri.dev"
+documentation = "https://docs.rs/distri-filesystem"
+keywords = ["distri", "filesystem", "tools", "agent"]
+categories = ["filesystem", "api-bindings"]
 
 [dependencies]
 anyhow = "1.0"

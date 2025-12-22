@@ -2,6 +2,14 @@
 name = "distri"
 version = "0.2.4"
 edition = "2024"
+description = "Rust client for the Distri A2A agent platform"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/distrihub/distri"
+homepage = "https://distri.dev"
+documentation = "https://docs.rs/distri"
+keywords = ["distri", "a2a", "agent", "llm", "workflow"]
+categories = ["api-bindings", "asynchronous", "development-tools"]
 
 [dependencies]
 anyhow = { workspace = true }
