@@ -1,0 +1,338 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Configuration",
+  "type": "object",
+  "required": [
+    "agents",
+    "sessions"
+  ],
+  "properties": {
+    "agents": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/AgentConfig"
+      }
+    },
+    "servers": {
+      "default": [],
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/ServerMetadata"
+      }
+    },
+    "sessions": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    }
+  },
+  "definitions": {
+    "AgentConfig": {
+      "type": "object",
+      "required": [
+        "definition",
+        "workflow"
+      ],
+      "properties": {
+        "definition": {
+          "$ref": "#/definitions/AgentDefinition"
+        },
+        "max_history": {
+          "default": 5,
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "workflow": {
+          "$ref": "#/definitions/RunWorkflow"
+        }
+      }
+    },
+    "AgentDefinition": {
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "description": {
+          "default": "",
+          "type": "string"
+        },
+        "mcp_servers": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/McpDefinition"
+          }
+        },
+        "model_settings": {
+          "default": {
+            "frequency_penalty": 0.0,
+            "max_iterations": 10,
+            "max_tokens": 1000,
+            "model": "gpt-4.1-mini",
+            "presence_penalty": 0.0,
+            "temperature": 0.699999988079071,
+            "top_p": 1.0
+          },
+          "allOf": [
+            {
+              "$ref": "#/definitions/ModelSettings"
+            }
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "parameters": {
+          "default": null
+        },
+        "response_format": {
+          "default": null
+        },
+        "instructions": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "McpDefinition": {
+      "type": "object",
+      "required": [
+        "mcp_server"
+      ],
+      "properties": {
+        "filter": {
+          "default": null,
+          "allOf": [
+            {
+              "$ref": "#/definitions/ToolsFilter"
+            }
+          ]
+        },
+        "mcp_server": {
+          "type": "string"
+        },
+        "mcp_server_type": {
+          "default": "tool",
+          "allOf": [
+            {
+              "$ref": "#/definitions/McpServerType"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "McpServerType": {
+      "type": "string",
+      "enum": [
+        "tool",
+        "agent"
+      ]
+    },
+    "ModelSettings": {
+      "type": "object",
+      "properties": {
+        "frequency_penalty": {
+          "default": 0.0,
+          "type": "number",
+          "format": "float"
+        },
+        "max_iterations": {
+          "default": 10,
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "max_tokens": {
+          "default": 1000,
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "model": {
+          "default": "gpt-4.1-mini",
+          "type": "string"
+        },
+        "presence_penalty": {
+          "default": 0.0,
+          "type": "number",
+          "format": "float"
+        },
+        "temperature": {
+          "default": 0.699999988079071,
+          "type": "number",
+          "format": "float"
+        },
+        "top_p": {
+          "default": 1.0,
+          "type": "number",
+          "format": "float"
+        }
+      },
+      "additionalProperties": false
+    },
+    "RunWorkflow": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "mode"
+          ],
+          "properties": {
+            "mode": {
+              "type": "string",
+              "enum": [
+                "chat"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "mode"
+          ],
+          "properties": {
+            "every": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint64",
+              "minimum": 0.0
+            },
+            "mode": {
+              "type": "string",
+              "enum": [
+                "event"
+              ]
+            },
+            "times": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          }
+        }
+      ]
+    },
+    "ServerMetadata": {
+      "type": "object",
+      "properties": {
+        "auth_session_key": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "mcp_transport": {
+          "default": "Async",
+          "allOf": [
+            {
+              "$ref": "#/definitions/TransportType"
+            }
+          ]
+        }
+      }
+    },
+    "ToolSelector": {
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "ToolsFilter": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ToolSelector"
+          }
+        }
+      ]
+    },
+    "TransportType": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "Async"
+          ]
+        },
+        {
+          "type": "object",
+          "required": [
+            "SSE"
+          ],
+          "properties": {
+            "SSE": {
+              "type": "object",
+              "required": [
+                "server_url"
+              ],
+              "properties": {
+                "server_url": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "Stdio"
+          ],
+          "properties": {
+            "Stdio": {
+              "type": "object",
+              "required": [
+                "args",
+                "command"
+              ],
+              "properties": {
+                "args": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "command": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    }
+  }
+}

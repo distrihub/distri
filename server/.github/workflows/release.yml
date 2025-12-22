@@ -1,0 +1,38 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+    branches:
+      - "chore/release"
+
+permissions:
+  contents: write
+
+jobs:
+  create-draft-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build release changelog
+        id: changelog
+        uses: mikepenz/release-changelog-builder-action@v5
+        with:
+          configurationJson: "{}"
+          token: ${{ secrets.PUBLISH_TOKEN }}
+
+      - name: Create draft GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          body: ${{steps.changelog.outputs.changelog}}
+          draft: true
+          repository: distrihub/distri
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          token: ${{ secrets.PUBLISH_TOKEN }}
+          make_latest: true

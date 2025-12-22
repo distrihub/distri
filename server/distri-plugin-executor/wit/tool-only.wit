@@ -1,0 +1,49 @@
+package distri:plugin@0.1.0;
+
+interface types {
+  // Tool call structure
+  record tool-call {
+    tool-call-id: string,
+    tool-name: string,
+    parameters: string, // JSON string
+  }
+
+  // Execution context for tools and workflows
+  record execution-context {
+    call-id: string,
+    agent-id: option<string>,
+    session-id: option<string>,
+    task-id: option<string>,
+    run-id: option<string>,
+    params: string, // JSON string
+  }
+
+  // Tool execution result
+  record tool-execution-result {
+    success: bool,
+    data: string, // JSON string
+    metadata: option<string>, // JSON string
+  }
+
+  // Plugin information
+  record plugin-item {
+    name: string,
+    description: string,
+    version: option<string>,
+    parameters: option<string>, // JSON schema string
+  }
+}
+
+interface tool-executor {
+  use types.{tool-call, execution-context, tool-execution-result, plugin-item};
+
+  // Get information about the tools this component provides
+  get-tool-info: func() -> list<plugin-item>;
+  
+  // Execute a specific tool
+  execute-tool: func(tool-name: string, tool-call: tool-call, context: execution-context) -> tool-execution-result;
+}
+
+world distri-tool {
+  export tool-executor;
+}
