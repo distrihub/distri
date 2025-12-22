@@ -1,24 +1,19 @@
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use distri_a2a::{
     EventKind, Message as A2aMessage, MessageSendParams, Part as A2aPart, Role, TextPart,
 };
-use distri_client::{
-    AgentStreamClient, BuildHttpClient, DistriClient, DistriClientApp, DistriClientConfig,
-    print_stream,
-};
+use distri::{AgentStreamClient, DistriClientConfig, print_stream};
+use distri::{DistriClient, DistriClientApp};
 use tokio::fs;
-
-const DEFAULT_SERVE_HOST: &str = "127.0.0.1";
-const DEFAULT_SERVE_PORT: u16 = 8081;
 
 #[derive(Parser, Debug, Clone)]
 #[clap(author, version, about)]
 struct Cli {
-    /// Optional base URL (defaults to DISTRI_BASE_URL)
+    /// Optional base URL (defaults to DISTRI_BASE_URL or distri.toml server.base_url)
     #[clap(long)]
     base_url: Option<String>,
 
@@ -26,12 +21,8 @@ struct Cli {
     #[clap(long)]
     config: Option<PathBuf>,
 
-    /// Verbose output (forwarded to distri-server for serve)
-    #[clap(long, short)]
-    verbose: bool,
-
     #[clap(subcommand)]
-    command: Option<Commands>,
+    command: Commands,
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -50,45 +41,42 @@ enum Commands {
         input: Option<String>,
     },
 
-    /// Agent-related commands
-    Agents {
-        #[clap(subcommand)]
-        command: AgentsCommands,
-    },
-
-    /// Tool-related commands
-    Tools {
-        #[clap(subcommand)]
-        command: ToolsCommands,
-    },
-
-    /// Start the local server (delegates to distri-server)
-    Serve {
-        #[clap(long)]
-        host: Option<String>,
-        #[clap(long)]
-        port: Option<u16>,
-        /// Run headless (do not open the web UI automatically)
-        #[clap(long, help = "Skip opening the web UI in your browser")]
-        headless: bool,
-        /// Run the shared browser in headless mode (default true). Use --no-headless-browser to show Chrome.
-        #[clap(
-            long,
-            default_value_t = true,
-            action = clap::ArgAction::Set,
-            help = "Run the shared browser headless (default true). Use --no-headless-browser to show Chrome."
-        )]
-        headless_browser: bool,
-        /// Disable loading plugins and their agents/tools
-        #[clap(long, help = "Disable loading plugins (plugins, agents/tools)")]
-        disable_plugins: bool,
-    },
-}
-
-#[derive(Subcommand, Debug, Clone)]
-enum AgentsCommands {
     /// List agents from the server
     List,
+
+    /// List tools (merging remote and local external tools when applicable)
+    ListTools {
+        #[clap(long, help = "Filter substring")]
+        filter: Option<String>,
+        #[clap(long, help = "Agent to inspect for local tools (optional)")]
+        agent: Option<String>,
+    },
+
+    /// Trigger a workspace build on the server
+    Build,
+
+    /// Call a tool directly via the server
+    Toolcall {
+        #[clap(help = "Tool name to call")]
+        name: String,
+        #[clap(long, help = "Tool input as JSON (default empty object)")]
+        input: Option<String>,
+        #[clap(long, help = "Optional session id")]
+        session: Option<String>,
+    },
+
+    /// Manage authentication for tool providers via server auth endpoints
+    Auth {
+        #[clap(subcommand)]
+        command: AuthCommands,
+    },
+
+    /// Manage local client configuration
+    Config {
+        #[clap(subcommand)]
+        command: ConfigCommands,
+    },
+
     /// Push agent definition(s) to the server from a file or directory
     Push {
         #[clap(help = "Path to an agent markdown file or directory of files")]
@@ -100,67 +88,59 @@ enum AgentsCommands {
 }
 
 #[derive(Subcommand, Debug, Clone)]
-enum ToolsCommands {
-    /// List tools (merging remote and local external tools when applicable)
-    List {
-        #[clap(long, help = "Filter substring")]
-        filter: Option<String>,
-        #[clap(long, help = "Agent to inspect for local tools (optional)")]
-        agent: Option<String>,
+enum AuthCommands {
+    Providers,
+    Status,
+    Login {
+        provider: String,
+        #[clap(long, value_delimiter = ' ', num_args = 0..)]
+        scopes: Vec<String>,
+        #[clap(long)]
+        redirect_url: Option<String>,
     },
-    /// Call a tool directly via the server
-    Invoke {
-        #[clap(help = "Tool name to call")]
-        name: String,
-        #[clap(long, help = "Tool input as JSON (default empty object)")]
-        input: Option<String>,
-        #[clap(long, help = "Optional session id")]
-        session: Option<String>,
+    Logout {
+        provider: String,
+    },
+    Secret {
+        provider: String,
+        key: String,
+        secret: String,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum ConfigCommands {
+    /// Set a config value in ~/.distri/config
+    Set {
+        #[clap(help = "Config key (api_key, base_url)")]
+        key: String,
+        #[clap(help = "Value to set (empty clears the key)", num_args = 1..)]
+        value: Vec<String>,
     },
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    dotenv::dotenv().ok();
-
-    let cli = parse_cli_with_default_serve();
-    let command = cli
-        .command
-        .clone()
-        .expect("command is set by default parser");
-
-    if let Commands::Serve {
-        host,
-        port,
-        headless,
-        headless_browser,
-        disable_plugins,
-    } = &command
-    {
-        run_distri_server(
-            &cli,
-            host.clone(),
-            *port,
-            *headless,
-            *headless_browser,
-            *disable_plugins,
-        )?;
-        return Ok(());
-    }
-
-    let mut config = DistriClientConfig::from_env();
-    if let Some(base_url) = cli.base_url.as_deref() {
-        config.base_url = base_url.trim_end_matches('/').to_string();
-    }
-
+    let cli = Cli::parse();
+    let config = DistriClientConfig::from_env();
     let base_url = config.base_url.clone();
     let client = DistriClient::from_config(config.clone());
-    let workspace = resolve_workspace(&cli.config);
 
+    let workspace = cli
+        .config
+        .clone()
+        .map(|p| {
+            p.parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or(PathBuf::from("."))
+        })
+        .unwrap_or(std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+
+    // Use the config to create DistriClientApp to preserve API keys
     let mut app =
         DistriClientApp::from_config(config.clone()).with_workspace_path(workspace.clone());
 
-    match command {
+    match cli.command {
         Commands::Run { agent, task, input } => {
             let agent_name = agent.unwrap_or_else(|| "distri".to_string());
             if let Some(agent_cfg) = app.fetch_agent(&agent_name).await? {
@@ -172,192 +152,141 @@ async fn main() -> Result<()> {
 
             println!("Streaming agent '{}' via {}", agent_name, base_url);
             let registry = app.registry();
-            let stream_config = config.clone().with_timeout(60);
-            let http_client = stream_config.build_http_client()?;
+            // Use the config to create AgentStreamClient to preserve API keys
             let client = AgentStreamClient::from_config(config.clone())
-                .with_http_client(http_client)
+                .with_http_client(
+                    reqwest::Client::builder()
+                        .timeout(Duration::from_secs(60))
+                        .build()?,
+                )
                 .with_tool_registry(registry);
             print_stream(&client, &agent_name, params).await?;
         }
-        Commands::Agents { command } => match command {
-            AgentsCommands::List => {
-                for agent in app.list_agents().await? {
-                    println!("{} - {}", agent.get_name(), agent.get_description());
+        Commands::List => {
+            for agent in app.list_agents().await? {
+                println!("{} - {}", agent.get_name(), agent.get_description());
+            }
+        }
+        Commands::ListTools { filter, agent } => {
+            if let Some(agent_id) = agent {
+                if let Some(agent_cfg) = app.fetch_agent(&agent_id).await? {
+                    app.ensure_local_tools(&agent_id, &agent_cfg.agent).await?;
                 }
             }
-            AgentsCommands::Push { path, all } => {
-                if path.is_dir() && !all {
-                    eprintln!(
-                        "Path is a directory. Re-run with --all to push all markdown files inside."
+            let mut tools = app.list_tools().await?;
+            if let Some(term) = filter {
+                let term = term.to_lowercase();
+                tools.retain(|t| {
+                    t.tool_name.to_lowercase().contains(&term)
+                        || t.description.to_lowercase().contains(&term)
+                });
+            }
+            for tool in tools {
+                println!("{} - {}", tool.tool_name, tool.description);
+            }
+        }
+        Commands::Build => {
+            app.build_workspace().await?;
+            println!("Workspace build triggered");
+        }
+        Commands::Toolcall {
+            name,
+            input,
+            session,
+        } => {
+            let payload = match input {
+                Some(raw) => {
+                    serde_json::from_str(&raw).unwrap_or_else(|_| serde_json::Value::String(raw))
+                }
+                None => serde_json::json!({}),
+            };
+            let result = app.call_tool(&name, payload, session).await?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        }
+        Commands::Auth { command } => match command {
+            AuthCommands::Providers => {
+                let providers = app.list_providers().await?;
+                for p in providers {
+                    println!(
+                        "{} (type: {:?}, scopes: {})",
+                        p.name,
+                        p.auth_type,
+                        p.scopes_supported.join(", ")
                     );
-                    std::process::exit(1);
-                }
-
-                if path.is_file() {
-                    push_file(&client, &path).await?;
-                } else if path.is_dir() {
-                    let mut entries = fs::read_dir(&path).await?;
-                    let mut pushed = 0usize;
-                    while let Some(entry) = entries.next_entry().await? {
-                        let meta = entry.metadata().await?;
-                        if !meta.is_file() {
-                            continue;
-                        }
-                        let file_path = entry.path();
-                        if file_path
-                            .extension()
-                            .and_then(|s| s.to_str())
-                            .map(|ext| ext.eq_ignore_ascii_case("md"))
-                            .unwrap_or(false)
-                        {
-                            push_file(&client, &file_path).await?;
-                            pushed += 1;
-                        }
-                    }
-                    if pushed == 0 {
-                        eprintln!("No markdown files found in {}", path.display());
-                    } else {
-                        println!("Pushed {} agent file(s) from {}", pushed, path.display());
-                    }
-                } else {
-                    anyhow::bail!("Path {} does not exist", path.display());
                 }
             }
-        },
-        Commands::Tools { command } => match command {
-            ToolsCommands::List { filter, agent } => {
-                if let Some(agent_id) = agent {
-                    if let Some(agent_cfg) = app.fetch_agent(&agent_id).await? {
-                        app.ensure_local_tools(&agent_id, &agent_cfg.agent)
-                            .await?;
-                    }
-                }
-                let mut tools = app.list_tools().await?;
-                if let Some(term) = filter {
-                    let term = term.to_lowercase();
-                    tools.retain(|t| {
-                        t.tool_name.to_lowercase().contains(&term)
-                            || t.description.to_lowercase().contains(&term)
-                    });
-                }
-                for tool in tools {
-                    println!("{} - {}", tool.tool_name, tool.description);
-                }
+            AuthCommands::Status => {
+                let status = app.auth_status().await?;
+                println!("{}", serde_json::to_string_pretty(&status)?);
             }
-            ToolsCommands::Invoke {
-                name,
-                input,
-                session,
+            AuthCommands::Login {
+                provider,
+                scopes,
+                redirect_url,
             } => {
-                let payload = match input {
-                    Some(raw) => serde_json::from_str(&raw)
-                        .unwrap_or_else(|_| serde_json::Value::String(raw)),
-                    None => serde_json::json!({}),
-                };
-                let result = app.call_tool(&name, payload, session).await?;
-                println!("{}", serde_json::to_string_pretty(&result)?);
+                let resp = app.start_oauth(&provider, scopes, redirect_url).await?;
+                println!(
+                    "Open this URL to authorize {}:\n{}\nstate={}",
+                    resp.provider, resp.authorization_url, resp.state
+                );
+            }
+            AuthCommands::Logout { provider } => {
+                app.logout_provider(&provider).await?;
+                println!("Logged out of {}", provider);
+            }
+            AuthCommands::Secret {
+                provider,
+                key,
+                secret,
+            } => {
+                app.store_secret(&provider, &key, &secret).await?;
+                println!("Stored secret for {}", provider);
             }
         },
-        Commands::Serve { .. } => unreachable!("serve handled earlier"),
-    }
+        Commands::Config { command } => {
+            handle_config_command(command)?;
+        }
+        Commands::Push { path, all } => {
+            if path.is_dir() && !all {
+                eprintln!(
+                    "Path is a directory. Re-run with --all to push all markdown files inside."
+                );
+                std::process::exit(1);
+            }
 
-    Ok(())
-}
-
-fn parse_cli_with_default_serve() -> Cli {
-    let mut cli = Cli::parse();
-
-    if cli.command.is_none() {
-        let host = std::env::var("DISTRI_HOST").unwrap_or_else(|_| DEFAULT_SERVE_HOST.to_string());
-        let port = std::env::var("DISTRI_PORT")
-            .ok()
-            .and_then(|value| value.parse().ok())
-            .unwrap_or(DEFAULT_SERVE_PORT);
-
-        println!(
-            "No command provided; starting distri server with UI at http://{}:{}/ui/",
-            host, port
-        );
-
-        cli.command = Some(Commands::Serve {
-            host: Some(host),
-            port: Some(port),
-            headless: false,
-            headless_browser: true,
-            disable_plugins: false,
-        });
-    }
-
-    cli
-}
-
-fn resolve_workspace(config_path: &Option<PathBuf>) -> PathBuf {
-    config_path
-        .as_ref()
-        .and_then(|path| path.parent().map(|p| p.to_path_buf()))
-        .unwrap_or_else(|| {
-            std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
-        })
-}
-
-fn run_distri_server(
-    cli: &Cli,
-    host: Option<String>,
-    port: Option<u16>,
-    headless: bool,
-    headless_browser: bool,
-    disable_plugins: bool,
-) -> Result<()> {
-    let mut cmd = Command::new(resolve_distri_server_binary());
-
-    if let Some(config) = &cli.config {
-        cmd.arg("--config").arg(config);
-    }
-    if cli.verbose {
-        cmd.arg("--verbose");
-    }
-    if disable_plugins {
-        cmd.arg("--disable-plugins");
-    }
-    if !headless_browser {
-        cmd.arg("--no-headless-browser");
-    }
-
-    cmd.arg("serve");
-
-    if let Some(host) = host {
-        cmd.arg("--host").arg(host);
-    }
-    if let Some(port) = port {
-        cmd.arg("--port").arg(port.to_string());
-    }
-    if headless {
-        cmd.arg("--headless");
-    }
-
-    let status = cmd
-        .status()
-        .with_context(|| "starting distri-server")?;
-    if !status.success() {
-        anyhow::bail!("distri-server exited with {}", status);
-    }
-
-    Ok(())
-}
-
-fn resolve_distri_server_binary() -> PathBuf {
-    if let Ok(mut path) = std::env::current_exe() {
-        let exe_name = format!("distri-server{}", std::env::consts::EXE_SUFFIX);
-        path.set_file_name(exe_name);
-        if path.exists() {
-            return path;
+            if path.is_file() {
+                push_file(&client, &path).await?;
+            } else if path.is_dir() {
+                let mut entries = fs::read_dir(&path).await?;
+                let mut pushed = 0usize;
+                while let Some(entry) = entries.next_entry().await? {
+                    let meta = entry.metadata().await?;
+                    if !meta.is_file() {
+                        continue;
+                    }
+                    let file_path = entry.path();
+                    if file_path
+                        .extension()
+                        .and_then(|s| s.to_str())
+                        .map(|ext| ext.eq_ignore_ascii_case("md"))
+                        .unwrap_or(false)
+                    {
+                        push_file(&client, &file_path).await?;
+                        pushed += 1;
+                    }
+                }
+                if pushed == 0 {
+                    eprintln!("No markdown files found in {}", path.display());
+                } else {
+                    println!("Pushed {} agent file(s) from {}", pushed, path.display());
+                }
+            } else {
+                anyhow::bail!("Path {} does not exist", path.display());
+            }
         }
     }
 
-    PathBuf::from(format!(
-        "distri-server{}",
-        std::env::consts::EXE_SUFFIX
-    ))
+    Ok(())
 }
 
 fn build_message_params(content: String) -> MessageSendParams {
@@ -377,6 +306,78 @@ fn build_message_params(content: String) -> MessageSendParams {
         metadata: None,
         browser_session_id: None,
     }
+}
+
+fn handle_config_command(command: ConfigCommands) -> Result<()> {
+    match command {
+        ConfigCommands::Set { key, value } => {
+            let raw_value = value
+                .into_iter()
+                .filter(|part| part != "=")
+                .collect::<Vec<_>>()
+                .join(" ");
+            let path = set_client_config_value(&key, &raw_value)?;
+            println!("Updated {} in {}", key, path.display());
+        }
+    }
+    Ok(())
+}
+
+fn set_client_config_value(key: &str, raw_value: &str) -> Result<PathBuf> {
+    let path = DistriClientConfig::config_path()
+        .ok_or_else(|| anyhow::anyhow!("Unable to resolve home directory for ~/.distri/config"))?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let mut config = load_client_config_value(&path);
+    let normalized = match key {
+        "api_key" => normalize_optional(raw_value),
+        "base_url" => normalize_base_url(raw_value),
+        _ => anyhow::bail!(
+            "Unknown config key '{}'. Supported keys: api_key, base_url",
+            key
+        ),
+    };
+
+    if let toml::Value::Table(ref mut table) = config {
+        match normalized {
+            Some(value) => {
+                table.insert(key.to_string(), toml::Value::String(value));
+            }
+            None => {
+                table.remove(key);
+            }
+        }
+    }
+
+    let contents = toml::to_string_pretty(&config)?;
+    std::fs::write(&path, contents)?;
+    Ok(path)
+}
+
+fn load_client_config_value(path: &Path) -> toml::Value {
+    let parsed = std::fs::read_to_string(path)
+        .ok()
+        .and_then(|contents| contents.parse::<toml::Value>().ok());
+
+    match parsed {
+        Some(toml::Value::Table(table)) => toml::Value::Table(table),
+        _ => toml::Value::Table(toml::map::Map::new()),
+    }
+}
+
+fn normalize_optional(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+fn normalize_base_url(raw: &str) -> Option<String> {
+    normalize_optional(raw).map(|value| value.trim_end_matches('/').to_string())
 }
 
 async fn push_file(client: &DistriClient, path: &Path) -> Result<()> {

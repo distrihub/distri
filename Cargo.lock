@@ -1025,31 +1025,6 @@ dependencies = [
 name = "distri"
 version = "0.2.3"
 dependencies = [
- "anyhow",
- "clap",
- "distri-a2a",
- "distri-client",
- "dotenv",
- "serde_json",
- "tempfile",
- "tokio",
- "uuid",
-]
-
-[[package]]
-name = "distri-a2a"
-version = "0.2.3"
-dependencies = [
- "schemars",
- "serde",
- "serde_json",
- "uuid",
-]
-
-[[package]]
-name = "distri-client"
-version = "0.1.0"
-dependencies = [
  "actix-web",
  "anyhow",
  "async-trait",
@@ -1075,6 +1050,32 @@ dependencies = [
  "uuid",
  "viuer",
  "which",
+]
+
+[[package]]
+name = "distri-a2a"
+version = "0.2.3"
+dependencies = [
+ "schemars",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
+name = "distri-cli"
+version = "0.2.3"
+dependencies = [
+ "anyhow",
+ "clap",
+ "distri",
+ "distri-a2a",
+ "dotenv",
+ "openssl",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]
@@ -2551,6 +2552,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d05e27ee213611ffe7d6348b942e8f942b37114c00cc03cec254295a4a17852e"
 
 [[package]]
+name = "openssl-src"
+version = "300.5.4+3.5.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a507b3792995dae9b0df8a1c1e3771e8418b7c2d9f0baeba32e6fe8b06c7cb72"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "openssl-sys"
 version = "0.9.111"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2558,6 +2568,7 @@ checksum = "82cab2d520aa75e3c58898289429321eb788c3106963d0dc886ec7a5f4adc321"
 dependencies = [
  "cc",
  "libc",
+ "openssl-src",
  "pkg-config",
  "vcpkg",
 ]

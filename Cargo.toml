@@ -1,8 +1,14 @@
 [workspace]
 resolver = "2"
 
-members = ["distri", "distri-a2a", "distri-types", "distri-filesystem"]
-default-members = ["distri"]
+members = [
+  "distri-cli",
+  "distri-a2a",
+  "distri-types",
+  "distri-filesystem",
+  "distri",
+]
+default-members = ["distri-cli"]
 
 
 [workspace.dependencies]

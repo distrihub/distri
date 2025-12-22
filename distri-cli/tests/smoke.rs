@@ -16,7 +16,7 @@ fn repo_root() -> PathBuf {
 }
 
 fn run_cli(base_url: &str, args: &[&str]) -> Result<()> {
-    let output = Command::new(env!("CARGO_BIN_EXE_distri"))
+    let output = Command::new("distri")
         .arg("--base-url")
         .arg(base_url)
         .args(args)

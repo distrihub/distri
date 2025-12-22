@@ -6,7 +6,7 @@ use distri_a2a::{
     MessageSendParams, Role,
 };
 use distri_types::{
-    ExternalTool, LLmContext, LlmDefinition, Message, MessageRole, ToolCall, TokenResponse,
+    ExternalTool, LLmContext, LlmDefinition, Message, MessageRole, TokenResponse, ToolCall,
     a2a_converters::MessageMetadata,
 };
 use distri_types::{StandardDefinition, ToolResponse};
@@ -19,7 +19,7 @@ use std::collections::HashMap;
 /// # Example
 ///
 /// ```rust
-/// use distri_client::DistriClient;
+/// use distri::DistriClient;
 ///
 /// // From environment variables (DISTRI_BASE_URL, DISTRI_API_KEY)
 /// let client = DistriClient::from_env();
