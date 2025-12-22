@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use async_openai::types::CreateChatCompletionRequest;
+use async_openai::types::chat::CreateChatCompletionRequest;
 use comfy_table::{
     modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL, Cell, Color, ContentArrangement, Table,
 };

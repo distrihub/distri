@@ -67,17 +67,18 @@ pub struct ToolDefinition {
     pub output_schema: Option<serde_json::Value>,
 }
 
-impl From<ToolDefinition> for async_openai::types::ChatCompletionTool {
+impl From<ToolDefinition> for async_openai::types::chat::ChatCompletionTools {
     fn from(definition: ToolDefinition) -> Self {
-        Self {
-            r#type: async_openai::types::ChatCompletionToolType::Function,
-            function: async_openai::types::FunctionObject {
-                name: definition.name,
-                description: Some(definition.description),
-                parameters: Some(definition.parameters),
-                strict: None,
+        async_openai::types::chat::ChatCompletionTools::Function(
+            async_openai::types::chat::ChatCompletionTool {
+                function: async_openai::types::chat::FunctionObject {
+                    name: definition.name,
+                    description: Some(definition.description),
+                    parameters: Some(definition.parameters),
+                    strict: None,
+                },
             },
-        }
+        )
     }
 }
 
@@ -94,13 +95,13 @@ pub enum MessageRole {
     Tool,
 }
 
-impl From<async_openai::types::Role> for MessageRole {
-    fn from(role: async_openai::types::Role) -> Self {
+impl From<async_openai::types::chat::Role> for MessageRole {
+    fn from(role: async_openai::types::chat::Role) -> Self {
         match role {
-            async_openai::types::Role::User => MessageRole::User,
-            async_openai::types::Role::Assistant => MessageRole::Assistant,
-            async_openai::types::Role::System => MessageRole::System,
-            async_openai::types::Role::Tool => MessageRole::Tool,
+            async_openai::types::chat::Role::User => MessageRole::User,
+            async_openai::types::chat::Role::Assistant => MessageRole::Assistant,
+            async_openai::types::chat::Role::System => MessageRole::System,
+            async_openai::types::chat::Role::Tool => MessageRole::Tool,
             _ => MessageRole::Assistant,
         }
     }

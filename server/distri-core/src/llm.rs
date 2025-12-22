@@ -11,14 +11,15 @@ use crate::{
     AgentError,
 };
 use async_openai::{
-    types::{
-        ChatCompletionMessageToolCall, ChatCompletionRequestAssistantMessageArgs,
-        ChatCompletionRequestMessage, ChatCompletionRequestMessageContentPartImage,
-        ChatCompletionRequestMessageContentPartText, ChatCompletionRequestSystemMessageArgs,
-        ChatCompletionRequestToolMessage, ChatCompletionRequestToolMessageContent,
-        ChatCompletionRequestUserMessageArgs, ChatCompletionRequestUserMessageContentPart,
-        CreateChatCompletionRequest, CreateChatCompletionResponse,
-        CreateChatCompletionStreamResponse, ImageUrl, ResponseFormatJsonSchema, Role,
+    types::chat::{
+        ChatCompletionMessageToolCall, ChatCompletionMessageToolCalls,
+        ChatCompletionRequestAssistantMessageArgs, ChatCompletionRequestMessage,
+        ChatCompletionRequestMessageContentPartImage, ChatCompletionRequestMessageContentPartText,
+        ChatCompletionRequestSystemMessageArgs, ChatCompletionRequestToolMessage,
+        ChatCompletionRequestToolMessageContent, ChatCompletionRequestUserMessageArgs,
+        ChatCompletionRequestUserMessageContentPart, CreateChatCompletionRequest,
+        CreateChatCompletionResponse, CreateChatCompletionStreamResponse, ImageUrl,
+        ResponseFormatJsonSchema, Role,
     },
     Client,
 };
@@ -30,14 +31,14 @@ use tokio::sync::RwLock;
 
 #[derive(Debug)]
 pub struct StreamResult {
-    pub finish_reason: async_openai::types::FinishReason,
+    pub finish_reason: async_openai::types::chat::FinishReason,
     pub tool_calls: Vec<ToolCall>,
     pub content: String,
 }
 
 #[derive(Debug, Clone)]
 pub struct LLMResponse {
-    pub finish_reason: async_openai::types::FinishReason,
+    pub finish_reason: async_openai::types::chat::FinishReason,
     pub tool_calls: Vec<ToolCall>,
     pub content: String,
     pub token_usage: u32,
@@ -233,7 +234,7 @@ impl LLMExecutor {
         let choice = &response.choices[0];
         let finish_reason = choice
             .finish_reason
-            .unwrap_or(async_openai::types::FinishReason::Stop);
+            .unwrap_or(async_openai::types::chat::FinishReason::Stop);
         let content = choice.message.content.clone().unwrap_or_default();
         let format = self.llm_def.tool_format.clone();
         let mut tool_calls = if format == ToolCallFormat::Provider {
@@ -603,19 +604,19 @@ impl LLMExecutor {
         if !tool_calls.is_empty() {
             Self::ensure_tool_call_ids(&mut tool_calls);
             Ok(StreamResult {
-                finish_reason: async_openai::types::FinishReason::ToolCalls,
+                finish_reason: async_openai::types::chat::FinishReason::ToolCalls,
                 tool_calls,
                 content,
             })
         } else {
             Ok(StreamResult {
-                finish_reason: async_openai::types::FinishReason::Stop,
+                finish_reason: async_openai::types::chat::FinishReason::Stop,
                 tool_calls: tool_calls,
                 content,
             })
         }
     }
-    pub fn map_tools(&self) -> Vec<async_openai::types::ChatCompletionTool> {
+    pub fn map_tools(&self) -> Vec<async_openai::types::chat::ChatCompletionTools> {
         self.tools
             .iter()
             .map(|t| {
@@ -742,7 +743,7 @@ impl LLMExecutor {
             settings.model
         );
 
-        let tools: Vec<async_openai::types::ChatCompletionTool> = self.map_tools();
+        let tools: Vec<async_openai::types::chat::ChatCompletionTools> = self.map_tools();
 
         let name = format!("{}_schema", self.llm_def.name);
 
@@ -761,7 +762,7 @@ impl LLMExecutor {
                 .model_settings
                 .response_format
                 .clone()
-                .map(|r| async_openai::types::ResponseFormat::JsonSchema {
+                .map(|r| async_openai::types::chat::ResponseFormat::JsonSchema {
                     json_schema: ResponseFormatJsonSchema {
                         description: None,
                         name,
@@ -777,17 +778,29 @@ impl LLMExecutor {
     }
 
     pub fn map_tool_call(
-        tool_call: &ChatCompletionMessageToolCall,
+        tool_call: &ChatCompletionMessageToolCalls,
     ) -> Result<ToolCall, AgentError> {
-        let raw_args = tool_call.function.arguments.clone();
+        let (tool_call_id, tool_name, input) = match tool_call {
+            ChatCompletionMessageToolCalls::Function(tool_call) => (
+                tool_call.id.clone(),
+                tool_call.function.name.clone(),
+                tool_call.function.arguments.clone(),
+            ),
+            ChatCompletionMessageToolCalls::Custom(tool_call) => (
+                tool_call.id.clone(),
+                tool_call.custom_tool.name.clone(),
+                tool_call.custom_tool.input.clone(),
+            ),
+        };
+
         let parsed_args =
-            serde_json::from_str(&raw_args).unwrap_or_else(|_| serde_json::Value::String(raw_args));
-        let tool_call_id = tool_call.id.clone();
+            serde_json::from_str(&input).unwrap_or_else(|_| serde_json::Value::String(input));
+
         tracing::debug!(
             target: "llm.tool_call",
             "Received tool_call_id from provider: {:?} for tool {}",
             tool_call_id,
-            tool_call.function.name
+            tool_name
         );
         if tool_call_id.is_empty() {
             return Err(AgentError::LLMError(
@@ -796,7 +809,7 @@ impl LLMExecutor {
         }
         Ok(ToolCall {
             tool_call_id,
-            tool_name: tool_call.function.name.clone(),
+            tool_name,
             input: parsed_args,
         })
     }
@@ -872,16 +885,19 @@ impl LLMExecutor {
                         if !tool_calls.is_empty()
                             && self.llm_def.tool_format == ToolCallFormat::Provider
                         {
-                            let tool_calls: Vec<ChatCompletionMessageToolCall> = tool_calls
+                            let tool_calls: Vec<ChatCompletionMessageToolCalls> = tool_calls
                                 .iter()
-                                .map(|tc| ChatCompletionMessageToolCall {
-                                    id: tc.tool_call_id.clone(),
-                                    r#type: async_openai::types::ChatCompletionToolType::Function,
-                                    function: async_openai::types::FunctionCall {
-                                        name: tc.tool_name.clone(),
-                                        arguments: serde_json::to_string(&tc.input.clone())
-                                            .unwrap_or_default(),
-                                    },
+                                .map(|tc| {
+                                    ChatCompletionMessageToolCalls::Function(
+                                        ChatCompletionMessageToolCall {
+                                            id: tc.tool_call_id.clone(),
+                                            function: async_openai::types::chat::FunctionCall {
+                                                name: tc.tool_name.clone(),
+                                                arguments: serde_json::to_string(&tc.input.clone())
+                                                    .unwrap_or_default(),
+                                            },
+                                        },
+                                    )
                                 })
                                 .collect();
                             msg.tool_calls(tool_calls);
@@ -948,7 +964,7 @@ async fn completion(
     additional_headers: Option<HashMap<String, String>>,
     label: Option<String>,
 ) -> Result<CreateChatCompletionResponse, AgentError> {
-    request.user = Some(context.user_id.clone());
+    request.safety_identifier = Some(context.user_id.clone());
     let client = get_client_with_context(llm_def, context, additional_headers, label);
     let response = client.chat().create(request).await.map_err(|e| {
         tracing::error!("LLM request failed: {}", e);
@@ -967,7 +983,7 @@ async fn completion_stream(
     impl Stream<Item = Result<CreateChatCompletionStreamResponse, async_openai::error::OpenAIError>>,
     AgentError,
 > {
-    request.user = Some(context.user_id.clone());
+    request.safety_identifier = Some(context.user_id.clone());
     let client = get_client_with_context(llm_def, context, additional_headers, label);
     let stream = client.chat().create_stream(request).await.map_err(|e| {
         tracing::error!("LLM stream request failed: {}", e);

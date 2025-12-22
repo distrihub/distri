@@ -1,7 +1,9 @@
 use super::types::{AudioFormat, StreamingConfig, VoiceStreamEvent};
 use anyhow::{Context, Result};
 use async_openai::types::realtime::{
-    ConversationItemCreateEvent, Item, ResponseCreateEvent, ServerEvent,
+    AssistantMessageContent, RealtimeClientEvent, RealtimeClientEventConversationItemCreate,
+    RealtimeClientEventResponseCreate, RealtimeConversationItem, RealtimeConversationItemMessage,
+    RealtimeServerEvent,
 };
 use futures_channel::mpsc::{UnboundedReceiver, UnboundedSender};
 use futures_util::{sink::SinkExt, stream::StreamExt};
@@ -63,9 +65,9 @@ impl RealtimeVoiceClient {
             let mut read = read;
             while let Some(message) = read.next().await {
                 match message {
-                    Ok(Message::Text(_)) => {
-                        let data = message.unwrap().into_data();
-                        if let Ok(server_event) = serde_json::from_slice::<ServerEvent>(&data) {
+                    Ok(Message::Text(text)) => {
+                        if let Ok(server_event) = serde_json::from_str::<RealtimeServerEvent>(&text)
+                        {
                             let voice_event = Self::convert_server_event(server_event);
                             if let Some(event) = voice_event {
                                 let _ = event_tx_clone.unbounded_send(event);
@@ -117,7 +119,7 @@ impl RealtimeVoiceClient {
     pub async fn send_text(&self, text: &str) -> Result<()> {
         if let Some(sender) = &self.event_sender {
             // Create OpenAI realtime conversation item
-            let item = Item::try_from(serde_json::json!({
+            let item = RealtimeConversationItem::try_from(serde_json::json!({
                 "type": "message",
                 "role": "user",
                 "content": [
@@ -129,8 +131,8 @@ impl RealtimeVoiceClient {
             }))?;
 
             // Create and send conversation item create event
-            let event: ConversationItemCreateEvent = item.into();
-            let event_json = serde_json::to_string(&event)?;
+            let event: RealtimeClientEventConversationItemCreate = item.into();
+            let event_json = serde_json::to_string(&RealtimeClientEvent::from(event))?;
             let _message = Message::Text(event_json);
 
             // Note: This would need to be connected to the WebSocket sender
@@ -142,8 +144,8 @@ impl RealtimeVoiceClient {
             sender.unbounded_send(text_event)?;
 
             // Send response create event
-            let response_event = ResponseCreateEvent::default();
-            let response_json = serde_json::to_string(&response_event)?;
+            let response_event = RealtimeClientEventResponseCreate::default();
+            let response_json = serde_json::to_string(&RealtimeClientEvent::from(response_event))?;
             let _response_message = Message::Text(response_json);
             // This would also need to be sent through the WebSocket
         }
@@ -163,30 +165,61 @@ impl RealtimeVoiceClient {
         Ok(())
     }
 
-    fn convert_server_event(server_event: ServerEvent) -> Option<VoiceStreamEvent> {
+    fn convert_server_event(server_event: RealtimeServerEvent) -> Option<VoiceStreamEvent> {
         match server_event {
-            ServerEvent::ResponseOutputItemDone(event) => {
-                if let Some(content) = event.item.content {
-                    for content_item in content {
-                        if let Some(transcript) = content_item.transcript {
-                            return Some(VoiceStreamEvent::TextChunk {
-                                text: transcript.trim().to_string(),
-                                is_final: true,
-                            });
-                        }
-                    }
-                }
-                None
+            RealtimeServerEvent::ResponseOutputItemDone(event) => {
+                Self::extract_assistant_text(event.item).map(|text| VoiceStreamEvent::TextChunk {
+                    text,
+                    is_final: true,
+                })
             }
-            ServerEvent::ResponseAudioTranscriptDelta(event) => Some(VoiceStreamEvent::TextChunk {
-                text: event.delta.trim().to_string(),
-                is_final: false,
-            }),
-            ServerEvent::Error(e) => Some(VoiceStreamEvent::Error {
-                message: format!("OpenAI realtime error: {:?}", e),
+            RealtimeServerEvent::ResponseOutputAudioTranscriptDelta(event) => {
+                let delta = event.delta.trim();
+                if delta.is_empty() {
+                    None
+                } else {
+                    Some(VoiceStreamEvent::TextChunk {
+                        text: delta.to_string(),
+                        is_final: false,
+                    })
+                }
+            }
+            RealtimeServerEvent::Error(e) => Some(VoiceStreamEvent::Error {
+                message: format!("OpenAI realtime error: {}", e.error.message),
             }),
             _ => None,
         }
+    }
+
+    fn extract_assistant_text(item: RealtimeConversationItem) -> Option<String> {
+        let message = match item {
+            RealtimeConversationItem::Message(message) => message,
+            _ => return None,
+        };
+
+        let assistant = match message {
+            RealtimeConversationItemMessage::Assistant(assistant) => assistant,
+            _ => return None,
+        };
+
+        for content in assistant.content {
+            match content {
+                AssistantMessageContent::OutputText(part) => {
+                    let text = part.text.trim();
+                    if !text.is_empty() {
+                        return Some(text.to_string());
+                    }
+                }
+                AssistantMessageContent::OutputAudio(part) => {
+                    let text = part.transcript.trim();
+                    if !text.is_empty() {
+                        return Some(text.to_string());
+                    }
+                }
+            }
+        }
+
+        None
     }
 }
 

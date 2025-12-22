@@ -2,7 +2,7 @@ use super::types::{SpeechToTextProvider, TranscribeRequest, TtsConfig, TtsProvid
 use anyhow::Result;
 use async_openai::{
     config::OpenAIConfig,
-    types::{
+    types::audio::{
         AudioInput, CreateSpeechRequest, CreateTranscriptionRequest, SpeechModel,
         SpeechResponseFormat, Voice,
     },
@@ -54,9 +54,10 @@ impl TtsProvider for OpenAITtsProvider {
             response_format: Some(SpeechResponseFormat::Mp3),
             speed: Some(speed),
             instructions: None,
+            stream_format: None,
         };
 
-        let response = self.client.audio().speech(request).await?;
+        let response = self.client.audio().speech().create(request).await?;
         Ok(response.bytes)
     }
 }
@@ -104,8 +105,9 @@ impl SpeechToTextProvider for OpenAITtsProvider {
             response_format: None,
             temperature: options.temperature,
             timestamp_granularities: None,
+            ..Default::default()
         };
-        let response = self.client.audio().transcribe(request).await?;
+        let response = self.client.audio().transcription().create(request).await?;
 
         // Clean up temp file
         let _ = std::fs::remove_file(&temp_file);

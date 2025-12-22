@@ -50,7 +50,7 @@ impl MockLLM {
             MockLLMScenario::ToolCallThenFinish => {
                 if call_count == 1 {
                     Ok(LLMResponse {
-                        finish_reason: async_openai::types::FinishReason::ToolCalls,
+                        finish_reason: async_openai::types::chat::FinishReason::ToolCalls,
                         tool_calls: vec![ToolCall {
                             tool_call_id: "1".into(), 
                             tool_name: "mock_tool".into(), 
@@ -61,7 +61,7 @@ impl MockLLM {
                     })
                 } else {
                     Ok(LLMResponse {
-                        finish_reason: async_openai::types::FinishReason::Stop,
+                        finish_reason: async_openai::types::chat::FinishReason::Stop,
                         tool_calls: vec![],
                         content: "I've completed the task using the tool. Here's what I found: mock data".into(),
                         token_usage: 0,
@@ -71,7 +71,7 @@ impl MockLLM {
             MockLLMScenario::MultipleToolCalls => {
                 match call_count {
                     1 => Ok(LLMResponse {
-                        finish_reason: async_openai::types::FinishReason::ToolCalls,
+                        finish_reason: async_openai::types::chat::FinishReason::ToolCalls,
                         tool_calls: vec![
                             ToolCall {
                                 tool_call_id: "1".into(), 
@@ -83,7 +83,7 @@ impl MockLLM {
                         token_usage: 0,
                     }),
                     2 => Ok(LLMResponse {
-                        finish_reason: async_openai::types::FinishReason::ToolCalls,
+                        finish_reason: async_openai::types::chat::FinishReason::ToolCalls,
                         tool_calls: vec![
                             ToolCall {
                                 tool_call_id: "2".into(), 
@@ -95,7 +95,7 @@ impl MockLLM {
                         token_usage: 0,
                     }),
                     _ => Ok(LLMResponse {
-                        finish_reason: async_openai::types::FinishReason::Stop,
+                        finish_reason: async_openai::types::chat::FinishReason::Stop,
                         tool_calls: vec![],
                         content: "I've completed the multi-step task. Here's the final result: processed data".into(),
                         token_usage: 0,
@@ -105,13 +105,13 @@ impl MockLLM {
             MockLLMScenario::PlanningScenario => {
                 match call_count {
                     1 => Ok(LLMResponse {
-                        finish_reason: async_openai::types::FinishReason::Stop,
+                        finish_reason: async_openai::types::chat::FinishReason::Stop,
                         tool_calls: vec![],
                         content: "Let me plan this step by step:\n1. First, I'll analyze the request\n2. Then I'll gather information\n3. Finally, I'll provide a comprehensive answer".into(),
                         token_usage: 0,
                     }),
                     2 => Ok(LLMResponse {
-                        finish_reason: async_openai::types::FinishReason::ToolCalls,
+                        finish_reason: async_openai::types::chat::FinishReason::ToolCalls,
                         tool_calls: vec![
                             ToolCall {
                                 tool_call_id: "1".into(), 
@@ -123,7 +123,7 @@ impl MockLLM {
                         token_usage: 0,
                     }),
                     3 => Ok(LLMResponse {
-                        finish_reason: async_openai::types::FinishReason::ToolCalls,
+                        finish_reason: async_openai::types::chat::FinishReason::ToolCalls,
                         tool_calls: vec![
                             ToolCall {
                                 tool_call_id: "2".into(), 
@@ -135,7 +135,7 @@ impl MockLLM {
                         token_usage: 0,
                     }),
                     _ => Ok(LLMResponse {
-                        finish_reason: async_openai::types::FinishReason::Stop,
+                        finish_reason: async_openai::types::chat::FinishReason::Stop,
                         tool_calls: vec![],
                         content: "Step 3: Providing comprehensive answer. Here's my analysis: The task has been completed successfully with detailed insights.".into(),
                         token_usage: 0,
@@ -147,7 +147,7 @@ impl MockLLM {
                     Err(AgentError::LLMError("Mock LLM error for testing".to_string()))
                 } else {
                     Ok(LLMResponse {
-                        finish_reason: async_openai::types::FinishReason::Stop,
+                        finish_reason: async_openai::types::chat::FinishReason::Stop,
                         tool_calls: vec![],
                         content: "Recovered from error and completed the task.".into(),
                         token_usage: 0,
@@ -159,7 +159,7 @@ impl MockLLM {
                     Ok(responses[call_count - 1].clone())
                 } else {
                     Ok(LLMResponse {
-                        finish_reason: async_openai::types::FinishReason::Stop,
+                        finish_reason: async_openai::types::chat::FinishReason::Stop,
                         tool_calls: vec![],
                         content: "Custom scenario completed.".into(),
                         token_usage: 0,

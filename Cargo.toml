@@ -17,13 +17,20 @@ members = [
   "server/distri-plugin-executor",
 
 ]
-default-members = ["distri-cli"]
+default-members = ["distri-cli", "server/distri-server-cli"]
 
 
 [workspace.dependencies]
 async-trait = "0.1"
 async-mcp = { version = "0.1.3" }
-async-openai = { git = "https://github.com/v3g42/async-openai", rev = "dce365a" }
+async-openai = { version = "0.32.2", features = [
+  "completion-types",
+  "chat-completion",
+  "audio-types",
+  "audio",
+  "realtime-types",
+  "realtime",
+] }
 anyhow = "1.0"
 tracing = "0.1"
 serde = { version = "=1.0.219", features = ["derive"] }
@@ -45,6 +52,9 @@ actix-ws = "0.3"
 actix-rt = "2.9"
 actix-files = "0.6"
 actix-multipart = "0.7"
+
+# browsr-client = { version = "0.1.1" }
+# browsr-types = { version = "0.1.1" }
 
 browsr-client = { version = "0.1.1" }
 browsr-types = { version = "0.1.1" }
