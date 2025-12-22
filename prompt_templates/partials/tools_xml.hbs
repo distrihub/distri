@@ -1,0 +1,31 @@
+# CRITICAL XML REQUIREMENTS
+- Each tool call is represented by its own top-level XML element
+- Tool parameters are nested elements within the tool element
+- NO wrapper elements like `<tool_calls>` or `<tool_call>`
+- All XML tags must have opening AND closing tags
+
+# TOOL CALL FORMAT
+Each tool call should be a direct XML element:
+
+## Tools with multiple parameters:
+<search>
+  <query>example search</query>
+  <limit>10</limit>
+</search>
+
+## Tools with single string parameter:
+<final>Task completed successfully</final>
+<call_search_agent>Find information about climate change</call_search_agent>
+
+# VALIDATION CHECKLIST
+- ✓ Use direct tool name as XML element (e.g., `<search>`, `<final>`)
+- ✓ For multiple parameters: use nested elements (e.g., `<query>value</query>`)
+- ✓ For single string parameter: put content directly inside element (e.g., `<final>message</final>`)
+- ✓ All tags properly closed
+- ✓ No wrapper elements
+
+    # REQUIREMENTS
+    - Use tools for current information
+    - Continue until task is solved
+    - End with "final" tool call
+    - Each tool call is its own XML element

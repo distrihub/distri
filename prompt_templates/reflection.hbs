@@ -1,0 +1,116 @@
+## REFLECTION AND SELF-ASSESSMENT
+
+You are tasked with performing reflection and self-assessment on your recent execution history to determine whether
+further reflection is needed and identify areas for improvement.
+
+### TASK CONTEXT
+<task>
+  {{task}}
+</task>
+
+### EXECUTION HISTORY
+{{execution_history}}
+
+### REFLECTION CONFIGURATION
+- **Reflection Depth**: {{reflection_depth}} (shallow, standard, deep)
+- **Trigger**: {{reflection_trigger}} (end_of_execution, after_failures, periodic)
+{{#if max_reflections}}
+- **Max Reflections**: {{max_reflections}}
+{{/if}}
+
+### REFLECTION INSTRUCTIONS
+
+{{#if (eq reflection_depth "shallow")}}
+**Shallow Reflection Mode**:
+- Provide brief assessment of recent performance
+- Identify only critical errors or issues
+- Give concise recommendations for immediate improvement
+{{else if (eq reflection_depth "standard")}}
+**Standard Reflection Mode**:
+- Evaluate the effectiveness of your recent actions and decisions
+- Assess whether you achieved the intended outcomes
+- Identify patterns in successful and unsuccessful attempts
+- Consider alternative approaches that might have been more effective
+{{else if (eq reflection_depth "deep")}}
+**Deep Reflection Mode**:
+- Conduct comprehensive analysis of your reasoning process
+- Evaluate the coherence and accuracy of your previous responses
+- Assess decision-making quality and strategic choices
+- Identify limitations in your understanding
+- Consider multiple alternative approaches and their trade-offs
+- Analyze patterns across the entire execution history
+- Provide detailed recommendations for performance improvement
+{{/if}}
+
+### SELF-ASSESSMENT QUESTIONS
+
+Answer the following questions based on your execution history:
+
+1. **Performance Evaluation**: How effectively did I complete the task requirements?
+
+2. **Decision Quality**: Were my tool choices and action sequences appropriate and efficient?
+
+3. **Error Analysis**: What errors or suboptimal decisions did I make? What were the root causes?
+
+4. **Alternative Approaches**: What alternative strategies could have been more effective?
+
+5. **Learning Insights**: What specific lessons can I extract from this execution?
+
+{{#if (eq reflection_depth "deep")}}
+6. **Pattern Recognition**: Are there recurring patterns in my successes or failures?
+
+7. **Strategic Assessment**: How well did I balance exploration vs exploitation in tool usage?
+
+8. **Coherence Check**: Was my reasoning consistent throughout the execution?
+{{/if}}
+
+### REFLECTION DECISION
+
+Based on your analysis, provide a structured response in the following format:
+
+```xml
+<reflection_assessment>
+  <should_continue_reflecting>YES/NO</should_continue_reflecting>
+  <confidence>0.0-1.0</confidence>
+  <performance_score>0.0-1.0</performance_score>
+  <key_insights>
+    - Insight 1: [Brief description]
+    - Insight 2: [Brief description]
+    {{#if (eq reflection_depth "deep")}}
+    - Insight 3: [Brief description]
+    {{/if}}
+  </key_insights>
+  <improvement_recommendations>
+    - Recommendation 1: [Specific actionable advice]
+    - Recommendation 2: [Specific actionable advice]
+    {{#if (eq reflection_depth "deep")}}
+    - Recommendation 3: [Specific actionable advice]
+    {{/if}}
+  </improvement_recommendations>
+  <reasoning>
+    {{#if (eq reflection_depth "shallow")}}
+    Brief explanation of your reflection decision and key findings.
+    {{else if (eq reflection_depth "standard")}}
+    Moderate explanation of your assessment, including specific examples from the execution history and rationale for
+    your recommendations.
+    {{else}}
+    Comprehensive analysis of your reflection process, including detailed reasoning about performance patterns, decision
+    quality, strategic considerations, and the basis for your improvement recommendations. Include specific examples
+    from the execution history that support your conclusions.
+    {{/if}}
+  </reasoning>
+</reflection_assessment>
+```
+
+### REFLECTION GUIDELINES
+
+- **Be Honest**: Acknowledge both successes and failures objectively
+- **Be Specific**: Reference concrete examples from the execution history
+- **Be Actionable**: Provide recommendations that can be implemented in future executions
+- **Be Proportional**: Match the depth of reflection to the configured reflection level
+- **Avoid Loops**: If recent performance was satisfactory, recommend ending reflection
+
+{{#if stopping_criteria}}
+### STOPPING CRITERIA
+{{stopping_criteria}}
+{{/if}}

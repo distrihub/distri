@@ -1,0 +1,10 @@
+[package]
+name = "distri-a2a"
+version = "0.2.3"
+edition = "2021"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = { workspace = true }
+uuid = "1.13.1"
