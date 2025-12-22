@@ -1,0 +1,49 @@
+name: Publish Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.6.0
+          cache: 'pnpm'
+
+      - name: Remove workspace overrides for CI
+        run: |
+          # Create a temporary pnpm-workspace.yaml without overrides
+          cat > pnpm-workspace.yaml << 'EOF'
+          packages:
+            - '.'
+          EOF
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      - name: Archive build output
+        run: zip -r distri-ui-${{ github.ref_name }}.zip dist
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: distri-ui-${{ github.ref_name }}.zip
