@@ -11,12 +11,11 @@ pub use crate::external_tools_runtime::ExternalToolRegistry;
 pub use crate::hooks_runtime::HookRegistry;
 pub use client::{
     ArtifactEntry, ArtifactListResponse, ArtifactNamespace, ArtifactNamespaceList,
-    ArtifactReadResponse, ArtifactSaveResponse, DistriClient, LlmExecuteResponse,
-    TaskNamespaceResponse,
+    ArtifactReadResponse, ArtifactSaveResponse, Distri, LlmExecuteResponse, TaskNamespaceResponse,
 };
 pub use client_app::{AgentWithTools, AppError, DistriClientApp, ToolListItem};
 pub use client_stream::{AgentStreamClient, StreamError, StreamItem};
-pub use config::{BuildHttpClient, DistriClientConfig};
+pub use config::{BuildHttpClient, DistriConfig};
 pub use hooks_runtime::*;
 
 pub use distri_types::{

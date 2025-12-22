@@ -10,7 +10,7 @@ use crate::configuration::config::{ExternalMcpServer, ServerConfig, StoreConfig}
 
 /// User configuration from distri.toml file
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct DistriConfiguration {
+pub struct DistriServerConfig {
     pub name: String,
     pub version: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -68,7 +68,7 @@ pub struct BuildConfig {
     pub env: Option<std::collections::HashMap<String, String>>,
 }
 
-impl DistriConfiguration {
+impl DistriServerConfig {
     pub fn has_entrypoints(&self) -> bool {
         self.entrypoints.is_some()
     }
@@ -113,7 +113,7 @@ pub struct LockFile {
     pub sources: HashMap<String, String>,
 }
 
-impl DistriConfiguration {
+impl DistriServerConfig {
     /// Get the working directory with fallback chain: config -> DISTRI_HOME -> current_dir
     pub fn get_working_directory(&self) -> Result<std::path::PathBuf> {
         // Fallback to current directory
@@ -122,7 +122,7 @@ impl DistriConfiguration {
 
     pub async fn load_from_path<P: AsRef<Path>>(path: P) -> Result<Self> {
         let content = fs::read_to_string(path).await?;
-        let manifest: DistriConfiguration = toml::from_str(&content)?;
+        let manifest: DistriServerConfig = toml::from_str(&content)?;
         manifest.validate()?;
         Ok(manifest)
     }

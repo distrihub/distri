@@ -6,7 +6,7 @@ use crate::{
 use anyhow::Result;
 use clap::Parser;
 use distri_core::agent::AgentOrchestrator;
-use distri_types::configuration::{AgentConfig, DistriConfiguration, ServerConfig};
+use distri_types::configuration::{AgentConfig, DistriServerConfig, ServerConfig};
 use futures::future::{BoxFuture, LocalBoxFuture};
 use std::any::Any;
 use std::collections::HashMap;
@@ -23,7 +23,7 @@ pub type SharedState = Arc<dyn Any + Send + Sync>;
 type CliParser = Arc<dyn Fn() -> Cli + Send + Sync>;
 type SharedStateInitializer = Arc<dyn Fn(&Cli) -> Result<Option<SharedState>> + Send + Sync>;
 type ConfigLoader = Arc<
-    dyn for<'a> Fn(CliContext<'a>) -> Result<(Option<DistriConfiguration>, PathBuf)> + Send + Sync,
+    dyn for<'a> Fn(CliContext<'a>) -> Result<(Option<DistriServerConfig>, PathBuf)> + Send + Sync,
 >;
 type WorkspaceResolver = Arc<dyn for<'a> Fn(WorkspaceContext<'a>) -> Result<PathBuf> + Send + Sync>;
 type ExecutorFactory = Arc<
@@ -39,8 +39,7 @@ type ToolInitializer = Arc<
         + Send
         + Sync,
 >;
-type ServerRunner =
-    Arc<dyn Fn(ServeContext) -> LocalBoxFuture<'static, Result<()>> + Send + Sync>;
+type ServerRunner = Arc<dyn Fn(ServeContext) -> LocalBoxFuture<'static, Result<()>> + Send + Sync>;
 
 pub const DEFAULT_SERVE_HOST: &str = "127.0.0.1";
 pub const DEFAULT_SERVE_PORT: u16 = 8081;
@@ -64,7 +63,7 @@ pub struct CliContext<'a> {
 /// Context passed to workspace resolution hooks.
 pub struct WorkspaceContext<'a> {
     pub cli: &'a Cli,
-    pub config: Option<&'a DistriConfiguration>,
+    pub config: Option<&'a DistriServerConfig>,
     pub shared_state: Option<&'a SharedState>,
 }
 
@@ -73,7 +72,7 @@ pub struct ExecutorContext<'a> {
     pub cli: &'a Cli,
     pub home_dir: &'a Path,
     pub workspace_path: &'a Path,
-    pub config: Option<&'a DistriConfiguration>,
+    pub config: Option<&'a DistriServerConfig>,
     pub disable_plugins: bool,
     pub headless_browser: bool,
     pub shared_state: Option<&'a SharedState>,
@@ -160,7 +159,7 @@ impl MultiAgentCliBuilder {
 
     pub fn with_config_loader<F>(mut self, loader: F) -> Self
     where
-        F: for<'a> Fn(CliContext<'a>) -> Result<(Option<DistriConfiguration>, PathBuf)>
+        F: for<'a> Fn(CliContext<'a>) -> Result<(Option<DistriServerConfig>, PathBuf)>
             + Send
             + Sync
             + 'static,
@@ -348,7 +347,7 @@ impl MultiAgentHarness {
         &self.runtime.workspace_path
     }
 
-    pub fn config(&self) -> Option<&DistriConfiguration> {
+    pub fn config(&self) -> Option<&DistriServerConfig> {
         self.runtime.config.as_ref()
     }
 
@@ -455,9 +454,10 @@ impl MultiAgentHarness {
                 server_config.base_url =
                     format!("http://{}:{}/api/v1", resolved_host, resolved_port);
 
-                let server_runner = self.server_runner.clone().ok_or_else(|| {
-                    anyhow::anyhow!("Serve is not available in this build")
-                })?;
+                let server_runner = self
+                    .server_runner
+                    .clone()
+                    .ok_or_else(|| anyhow::anyhow!("Serve is not available in this build"))?;
 
                 let ui_url = format!("http://{}:{}/ui/", resolved_host, resolved_port);
                 let verbose = self.runtime.cli.verbose;
@@ -560,7 +560,7 @@ fn resolve_host_and_port(
 struct MultiAgentRuntime {
     cli: Cli,
     shared_state: Option<SharedState>,
-    config: Option<DistriConfiguration>,
+    config: Option<DistriServerConfig>,
     home_dir: PathBuf,
     workspace_path: PathBuf,
 }

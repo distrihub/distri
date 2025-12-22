@@ -27,7 +27,7 @@ use distri_types::{
     browser::DistriBrowserConfig,
     configuration::{
         is_namespaced_plugin_id, namespace_plugin_item, split_namespaced_plugin_id,
-        CustomAgentDefinition, CustomAgentExample, DistriConfiguration, StoreConfig,
+        CustomAgentDefinition, CustomAgentExample, DistriServerConfig, StoreConfig,
     },
     HookMutation,
 };
@@ -62,7 +62,7 @@ pub struct AgentOrchestrator {
     pub store_config: StoreConfig,
     /// All stores - use this instead of individual store fields
     pub stores: InitializedStores,
-    pub configuration: Arc<RwLock<DistriConfiguration>>,
+    pub configuration: Arc<RwLock<DistriServerConfig>>,
     pub default_model_settings: Arc<RwLock<ModelSettings>>,
     pub default_analysis_model_settings: Arc<RwLock<ModelSettings>>,
     pub hooks: Arc<RwLock<HashMap<String, Arc<dyn crate::agent::types::AgentHooks>>>>,
@@ -96,7 +96,7 @@ pub struct AgentOrchestratorBuilder {
     stores: Option<InitializedStores>,
     prompt_registry: Option<Arc<PromptRegistry>>,
     store_config: Option<StoreConfig>,
-    configuration: Option<Arc<RwLock<DistriConfiguration>>>,
+    configuration: Option<Arc<RwLock<DistriServerConfig>>>,
     default_model_settings: Option<ModelSettings>,
     default_analysis_model_settings: Option<ModelSettings>,
     hooks: Option<HashMap<String, Arc<dyn crate::agent::types::AgentHooks>>>,
@@ -146,7 +146,7 @@ impl AgentOrchestratorBuilder {
         self
     }
 
-    pub fn with_configuration(mut self, configuration: Arc<RwLock<DistriConfiguration>>) -> Self {
+    pub fn with_configuration(mut self, configuration: Arc<RwLock<DistriServerConfig>>) -> Self {
         self.configuration = Some(configuration);
         self
     }
@@ -207,7 +207,7 @@ impl AgentOrchestratorBuilder {
 
         let configuration = self
             .configuration
-            .unwrap_or_else(|| Arc::new(RwLock::new(DistriConfiguration::default())));
+            .unwrap_or_else(|| Arc::new(RwLock::new(DistriServerConfig::default())));
         let filesystem_config = {
             let cfg_guard = configuration.read().await;
             cfg_guard.filesystem.clone()
@@ -403,15 +403,15 @@ impl AgentOrchestrator {
         self.plugin_registry.cleanup();
     }
 
-    pub async fn get_configuration(&self) -> DistriConfiguration {
+    pub async fn get_configuration(&self) -> DistriServerConfig {
         self.configuration.read().await.clone()
     }
 
-    pub fn configuration_handle(&self) -> Arc<RwLock<DistriConfiguration>> {
+    pub fn configuration_handle(&self) -> Arc<RwLock<DistriServerConfig>> {
         self.configuration.clone()
     }
 
-    pub async fn update_configuration(&self, configuration: DistriConfiguration) {
+    pub async fn update_configuration(&self, configuration: DistriServerConfig) {
         {
             let mut guard = self.configuration.write().await;
             *guard = configuration.clone();

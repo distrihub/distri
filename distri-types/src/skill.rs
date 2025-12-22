@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::agent::StandardDefinition;
 use crate::configuration::{
-    AgentConfig, DistriConfiguration, EntryPoints, PluginAgentDefinition, PluginArtifact,
+    AgentConfig, DistriServerConfig, EntryPoints, PluginAgentDefinition, PluginArtifact,
     PluginToolDefinition, PluginWorkflowDefinition,
 };
 use crate::stores::PluginMetadataRecord;
@@ -58,7 +58,7 @@ impl Skill {
             .map(|file| file.path.clone())
             .unwrap_or_else(|| "scripts/main.ts".to_string());
 
-        let mut configuration = DistriConfiguration::new_minimal(self.id.clone());
+        let mut configuration = DistriServerConfig::new_minimal(self.id.clone());
         configuration.description = if self.description.is_empty() {
             None
         } else {

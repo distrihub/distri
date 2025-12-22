@@ -1,5 +1,5 @@
 use crate::agent::StandardDefinition;
-use crate::configuration::manifest::DistriConfiguration;
+use crate::configuration::manifest::DistriServerConfig;
 use crate::configuration::workflow::{
     CustomAgentDefinition, DagWorkflowDefinition, SequentialWorkflowDefinition,
 };
@@ -102,7 +102,7 @@ impl AgentConfig {
     /// Get the working directory with fallback chain: agent config -> package config -> DISTRI_HOME -> current_dir
     pub fn get_working_directory(
         &self,
-        package_config: Option<&DistriConfiguration>,
+        package_config: Option<&DistriServerConfig>,
     ) -> anyhow::Result<std::path::PathBuf> {
         // Fall back to package configuration
         if let Some(config) = package_config {
@@ -136,7 +136,7 @@ pub struct PluginAgentDefinition {
 pub struct PluginArtifact {
     pub name: String,
     pub path: PathBuf,
-    pub configuration: crate::configuration::manifest::DistriConfiguration,
+    pub configuration: crate::configuration::manifest::DistriServerConfig,
     pub tools: Vec<PluginToolDefinition>,
     pub workflows: Vec<PluginWorkflowDefinition>,
     pub agents: Vec<PluginAgentDefinition>,

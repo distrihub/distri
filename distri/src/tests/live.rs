@@ -1,6 +1,6 @@
 use std::env;
 
-use crate::{DistriClient, DistriClientApp, ToolListItem};
+use crate::{Distri, DistriClientApp, ToolListItem};
 use distri_types::{LLmContext, LlmDefinition, Message, ModelSettings};
 
 #[tokio::test]
@@ -142,8 +142,8 @@ impl LiveCtx {
         })
     }
 
-    fn client(&self) -> DistriClient {
-        DistriClient::new(&self.base_url)
+    fn client(&self) -> Distri {
+        Distri::new(&self.base_url)
     }
 }
 

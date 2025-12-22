@@ -281,7 +281,7 @@ impl PluginRegistry {
         let artifact = PluginArtifact {
             name: package_name.clone(),
             path: PathBuf::from("<default>"),
-            configuration: distri_types::configuration::DistriConfiguration {
+            configuration: distri_types::configuration::DistriServerConfig {
                 name: package_name.clone(),
                 version: "1.0.0".to_string(),
                 description: Some("Default agents built into Distri".to_string()),

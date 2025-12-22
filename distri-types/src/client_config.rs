@@ -17,7 +17,7 @@ const CONFIG_FILE_NAME: &str = "config";
 
 /// Configuration for the Distri client.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-pub struct DistriClientConfig {
+pub struct DistriConfig {
     /// Base URL of the Distri server
     pub base_url: String,
 
@@ -70,7 +70,7 @@ impl FileConfig {
     }
 }
 
-impl Default for DistriClientConfig {
+impl Default for DistriConfig {
     fn default() -> Self {
         Self {
             base_url: DEFAULT_BASE_URL.to_string(),
@@ -81,11 +81,10 @@ impl Default for DistriClientConfig {
     }
 }
 
-impl DistriClientConfig {
+impl DistriConfig {
     /// Path to the local client config file (`~/.distri/config`).
     pub fn config_path() -> Option<PathBuf> {
-        let home = std::env::var_os("HOME")
-            .or_else(|| std::env::var_os("USERPROFILE"))?;
+        let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
         let mut path = PathBuf::from(home);
         path.push(CONFIG_DIR_NAME);
         path.push(CONFIG_FILE_NAME);

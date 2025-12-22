@@ -1,18 +1,18 @@
 use anyhow::{anyhow, Result};
-use distri_types::configuration::DistriConfiguration;
+use distri_types::configuration::DistriServerConfig;
 use std::path::PathBuf;
 use tokio::fs;
 
 #[derive(Debug)]
 pub struct Plugin {
-    pub configuration: DistriConfiguration,
+    pub configuration: DistriServerConfig,
     pub root_path: PathBuf,
 }
 
 impl Plugin {
     pub async fn load_from_current_dir() -> Result<Self> {
-        let config_path = DistriConfiguration::find_configuration_in_current_dir()?;
-        let configuration = DistriConfiguration::load_from_path(&config_path).await?;
+        let config_path = DistriServerConfig::find_configuration_in_current_dir()?;
+        let configuration = DistriServerConfig::load_from_path(&config_path).await?;
         let root_path = config_path
             .parent()
             .ok_or_else(|| anyhow!("Invalid configuration path"))?

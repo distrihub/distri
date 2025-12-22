@@ -10,7 +10,7 @@ use distri_core::llm::LLMExecutor;
 use distri_core::types::UpdateThreadRequest;
 use distri_core::{AgentError, MessageFilter, ToolAuthRequestContext};
 use distri_a2a::JsonRpcRequest;
-use distri_types::configuration::DistriConfiguration;
+use distri_types::configuration::DistriServerConfig;
 use distri_types::configuration::ServerConfig;
 use distri_types::StandardDefinition;
 use distri_types::{
@@ -118,7 +118,7 @@ async fn list_agents(executor: web::Data<Arc<AgentOrchestrator>>) -> HttpRespons
 
 #[derive(Debug, Serialize)]
 struct ConfigurationMeta {
-    configuration: DistriConfiguration,
+    configuration: DistriServerConfig,
 }
 
 async fn get_configuration(executor: web::Data<Arc<AgentOrchestrator>>) -> HttpResponse {

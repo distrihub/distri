@@ -7,7 +7,7 @@ use crate::{
     TypeScriptPluginExecutor,
 };
 use anyhow::Context;
-use distri_types::DistriConfiguration;
+use distri_types::DistriServerConfig;
 
 #[tokio::test]
 async fn load_execute_plugin() {
@@ -21,7 +21,7 @@ async fn load_execute_plugin() {
     let plugin_path = Path::new("./").join("samples/hello-plugin");
 
     let manifest = plugin_path.join("distri.toml");
-    let configuration = DistriConfiguration::load_from_path(&manifest)
+    let configuration = DistriServerConfig::load_from_path(&manifest)
         .await
         .expect("failed to load distri.toml");
 

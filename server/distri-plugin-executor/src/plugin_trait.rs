@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use distri_types::configuration::DistriConfiguration;
+use distri_types::configuration::DistriServerConfig;
 use distri_types::ToolCall;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -38,7 +38,7 @@ pub trait PluginFileResolver: Send + Sync {
 pub struct PluginLoadContext {
     pub package_name: String,
     pub entrypoint: Option<String>,
-    pub manifest: DistriConfiguration,
+    pub manifest: DistriServerConfig,
     pub resolver: Arc<dyn PluginFileResolver>,
 }
 

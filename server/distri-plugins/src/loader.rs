@@ -6,7 +6,7 @@ use distri_types::{
     configuration::{
         PluginAgentDefinition, PluginArtifact, PluginToolDefinition, PluginWorkflowDefinition,
     },
-    DistriConfiguration,
+    DistriServerConfig,
 };
 use distri_types::{MockOrchestrator, StandardDefinition};
 use std::path::PathBuf;
@@ -55,14 +55,14 @@ impl PluginLoader {
         // Load manifest
         let manifest_path = package_path.join("distri.toml");
         let configuration = if manifest_path.exists() {
-            DistriConfiguration::load_from_path(&manifest_path).await?
+            DistriServerConfig::load_from_path(&manifest_path).await?
         } else {
             let default_entry = if package_path.join("src/mod.ts").exists() {
                 "src/mod.ts".to_string()
             } else {
                 "mod.ts".to_string()
             };
-            DistriConfiguration {
+            DistriServerConfig {
                 name: package_name.to_string(),
                 entrypoints: Some(EntryPoints {
                     path: default_entry,
@@ -111,7 +111,7 @@ impl PluginLoader {
     /// Load tools and workflows from package using new architecture only
     async fn load_tools_and_workflows(
         &self,
-        configuration: &DistriConfiguration,
+        configuration: &DistriServerConfig,
         package_path: &PathBuf,
         package_name: &str,
     ) -> Result<(Vec<PluginToolDefinition>, Vec<PluginWorkflowDefinition>)> {
@@ -129,7 +129,7 @@ impl PluginLoader {
     /// Load agents from configuration
     pub async fn load_agents(
         &self,
-        configuration: &DistriConfiguration,
+        configuration: &DistriServerConfig,
         package_path: &PathBuf,
         package_name: &str,
     ) -> Result<Vec<PluginAgentDefinition>> {
@@ -170,7 +170,7 @@ impl PluginLoader {
 
     async fn load_typescript_exports(
         &self,
-        configuration: &DistriConfiguration,
+        configuration: &DistriServerConfig,
         package_path: &PathBuf,
         package_name: &str,
         entrypoint: &str,

@@ -1,5 +1,5 @@
 use crate::client_stream::StreamItem;
-use crate::config::{BuildHttpClient, DistriClientConfig};
+use crate::config::{BuildHttpClient, DistriConfig};
 use crate::{AgentStreamClient, ClientError, StreamError};
 use distri_a2a::{
     EventKind, JsonRpcRequest, Message as A2aMessage, MessageKind, MessageSendConfiguration,
@@ -22,28 +22,28 @@ use std::collections::HashMap;
 /// use distri::DistriClient;
 ///
 /// // From environment variables (DISTRI_BASE_URL, DISTRI_API_KEY)
-/// let client = DistriClient::from_env();
+/// let client = Distri::from_env();
 ///
 /// // From explicit URL (for local development)
-/// let client = DistriClient::new("http://localhost:3033");
+/// let client = Distri::new("http://localhost:3033");
 ///
 /// // With API key authentication
-/// let client = DistriClient::new("https://api.distri.dev")
+/// let client = Distri::new("https://api.distri.dev")
 ///     .with_api_key("your-api-key");
 /// ```
 #[derive(Clone)]
-pub struct DistriClient {
+pub struct Distri {
     base_url: String,
     http: reqwest::Client,
     stream: AgentStreamClient,
-    config: DistriClientConfig,
+    config: DistriConfig,
 }
 
-impl DistriClient {
+impl Distri {
     /// Create a new client with the specified base URL (no authentication).
     /// For local development, use this method.
     pub fn new(base_url: impl Into<String>) -> Self {
-        let config = DistriClientConfig::new(base_url);
+        let config = DistriConfig::new(base_url);
         Self::from_config(config)
     }
 
@@ -52,14 +52,14 @@ impl DistriClient {
     /// - `DISTRI_BASE_URL`: Base URL (defaults to `https://api.distri.dev`)
     /// - `DISTRI_API_KEY`: Optional API key for authentication
     pub fn from_env() -> Self {
-        let config = DistriClientConfig::from_env();
+        let config = DistriConfig::from_env();
         Self::from_config(config)
     }
 
     /// Create a new client from explicit configuration.
-    pub fn from_config(config: DistriClientConfig) -> Self {
+    pub fn from_config(config: DistriConfig) -> Self {
         let base = config.base_url.clone();
-        let http = <DistriClientConfig as BuildHttpClient>::build_http_client(&config)
+        let http = <DistriConfig as BuildHttpClient>::build_http_client(&config)
             .expect("Failed to build HTTP client");
 
         // Use from_config to preserve API keys and configuration in AgentStreamClient
@@ -78,7 +78,7 @@ impl DistriClient {
     /// This rebuilds the HTTP client with the new authentication header.
     pub fn with_api_key(mut self, api_key: impl Into<String>) -> Self {
         self.config = self.config.with_api_key(api_key);
-        self.http = <DistriClientConfig as BuildHttpClient>::build_http_client(&self.config)
+        self.http = <DistriConfig as BuildHttpClient>::build_http_client(&self.config)
             .expect("Failed to build HTTP client");
         self.stream = self.stream.clone().with_http_client(self.http.clone());
         self
@@ -97,7 +97,7 @@ impl DistriClient {
     }
 
     /// Get the current configuration.
-    pub fn config(&self) -> &DistriClientConfig {
+    pub fn config(&self) -> &DistriConfig {
         &self.config
     }
 
@@ -496,7 +496,7 @@ impl DistriClient {
     ///
     /// # Example
     /// ```rust,ignore
-    /// let client = DistriClient::from_env();
+    /// let client = Distri::from_env();
     /// let token_response = client.issue_token().await?;
     /// println!("Access token: {}", token_response.access_token);
     /// println!("Refresh token: {}", token_response.refresh_token);

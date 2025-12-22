@@ -47,16 +47,16 @@ impl AgentStreamClient {
     /// Create a new AgentStreamClient from a base URL (for backward compatibility)
     /// Prefer using `from_config` to preserve API keys and configuration
     pub fn new(base_url: impl Into<String>) -> Self {
-        let cfg = config::DistriClientConfig::new(base_url);
+        let cfg = config::DistriConfig::new(base_url);
         Self::from_config(cfg)
     }
 
     /// Create a new AgentStreamClient from DistriClientConfig (preserves API keys and configuration)
     /// The config must come from crate::config to have the build_http_client method
-    pub fn from_config(cfg: config::DistriClientConfig) -> Self {
+    pub fn from_config(cfg: config::DistriConfig) -> Self {
         let base_url = cfg.base_url.clone();
         // build_http_client is a trait method from BuildHttpClient trait
-        let http = <config::DistriClientConfig as BuildHttpClient>::build_http_client(&cfg)
+        let http = <config::DistriConfig as BuildHttpClient>::build_http_client(&cfg)
             .expect("Failed to build HTTP client for AgentStreamClient");
         Self {
             base_url,

@@ -5,7 +5,7 @@ use distri_core::{
     AgentOrchestratorBuilder,
 };
 use distri_types::browser::DistriBrowserConfig;
-use distri_types::configuration::{AgentConfig, DistriConfiguration, ObjectStorageConfig};
+use distri_types::configuration::{AgentConfig, DistriServerConfig, ObjectStorageConfig};
 use distri_types::ServerMetadataWrapper;
 pub mod workspace;
 use crate::tool_renderers::ToolRendererRegistry;
@@ -34,7 +34,7 @@ pub use cli::{
 /// Uses default configuration if no distri.toml is found
 pub fn load_distri_config(
     config_path: &Option<PathBuf>,
-) -> Result<(Option<DistriConfiguration>, PathBuf)> {
+) -> Result<(Option<DistriServerConfig>, PathBuf)> {
     let current_dir = std::env::current_dir()?;
 
     let (distri_config_path, home_dir) = match config_path {
@@ -73,7 +73,7 @@ pub fn load_distri_config(
     let config = if let Some(toml_path) = distri_config_path {
         let config_str = std::fs::read_to_string(&toml_path)?;
         let config_str = replace_env_vars(&config_str);
-        let config: DistriConfiguration = toml::from_str(&config_str)?;
+        let config: DistriServerConfig = toml::from_str(&config_str)?;
 
         debug!(
             "DAP config loaded from {}: {:?}",
@@ -114,7 +114,7 @@ pub fn replace_env_vars(content: &str) -> String {
 pub async fn init_orchestrator(
     home_dir: &Path,
     workspace_path: &Path,
-    workspace_config: Option<&DistriConfiguration>,
+    workspace_config: Option<&DistriServerConfig>,
     disable_plugins: bool,
     headless_browser: bool,
 ) -> Result<std::sync::Arc<distri_core::agent::AgentOrchestrator>> {
@@ -133,10 +133,10 @@ pub async fn init_orchestrator(
 pub async fn init_orchestrator_with_configuration(
     home_dir: &Path,
     workspace_path: &Path,
-    workspace_config: Option<&DistriConfiguration>,
+    workspace_config: Option<&DistriServerConfig>,
     disable_plugins: bool,
     headless_browser: bool,
-    configuration: Option<Arc<RwLock<DistriConfiguration>>>,
+    configuration: Option<Arc<RwLock<DistriServerConfig>>>,
 ) -> Result<std::sync::Arc<distri_core::agent::AgentOrchestrator>> {
     use distri_types::configuration::StoreConfig;
 
@@ -195,7 +195,7 @@ pub async fn init_orchestrator_with_configuration(
             match fs::read_to_string(&candidate) {
                 Ok(content) => {
                     let content = replace_env_vars(&content);
-                    match toml::from_str::<DistriConfiguration>(&content) {
+                    match toml::from_str::<DistriServerConfig>(&content) {
                         Ok(cfg) => resolved_config_owned = Some(cfg),
                         Err(error) => tracing::warn!(
                             "Failed to parse distri.toml at {}: {}",
@@ -222,7 +222,7 @@ pub async fn init_orchestrator_with_configuration(
         Arc::new(RwLock::new(
             resolved_config_owned
                 .clone()
-                .unwrap_or_else(DistriConfiguration::default),
+                .unwrap_or_else(DistriServerConfig::default),
         ))
     };
 
@@ -266,7 +266,7 @@ pub async fn init_orchestrator_with_configuration(
 async fn register_workspace_assets(
     orchestrator: &Arc<AgentOrchestrator>,
     workspace_path: &Path,
-    workspace_config: Option<&DistriConfiguration>,
+    workspace_config: Option<&DistriServerConfig>,
 ) -> Result<()> {
     let agents_dir = workspace_path.join("agents");
     if agents_dir.exists() {

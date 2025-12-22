@@ -4,8 +4,7 @@ use std::process::Command;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use distri::{
-    print_stream, AgentStreamClient, BuildHttpClient, DistriClient, DistriClientApp,
-    DistriClientConfig,
+    print_stream, AgentStreamClient, BuildHttpClient, Distri, DistriClientApp, DistriConfig,
 };
 use distri_a2a::{
     EventKind, Message as A2aMessage, MessageSendParams, Part as A2aPart, Role, TextPart,
@@ -128,13 +127,13 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    let mut config = DistriClientConfig::from_env();
+    let mut config = DistriConfig::from_env();
     if let Some(base_url) = cli.base_url.as_deref() {
         config.base_url = base_url.trim_end_matches('/').to_string();
     }
 
     let base_url = config.base_url.clone();
-    let client = DistriClient::from_config(config.clone());
+    let client = Distri::from_config(config.clone());
     let workspace = resolve_workspace(&cli.config);
 
     let mut app =
@@ -326,7 +325,7 @@ fn build_message_params(content: String) -> MessageSendParams {
     }
 }
 
-async fn push_file(client: &DistriClient, path: &Path) -> Result<()> {
+async fn push_file(client: &Distri, path: &Path) -> Result<()> {
     let content = fs::read_to_string(path)
         .await
         .with_context(|| format!("reading {}", path.display()))?;

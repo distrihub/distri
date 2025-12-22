@@ -10,7 +10,7 @@ pub use agent::*;
 pub mod prompt;
 pub use orchestrator::*;
 
-pub use configuration::DistriConfiguration;
+pub use configuration::DistriServerConfig;
 mod hooks;
 
 pub mod auth;
@@ -61,7 +61,7 @@ pub use ui_tool_renderers::*;
 pub use browsr_types::FileType;
 
 mod client_config;
-pub use client_config::DistriClientConfig;
+pub use client_config::DistriConfig;
 
 pub mod constants {
     pub const ADDITIONAL_PARTS_KEY: &str = "__user_parts";
