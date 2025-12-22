@@ -34,8 +34,8 @@ else
 endif
 
 TARGETDIR=${ROOT_DIR}/target/${DEFAULT_CONTAINER_TARGET}/${PROFILE_DIR}
-FRONTEND_DIR=${ROOT_DIR}/distrijs/apps/distri-ui
-FRONTEND_DIST=${ROOT_DIR}/distrijs/dist
+FRONTEND_DIR=${ROOT_DIR}/distri-ui
+FRONTEND_DIST=${ROOT_DIR}/dist
 
 ifeq (${SYSTEM_TARGET}, ${DEFAULT_CONTAINER_TARGET})
 	RUN_CMD=cargo-zigbuild run --target ${DEFAULT_CONTAINER_TARGET}.${CONTAINER_GLIBC}
@@ -48,19 +48,31 @@ build: build-linux
 ${TARGETDIR}/distri: ${TMPDIR} FORCE
 	cargo zigbuild --profile ${PROFILE} --target ${DEFAULT_CONTAINER_TARGET}.${CONTAINER_GLIBC} -p distri-cli --bin distri 
 
+${TARGETDIR}/distri-server: ${TMPDIR} FORCE
+	cargo zigbuild --profile ${PROFILE} --target ${DEFAULT_CONTAINER_TARGET}.${CONTAINER_GLIBC} -p distri-server-cli --bin distri-server --features "ui vendored-db"
+
 build-all: build-linux build-linux-arm build-mac build-mac-intel
 
-build-linux:  ${TMPDIR} FORCE
+build-linux: frontend-dist ${TMPDIR} FORCE
 	cargo zigbuild --profile ${PROFILE} --target ${DEFAULT_CONTAINER_TARGET}.${CONTAINER_GLIBC} -p distri-cli --bin distri 
+	cargo zigbuild --profile ${PROFILE} --target ${DEFAULT_CONTAINER_TARGET}.${CONTAINER_GLIBC} -p distri-server-cli --bin distri-server --features "ui vendored-db"
 
-build-linux-arm: ${TMPDIR} FORCE
+build-linux-arm: frontend-dist ${TMPDIR} FORCE
 	cargo zigbuild --profile ${PROFILE} --target ${LINUX_ARM_TARGET}.${CONTAINER_GLIBC} -p distri-cli --bin distri 
+	cargo zigbuild --profile ${PROFILE} --target ${LINUX_ARM_TARGET}.${CONTAINER_GLIBC} -p distri-server-cli --bin distri-server --features "ui vendored-db"
 
-build-mac: ${TMPDIR} FORCE
+build-mac: frontend-dist ${TMPDIR} FORCE
 	cargo build --profile ${PROFILE} -p distri-cli --bin distri 
+	cargo build --profile ${PROFILE} -p distri-server-cli --bin distri-server --features "ui vendored-db"
 
-build-mac-intel:  ${TMPDIR} FORCE
+build-mac-intel: frontend-dist ${TMPDIR} FORCE
 	cargo build --profile ${PROFILE} --target ${MAC_INTEL_TARGET} -p distri-cli --bin distri 
+	cargo build --profile ${PROFILE} --target ${MAC_INTEL_TARGET} -p distri-server-cli --bin distri-server --features "ui vendored-db"
+
+build-ui: frontend-dist
+
+frontend-dist:
+	pnpm run build
 
 
 ${TMPDIR}:
@@ -72,14 +84,26 @@ release-dir:
 package-releases: build-linux build-linux-arm build-mac build-mac-intel release-tarballs
 
 release-tarballs: release-dir
-	mkdir -p ${RELEASE_TMP}/${MAC_ARM_SLUG} ${RELEASE_TMP}/${MAC_INTEL_SLUG} ${RELEASE_TMP}/${LINUX_X86_SLUG} ${RELEASE_TMP}/${LINUX_ARM_SLUG}
+	mkdir -p ${RELEASE_TMP}/${MAC_ARM_SLUG}/server ${RELEASE_TMP}/${MAC_INTEL_SLUG}/server ${RELEASE_TMP}/${LINUX_X86_SLUG}/server ${RELEASE_TMP}/${LINUX_ARM_SLUG}/server
+	cp -p ${ROOT_DIR}/LICENSE ${RELEASE_TMP}/${MAC_ARM_SLUG}/LICENSE
+	cp -p ${ROOT_DIR}/server/LICENSE ${RELEASE_TMP}/${MAC_ARM_SLUG}/server/LICENSE
 	cp -p ${ROOT_DIR}/target/release/distri ${RELEASE_TMP}/${MAC_ARM_SLUG}/distri
-	tar -czf ${RELEASES_DIR}/distri-${MAC_ARM_SLUG}.tar.gz -C ${RELEASE_TMP}/${MAC_ARM_SLUG} distri
+	cp -p ${ROOT_DIR}/target/release/distri-server ${RELEASE_TMP}/${MAC_ARM_SLUG}/server/distri-server
+	tar -czf ${RELEASES_DIR}/distri-${MAC_ARM_SLUG}.tar.gz -C ${RELEASE_TMP} ${MAC_ARM_SLUG}
+	cp -p ${ROOT_DIR}/LICENSE ${RELEASE_TMP}/${MAC_INTEL_SLUG}/LICENSE
+	cp -p ${ROOT_DIR}/server/LICENSE ${RELEASE_TMP}/${MAC_INTEL_SLUG}/server/LICENSE
 	cp -p ${ROOT_DIR}/target/${MAC_INTEL_TARGET}/release/distri ${RELEASE_TMP}/${MAC_INTEL_SLUG}/distri
-	tar -czf ${RELEASES_DIR}/distri-${MAC_INTEL_SLUG}.tar.gz -C ${RELEASE_TMP}/${MAC_INTEL_SLUG} distri
+	cp -p ${ROOT_DIR}/target/${MAC_INTEL_TARGET}/release/distri-server ${RELEASE_TMP}/${MAC_INTEL_SLUG}/server/distri-server
+	tar -czf ${RELEASES_DIR}/distri-${MAC_INTEL_SLUG}.tar.gz -C ${RELEASE_TMP} ${MAC_INTEL_SLUG}
+	cp -p ${ROOT_DIR}/LICENSE ${RELEASE_TMP}/${LINUX_X86_SLUG}/LICENSE
+	cp -p ${ROOT_DIR}/server/LICENSE ${RELEASE_TMP}/${LINUX_X86_SLUG}/server/LICENSE
 	cp -p ${ROOT_DIR}/target/${DEFAULT_CONTAINER_TARGET}/release/distri ${RELEASE_TMP}/${LINUX_X86_SLUG}/distri
-	tar -czf ${RELEASES_DIR}/distri-${LINUX_X86_SLUG}.tar.gz -C ${RELEASE_TMP}/${LINUX_X86_SLUG} distri
+	cp -p ${ROOT_DIR}/target/${DEFAULT_CONTAINER_TARGET}/release/distri-server ${RELEASE_TMP}/${LINUX_X86_SLUG}/server/distri-server
+	tar -czf ${RELEASES_DIR}/distri-${LINUX_X86_SLUG}.tar.gz -C ${RELEASE_TMP} ${LINUX_X86_SLUG}
+	cp -p ${ROOT_DIR}/LICENSE ${RELEASE_TMP}/${LINUX_ARM_SLUG}/LICENSE
+	cp -p ${ROOT_DIR}/server/LICENSE ${RELEASE_TMP}/${LINUX_ARM_SLUG}/server/LICENSE
 	cp -p ${ROOT_DIR}/target/${LINUX_ARM_TARGET}/release/distri ${RELEASE_TMP}/${LINUX_ARM_SLUG}/distri
-	tar -czf ${RELEASES_DIR}/distri-${LINUX_ARM_SLUG}.tar.gz -C ${RELEASE_TMP}/${LINUX_ARM_SLUG} distri
+	cp -p ${ROOT_DIR}/target/${LINUX_ARM_TARGET}/release/distri-server ${RELEASE_TMP}/${LINUX_ARM_SLUG}/server/distri-server
+	tar -czf ${RELEASES_DIR}/distri-${LINUX_ARM_SLUG}.tar.gz -C ${RELEASE_TMP} ${LINUX_ARM_SLUG}
 
 FORCE: ;

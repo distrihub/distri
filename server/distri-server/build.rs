@@ -4,7 +4,7 @@ use static_files::resource_dir;
 fn main() -> std::io::Result<()> {
     #[cfg(feature = "ui")]
     {
-        let dist_path = "../distrijs/dist";
+        let dist_path = "../../distri-ui/dist";
         println!("cargo:rerun-if-changed={}", dist_path);
         println!("cargo:rerun-if-changed=build.rs");
 

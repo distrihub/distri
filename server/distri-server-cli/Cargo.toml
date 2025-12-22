@@ -7,6 +7,7 @@ edition = "2021"
 default = []
 vendored-db = ["distri-core/vendored-db", "distri-server/vendored-db"]
 otel = ["distri-server/otel", "distri-core/otel"]
+ui = ["distri-server/ui"]
 [dependencies]
 distri-core = { path = "../distri-core", version = "0.2.3" }
 distri-types = { path = "../../distri-types", version = "0.2.3" }

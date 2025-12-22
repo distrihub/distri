@@ -10,7 +10,6 @@ use distri_core::agent::AgentOrchestrator;
 use distri_core::voice::{TtsConfig, TtsService};
 use distri_types::configuration::ServerConfig;
 use serde_json::json;
-use std::path::Path;
 use std::sync::Arc;
 
 use crate::routes;
@@ -69,7 +68,7 @@ impl DistriAgentServer {
         #[cfg(not(feature = "ui"))]
         let ui_available = {
             let ui_path = "distri-server/static/ui";
-            Path::new(ui_path).exists()
+            std::path::Path::new(ui_path).exists()
         };
 
         tracing::info!("🌐 Server ready! Access these endpoints:");
@@ -155,7 +154,7 @@ impl DistriAgentServer {
             #[cfg(not(feature = "ui"))]
             {
                 let ui_path = "distri-server/static/ui";
-                if Path::new(ui_path).exists() {
+                if std::path::Path::new(ui_path).exists() {
                     app = app
                         // Serve static UI files under /ui
                         .service(
