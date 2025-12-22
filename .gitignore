@@ -19,3 +19,7 @@ samples/**/node_modules/**
 
 # Rust deps
 target/*
+
+#Turbo
+.turbo/*
+.distri/
