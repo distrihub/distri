@@ -1,0 +1,34 @@
+[package]
+name = "distri-auth"
+version = "0.2.3"
+edition = "2021"
+
+[features]
+default = []
+
+[dependencies]
+async-trait.workspace = true
+tracing.workspace = true
+anyhow.workspace = true
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+reqwest.workspace = true
+uuid.workspace = true
+thiserror = "1.0"
+url = "2.0"
+serde_urlencoded = "0.7"
+actix-web.workspace = true
+actix-cors.workspace = true
+rand.workspace = true
+open = "5.0"
+dirs = "5.0"
+
+# Internal dependencies
+distri-types = { path = "../../distri-types", version = "0.2.3" }
+cli-auth-server = { path = "../cli-auth-server", version = "0.2.3" }
+
+[dev-dependencies]
+tokio-test = "0.4"
+tempfile = "3.8"

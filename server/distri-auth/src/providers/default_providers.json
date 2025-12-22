@@ -1,0 +1,132 @@
+{
+  "providers": [
+    {
+      "name": "google",
+      "type": "oauth2",
+      "authorization_url": "https://accounts.google.com/o/oauth2/v2/auth",
+      "token_url": "https://oauth2.googleapis.com/token",
+      "refresh_url": "https://oauth2.googleapis.com/token",
+      "scopes_supported": [
+        "email",
+        "profile",
+        "openid",
+        "https://www.googleapis.com/auth/calendar",
+        "https://www.googleapis.com/auth/gmail.readonly",
+        "https://www.googleapis.com/auth/drive.readonly"
+      ],
+      "default_scopes": [
+        "email",
+        "profile",
+        "openid"
+      ],
+      "scope_mappings": {
+        "calendar": "https://www.googleapis.com/auth/calendar",
+        "calendar.readonly": "https://www.googleapis.com/auth/calendar.readonly",
+        "calendar.events": "https://www.googleapis.com/auth/calendar.events",
+        "gmail": "https://www.googleapis.com/auth/gmail.readonly",
+        "gmail.readonly": "https://www.googleapis.com/auth/gmail.readonly",
+        "gmail.modify": "https://www.googleapis.com/auth/gmail.modify",
+        "drive": "https://www.googleapis.com/auth/drive.readonly",
+        "drive.readonly": "https://www.googleapis.com/auth/drive.readonly",
+        "drive.file": "https://www.googleapis.com/auth/drive.file",
+        "userinfo": "https://www.googleapis.com/auth/userinfo.profile"
+      },
+      "env_vars": {
+        "client_id": "GOOGLE_CLIENT_ID",
+        "client_secret": "GOOGLE_CLIENT_SECRET"
+      }
+    },
+    {
+      "name": "github",
+      "type": "oauth2",
+      "authorization_url": "https://github.com/login/oauth/authorize",
+      "token_url": "https://github.com/login/oauth/access_token",
+      "refresh_url": "https://github.com/login/oauth/access_token",
+      "scopes_supported": [
+        "user",
+        "user:email",
+        "repo",
+        "public_repo",
+        "gist",
+        "notifications"
+      ],
+      "default_scopes": [
+        "user:email"
+      ],
+      "scope_mappings": {
+        "user": "user",
+        "email": "user:email",
+        "repos": "repo",
+        "repo": "repo",
+        "public_repos": "public_repo",
+        "gists": "gist",
+        "notifications": "notifications"
+      },
+      "env_vars": {
+        "client_id": "GITHUB_CLIENT_ID",
+        "client_secret": "GITHUB_CLIENT_SECRET"
+      }
+    },
+    {
+      "name": "twitter",
+      "type": "oauth2",
+      "authorization_url": "https://twitter.com/i/oauth2/authorize",
+      "token_url": "https://api.twitter.com/2/oauth2/token",
+      "refresh_url": "https://api.twitter.com/2/oauth2/token",
+      "pkce_required": true,
+      "scopes_supported": [
+        "tweet.read",
+        "tweet.write",
+        "users.read",
+        "follows.read",
+        "follows.write"
+      ],
+      "default_scopes": [
+        "users.read"
+      ],
+      "scope_mappings": {
+        "read": "tweet.read",
+        "write": "tweet.write",
+        "tweets": "tweet.read",
+        "tweets.read": "tweet.read",
+        "tweets.write": "tweet.write",
+        "users": "users.read",
+        "follows": "follows.read"
+      },
+      "env_vars": {
+        "client_id": "TWITTER_CLIENT_ID",
+        "client_secret": "TWITTER_CLIENT_SECRET"
+      }
+    },
+    {
+      "name": "microsoft",
+      "type": "oauth2",
+      "authorization_url": "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+      "token_url": "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+      "refresh_url": "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+      "scopes_supported": [
+        "https://graph.microsoft.com/.default",
+        "User.Read",
+        "Mail.Read",
+        "Calendars.Read",
+        "Files.Read"
+      ],
+      "default_scopes": [
+        "User.Read"
+      ],
+      "scope_mappings": {
+        "user": "User.Read",
+        "profile": "User.Read",
+        "mail": "Mail.Read",
+        "calendar": "Calendars.Read",
+        "calendars": "Calendars.Read",
+        "files": "Files.Read",
+        "default": "https://graph.microsoft.com/.default"
+      },
+      "env_vars": {
+        "client_id": "MICROSOFT_CLIENT_ID",
+        "client_secret": "MICROSOFT_CLIENT_SECRET"
+      }
+    }
+  ]
+}

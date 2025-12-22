@@ -2,20 +2,20 @@
 resolver = "2"
 
 members = [
+  "distri",
+  "distri-server",
+  "distri-server-cli",
   "distri-cli",
   "distri-a2a",
+  "distri-plugin-executor",
   "distri-types",
+  "distri-auth",
+  "distri-parsers",
+  "distri-plugins",
+  "distri-stores",
   "distri-filesystem",
-  "distri",
-  # server
-  "server/distri-core",
-  "server/distri-stores",
-  "server/cli-auth-server",
-  "server/distri-server",
-  "server/distri-plugins",
-  "server/distri-server-cli",
-  "server/distri-plugin-executor",
-
+  "distri-coder",
+  "cli-auth-server",
 ]
 default-members = ["distri-cli"]
 
@@ -30,10 +30,27 @@ serde = { version = "=1.0.219", features = ["derive"] }
 serde_json = "=1.0.143"
 tokio = { version = "1.0", features = ["full"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "chrono"] }
+distri-js-sandbox = { git = "https://github.com/distrihub/js-sandbox", rev = "b3bb928" }
 futures = "0.3.31"
 reqwest = { version = "0.12.8", features = ["json"] }
 tokio-util = { version = "0.7", features = ["full"] }
+# MCP servers
+mcp-tavily = { git = "https://github.com/distrihub/mcp-servers.git", rev = "0af3104" }
+mcp-crawl = { git = "https://github.com/distrihub/mcp-servers.git", rev = "0af3104" }
+mcp-reddit = { git = "https://github.com/distrihub/mcp-servers.git", rev = "0af3104" }
+mcp-twitter = { git = "https://github.com/distrihub/mcp-servers.git", rev = "0af3104" }
+chrono = { version = "0.4", features = ["serde"] }
+rustyscript = { git = "https://github.com/rscarson/rustyscript.git", version = "0.12.3", default-features = false, features = [
+  "worker",
+  "url_import",
+  "url",
+  "fs",
+  "fs_import",
+] } # JavaSc
+# WASM dependencies
+wasm-bindgen = "0.2"
 uuid = { version = "1.0", features = ["v4", "js"] }
+
 schemars = "1.0.4"
 jsonschema = "0.33"
 
@@ -51,20 +68,3 @@ browsr-types = { version = "0.1.1" }
 # Other shared dependencies
 rand = "0.8"
 futures-util = "0.3.31"
-
-## Server dependencies
-# MCP servers
-mcp-tavily = { git = "https://github.com/distrihub/mcp-servers.git", rev = "0af3104" }
-mcp-crawl = { git = "https://github.com/distrihub/mcp-servers.git", rev = "0af3104" }
-mcp-reddit = { git = "https://github.com/distrihub/mcp-servers.git", rev = "0af3104" }
-mcp-twitter = { git = "https://github.com/distrihub/mcp-servers.git", rev = "0af3104" }
-chrono = { version = "0.4", features = ["serde"] }
-rustyscript = { git = "https://github.com/rscarson/rustyscript.git", version = "0.12.3", default-features = false, features = [
-  "worker",
-  "url_import",
-  "url",
-  "fs",
-  "fs_import",
-] }
-
-distri-js-sandbox = { git = "https://github.com/distrihub/js-sandbox", rev = "b3bb928" }

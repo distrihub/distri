@@ -1,0 +1,33 @@
+[package]
+name = "distri-parsers"
+version = "0.2.3"
+edition = "2024"
+
+[dependencies]
+
+
+distri-types = { path = "../../distri-types", version = "0.2.3" }
+
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = "0.9"
+
+thiserror = "1.0"
+
+regex = "1.5"
+tracing = "0.1"
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+futures = { workspace = true }
+jsonschema = { workspace = true }
+schemars = { workspace = true }
+
+uuid = "1.13.1"
+chrono = { version = "0.4", features = ["serde"] }
+
+quick-xml = { version = "0.31", features = ["serialize"] }
+roxmltree = "0.20"
+crossbeam-channel = "0.5"
+base64 = "0.22.1"
+handlebars = "6.0"
