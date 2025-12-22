@@ -1,0 +1,43 @@
+[package]
+name = "distri-types"
+version = "0.2.3"
+edition = "2024"
+
+[dependencies]
+browsr-types = { workspace = true }
+distri-a2a = { path = "../distri-a2a", version = "0.2.3" }
+
+async-trait = "0.1"
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = "0.9"
+thiserror = "1.0"
+async-openai = { workspace = true }
+async-mcp = { workspace = true }
+regex = "1.5"
+tracing = "0.1"
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+futures = { workspace = true }
+jsonschema = { workspace = true }
+schemars = { workspace = true }
+secrecy = { version = "0.10.3", features = ["serde"] }
+uuid = { version = "1.13.1", features = ["serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+comfy-table = "7.0"
+futures-util = "0.3"
+async-stream = "0.3"
+tokio = { version = "1.0", features = ["fs"] }
+crossbeam-channel = "0.5"
+base64 = "0.22.1"
+rand.workspace = true
+sha2 = "0.10"
+url = "2"
+handlebars = "6.0"
+toml = "0.8"
+
+[features]
+default = ["typescript"]
+typescript = []
+wasm = []
+native = []

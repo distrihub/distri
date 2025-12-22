@@ -15,3 +15,7 @@ dist/
 runtime/deno.lock
 node_modules/**
 samples/**/node_modules/**
+
+
+# Rust deps
+target/*

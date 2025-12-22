@@ -1,0 +1,26 @@
+{{#if steps}}
+## Agent History
+{{#each steps}}
+### Step {{step_number}}
+{{#if commands}}
+{{#each commands}}
+  - {{label}} ({{status}})
+    {{#if result}}
+      RESULT:
+{{result}}
+    {{/if}}
+{{/each}}
+{{/if}}
+{{/each}}
+
+{{/if}}
+
+{{#if task_files}}
+## Available Files
+{{task_files}}
+{{/if}}
+
+{{#if observation}}
+## Latest Observation
+{{observation}}
+{{/if}}
