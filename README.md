@@ -73,6 +73,7 @@ Clone the repo, open any plugin directory, and run the Deno snippets in the READ
 cargo publish -p distri-a2a
 cargo publish -p distri-types
 cargo publish -p distri-filesystem
+cargo publish -p distri
 ```
 
 ## Releases & updates

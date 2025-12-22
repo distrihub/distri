@@ -82,28 +82,28 @@ impl PromptRegistry {
         let templates = vec![
             PromptTemplate {
                 name: "planning".to_string(),
-                content: include_str!("../../prompt_templates/planning.hbs").to_string(),
+                content: include_str!("../prompt_templates/planning.hbs").to_string(),
                 description: Some("Default system message template".to_string()),
                 version: Some("1.0.0".to_string()),
                 source: TemplateSource::Static,
             },
             PromptTemplate {
                 name: "user".to_string(),
-                content: include_str!("../../prompt_templates/user.hbs").to_string(),
+                content: include_str!("../prompt_templates/user.hbs").to_string(),
                 description: Some("Default user message template".to_string()),
                 version: Some("1.0.0".to_string()),
                 source: TemplateSource::Static,
             },
             PromptTemplate {
                 name: "code".to_string(),
-                content: include_str!("../../prompt_templates/code.hbs").to_string(),
+                content: include_str!("../prompt_templates/code.hbs").to_string(),
                 description: Some("Code generation template".to_string()),
                 version: Some("1.0.0".to_string()),
                 source: TemplateSource::Static,
             },
             PromptTemplate {
                 name: "reflection".to_string(),
-                content: include_str!("../../prompt_templates/reflection.hbs").to_string(),
+                content: include_str!("../prompt_templates/reflection.hbs").to_string(),
                 description: Some("Reflection and improvement template".to_string()),
                 version: Some("1.0.0".to_string()),
                 source: TemplateSource::Static,
@@ -122,27 +122,27 @@ impl PromptRegistry {
         let partials = vec![
             (
                 "core_instructions",
-                include_str!("../../prompt_templates/partials/core_instructions.hbs"),
+                include_str!("../prompt_templates/partials/core_instructions.hbs"),
             ),
             (
                 "communication",
-                include_str!("../../prompt_templates/partials/communication.hbs"),
+                include_str!("../prompt_templates/partials/communication.hbs"),
             ),
             (
                 "todo_instructions",
-                include_str!("../../prompt_templates/partials/todo_instructions.hbs"),
+                include_str!("../prompt_templates/partials/todo_instructions.hbs"),
             ),
             (
                 "tools_xml",
-                include_str!("../../prompt_templates/partials/tools_xml.hbs"),
+                include_str!("../prompt_templates/partials/tools_xml.hbs"),
             ),
             (
                 "tools_json",
-                include_str!("../../prompt_templates/partials/tools_json.hbs"),
+                include_str!("../prompt_templates/partials/tools_json.hbs"),
             ),
             (
                 "reasoning",
-                include_str!("../../prompt_templates/partials/reasoning.hbs"),
+                include_str!("../prompt_templates/partials/reasoning.hbs"),
             ),
         ];
 

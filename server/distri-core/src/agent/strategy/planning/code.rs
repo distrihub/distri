@@ -138,7 +138,7 @@ impl PlanningStrategy for CodePlanner {
         // Get tool descriptions with XML formatting
         let tools = self.get_tool_descriptions(&context).await;
 
-        let code_template = include_str!("../../../../../../prompt_templates/code.hbs");
+        let code_template = include_str!("./templates/code.hbs");
 
         // Create variables for template
         let mut variables = HashMap::new();
@@ -211,7 +211,9 @@ impl PlanningStrategy for CodePlanner {
         handlebars
             .register_partial(
                 "todo_instructions",
-                include_str!("../../../../../../prompt_templates/partials/todo_instructions.hbs"),
+                include_str!(
+                    "../../../../../../distri-types/prompt_templates/partials/todo_instructions.hbs"
+                ),
             )
             .unwrap();
         let data = serde_json::to_value(variables)
