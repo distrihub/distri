@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "Distri Extension",
+  "version": "0.1.1",
+  "description": "Distri UI as a Chrome Extension",
+  "permissions": [
+    "activeTab",
+    "storage"
+  ],
+  "action": {
+    "default_popup": "index-extension.html",
+    "default_title": "Distri Extension"
+  },
+  "background": {
+    "service_worker": "src/background.ts",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["src/content.ts"]
+    }
+  ]
+}

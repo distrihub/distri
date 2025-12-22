@@ -1,0 +1,80 @@
+/* Import base styles first */
+@import './index.css';
+
+/* Chrome extension popup sizing */
+html, body {
+  width: 800px !important;
+  height: 600px !important;
+  overflow-x: hidden;
+  margin: 0;
+  padding: 0;
+}
+
+#root {
+  width: 800px !important;
+  height: 600px !important;
+  overflow-x: hidden;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0;
+}
+
+/* Force container widths */
+.min-h-screen {
+  min-height: 600px !important;
+  height: 600px !important;
+}
+
+/* Adjust sidebar width */
+[data-sidebar="sidebar"] {
+  width: 200px !important;
+  min-width: 200px !important;
+  flex-shrink: 0;
+}
+
+/* Adjust main content width */
+main {
+  width: calc(800px - 200px) !important;
+  max-width: calc(800px - 200px) !important;
+  overflow-x: hidden;
+}
+
+/* Container adjustments */
+.container {
+  max-width: 580px !important;
+  width: 100% !important;
+  padding-left: 1rem !important;
+  padding-right: 1rem !important;
+}
+
+/* Card adjustments */
+.card {
+  margin-bottom: 0.75rem !important;
+}
+
+/* Text overflow handling */
+.truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Table/list adjustments for extension */
+.virtualized-table {
+  max-width: 560px !important;
+}
+
+/* Hide scrollbars but keep functionality */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 2px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
