@@ -16,6 +16,7 @@ else
 	NPROCS:=$(shell grep -c 'processor' /proc/cpuinfo 2>/dev/null || nproc 2>/dev/null || echo 2)
 endif
 MAKEFLAGS += -j${NPROCS}
+UI_PREFIX ?= ui
 
 ROOT_DIR=$(shell dirname $(realpath $(firstword $(MAKEFILE_LIST))))
 DISTRI_VERSION=$(shell awk -F\" '/^version =/ {print $$2; exit}' ${ROOT_DIR}/distri/Cargo.toml)
@@ -72,7 +73,7 @@ build-mac-intel: frontend-dist ${TMPDIR} FORCE
 build-ui: frontend-dist
 
 frontend-dist:
-	pnpm run build
+	VITE_PREFIX=${UI_PREFIX} pnpm run build
 
 
 ${TMPDIR}:
