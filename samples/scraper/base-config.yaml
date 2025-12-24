@@ -1,0 +1,83 @@
+# Base configuration for distri-scraper
+# This can be extended by other configurations
+
+name: "distri-scraper-base"
+description: "Base web scraping agent configuration"
+version: "1.0.0"
+
+# Base agent definition
+agent:
+  name: "scraper-base"
+  description: "Web scraping agent"
+  input_schema:
+    type: "object"
+    properties:
+      task:
+        type: "string"
+        description: "The scraping task to perform"
+    required: ["task"]
+  output_schema:
+    type: "object"
+    properties:
+      result:
+        type: "string"
+        description: "The scraped content"
+      metadata:
+        type: "object"
+        description: "Additional metadata about the scraping"
+  prompt_template: |
+    You are a web scraping agent.
+    Your task is to: {{task}}
+
+    Use available tools to search and extract information.
+
+# Base configuration
+config:
+  memory:
+    type: "ShortTerm"
+  rejection:
+    type: "ReplanOnRejection"
+  tool_usage:
+    type: "OnDemand"
+  reflection:
+    type: "AfterEachStep"
+
+# Base tools
+tools:
+  - name: "search"
+    description: "Search for information on the web"
+    input_schema:
+      type: "object"
+      properties:
+        query:
+          type: "string"
+          description: "Search query"
+      required: ["query"]
+  - name: "scrape"
+    description: "Scrape content from a webpage"
+    input_schema:
+      type: "object"
+      properties:
+        url:
+          type: "string"
+          description: "URL to scrape"
+        selector:
+          type: "string"
+          description: "CSS selector for content"
+      required: ["url"]
+  - name: "extract_text"
+    description: "Extract text content from HTML"
+    input_schema:
+      type: "object"
+      properties:
+        html:
+          type: "string"
+          description: "HTML content to extract text from"
+      required: ["html"]
+
+# Base servers
+servers:
+  - name: "tavily"
+    type: "tavily"
+    config:
+      api_key: "${TAVILY_API_KEY}"
