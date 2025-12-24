@@ -1,33 +1,69 @@
 # Distri Coder Sample
 
-This sample demonstrates the **Distri Coder** agent ("codela"), designed for iterative software development tasks.
+This sample demonstrates the **codela** agent, a CLI-based coding assistant designed for iterative software development tasks.
 
-## Prerequisites
+> **Note**: This sample showcases the distri CLI capabilities and requires a complete distri CLI installation to run.
 
-- `distri` CLI installed.
-- Access to a running Distri server.
+## Quick Start with Distri Cloud
 
-## Setup
+1. **Install Distri CLI**:
+   ```bash
+   curl -fsSL https://distri.dev/install.sh | bash
+   ```
 
-1. **Start the Distri Server** (if not running):
+2. **Push the Agent to Distri Cloud**:
+   ```bash
+   distri push
+   ```
+
+3. **Run Tasks**:
+   ```bash
+   distri run --agent codela --task "Create a simple Python script that prints 'Hello World'"
+   ```
+
+## Local Development (Optional)
+
+If you prefer to run a local distri server:
+
+1. **Start the Local Server**:
    ```bash
    distri serve
    ```
 
-2. **Push the Agent Definition**:
-   Push the coder agent definition to the server:
+2. **Push the Agent Locally**:
    ```bash
-   distri agents push agents/coder.md
+   distri push --local
    ```
 
-## Usage
+3. **Run Tasks**:
+   ```bash
+   distri run --agent codela --task "Your task here"
+   ```
 
-Use the `distri run` command to invoke the coder agent. You can specify the task you want it to perform.
+## Features
 
-**Example: Create a Hello World**
+- Iterative code generation and refinement
+- File system operations (read/write/edit files)
+- Shell command execution
+- Code review and analysis
+
+## Example Tasks
+
 ```bash
-distri run --agent codela --task "Create a simple Python script that prints 'Hello World' and save it to hello.py"
+# Create a new file
+distri run --agent codela --task "Create a hello.py script that prints Hello World"
+
+# Edit existing code
+distri run --agent codela --task "Add error handling to the main function in app.py"
+
+# Code review
+distri run --agent codela --task "Review the code in src/ and suggest improvements"
 ```
 
-**Note on Workspace**:
-The agent operates within the server's working directory or the specific workspace configured for the session. Ensure your server or client has access to the target files.
+## Configuration
+
+The agent configuration is defined in `agents/coder.md`. Customize the system prompt and capabilities as needed.
+
+## Workspace
+
+The agent operates within the current working directory. Set the `CODE_HOME` environment variable to specify a different workspace root.
