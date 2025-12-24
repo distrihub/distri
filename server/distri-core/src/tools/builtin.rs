@@ -20,12 +20,16 @@ pub fn get_builtin_tools(
     let mut tools = vec![
         Arc::new(TransferToAgentTool) as Arc<dyn Tool>,
         Arc::new(FinalTool) as Arc<dyn Tool>,
-        Arc::new(DistriExecuteCodeTool) as Arc<dyn Tool>,
         Arc::new(DistriScrapeSharedTool) as Arc<dyn Tool>,
         Arc::new(DistriBrowserSharedTool) as Arc<dyn Tool>,
         Arc::new(SearchTool) as Arc<dyn Tool>,
         Arc::new(TodosTool) as Arc<dyn Tool>,
     ];
+
+    #[cfg(feature = "code")]
+    {
+        tools.push(Arc::new(DistriExecuteCodeTool) as Arc<dyn Tool>);
+    }
 
     if include_filesystem_tools {
         tools.push(Arc::new(ArtifactTool) as Arc<dyn Tool>);
@@ -203,9 +207,11 @@ impl ExecutorContextTool for TransferToAgentTool {
     }
 }
 
+#[cfg(feature = "code")]
 #[derive(Debug)]
 pub struct DistriExecuteCodeTool;
 
+#[cfg(feature = "code")]
 #[async_trait::async_trait]
 impl Tool for DistriExecuteCodeTool {
     fn get_name(&self) -> String {
@@ -254,6 +260,7 @@ impl Tool for DistriExecuteCodeTool {
     }
 }
 
+#[cfg(feature = "code")]
 #[async_trait::async_trait]
 impl ExecutorContextTool for DistriExecuteCodeTool {
     async fn execute_with_executor_context(

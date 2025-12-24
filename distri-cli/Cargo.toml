@@ -9,6 +9,7 @@ clap = { version = "4.5", features = ["derive"] }
 dotenv = "0.15"
 serde_json = { workspace = true }
 tokio = { version = "1.0", features = ["full"] }
+toml = "0.8"
 
 distri = { path = "../distri", version = "0.2.4" }
 distri-a2a = { path = "../distri-a2a", version = "0.2.4" }

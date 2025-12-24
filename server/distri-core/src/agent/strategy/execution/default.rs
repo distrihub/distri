@@ -4,9 +4,11 @@ use crate::{
         strategy::execution::{ExecutionResult, ExecutionStrategy},
         AgentEventType, ExecutorContext, InvokeResult,
     },
-    tools::{DistriExecuteCodeTool, Tool},
+    tools::Tool,
     AgentError,
 };
+#[cfg(feature = "code")]
+use crate::tools::DistriExecuteCodeTool;
 use distri_types::{
     Action, ExecutionStatus, Part, PlanStep, StandardDefinition, ToolResponse, ToolResultWithSkip,
     DEFAULT_EXTERNAL_TOOL_TIMEOUT_SECS,
@@ -64,8 +66,15 @@ impl AgentExecutor {
             .any(|tc| tc.tool_name == "distri_execute_code");
 
         if has_code_execution {
-            enhanced_tools.push(Arc::new(DistriExecuteCodeTool) as Arc<dyn Tool>);
-            tracing::debug!("Added DistriExecuteCodeTool for code execution");
+            #[cfg(feature = "code")]
+            {
+                enhanced_tools.push(Arc::new(DistriExecuteCodeTool) as Arc<dyn Tool>);
+                tracing::debug!("Added DistriExecuteCodeTool for code execution");
+            }
+            #[cfg(not(feature = "code"))]
+            {
+                tracing::warn!("DistriExecuteCodeTool requested but 'code' feature is disabled");
+            }
         }
 
         // Get external tool timeout from agent definition strategy
@@ -263,26 +272,40 @@ impl ExecutionStrategy for AgentExecutor {
             }
 
             Action::Code { code, .. } => {
-                // Execute code and handle errors gracefully - centralized tool setup
-                match crate::tools::execute_code_with_tools(code, context.clone()).await {
-                    Ok((_, observations, _)) => Ok(ExecutionResult {
-                        step_id: step.id.clone(),
-                        status: ExecutionStatus::Success,
-                        parts: vec![Part::Text(observations.join("\n\n"))],
-                        timestamp: chrono::Utc::now().timestamp_millis(),
-                        reason: None,
-                    }),
-                    Err(e) => {
-                        // Code execution failed - capture error but continue
-                        tracing::warn!("Direct code execution failed: {}", e);
-                        Ok(ExecutionResult {
+                #[cfg(feature = "code")]
+                {
+                    // Execute code and handle errors gracefully - centralized tool setup
+                    match crate::tools::execute_code_with_tools(code, context.clone()).await {
+                        Ok((_, observations, _)) => Ok(ExecutionResult {
                             step_id: step.id.clone(),
-                            status: ExecutionStatus::Failed,
-                            parts: vec![],
+                            status: ExecutionStatus::Success,
+                            parts: vec![Part::Text(observations.join("\n\n"))],
                             timestamp: chrono::Utc::now().timestamp_millis(),
-                            reason: Some(format!("Code execution error: {}", e)),
-                        })
+                            reason: None,
+                        }),
+                        Err(e) => {
+                            // Code execution failed - capture error but continue
+                            tracing::warn!("Direct code execution failed: {}", e);
+                            Ok(ExecutionResult {
+                                step_id: step.id.clone(),
+                                status: ExecutionStatus::Failed,
+                                parts: vec![],
+                                timestamp: chrono::Utc::now().timestamp_millis(),
+                                reason: Some(format!("Code execution error: {}", e)),
+                            })
+                        }
                     }
+                }
+                #[cfg(not(feature = "code"))]
+                {
+                    tracing::warn!("Code execution requested but 'code' feature is disabled");
+                    Ok(ExecutionResult {
+                        step_id: step.id.clone(),
+                        status: ExecutionStatus::Failed,
+                        parts: vec![],
+                        timestamp: chrono::Utc::now().timestamp_millis(),
+                        reason: Some("Code execution feature disabled".to_string()),
+                    })
                 }
             }
         }

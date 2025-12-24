@@ -58,6 +58,12 @@ enum Commands {
         command: ToolsCommands,
     },
 
+    /// Manage local client configuration
+    Config {
+        #[clap(subcommand)]
+        command: ConfigCommands,
+    },
+
     /// Start the local server (delegates to distri-server)
     Serve {
         #[clap(long)]
@@ -104,6 +110,17 @@ enum ToolsCommands {
         input: Option<String>,
         #[clap(long, help = "Optional session id")]
         session: Option<String>,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum ConfigCommands {
+    /// Set a config value in ~/.distri/config
+    Set {
+        #[clap(help = "Config key (api_key, base_url)")]
+        key: String,
+        #[clap(help = "Value to set (empty clears the key)", num_args = 1..)]
+        value: Vec<String>,
     },
 }
 
@@ -236,6 +253,9 @@ async fn main() -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             }
         },
+        Commands::Config { command } => {
+            handle_config_command(command)?;
+        }
         Commands::Serve { .. } => unreachable!("serve handled earlier"),
     }
 
@@ -323,6 +343,78 @@ fn build_message_params(content: String) -> MessageSendParams {
         metadata: None,
         browser_session_id: None,
     }
+}
+
+fn handle_config_command(command: ConfigCommands) -> Result<()> {
+    match command {
+        ConfigCommands::Set { key, value } => {
+            let raw_value = value
+                .into_iter()
+                .filter(|part| part != "=")
+                .collect::<Vec<_>>()
+                .join(" ");
+            let path = set_client_config_value(&key, &raw_value)?;
+            println!("Updated {} in {}", key, path.display());
+        }
+    }
+    Ok(())
+}
+
+fn set_client_config_value(key: &str, raw_value: &str) -> Result<PathBuf> {
+    let path = DistriConfig::config_path()
+        .ok_or_else(|| anyhow::anyhow!("Unable to resolve home directory for ~/.distri/config"))?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let mut config = load_client_config_value(&path);
+    let normalized = match key {
+        "api_key" => normalize_optional(raw_value),
+        "base_url" => normalize_base_url(raw_value),
+        _ => anyhow::bail!(
+            "Unknown config key '{}'. Supported keys: api_key, base_url",
+            key
+        ),
+    };
+
+    if let toml::Value::Table(ref mut table) = config {
+        match normalized {
+            Some(value) => {
+                table.insert(key.to_string(), toml::Value::String(value));
+            }
+            None => {
+                table.remove(key);
+            }
+        }
+    }
+
+    let contents = toml::to_string_pretty(&config)?;
+    std::fs::write(&path, contents)?;
+    Ok(path)
+}
+
+fn load_client_config_value(path: &Path) -> toml::Value {
+    let parsed = std::fs::read_to_string(path)
+        .ok()
+        .and_then(|contents| contents.parse::<toml::Value>().ok());
+
+    match parsed {
+        Some(toml::Value::Table(table)) => toml::Value::Table(table),
+        _ => toml::Value::Table(toml::map::Map::new()),
+    }
+}
+
+fn normalize_optional(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+fn normalize_base_url(raw: &str) -> Option<String> {
+    normalize_optional(raw).map(|value| value.trim_end_matches('/').to_string())
 }
 
 async fn push_file(client: &Distri, path: &Path) -> Result<()> {
