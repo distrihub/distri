@@ -50,25 +50,25 @@ ${TARGETDIR}/distri: ${TMPDIR} FORCE
 	cargo zigbuild --profile ${PROFILE} --target ${DEFAULT_CONTAINER_TARGET}.${CONTAINER_GLIBC} -p distri-cli --bin distri 
 
 ${TARGETDIR}/distri-server: ${TMPDIR} FORCE
-	cargo zigbuild --profile ${PROFILE} --target ${DEFAULT_CONTAINER_TARGET}.${CONTAINER_GLIBC} -p distri-server-cli --bin distri-server --features "ui vendored-db"
+	cargo zigbuild --profile ${PROFILE} --target ${DEFAULT_CONTAINER_TARGET}.${CONTAINER_GLIBC} -p distri-server-cli --bin distri-server --features "ui sqlite_vendored"
 
 build-all: build-linux build-linux-arm build-mac build-mac-intel
 
 build-linux: frontend-dist ${TMPDIR} FORCE
 	cargo zigbuild --profile ${PROFILE} --target ${DEFAULT_CONTAINER_TARGET}.${CONTAINER_GLIBC} -p distri-cli --bin distri 
-	cargo zigbuild --profile ${PROFILE} --target ${DEFAULT_CONTAINER_TARGET}.${CONTAINER_GLIBC} -p distri-server-cli --bin distri-server --features "ui vendored-db"
+	cargo zigbuild --profile ${PROFILE} --target ${DEFAULT_CONTAINER_TARGET}.${CONTAINER_GLIBC} -p distri-server-cli --bin distri-server --features "ui sqlite_vendored"
 
 build-linux-arm: frontend-dist ${TMPDIR} FORCE
 	cargo zigbuild --profile ${PROFILE} --target ${LINUX_ARM_TARGET}.${CONTAINER_GLIBC} -p distri-cli --bin distri 
-	cargo zigbuild --profile ${PROFILE} --target ${LINUX_ARM_TARGET}.${CONTAINER_GLIBC} -p distri-server-cli --bin distri-server --features "ui vendored-db"
+	cargo zigbuild --profile ${PROFILE} --target ${LINUX_ARM_TARGET}.${CONTAINER_GLIBC} -p distri-server-cli --bin distri-server --features "ui sqlite_vendored"
 
 build-mac: frontend-dist ${TMPDIR} FORCE
 	cargo build --profile ${PROFILE} -p distri-cli --bin distri 
-	cargo build --profile ${PROFILE} -p distri-server-cli --bin distri-server --features "ui vendored-db"
+	cargo build --profile ${PROFILE} -p distri-server-cli --bin distri-server --features "ui sqlite"
 
 build-mac-intel: frontend-dist ${TMPDIR} FORCE
 	cargo build --profile ${PROFILE} --target ${MAC_INTEL_TARGET} -p distri-cli --bin distri 
-	cargo build --profile ${PROFILE} --target ${MAC_INTEL_TARGET} -p distri-server-cli --bin distri-server --features "ui vendored-db"
+	cargo build --profile ${PROFILE} --target ${MAC_INTEL_TARGET} -p distri-server-cli --bin distri-server --features "ui sqlite"
 
 build-ui: frontend-dist
 

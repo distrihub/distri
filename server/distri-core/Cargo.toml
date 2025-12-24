@@ -4,14 +4,13 @@ version = "0.2.4"
 edition = "2021"
 
 [features]
-default = ["code", "vendored-sqlite"]
+default = ["code", "sqlite"]
 inmemory = []
 code = ["dep:distri-js-sandbox"]
 sqlite = ["distri-stores/sqlite"]
 postgres = ["distri-stores/postgres"]
-vendored-sqlite = ["sqlite", "distri-stores/sqlite_vendored"]
-vendored-postgres = ["postgres", "distri-stores/postgres_vendored"]
-vendored-db = ["vendored-sqlite"]
+sqlite_vendored = ["sqlite", "distri-stores/sqlite_vendored"]
+postgres_vendored = ["postgres", "distri-stores/postgres_vendored"]
 otel = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp"]
 
 [dependencies]
