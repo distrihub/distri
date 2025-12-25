@@ -29,7 +29,7 @@ Based on context engineering principles from [Manus](https://manus.im/blog/Conte
 
 **Key Features:**
 - Automatic size thresholds (no manual configuration needed)
-- Workspace filesystem rooted at `CURRENT_WORKING_DIR` for editable code (`agents/`, `src/`, `plugins/`). This is the same tree exposed through `/api/v1/files`, so local edits, server writes, and object storage deployments all point at the exact same root.
+- Workspace filesystem rooted at `CURRENT_WORKING_DIR` for editable code (`agents/`, `src/`, `plugins/`). This is the same tree exposed through `/v1/files`, so local edits, server writes, and object storage deployments all point at the exact same root.
 - Session and artifact data are isolated under `${CURRENT_WORKING_DIR}/.distri/runtime/…`. Every run receives a namespace such as `.distri/runtime/runs/{thread_id}/{task_id}/tool_call_{tool_call_id}.json`, so per-task artifacts never pollute the workspace tree but still share the same object store backend.
 - Content type detection with proper file extensions
 - JSON metadata with schema detection and statistics

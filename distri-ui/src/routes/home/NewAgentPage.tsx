@@ -66,7 +66,7 @@ const NewAgentPage = () => {
       if (token) {
         headers['Authorization'] = `Bearer ${token}`
       }
-      const resp = await fetch(`${BACKEND_URL}/api/v1/agents`, {
+      const resp = await fetch(`${BACKEND_URL}/v1/agents`, {
         method: 'POST',
         headers,
         body: finalMarkdown,

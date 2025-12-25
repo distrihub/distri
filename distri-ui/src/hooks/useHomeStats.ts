@@ -18,7 +18,7 @@ export function useHomeStats() {
     const load = async () => {
       setLoading(true)
       try {
-        const res = await fetch(`${BACKEND_URL}/api/v1/home/stats`)
+        const res = await fetch(`${BACKEND_URL}/v1/home/stats`)
         if (res.ok) {
           const json = (await res.json()) as HomeStats
           if (!cancelled) {

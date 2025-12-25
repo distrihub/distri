@@ -234,11 +234,11 @@ pnpm run dev
 ### A2A Endpoints
 
 ```
-GET  /api/v1/agents              # List all agents
-GET  /api/v1/agents/{id}         # Get agent card
-POST /api/v1/agents/{id}         # JSON-RPC endpoint
-GET  /api/v1/agents/{id}/events  # SSE stream
-GET  /api/v1/tasks/{id}          # Get task details
+GET  /v1/agents              # List all agents
+GET  /v1/agents/{id}         # Get agent card
+POST /v1/agents/{id}         # JSON-RPC endpoint
+GET  /v1/agents/{id}/events  # SSE stream
+GET  /v1/tasks/{id}          # Get task details
 ```
 
 ### JSON-RPC Methods
@@ -292,7 +292,7 @@ cargo run --bin distri run test_reflection --task "Provide a detailed analysis o
 ### 2. Send a Message via cURL
 
 ```bash
-curl -X POST http://localhost:8081/api/v1/agents/assistant \
+curl -X POST http://localhost:8081/v1/agents/assistant \
   -H "Content-Type: application/json" \
   -d '{
     "jsonrpc": "2.0",
@@ -312,7 +312,7 @@ curl -X POST http://localhost:8081/api/v1/agents/assistant \
 ### 2. Monitor Tasks via SSE
 
 ```javascript
-const eventSource = new EventSource('http://localhost:8081/api/v1/agents/assistant/events');
+const eventSource = new EventSource('http://localhost:8081/v1/agents/assistant/events');
 
 eventSource.onmessage = (event) => {
   const data = JSON.parse(event.data);

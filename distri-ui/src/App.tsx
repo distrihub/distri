@@ -112,7 +112,7 @@ const ProtectedLayout = () => {
   return (
     <DistriProvider
       config={{
-        baseUrl: `${BACKEND_URL}/api/v1/`,
+        baseUrl: `${BACKEND_URL}/v1/`,
         headers: authHeaders,
         interceptor: async (init?: RequestInit): Promise<RequestInit | undefined> => {
           if (!token) {

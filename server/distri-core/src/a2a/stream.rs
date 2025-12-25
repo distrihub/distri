@@ -6,6 +6,7 @@ use crate::agent::{
     AgentOrchestrator, ExecutorContext,
 };
 use crate::AgentError;
+use distri_auth::context::with_user_id;
 use distri_types::HookMutation;
 
 use anyhow::{anyhow, Result as AnyhowResult};
@@ -14,7 +15,12 @@ use browsr_types::FileType;
 use distri_a2a::{JsonRpcError, JsonRpcResponse, MessageSendParams};
 use distri_types::configuration::{AgentConfig, DefinitionOverrides};
 
+use futures_util::future::poll_fn;
+use futures_util::Stream;
+use std::future::Future;
 use std::sync::Arc;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
@@ -25,6 +31,35 @@ struct TaskGuard {
 impl Drop for TaskGuard {
     fn drop(&mut self) {
         self.token.cancel();
+    }
+}
+
+struct UserScopedStream<S> {
+    user_id: String,
+    inner: Pin<Box<S>>,
+}
+
+impl<S> UserScopedStream<S> {
+    fn new(user_id: String, inner: Pin<Box<S>>) -> Self {
+        Self { user_id, inner }
+    }
+}
+
+impl<S> Stream for UserScopedStream<S>
+where
+    S: Stream,
+{
+    type Item = S::Item;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let this = self.get_mut();
+        let user_id = this.user_id.clone();
+        let mut inner = this.inner.as_mut();
+        let mut fut = Box::pin(with_user_id(
+            user_id,
+            poll_fn(|cx| inner.as_mut().poll_next(cx)),
+        ));
+        fut.as_mut().poll(cx)
     }
 }
 
@@ -140,9 +175,12 @@ pub async fn handle_message_send_streaming_sse(
     executor: Arc<AgentOrchestrator>,
     executor_context: Arc<ExecutorContext>,
 ) -> impl futures_util::stream::Stream<Item = Result<SseMessage, std::convert::Infallible>> {
+    let user_id = executor_context.user_id.clone();
+    let stream_user_id = user_id.clone();
     let id_field_clone = executor_context.session_id.clone();
 
-    async_stream::stream! {
+    let stream = async_stream::stream! {
+        let user_id = stream_user_id.clone();
         let params: MessageSendParams = match serde_json::from_value(params) {
             Ok(p) => p,
             Err(e) => {
@@ -176,9 +214,16 @@ pub async fn handle_message_send_streaming_sse(
             .and_then(|v| serde_json::from_value::<BrowserSession>(v.clone()).ok())
             .and_then(|bs| bs.browser_session_id);
 
-    let (_thread_id, message) = match init_thread_get_message(agent_id.clone(), executor.clone(), &params, executor_context.clone()).await {
-        Ok(t) => t,
-        Err(e) => {
+        let (_thread_id, message) = match init_thread_get_message(
+            agent_id.clone(),
+            executor.clone(),
+            &params,
+            executor_context.clone(),
+        )
+        .await
+        {
+            Ok(t) => t,
+            Err(e) => {
                 let error = JsonRpcResponse {
                     jsonrpc: "2.0".to_string(),
                     result: None,
@@ -288,8 +333,9 @@ pub async fn handle_message_send_streaming_sse(
             let executor_for_browser = executor.clone();
             let context_for_browser = executor_context.clone();
             let event_tx_for_browser = browser_event_tx.clone();
+            let user_id_for_browser = user_id.clone();
 
-            browser_handle = Some(tokio::spawn(async move {
+            browser_handle = Some(tokio::spawn(with_user_id(user_id_for_browser, async move {
                 if let Err(err) = stream_browser_frames_remote(
                     executor_for_browser,
                     context_for_browser,
@@ -300,7 +346,7 @@ pub async fn handle_message_send_streaming_sse(
                 {
                     tracing::warn!("Browser screenshot stream failed: {}", err);
                 }
-            }));
+            })));
             browser_stop_tx = Some(stop_tx);
         }
 
@@ -316,7 +362,8 @@ pub async fn handle_message_send_streaming_sse(
         let cancel_token_for_completion = cancel_token.clone();
         let cancel_token_for_exec = cancel_token.clone();
         let executor_for_completion = executor.clone();
-        let completion_task = tokio::spawn(async move {
+        let user_id_for_completion = user_id.clone();
+        let completion_task = tokio::spawn(with_user_id(user_id_for_completion, async move {
             let cancel_token = cancel_token_for_completion;
             let mut completed = false;
             while let Some(event) = event_rx.recv().await {
@@ -351,14 +398,15 @@ pub async fn handle_message_send_streaming_sse(
                 }
             }
             completed
-        });
+        }));
         // Spawn execute_stream in the background
         let agent_id_clone = agent_id.clone();
         let executor_clone = executor.clone();
         let executor_context_clone = executor_context.clone();
         let req_id_clone = req_id.clone();
         let definition_overrides_clone = definition_overrides.clone();
-        let exec_handle = tokio::spawn(async move {
+        let user_id_for_exec = user_id.clone();
+        let exec_handle = tokio::spawn(with_user_id(user_id_for_exec, async move {
             let exec_fut = executor_clone.execute_stream(
                 &agent_id_clone,
                 message,
@@ -381,7 +429,7 @@ pub async fn handle_message_send_streaming_sse(
                     let _ = sse_tx_clone.send(Err(e)).await;
                 }
             }
-        });
+        }));
 
         while let Some(msg) = sse_rx.recv().await {
             if let Err(e) = msg {
@@ -434,5 +482,7 @@ pub async fn handle_message_send_streaming_sse(
             let _ = task_store.cancel_task(&main_task_id).await;
         }
 
-    }
+    };
+
+    UserScopedStream::new(user_id, Box::pin(stream))
 }

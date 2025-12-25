@@ -22,7 +22,7 @@ export const WorkflowRunner = ({ agent, firstStepType }: WorkflowRunnerProps) =>
 
     try {
       // Call the a2a API directly
-      const response = await fetch(`${BACKEND_URL}/api/v1/agents/${agent.id}/invoke`, {
+      const response = await fetch(`${BACKEND_URL}/v1/agents/${agent.id}/invoke`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

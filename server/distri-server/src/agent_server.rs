@@ -74,7 +74,7 @@ impl DistriAgentServer {
         tracing::info!("🌐 Server ready! Access these endpoints:");
         tracing::info!("  📋 API Welcome:     {}/", base_url);
         tracing::info!("  ❤️  Health Check:   {}/health", base_url);
-        tracing::info!("  🤖 Distri API:      {}/api/v1/*", base_url);
+        tracing::info!("  🤖 Distri API:      {}/v1/*", base_url);
 
         if ui_available {
             tracing::info!("");

@@ -55,7 +55,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     }
     setLoading(true)
     try {
-      const res = await fetch(`${BACKEND_URL}/api/v1/device`)
+      const res = await fetch(`${BACKEND_URL}/v1/device`)
       if (!res.ok) {
         throw new Error(`Failed to fetch device metadata: ${res.status}`)
       }

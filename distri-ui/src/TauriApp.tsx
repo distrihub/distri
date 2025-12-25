@@ -46,7 +46,7 @@ const WrappedTauriContent = () => {
 
   return (
     <DistriProvider config={{
-      baseUrl: `${BACKEND_URL}/api/v1/`,
+      baseUrl: `${BACKEND_URL}/v1/`,
       headers: token ? {
         'Authorization': `Bearer ${token}`
       } : {},
@@ -72,7 +72,7 @@ const WrappedTauriContent = () => {
             </div>
           </div>
         </div>
-        
+
         {/* Chat Interface */}
         <div className="h-[calc(100vh-3.5rem)]">
           <Chat

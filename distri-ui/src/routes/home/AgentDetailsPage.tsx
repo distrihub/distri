@@ -85,7 +85,7 @@ export default function AgentDetailsPage() {
         if (token) {
           headers['Authorization'] = `Bearer ${token}`
         }
-        const resp = await fetch(`${BACKEND_URL}/api/v1/agents/${encodeURIComponent(agentId)}`, {
+        const resp = await fetch(`${BACKEND_URL}/v1/agents/${encodeURIComponent(agentId)}`, {
           headers,
         })
         if (!resp.ok) {
@@ -121,7 +121,7 @@ export default function AgentDetailsPage() {
       if (token) {
         headers['Authorization'] = `Bearer ${token}`
       }
-      const resp = await fetch(`${BACKEND_URL}/api/v1/agents/${encodeURIComponent(agentId)}`, {
+      const resp = await fetch(`${BACKEND_URL}/v1/agents/${encodeURIComponent(agentId)}`, {
         method: 'PUT',
         headers,
         body: markdown,

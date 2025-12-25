@@ -30,7 +30,7 @@ export const WorkflowDetailsView = ({ agent }: WorkflowDetailsViewProps) => {
 
         // Always try to fetch DAG from API first
         try {
-          const response = await fetch(`${BACKEND_URL}/api/v1/agents/${agent.id}/dag`)
+          const response = await fetch(`${BACKEND_URL}/v1/agents/${agent.id}/dag`)
           console.log('DAG API response status:', response.status)
           if (response.ok) {
             const backendDag = await response.json() as BackendDag

@@ -10,7 +10,7 @@ The Distri Plugin System provides a unified interface for loading and executing 
 2. `src/mod.ts` – a TypeScript module that can register tools/workflows/agents programmatically
 3. `plugins/` – nested plugin packages where each plugin owns its own `agents/` + `src/`
 
-Run `distri build` (or call `POST /api/v1/build`) to register these assets up front so the embedded `distri` runtime never needs to inspect hidden `.distri` folders again. The build step scans `${CURRENT_WORKING_DIR}/plugins`, recompiles each package, stores metadata in the catalog, and registers `src/mod.ts` as the workspace module. Runtime/session data (agent transcripts, artifacts, compiled bundles) now lives under `${CURRENT_WORKING_DIR}/.distri/runtime`, leaving the workspace tree strictly for editable source files. It supports:
+Run `distri build` (or call `POST /v1/build`) to register these assets up front so the embedded `distri` runtime never needs to inspect hidden `.distri` folders again. The build step scans `${CURRENT_WORKING_DIR}/plugins`, recompiles each package, stores metadata in the catalog, and registers `src/mod.ts` as the workspace module. Runtime/session data (agent transcripts, artifacts, compiled bundles) now lives under `${CURRENT_WORKING_DIR}/.distri/runtime`, leaving the workspace tree strictly for editable source files. It supports:
 
 - **TypeScript/JavaScript Plugins**: Executed using rustyscript runtime
 - **WebAssembly Plugins**: Executed using wasmtime runtime  
