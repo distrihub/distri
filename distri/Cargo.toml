@@ -1,6 +1,6 @@
 [package]
 name = "distri"
-version = "0.2.5"
+version = "0.2.6"
 edition = "2024"
 description = "Rust client for the Distri A2A agent platform"
 license = "MIT"
@@ -25,9 +25,9 @@ tokio = { workspace = true, features = [
 reqwest = { workspace = true, features = ["json", "stream", "gzip"] }
 flate2 = "1.0"
 reqwest-eventsource = "0.6"
-distri-types = { path = "../distri-types", version = "0.2.5" }
-distri-a2a = { path = "../distri-a2a", version = "0.2.5" }
-distri-filesystem = { path = "../distri-filesystem", version = "0.2.5" }
+distri-types = { path = "../distri-types", version = "0.2.6" }
+distri-a2a = { path = "../distri-a2a", version = "0.2.6" }
+distri-filesystem = { path = "../distri-filesystem", version = "0.2.6" }
 base64 = "0.22"
 image = { version = "0.24.9", default-features = false, features = [
   "png",
