@@ -4,7 +4,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Badge } from '@/components/ui/badge'
-import { MessageSquare, Bot, Workflow, Eye, FileCode } from 'lucide-react'
+import { ArrowRight, Bot, Workflow } from 'lucide-react'
 import { useAgentDefinitions, ChatInput, useAgent, Chat } from '@distri/react'
 import { AgentDefinition, DistriPart } from '@distri/core'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
@@ -176,30 +176,15 @@ const AgentsHome = ({
   }
 
   const getActionButton = (agent: AgentDefinition) => {
-    if (agent.agent_type === 'sequential_workflow_agent' ||
-      agent.agent_type === 'dag_workflow_agent' ||
-      agent.agent_type === 'custom_agent') {
-      return (
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={() => handleChatWithAgent(agent)}
-          className="h-8 w-8 p-0 rounded-lg hover:bg-muted flex-shrink-0"
-          title="View Workflow"
-        >
-          <Eye className="h-4 w-4" />
-        </Button>
-      )
-    }
     return (
       <Button
         size="sm"
         variant="ghost"
         onClick={() => handleChatWithAgent(agent)}
         className="h-8 w-8 p-0 rounded-lg hover:bg-muted flex-shrink-0"
-        title="Chat with Agent"
+        title="Open agent"
       >
-        <MessageSquare className="h-4 w-4" />
+        <ArrowRight className="h-4 w-4" />
       </Button>
     )
   }

@@ -73,8 +73,6 @@ struct ChatState {
     is_planning: bool,
 }
 
-/// A portable event printer that mirrors the CLI printer behavior but has no CLI-specific
-/// dependencies. Can be embedded by CLI, servers, or other clients.
 pub struct EventPrinter {
     state: ChatState,
 }

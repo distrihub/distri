@@ -134,8 +134,8 @@ impl LiveCtx {
         if env::var("DISTRI_LIVE_TEST").unwrap_or_default() != "1" {
             return None;
         }
-        let base_url = env::var("DISTRI_BASE_URL")
-            .unwrap_or_else(|_| "http://localhost:8081/api/v1".to_string());
+        let base_url =
+            env::var("DISTRI_BASE_URL").unwrap_or_else(|_| "http://localhost:8081/v1".to_string());
         Some(Self {
             base_url,
             agent_name: format!("distri_agent_test"),

@@ -3,19 +3,18 @@ use actix_web::{web, HttpMessage, HttpRequest, HttpResponse};
 use actix_web_lab::sse::{self, Sse};
 use chrono::{DateTime, Utc};
 use dirs::home_dir;
+use distri_a2a::JsonRpcRequest;
 use distri_core::a2a::messages::get_a2a_messages;
 use distri_core::a2a::A2AHandler;
 use distri_core::agent::{parse_agent_markdown_content, AgentOrchestrator, ExecutorContext};
 use distri_core::llm::LLMExecutor;
 use distri_core::types::UpdateThreadRequest;
 use distri_core::{AgentError, MessageFilter, ToolAuthRequestContext};
-use distri_a2a::JsonRpcRequest;
-use distri_types::configuration::DistriServerConfig;
 use distri_types::configuration::ServerConfig;
+use distri_types::configuration::{AgentConfigWithTools, DistriServerConfig};
 use distri_types::StandardDefinition;
 use distri_types::{
     ExternalTool, InlineHookResponse, LlmDefinition, Message, ModelSettings, ToolCallFormat,
-    ToolDefinition,
 };
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -415,15 +414,6 @@ async fn build_workspace(executor: web::Data<Arc<AgentOrchestrator>>) -> HttpRes
     HttpResponse::Ok().json(json!({ "status": "built" }))
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AgentConfigWithTools {
-    #[serde(flatten)]
-    pub agent: distri_types::configuration::AgentConfig,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub tools: Vec<ToolDefinition>,
-    #[serde(skip_serializing_if = "String::is_empty")]
-    pub markdown: String,
-}
 async fn get_agent_definition(
     id: web::Path<String>,
     executor: web::Data<Arc<AgentOrchestrator>>,

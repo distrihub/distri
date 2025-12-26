@@ -280,7 +280,7 @@ fn default_agent_provider() -> AgentProvider {
 }
 
 fn default_server_url() -> String {
-    "http://localhost:8081/api/v1".to_string()
+    "http://localhost:8081/v1".to_string()
 }
 
 fn default_documentation_url() -> Option<String> {

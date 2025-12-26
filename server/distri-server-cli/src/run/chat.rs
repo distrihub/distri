@@ -1,8 +1,8 @@
 use anyhow::Context;
+use distri_auth::get_local_user_id;
 use distri_core::agent::AgentOrchestrator;
 use distri_core::tools::APPROVAL_REQUEST_TOOL_NAME;
 use distri_core::types::{Message, MessageRole, Part, ToolCall, ToolResponse};
-use distri_auth::get_local_user_id;
 use distri_types::configuration::AgentConfig;
 use inquire::Text;
 use serde_json::json;
@@ -26,7 +26,6 @@ pub async fn run(
     executor: Arc<AgentOrchestrator>,
     verbose: bool,
     tool_renderers: Option<Arc<ToolRendererRegistry>>,
-    headless_browser: bool,
 ) -> anyhow::Result<()> {
     let mut thread_id = uuid::Uuid::new_v4().to_string();
     let mut current_agent = agent_name.to_string();
@@ -47,7 +46,7 @@ pub async fn run(
     autocomplete.update_agent_commands(agent_commands);
 
     // Initialize browser immediately if the selected agent needs it
-    ensure_chat_browser_if_needed(executor.clone(), &current_agent, headless_browser)
+    ensure_chat_browser_if_needed(executor.clone(), &current_agent)
         .await
         .context("Failed to prepare browser for chat agent")?;
 
@@ -185,30 +184,20 @@ pub async fn run(
 async fn ensure_chat_browser_if_needed(
     executor: Arc<AgentOrchestrator>,
     agent_name: &str,
-    headless_browser: bool,
 ) -> anyhow::Result<()> {
-    let (needs_browser, runtime_override) = match executor.get_agent(agent_name).await {
-        Some(AgentConfig::StandardAgent(def)) => {
-            (def.should_use_browser(), def.browser_runtime_config())
-        }
-        _ => (false, None),
+    let needs_browser = match executor.get_agent(agent_name).await {
+        Some(AgentConfig::StandardAgent(def)) => def.should_use_browser(),
+        _ => false,
     };
 
     if !needs_browser {
         return Ok(());
     }
 
-    if let Some(config) = runtime_override {
-        executor
-            .ensure_browser_session(None, config.headless, None)
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to initialize browser: {}", e))?;
-    } else {
-        executor
-            .ensure_browser_session(None, Some(headless_browser), None)
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to initialize browser: {}", e))?;
-    }
+    executor
+        .ensure_browser_session(None)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to initialize browser: {}", e))?;
 
     Ok(())
 }

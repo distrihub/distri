@@ -9,7 +9,7 @@ import { Agent, uuidv4 } from '@distri/core';
 
 // Environment variables validation
 const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
-const DISTRI_API_URL = import.meta.env.VITE_DISTRI_API_URL || 'http://localhost:8080/api/v1';
+const DISTRI_API_URL = import.meta.env.VITE_DISTRI_API_URL || 'http://localhost:8080/v1';
 
 function getThreadId() {
   const threadId = localStorage.getItem('MapsDemo:threadId');

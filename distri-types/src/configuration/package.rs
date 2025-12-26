@@ -1,3 +1,4 @@
+use crate::ToolDefinition;
 use crate::agent::StandardDefinition;
 use crate::configuration::manifest::DistriServerConfig;
 use crate::configuration::workflow::{
@@ -28,6 +29,16 @@ pub struct PluginWorkflowDefinition {
     pub parameters: serde_json::Value,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub examples: Vec<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentConfigWithTools {
+    #[serde(flatten)]
+    pub agent: AgentConfig,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<ToolDefinition>,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub markdown: String,
 }
 
 /// Unified agent configuration enum - combines all agent and workflow types

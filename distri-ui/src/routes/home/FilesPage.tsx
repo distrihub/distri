@@ -29,7 +29,7 @@ interface WorkspaceMetadataResponse {
   updated_at: string
 }
 
-const API_BASE_URL = `${BACKEND_URL}/api/v1`
+const API_BASE_URL = `${BACKEND_URL}/v1`
 const PROJECT_ID = 'distri-workspace'
 
 const currentThreadId = (scope: string) => {

@@ -25,6 +25,7 @@ import SettingsPage from './routes/home/SettingsPage';
 import NewAgentPage from './routes/home/NewAgentPage';
 import AgentDetailsPage from './routes/home/AgentDetailsPage';
 import { Toaster } from './components/ui/sonner';
+import ChatPage from './routes/home/ChatPage';
 
 function App() {
   // Initialize theme to dark by default
@@ -61,6 +62,7 @@ function App() {
                   <Route path="agents" element={<AgentsPage />} />
                   <Route path="new" element={<NewAgentPage />} />
                   <Route path="agents/:agentId" element={<AgentDetailsPage />} />
+                  <Route path="chat" element={<ChatPage />} />
                   <Route path="threads" element={<ThreadsPage />} />
                   <Route path="settings" element={<SettingsPage />} />
                   <Route path="menu/account" element={<AccountPage />} />

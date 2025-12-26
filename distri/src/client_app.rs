@@ -2,6 +2,7 @@ use std::{collections::HashSet, path::PathBuf};
 
 use anyhow::Result;
 use distri_a2a::MessageSendParams;
+use distri_types::configuration::AgentConfigWithTools;
 use distri_types::{ToolDefinition, configuration::AgentConfig};
 use serde::{Deserialize, Serialize};
 
@@ -108,7 +109,10 @@ impl DistriClientApp {
         Ok(items)
     }
 
-    pub async fn fetch_agent(&self, agent_id: &str) -> Result<Option<AgentWithTools>, ClientError> {
+    pub async fn fetch_agent(
+        &self,
+        agent_id: &str,
+    ) -> Result<Option<AgentConfigWithTools>, ClientError> {
         let url = format!("{}/agents/{}", self.base(), agent_id);
         let resp = self.http.get(url).send().await?;
         if resp.status() == reqwest::StatusCode::NOT_FOUND {
@@ -121,7 +125,7 @@ impl DistriClientApp {
                 resp.status()
             )));
         }
-        Ok(Some(resp.json::<AgentWithTools>().await?))
+        Ok(Some(resp.json::<AgentConfigWithTools>().await?))
     }
 
     pub async fn stream_agent(
@@ -374,14 +378,6 @@ impl DistriClientApp {
         }
         Ok(())
     }
-}
-
-#[derive(Debug, Deserialize)]
-pub struct AgentWithTools {
-    #[serde(flatten)]
-    pub agent: AgentConfig,
-    #[serde(default)]
-    pub tools: Vec<ToolDefinition>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useThreads } from '@distri/react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -8,7 +8,9 @@ import { Button } from '@/components/ui/button'
 const ThreadsPage = () => {
   const { threads, loading } = useThreads()
   const navigate = useNavigate()
-  const [agentFilter, setAgentFilter] = useState('')
+  const [searchParams] = useSearchParams()
+  const agentQuery = searchParams.get('agent') || searchParams.get('agent_id') || ''
+  const [agentFilter, setAgentFilter] = useState(agentQuery)
   const [userFilter, setUserFilter] = useState('')
   const [query, setQuery] = useState('')
   const [visibleCount, setVisibleCount] = useState(20)
@@ -21,6 +23,10 @@ const ThreadsPage = () => {
     })
     return Array.from(set).sort((a, b) => a.localeCompare(b))
   }, [threads])
+
+  useEffect(() => {
+    setAgentFilter(agentQuery)
+  }, [agentQuery])
 
   useEffect(() => {
     // Auto-load more when reaching bottom
@@ -39,7 +45,10 @@ const ThreadsPage = () => {
 
   const filtered = useMemo(() => {
     return threads.filter((t: any) => {
-      const matchesAgent = agentFilter ? (t.agent_name || '').toLowerCase().includes(agentFilter.toLowerCase()) : true
+      const agentLabel = `${t.agent_name || ''} ${t.agent_id || ''}`.trim()
+      const matchesAgent = agentFilter
+        ? agentLabel.toLowerCase().includes(agentFilter.toLowerCase())
+        : true
       const userName = (t.user_name || t.user || '').toString()
       const matchesUser = userFilter ? userName.toLowerCase().includes(userFilter.toLowerCase()) : true
       const matchesQuery =
@@ -124,7 +133,7 @@ const ThreadsPage = () => {
                             variant="ghost"
                             onClick={() => {
                               if (t.agent_id) {
-                                navigate(`/home/agents/${encodeURIComponent(t.agent_id)}?threadId=${t.id}`)
+                                navigate(`/home/chat?id=${encodeURIComponent(t.agent_id)}&threadId=${t.id}`)
                               }
                             }}
                           >
@@ -155,5 +164,4 @@ const ThreadsPage = () => {
 }
 
 export default ThreadsPage
-
 

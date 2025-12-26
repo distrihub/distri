@@ -1,3 +1,5 @@
+#[cfg(feature = "code")]
+use crate::tools::DistriExecuteCodeTool;
 use crate::{
     agent::{
         file::process_large_tool_responses,
@@ -7,8 +9,6 @@ use crate::{
     tools::Tool,
     AgentError,
 };
-#[cfg(feature = "code")]
-use crate::tools::DistriExecuteCodeTool;
 use distri_types::{
     Action, ExecutionStatus, Part, PlanStep, StandardDefinition, ToolResponse, ToolResultWithSkip,
     DEFAULT_EXTERNAL_TOOL_TIMEOUT_SECS,
@@ -57,6 +57,7 @@ impl AgentExecutor {
             })
             .await;
 
+        #[allow(unused_mut)]
         // Get all available tools from context (including MCP tools)
         let mut enhanced_tools = context.get_tools().await;
 
@@ -270,7 +271,7 @@ impl ExecutionStrategy for AgentExecutor {
                 )
                 .await
             }
-
+            #[allow(unused)]
             Action::Code { code, .. } => {
                 #[cfg(feature = "code")]
                 {

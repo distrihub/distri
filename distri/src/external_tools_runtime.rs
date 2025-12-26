@@ -62,4 +62,13 @@ impl ExternalToolRegistry {
             .clone();
         Some(handler(call.clone(), event.clone()).await)
     }
+
+    /// Check if a tool handler is registered for the agent or globally.
+    pub fn has_tool(&self, agent: &str, tool_name: &str) -> bool {
+        let Ok(guard) = self.handlers.read() else {
+            return false;
+        };
+        guard.contains_key(&(agent.to_string(), tool_name.to_string()))
+            || guard.contains_key(&("*".to_string(), tool_name.to_string()))
+    }
 }

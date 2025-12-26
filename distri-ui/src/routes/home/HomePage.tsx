@@ -105,7 +105,7 @@ const HomePage = () => {
                     variant="ghost"
                     onClick={() => {
                       if (t.agent_id) {
-                        navigate(`/home/agents/${encodeURIComponent(t.agent_id)}?threadId=${t.id}`)
+                        navigate(`/home/chat?id=${encodeURIComponent(t.agent_id)}&threadId=${t.id}`)
                       }
                     }}
                   >

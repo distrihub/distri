@@ -30,11 +30,7 @@ impl BrowserSessions {
         self.orchestrator_ref.set_orchestrator(orchestrator.clone());
     }
 
-    async fn build_browser(
-        &self,
-        _headless: Option<bool>,
-        _start_url: Option<String>,
-    ) -> Result<String, String> {
+    async fn build_browser(&self) -> Result<String, String> {
         self.client
             .create_session()
             .await
@@ -43,11 +39,9 @@ impl BrowserSessions {
 
     pub async fn create(
         &self,
-        headless: Option<bool>,
         requested_name: Option<String>,
-        start_url: Option<String>,
     ) -> Result<(String, Arc<Mutex<()>>), String> {
-        let session_id = self.build_browser(headless, start_url).await?;
+        let session_id = self.build_browser().await?;
 
         let name = requested_name
             .and_then(|s| {
@@ -78,8 +72,6 @@ impl BrowserSessions {
     pub async fn ensure(
         &self,
         requested: Option<String>,
-        headless: Option<bool>,
-        start_url: Option<String>,
     ) -> Result<(String, Arc<Mutex<()>>), String> {
         if let Some(id) = requested {
             if let Some(mut entry) = self.sessions.get_mut(&id) {
@@ -94,7 +86,7 @@ impl BrowserSessions {
             return Ok((entry.key().clone(), Arc::new(Mutex::new(()))));
         }
 
-        self.create(headless, None, start_url).await
+        self.create(requested).await
     }
 
     pub fn list(&self) -> Vec<String> {

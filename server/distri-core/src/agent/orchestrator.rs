@@ -1321,24 +1321,16 @@ impl AgentOrchestrator {
 
     pub async fn create_browser_session(
         &self,
-        headless: Option<bool>,
         requested_name: Option<String>,
-        start_url: Option<String>,
     ) -> Result<(String, Arc<Mutex<()>>), String> {
-        self.browser_sessions
-            .create(headless, requested_name, start_url)
-            .await
+        self.browser_sessions.create(requested_name).await
     }
 
     pub async fn ensure_browser_session(
         &self,
         requested: Option<String>,
-        headless: Option<bool>,
-        start_url: Option<String>,
     ) -> Result<(String, Arc<Mutex<()>>), String> {
-        self.browser_sessions
-            .ensure(requested, headless, start_url)
-            .await
+        self.browser_sessions.ensure(requested).await
     }
 
     pub fn list_browser_sessions(&self) -> Vec<String> {

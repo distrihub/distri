@@ -59,7 +59,7 @@ impl DistriAgentServer {
         // Use DAP configuration for server settings
         let port = port.unwrap_or(DEFAULT_PORT);
         let host = host.unwrap_or_else(|| DEFAULT_HOST.to_string());
-        let base_url = format!("http://{}:{}/api/v1", host, port);
+        let base_url = format!("http://{}:{}/v1", host, port);
         tracing::info!("Starting {}...", service_name);
         tracing::info!("Starting server on {}", base_url);
 
@@ -131,7 +131,7 @@ impl DistriAgentServer {
                         .app_data(web::Data::new(verbose))
                         .configure(|cfg| {
                             cfg.service(
-                                web::scope("/api/v1").configure(routes::distri_without_browser),
+                                web::scope("/v1").configure(routes::distri_without_browser),
                             );
                         });
                 });

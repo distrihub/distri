@@ -74,7 +74,6 @@ pub struct ExecutorContext<'a> {
     pub workspace_path: &'a Path,
     pub config: Option<&'a DistriServerConfig>,
     pub disable_plugins: bool,
-    pub headless_browser: bool,
     pub shared_state: Option<&'a SharedState>,
 }
 
@@ -117,7 +116,6 @@ impl Default for MultiAgentCliBuilder {
                         ctx.workspace_path,
                         ctx.config,
                         ctx.disable_plugins,
-                        ctx.headless_browser,
                     )
                     .await
                 })
@@ -395,7 +393,6 @@ impl MultiAgentHarness {
                         None,
                         self.runtime.cli.verbose,
                         tool_renderers,
-                        self.runtime.cli.headless_browser,
                     )
                     .await?;
                 } else {
@@ -406,7 +403,6 @@ impl MultiAgentHarness {
                         None,
                         self.runtime.cli.verbose,
                         tool_renderers,
-                        self.runtime.cli.headless_browser,
                     )
                     .await?;
                 }
@@ -425,7 +421,6 @@ impl MultiAgentHarness {
                         None,
                         self.runtime.cli.verbose,
                         tool_renderers,
-                        self.runtime.cli.headless_browser,
                     )
                     .await?;
                 } else {
@@ -436,7 +431,6 @@ impl MultiAgentHarness {
                         None,
                         self.runtime.cli.verbose,
                         tool_renderers,
-                        self.runtime.cli.headless_browser,
                     )
                     .await?;
                 }
@@ -451,8 +445,7 @@ impl MultiAgentHarness {
                 let (resolved_host, resolved_port) =
                     resolve_host_and_port(host, port, &server_config);
 
-                server_config.base_url =
-                    format!("http://{}:{}/api/v1", resolved_host, resolved_port);
+                server_config.base_url = format!("http://{}:{}/v1", resolved_host, resolved_port);
 
                 let server_runner = self
                     .server_runner
@@ -498,7 +491,7 @@ impl MultiAgentHarness {
             workspace_path: &self.runtime.workspace_path,
             config: self.runtime.config.as_ref(),
             disable_plugins: self.runtime.cli.disable_plugins,
-            headless_browser: self.runtime.cli.headless_browser,
+
             shared_state: self.runtime.shared_state(),
         };
         let executor = (self.executor_factory.as_ref())(context).await?;

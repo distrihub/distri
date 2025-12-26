@@ -18,8 +18,8 @@ use distri_types::configuration::{AgentConfig, DefinitionOverrides};
 use futures_util::future::poll_fn;
 use futures_util::Stream;
 use std::future::Future;
-use std::sync::Arc;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::{Context, Poll};
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
@@ -71,7 +71,7 @@ async fn stream_browser_frames_remote(
 ) -> AnyhowResult<()> {
     // Ensure a session exists; use browsr-client for observations.
     let (session_alias, _) = executor
-        .ensure_browser_session(None, Some(true), None)
+        .ensure_browser_session(None)
         .await
         .map_err(|e| anyhow!(e))?;
     let session_id = executor

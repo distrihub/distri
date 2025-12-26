@@ -25,10 +25,7 @@ pub mod tool_renderers;
 pub mod workflow_dag;
 // use run::{background, chat}; // Unused imports
 
-pub use cli::{
-    AuthCommand, AuthSecretsCommand, Cli, Commands, EmbeddedCli, EmbeddedCommands,
-    ScratchpadCommands,
-};
+pub use cli::{Cli, Commands};
 
 /// Load distri.toml file and use its directory as home directory
 /// Uses default configuration if no distri.toml is found
@@ -116,14 +113,12 @@ pub async fn init_orchestrator(
     workspace_path: &Path,
     workspace_config: Option<&DistriServerConfig>,
     disable_plugins: bool,
-    headless_browser: bool,
 ) -> Result<std::sync::Arc<distri_core::agent::AgentOrchestrator>> {
     init_orchestrator_with_configuration(
         home_dir,
         workspace_path,
         workspace_config,
         disable_plugins,
-        headless_browser,
         None,
     )
     .await
@@ -135,7 +130,7 @@ pub async fn init_orchestrator_with_configuration(
     workspace_path: &Path,
     workspace_config: Option<&DistriServerConfig>,
     disable_plugins: bool,
-    headless_browser: bool,
+
     configuration: Option<Arc<RwLock<DistriServerConfig>>>,
 ) -> Result<std::sync::Arc<distri_core::agent::AgentOrchestrator>> {
     use distri_types::configuration::StoreConfig;
@@ -237,10 +232,7 @@ pub async fn init_orchestrator_with_configuration(
             builder = builder.with_default_analysis_model_settings(analysis_settings);
         }
     }
-    builder = builder.with_browser_config(DistriBrowserConfig {
-        headless: Some(headless_browser),
-        ..Default::default()
-    });
+    builder = builder.with_browser_config(DistriBrowserConfig::default());
     let orchestrator = builder
         .with_stores(stores)
         .with_plugin_registry(Arc::new(plugin_registry))
@@ -321,7 +313,6 @@ pub async fn run_agent_cli(
     user_id: Option<&str>,
     verbose: bool,
     tool_renderers: Option<Arc<ToolRendererRegistry>>,
-    headless_browser: bool,
 ) -> Result<()> {
     debug!("Running agent: {:?}", agent_name);
 
@@ -338,14 +329,7 @@ pub async fn run_agent_cli(
         )
         .await?;
     } else {
-        run::chat::run(
-            agent_name,
-            executor,
-            verbose,
-            tool_renderers,
-            headless_browser,
-        )
-        .await?;
+        run::chat::run(agent_name, executor, verbose, tool_renderers).await?;
     }
     Ok(())
 }

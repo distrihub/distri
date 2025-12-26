@@ -227,7 +227,7 @@ pnpm run dev
 ### 5. Access the Application
 
 - Frontend: http://localhost:3000
-- Backend API: http://localhost:8081/api/v1
+- Backend API: http://localhost:8081/v1
 
 ## API Endpoints
 

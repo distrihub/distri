@@ -54,7 +54,6 @@ export default function AgentView({ defaultChatOpen = false }: AgentViewProps) {
   const queryThreadId = searchParams.get('threadId')
 
   const { agent, loading: agentLoading } = useAgent({ agentIdOrDef: agentId || '' })
-
   const { token } = useInitialization()
   const { setTheme } = useTheme()
   const navigate = useNavigate()
@@ -151,6 +150,45 @@ export default function AgentView({ defaultChatOpen = false }: AgentViewProps) {
     }
     void load()
   }, [agentId, token])
+
+  useEffect(() => {
+    if (!threadId) {
+      setInitialMessages(undefined)
+      return
+    }
+    const loadMessages = async () => {
+      try {
+        const headers: Record<string, string> = {}
+        if (token) {
+          headers['Authorization'] = `Bearer ${token}`
+        }
+        const resp = await fetch(`${BACKEND_URL}/v1/threads/${encodeURIComponent(threadId)}/messages`, {
+          headers,
+        })
+        if (resp.ok) {
+          const data = await resp.json()
+          const converted = Array.isArray(data)
+            ? data.map((msg: any) => ({
+              ...msg,
+              id: msg.id || crypto.randomUUID(),
+              role: msg.role === 'agent' ? 'assistant' : msg.role,
+              content:
+                typeof msg.content === 'string'
+                  ? msg.content
+                  : JSON.stringify(msg.content),
+            }))
+            : []
+          setInitialMessages(converted)
+        } else {
+          setInitialMessages([])
+        }
+      } catch (err) {
+        console.error('Failed to load thread messages', err)
+        setInitialMessages([])
+      }
+    }
+    void loadMessages()
+  }, [threadId, token])
 
   if (agentLoading || sourceLoading) {
     return (
@@ -673,7 +711,14 @@ export default function AgentView({ defaultChatOpen = false }: AgentViewProps) {
                       </div>
                     </div>
                   ) : (
-                    <Chat key={threadId} agent={agent} threadId={threadId} />
+                    initialMessages === undefined ? (
+                      <div className="flex h-full items-center justify-center p-6 text-slate-400 gap-2">
+                        <Loader2 className="animate-spin h-5 w-5" />
+                        Loading chat...
+                      </div>
+                    ) : (
+                      <Chat key={threadId} agent={agent} threadId={threadId} initialMessages={initialMessages} theme="dark" />
+                    )
                   )}
                 </div>
               </div>
