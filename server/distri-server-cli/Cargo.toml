@@ -1,6 +1,6 @@
 [package]
 name = "distri-server-cli"
-version = "0.2.4"
+version = "0.2.5"
 edition = "2021"
 
 [features]
@@ -20,11 +20,11 @@ vendored-postgres = [
 otel = ["distri-server/otel", "distri-core/otel"]
 ui = ["distri-server/ui"]
 [dependencies]
-distri-core = { path = "../distri-core", version = "0.2.4", default-features = false }
-distri-types = { path = "../../distri-types", version = "0.2.4" }
-distri-server = { path = "../distri-server", version = "0.2.4", default-features = false }
-distri-auth = { path = "../distri-auth", version = "0.2.4" }
-distri-plugins = { path = "../distri-plugins", version = "0.2.4" }
+distri-core = { path = "../distri-core", version = "0.2.5", default-features = false }
+distri-types = { path = "../../distri-types", version = "0.2.5" }
+distri-server = { path = "../distri-server", version = "0.2.5", default-features = false }
+distri-auth = { path = "../distri-auth", version = "0.2.5" }
+distri-plugins = { path = "../distri-plugins", version = "0.2.5" }
 open = "5.0"
 dotenv = "0.15"
 clap = { version = "4.5", features = ["derive"] }
