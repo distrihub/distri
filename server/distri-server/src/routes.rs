@@ -436,7 +436,7 @@ async fn get_agent_definition(
                     .collect();
                 HttpResponse::Ok().json(AgentConfigWithTools {
                     agent,
-                    tools,
+                    resolved_tools: tools,
                     markdown,
                 })
             }

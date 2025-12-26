@@ -36,7 +36,7 @@ pub struct AgentConfigWithTools {
     #[serde(flatten)]
     pub agent: AgentConfig,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub tools: Vec<ToolDefinition>,
+    pub resolved_tools: Vec<ToolDefinition>,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub markdown: String,
 }

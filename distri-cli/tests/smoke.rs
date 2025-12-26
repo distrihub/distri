@@ -127,3 +127,19 @@ fn smoke_tools_invoke() -> Result<()> {
         &["tools", "invoke", &tool_name, "--input", &tool_input],
     )
 }
+
+#[test]
+fn smoke_run_browser_agent_task() -> Result<()> {
+    let Some(base_url) = ensure_smoke_base_url()? else {
+        return Ok(());
+    };
+    run_cli(
+        &base_url,
+        &[
+            "run",
+            "distri",
+            "--task",
+            "Find all open job positions in google singapore",
+        ],
+    )
+}

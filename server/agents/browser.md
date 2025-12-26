@@ -24,12 +24,6 @@ temperature = 0.3
 max_tokens = 800
 context_size = 8000
 
-[model_settings.provider]
-name = "vllora"
-
-[analysis_model_settings.provider]
-name = "vllora"
-
 ---
 
 # ROLE
