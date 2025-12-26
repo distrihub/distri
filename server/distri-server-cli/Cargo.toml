@@ -7,12 +7,12 @@ edition = "2021"
 default = ["sqlite"]
 sqlite = ["distri-core/sqlite", "distri-server/sqlite"]
 postgres = ["distri-core/postgres", "distri-server/postgres"]
-vendored-sqlite = [
+sqlite_vendored = [
   "sqlite",
   "distri-core/sqlite_vendored",
   "distri-server/sqlite_vendored",
 ]
-vendored-postgres = [
+postgres_vendored = [
   "postgres",
   "distri-core/postgres_vendored",
   "distri-server/postgres_vendored",
