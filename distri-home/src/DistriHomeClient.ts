@@ -129,4 +129,138 @@ export class DistriHomeClient {
       throw new Error(`Failed to revoke API key: ${response.statusText}`);
     }
   }
+
+  // ---- Secrets ----
+
+  /**
+   * List all secrets
+   */
+  async listSecrets(): Promise<Secret[]> {
+    const response = await this.client.fetch('/secrets');
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch secrets: ${response.statusText}`);
+    }
+
+    return await response.json();
+  }
+
+  /**
+   * Create or update a secret
+   */
+  async createSecret(key: string, value: string): Promise<Secret> {
+    const response = await this.client.fetch('/secrets', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ key, value }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to create secret: ${response.statusText}`);
+    }
+
+    return await response.json();
+  }
+
+  /**
+   * Delete a secret
+   */
+  async deleteSecret(id: string): Promise<void> {
+    const response = await this.client.fetch(`/secrets/${id}`, {
+      method: 'DELETE',
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to delete secret: ${response.statusText}`);
+    }
+  }
+
+  // ---- Prompt Templates ----
+
+  /**
+   * List all prompt templates (system + user)
+   */
+  async listPromptTemplates(): Promise<PromptTemplate[]> {
+    const response = await this.client.fetch('/prompt-templates');
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch prompt templates: ${response.statusText}`);
+    }
+
+    return await response.json();
+  }
+
+  /**
+   * Create a new prompt template
+   */
+  async createPromptTemplate(name: string, template: string): Promise<PromptTemplate> {
+    const response = await this.client.fetch('/prompt-templates', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ name, template }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to create prompt template: ${response.statusText}`);
+    }
+
+    return await response.json();
+  }
+
+  /**
+   * Update a prompt template
+   */
+  async updatePromptTemplate(id: string, name: string, template: string): Promise<PromptTemplate> {
+    const response = await this.client.fetch(`/prompt-templates/${id}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ name, template }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to update prompt template: ${response.statusText}`);
+    }
+
+    return await response.json();
+  }
+
+  /**
+   * Delete a prompt template
+   */
+  async deletePromptTemplate(id: string): Promise<void> {
+    const response = await this.client.fetch(`/prompt-templates/${id}`, {
+      method: 'DELETE',
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to delete prompt template: ${response.statusText}`);
+    }
+  }
+}
+
+// Types for secrets and prompt templates
+export interface Secret {
+  id: string;
+  key: string;
+  masked_value: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface PromptTemplate {
+  id: string;
+  name: string;
+  template: string;
+  description?: string;
+  version?: string;
+  source?: 'static' | 'file' | 'dynamic' | 'user';
+  is_system?: boolean;
+  created_at?: string;
+  updated_at?: string;
 }
