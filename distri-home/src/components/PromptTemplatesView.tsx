@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, FileText, Filter, Lock, Plus, Save, Search, Trash2, X } from 'lucide-react';
+import { AlertTriangle, Copy, FileText, Filter, Lock, Plus, Save, Search, Trash2, X } from 'lucide-react';
 import { useDistriHomeClient } from '../DistriHomeProvider';
 
 // Types
@@ -9,7 +9,6 @@ export interface PromptTemplate {
   template: string;
   description?: string;
   version?: string;
-  source?: 'static' | 'file' | 'dynamic' | 'user';
   is_system?: boolean;
   created_at?: string;
   updated_at?: string;
@@ -106,6 +105,35 @@ export function PromptTemplatesView({ className }: PromptTemplatesViewProps) {
     void load();
   }, [load]);
 
+  // Effect to sync state with URL query parameter
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (selectedId) {
+      url.searchParams.set('id', selectedId);
+    } else {
+      url.searchParams.delete('id');
+    }
+    window.history.pushState({}, '', url.toString());
+  }, [selectedId]);
+
+  // Handle initial selection from URL and sync with loaded templates
+  useEffect(() => {
+    if (!loading && templates.length > 0) {
+      const searchParams = new URLSearchParams(window.location.search);
+      const idFromUrl = searchParams.get('id');
+
+      if (idFromUrl && idFromUrl !== selectedId) {
+        const t = templates.find(t => t.id === idFromUrl);
+        if (t) {
+          setSelectedId(idFromUrl);
+          setIsCreating(false);
+          setName(t.name);
+          setTemplate(t.template);
+        }
+      }
+    }
+  }, [loading, templates, selectedId]);
+
   const selectTemplate = (id: string) => {
     const t = templates.find(t => t.id === id);
     if (t) {
@@ -136,13 +164,26 @@ export function PromptTemplatesView({ className }: PromptTemplatesViewProps) {
     setSaving(true);
     setError(null);
     try {
+      let savedId = selectedId;
       if (selectedId && !isCreating) {
         await homeClient.updatePromptTemplate(selectedId, name.trim(), template.trim());
       } else {
-        await homeClient.createPromptTemplate(name.trim(), template.trim());
+        const created = await homeClient.createPromptTemplate(name.trim(), template.trim());
+        savedId = created.id;
       }
-      cancelEdit();
+
       await load();
+
+      // If we saved/created, ensure it's still selected
+      if (savedId) {
+        const t = templates.find(t => t.id === savedId);
+        // Note: we might need to wait for templates state to update or use the returned value
+        // But since we call load() and then templates changes, useEffect above will handle sync if id matches
+        setSelectedId(savedId);
+        setIsCreating(false);
+      } else {
+        cancelEdit();
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unable to save template';
       setError(message);
@@ -154,10 +195,16 @@ export function PromptTemplatesView({ className }: PromptTemplatesViewProps) {
   const handleDelete = async (id: string) => {
     if (!homeClient) return;
     const tpl = templates.find(t => t.id === id);
-    if (tpl?.is_system) {
+    if (!tpl) return;
+
+    if (tpl.is_system) {
       setError('Cannot delete system templates');
       return;
     }
+    if (!window.confirm(`Are you sure you want to delete "${tpl.name}"?`)) {
+      return;
+    }
+
     setError(null);
     try {
       await homeClient.deletePromptTemplate(id);
@@ -168,6 +215,22 @@ export function PromptTemplatesView({ className }: PromptTemplatesViewProps) {
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unable to delete template';
       setError(message);
+    }
+  };
+
+  const handleClone = async (id: string) => {
+    if (!homeClient) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const cloned = await homeClient.clonePromptTemplate(id);
+      await load();
+      selectTemplate(cloned.id);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unable to clone template';
+      setError(message);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -328,12 +391,24 @@ export function PromptTemplatesView({ className }: PromptTemplatesViewProps) {
                     </button>
                   </>
                 )}
+                {selectedId && (
+                  <button
+                    type="button"
+                    onClick={() => handleClone(selectedId)}
+                    disabled={loading || saving}
+                    title="Clone"
+                    className="flex h-8 w-8 items-center justify-center rounded-md border border-border/70 text-muted-foreground transition hover:text-foreground disabled:opacity-50"
+                  >
+                    <Copy className="h-4 w-4" />
+                  </button>
+                )}
                 {selectedId && !selectedTemplate?.is_system && (
                   <button
                     type="button"
                     onClick={() => handleDelete(selectedId)}
+                    disabled={loading || saving}
                     title="Delete"
-                    className="flex h-8 w-8 items-center justify-center rounded-md border border-red-400/50 text-red-500 transition hover:bg-red-500/10"
+                    className="flex h-8 w-8 items-center justify-center rounded-md border border-red-400/50 text-red-500 transition hover:bg-red-500/10 disabled:opacity-50"
                   >
                     <Trash2 className="h-4 w-4" />
                   </button>
@@ -371,7 +446,7 @@ export function PromptTemplatesView({ className }: PromptTemplatesViewProps) {
               {/* Metadata */}
               {selectedTemplate && (
                 <div className="mt-4 flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
-                  <span>Source: <b>{selectedTemplate.source ?? 'user'}</b></span>
+                  <span>Type: <b>{selectedTemplate.is_system ? 'System' : 'User'}</b></span>
                   {selectedTemplate.version && <span>Version: <b>v{selectedTemplate.version}</b></span>}
                   {selectedTemplate.updated_at && (
                     <span>Updated: <b>{new Date(selectedTemplate.updated_at).toLocaleDateString()}</b></span>

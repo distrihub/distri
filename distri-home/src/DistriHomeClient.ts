@@ -242,6 +242,21 @@ export class DistriHomeClient {
       throw new Error(`Failed to delete prompt template: ${response.statusText}`);
     }
   }
+
+  /**
+   * Clone a prompt template
+   */
+  async clonePromptTemplate(id: string): Promise<PromptTemplate> {
+    const response = await this.client.fetch(`/prompt-templates/${id}/clone`, {
+      method: 'POST',
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to clone prompt template: ${response.statusText}`);
+    }
+
+    return await response.json();
+  }
 }
 
 // Types for secrets and prompt templates
@@ -259,7 +274,6 @@ export interface PromptTemplate {
   template: string;
   description?: string;
   version?: string;
-  source?: 'static' | 'file' | 'dynamic' | 'user';
   is_system?: boolean;
   created_at?: string;
   updated_at?: string;

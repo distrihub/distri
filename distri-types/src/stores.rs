@@ -432,7 +432,6 @@ pub struct PromptTemplateRecord {
     pub template: String,
     pub description: Option<String>,
     pub version: Option<String>,
-    pub source: String,
     pub is_system: bool,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
@@ -444,7 +443,6 @@ pub struct NewPromptTemplate {
     pub template: String,
     pub description: Option<String>,
     pub version: Option<String>,
-    pub source: String,
     pub is_system: bool,
 }
 
@@ -466,6 +464,8 @@ pub trait PromptTemplateStore: Send + Sync {
         update: UpdatePromptTemplate,
     ) -> anyhow::Result<PromptTemplateRecord>;
     async fn delete(&self, id: &str) -> anyhow::Result<()>;
+    async fn clone_template(&self, id: &str) -> anyhow::Result<PromptTemplateRecord>;
+    async fn sync_system_templates(&self, templates: Vec<NewPromptTemplate>) -> anyhow::Result<()>;
 }
 
 // ========== Secret Store ==========

@@ -15,6 +15,9 @@ pub fn configure_prompt_template_routes(cfg: &mut web::ServiceConfig) {
             .route(web::get().to(get_prompt_template))
             .route(web::put().to(update_prompt_template))
             .route(web::delete().to(delete_prompt_template)),
+    )
+    .service(
+        web::resource("/prompt-templates/{id}/clone").route(web::post().to(clone_prompt_template)),
     );
 }
 
@@ -103,6 +106,24 @@ async fn delete_prompt_template(
 
     match store.delete(&id).await {
         Ok(_) => HttpResponse::NoContent().finish(),
+        Err(e) => HttpResponse::InternalServerError().json(json!({"error": e.to_string()})),
+    }
+}
+
+async fn clone_prompt_template(
+    id: web::Path<String>,
+    executor: web::Data<Arc<AgentOrchestrator>>,
+) -> HttpResponse {
+    let store = match &executor.stores.prompt_template_store {
+        Some(s) => s,
+        None => {
+            return HttpResponse::InternalServerError()
+                .json(json!({"error": "Prompt template store not initialized"}))
+        }
+    };
+
+    match store.clone_template(&id).await {
+        Ok(template) => HttpResponse::Ok().json(template),
         Err(e) => HttpResponse::InternalServerError().json(json!({"error": e.to_string()})),
     }
 }

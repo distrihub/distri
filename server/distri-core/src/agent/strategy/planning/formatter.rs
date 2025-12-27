@@ -125,8 +125,12 @@ impl<'a> MessageFormatter<'a> {
 
         let mut formatted = vec![crate::types::Message::system(rendered_prompt, None)];
 
-        let user_message =
-            Self::build_user_message(message, &user_additional_data, additional_user_parts);
+        let user_message = if let Some(overrides) = &self.agent_def.user_message_overrides {
+            self.build_overridden_user_message(message, overrides, &template_data, context)
+                .await?
+        } else {
+            Self::build_user_message(message, &user_additional_data, additional_user_parts)
+        };
         formatted.push(user_message);
 
         if native_json_tools && include_scratchpad {
@@ -277,48 +281,16 @@ impl<'a> MessageFormatter<'a> {
 
         for key in prefixed_keys {
             if let Some(value) = all_values.get(key) {
-                // Try to parse as AdditionalParts (new format), Vec<Part> (legacy), Part, or string
+                let resolved = Self::resolve_session_value_to_parts(value, false, context).await;
+                
+                // Special handling for AdditionalParts instruction (Replace)
                 if let Ok(additional_parts) = serde_json::from_value::<distri_types::AdditionalParts>(value.clone()) {
-                    // Handle instruction (replace vs append)
                     if matches!(additional_parts.instruction, distri_types::AdditionalPartsInstruction::Replace) {
                         all_parts.clear();
                     }
-                    
-                    tracing::debug!(
-                        "Processing AdditionalParts: {} parts, instruction: {:?}, include_artifacts: {}",
-                        additional_parts.parts.len(),
-                        additional_parts.instruction,
-                        additional_parts.include_artifacts
-                    );
-                    
-                    // Process parts, expanding artifacts if requested
-                    for part in additional_parts.parts {
-                        if additional_parts.include_artifacts {
-                            // Expand artifacts to their actual content (e.g., image artifacts -> Part::Image)
-                            all_parts.push(
-                                Self::convert_artifact_to_image_if_needed(part, context).await,
-                            );
-                        } else {
-                            // Keep artifacts as Part::Artifact references
-                            all_parts.push(part);
-                        }
-                    }
-                } else if let Ok(parts) = serde_json::from_value::<Vec<Part>>(value.clone()) {
-                    // Legacy format: Vec<Part> - always expand artifacts for backward compatibility
-                    for part in parts {
-                        all_parts.push(
-                            Self::convert_artifact_to_image_if_needed(part, context).await,
-                        );
-                    }
-                } else if let Ok(part) = serde_json::from_value::<Part>(value.clone()) {
-                    // Legacy format: single Part - always expand artifacts
-                    all_parts.push(Self::convert_artifact_to_image_if_needed(part, context).await);
-                } else if let Some(text) = value.as_str() {
-                    all_parts.push(Part::Text(text.to_string()));
-                } else {
-                    // For other JSON values, serialize as text
-                    all_parts.push(Part::Text(value.to_string()));
                 }
+                
+                all_parts.extend(resolved);
             }
         }
 
@@ -546,6 +518,80 @@ impl<'a> MessageFormatter<'a> {
             }
             other => other,
         }
+    }
+
+    async fn build_overridden_user_message(
+        &self,
+        base_message: &crate::types::Message,
+        overrides: &crate::types::UserMessageOverrides,
+        template_data: &TemplateData<'_>,
+        context: &Arc<ExecutorContext>,
+    ) -> Result<crate::types::Message, AgentError> {
+        let mut parts = Vec::new();
+
+        for part_def in &overrides.parts {
+            match part_def {
+                distri_types::PartDefinition::Template(template_name) => {
+                    let rendered = render_prompt(context, template_name, template_data).await?;
+                    if !rendered.is_empty() {
+                        parts.push(Part::Text(rendered));
+                    }
+                }
+                distri_types::PartDefinition::SessionKey(key) => {
+                    if let Some(value) = template_data.session_values.get(key) {
+                        let resolved = Self::resolve_session_value_to_parts(
+                            value,
+                            overrides.include_artifacts,
+                            context,
+                        )
+                        .await;
+                        parts.extend(resolved);
+                    }
+                }
+            }
+        }
+
+        let mut message = base_message.clone();
+        message.role = MessageRole::User;
+        message.parts = parts;
+        Ok(message)
+    }
+
+    async fn resolve_session_value_to_parts(
+        value: &serde_json::Value,
+        force_include_artifacts: bool,
+        context: &Arc<ExecutorContext>,
+    ) -> Vec<Part> {
+        let mut all_parts = Vec::new();
+        // Try to parse as AdditionalParts (new format), Vec<Part> (legacy), Part, or string
+        if let Ok(additional_parts) =
+            serde_json::from_value::<distri_types::AdditionalParts>(value.clone())
+        {
+            // Process parts, expanding artifacts if requested
+            for part in additional_parts.parts {
+                if force_include_artifacts || additional_parts.include_artifacts {
+                    // Expand artifacts to their actual content (e.g., image artifacts -> Part::Image)
+                    all_parts.push(Self::convert_artifact_to_image_if_needed(part, context).await);
+                } else {
+                    // Keep artifacts as Part::Artifact references
+                    all_parts.push(part);
+                }
+            }
+        } else if let Ok(parts) = serde_json::from_value::<Vec<Part>>(value.clone()) {
+            // Legacy format: Vec<Part> - expand if forced or default legacy behavior (always expand)
+            for part in parts {
+                all_parts.push(Self::convert_artifact_to_image_if_needed(part, context).await);
+            }
+        } else if let Ok(part) = serde_json::from_value::<Part>(value.clone()) {
+            // Legacy format: single Part - always expand artifacts
+            all_parts.push(Self::convert_artifact_to_image_if_needed(part, context).await);
+        } else if let Some(text) = value.as_str() {
+            all_parts.push(Part::Text(text.to_string()));
+        } else {
+            // For other JSON values, serialize as text
+            all_parts.push(Part::Text(value.to_string()));
+        }
+        all_parts
     }
 
     fn build_user_message(

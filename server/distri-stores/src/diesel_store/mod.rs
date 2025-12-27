@@ -2602,7 +2602,6 @@ fn to_prompt_template_record(model: PromptTemplateModel) -> PromptTemplateRecord
         template: model.template,
         description: model.description,
         version: model.version,
-        source: model.source,
         is_system: model.is_system != 0,
         created_at: from_naive(model.created_at),
         updated_at: from_naive(model.updated_at),
@@ -2681,7 +2680,6 @@ where
             template: &template_data.template,
             description: template_data.description.as_deref(),
             version: template_data.version.as_deref(),
-            source: &template_data.source,
             is_system: if template_data.is_system { 1 } else { 0 },
             created_at: now,
             updated_at: now,
@@ -2760,6 +2758,98 @@ where
             diesel::delete(prompt_templates.filter(id.eq(template_id)))
                 .execute(&mut conn)
                 .await?;
+        }
+
+        Ok(())
+    }
+
+    async fn clone_template(&self, template_id: &str) -> Result<PromptTemplateRecord> {
+        use crate::schema::prompt_templates::dsl::*;
+        let mut conn = self.conn().await?;
+
+        // Fetch the source template
+        let source_tpl = prompt_templates
+            .filter(id.eq(template_id))
+            .select(PromptTemplateModel::as_select())
+            .first::<PromptTemplateModel>(&mut conn)
+            .await?;
+
+        let now = Utc::now().naive_utc();
+        let new_id = uuid::Uuid::new_v4().to_string();
+        let new_name = format!("Clone of {}", source_tpl.name);
+
+        let new_model = NewPromptTemplateModel {
+            id: &new_id,
+            name: &new_name,
+            template: &source_tpl.template,
+            description: source_tpl.description.as_deref(),
+            version: source_tpl.version.as_deref(),
+            is_system: 0,
+            created_at: now,
+            updated_at: now,
+        };
+
+        diesel::insert_into(prompt_templates)
+            .values(&new_model)
+            .execute(&mut conn)
+            .await?;
+
+        let result = prompt_templates
+            .filter(id.eq(&new_id))
+            .select(PromptTemplateModel::as_select())
+            .first::<PromptTemplateModel>(&mut conn)
+            .await?;
+
+        Ok(to_prompt_template_record(result))
+    }
+
+    async fn sync_system_templates(&self, templates_to_sync: Vec<NewPromptTemplate>) -> Result<()> {
+        use crate::schema::prompt_templates::dsl::*;
+        let mut conn = self.conn().await?;
+        let now = Utc::now().naive_utc();
+
+        for tpl in templates_to_sync {
+            // Check if exists by name (system templates are identified by name for syncing)
+            let existing = prompt_templates
+                .filter(name.eq(&tpl.name))
+                .filter(is_system.eq(1))
+                .select(PromptTemplateModel::as_select())
+                .first::<PromptTemplateModel>(&mut conn)
+                .await
+                .optional()?;
+
+            if let Some(existing_model) = existing {
+                // Update if content changed
+                if existing_model.template != tpl.template {
+                    diesel::update(prompt_templates.filter(id.eq(existing_model.id)))
+                        .set((
+                            template.eq(&tpl.template),
+                            description.eq(tpl.description.as_deref()),
+                            version.eq(tpl.version.as_deref()),
+                            updated_at.eq(now),
+                        ))
+                        .execute(&mut conn)
+                        .await?;
+                }
+            } else {
+                // Create new
+                let new_id = Uuid::new_v4().to_string();
+                let model = NewPromptTemplateModel {
+                    id: &new_id,
+                    name: &tpl.name,
+                    template: &tpl.template,
+                    description: tpl.description.as_deref(),
+                    version: tpl.version.as_deref(),
+                    is_system: 1,
+                    created_at: now,
+                    updated_at: now,
+                };
+
+                diesel::insert_into(prompt_templates)
+                    .values(&model)
+                    .execute(&mut conn)
+                    .await?;
+            }
         }
 
         Ok(())
