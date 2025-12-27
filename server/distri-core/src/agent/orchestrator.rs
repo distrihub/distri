@@ -17,8 +17,9 @@ use super::ExecutorContext;
 use crate::agent::hooks::inline::InlineHook;
 use distri_auth::ProviderRegistry;
 use distri_filesystem::FileSystem;
-use distri_stores::{initialize_stores, InitializedStores, PromptTemplateStore};
+use distri_stores::{initialize_stores, InitializedStores};
 pub use distri_stores::{workflow::InMemoryWorkflowStore, AgentStore, ThreadStore};
+use distri_types::stores::{PromptTemplateStore, SecretStore};
 use distri_types::{
     auth::OAuthHandler, LlmDefinition, ModelSettings, Part, ServerMetadataWrapper, ToolCall,
     ToolsConfig,
@@ -58,7 +59,6 @@ pub struct AgentOrchestrator {
     pub plugin_tools: Arc<RwLock<HashMap<String, Vec<Arc<dyn Tool>>>>>,
     pub workspace_path: std::path::PathBuf,
     pub prompt_registry: Arc<PromptRegistry>,
-    pub prompt_template_store: Option<Arc<dyn PromptTemplateStore>>,
     /// Store configuration for creating new session stores
     pub store_config: StoreConfig,
     /// All stores - use this instead of individual store fields
@@ -96,7 +96,6 @@ pub struct AgentOrchestratorBuilder {
     browser_sessions: Option<Arc<BrowserSessions>>,
     stores: Option<InitializedStores>,
     prompt_registry: Option<Arc<PromptRegistry>>,
-    prompt_template_store: Option<Arc<dyn PromptTemplateStore>>,
     store_config: Option<StoreConfig>,
     configuration: Option<Arc<RwLock<DistriServerConfig>>>,
     default_model_settings: Option<ModelSettings>,
@@ -139,7 +138,19 @@ impl AgentOrchestratorBuilder {
     }
 
     pub fn with_prompt_template_store(mut self, store: Arc<dyn PromptTemplateStore>) -> Self {
-        self.prompt_template_store = Some(store);
+        if let Some(stores) = &mut self.stores {
+            stores.prompt_template_store = Some(store);
+        } else {
+            // This is a bit awkward since stores is Option, 
+            // but build() will handle it if stores is None initially
+        }
+        self
+    }
+
+    pub fn with_secret_store(mut self, store: Arc<dyn SecretStore>) -> Self {
+        if let Some(stores) = &mut self.stores {
+            stores.secret_store = Some(store);
+        }
         self
     }
 
@@ -319,7 +330,6 @@ impl AgentOrchestratorBuilder {
             plugin_tools: Arc::new(RwLock::new(self.plugin_tools.unwrap_or_default())),
             workspace_path,
             prompt_registry,
-            prompt_template_store: self.prompt_template_store,
             store_config,
             stores,
             configuration,

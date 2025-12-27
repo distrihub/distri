@@ -31,6 +31,8 @@ pub struct InitializedStores {
     pub external_tool_calls_store: Arc<dyn ExternalToolCallsStore>,
     pub plugin_store: Arc<dyn PluginCatalogStore>,
     pub browser_session_store: Arc<dyn BrowserSessionStore>,
+    pub prompt_template_store: Option<Arc<dyn PromptTemplateStore>>,
+    pub secret_store: Option<Arc<dyn SecretStore>>,
 }
 impl InitializedStores {
     pub fn set_tool_auth_store(&mut self, tool_auth_store: Arc<dyn ToolAuthStore>) {
@@ -419,4 +421,75 @@ pub trait ExternalToolCallsStore: Send + Sync + std::fmt::Debug {
 
     /// List all pending sessions (for debugging)
     async fn list_pending_tool_calls(&self) -> anyhow::Result<Vec<String>>;
+}
+
+// ========== Prompt Template Store ==========
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PromptTemplateRecord {
+    pub id: String,
+    pub name: String,
+    pub template: String,
+    pub description: Option<String>,
+    pub version: Option<String>,
+    pub source: String,
+    pub is_system: bool,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NewPromptTemplate {
+    pub name: String,
+    pub template: String,
+    pub description: Option<String>,
+    pub version: Option<String>,
+    pub source: String,
+    pub is_system: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdatePromptTemplate {
+    pub name: String,
+    pub template: String,
+    pub description: Option<String>,
+}
+
+#[async_trait]
+pub trait PromptTemplateStore: Send + Sync {
+    async fn list(&self) -> anyhow::Result<Vec<PromptTemplateRecord>>;
+    async fn get(&self, id: &str) -> anyhow::Result<Option<PromptTemplateRecord>>;
+    async fn create(&self, template: NewPromptTemplate) -> anyhow::Result<PromptTemplateRecord>;
+    async fn update(
+        &self,
+        id: &str,
+        update: UpdatePromptTemplate,
+    ) -> anyhow::Result<PromptTemplateRecord>;
+    async fn delete(&self, id: &str) -> anyhow::Result<()>;
+}
+
+// ========== Secret Store ==========
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SecretRecord {
+    pub id: String,
+    pub key: String,
+    pub value: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NewSecret {
+    pub key: String,
+    pub value: String,
+}
+
+#[async_trait]
+pub trait SecretStore: Send + Sync {
+    async fn list(&self) -> anyhow::Result<Vec<SecretRecord>>;
+    async fn get(&self, key: &str) -> anyhow::Result<Option<SecretRecord>>;
+    async fn create(&self, secret: NewSecret) -> anyhow::Result<SecretRecord>;
+    async fn update(&self, key: &str, value: &str) -> anyhow::Result<SecretRecord>;
+    async fn delete(&self, key: &str) -> anyhow::Result<()>;
 }
