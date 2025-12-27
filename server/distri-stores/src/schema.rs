@@ -181,7 +181,6 @@ diesel::table! {
         template -> Text,
         description -> Nullable<Text>,
         version -> Nullable<Text>,
-        source -> Text,
         is_system -> Integer,
         created_at -> Timestamp,
         updated_at -> Timestamp,

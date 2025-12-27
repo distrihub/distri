@@ -44,7 +44,7 @@ pub use plugin_registry::{PluginOptions, PluginRegistry};
 
 // Export prompt registry
 pub use prompt_registry::{
-    PromptRegistry, PromptSection, PromptTemplate, TemplateData, TemplateSource,
+    PromptRegistry, PromptSection, PromptTemplate, TemplateData,
 };
 
 // Export types from types module
