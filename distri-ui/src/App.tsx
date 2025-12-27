@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate, Outlet, useLocation } from 'react-router-dom';
-import { DistriProvider, ThemeProvider } from '@distri/react';
+import { BrowserRouter as Router, Routes, Route, Navigate, Outlet, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { DistriProvider, ThemeProvider, useDistri } from '@distri/react';
+import { DistriHomeProvider, Home, AgentDetails, ThreadsView, SettingsView } from '@distri/home';
 import { TokenProvider, useInitialization } from '@/components/TokenProvider';
 import { ThreadProvider } from '@/components/ThreadContext';
 import { SessionProvider, useSession } from '@/components/SessionProvider';
@@ -11,7 +12,6 @@ import AuthCallback from '@/routes/auth/AuthCallback';
 import AuthSuccess from '@/routes/auth/AuthSuccess';
 import LoginPage from '@/routes/login/LoginPage';
 import HomeLayout from '@/layouts/HomeLayout';
-import HomePage from '@/routes/home/HomePage';
 import PaymentSuccess from '@/routes/payment/PaymentSuccess';
 import AccountPage from '@/routes/home/menu/AccountPage';
 import PricingPage from '@/routes/home/menu/PricingPage';
@@ -20,12 +20,55 @@ import { BACKEND_URL } from './constants';
 import { AccountProvider } from './components/AccountProvider';
 import FilesPage from './routes/home/FilesPage';
 import AgentsPage from './routes/home/AgentsPage';
-import ThreadsPage from './routes/home/ThreadsPage';
-import SettingsPage from './routes/home/SettingsPage';
 import NewAgentPage from './routes/home/NewAgentPage';
-import AgentDetailsPage from './routes/home/AgentDetailsPage';
 import { Toaster } from './components/ui/sonner';
 import ChatPage from './routes/home/ChatPage';
+
+// Wrapper components to pass props from router to @distri/home components
+function HomePageWrapper() {
+  return <Home />;
+}
+
+function AgentDetailsWrapper() {
+  const { agentId: encodedAgentId } = useParams<{ agentId: string }>();
+  const [searchParams] = useSearchParams();
+  const queryAgentId = searchParams.get('id');
+  const queryThreadId = searchParams.get('threadId');
+  const agentId = encodedAgentId ? decodeURIComponent(encodedAgentId) : (queryAgentId || '');
+
+  if (!agentId) {
+    return <div className="flex h-full items-center justify-center text-muted-foreground">No agent ID provided</div>;
+  }
+
+  return <AgentDetails agentId={agentId} threadId={queryThreadId ?? undefined} />;
+}
+
+function ThreadsViewWrapper() {
+  return <ThreadsView />;
+}
+
+function SettingsViewWrapper() {
+  return <SettingsView activeSection="configuration" />;
+}
+
+function DistriHomeWrapper() {
+  const { client } = useDistri();
+  const navigate = useNavigate();
+
+  if (!client) {
+    return <LoadingScreen message="Initializing..." />;
+  }
+
+  return (
+    <DistriHomeProvider
+      client={client}
+      config={{ enableApiKeys: false, enableAccountBilling: false }} // OSS version
+      onNavigate={navigate}
+    >
+      <Outlet />
+    </DistriHomeProvider>
+  );
+}
 
 function App() {
   // Initialize theme to dark by default
@@ -39,12 +82,10 @@ function App() {
   const basePath = import.meta.env.BASE_URL || '/ui/';
 
   return (
-
     <ThemeProvider defaultTheme="dark" storageKey="distri-theme">
       <ThreadProvider>
         <Router basename={basePath}>
           <SessionProvider>
-
             <Routes>
               {/* Root redirect */}
               <Route path="/" element={<Navigate to="home" replace />} />
@@ -58,13 +99,18 @@ function App() {
               {/* Protected routes with layout */}
               <Route path="home" element={<LayoutWithProviders />}>
                 <Route element={<HomeLayout />}>
-                  <Route index element={<HomePage />} />
+                  {/* Routes using @distri/home components */}
+                  <Route element={<DistriHomeWrapper />}>
+                    <Route index element={<HomePageWrapper />} />
+                    <Route path="agents/:agentId" element={<AgentDetailsWrapper />} />
+                    <Route path="threads" element={<ThreadsViewWrapper />} />
+                    <Route path="settings" element={<SettingsViewWrapper />} />
+                  </Route>
+
+                  {/* Routes not using @distri/home */}
                   <Route path="agents" element={<AgentsPage />} />
                   <Route path="new" element={<NewAgentPage />} />
-                  <Route path="agents/:agentId" element={<AgentDetailsPage />} />
                   <Route path="chat" element={<ChatPage />} />
-                  <Route path="threads" element={<ThreadsPage />} />
-                  <Route path="settings" element={<SettingsPage />} />
                   <Route path="menu/account" element={<AccountPage />} />
                   <Route path="menu/account/pricing" element={<PricingPage />} />
                   <Route path="menu/help" element={<HelpPage />} />
@@ -145,7 +191,5 @@ const LoadingScreen = ({ message }: { message: string }) => (
     </div>
   </div>
 )
-
-
 
 export default App;

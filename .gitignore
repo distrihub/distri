@@ -24,3 +24,4 @@ target/*
 .turbo/*
 .distri/
 releases/*
+distri-home/node_modules/** 
