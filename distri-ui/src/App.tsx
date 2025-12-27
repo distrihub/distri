@@ -106,7 +106,7 @@ function App() {
                   {/* Routes using @distri/home components */}
                   <Route element={<DistriHomeWrapper />}>
                     <Route index element={<HomePageWrapper />} />
-                    <Route path="agents/:agentId" element={<AgentDetailsWrapper />} />
+                    <Route path="details" element={<AgentDetailsWrapper />} />
                     <Route path="threads" element={<ThreadsViewWrapper />} />
                     <Route path="templates" element={<PromptTemplatesViewWrapper />} />
                     <Route path="settings" element={<SettingsViewWrapper />} />

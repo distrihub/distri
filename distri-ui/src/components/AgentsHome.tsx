@@ -21,6 +21,7 @@ interface AgentsHomeProps {
   enableNavigation?: boolean
   allowInlineCreator?: boolean
   onRequestCreateAgent?: () => void
+  onSelectAgent?: (agent: AgentDefinition) => void
 }
 
 const AgentsHome = ({
@@ -28,6 +29,7 @@ const AgentsHome = ({
   enableNavigation = true,
   allowInlineCreator = true,
   onRequestCreateAgent,
+  onSelectAgent,
 }: AgentsHomeProps) => {
   const navigate = useNavigate()
   const { agents, loading } = useAgentDefinitions()
@@ -151,19 +153,24 @@ const AgentsHome = ({
     if (!text.trim()) return
     if (preferredAgent && enableNavigation) {
       const params = new URLSearchParams()
+      params.set('id', preferredAgent.id)
       params.set('prefill', text.trim())
       params.set('threadId', uuidv4())
-      navigate(`/home/agents/${encodeURIComponent(preferredAgent.id)}?${params.toString()}`)
+      navigate(`/home/details?${params.toString()}`)
     }
     setHeroPrompt('')
     setShowCreator(false)
   }
 
   const handleChatWithAgent = (agent: AgentDefinition) => {
+    if (onSelectAgent) {
+      onSelectAgent(agent)
+      return
+    }
     if (!enableNavigation) {
       return
     }
-    navigate(`/home/agents/${encodeURIComponent(agent.id)}`)
+    navigate(`/home/details?id=${encodeURIComponent(agent.id)}`)
   }
 
   const getAgentIcon = (agent: AgentDefinition) => {
@@ -298,7 +305,10 @@ const AgentsHome = ({
                       <div className="flex flex-col gap-4">
                         <div className="flex items-center justify-between gap-3">
                           <div className="flex flex-1 items-center gap-3 min-w-0">
-                            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary dark:bg-primary/20">
+                            <div
+                              className="flex h-12 w-12 cursor-pointer items-center justify-center rounded-2xl bg-primary/10 text-primary dark:bg-primary/20"
+                              onClick={() => handleChatWithAgent(agent)}
+                            >
                               <Avatar>
                                 <AvatarImage src={agent.icon_url} />
                                 <AvatarFallback className="bg-transparent text-primary">
@@ -308,7 +318,11 @@ const AgentsHome = ({
                             </div>
                             <div className="min-w-0">
                               <div className="flex flex-wrap items-center gap-2">
-                                <p className="text-sm font-semibold text-foreground truncate" title={agent.name}>
+                                <p
+                                  className="cursor-pointer text-sm font-semibold text-foreground truncate hover:underline"
+                                  title={agent.name}
+                                  onClick={() => handleChatWithAgent(agent)}
+                                >
                                   {agent.name}
                                 </p>
                                 {(() => {
