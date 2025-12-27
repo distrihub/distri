@@ -625,8 +625,9 @@ dependencies = [
 
 [[package]]
 name = "async-openai"
-version = "0.29.0"
-source = "git+https://github.com/v3g42/async-openai?rev=dce365a#dce365a9a4fa620c6b2e77e2ff6fd5e312f7c88b"
+version = "0.32.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "afb7051804e03daf32cd7e45e7a655bb6cea9283309d2253babfb38c09f4ea03"
 dependencies = [
  "async-openai-macros",
  "backoff",
@@ -635,24 +636,28 @@ dependencies = [
  "derive_builder",
  "eventsource-stream",
  "futures",
- "rand 0.8.5",
+ "getrandom 0.3.4",
+ "rand 0.9.2",
  "reqwest 0.12.8",
  "reqwest-eventsource",
  "secrecy",
  "serde",
  "serde_json",
+ "serde_urlencoded",
  "thiserror 2.0.17",
  "tokio",
  "tokio-stream",
- "tokio-tungstenite 0.26.2",
+ "tokio-tungstenite 0.28.0",
  "tokio-util",
  "tracing",
+ "url",
 ]
 
 [[package]]
 name = "async-openai-macros"
-version = "0.1.0"
-source = "git+https://github.com/v3g42/async-openai?rev=dce365a#dce365a9a4fa620c6b2e77e2ff6fd5e312f7c88b"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "81872a8e595e8ceceab71c6ba1f9078e313b452a1e31934e6763ef5d308705e4"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1323,7 +1328,7 @@ checksum = "a1d728cc89cf3aee9ff92b05e62b19ee65a02b5702cff7d5a377e32c6ae29d8d"
 
 [[package]]
 name = "cli-auth-server"
-version = "0.2.3"
+version = "0.2.6"
 dependencies = [
  "actix-cors",
  "actix-web",
@@ -2923,7 +2928,74 @@ dependencies = [
 
 [[package]]
 name = "distri"
-version = "0.2.3"
+version = "0.2.6"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.22.1",
+ "chrono",
+ "clap",
+ "dashmap 6.1.0",
+ "distri-a2a",
+ "distri-filesystem",
+ "distri-types",
+ "flate2",
+ "futures-util",
+ "image 0.24.9",
+ "reqwest 0.12.8",
+ "reqwest-eventsource",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.17",
+ "tokio",
+ "toml 0.8.23",
+ "tracing",
+ "urlencoding",
+ "uuid",
+ "viuer 0.6.2",
+ "which 8.0.0",
+]
+
+[[package]]
+name = "distri-a2a"
+version = "0.2.6"
+dependencies = [
+ "schemars",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
+name = "distri-auth"
+version = "0.2.6"
+dependencies = [
+ "actix-cors",
+ "actix-web",
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "cli-auth-server",
+ "dirs 5.0.1",
+ "distri-types",
+ "open",
+ "rand 0.8.5",
+ "reqwest 0.12.8",
+ "serde",
+ "serde_json",
+ "serde_urlencoded",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-test",
+ "tracing",
+ "url",
+ "uuid",
+]
+
+[[package]]
+name = "distri-core"
+version = "0.2.6"
 dependencies = [
  "anyhow",
  "async-mcp",
@@ -2938,9 +3010,9 @@ dependencies = [
  "comfy-table",
  "crossbeam-channel",
  "dashmap 5.5.3",
+ "distri",
  "distri-a2a",
  "distri-auth",
- "distri-client",
  "distri-filesystem",
  "distri-js-sandbox",
  "distri-parsers",
@@ -2984,128 +3056,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "distri-a2a"
-version = "0.2.3"
-dependencies = [
- "schemars",
- "serde",
- "serde_json",
- "uuid",
-]
-
-[[package]]
-name = "distri-auth"
-version = "0.2.3"
-dependencies = [
- "actix-cors",
- "actix-web",
- "anyhow",
- "async-trait",
- "chrono",
- "cli-auth-server",
- "dirs 5.0.1",
- "distri-types",
- "open",
- "rand 0.8.5",
- "reqwest 0.12.8",
- "serde",
- "serde_json",
- "serde_urlencoded",
- "tempfile",
- "thiserror 1.0.69",
- "tokio",
- "tokio-test",
- "tracing",
- "url",
- "uuid",
-]
-
-[[package]]
-name = "distri-cli"
-version = "0.2.3"
-dependencies = [
- "anyhow",
- "clap",
- "distri-a2a",
- "distri-client",
- "dotenv",
- "serde_json",
- "tokio",
- "uuid",
-]
-
-[[package]]
-name = "distri-client"
-version = "0.1.0"
-dependencies = [
- "actix-web",
- "anyhow",
- "async-trait",
- "base64 0.22.1",
- "chrono",
- "clap",
- "dashmap 6.1.0",
- "distri-a2a",
- "distri-filesystem",
- "distri-types",
- "flate2",
- "futures-util",
- "image 0.24.9",
- "reqwest 0.12.8",
- "reqwest-eventsource",
- "serde",
- "serde_json",
- "thiserror 2.0.17",
- "tokio",
- "toml 0.8.23",
- "tracing",
- "urlencoding",
- "uuid",
- "viuer 0.6.2",
- "which 8.0.0",
-]
-
-[[package]]
-name = "distri-coder"
-version = "0.2.3"
-dependencies = [
- "anyhow",
- "async-trait",
- "chrono",
- "clap",
- "comfy-table",
- "crossterm 0.27.0",
- "deno_ast 0.42.2",
- "dirs 5.0.1",
- "distri",
- "distri-auth",
- "distri-filesystem",
- "distri-server-cli",
- "distri-types",
- "dotenv",
- "futures",
- "futures-util",
- "fuzzy-matcher",
- "inquire",
- "mcp-crawl",
- "mcp-tavily",
- "open",
- "regex",
- "reqwest 0.12.8",
- "serde",
- "serde_json",
- "serde_yaml",
- "syntect",
- "tokio",
- "toml 0.9.5",
- "tracing",
- "tracing-subscriber",
- "uuid",
-]
-
-[[package]]
 name = "distri-filesystem"
-version = "0.2.3"
+version = "0.2.6"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3122,7 +3074,6 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
- "tempfile",
  "tokio",
  "tracing",
  "uuid",
@@ -3145,7 +3096,7 @@ dependencies = [
 
 [[package]]
 name = "distri-parsers"
-version = "0.2.3"
+version = "0.2.6"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3170,14 +3121,14 @@ dependencies = [
 
 [[package]]
 name = "distri-plugin-executor"
-version = "0.2.3"
+version = "0.2.6"
 dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
  "deno_error 0.7.0",
  "distri-types",
- "reqwest 0.11.27",
+ "reqwest 0.12.8",
  "rustyscript",
  "schemars",
  "serde",
@@ -3192,7 +3143,7 @@ dependencies = [
 
 [[package]]
 name = "distri-plugins"
-version = "0.2.3"
+version = "0.2.6"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3222,7 +3173,7 @@ dependencies = [
 
 [[package]]
 name = "distri-server"
-version = "0.2.3"
+version = "0.2.6"
 dependencies = [
  "actix-cors",
  "actix-files",
@@ -3238,14 +3189,12 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "chrono",
- "clap",
  "dashmap 5.5.3",
  "dirs 5.0.1",
- "distri",
  "distri-a2a",
  "distri-auth",
+ "distri-core",
  "distri-filesystem",
- "distri-server-cli",
  "distri-types",
  "dotenv",
  "env_logger",
@@ -3271,7 +3220,7 @@ dependencies = [
 
 [[package]]
 name = "distri-server-cli"
-version = "0.2.3"
+version = "0.2.6"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3282,9 +3231,10 @@ dependencies = [
  "crossterm 0.27.0",
  "deno_ast 0.42.2",
  "dirs 5.0.1",
- "distri",
  "distri-auth",
+ "distri-core",
  "distri-plugins",
+ "distri-server",
  "distri-types",
  "dotenv",
  "futures",
@@ -3310,7 +3260,7 @@ dependencies = [
 
 [[package]]
 name = "distri-stores"
-version = "0.2.3"
+version = "0.2.6"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3339,7 +3289,7 @@ dependencies = [
 
 [[package]]
 name = "distri-types"
-version = "0.2.3"
+version = "0.2.6"
 dependencies = [
  "anyhow",
  "async-mcp",
@@ -9627,14 +9577,14 @@ dependencies = [
 
 [[package]]
 name = "tokio-tungstenite"
-version = "0.26.2"
+version = "0.28.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7a9daff607c6d2bf6c16fd681ccb7eecc83e4e2cdc1ca067ffaadfca5de7f084"
+checksum = "d25a406cddcc431a75d3d9afc6a7c0f7428d4891dd973e4d54c56b46127bf857"
 dependencies = [
  "futures-util",
  "log",
  "tokio",
- "tungstenite 0.26.2",
+ "tungstenite 0.28.0",
 ]
 
 [[package]]
@@ -9964,9 +9914,9 @@ dependencies = [
 
 [[package]]
 name = "tungstenite"
-version = "0.26.2"
+version = "0.28.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4793cb5e56680ecbb1d843515b23b6de9a75eb04b66643e256a396d43be33c13"
+checksum = "8628dcc84e5a09eb3d8423d6cb682965dea9133204e8fb3efee74c2a0c259442"
 dependencies = [
  "bytes",
  "log",
