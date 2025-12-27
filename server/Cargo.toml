@@ -2,22 +2,17 @@
 resolver = "2"
 
 members = [
-  "distri",
+  "distri-core",
   "distri-server",
   "distri-server-cli",
-  "distri-cli",
-  "distri-a2a",
   "distri-plugin-executor",
-  "distri-types",
   "distri-auth",
   "distri-parsers",
   "distri-plugins",
   "distri-stores",
-  "distri-filesystem",
-  "distri-coder",
   "cli-auth-server",
 ]
-default-members = ["distri-cli"]
+default-members = ["distri-server-cli"]
 
 
 [workspace.dependencies]

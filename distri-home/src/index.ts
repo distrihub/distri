@@ -1,6 +1,6 @@
 // Client exports
 export { DistriHomeClient } from './DistriHomeClient';
-export type { HomeStats, HomeStatsThread, ApiKey } from './DistriHomeClient';
+export type { HomeStats, HomeStatsThread, ApiKey, Secret, PromptTemplate } from './DistriHomeClient';
 
 // Provider exports
 export { DistriHomeProvider, useDistriHome, useDistriHomeConfig, useDistriHomeNavigate, useDistriHomeClient } from './DistriHomeProvider';
@@ -17,3 +17,5 @@ export { Home } from './components/Home';
 export { AgentDetails } from './components/AgentDetails';
 export { ThreadsView } from './components/ThreadsView';
 export { SettingsView } from './components/SettingsView';
+export { SecretsView } from './components/SecretsView';
+export { PromptTemplatesView } from './components/PromptTemplatesView';

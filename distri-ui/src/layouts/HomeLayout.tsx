@@ -19,7 +19,7 @@ import {
   SidebarProvider,
   SidebarSeparator,
 } from '@/components/ui/sidebar'
-import { ChevronUp, LogOut, Settings, Users, Home, MessageSquare, User2 } from 'lucide-react'
+import { ChevronUp, LogOut, Settings, Users, Home, MessageSquare, User2, FileText } from 'lucide-react'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { useAccount } from '@/components/AccountProvider'
@@ -28,6 +28,7 @@ const navItems = [
   { id: 'home', label: 'Home', href: '/home', icon: Home },
   { id: 'agents', label: 'Agents', href: '/home/agents', icon: Users },
   { id: 'threads', label: 'Threads', href: '/home/threads', icon: MessageSquare },
+  { id: 'templates', label: 'Templates', href: '/home/templates', icon: FileText },
   { id: 'settings', label: 'Settings', href: '/home/settings', icon: Settings },
 ]
 

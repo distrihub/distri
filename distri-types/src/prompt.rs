@@ -23,7 +23,6 @@ pub struct PromptTemplate {
     pub content: String,
     pub description: Option<String>,
     pub version: Option<String>,
-    pub source: TemplateSource,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -54,13 +53,7 @@ pub struct PromptSection {
     pub content: String,
 }
 
-/// The source of a prompt template.
-#[derive(Debug, Clone, PartialEq)]
-pub enum TemplateSource {
-    Static,
-    File(String),
-    Dynamic,
-}
+
 
 impl PromptRegistry {
     pub fn new() -> Self {
@@ -85,28 +78,30 @@ impl PromptRegistry {
                 content: include_str!("../prompt_templates/planning.hbs").to_string(),
                 description: Some("Default system message template".to_string()),
                 version: Some("1.0.0".to_string()),
-                source: TemplateSource::Static,
             },
             PromptTemplate {
                 name: "user".to_string(),
                 content: include_str!("../prompt_templates/user.hbs").to_string(),
                 description: Some("Default user message template".to_string()),
                 version: Some("1.0.0".to_string()),
-                source: TemplateSource::Static,
             },
             PromptTemplate {
                 name: "code".to_string(),
                 content: include_str!("../prompt_templates/code.hbs").to_string(),
                 description: Some("Code generation template".to_string()),
                 version: Some("1.0.0".to_string()),
-                source: TemplateSource::Static,
             },
             PromptTemplate {
                 name: "reflection".to_string(),
                 content: include_str!("../prompt_templates/reflection.hbs").to_string(),
                 description: Some("Reflection and improvement template".to_string()),
                 version: Some("1.0.0".to_string()),
-                source: TemplateSource::Static,
+            },
+            PromptTemplate {
+                name: "standard_user_message".to_string(),
+                content: include_str!("../prompt_templates/user.hbs").to_string(),
+                description: Some("Standard user message template".to_string()),
+                version: Some("1.0.0".to_string()),
             },
         ];
 
@@ -172,9 +167,48 @@ impl PromptRegistry {
             content,
             description,
             version,
-            source: TemplateSource::Dynamic,
         };
         self.register_template(template).await
+    }
+
+    pub fn get_default_templates() -> Vec<crate::stores::NewPromptTemplate> {
+        vec![
+            crate::stores::NewPromptTemplate {
+                name: "planning".to_string(),
+                template: include_str!("../prompt_templates/planning.hbs").to_string(),
+                description: Some("Default system message template".to_string()),
+                version: Some("1.0.0".to_string()),
+                is_system: true,
+            },
+            crate::stores::NewPromptTemplate {
+                name: "user".to_string(),
+                template: include_str!("../prompt_templates/user.hbs").to_string(),
+                description: Some("Default user message template".to_string()),
+                version: Some("1.0.0".to_string()),
+                is_system: true,
+            },
+            crate::stores::NewPromptTemplate {
+                name: "code".to_string(),
+                template: include_str!("../prompt_templates/code.hbs").to_string(),
+                description: Some("Code generation template".to_string()),
+                version: Some("1.0.0".to_string()),
+                is_system: true,
+            },
+            crate::stores::NewPromptTemplate {
+                name: "reflection".to_string(),
+                template: include_str!("../prompt_templates/reflection.hbs").to_string(),
+                description: Some("Reflection and improvement template".to_string()),
+                version: Some("1.0.0".to_string()),
+                is_system: true,
+            },
+            crate::stores::NewPromptTemplate {
+                name: "standard_user_message".to_string(),
+                template: include_str!("../prompt_templates/user.hbs").to_string(),
+                description: Some("Standard user message template".to_string()),
+                version: Some("1.0.0".to_string()),
+                is_system: true,
+            },
+        ]
     }
 
     pub async fn register_template_file<P: AsRef<Path>>(
@@ -198,7 +232,6 @@ impl PromptRegistry {
             content,
             description,
             version,
-            source: TemplateSource::File(path.to_string_lossy().to_string()),
         };
         self.register_template(template).await
     }

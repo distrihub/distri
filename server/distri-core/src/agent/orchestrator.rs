@@ -19,6 +19,7 @@ use distri_auth::ProviderRegistry;
 use distri_filesystem::FileSystem;
 use distri_stores::{initialize_stores, InitializedStores};
 pub use distri_stores::{workflow::InMemoryWorkflowStore, AgentStore, ThreadStore};
+use distri_types::stores::{PromptTemplateStore, SecretStore};
 use distri_types::{
     auth::OAuthHandler, LlmDefinition, ModelSettings, Part, ServerMetadataWrapper, ToolCall,
     ToolsConfig,
@@ -133,6 +134,23 @@ impl AgentOrchestratorBuilder {
 
     pub fn with_prompt_registry(mut self, prompt_registry: Arc<PromptRegistry>) -> Self {
         self.prompt_registry = Some(prompt_registry);
+        self
+    }
+
+    pub fn with_prompt_template_store(mut self, store: Arc<dyn PromptTemplateStore>) -> Self {
+        if let Some(stores) = &mut self.stores {
+            stores.prompt_template_store = Some(store);
+        } else {
+            // This is a bit awkward since stores is Option, 
+            // but build() will handle it if stores is None initially
+        }
+        self
+    }
+
+    pub fn with_secret_store(mut self, store: Arc<dyn SecretStore>) -> Self {
+        if let Some(stores) = &mut self.stores {
+            stores.secret_store = Some(store);
+        }
         self
     }
 
@@ -277,6 +295,7 @@ impl AgentOrchestratorBuilder {
                 anyhow::anyhow!("Failed to create prompt registry with defaults: {}", e)
             })?)
         };
+
         let (default_model_settings, default_analysis_model_settings) = {
             let cfg_guard = configuration.read().await;
             let default_model_settings = self
@@ -297,7 +316,7 @@ impl AgentOrchestratorBuilder {
 
         let browser_sessions_clone = browser_sessions.clone();
 
-        let orcheshtrator = AgentOrchestrator {
+        let orchestrator = AgentOrchestrator {
             tool_auth_handler,
             mcp_registry: registry,
             coordinator_rx: Arc::new(Mutex::new(coordinator_rx)),
@@ -322,12 +341,20 @@ impl AgentOrchestratorBuilder {
             hook_registry: HookRegistry::new(),
         };
 
-        let orch = Arc::new(orcheshtrator.clone());
+        // Sync system prompts to the store
+        if let Some(store) = &orchestrator.stores.prompt_template_store {
+            let defaults = PromptRegistry::get_default_templates();
+            if let Err(e) = store.sync_system_templates(defaults).await {
+                tracing::warn!("⚠️  Failed to sync system prompts to store: {}", e);
+            }
+        }
+
+        let orch = Arc::new(orchestrator.clone());
         // Set orchestrator on the existing registry (which already has plugins loaded)
         plugin_registry.set_orchestrator(orch.clone() as Arc<dyn OrchestratorTrait>);
 
         browser_sessions.set_orchestrator(orch.clone() as Arc<dyn OrchestratorTrait>);
-        Ok(orcheshtrator)
+        Ok(orchestrator)
     }
 }
 
@@ -547,6 +574,22 @@ impl AgentOrchestrator {
         &self,
         name: &str,
     ) -> Option<crate::agent::prompt_registry::PromptTemplate> {
+        // Try the store first
+        if let Some(store) = &self.stores.prompt_template_store {
+            // Find by name
+            if let Ok(templates) = store.list().await {
+                if let Some(record) = templates.into_iter().find(|t| t.name == name) {
+                    return Some(crate::agent::prompt_registry::PromptTemplate {
+                        name: record.name,
+                        content: record.template,
+                        description: record.description,
+                        version: record.version,
+                    });
+                }
+            }
+        }
+
+        // Fallback to registry
         self.prompt_registry.get_template(name).await
     }
 

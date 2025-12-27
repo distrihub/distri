@@ -32,6 +32,8 @@ use crate::tts::{get_available_voices, synthesize_tts, transcribe_speech};
 
 mod artifacts;
 mod files;
+mod prompt_templates;
+mod secrets;
 mod session;
 mod tools;
 
@@ -102,6 +104,8 @@ fn configure_routes(cfg: &mut web::ServiceConfig, include_browser: bool) {
     .service(web::resource("/configuration").route(web::get().to(get_configuration)))
     .service(web::resource("/device").route(web::get().to(get_device_info)))
     .service(web::resource("/home/stats").route(web::get().to(get_home_stats)))
+    .configure(prompt_templates::configure_prompt_template_routes)
+    .configure(secrets::configure_secret_routes)
     // Voice streaming endpoints - TODO: Implement after fixing compilation issues
     // .service(web::resource("/voice/stream").route(web::get().to(voice_stream_handler)));
     // Authentication endpoints

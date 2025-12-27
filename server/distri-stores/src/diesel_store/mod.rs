@@ -29,8 +29,9 @@ use distri_types::auth::{AuthError, AuthSecret, AuthSession, OAuth2State, ToolAu
 use distri_types::configuration::PluginArtifact;
 use distri_types::stores::{
     AgentStore, BrowserSessionStore, ExternalToolCallsStore, FilterMessageType, MemoryStore,
-    MessageFilter, PluginCatalogStore, PluginMetadataRecord, ScratchpadStore, SessionMemory,
-    SessionStore, TaskStore, ThreadStore,
+    MessageFilter, NewPromptTemplate, NewSecret, PluginCatalogStore, PluginMetadataRecord,
+    PromptTemplateRecord, PromptTemplateStore, ScratchpadStore, SecretRecord, SecretStore,
+    SessionMemory, SessionStore, TaskStore, ThreadStore, UpdatePromptTemplate,
 };
 use distri_types::{
     AgentError, AgentEvent, AgentEventType, CreateThreadRequest, Message, ScratchpadEntry, Task,
@@ -2453,6 +2454,405 @@ where
 
     pub fn pool(&self) -> DieselStorePool<Conn> {
         self.pool.clone()
+    }
+
+    pub fn prompt_template_store(&self) -> DieselPromptTemplateStore<Conn> {
+        DieselPromptTemplateStore::new(self.pool.clone_store_pool())
+    }
+
+    pub fn secret_store(&self) -> DieselSecretStore<Conn> {
+        DieselSecretStore::new(self.pool.clone_store_pool())
+    }
+}
+
+// ========== Prompt Template Store ==========
+
+// ========== Secret Store ==========
+
+fn to_secret_record(model: SecretModel) -> SecretRecord {
+    SecretRecord {
+        id: model.id,
+        key: model.key,
+        value: model.value,
+        created_at: from_naive(model.created_at),
+        updated_at: from_naive(model.updated_at),
+    }
+}
+
+pub struct DieselSecretStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    pool: DieselStorePool<Conn>,
+}
+
+impl<Conn> DieselSecretStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    pub fn new(pool: DieselStorePool<Conn>) -> Self {
+        Self { pool }
+    }
+
+    async fn conn(&self) -> Result<DieselConn<'_, Conn>> {
+        self.pool
+            .get()
+            .await
+            .context("failed to acquire diesel connection for secrets")
+    }
+}
+
+#[async_trait]
+impl<Conn> SecretStore for DieselSecretStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    async fn list(&self) -> Result<Vec<SecretRecord>> {
+        use crate::schema::secrets::dsl::*;
+        let mut conn = self.conn().await?;
+        let results = secrets
+            .select(SecretModel::as_select())
+            .load::<SecretModel>(&mut conn)
+            .await?;
+        Ok(results.into_iter().map(to_secret_record).collect())
+    }
+
+    async fn get(&self, secret_key: &str) -> Result<Option<SecretRecord>> {
+        use crate::schema::secrets::dsl::*;
+        let mut conn = self.conn().await?;
+        let result = secrets
+            .filter(key.eq(secret_key))
+            .select(SecretModel::as_select())
+            .first::<SecretModel>(&mut conn)
+            .await
+            .optional()?;
+        Ok(result.map(to_secret_record))
+    }
+
+    async fn create(&self, secret: NewSecret) -> Result<SecretRecord> {
+        use crate::schema::secrets::dsl::*;
+        let mut conn = self.conn().await?;
+        let now = Utc::now().naive_utc();
+        let new_id = Uuid::new_v4().to_string();
+
+        let model = NewSecretModel {
+            id: &new_id,
+            key: &secret.key,
+            value: &secret.value,
+            created_at: now,
+            updated_at: now,
+        };
+
+        diesel::insert_into(secrets)
+            .values(&model)
+            .execute(&mut conn)
+            .await?;
+
+        let result = secrets
+            .filter(id.eq(&new_id))
+            .select(SecretModel::as_select())
+            .first::<SecretModel>(&mut conn)
+            .await?;
+
+        Ok(to_secret_record(result))
+    }
+
+    async fn update(&self, secret_key: &str, new_value: &str) -> Result<SecretRecord> {
+        use crate::schema::secrets::dsl::*;
+        let mut conn = self.conn().await?;
+        let now = Utc::now().naive_utc();
+
+        diesel::update(secrets.filter(key.eq(secret_key)))
+            .set((value.eq(new_value), updated_at.eq(now)))
+            .execute(&mut conn)
+            .await?;
+
+        let result = secrets
+            .filter(key.eq(secret_key))
+            .select(SecretModel::as_select())
+            .first::<SecretModel>(&mut conn)
+            .await?;
+
+        Ok(to_secret_record(result))
+    }
+
+    async fn delete(&self, secret_key: &str) -> Result<()> {
+        use crate::schema::secrets::dsl::*;
+        let mut conn = self.conn().await?;
+        diesel::delete(secrets.filter(key.eq(secret_key)))
+            .execute(&mut conn)
+            .await?;
+        Ok(())
+    }
+}
+
+fn to_prompt_template_record(model: PromptTemplateModel) -> PromptTemplateRecord {
+    PromptTemplateRecord {
+        id: model.id,
+        name: model.name,
+        template: model.template,
+        description: model.description,
+        version: model.version,
+        is_system: model.is_system != 0,
+        created_at: from_naive(model.created_at),
+        updated_at: from_naive(model.updated_at),
+    }
+}
+
+#[derive(Clone)]
+pub struct DieselPromptTemplateStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    pool: DieselStorePool<Conn>,
+}
+
+impl<Conn> DieselPromptTemplateStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    pub fn new(pool: DieselStorePool<Conn>) -> Self {
+        Self { pool }
+    }
+
+    async fn conn(&self) -> Result<DieselConn<'_, Conn>> {
+        self.pool
+            .get()
+            .await
+            .context("failed to acquire diesel connection for prompt templates")
+    }
+}
+
+#[async_trait]
+impl<Conn> PromptTemplateStore for DieselPromptTemplateStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    async fn list(&self) -> Result<Vec<PromptTemplateRecord>> {
+        use crate::schema::prompt_templates::dsl::*;
+        let mut conn = self.conn().await?;
+        let results = prompt_templates
+            .select(PromptTemplateModel::as_select())
+            .load::<PromptTemplateModel>(&mut conn)
+            .await?;
+        Ok(results.into_iter().map(to_prompt_template_record).collect())
+    }
+
+    async fn get(&self, template_id: &str) -> Result<Option<PromptTemplateRecord>> {
+        use crate::schema::prompt_templates::dsl::*;
+        let mut conn = self.conn().await?;
+        let result = prompt_templates
+            .filter(id.eq(template_id))
+            .select(PromptTemplateModel::as_select())
+            .first::<PromptTemplateModel>(&mut conn)
+            .await
+            .optional()?;
+        Ok(result.map(to_prompt_template_record))
+    }
+
+    async fn create(&self, template_data: NewPromptTemplate) -> Result<PromptTemplateRecord> {
+        use crate::schema::prompt_templates::dsl::*;
+        let mut conn = self.conn().await?;
+        let now = Utc::now().naive_utc();
+        let new_id = Uuid::new_v4().to_string();
+
+        let model = NewPromptTemplateModel {
+            id: &new_id,
+            name: &template_data.name,
+            template: &template_data.template,
+            description: template_data.description.as_deref(),
+            version: template_data.version.as_deref(),
+            is_system: if template_data.is_system { 1 } else { 0 },
+            created_at: now,
+            updated_at: now,
+        };
+
+        diesel::insert_into(prompt_templates)
+            .values(&model)
+            .execute(&mut conn)
+            .await?;
+
+        let result = prompt_templates
+            .filter(id.eq(&new_id))
+            .select(PromptTemplateModel::as_select())
+            .first::<PromptTemplateModel>(&mut conn)
+            .await?;
+
+        Ok(to_prompt_template_record(result))
+    }
+
+    async fn update(
+        &self,
+        template_id: &str,
+        update_data: UpdatePromptTemplate,
+    ) -> Result<PromptTemplateRecord> {
+        use crate::schema::prompt_templates::dsl::*;
+        let mut conn = self.conn().await?;
+        let now = Utc::now().naive_utc();
+
+        // Check if it's a system template
+        let existing = prompt_templates
+            .filter(id.eq(template_id))
+            .select(PromptTemplateModel::as_select())
+            .first::<PromptTemplateModel>(&mut conn)
+            .await?;
+
+        if existing.is_system != 0 {
+            return Err(anyhow!("system templates cannot be modified"));
+        }
+
+        diesel::update(prompt_templates.filter(id.eq(template_id)))
+            .set((
+                name.eq(&update_data.name),
+                template.eq(&update_data.template),
+                description.eq(update_data.description.as_deref()),
+                updated_at.eq(now),
+            ))
+            .execute(&mut conn)
+            .await?;
+
+        let result = prompt_templates
+            .filter(id.eq(template_id))
+            .select(PromptTemplateModel::as_select())
+            .first::<PromptTemplateModel>(&mut conn)
+            .await?;
+
+        Ok(to_prompt_template_record(result))
+    }
+
+    async fn delete(&self, template_id: &str) -> Result<()> {
+        use crate::schema::prompt_templates::dsl::*;
+        let mut conn = self.conn().await?;
+
+        // Check if it's a system template
+        let existing = prompt_templates
+            .filter(id.eq(template_id))
+            .select(PromptTemplateModel::as_select())
+            .first::<PromptTemplateModel>(&mut conn)
+            .await
+            .optional()?;
+
+        if let Some(record) = existing {
+            if record.is_system != 0 {
+                return Err(anyhow!("system templates cannot be deleted"));
+            }
+
+            diesel::delete(prompt_templates.filter(id.eq(template_id)))
+                .execute(&mut conn)
+                .await?;
+        }
+
+        Ok(())
+    }
+
+    async fn clone_template(&self, template_id: &str) -> Result<PromptTemplateRecord> {
+        use crate::schema::prompt_templates::dsl::*;
+        let mut conn = self.conn().await?;
+
+        // Fetch the source template
+        let source_tpl = prompt_templates
+            .filter(id.eq(template_id))
+            .select(PromptTemplateModel::as_select())
+            .first::<PromptTemplateModel>(&mut conn)
+            .await?;
+
+        let now = Utc::now().naive_utc();
+        let new_id = uuid::Uuid::new_v4().to_string();
+        let new_name = format!("Clone of {}", source_tpl.name);
+
+        let new_model = NewPromptTemplateModel {
+            id: &new_id,
+            name: &new_name,
+            template: &source_tpl.template,
+            description: source_tpl.description.as_deref(),
+            version: source_tpl.version.as_deref(),
+            is_system: 0,
+            created_at: now,
+            updated_at: now,
+        };
+
+        diesel::insert_into(prompt_templates)
+            .values(&new_model)
+            .execute(&mut conn)
+            .await?;
+
+        let result = prompt_templates
+            .filter(id.eq(&new_id))
+            .select(PromptTemplateModel::as_select())
+            .first::<PromptTemplateModel>(&mut conn)
+            .await?;
+
+        Ok(to_prompt_template_record(result))
+    }
+
+    async fn sync_system_templates(&self, templates_to_sync: Vec<NewPromptTemplate>) -> Result<()> {
+        use crate::schema::prompt_templates::dsl::*;
+        let mut conn = self.conn().await?;
+        let now = Utc::now().naive_utc();
+
+        for tpl in templates_to_sync {
+            // Check if exists by name (system templates are identified by name for syncing)
+            let existing = prompt_templates
+                .filter(name.eq(&tpl.name))
+                .filter(is_system.eq(1))
+                .select(PromptTemplateModel::as_select())
+                .first::<PromptTemplateModel>(&mut conn)
+                .await
+                .optional()?;
+
+            if let Some(existing_model) = existing {
+                // Update if content changed
+                if existing_model.template != tpl.template {
+                    diesel::update(prompt_templates.filter(id.eq(existing_model.id)))
+                        .set((
+                            template.eq(&tpl.template),
+                            description.eq(tpl.description.as_deref()),
+                            version.eq(tpl.version.as_deref()),
+                            updated_at.eq(now),
+                        ))
+                        .execute(&mut conn)
+                        .await?;
+                }
+            } else {
+                // Create new
+                let new_id = Uuid::new_v4().to_string();
+                let model = NewPromptTemplateModel {
+                    id: &new_id,
+                    name: &tpl.name,
+                    template: &tpl.template,
+                    description: tpl.description.as_deref(),
+                    version: tpl.version.as_deref(),
+                    is_system: 1,
+                    created_at: now,
+                    updated_at: now,
+                };
+
+                diesel::insert_into(prompt_templates)
+                    .values(&model)
+                    .execute(&mut conn)
+                    .await?;
+            }
+        }
+
+        Ok(())
     }
 }
 

@@ -252,6 +252,22 @@ pub enum ToolCallFormat {
     None,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, Default)]
+pub struct UserMessageOverrides {
+    /// The parts to include in the user message
+    pub parts: Vec<PartDefinition>,
+    /// If true, artifacts will be expanded to their actual content (e.g., image artifacts become Part::Image)
+    #[serde(default)]
+    pub include_artifacts: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema)]
+#[serde(tag = "type", content = "source", rename_all = "lowercase")]
+pub enum PartDefinition {
+    Template(String),   // Prompt Template Key
+    SessionKey(String), // SessionKey
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 #[serde(deny_unknown_fields)]
 pub struct LlmDefinition {
@@ -396,6 +412,10 @@ pub struct StandardDefinition {
     /// Optional hook names to attach to this agent
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub hooks: Vec<String>,
+ 
+    /// Custom user message construction (dynamic prompting)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_message_overrides: Option<UserMessageOverrides>,
 }
 fn default_append_default_instructions() -> Option<bool> {
     Some(true)

@@ -8,6 +8,7 @@ const AgentsPage = () => {
     <AgentsHome
       showDesignerChat={false}
       allowInlineCreator={false}
+      onSelectAgent={(agent) => navigate(`/home/details?id=${encodeURIComponent(agent.id)}`)}
       onRequestCreateAgent={() => navigate('/home/new')}
     />
   )
