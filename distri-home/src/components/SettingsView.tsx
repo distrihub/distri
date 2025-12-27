@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { ConfigurationPanel } from '@distri/react';
-import { useDistriHomeConfig } from '../DistriHomeProvider';
+import { useDistriHomeConfig, useDistriHomeNavigate } from '../DistriHomeProvider';
 import { useApiKeys } from '../hooks/useApiKeys';
-import { CreditCard, KeyRound, Settings as SettingsIcon } from 'lucide-react';
+import { CreditCard, KeyRound, Settings as SettingsIcon, LockIcon } from 'lucide-react';
 
 export interface SettingsViewProps {
   /**
@@ -12,11 +12,11 @@ export interface SettingsViewProps {
   /**
    * Active section (tab)
    */
-  activeSection?: 'configuration' | 'account' | 'api-keys';
+  activeSection?: 'configuration' | 'account' | 'api-keys' | 'secrets';
   /**
    * Callback when section changes
    */
-  onSectionChange?: (section: 'configuration' | 'account' | 'api-keys') => void;
+  onSectionChange?: (section: 'configuration' | 'account' | 'api-keys' | 'secrets') => void;
 }
 
 export function SettingsView({
@@ -25,6 +25,7 @@ export function SettingsView({
   onSectionChange,
 }: SettingsViewProps) {
   const { enableApiKeys, enableAccountBilling } = useDistriHomeConfig();
+  const navigate = useDistriHomeNavigate();
 
   // Use the useApiKeys hook for API key management
   const {
@@ -36,7 +37,7 @@ export function SettingsView({
   } = useApiKeys();
 
   const [internalActiveSection, setInternalActiveSection] = useState<
-    'configuration' | 'account' | 'api-keys'
+    'configuration' | 'account' | 'api-keys' | 'secrets'
   >('configuration');
 
   const [label, setLabel] = useState('');
@@ -45,15 +46,16 @@ export function SettingsView({
   const [actionError, setActionError] = useState<string | null>(null);
 
   const activeSection = controlledActiveSection ?? internalActiveSection;
-  const setActiveSection = (section: 'configuration' | 'account' | 'api-keys') => {
+  const setActiveSection = (section: 'configuration' | 'account' | 'api-keys' | 'secrets') => {
     setInternalActiveSection(section);
     onSectionChange?.(section);
   };
 
   const tabs = [
-    { id: 'configuration' as const, label: 'Configuration', icon: SettingsIcon },
-    ...(enableAccountBilling !== false ? [{ id: 'account' as const, label: 'Account & billing', icon: CreditCard }] : []),
-    ...(enableApiKeys ? [{ id: 'api-keys' as const, label: 'API keys', icon: KeyRound }] : []),
+    { id: 'configuration' as const, label: 'Configuration', icon: SettingsIcon, href: '/settings' },
+    ...(enableAccountBilling !== false ? [{ id: 'account' as const, label: 'Account & billing', icon: CreditCard, href: '/settings/account' }] : []),
+    { id: 'secrets' as const, label: 'Secrets', icon: LockIcon, href: '/settings/secrets' },
+    ...(enableApiKeys ? [{ id: 'api-keys' as const, label: 'API keys', icon: KeyRound, href: '/settings/api-keys' }] : []),
   ];
 
   const handleCreate = async (e: React.FormEvent) => {
@@ -98,11 +100,16 @@ export function SettingsView({
 
         <div className="border-b border-border/60">
           <nav className="-mb-px flex flex-wrap gap-6 text-sm font-medium text-muted-foreground">
-            {tabs.map(({ id, label: tabLabel, icon: Icon }) => (
+            {tabs.map(({ id, label: tabLabel, icon: Icon, href }) => (
               <button
                 key={id}
                 type="button"
-                onClick={() => setActiveSection(id)}
+                onClick={() => {
+                  setActiveSection(id);
+                  if (href) {
+                    navigate(href);
+                  }
+                }}
                 className={`flex items-center gap-2 border-b-2 px-1 py-3 transition ${activeSection === id
                   ? 'border-primary text-primary'
                   : 'border-transparent hover:border-border/80 hover:text-foreground'

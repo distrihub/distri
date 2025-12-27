@@ -337,3 +337,99 @@ pub struct PluginCatalogChangeset<'a> {
     pub artifact_json: &'a str,
     pub updated_at: NaiveDateTime,
 }
+
+// ========== Prompt Templates ==========
+
+#[derive(Debug, Clone, Queryable, Identifiable, Selectable)]
+#[diesel(table_name = prompt_templates)]
+pub struct PromptTemplateModel {
+    pub id: String,
+    pub name: String,
+    pub template: String,
+    pub description: Option<String>,
+    pub version: Option<String>,
+    pub source: String,
+    pub is_system: i32,
+    pub created_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
+}
+
+#[derive(Debug, Clone, Insertable)]
+#[diesel(table_name = prompt_templates)]
+pub struct NewPromptTemplateModel<'a> {
+    pub id: &'a str,
+    pub name: &'a str,
+    pub template: &'a str,
+    pub description: Option<&'a str>,
+    pub version: Option<&'a str>,
+    pub source: &'a str,
+    pub is_system: i32,
+    pub created_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
+}
+
+#[derive(Debug, Clone, AsChangeset)]
+#[diesel(table_name = prompt_templates)]
+pub struct PromptTemplateChangeset<'a> {
+    pub name: &'a str,
+    pub template: &'a str,
+    pub description: Option<&'a str>,
+    pub version: Option<&'a str>,
+    pub updated_at: NaiveDateTime,
+}
+
+// ========== Server Settings ==========
+
+#[derive(Debug, Clone, Queryable, Identifiable, Selectable)]
+#[diesel(table_name = server_settings)]
+pub struct ServerSettingsModel {
+    pub id: String,
+    pub config_json: String,
+    pub created_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
+}
+
+#[derive(Debug, Clone, Insertable)]
+#[diesel(table_name = server_settings)]
+pub struct NewServerSettingsModel<'a> {
+    pub id: &'a str,
+    pub config_json: &'a str,
+    pub created_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
+}
+
+#[derive(Debug, Clone, AsChangeset)]
+#[diesel(table_name = server_settings)]
+pub struct ServerSettingsChangeset<'a> {
+    pub config_json: &'a str,
+    pub updated_at: NaiveDateTime,
+}
+
+// ========== Secrets ==========
+
+#[derive(Debug, Clone, Queryable, Identifiable, Selectable)]
+#[diesel(table_name = secrets)]
+pub struct SecretModel {
+    pub id: String,
+    pub key: String,
+    pub value: String,
+    pub created_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
+}
+
+#[derive(Debug, Clone, Insertable)]
+#[diesel(table_name = secrets)]
+pub struct NewSecretModel<'a> {
+    pub id: &'a str,
+    pub key: &'a str,
+    pub value: &'a str,
+    pub created_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
+}
+
+#[derive(Debug, Clone, AsChangeset)]
+#[diesel(table_name = secrets)]
+pub struct SecretChangeset<'a> {
+    pub value: &'a str,
+    pub updated_at: NaiveDateTime,
+}

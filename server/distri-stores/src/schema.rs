@@ -172,6 +172,46 @@ diesel::table! {
     }
 }
 
+diesel::table! {
+    use diesel::sql_types::*;
+
+    prompt_templates (id) {
+        id -> Text,
+        name -> Text,
+        template -> Text,
+        description -> Nullable<Text>,
+        version -> Nullable<Text>,
+        source -> Text,
+        is_system -> Integer,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+    }
+}
+
+diesel::table! {
+    use diesel::sql_types::*;
+    use crate::schema::types::Jsonb;
+
+    server_settings (id) {
+        id -> Text,
+        config_json -> Jsonb,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+    }
+}
+
+diesel::table! {
+    use diesel::sql_types::*;
+
+    secrets (id) {
+        id -> Text,
+        key -> Text,
+        value -> Text,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+    }
+}
+
 diesel::joinable!(task_messages -> tasks (task_id));
 diesel::joinable!(tasks -> threads (thread_id));
 diesel::joinable!(external_tool_call_events -> external_tool_calls (tool_call_id));
@@ -191,6 +231,9 @@ diesel::allow_tables_to_appear_in_same_query!(
     external_tool_call_events,
     plugin_catalog,
     browser_sessions,
+    prompt_templates,
+    server_settings,
+    secrets,
 );
 
 diesel::table! {
