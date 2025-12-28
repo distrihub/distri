@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, Outlet, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { DistriProvider, ThemeProvider, useDistri } from '@distri/react';
-import { DistriHomeProvider, Home, AgentDetails, ThreadsView, SettingsView, PromptTemplatesView, SecretsView } from '@distri/home';
+import { DistriHomeProvider, Home, AgentDetails, ThreadsView, SettingsView, PromptTemplatesView } from '@distri/home';
 import { TokenProvider, useInitialization } from '@/components/TokenProvider';
 import { ThreadProvider } from '@/components/ThreadContext';
 import { SessionProvider, useSession } from '@/components/SessionProvider';
@@ -69,7 +69,13 @@ function DistriHomeWrapper() {
   return (
     <DistriHomeProvider
       client={client}
-      config={{ enableApiKeys: false, enableAccountBilling: false }} // OSS version
+      config={{
+        enableApiKeys: false,
+        enableAccountBilling: false,
+        navigationPaths: {
+          agentDetails: (id: string) => `details?id=${encodeURIComponent(id)}`
+        }
+      }} // OSS version
       onNavigate={navigate}
     >
       <Outlet />
@@ -95,7 +101,7 @@ function App() {
           <SessionProvider>
             <Routes>
               {/* Root redirect */}
-              <Route path="/" element={<Navigate to="home" replace />} />
+              <Route path="/" element={<Navigate to="/home" replace />} />
 
               {/* Auth routes */}
               <Route path="auth" element={<AuthPage />} />
@@ -124,10 +130,12 @@ function App() {
                   <Route path="chat" element={<ChatPage />} />
                 </Route>
                 <Route path="workspace" element={<FilesPage />} />
+
               </Route>
 
+              <Route path="*" element={<Navigate to="/home" replace />} />
               {/* Catch all */}
-              <Route path="*" element={<Navigate to="home" replace />} />
+
             </Routes>
 
             <Toaster position="top-right" richColors closeButton />

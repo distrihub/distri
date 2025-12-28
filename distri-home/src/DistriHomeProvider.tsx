@@ -15,6 +15,18 @@ export interface DistriHomeConfig {
    * @default true
    */
   enableAccountBilling?: boolean;
+
+  /**
+   * Custom navigation path generators.
+   * Use this to customize internal links (e.g. agent details).
+   */
+  navigationPaths?: {
+    /**
+     * Generate path for agent details page
+     * @default "agents/<id>"
+     */
+    agentDetails?: (agentId: string) => string;
+  };
 }
 
 export interface NavigateFunction {
