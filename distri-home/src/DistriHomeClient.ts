@@ -257,6 +257,36 @@ export class DistriHomeClient {
 
     return await response.json();
   }
+
+  // ---- Sessions ----
+
+  /**
+   * List sessions
+   */
+  async listSessions(options?: {
+    threadId?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<SessionSummary[]> {
+    const params = new URLSearchParams();
+    if (options?.threadId) {
+      params.append('thread_id', options.threadId);
+    }
+    if (options?.limit) {
+      params.append('limit', options.limit.toString());
+    }
+    if (options?.offset) {
+      params.append('offset', options.offset.toString());
+    }
+
+    const response = await this.client.fetch(`/sessions?${params.toString()}`);
+
+    if (!response.ok) {
+      throw new Error(`Failed to list sessions: ${response.statusText}`);
+    }
+
+    return await response.json();
+  }
 }
 
 // Types for secrets and prompt templates
@@ -276,5 +306,12 @@ export interface PromptTemplate {
   version?: string;
   is_system?: boolean;
   created_at?: string;
+  updated_at?: string;
+}
+
+export interface SessionSummary {
+  session_id: string;
+  keys: string[];
+  key_count: number;
   updated_at?: string;
 }

@@ -127,6 +127,8 @@ pub trait SessionStore: Send + Sync + std::fmt::Debug {
     async fn list_sessions(
         &self,
         namespace: Option<&str>,
+        limit: Option<usize>,
+        offset: Option<usize>,
     ) -> anyhow::Result<Vec<SessionSummary>>;
 }
 #[async_trait::async_trait]

@@ -88,7 +88,7 @@ fn configure_routes(cfg: &mut web::ServiceConfig, include_browser: bool) {
     .service(web::resource("/schema/agent").route(web::get().to(get_agent_schema))) // Note: External tools and approvals are now handled via message metadata
     // Workspace file endpoints
     .service(web::scope("/files").configure(files::configure_file_routes))
-    .service(web::scope("/session").configure(session::configure_session_routes))
+    .service(web::scope("/sessions").configure(session::configure_session_routes))
     // Artifact endpoints (session storage for thread/task artifacts)
     .service(web::scope("/artifacts").configure(artifacts::configure_artifact_routes))
     .service(web::resource("/build").route(web::post().to(build_workspace)))

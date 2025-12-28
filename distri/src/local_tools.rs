@@ -74,19 +74,13 @@ impl SessionStore for LocalSessionStore {
     async fn list_sessions(
         &self,
         namespace: Option<&str>,
+        limit: Option<usize>,
+        offset: Option<usize>,
     ) -> anyhow::Result<Vec<SessionSummary>> {
         let guard = self.data.read().await;
-        let iter: Box<dyn Iterator<Item = (&String, &HashMap<String, serde_json::Value>)>> =
-            if let Some(namespace) = namespace {
-                guard
-                    .get_key_value(namespace)
-                    .map(|(key, value)| Box::new(std::iter::once((key, value))))
-                    .unwrap_or_else(|| Box::new(std::iter::empty()))
-            } else {
-                Box::new(guard.iter())
-            };
-
-        let sessions = iter
+        
+        let mut sessions: Vec<SessionSummary> = guard.iter()
+            .filter(|(k, _)| namespace.map_or(true, |n| *k == n))
             .map(|(session_id, values)| SessionSummary {
                 session_id: session_id.clone(),
                 keys: values.keys().cloned().collect(),
@@ -95,7 +89,17 @@ impl SessionStore for LocalSessionStore {
             })
             .collect();
 
-        Ok(sessions)
+        sessions.sort_by(|a, b| a.session_id.cmp(&b.session_id));
+
+        let offset = offset.unwrap_or(0);
+        let limit = limit.unwrap_or(50);
+
+        if offset >= sessions.len() {
+            return Ok(Vec::new());
+        }
+
+        let end = (offset + limit).min(sessions.len());
+        Ok(sessions[offset..end].to_vec())
     }
 }
 
