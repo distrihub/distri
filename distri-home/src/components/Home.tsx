@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useAgentDefinitions } from '@distri/react';
-import { useDistriHomeNavigate } from '../DistriHomeProvider';
+import { useDistriHomeNavigate, useDistriHomeConfig } from '../DistriHomeProvider';
 import { useHomeStats } from '../hooks/useHomeStats';
 import { HomeStatsThread } from '../DistriHomeClient';
 import {
@@ -34,6 +34,7 @@ export interface HomeProps {
 
 export function Home({ onNewAgent, renderNewAgentHelp, className }: HomeProps) {
   const navigate = useDistriHomeNavigate();
+  const config = useDistriHomeConfig();
   const { stats, loading: statsLoading, error: statsError, refetch } = useHomeStats();
   const { agents } = useAgentDefinitions();
   const [refreshing, setRefreshing] = useState(false);
@@ -186,7 +187,13 @@ export function Home({ onNewAgent, renderNewAgentHelp, className }: HomeProps) {
                 ) : mostActiveAgent?.id ? (
                   <button
                     type="button"
-                    onClick={() => navigate(`agents/${encodeURIComponent(mostActiveAgent.id)}`)}
+                    onClick={() => {
+                      const getPath = config.navigationPaths?.agentDetails;
+                      const path = getPath
+                        ? getPath(mostActiveAgent.id)
+                        : `agents/${encodeURIComponent(mostActiveAgent.id)}`;
+                      navigate(path);
+                    }}
                     className="font-medium text-primary transition hover:text-primary/80"
                   >
                     {mostActiveLabel}
