@@ -1,7 +1,7 @@
 import { useState, useEffect, KeyboardEvent } from 'react';
 import { useDistriHome } from '../DistriHomeProvider';
 import { SessionSummary } from '../DistriHomeClient';
-import { Loader2, ArrowLeft, ArrowRight, Search, Clock } from 'lucide-react';
+import { Loader2, ArrowLeft, ArrowRight, Search, Clock, X, Database } from 'lucide-react';
 
 export interface SessionsViewProps {
   className?: string;
@@ -34,6 +34,30 @@ export function SessionsView({ className }: SessionsViewProps) {
   const [offset, setOffset] = useState(0);
   const [filterInput, setFilterInput] = useState('');
   const [activeFilter, setActiveFilter] = useState('');
+
+  // Details View
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+  const [sessionDetails, setSessionDetails] = useState<Record<string, any> | null>(null);
+  const [loadingDetails, setLoadingDetails] = useState(false);
+
+  useEffect(() => {
+    if (!selectedSessionId || !client) {
+      setSessionDetails(null);
+      return;
+    }
+    const loadDetails = async () => {
+      setLoadingDetails(true);
+      try {
+        const data = await client.getSessionValues(selectedSessionId);
+        setSessionDetails(data);
+      } catch (e) {
+        console.error("Failed to load session details", e);
+      } finally {
+        setLoadingDetails(false);
+      }
+    };
+    loadDetails();
+  }, [selectedSessionId, client]);
 
   const fetchSessions = async () => {
     if (!client) return;
@@ -139,7 +163,8 @@ export function SessionsView({ className }: SessionsViewProps) {
                 sessions.map((session) => (
                   <tr
                     key={session.session_id}
-                    className="border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted"
+                    className="border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted cursor-pointer"
+                    onClick={() => setSelectedSessionId(session.session_id)}
                   >
                     <td className="p-4 align-middle font-mono text-xs">
                       {session.session_id}
@@ -201,6 +226,57 @@ export function SessionsView({ className }: SessionsViewProps) {
           </button>
         </div>
       </div>
+
+      {selectedSessionId && (
+        <div className="fixed inset-0 z-50 flex justify-end bg-background/80 backdrop-blur-sm" onClick={() => setSelectedSessionId(null)}>
+          <div
+            className="w-full max-w-2xl border-l bg-background p-6 shadow-2xl overflow-y-auto animate-in slide-in-from-right duration-200"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-6">
+              <div>
+                <h2 className="text-lg font-semibold flex items-center gap-2">
+                  <Database className="h-5 w-5" />
+                  Session Details
+                </h2>
+                <p className="text-sm text-muted-foreground font-mono mt-1">{selectedSessionId}</p>
+              </div>
+              <button
+                onClick={() => setSelectedSessionId(null)}
+                className="rounded-full p-2 hover:bg-muted transition-colors"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {loadingDetails ? (
+              <div className="flex items-center justify-center h-40">
+                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+              </div>
+            ) : sessionDetails ? (
+              <div className="space-y-6">
+                {Object.entries(sessionDetails).map(([key, value]) => (
+                  <div key={key} className="space-y-2">
+                    <h3 className="text-sm font-medium text-foreground bg-muted/40 px-2 py-1 rounded inline-block">
+                      {key}
+                    </h3>
+                    <div className="rounded-md border bg-muted/20 p-4 overflow-x-auto">
+                      <pre className="text-xs font-mono whitespace-pre-wrap break-all">
+                        {typeof value === 'string' ? value : JSON.stringify(value, null, 2)}
+                      </pre>
+                    </div>
+                  </div>
+                ))}
+                {Object.keys(sessionDetails).length === 0 && (
+                  <div className="text-muted-foreground text-center py-10">No values stored in this session.</div>
+                )}
+              </div>
+            ) : (
+              <div className="text-destructive">Failed to load details.</div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

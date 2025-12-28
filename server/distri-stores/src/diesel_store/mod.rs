@@ -11,7 +11,6 @@ use async_trait::async_trait;
 use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
 use dashmap::DashMap;
 use diesel::prelude::*;
-use distri_types::stores::SessionSummary;
 use diesel::query_builder::QueryFragment;
 use diesel::result::{DatabaseErrorKind, Error as DieselError};
 use diesel_async::AsyncConnectionCore;
@@ -28,6 +27,7 @@ use diesel_async::sync_connection_wrapper::SyncConnectionWrapper;
 use diesel_migrations::{EmbeddedMigrations, embed_migrations};
 use distri_types::auth::{AuthError, AuthSecret, AuthSession, OAuth2State, ToolAuthStore};
 use distri_types::configuration::PluginArtifact;
+use distri_types::stores::SessionSummary;
 use distri_types::stores::{
     AgentStore, BrowserSessionStore, ExternalToolCallsStore, FilterMessageType, MemoryStore,
     MessageFilter, NewPromptTemplate, NewSecret, PluginCatalogStore, PluginMetadataRecord,
@@ -1443,7 +1443,7 @@ where
         offset: Option<usize>,
     ) -> Result<Vec<SessionSummary>> {
         let mut connection = self.conn().await?;
-        
+
         // 1. Get distinct thread_ids (paginated)
         let mut thread_query = session_entries::table
             .select(session_entries::thread_id)
@@ -1507,7 +1507,6 @@ where
         Ok(result)
     }
 }
-
 
 #[derive(Clone)]
 pub struct DieselMemoryStore<Conn>
