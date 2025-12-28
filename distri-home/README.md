@@ -41,12 +41,6 @@ function App() {
 - **ThreadsView** - Thread list with search and delete functionality
 - **SettingsView** - Settings page with optional API keys management
 
-## Configuration
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `enableApiKeys` | boolean | true | Show API keys section in settings |
-
 ## Peer Dependencies
 
 - `@distri/core`

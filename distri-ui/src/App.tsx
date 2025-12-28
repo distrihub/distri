@@ -70,8 +70,6 @@ function DistriHomeWrapper() {
     <DistriHomeProvider
       client={client}
       config={{
-        enableApiKeys: false,
-        enableAccountBilling: false,
         navigationPaths: {
           agentDetails: (id: string) => `details?id=${encodeURIComponent(id)}`
         }
