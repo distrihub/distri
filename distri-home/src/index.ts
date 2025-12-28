@@ -21,6 +21,6 @@ export { SecretsView } from './components/SecretsView';
 export type { HomeProps } from './components/Home';
 export type { AgentDetailsProps } from './components/AgentDetails';
 export type { ThreadsViewProps } from './components/ThreadsView';
-export type { SettingsViewProps } from './components/SettingsView';
+export type { SettingsViewProps, SettingsSection } from './components/SettingsView';
 export type { SecretsViewProps } from './components/SecretsView';
 export { PromptTemplatesView } from './components/PromptTemplatesView';

@@ -5,7 +5,6 @@ CREATE TABLE IF NOT EXISTS prompt_templates (
     template TEXT NOT NULL,
     description TEXT,
     version TEXT,
-    source TEXT NOT NULL DEFAULT 'user',
     is_system INTEGER NOT NULL DEFAULT 0,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
