@@ -11,6 +11,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
 use dashmap::DashMap;
 use diesel::prelude::*;
+use distri_types::stores::SessionSummary;
 use diesel::query_builder::QueryFragment;
 use diesel::result::{DatabaseErrorKind, Error as DieselError};
 use diesel_async::AsyncConnectionCore;
@@ -1435,44 +1436,78 @@ where
         Ok(map)
     }
 
-    async fn list_sessions(&self, namespace: Option<&str>) -> Result<Vec<SessionSummary>> {
+    async fn list_sessions(
+        &self,
+        namespace: Option<&str>,
+        limit: Option<usize>,
+        offset: Option<usize>,
+    ) -> Result<Vec<SessionSummary>> {
         let mut connection = self.conn().await?;
-        let mut query = session_entries::table.into_boxed();
-        if let Some(namespace) = namespace {
-            query = query.filter(session_entries::thread_id.eq(namespace));
+        
+        // 1. Get distinct thread_ids (paginated)
+        let mut thread_query = session_entries::table
+            .select(session_entries::thread_id)
+            .distinct()
+            .into_boxed();
+
+        if let Some(ns) = namespace {
+            thread_query = thread_query.filter(session_entries::thread_id.eq(ns));
         }
-        let entries = query
+
+        let thread_ids = thread_query
+            .order(session_entries::updated_at.desc())
+            .limit(limit.unwrap_or(50) as i64)
+            .offset(offset.unwrap_or(0) as i64)
+            .load::<String>(&mut connection)
+            .await
+            .context("failed to list session threads")?;
+
+        if thread_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // 2. Fetch entries for these threads
+        let entries = session_entries::table
+            .filter(session_entries::thread_id.eq_any(&thread_ids))
+            .select(SessionEntryModel::as_select())
             .load::<SessionEntryModel>(&mut connection)
             .await
-            .context("failed to fetch session entries")?;
+            .context("failed to fetch session entries details")?;
 
-        let mut map: HashMap<String, SessionSummary> = HashMap::new();
+        let mut summaries: HashMap<String, SessionSummary> = HashMap::new();
 
-        for entry in entries {
-            let updated_at = DateTime::<Utc>::from_utc(entry.updated_at, Utc);
-            let summary = map
-                .entry(entry.thread_id.clone())
-                .or_insert_with(|| SessionSummary {
-                    session_id: entry.thread_id.clone(),
+        for tid in &thread_ids {
+            summaries.insert(
+                tid.clone(),
+                SessionSummary {
+                    session_id: tid.clone(),
                     keys: Vec::new(),
                     key_count: 0,
-                    updated_at: Some(updated_at),
-                });
+                    updated_at: None,
+                },
+            );
+        }
 
-            summary.keys.push(entry.key.clone());
-            summary.key_count = summary.key_count.saturating_add(1);
-            if let Some(existing) = summary.updated_at {
-                if updated_at > existing {
-                    summary.updated_at = Some(updated_at);
+        for entry in entries {
+            if let Some(summary) = summaries.get_mut(&entry.thread_id) {
+                summary.keys.push(entry.key);
+                summary.key_count += 1;
+                let entry_updated = Utc.from_utc_datetime(&entry.updated_at);
+                if summary.updated_at.map_or(true, |curr| entry_updated > curr) {
+                    summary.updated_at = Some(entry_updated);
                 }
-            } else {
-                summary.updated_at = Some(updated_at);
             }
         }
 
-        Ok(map.into_values().collect())
+        let result = thread_ids
+            .into_iter()
+            .filter_map(|tid| summaries.remove(&tid))
+            .collect();
+
+        Ok(result)
     }
 }
+
 
 #[derive(Clone)]
 pub struct DieselMemoryStore<Conn>

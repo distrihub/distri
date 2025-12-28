@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, Outlet, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { DistriProvider, ThemeProvider, useDistri } from '@distri/react';
-import { DistriHomeProvider, Home, AgentDetails, ThreadsView, SettingsView, PromptTemplatesView } from '@distri/home';
+import { DistriHomeProvider, Home, AgentDetails, ThreadsView, SettingsView, PromptTemplatesView, SessionsView } from '@distri/home';
 import { TokenProvider, useInitialization } from '@/components/TokenProvider';
 import { ThreadProvider } from '@/components/ThreadContext';
 import { SessionProvider, useSession } from '@/components/SessionProvider';
@@ -41,6 +41,10 @@ function AgentDetailsWrapper() {
 
 function ThreadsViewWrapper() {
   return <ThreadsView />;
+}
+
+function SessionsViewWrapper() {
+  return <SessionsView />;
 }
 
 function SettingsViewWrapper() {
@@ -115,6 +119,7 @@ function App() {
                     <Route index element={<HomePageWrapper />} />
                     <Route path="details" element={<AgentDetailsWrapper />} />
                     <Route path="threads" element={<ThreadsViewWrapper />} />
+                    <Route path="sessions" element={<SessionsViewWrapper />} />
                     <Route path="templates" element={<PromptTemplatesViewWrapper />} />
                     <Route path="settings">
                       <Route index element={<SettingsViewWrapper />} />

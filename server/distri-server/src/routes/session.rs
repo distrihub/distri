@@ -57,6 +57,8 @@ pub fn configure_session_routes(cfg: &mut web::ServiceConfig) {
 pub struct ListSessionsQuery {
     pub thread_id: Option<String>,
     pub task_id: Option<String>,
+    pub limit: Option<usize>,
+    pub offset: Option<usize>,
 }
 
 #[derive(Debug, Serialize)]
@@ -76,7 +78,11 @@ async fn list_sessions(
     let sessions = match executor
         .stores
         .session_store
-        .list_sessions(query.thread_id.as_deref())
+        .list_sessions(
+            query.thread_id.as_deref(),
+            query.limit,
+            query.offset,
+        )
         .await
     {
         Ok(sessions) => sessions,
