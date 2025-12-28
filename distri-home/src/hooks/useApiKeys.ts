@@ -18,7 +18,7 @@ export function useApiKeys(): UseApiKeysResult {
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    if (!homeClient || !config.enableApiKeys) {
+    if (!homeClient) {
       setLoading(false);
       return;
     }
@@ -33,7 +33,7 @@ export function useApiKeys(): UseApiKeysResult {
     } finally {
       setLoading(false);
     }
-  }, [homeClient, config.enableApiKeys]);
+  }, [homeClient]);
 
   useEffect(() => {
     void load();
