@@ -18,7 +18,8 @@ import {
   SidebarProvider,
   SidebarSeparator,
 } from '@/components/ui/sidebar'
-import { Settings, Users, Home, MessageSquare, FileText } from 'lucide-react'
+
+import { Settings, Users, Home, MessageSquare, History, FileText } from 'lucide-react'
 import { useAccount } from '@/components/AccountProvider'
 
 const navItems = [
@@ -26,6 +27,7 @@ const navItems = [
   { id: 'agents', label: 'Agents', href: '/home/agents', icon: Users },
   { id: 'threads', label: 'Threads', href: '/home/threads', icon: MessageSquare },
   { id: 'templates', label: 'Templates', href: '/home/templates', icon: FileText },
+  { id: 'sessions', label: 'Sessions', href: '/home/sessions', icon: History },
   { id: 'settings', label: 'Settings', href: '/home/settings', icon: Settings },
 ]
 
@@ -126,10 +128,4 @@ const HomeSidebar = () => {
 
     </Sidebar>
   )
-}
-
-// Threads list removed from sidebar per new design.
-
-interface AccountMenuButtonProps {
-  accountInfo: ReturnType<typeof useAccount>['accountInfo']
 }
