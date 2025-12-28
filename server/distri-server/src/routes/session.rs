@@ -30,6 +30,10 @@ pub struct GetAllValuesResponse {
 
 pub fn configure_session_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(
+        web::resource("")
+            .route(web::get().to(list_sessions)),
+    )
+    .service(
         web::resource("/{session_id}/values")
             .route(web::get().to(get_all_values))
             .route(web::post().to(set_value)),
@@ -47,6 +51,71 @@ pub fn configure_session_routes(cfg: &mut web::ServiceConfig) {
             .route(web::delete().to(delete_additional_parts)),
     )
     .service(web::resource("/{session_id}").route(web::delete().to(clear_session)));
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ListSessionsQuery {
+    pub thread_id: Option<String>,
+    pub task_id: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SessionListItem {
+    pub session_id: String,
+    pub thread_id: String,
+    pub key_count: usize,
+    pub keys: Vec<String>,
+    pub updated_at: Option<String>,
+    pub task_ids: Vec<String>,
+}
+
+async fn list_sessions(
+    query: web::Query<ListSessionsQuery>,
+    executor: web::Data<Arc<AgentOrchestrator>>,
+) -> HttpResponse {
+    let sessions = match executor
+        .stores
+        .session_store
+        .list_sessions(query.thread_id.as_deref())
+        .await
+    {
+        Ok(sessions) => sessions,
+        Err(err) => {
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": format!("Failed to list sessions: {}", err)
+            }))
+        }
+    };
+
+    let mut items = Vec::with_capacity(sessions.len());
+    for session in sessions {
+        let task_ids = match executor
+            .stores
+            .task_store
+            .list_tasks(Some(&session.session_id))
+            .await
+        {
+            Ok(tasks) => tasks.into_iter().map(|task| task.id).collect(),
+            Err(_) => Vec::new(),
+        };
+
+        items.push(SessionListItem {
+            session_id: session.session_id.clone(),
+            thread_id: session.session_id.clone(),
+            key_count: session.key_count,
+            keys: session.keys,
+            updated_at: session.updated_at.map(|dt| dt.to_rfc3339()),
+            task_ids,
+        });
+    }
+
+    if let Some(task_id) = &query.task_id {
+        items.retain(|item| item.task_ids.iter().any(|id| id == task_id));
+    }
+
+    items.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+
+    HttpResponse::Ok().json(items)
 }
 
 /// Set a session value. Supports gzip-compressed requests for large payloads.
