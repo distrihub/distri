@@ -3,6 +3,7 @@ use crate::{
     workflow::WorkflowStore,
 };
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};
@@ -80,6 +81,14 @@ impl std::fmt::Debug for InitializedStores {
     }
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SessionSummary {
+    pub session_id: String,
+    pub keys: Vec<String>,
+    pub key_count: usize,
+    pub updated_at: Option<DateTime<Utc>>,
+}
+
 // SessionStore trait - manages current conversation thread/run
 #[async_trait::async_trait]
 pub trait SessionStore: Send + Sync + std::fmt::Debug {
@@ -100,6 +109,11 @@ pub trait SessionStore: Send + Sync + std::fmt::Debug {
     async fn delete_value(&self, namespace: &str, key: &str) -> anyhow::Result<()>;
 
     async fn get_all_values(&self, namespace: &str) -> anyhow::Result<HashMap<String, Value>>;
+
+    async fn list_sessions(
+        &self,
+        namespace: Option<&str>,
+    ) -> anyhow::Result<Vec<SessionSummary>>;
 }
 #[async_trait::async_trait]
 pub trait SessionStoreExt: SessionStore {

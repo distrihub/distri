@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use distri_filesystem::{create_artifact_tools, create_core_filesystem_tools, create_file_system};
 use distri_types::{
     AgentEvent, ToolCall, ToolContext, ToolDefinition, ToolResponse,
-    configuration::ObjectStorageConfig, stores::SessionStore,
+    configuration::ObjectStorageConfig, stores::{SessionStore, SessionSummary},
 };
 use tokio::sync::RwLock;
 
@@ -69,6 +69,33 @@ impl SessionStore for LocalSessionStore {
     ) -> anyhow::Result<HashMap<String, serde_json::Value>> {
         let guard = self.data.read().await;
         Ok(guard.get(namespace).cloned().unwrap_or_default())
+    }
+
+    async fn list_sessions(
+        &self,
+        namespace: Option<&str>,
+    ) -> anyhow::Result<Vec<SessionSummary>> {
+        let guard = self.data.read().await;
+        let iter: Box<dyn Iterator<Item = (&String, &HashMap<String, serde_json::Value>)>> =
+            if let Some(namespace) = namespace {
+                guard
+                    .get_key_value(namespace)
+                    .map(|(key, value)| Box::new(std::iter::once((key, value))))
+                    .unwrap_or_else(|| Box::new(std::iter::empty()))
+            } else {
+                Box::new(guard.iter())
+            };
+
+        let sessions = iter
+            .map(|(session_id, values)| SessionSummary {
+                session_id: session_id.clone(),
+                keys: values.keys().cloned().collect(),
+                key_count: values.len(),
+                updated_at: None,
+            })
+            .collect();
+
+        Ok(sessions)
     }
 }
 

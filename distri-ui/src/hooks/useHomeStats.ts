@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { BACKEND_URL } from '@/constants'
+import { useHomeFetch } from '@/hooks/useHomeFetch'
 
 export interface HomeStats {
   total_agents?: number
@@ -12,13 +12,14 @@ export function useHomeStats() {
   const [stats, setStats] = useState<HomeStats | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const homeFetch = useHomeFetch()
 
   useEffect(() => {
     let cancelled = false
     const load = async () => {
       setLoading(true)
       try {
-        const res = await fetch(`${BACKEND_URL}/api/v1/home/stats`)
+        const res = await homeFetch('/api/v1/home/stats')
         if (res.ok) {
           const json = (await res.json()) as HomeStats
           if (!cancelled) {
@@ -41,9 +42,8 @@ export function useHomeStats() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [homeFetch])
 
   return { stats, loading, error }
 }
-
 

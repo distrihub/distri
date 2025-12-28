@@ -30,7 +30,7 @@ use distri_types::configuration::PluginArtifact;
 use distri_types::stores::{
     AgentStore, BrowserSessionStore, ExternalToolCallsStore, FilterMessageType, MemoryStore,
     MessageFilter, PluginCatalogStore, PluginMetadataRecord, ScratchpadStore, SessionMemory,
-    SessionStore, TaskStore, ThreadStore,
+    SessionStore, SessionSummary, TaskStore, ThreadStore,
 };
 use distri_types::{
     AgentError, AgentEvent, AgentEventType, CreateThreadRequest, Message, ScratchpadEntry, Task,
@@ -1297,6 +1297,45 @@ where
         }
 
         Ok(map)
+    }
+
+    async fn list_sessions(
+        &self,
+        namespace: Option<&str>,
+    ) -> Result<Vec<SessionSummary>> {
+        let mut connection = self.conn().await?;
+        let mut query = session_entries::table.into_boxed();
+        if let Some(namespace) = namespace {
+            query = query.filter(session_entries::thread_id.eq(namespace));
+        }
+        let entries = query
+            .load::<SessionEntryModel>(&mut connection)
+            .await
+            .context("failed to fetch session entries")?;
+
+        let mut map: HashMap<String, SessionSummary> = HashMap::new();
+
+        for entry in entries {
+            let updated_at = DateTime::<Utc>::from_utc(entry.updated_at, Utc);
+            let summary = map.entry(entry.thread_id.clone()).or_insert_with(|| SessionSummary {
+                session_id: entry.thread_id.clone(),
+                keys: Vec::new(),
+                key_count: 0,
+                updated_at: Some(updated_at),
+            });
+
+            summary.keys.push(entry.key.clone());
+            summary.key_count = summary.key_count.saturating_add(1);
+            if let Some(existing) = summary.updated_at {
+                if updated_at > existing {
+                    summary.updated_at = Some(updated_at);
+                }
+            } else {
+                summary.updated_at = Some(updated_at);
+            }
+        }
+
+        Ok(map.into_values().collect())
     }
 }
 

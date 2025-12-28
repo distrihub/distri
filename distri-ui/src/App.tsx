@@ -24,6 +24,7 @@ import ThreadsPage from './routes/home/ThreadsPage';
 import SettingsPage from './routes/home/SettingsPage';
 import NewAgentPage from './routes/home/NewAgentPage';
 import AgentDetailsPage from './routes/home/AgentDetailsPage';
+import SessionsPage from './routes/home/SessionsPage';
 import { Toaster } from './components/ui/sonner';
 
 function App() {
@@ -62,6 +63,7 @@ function App() {
                   <Route path="new" element={<NewAgentPage />} />
                   <Route path="agents/:agentId" element={<AgentDetailsPage />} />
                   <Route path="threads" element={<ThreadsPage />} />
+                  <Route path="sessions" element={<SessionsPage />} />
                   <Route path="settings" element={<SettingsPage />} />
                   <Route path="menu/account" element={<AccountPage />} />
                   <Route path="menu/account/pricing" element={<PricingPage />} />
