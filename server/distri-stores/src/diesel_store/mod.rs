@@ -988,8 +988,7 @@ where
         )
         .get_result(&mut connection)
         .await
-        .optional()
-        .context("Failed to find most active agent")?;
+        .optional()?;
 
         let most_active_agent = most_active.map(|a| distri_types::stores::MostActiveAgent {
             id: a.agent_id,
@@ -1010,7 +1009,7 @@ where
         .get_result(&mut connection)
         .await
         .optional()
-        .context("Failed to calculate average run time")?;
+        ?;
 
         let avg_run_time_ms = avg_result.and_then(|r| r.avg_duration);
 
