@@ -74,10 +74,9 @@ export default function ChatPage() {
       </header>
 
       {(agentLoading == true || messagesLoading == true) && <Loader2 className="animate-spin h-5 w-5" />}
-      {agentLoading != true && agent && <div className="flex-1 min-h-0 overflow-hidden relative">
+      {agentLoading != true && <div className="flex-1 min-h-0 overflow-hidden relative">
         <Chat
           key={threadId}
-          agent={agent}
           threadId={threadId}
           initialMessages={messages}
           theme="dark"

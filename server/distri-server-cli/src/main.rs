@@ -1,11 +1,11 @@
 use anyhow::Result;
 use clap::Parser;
+use distri_server::agent_server::DistriAgentServer;
 use distri_server_cli::{
     logging,
     multi_agent_cli::{MultiAgentCliBuilder, ServeContext, DEFAULT_SERVE_HOST, DEFAULT_SERVE_PORT},
     Cli, Commands,
 };
-use distri_server::agent_server::DistriAgentServer;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -17,7 +17,12 @@ async fn main() -> Result<()> {
 
     dotenv::dotenv().ok();
 
-    let cli = parse_cli_with_default_serve();
+    let cli: Cli = parse_cli_with_default_serve();
+
+    // Enable diesel query logging if verbose mode is enabled
+    if cli.verbose {
+        distri_core::logging::init_diesel_instrumentation();
+    }
 
     MultiAgentCliBuilder::new()
         .with_cli_parser(move || cli.clone())

@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { ConfigurationPanel } from '@distri/react';
 import { useDistriHomeConfig, useDistriHomeNavigate } from '../DistriHomeProvider';
 import { useApiKeys } from '../hooks/useApiKeys';
+import { SecretsView } from './SecretsView';
 import { CreditCard, KeyRound, Settings as SettingsIcon, LockIcon } from 'lucide-react';
 
 export interface SettingsViewProps {
@@ -21,7 +22,7 @@ export interface SettingsViewProps {
 
 export function SettingsView({
   className,
-  activeSection: controlledActiveSection,
+  activeSection,
   onSectionChange,
 }: SettingsViewProps) {
   const { enableApiKeys, enableAccountBilling } = useDistriHomeConfig();
@@ -36,26 +37,22 @@ export function SettingsView({
     revokeKey
   } = useApiKeys();
 
-  const [internalActiveSection, setInternalActiveSection] = useState<
-    'configuration' | 'account' | 'api-keys' | 'secrets'
-  >('configuration');
-
   const [label, setLabel] = useState('');
   const [creating, setCreating] = useState(false);
   const [newSecret, setNewSecret] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
 
-  const activeSection = controlledActiveSection ?? internalActiveSection;
+  const [actionError, setActionError] = useState<string | null>(null);
   const setActiveSection = (section: 'configuration' | 'account' | 'api-keys' | 'secrets') => {
-    setInternalActiveSection(section);
     onSectionChange?.(section);
   };
 
+
+
   const tabs = [
-    { id: 'configuration' as const, label: 'Configuration', icon: SettingsIcon, href: '/settings' },
-    ...(enableAccountBilling !== false ? [{ id: 'account' as const, label: 'Account & billing', icon: CreditCard, href: '/settings/account' }] : []),
-    { id: 'secrets' as const, label: 'Secrets', icon: LockIcon, href: '/settings/secrets' },
-    ...(enableApiKeys ? [{ id: 'api-keys' as const, label: 'API keys', icon: KeyRound, href: '/settings/api-keys' }] : []),
+    { id: 'configuration' as const, label: 'Configuration', icon: SettingsIcon, href: 'settings' },
+    ...(enableAccountBilling !== false ? [{ id: 'account' as const, label: 'Account & billing', icon: CreditCard, href: 'settings/account' }] : []),
+    { id: 'secrets' as const, label: 'Secrets', icon: LockIcon, href: 'settings/secrets' },
+    ...(enableApiKeys ? [{ id: 'api-keys' as const, label: 'API keys', icon: KeyRound, href: 'settings/api-keys' }] : []),
   ];
 
   const handleCreate = async (e: React.FormEvent) => {
@@ -109,6 +106,7 @@ export function SettingsView({
                   if (href) {
                     navigate(href);
                   }
+                  navigate(href);
                 }}
                 className={`flex items-center gap-2 border-b-2 px-1 py-3 transition ${activeSection === id
                   ? 'border-primary text-primary'
@@ -241,6 +239,10 @@ export function SettingsView({
                 </div>
               </div>
             </div>
+          )}
+
+          {activeSection === 'secrets' && (
+            <SecretsView />
           )}
         </div>
       </div>

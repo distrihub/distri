@@ -33,6 +33,7 @@ diesel::table! {
         last_message -> Nullable<Text>,
         metadata -> Jsonb,
         attributes -> Jsonb,
+        external_id -> Nullable<Text>,
     }
 }
 

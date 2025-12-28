@@ -14,6 +14,8 @@ import {
   Sun,
   Wrench,
 } from 'lucide-react';
+import { AgentConfigWithTools } from '@distri/core';
+import { ToolDefinition } from '@distri/core';
 
 const currentThreadId = (scope: string) => {
   if (typeof window === 'undefined') {
@@ -27,14 +29,8 @@ const currentThreadId = (scope: string) => {
   return generated;
 };
 
-interface AgentDefinitionEnvelope {
-  definition?: any;
-  agent?: any;
-  config?: any;
-  markdown?: string;
+interface AgentDefinitionEnvelope extends AgentConfigWithTools {
   is_owner?: boolean;
-  tools?: any[];
-  id?: string;
   [key: string]: any;
 }
 
@@ -77,7 +73,7 @@ export function AgentDetails({
 }: AgentDetailsProps) {
   const navigate = useDistriHomeNavigate();
   const { client } = useDistri();
-  const { agent, loading: agentLoading } = useAgent({ agentIdOrDef: agentId || '' });
+  const { agent, loading: agentLoading, error: agentError } = useAgent({ agentIdOrDef: agentId || '' });
   const { theme, setTheme } = useTheme();
 
   const [definition, setDefinition] = useState<AgentDefinitionEnvelope | null>(null);
@@ -98,20 +94,16 @@ export function AgentDetails({
     return currentThreadId(agentId ? `agent:${agentId}` : 'agent');
   }, [agentId, propThreadId]);
 
-  const agentType = agent?.getDefinition?.().agent_type ?? (agent as any)?.agentType;
+  const agentType = agent?.getDefinition?.().agent_type;
 
-  const agentDefinition = useMemo(() => {
-    if (definition?.config) return definition.config;
-    if (definition?.agent) return definition.agent;
-    if (definition?.definition) return definition.definition;
-    if (definition && (definition as any).name) return definition;
-    return agent?.getDefinition?.();
+  const agentDefinition: AgentDefinitionEnvelope = useMemo(() => {
+    if (definition) return definition;
+    return agent?.getDefinition?.() as AgentDefinitionEnvelope;
   }, [agent, definition]);
 
-  const toolDefinitions = useMemo(() => {
-    const tools = definition?.tools ?? agentDefinition?.tools;
-    return Array.isArray(tools) ? tools : [];
-  }, [definition, agentDefinition]);
+  const toolDefinitions: ToolDefinition[] = useMemo(() => {
+    return definition?.resolved_tools || agentDefinition?.resolved_tools || []
+  }, [definition]);
 
   const toolRows = useMemo(() => {
     return toolDefinitions.map((tool: any) => {
@@ -189,12 +181,32 @@ export function AgentDetails({
     );
   }
 
+  // Handle errors specifically
+  if (agentError) {
+    return (
+      <div className={`flex h-full items-center justify-center bg-background px-4 ${className ?? ''}`}>
+        <div className="flex max-w-md flex-col items-center text-center gap-2">
+          <p className="text-lg font-semibold text-destructive">Failed to load agent</p>
+          <p className="text-sm text-muted-foreground">{agentError.message}</p>
+          <button
+            onClick={() => window.location.reload()}
+            className="mt-4 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (!agent) {
     return (
       <div className={`flex h-full items-center justify-center bg-background px-4 ${className ?? ''}`}>
         <div className="flex max-w-md flex-col items-center text-center gap-2">
           <p className="text-lg font-semibold text-foreground">Agent not found</p>
-          <p className="text-sm text-muted-foreground">Check the URL or create a new agent.</p>
+          <p className="text-sm text-muted-foreground">
+            Check the URL or verify that you have access to this agent.
+          </p>
         </div>
       </div>
     );

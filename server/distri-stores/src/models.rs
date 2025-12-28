@@ -39,6 +39,7 @@ pub struct ThreadModel {
     pub last_message: Option<String>,
     pub metadata: String,
     pub attributes: String,
+    pub external_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Insertable)]
@@ -53,6 +54,7 @@ pub struct NewThreadModel<'a> {
     pub last_message: Option<&'a str>,
     pub metadata: &'a str,
     pub attributes: &'a str,
+    pub external_id: Option<&'a str>,
 }
 
 #[derive(Debug, Clone, AsChangeset)]
@@ -64,6 +66,7 @@ pub struct ThreadChangeset<'a> {
     pub last_message: Option<Option<&'a str>>,
     pub metadata: Option<&'a str>,
     pub attributes: Option<&'a str>,
+    pub external_id: Option<Option<&'a str>>,
 }
 
 #[derive(

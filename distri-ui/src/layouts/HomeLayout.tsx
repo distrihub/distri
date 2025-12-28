@@ -1,5 +1,5 @@
 import { useEffect, useState, type CSSProperties } from 'react'
-import { Outlet, useLocation, useNavigate, Link } from 'react-router-dom'
+import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useTheme } from '@distri/react'
 import Logo from "@/assets/logo.svg";
 import LogoSmall from "@/assets/logo_small.svg";
@@ -7,7 +7,6 @@ import {
   Sidebar,
   useSidebar,
   SidebarContent,
-  SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
   SidebarHeader,
@@ -19,9 +18,7 @@ import {
   SidebarProvider,
   SidebarSeparator,
 } from '@/components/ui/sidebar'
-import { ChevronUp, LogOut, Settings, Users, Home, MessageSquare, User2, FileText } from 'lucide-react'
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+import { Settings, Users, Home, MessageSquare, FileText } from 'lucide-react'
 import { useAccount } from '@/components/AccountProvider'
 
 const navItems = [
@@ -43,7 +40,11 @@ function LogoContainer() {
 
 export default function HomeLayout() {
   const [defaultOpen, setDefaultOpen] = useState(true)
-  const sidebarStyles: CSSProperties = {
+  type SidebarCSSVars = CSSProperties & {
+    '--sidebar-width'?: string
+    '--sidebar-width-mobile'?: string
+  }
+  const sidebarStyles: SidebarCSSVars = {
     '--sidebar-width': '20rem',
     '--sidebar-width-mobile': '18rem',
   }
@@ -72,7 +73,6 @@ export default function HomeLayout() {
 
 const HomeSidebar = () => {
   const { theme, setTheme } = useTheme()
-  const { accountInfo } = useAccount()
   const navigate = useNavigate()
   const location = useLocation()
 
@@ -124,9 +124,6 @@ const HomeSidebar = () => {
         </SidebarGroup>
       </SidebarContent>
 
-      <SidebarFooter>
-        <AccountMenuButton accountInfo={accountInfo} />
-      </SidebarFooter>
     </Sidebar>
   )
 }
@@ -136,34 +133,3 @@ const HomeSidebar = () => {
 interface AccountMenuButtonProps {
   accountInfo: ReturnType<typeof useAccount>['accountInfo']
 }
-
-const AccountMenuButton = ({ accountInfo }: AccountMenuButtonProps) => (
-  <SidebarMenu>
-    <SidebarMenuItem>
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <SidebarMenuButton size="lg" className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground">
-            <Avatar className="h-8 w-8 rounded-lg">
-              <AvatarImage src={accountInfo?.picture || undefined} alt={accountInfo?.email || 'User'} />
-              <AvatarFallback className="rounded-lg">
-                {accountInfo?.email?.charAt(0)?.toUpperCase() || <User2 className="h-4 w-4" />}
-              </AvatarFallback>
-            </Avatar>
-            <div className="grid flex-1 text-left text-sm leading-tight">
-              <span className="truncate text-xs">{accountInfo?.email}</span>
-            </div>
-            <ChevronUp className="ml-auto size-4" />
-          </SidebarMenuButton>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent className="w-[--radix-dropdown-menu-trigger-width] min-w-56 rounded-lg" side="bottom" align="end" sideOffset={4}>
-          <DropdownMenuItem asChild>
-            <Link to="/auth">
-              <LogOut className="mr-2 h-4 w-4" />
-              Log out
-            </Link>
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-    </SidebarMenuItem>
-  </SidebarMenu>
-)

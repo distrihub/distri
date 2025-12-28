@@ -1,5 +1,5 @@
+pub use distri_stores::init_diesel_instrumentation;
 use tracing_subscriber::{filter::FilterFn, fmt::format::FmtSpan, prelude::*, EnvFilter};
-
 /// Initialize logging with sensible defaults for the agents library.
 pub fn init_logging(level: &str) {
     let filter = EnvFilter::try_from_default_env()

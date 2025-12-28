@@ -22,7 +22,7 @@ export interface HomeStats {
   total_accessible_agents?: number;
   total_threads?: number;
   total_messages?: number;
-  avg_time_per_run_ms?: number;
+  avg_run_time_ms?: number;
   latest_threads?: HomeStatsThread[];
   most_active_agent?: {
     id: string;

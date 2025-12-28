@@ -66,9 +66,9 @@ export function Home({ onNewAgent, renderNewAgentHelp, className }: HomeProps) {
     statsLoading || stats?.total_messages == null ? '—' : formatNumber(stats.total_messages);
   const mostActiveLabel = mostActiveAgent?.name || '—';
   const avgTimeLabel =
-    statsLoading || stats?.avg_time_per_run_ms == null
+    statsLoading || stats?.avg_run_time_ms == null
       ? '—'
-      : `${Math.round((stats.avg_time_per_run_ms / 1000) * 10) / 10}s`;
+      : `${Math.round((stats.avg_run_time_ms / 1000) * 10) / 10}s`;
 
   const handleRefresh = async () => {
     setRefreshing(true);

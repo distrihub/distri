@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, Outlet, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { DistriProvider, ThemeProvider, useDistri } from '@distri/react';
-import { DistriHomeProvider, Home, AgentDetails, ThreadsView, SettingsView, PromptTemplatesView } from '@distri/home';
+import { DistriHomeProvider, Home, AgentDetails, ThreadsView, SettingsView, PromptTemplatesView, SecretsView } from '@distri/home';
 import { TokenProvider, useInitialization } from '@/components/TokenProvider';
 import { ThreadProvider } from '@/components/ThreadContext';
 import { SessionProvider, useSession } from '@/components/SessionProvider';
@@ -12,10 +12,6 @@ import AuthCallback from '@/routes/auth/AuthCallback';
 import AuthSuccess from '@/routes/auth/AuthSuccess';
 import LoginPage from '@/routes/login/LoginPage';
 import HomeLayout from '@/layouts/HomeLayout';
-import PaymentSuccess from '@/routes/payment/PaymentSuccess';
-import AccountPage from '@/routes/home/menu/AccountPage';
-import PricingPage from '@/routes/home/menu/PricingPage';
-import HelpPage from '@/routes/home/menu/HelpPage';
 import { BACKEND_URL } from './constants';
 import { AccountProvider } from './components/AccountProvider';
 import FilesPage from './routes/home/FilesPage';
@@ -48,12 +44,19 @@ function ThreadsViewWrapper() {
 }
 
 function SettingsViewWrapper() {
-  return <SettingsView activeSection="configuration" />;
+  return <SettingsView activeSection="configuration" />
+}
+
+
+function SecretsViewWrapper() {
+  return <SettingsView activeSection="secrets" />
 }
 
 function PromptTemplatesViewWrapper() {
-  return <PromptTemplatesView />;
+  return <PromptTemplatesView />
 }
+
+
 
 function DistriHomeWrapper() {
   const { client } = useDistri();
@@ -109,22 +112,19 @@ function App() {
                     <Route path="details" element={<AgentDetailsWrapper />} />
                     <Route path="threads" element={<ThreadsViewWrapper />} />
                     <Route path="templates" element={<PromptTemplatesViewWrapper />} />
-                    <Route path="settings" element={<SettingsViewWrapper />} />
+                    <Route path="settings">
+                      <Route index element={<SettingsViewWrapper />} />
+                      <Route path="secrets" element={<SecretsViewWrapper />} />
+                    </Route>
                   </Route>
 
                   {/* Routes not using @distri/home */}
                   <Route path="agents" element={<AgentsPage />} />
                   <Route path="new" element={<NewAgentPage />} />
                   <Route path="chat" element={<ChatPage />} />
-                  <Route path="menu/account" element={<AccountPage />} />
-                  <Route path="menu/account/pricing" element={<PricingPage />} />
-                  <Route path="menu/help" element={<HelpPage />} />
                 </Route>
                 <Route path="workspace" element={<FilesPage />} />
               </Route>
-
-              {/* Payment routes */}
-              <Route path="payment/success" element={<PaymentSuccess />} />
 
               {/* Catch all */}
               <Route path="*" element={<Navigate to="home" replace />} />

@@ -226,12 +226,12 @@ export function ThreadsView({ className }: ThreadsViewProps) {
                     key={thread.id}
                     className="group flex items-center justify-between gap-4 px-6 py-4 transition hover:bg-muted/40"
                   >
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-3">
-                        <h3 className="truncate text-base font-medium text-foreground">
+                    <div className="flex-1 min-w-0 overflow-hidden">
+                      <div className="flex items-baseline gap-3">
+                        <h3 className="truncate text-base font-medium text-foreground overflow-hidden text-elipsis max-w-[800px]">
                           {thread.title || 'Untitled thread'}
                         </h3>
-                        <span className="rounded border border-border/60 bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">
+                        <span className="shrink-0 whitespace-nowrap rounded border border-border/60 bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">
                           {thread.message_count ? `${thread.message_count} msgs` : 'No messages'}
                         </span>
                       </div>

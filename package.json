@@ -7,9 +7,9 @@
     "ui"
   ],
   "scripts": {
-    "build": "turbo build --filter=./distrijs/packages/core --filter=./distrijs/packages/react  --filter=./distri-ui",
+    "build": "turbo build --filter=./distrijs/packages/core --filter=./distrijs/packages/react  --filter=./distri-home --filter=./distri-ui",
     "build:all": "turbo build",
-    "dev": "turbo dev  --filter=./distrijs/packages/core --filter=./distrijs/packages/react --filter=./distri-ui",
+    "dev": "turbo dev  --filter=./distrijs/packages/core --filter=./distrijs/packages/react --filter=./distri-home --filter=./distri-ui",
     "lint": "turbo lint",
     "lint:fix": "turbo lint -- --fix",
     "clean": "turbo clean",

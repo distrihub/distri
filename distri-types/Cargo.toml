@@ -47,5 +47,6 @@ toml = "0.8"
 [features]
 default = ["typescript"]
 typescript = []
+instrumentation = []
 wasm = []
 native = []
