@@ -287,6 +287,20 @@ export class DistriHomeClient {
 
     return await response.json();
   }
+
+  /**
+   * Get all values for a session
+   */
+  async getSessionValues(sessionId: string): Promise<Record<string, any>> {
+    const response = await this.client.fetch(`/sessions/${sessionId}/values`);
+
+    if (!response.ok) {
+      throw new Error(`Failed to get session values: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    return data.values;
+  }
 }
 
 // Types for secrets and prompt templates
