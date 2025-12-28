@@ -31,7 +31,7 @@ use distri_types::stores::{
     AgentStore, BrowserSessionStore, ExternalToolCallsStore, FilterMessageType, MemoryStore,
     MessageFilter, NewPromptTemplate, NewSecret, PluginCatalogStore, PluginMetadataRecord,
     PromptTemplateRecord, PromptTemplateStore, ScratchpadStore, SecretRecord, SecretStore,
-    SessionMemory, SessionStore, TaskStore, ThreadStore, UpdatePromptTemplate,
+    SessionMemory, SessionStore, TaskStore, ThreadListFilter, ThreadStore, UpdatePromptTemplate,
 };
 use distri_types::{
     AgentError, AgentEvent, AgentEventType, CreateThreadRequest, Message, ScratchpadEntry, Task,
@@ -162,18 +162,22 @@ fn to_thread(model: ThreadModel) -> Thread {
         last_message: model.last_message,
         metadata: metadata_from_str(&model.metadata),
         attributes: serde_json::from_str(&model.attributes).unwrap_or(serde_json::Value::Null),
+        user_id: None,
+        external_id: model.external_id,
     }
 }
 
 fn to_thread_summary(thread: &Thread) -> ThreadSummary {
     ThreadSummary {
         id: thread.id.clone(),
-        title: thread.title.clone(),
         agent_id: thread.agent_id.clone(),
-        agent_name: thread.agent_id.clone(),
+        agent_name: String::new(),
+        title: thread.title.clone(),
         updated_at: thread.updated_at,
         message_count: thread.message_count,
         last_message: thread.last_message.clone(),
+        user_id: thread.user_id.clone(),
+        external_id: thread.external_id.clone(),
     }
 }
 
@@ -361,7 +365,7 @@ where
 
 #[cfg(feature = "sqlite")]
 impl DieselStorePool<SqliteConnectionWrapper> {
-    pub async fn sqlite_pool(database_url: &str, max_connections: u32) -> Result<SqlitePool> {
+    async fn sqlite_pool(database_url: &str, max_connections: u32) -> Result<SqlitePool> {
         tracing::debug!("Creating connection pool with URL: {}", database_url);
         let manager = SqliteManager::new(database_url);
         let pool = SqlitePool::builder(manager)
@@ -702,7 +706,13 @@ where
     }
 
     async fn create_thread(&self, request: CreateThreadRequest) -> Result<Thread> {
-        let mut thread = Thread::new(request.agent_id, request.title, request.thread_id);
+        let mut thread = Thread::new(
+            request.agent_id,
+            request.title,
+            request.thread_id,
+            None,
+            request.external_id,
+        );
         if let Some(attributes) = request.attributes {
             thread.attributes = attributes;
         }
@@ -721,6 +731,7 @@ where
             last_message: thread.last_message.as_deref(),
             metadata: &metadata_value,
             attributes: &thread.attributes.to_string(),
+            external_id: thread.external_id.as_deref(),
         };
 
         let mut connection = self
@@ -805,6 +816,7 @@ where
             last_message: Some(thread.last_message.as_deref()),
             metadata: Some(&metadata_value),
             attributes: Some(&attr_str),
+            external_id: None,
         };
 
         diesel::update(threads::table.find(thread_id))
@@ -827,16 +839,22 @@ where
 
     async fn list_threads(
         &self,
-        agent_id: Option<&str>,
+        filter: &ThreadListFilter,
         limit: Option<u32>,
         offset: Option<u32>,
-        filter: Option<&serde_json::Value>,
     ) -> Result<Vec<ThreadSummary>> {
         let mut connection = self.conn().await?;
         let mut query = threads::table.into_boxed();
 
-        if let Some(agent) = agent_id {
-            query = query.filter(threads::agent_id.eq(agent));
+        // Local store is single-tenant, so we ignore user_id filter
+        // Filter by agent_id if provided
+        if let Some(agent) = &filter.agent_id {
+            query = query.filter(threads::agent_id.eq(agent.as_str()));
+        }
+
+        // Filter by external_id if provided
+        if let Some(ext_id) = &filter.external_id {
+            query = query.filter(threads::external_id.eq(ext_id.as_str()));
         }
 
         let rows = query
@@ -844,14 +862,17 @@ where
             .offset(offset.unwrap_or(0) as i64)
             .limit(limit.unwrap_or(50) as i64)
             .load::<ThreadModel>(&mut connection)
-            .await
-            .context("failed to list threads")?;
+            .await?;
 
         let mut summaries = Vec::new();
 
         for row in rows {
             let thread = to_thread(row);
-            if filter.map_or(true, |f| attributes_match(&thread.attributes, f)) {
+            if filter
+                .attributes
+                .as_ref()
+                .map_or(true, |f| attributes_match(&thread.attributes, f))
+            {
                 summaries.push(to_thread_summary(&thread));
             }
         }
@@ -880,6 +901,7 @@ where
             last_message: Some(thread.last_message.as_deref()),
             metadata: Some(&metadata_value),
             attributes: Some(&attr_str),
+            external_id: None,
         };
 
         diesel::update(threads::table.find(thread_id))
@@ -889,6 +911,120 @@ where
             .context("failed to update thread with message")?;
 
         Ok(())
+    }
+
+    async fn get_home_stats(&self) -> Result<distri_types::stores::HomeStats> {
+        let mut connection = self.conn().await?;
+
+        // Count total agents
+        let total_agents = agent_configs::table
+            .count()
+            .get_result::<i64>(&mut connection)
+            .await
+            .context("Failed to count agents")?;
+
+        // Count total threads
+        let total_threads = threads::table
+            .count()
+            .get_result::<i64>(&mut connection)
+            .await
+            .context("Failed to count threads")?;
+
+        // Sum all message counts from threads
+        let total_messages: Option<i64> = threads::table
+            .select(diesel::dsl::sum(threads::message_count))
+            .first(&mut connection)
+            .await
+            .context("Failed to sum message counts")?;
+
+        // Get latest 5 threads
+        let latest_thread_rows: Vec<(String, String, String, NaiveDateTime)> = threads::table
+            .select((
+                threads::id,
+                threads::title,
+                threads::agent_id,
+                threads::updated_at,
+            ))
+            .order(threads::updated_at.desc())
+            .limit(5)
+            .load(&mut connection)
+            .await
+            .context("Failed to load latest threads")?;
+
+        let latest_threads: Vec<distri_types::stores::LatestThreadInfo> = latest_thread_rows
+            .into_iter()
+            .map(
+                |(id, title, aid, updated_at)| distri_types::stores::LatestThreadInfo {
+                    id,
+                    title,
+                    agent_id: aid.clone(),
+                    agent_name: aid,
+                    updated_at: chrono::DateTime::from_naive_utc_and_offset(
+                        updated_at,
+                        chrono::Utc,
+                    ),
+                },
+            )
+            .collect();
+
+        // Get most active agent (agent with most threads)
+        #[derive(QueryableByName)]
+        struct AgentThreadCount {
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            agent_id: String,
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            agent_name: String,
+            #[diesel(sql_type = diesel::sql_types::BigInt)]
+            thread_count: i64,
+        }
+
+        let most_active: Option<AgentThreadCount> = diesel::sql_query(
+            "SELECT t.agent_id, t.agent_id as agent_name, COUNT(*) as thread_count
+             FROM threads t
+             LEFT JOIN agent_configs a ON t.agent_id = a.name
+             GROUP BY t.agent_id, a.name
+             ORDER BY thread_count DESC
+             LIMIT 1",
+        )
+        .get_result(&mut connection)
+        .await
+        .optional()
+        .context("Failed to find most active agent")?;
+
+        let most_active_agent = most_active.map(|a| distri_types::stores::MostActiveAgent {
+            id: a.agent_id,
+            name: a.agent_name,
+            thread_count: a.thread_count,
+        });
+
+        // Calculate average run time from tasks
+        #[derive(QueryableByName)]
+        struct AvgResult {
+            #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Double>)]
+            avg_duration: Option<f64>,
+        }
+
+        let avg_result: Option<AvgResult> = diesel::sql_query(
+            "SELECT AVG(updated_at - created_at) as avg_duration FROM tasks WHERE status = 'completed'",
+        )
+        .get_result(&mut connection)
+        .await
+        .optional()
+        .context("Failed to calculate average run time")?;
+
+        let avg_run_time_ms = avg_result.and_then(|r| r.avg_duration);
+
+        Ok(distri_types::stores::HomeStats {
+            total_agents,
+            total_threads,
+            total_messages: total_messages.unwrap_or(0),
+            avg_run_time_ms,
+            // Local is single-tenant, so owned = accessible = total
+            total_owned_agents: Some(total_agents),
+            total_accessible_agents: Some(total_agents),
+            most_active_agent,
+            latest_threads: Some(latest_threads),
+        })
     }
 }
 

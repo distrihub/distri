@@ -86,6 +86,7 @@ impl Drop for AgentOrchestrator {
 
 #[derive(Default)]
 pub struct AgentOrchestratorBuilder {
+    user_id: Option<String>,
     registry: Option<Arc<RwLock<McpServerRegistry>>>,
     additional_tools: Option<HashMap<String, Vec<Arc<dyn Tool>>>>,
     plugin_registry: Option<Arc<PluginRegistry>>,
@@ -104,6 +105,11 @@ pub struct AgentOrchestratorBuilder {
 }
 
 impl AgentOrchestratorBuilder {
+    pub fn with_user_id(mut self, user_id: impl Into<String>) -> Self {
+        self.user_id = Some(user_id.into());
+        self
+    }
+
     pub fn with_registry(mut self, registry: Arc<RwLock<McpServerRegistry>>) -> Self {
         self.registry = Some(registry);
         self
@@ -140,10 +146,7 @@ impl AgentOrchestratorBuilder {
     pub fn with_prompt_template_store(mut self, store: Arc<dyn PromptTemplateStore>) -> Self {
         if let Some(stores) = &mut self.stores {
             stores.prompt_template_store = Some(store);
-        } else {
-            // This is a bit awkward since stores is Option, 
-            // but build() will handle it if stores is None initially
-        }
+        } 
         self
     }
 
@@ -1042,14 +1045,20 @@ impl AgentOrchestrator {
 
     pub async fn list_threads(
         &self,
-        user_id: Option<&str>,
+        agent_id: Option<&str>,
         limit: Option<u32>,
         offset: Option<u32>,
-        filter: Option<&serde_json::Value>,
+        attributes_filter: Option<&serde_json::Value>,
     ) -> Result<Vec<ThreadSummary>, AgentError> {
+        let filter = distri_types::stores::ThreadListFilter {
+            agent_id: agent_id.map(|s| s.to_string()),
+            external_id: None,
+            attributes: attributes_filter.cloned(),
+        };
+
         self.stores
             .thread_store
-            .list_threads(user_id, limit, offset, filter)
+            .list_threads(&filter, limit, offset)
             .await
             .map_err(|e| AgentError::Session(e.to_string()))
     }
@@ -1085,6 +1094,7 @@ impl AgentOrchestrator {
                         title: None,
                         metadata: None,
                         attributes: Some(attrs),
+                        user_id: None,
                     };
                     let updated = thread_store
                         .update_thread(&existing.id, update_req)
@@ -1101,6 +1111,8 @@ impl AgentOrchestrator {
                     title: title.map(String::from),
                     thread_id,
                     attributes,
+                    user_id: None,
+                    external_id: None,
                 };
                 thread_store
                     .create_thread(create_request)

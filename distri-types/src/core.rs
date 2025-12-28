@@ -479,10 +479,18 @@ pub struct Thread {
     pub metadata: HashMap<String, serde_json::Value>,
     #[serde(default)]
     pub attributes: serde_json::Value,
+    pub user_id: Option<String>,
+    pub external_id: Option<String>,
 }
 
 impl Thread {
-    pub fn new(agent_id: String, title: Option<String>, thread_id: Option<String>) -> Self {
+    pub fn new(
+        agent_id: String,
+        title: Option<String>,
+        thread_id: Option<String>,
+        user_id: Option<String>,
+        external_id: Option<String>,
+    ) -> Self {
         let now = chrono::Utc::now();
         Self {
             id: thread_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
@@ -494,6 +502,8 @@ impl Thread {
             last_message: None,
             metadata: HashMap::new(),
             attributes: serde_json::Value::Null,
+            user_id,
+            external_id,
         }
     }
 
@@ -526,6 +536,8 @@ pub struct ThreadSummary {
     pub updated_at: chrono::DateTime<chrono::Utc>,
     pub message_count: u32,
     pub last_message: Option<String>,
+    pub user_id: Option<String>,
+    pub external_id: Option<String>,
 }
 
 // CreateThreadRequest removed - threads are now auto-created from first messages
@@ -537,6 +549,9 @@ pub struct CreateThreadRequest {
     pub thread_id: Option<String>,
     #[serde(default)]
     pub attributes: Option<serde_json::Value>,
+    #[serde(default)]
+    pub user_id: Option<String>,
+    pub external_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -544,4 +559,5 @@ pub struct UpdateThreadRequest {
     pub title: Option<String>,
     pub metadata: Option<HashMap<String, serde_json::Value>>,
     pub attributes: Option<serde_json::Value>,
+    pub user_id: Option<String>,
 }

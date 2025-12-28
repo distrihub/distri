@@ -16,6 +16,18 @@ use crate::{
 
 // Redis and PostgreSQL stores moved to distri-stores crate
 
+/// Filter for listing threads
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ThreadListFilter {
+    /// Filter by agent ID
+    pub agent_id: Option<String>,
+    /// Filter by external ID (for integration with external systems)
+    pub external_id: Option<String>,
+    /// Filter by thread attributes (JSON matching)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attributes: Option<serde_json::Value>,
+}
+
 /// Initialized store collection
 #[derive(Clone)]
 pub struct InitializedStores {
@@ -290,18 +302,55 @@ pub trait ThreadStore: Send + Sync {
         request: UpdateThreadRequest,
     ) -> anyhow::Result<Thread>;
     async fn delete_thread(&self, thread_id: &str) -> anyhow::Result<()>;
+
     async fn list_threads(
         &self,
-        agent_id: Option<&str>,
+        filter: &ThreadListFilter,
         limit: Option<u32>,
         offset: Option<u32>,
-        attributes_filter: Option<&serde_json::Value>,
     ) -> anyhow::Result<Vec<ThreadSummary>>;
     async fn update_thread_with_message(
         &self,
         thread_id: &str,
         message: &str,
     ) -> anyhow::Result<()>;
+
+    /// Get aggregated home statistics
+    async fn get_home_stats(&self) -> anyhow::Result<HomeStats>;
+}
+
+/// Home statistics for dashboard
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct HomeStats {
+    pub total_agents: i64,
+    pub total_threads: i64,
+    pub total_messages: i64,
+    pub avg_run_time_ms: Option<f64>,
+    // Cloud-specific fields (optional)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_owned_agents: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_accessible_agents: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub most_active_agent: Option<MostActiveAgent>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_threads: Option<Vec<LatestThreadInfo>>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct MostActiveAgent {
+    pub id: String,
+    pub name: String,
+    pub thread_count: i64,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct LatestThreadInfo {
+    pub id: String,
+    pub title: String,
+    pub agent_id: String,
+    pub agent_name: String,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
 }
 
 #[async_trait]

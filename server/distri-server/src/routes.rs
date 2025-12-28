@@ -629,7 +629,7 @@ async fn llm_execute(
 // Thread handlers
 #[derive(Deserialize)]
 struct ListThreadsQuery {
-    user_id: Option<String>,
+    agent_id: Option<String>,
     limit: Option<u32>,
     offset: Option<u32>,
     filter: Option<serde_json::Value>,
@@ -641,7 +641,7 @@ async fn list_threads_handler(
 ) -> HttpResponse {
     match coordinator
         .list_threads(
-            query.user_id.as_deref(),
+            query.agent_id.as_deref(),
             query.limit,
             query.offset,
             query.filter.as_ref(),
@@ -760,86 +760,17 @@ async fn get_thread_messages(
     }
 }
 
-#[derive(Debug, Serialize)]
-struct HomeStats {
-    total_agents: usize,
-    total_threads: usize,
-    total_messages: u64,
-    avg_time_per_run_ms: Option<u64>,
-}
 
 async fn get_home_stats(executor: web::Data<Arc<AgentOrchestrator>>) -> HttpResponse {
-    // Count agents via cursor-based pagination
-    let mut total_agents: usize = 0;
-    let mut cursor: Option<String> = None;
-    loop {
-        let (agents, next) = executor.list_agents(cursor.clone(), Some(500)).await;
-        total_agents += agents.len();
-        if let Some(next_cursor) = next {
-            cursor = Some(next_cursor);
-        } else {
-            break;
-        }
-    }
-
-    // Count threads and messages using paginated listing
-    let mut total_threads: usize = 0;
-    let mut total_messages: u64 = 0;
-    let mut offset: u32 = 0;
-    let page_size: u32 = 500;
-    loop {
-        match executor
-            .list_threads(None, Some(page_size), Some(offset), None)
-            .await
-        {
-            Ok(page) => {
-                if page.is_empty() {
-                    break;
-                }
-                total_threads += page.len();
-                for t in page {
-                    total_messages = total_messages.saturating_add(t.message_count as u64);
-                }
-                offset += page_size;
-            }
-            Err(e) => {
-                return HttpResponse::InternalServerError().json(json!({
-                    "error": format!("Failed to list threads for stats: {}", e)
-                }));
-            }
-        }
-    }
-
-    // Average time per run from all tasks
-    let tasks = match executor.stores.task_store.list_tasks(None).await {
-        Ok(tasks) => tasks,
+    match executor.stores.thread_store.get_home_stats().await {
+        Ok(stats) => HttpResponse::Ok().json(stats),
         Err(e) => {
-            return HttpResponse::InternalServerError().json(json!({
-                "error": format!("Failed to list tasks for stats: {}", e)
-            }));
-        }
-    };
-    let mut sum_ms: i128 = 0;
-    let mut n: i128 = 0;
-    for task in tasks {
-        let duration = (task.updated_at as i128) - (task.created_at as i128);
-        if duration >= 0 {
-            sum_ms += duration;
-            n += 1;
+            tracing::error!(error = ?e, "Failed to get home stats");
+            HttpResponse::InternalServerError().json(json!({
+                "error": format!("Failed to load home stats: {}", e)
+            }))
         }
     }
-    let avg_time_per_run_ms = if n > 0 {
-        Some((sum_ms / n) as u64)
-    } else {
-        None
-    };
-
-    HttpResponse::Ok().json(HomeStats {
-        total_agents,
-        total_threads,
-        total_messages,
-        avg_time_per_run_ms,
-    })
 }
 
 async fn create_agent(

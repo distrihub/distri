@@ -9,11 +9,10 @@ pub use auth::*;
 pub use external_tool_calls::*;
 
 pub mod diesel_store;
+mod instrumentation;
+pub use instrumentation::init_diesel_instrumentation;
 pub mod models;
 pub mod schema;
-
-// Re-export prompt template store types
-pub use diesel_store::{DieselPromptTemplateStore, DieselSecretStore};
 
 /// Initialize all stores based on configuration
 mod initialize;
