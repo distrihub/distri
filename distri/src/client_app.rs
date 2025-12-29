@@ -314,7 +314,7 @@ impl DistriClientApp {
     }
 
     /// Set a single session value.
-    /// This is typically called by external tools (like browser_step) to store observation data
+    /// This is typically called by external tools to store observation data
     /// that will be included in the agent's prompt.
     pub async fn set_session_value(
         &self,

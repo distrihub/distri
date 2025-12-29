@@ -3,8 +3,8 @@ use std::{collections::HashSet, env, fs, sync::Arc};
 use chrono::Utc;
 use distri_parsers;
 use distri_types::{
-    ExecutionResult, MessageRole, Part, ScratchpadEntry,
-    ScratchpadEntryType, ToolCall, ToolCallFormat,
+    ExecutionResult, MessageRole, Part, ScratchpadEntry, ScratchpadEntryType, ToolCall,
+    ToolCallFormat,
 };
 use tracing::warn;
 
@@ -216,7 +216,7 @@ impl<'a> MessageFormatter<'a> {
     }
 
     /// Load session values from the session store for this thread.
-    /// These values are set by external tools (like browser_step) and can be used in templates.
+    /// These values are set by external tools and can be used in templates.
     /// The namespace is the thread_id, which matches how the frontend stores values.
     async fn load_session_values(
         context: &Arc<ExecutorContext>,
@@ -230,7 +230,6 @@ impl<'a> MessageFormatter<'a> {
             Err(_) => std::collections::HashMap::new(),
         }
     }
-
 
     fn build_native_history_messages(
         scratchpad_entries: &[ScratchpadEntry],
@@ -311,7 +310,6 @@ impl<'a> MessageFormatter<'a> {
         messages
     }
 
-
     async fn build_overridden_user_message(
         &self,
         base_message: &crate::types::Message,
@@ -322,7 +320,7 @@ impl<'a> MessageFormatter<'a> {
     ) -> Result<crate::types::Message, AgentError> {
         // Start with the base message parts
         let mut parts = Vec::new();
-        
+
         // Add the original message parts if they exist
         if !base_message.parts.is_empty() {
             parts.extend_from_slice(&base_message.parts);
@@ -378,9 +376,7 @@ impl<'a> MessageFormatter<'a> {
             for part in parts {
                 if force_include_artifacts {
                     // Expand artifacts to their actual content (e.g., image artifacts -> Part::Image)
-                    all_parts.push(
-                        Self::load_artifact_if_needed(part, context).await
-                    );
+                    all_parts.push(Self::load_artifact_if_needed(part, context).await);
                 } else {
                     // Keep artifacts as Part::Artifact references
                     all_parts.push(part);
@@ -389,9 +385,7 @@ impl<'a> MessageFormatter<'a> {
         } else if let Ok(part) = serde_json::from_value::<Part>(value.clone()) {
             // Single Part - expand artifacts if requested
             if force_include_artifacts {
-                all_parts.push(
-                    Self::load_artifact_if_needed(part, context).await
-                );
+                all_parts.push(Self::load_artifact_if_needed(part, context).await);
             } else {
                 all_parts.push(part);
             }
@@ -405,10 +399,7 @@ impl<'a> MessageFormatter<'a> {
     }
 
     /// Load artifact content if needed using ArtifactWrapper::load_artifact
-    async fn load_artifact_if_needed(
-        part: Part,
-        context: &Arc<ExecutorContext>,
-    ) -> Part {
+    async fn load_artifact_if_needed(part: Part, context: &Arc<ExecutorContext>) -> Part {
         match part {
             Part::Artifact(metadata) => {
                 // Get filesystem from orchestrator

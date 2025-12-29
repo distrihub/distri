@@ -11,7 +11,7 @@ enabled = true
 # proxy = { kind = "https", address = "proxy.example:8443" }
 
 [tools]
-builtin = ["distri_browser", "browser_observe"]
+builtin = ["distri_browser"]
 
 # [model_settings]
 # model = "gpt-4.1-mini"

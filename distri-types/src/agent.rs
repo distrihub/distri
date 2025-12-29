@@ -269,10 +269,10 @@ fn default_include_step_count() -> Option<bool> {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, JsonSchema)]
-#[serde(tag = "type", content = "source", rename_all = "lowercase")]
+#[serde(tag = "type", content = "source", rename_all = "snake_case")]
 pub enum PartDefinition {
     Template(String),   // Prompt Template Key
-    SessionKey(String), // SessionKey
+    SessionKey(String), // Session key reference
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]

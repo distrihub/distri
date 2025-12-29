@@ -62,7 +62,3 @@ pub use browsr_types::FileType;
 
 mod client_config;
 pub use client_config::DistriConfig;
-
-pub mod constants {
-    pub const ADDITIONAL_PARTS_KEY: &str = "__user_parts";
-}
