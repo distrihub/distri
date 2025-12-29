@@ -1,8 +1,5 @@
 #![allow(clippy::all)]
 
-use diesel::allow_tables_to_appear_in_same_query;
-use diesel::joinable;
-
 pub mod types {
     pub type Jsonb = diesel::sql_types::Text;
 }
@@ -234,82 +231,4 @@ diesel::allow_tables_to_appear_in_same_query!(
     prompt_templates,
     server_settings,
     secrets,
-);
-
-diesel::table! {
-    use diesel::sql_types::*;
-    use crate::schema::types::Jsonb;
-
-    browser_sequences (id) {
-        id -> Text,
-        goal -> Nullable<Text>,
-        task_id -> Nullable<Text>,
-        thread_id -> Nullable<Text>,
-        created_at -> Timestamp,
-        updated_at -> Timestamp,
-    }
-}
-
-diesel::table! {
-    use diesel::sql_types::*;
-    use crate::schema::types::Jsonb;
-
-    browser_steps (id) {
-        id -> Text,
-        browser_sequence_id -> Text,
-        commands -> Jsonb,
-        reason -> Nullable<Text>,
-        thread_id -> Nullable<Text>,
-        task_id -> Nullable<Text>,
-        run_id -> Nullable<Text>,
-        thinking -> Nullable<Text>,
-        evaluation_previous_goal -> Nullable<Text>,
-        memory -> Nullable<Text>,
-        next_goal -> Nullable<Text>,
-        success -> Bool,
-        action_result -> Nullable<Jsonb>,
-        created_at -> Timestamp,
-        updated_at -> Timestamp,
-    }
-}
-
-diesel::table! {
-    use diesel::sql_types::*;
-    use crate::schema::types::Jsonb;
-
-    browser_step_observations (id) {
-        id -> Integer,
-        thread_id -> Text,
-        task_id -> Text,
-        run_id -> Text,
-        sequence_id -> Text,
-        observation -> Jsonb,
-        created_at -> Timestamp,
-    }
-}
-
-diesel::table! {
-    use diesel::sql_types::*;
-    use crate::schema::types::Jsonb;
-
-    browser_step_screenshots (id) {
-        id -> Integer,
-        thread_id -> Text,
-        task_id -> Text,
-        run_id -> Text,
-        sequence_id -> Text,
-        screenshot -> Jsonb,
-        created_at -> Timestamp,
-    }
-}
-
-joinable!(browser_steps -> browser_sequences (browser_sequence_id));
-joinable!(browser_step_observations -> browser_sequences (sequence_id));
-joinable!(browser_step_screenshots -> browser_sequences (sequence_id));
-
-allow_tables_to_appear_in_same_query!(
-    browser_sequences,
-    browser_steps,
-    browser_step_observations,
-    browser_step_screenshots,
 );
