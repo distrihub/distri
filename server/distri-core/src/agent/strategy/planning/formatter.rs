@@ -3,7 +3,7 @@ use std::{collections::HashSet, env, fs, sync::Arc};
 use chrono::Utc;
 use distri_parsers;
 use distri_types::{
-    constants::ADDITIONAL_PARTS_KEY, ExecutionResult, MessageRole, Part, ScratchpadEntry,
+    ExecutionResult, MessageRole, Part, ScratchpadEntry,
     ScratchpadEntryType, ToolCall, ToolCallFormat,
 };
 use tracing::warn;
@@ -120,16 +120,19 @@ impl<'a> MessageFormatter<'a> {
 
         println!("{user_additional_data}");
 
-        // Load additional user parts from session store (e.g., browser observations, screenshots)
-        let additional_user_parts = Self::load_additional_user_parts(context).await;
-
         let mut formatted = vec![crate::types::Message::system(rendered_prompt, None)];
 
         let user_message = if let Some(overrides) = &self.agent_def.user_message_overrides {
-            self.build_overridden_user_message(message, overrides, &template_data, context)
-                .await?
+            self.build_overridden_user_message(
+                message,
+                overrides,
+                &template_data,
+                context,
+                &user_additional_data,
+            )
+            .await?
         } else {
-            Self::build_user_message(message, &user_additional_data, additional_user_parts)
+            Self::build_user_message(message, &user_additional_data)
         };
         formatted.push(user_message);
 
@@ -228,102 +231,6 @@ impl<'a> MessageFormatter<'a> {
         }
     }
 
-    /// Prefix for session values that should be automatically included as user parts.
-    /// Any session key starting with this prefix will be collected and added to the user message.
-
-    /// Load additional user message parts from the session store.
-    /// Collects parts from:
-    /// 2. Any session values with the `__user_part_` prefix (new approach)
-    ///
-    /// Values can be:
-    /// - A Vec<Part> (legacy format)
-    /// - A single Part
-    /// - A string (converted to Part::Text)
-    async fn load_additional_user_parts(context: &Arc<ExecutorContext>) -> Vec<Part> {
-        let session_store = match context.get_session_store() {
-            Ok(store) => store,
-            Err(e) => {
-                tracing::info!(
-                    "No session store available for loading additional parts: {}",
-                    e
-                );
-                return Vec::new();
-            }
-        };
-
-        let mut all_parts: Vec<Part> = Vec::new();
-
-        // Load all session values
-        tracing::info!(
-            "Loading additional user parts for thread_id={}",
-            context.thread_id
-        );
-        let all_values = match session_store.get_all_values(&context.thread_id).await {
-            Ok(values) => {
-                tracing::info!(
-                    "Loaded {} session values",
-                    values.keys().cloned().collect::<Vec<_>>().join(",")
-                );
-                values
-            }
-            Err(e) => {
-                tracing::warn!("Failed to load session values: {}", e);
-                return Vec::new();
-            }
-        };
-
-        // Collect prefixed user parts (sorted by key for deterministic ordering)
-        let mut prefixed_keys: Vec<_> = all_values
-            .keys()
-            .filter(|k| k.starts_with(ADDITIONAL_PARTS_KEY))
-            .collect();
-        prefixed_keys.sort();
-
-        for key in prefixed_keys {
-            if let Some(value) = all_values.get(key) {
-                let resolved = Self::resolve_session_value_to_parts(value, false, context).await;
-                
-                // Special handling for AdditionalParts instruction (Replace)
-                if let Ok(additional_parts) = serde_json::from_value::<distri_types::AdditionalParts>(value.clone()) {
-                    if matches!(additional_parts.instruction, distri_types::AdditionalPartsInstruction::Replace) {
-                        all_parts.clear();
-                    }
-                }
-                
-                all_parts.extend(resolved);
-            }
-        }
-
-        if all_parts.is_empty() {
-            tracing::debug!(
-                "No additional user parts found for thread {}",
-                context.thread_id
-            );
-        } else {
-            let text_count = all_parts
-                .iter()
-                .filter(|p| matches!(p, Part::Text(_)))
-                .count();
-            let image_count = all_parts
-                .iter()
-                .filter(|p| matches!(p, Part::Image(_)))
-                .count();
-            let artifact_count = all_parts
-                .iter()
-                .filter(|p| matches!(p, Part::Artifact(_)))
-                .count();
-            tracing::info!(
-                "Loaded {} additional user parts ({} text, {} image, {} artifact) for thread {}",
-                all_parts.len(),
-                text_count,
-                image_count,
-                artifact_count,
-                context.thread_id
-            );
-        }
-
-        all_parts
-    }
 
     fn build_native_history_messages(
         scratchpad_entries: &[ScratchpadEntry],
@@ -404,121 +311,6 @@ impl<'a> MessageFormatter<'a> {
         messages
     }
 
-    /// Convert Part::Artifact to Part::Image if it's an image artifact (for LLM compatibility)
-    async fn convert_artifact_to_image_if_needed(
-        part: Part,
-        context: &Arc<ExecutorContext>,
-    ) -> Part {
-        match part {
-            Part::Artifact(metadata) => {
-                // Check if this is an image artifact (PNG, JPEG, etc.)
-                let is_image = metadata
-                    .content_type
-                    .as_ref()
-                    .map(|ct| ct.starts_with("image/"))
-                    .unwrap_or(false)
-                    || metadata
-                        .file_id
-                        .ends_with(".png")
-                        || metadata.file_id.ends_with(".jpg")
-                        || metadata.file_id.ends_with(".jpeg");
-
-                if is_image {
-                    // Try to fetch the artifact content and convert to Part::Image
-                    if let Ok(orchestrator) = context.get_orchestrator() {
-                        let filesystem = orchestrator.session_filesystem.clone();
-                        // Extract artifact namespace from relative_path
-                        // Format: threads/{thread_hash}/tasks/{task_hash}/content/{filename}
-                        if let Some((artifact_namespace, filename)) =
-                            metadata.relative_path.rsplit_once("/content/")
-                        {
-                            use distri_filesystem::ArtifactWrapper;
-                            use distri_types::filesystem::FileSystemOps;
-
-                            match ArtifactWrapper::new(
-                                filesystem as Arc<dyn FileSystemOps>,
-                                artifact_namespace.to_string(),
-                            )
-                            .await
-                            {
-                                Ok(wrapper) => {
-                                    // For image artifacts, read as binary (bytes) then encode to base64
-                                    // This handles the case where artifacts are stored as base64 strings
-                                    match wrapper.read_artifact_binary(&filename).await {
-                                        Ok(bytes) => {
-                                            // The bytes are the UTF-8 encoding of the base64 string
-                                            // Convert to string and use directly as base64
-                                            match String::from_utf8(bytes) {
-                                                Ok(base64_content) => {
-                                                    // Verify it's valid base64
-                                                    use base64::{engine::general_purpose, Engine as _};
-                                                    if general_purpose::STANDARD.decode(&base64_content).is_err() {
-                                                        tracing::warn!(
-                                                            "Image artifact {} does not contain valid base64. Keeping as artifact.",
-                                                            metadata.file_id
-                                                        );
-                                                    } else {
-                                                        use distri_types::FileType;
-                                                        let image_part = Part::Image(FileType::Bytes {
-                                                            bytes: base64_content, // Base64-encoded string
-                                                            mime_type: metadata
-                                                                .content_type
-                                                                .clone()
-                                                                .unwrap_or_else(|| "image/png".to_string()),
-                                                            name: Some(metadata.file_id.clone()),
-                                                        });
-                                                        let image_size = match &image_part {
-                                                            Part::Image(FileType::Bytes { bytes, .. }) => bytes.len(),
-                                                            _ => 0,
-                                                        };
-                                                        tracing::info!(
-                                                            "Converted image artifact {} to Part::Image ({} base64 chars)",
-                                                            metadata.file_id,
-                                                            image_size
-                                                        );
-                                                        return image_part;
-                                                    }
-                                                }
-                                                Err(e) => {
-                                                    tracing::warn!(
-                                                        "Failed to convert image artifact bytes to UTF-8 string: {}. Keeping as artifact.",
-                                                        e
-                                                    );
-                                                }
-                                            }
-                                        }
-                                        Err(e) => {
-                                            tracing::warn!(
-                                                "Failed to read image artifact {}: {}. Keeping as artifact.",
-                                                metadata.file_id,
-                                                e
-                                            );
-                                        }
-                                    }
-                                }
-                                Err(e) => {
-                                    tracing::warn!(
-                                        "Failed to create artifact wrapper for {}: {}. Keeping as artifact.",
-                                        artifact_namespace,
-                                        e
-                                    );
-                                }
-                            }
-                        }
-                    }
-                    tracing::info!(
-                        "Image artifact detected in additional_parts: {} (content_type: {:?}, path: {}). Keeping as artifact.",
-                        metadata.file_id,
-                        metadata.content_type,
-                        metadata.relative_path
-                    );
-                }
-                // Keep as artifact if conversion failed or not an image
-                Part::Artifact(metadata)
-            }
-            other => other,
-        }
-    }
 
     async fn build_overridden_user_message(
         &self,
@@ -526,9 +318,19 @@ impl<'a> MessageFormatter<'a> {
         overrides: &crate::types::UserMessageOverrides,
         template_data: &TemplateData<'_>,
         context: &Arc<ExecutorContext>,
+        user_additional_data: &str,
     ) -> Result<crate::types::Message, AgentError> {
+        // Start with the base message parts
         let mut parts = Vec::new();
+        
+        // Add the original message parts if they exist
+        if !base_message.parts.is_empty() {
+            parts.extend_from_slice(&base_message.parts);
+        } else if let Some(text) = base_message.as_text() {
+            parts.push(Part::Text(text));
+        }
 
+        // Add parts from UserMessageOverrides
         for part_def in &overrides.parts {
             match part_def {
                 distri_types::PartDefinition::Template(template_name) => {
@@ -551,6 +353,13 @@ impl<'a> MessageFormatter<'a> {
             }
         }
 
+        // Add the user additional data at the end (step limit, todos, etc.)
+        // Only include if include_step_count is true (default) or None (defaults to true)
+        let should_include = overrides.include_step_count.unwrap_or(true);
+        if should_include && !user_additional_data.is_empty() {
+            parts.push(Part::Text(user_additional_data.to_string()));
+        }
+
         let mut message = base_message.clone();
         message.role = MessageRole::User;
         message.parts = parts;
@@ -563,28 +372,29 @@ impl<'a> MessageFormatter<'a> {
         context: &Arc<ExecutorContext>,
     ) -> Vec<Part> {
         let mut all_parts = Vec::new();
-        // Try to parse as AdditionalParts (new format), Vec<Part> (legacy), Part, or string
-        if let Ok(additional_parts) =
-            serde_json::from_value::<distri_types::AdditionalParts>(value.clone())
-        {
-            // Process parts, expanding artifacts if requested
-            for part in additional_parts.parts {
-                if force_include_artifacts || additional_parts.include_artifacts {
+        // Try to parse as Vec<Part>, Part, or string
+        if let Ok(parts) = serde_json::from_value::<Vec<Part>>(value.clone()) {
+            // Vec<Part> format - expand artifacts if requested
+            for part in parts {
+                if force_include_artifacts {
                     // Expand artifacts to their actual content (e.g., image artifacts -> Part::Image)
-                    all_parts.push(Self::convert_artifact_to_image_if_needed(part, context).await);
+                    all_parts.push(
+                        Self::load_artifact_if_needed(part, context).await
+                    );
                 } else {
                     // Keep artifacts as Part::Artifact references
                     all_parts.push(part);
                 }
             }
-        } else if let Ok(parts) = serde_json::from_value::<Vec<Part>>(value.clone()) {
-            // Legacy format: Vec<Part> - expand if forced or default legacy behavior (always expand)
-            for part in parts {
-                all_parts.push(Self::convert_artifact_to_image_if_needed(part, context).await);
-            }
         } else if let Ok(part) = serde_json::from_value::<Part>(value.clone()) {
-            // Legacy format: single Part - always expand artifacts
-            all_parts.push(Self::convert_artifact_to_image_if_needed(part, context).await);
+            // Single Part - expand artifacts if requested
+            if force_include_artifacts {
+                all_parts.push(
+                    Self::load_artifact_if_needed(part, context).await
+                );
+            } else {
+                all_parts.push(part);
+            }
         } else if let Some(text) = value.as_str() {
             all_parts.push(Part::Text(text.to_string()));
         } else {
@@ -594,10 +404,36 @@ impl<'a> MessageFormatter<'a> {
         all_parts
     }
 
+    /// Load artifact content if needed using ArtifactWrapper::load_artifact
+    async fn load_artifact_if_needed(
+        part: Part,
+        context: &Arc<ExecutorContext>,
+    ) -> Part {
+        match part {
+            Part::Artifact(metadata) => {
+                // Get filesystem from orchestrator
+                if let Ok(orchestrator) = context.get_orchestrator() {
+                    let filesystem = orchestrator.session_filesystem.clone();
+                    use distri_filesystem::ArtifactWrapper;
+                    use distri_types::filesystem::FileSystemOps;
+                    ArtifactWrapper::load_artifact(
+                        filesystem as Arc<dyn FileSystemOps>,
+                        &metadata,
+                        true, // include_artifacts = true
+                    )
+                    .await
+                } else {
+                    // If no orchestrator, keep as artifact
+                    Part::Artifact(metadata)
+                }
+            }
+            other => other,
+        }
+    }
+
     fn build_user_message(
         message: &crate::types::Message,
         additional_user_data: &str,
-        additional_parts: Vec<Part>,
     ) -> crate::types::Message {
         let mut user_message = message.clone();
         user_message.role = MessageRole::User;
@@ -605,12 +441,6 @@ impl<'a> MessageFormatter<'a> {
             if let Some(text) = message.as_text() {
                 user_message.parts.push(Part::Text(text));
             }
-        }
-
-        // Append additional parts from session store (e.g., browser observations, screenshots)
-        // These are added BEFORE the step limit text so the observation is visible
-        for part in additional_parts {
-            user_message.parts.push(part);
         }
 
         if !additional_user_data.is_empty() {

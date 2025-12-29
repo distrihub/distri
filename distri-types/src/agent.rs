@@ -259,6 +259,13 @@ pub struct UserMessageOverrides {
     /// If true, artifacts will be expanded to their actual content (e.g., image artifacts become Part::Image)
     #[serde(default)]
     pub include_artifacts: bool,
+    /// If true (default), step count information will be included at the end of the user message
+    #[serde(default = "default_include_step_count")]
+    pub include_step_count: Option<bool>,
+}
+
+fn default_include_step_count() -> Option<bool> {
+    Some(true)
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, JsonSchema)]

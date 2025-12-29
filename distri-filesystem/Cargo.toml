@@ -30,6 +30,7 @@ object_store = { version = "0.9", default-features = false, features = ["aws"] }
 bytes = "1.6"
 futures = "0.3"
 schemars = { workspace = true }
+base64 = "0.22.1"
 
 [dev-dependencies] # jql = "7.0"  # Will add when implementing full JQL support
 tempfile = "3.0"

@@ -3083,6 +3083,7 @@ version = "0.2.6"
 dependencies = [
  "anyhow",
  "async-trait",
+ "base64 0.22.1",
  "bytes",
  "chrono",
  "distri-types",

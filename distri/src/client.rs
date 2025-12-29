@@ -192,7 +192,7 @@ impl Distri {
             expiry: Option<&'a str>,
         }
         // Session IDs are typically UUIDs and keys are simple strings, so no encoding needed
-        let url = format!("{}/session/{}/values", self.base_url, session_id);
+        let url = format!("{}/sessions/{}/values", self.base_url, session_id);
         let body = SetRequest {
             key,
             value,
@@ -220,7 +220,7 @@ impl Distri {
         struct GetResponse {
             value: Option<serde_json::Value>,
         }
-        let url = format!("{}/session/{}/values/{}", self.base_url, session_id, key);
+        let url = format!("{}/sessions/{}/values/{}", self.base_url, session_id, key);
         let resp = self.http.get(url).send().await?;
         if !resp.status().is_success() {
             let text = resp.text().await.unwrap_or_default();
@@ -242,7 +242,7 @@ impl Distri {
         struct GetAllResponse {
             values: std::collections::HashMap<String, serde_json::Value>,
         }
-        let url = format!("{}/session/{}/values", self.base_url, session_id);
+        let url = format!("{}/sessions/{}/values", self.base_url, session_id);
         let resp = self.http.get(url).send().await?;
         if !resp.status().is_success() {
             let text = resp.text().await.unwrap_or_default();
@@ -261,7 +261,7 @@ impl Distri {
         session_id: &str,
         key: &str,
     ) -> Result<(), ClientError> {
-        let url = format!("{}/session/{}/values/{}", self.base_url, session_id, key);
+        let url = format!("{}/sessions/{}/values/{}", self.base_url, session_id, key);
         let resp = self.http.delete(url).send().await?;
         if resp.status().is_success() || resp.status() == reqwest::StatusCode::NO_CONTENT {
             Ok(())
@@ -276,7 +276,7 @@ impl Distri {
 
     /// Clear a session
     pub async fn clear_session(&self, session_id: &str) -> Result<(), ClientError> {
-        let url = format!("{}/session/{}", self.base_url, session_id);
+        let url = format!("{}/sessions/{}", self.base_url, session_id);
         let resp = self.http.delete(url).send().await?;
         if resp.status().is_success() || resp.status() == reqwest::StatusCode::NO_CONTENT {
             Ok(())
@@ -290,90 +290,7 @@ impl Distri {
     }
 
     // ============================================================
-    // Additional User Message Parts API
-    // ============================================================
-    // These methods allow external tools to append parts (text, images)
-    // to the user message in the next agent iteration.
-    // Uses a dedicated compressed endpoint for efficient transfer of large data.
-
-    /// Set additional user message parts for the next agent iteration.
-    /// Sends JSON directly without compression for reliability.
-    pub async fn set_additional_user_parts(
-        &self,
-        session_id: &str,
-        parts: Vec<distri_types::Part>,
-    ) -> Result<(), ClientError> {
-        let url = format!("{}/session/{}/additional_parts", self.base_url, session_id);
-
-        tracing::debug!(
-            "Sending {} additional parts to session {}",
-            parts.len(),
-            session_id
-        );
-
-        let resp = self.http.post(&url).json(&parts).send().await?;
-
-        if resp.status().is_success() || resp.status() == reqwest::StatusCode::NO_CONTENT {
-            Ok(())
-        } else {
-            let status = resp.status();
-            let text = resp.text().await.unwrap_or_default();
-            Err(ClientError::InvalidResponse(format!(
-                "failed to set additional parts ({}): {}",
-                status, text
-            )))
-        }
-    }
-
-    /// Get the current additional user message parts.
-    pub async fn get_additional_user_parts(
-        &self,
-        session_id: &str,
-    ) -> Result<Option<Vec<distri_types::Part>>, ClientError> {
-        let url = format!("{}/session/{}/additional_parts", self.base_url, session_id);
-        let resp = self
-            .http
-            .get(&url)
-            .header("Accept-Encoding", "gzip")
-            .send()
-            .await?;
-
-        if resp.status() == reqwest::StatusCode::NOT_FOUND
-            || resp.status() == reqwest::StatusCode::NO_CONTENT
-        {
-            return Ok(None);
-        }
-
-        if !resp.status().is_success() {
-            let text = resp.text().await.unwrap_or_default();
-            return Err(ClientError::InvalidResponse(format!(
-                "failed to get additional parts: {}",
-                text
-            )));
-        }
-
-        // reqwest handles gzip decompression automatically when "gzip" feature is enabled
-        let parts: Vec<distri_types::Part> = resp.json().await?;
-        Ok(Some(parts))
-    }
-
-    /// Clear/delete the additional user message parts.
-    pub async fn clear_additional_user_parts(&self, session_id: &str) -> Result<(), ClientError> {
-        let url = format!("{}/session/{}/additional_parts", self.base_url, session_id);
-        let resp = self.http.delete(&url).send().await?;
-        if resp.status().is_success() || resp.status() == reqwest::StatusCode::NO_CONTENT {
-            Ok(())
-        } else {
-            let text = resp.text().await.unwrap_or_default();
-            Err(ClientError::InvalidResponse(format!(
-                "failed to clear additional parts: {}",
-                text
-            )))
-        }
-    }
-
-    // ============================================================
-    // Prefixed User Parts API (recommended for new code)
+    // Prefixed User Parts API
     // ============================================================
     // These methods use the `__user_part_` prefix convention for session values.
     // Any session value with this prefix is automatically included in the user message.
@@ -448,7 +365,7 @@ impl Distri {
             (1.0 - compressed.len() as f64 / json_bytes.len() as f64) * 100.0
         );
 
-        let url = format!("{}/session/{}/values", self.base_url, session_id);
+        let url = format!("{}/sessions/{}/values", self.base_url, session_id);
         let resp = self
             .http
             .post(&url)

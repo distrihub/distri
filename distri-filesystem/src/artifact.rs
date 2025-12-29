@@ -292,4 +292,116 @@ impl ArtifactWrapper {
             parts: processed_parts,
         })
     }
+
+    /// Load artifact content if include_artifacts is true.
+    /// Currently supports images (converts to Part::Image with base64 content).
+    /// Future: will support PDFs and other file types.
+    /// 
+    /// Returns:
+    /// - If include_artifacts is false: returns Part::Artifact(metadata) unchanged
+    /// - If include_artifacts is true and artifact is an image: returns Part::Image with loaded content
+    /// - If include_artifacts is true but artifact type is not supported: returns Part::Artifact(metadata)
+    /// - If loading fails: returns Part::Artifact(metadata) and logs warning
+    pub async fn load_artifact(
+        filesystem: Arc<dyn FileSystemOps>,
+        metadata: &distri_types::FileMetadata,
+        include_artifacts: bool,
+    ) -> Part {
+        if !include_artifacts {
+            return Part::Artifact(metadata.clone());
+        }
+
+        // Check if this is an image artifact
+        let is_image = metadata
+            .content_type
+            .as_ref()
+            .map(|ct| ct.starts_with("image/"))
+            .unwrap_or(false)
+            || metadata.file_id.ends_with(".png")
+            || metadata.file_id.ends_with(".jpg")
+            || metadata.file_id.ends_with(".jpeg");
+
+        if is_image {
+            // Extract artifact namespace from relative_path
+            // Format: threads/{thread_hash}/tasks/{task_hash}/content/{filename}
+            if let Some((artifact_namespace, filename)) =
+                metadata.relative_path.rsplit_once("/content/")
+            {
+                match Self::new(filesystem.clone(), artifact_namespace.to_string()).await {
+                    Ok(wrapper) => {
+                        // For image artifacts, read as binary (bytes) then encode to base64
+                        // This handles the case where artifacts are stored as base64 strings
+                        match wrapper.read_artifact_binary(&filename).await {
+                            Ok(bytes) => {
+                                // The bytes are the UTF-8 encoding of the base64 string
+                                // Convert to string and use directly as base64
+                                match String::from_utf8(bytes) {
+                                    Ok(base64_content) => {
+                                        // Verify it's valid base64
+                                        use base64::{engine::general_purpose, Engine as _};
+                                        if general_purpose::STANDARD.decode(&base64_content).is_err() {
+                                            tracing::warn!(
+                                                "Image artifact {} does not contain valid base64. Keeping as artifact.",
+                                                metadata.file_id
+                                            );
+                                        } else {
+                                            use distri_types::FileType;
+                                            let image_part = Part::Image(FileType::Bytes {
+                                                bytes: base64_content, // Base64-encoded string
+                                                mime_type: metadata
+                                                    .content_type
+                                                    .clone()
+                                                    .unwrap_or_else(|| "image/png".to_string()),
+                                                name: Some(metadata.file_id.clone()),
+                                            });
+                                            let image_size = match &image_part {
+                                                Part::Image(FileType::Bytes { bytes, .. }) => bytes.len(),
+                                                _ => 0,
+                                            };
+                                            tracing::info!(
+                                                "Loaded image artifact {} as Part::Image ({} base64 chars)",
+                                                metadata.file_id,
+                                                image_size
+                                            );
+                                            return image_part;
+                                        }
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            "Failed to convert image artifact bytes to UTF-8 string: {}. Keeping as artifact.",
+                                            e
+                                        );
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    "Failed to read image artifact {}: {}. Keeping as artifact.",
+                                    metadata.file_id,
+                                    e
+                                );
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Failed to create artifact wrapper for {}: {}. Keeping as artifact.",
+                            artifact_namespace,
+                            e
+                        );
+                    }
+                }
+            }
+        } else {
+            // Future: Handle other file types (PDFs, etc.) here
+            // For now, keep as artifact
+            tracing::debug!(
+                "Artifact {} is not an image and include_artifacts is true. Keeping as artifact (future: will support PDFs, etc.)",
+                metadata.file_id
+            );
+        }
+
+        // Return as artifact if conversion failed, not an image, or not supported yet
+        Part::Artifact(metadata.clone())
+    }
 }
