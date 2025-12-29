@@ -31,6 +31,7 @@ pub trait StoreFactory: Send + Sync {
     fn session_store(&self) -> Arc<dyn SessionStore>;
     fn plugin_catalog_store(&self) -> Arc<dyn PluginCatalogStore>;
     fn browser_session_store(&self) -> Arc<dyn BrowserSessionStore>;
+    fn settings_store(&self) -> Arc<dyn SettingsStore>;
 }
 
 impl<Conn> StoreFactory for DieselStoreBuilder<Conn>
@@ -78,6 +79,10 @@ where
     fn browser_session_store(&self) -> Arc<dyn BrowserSessionStore> {
         Arc::new(DieselStoreBuilder::browser_session_store(self)) as Arc<dyn BrowserSessionStore>
     }
+
+    fn settings_store(&self) -> Arc<dyn SettingsStore> {
+        Arc::new(DieselStoreBuilder::settings_store(self)) as Arc<dyn SettingsStore>
+    }
 }
 
 fn boxed_initializer<F, Fut, Factory>(initializer: F) -> StoreInitializer
@@ -113,6 +118,7 @@ pub struct StoreBuilder {
     pub external_tool_calls_store: Option<Arc<dyn ExternalToolCallsStore>>,
     pub plugin_store: Option<Arc<dyn PluginCatalogStore>>,
     pub browser_session_store: Option<Arc<dyn BrowserSessionStore>>,
+    pub settings_store: Option<Arc<dyn SettingsStore>>,
 }
 
 impl StoreBuilder {
@@ -131,6 +137,7 @@ impl StoreBuilder {
             external_tool_calls_store: None,
             plugin_store: None,
             browser_session_store: None,
+            settings_store: None,
         }
         .register_default_store_types()
     }
@@ -238,6 +245,12 @@ impl StoreBuilder {
         self
     }
 
+    /// Set a pre-initialized settings store (won't be reinitialized)
+    pub fn with_settings_store(mut self, store: Arc<dyn SettingsStore>) -> Self {
+        self.settings_store = Some(store);
+        self
+    }
+
     /// Build InitializedStores, initializing only stores that weren't pre-provided
     pub async fn build(self) -> Result<InitializedStores> {
         let metadata_factory = self
@@ -263,6 +276,10 @@ impl StoreBuilder {
             .browser_session_store
             .clone()
             .unwrap_or_else(|| metadata_factory.browser_session_store());
+        let settings_store = self
+            .settings_store
+            .clone()
+            .unwrap_or_else(|| metadata_factory.settings_store());
 
         // Initialize memory store if configured and not provided
         let memory_store = if let Some(store) = self.memory_store.clone() {
@@ -353,6 +370,7 @@ impl StoreBuilder {
             external_tool_calls_store,
             plugin_store,
             browser_session_store,
+            settings_store,
         })
     }
 }
@@ -460,6 +478,7 @@ pub async fn create_ephemeral_execution_stores(
         external_tool_calls_store: base_stores.external_tool_calls_store.clone(),
         plugin_store: base_stores.plugin_store.clone(),
         browser_session_store: base_stores.browser_session_store.clone(),
+        settings_store: base_stores.settings_store.clone(),
     })
 }
 
@@ -502,5 +521,6 @@ pub async fn prepare_stores_for_execution(
         external_tool_calls_store: base_stores.external_tool_calls_store.clone(),
         plugin_store: base_stores.plugin_store.clone(),
         browser_session_store: base_stores.browser_session_store.clone(),
+        settings_store: base_stores.settings_store.clone(),
     })
 }

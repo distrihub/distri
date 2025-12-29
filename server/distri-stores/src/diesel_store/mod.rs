@@ -4,7 +4,8 @@ use std::{collections::HashMap, fmt::Display, sync::Arc};
 use crate::models::*;
 use crate::schema::{
     agent_configs, browser_sessions, external_tool_calls, integrations, memory_entries,
-    plugin_catalog, scratchpad_entries, session_entries, task_messages, tasks, threads,
+    plugin_catalog, scratchpad_entries, session_entries, settings_entries, task_messages, tasks,
+    threads,
 };
 use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
@@ -30,7 +31,7 @@ use distri_types::configuration::PluginArtifact;
 use distri_types::stores::{
     AgentStore, BrowserSessionStore, ExternalToolCallsStore, FilterMessageType, MemoryStore,
     MessageFilter, PluginCatalogStore, PluginMetadataRecord, ScratchpadStore, SessionMemory,
-    SessionStore, TaskStore, ThreadStore,
+    SessionStore, SettingsStore, TaskStore, ThreadStore,
 };
 use distri_types::{
     AgentError, AgentEvent, AgentEventType, CreateThreadRequest, Message, ScratchpadEntry, Task,
@@ -1301,6 +1302,105 @@ where
 }
 
 #[derive(Clone)]
+pub struct DieselSettingsStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    pool: DieselStorePool<Conn>,
+}
+
+impl<Conn> DieselSettingsStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    pub fn new(pool: DieselStorePool<Conn>) -> Self {
+        Self { pool }
+    }
+
+    async fn conn(&self) -> Result<DieselConn<'_, Conn>> {
+        self.pool
+            .get()
+            .await
+            .context("failed to acquire diesel connection")
+    }
+}
+
+impl<Conn> std::fmt::Debug for DieselSettingsStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DieselSettingsStore").finish()
+    }
+}
+
+#[async_trait]
+impl<Conn> SettingsStore for DieselSettingsStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    async fn get_settings(&self, user_id: &str) -> Result<Option<JsonValue>> {
+        let mut connection = self.conn().await?;
+        let row = settings_entries::table
+            .filter(settings_entries::user_id.eq(user_id))
+            .first::<SettingsEntryModel>(&mut connection)
+            .await
+            .optional()
+            .context("failed to fetch settings entry")?;
+
+        match row {
+            Some(model) => Ok(Some(
+                serde_json::from_str(&model.settings)
+                    .unwrap_or_else(|_| JsonValue::Object(Default::default())),
+            )),
+            None => Ok(None),
+        }
+    }
+
+    async fn upsert_settings(&self, user_id: &str, settings: &JsonValue) -> Result<()> {
+        let mut connection = self.conn().await?;
+        let now = now_naive();
+        let settings_str =
+            serde_json::to_string(settings).context("failed to serialize settings value")?;
+
+        let insert = NewSettingsEntryModel {
+            user_id,
+            settings: &settings_str,
+            created_at: now,
+            updated_at: now,
+        };
+
+        let changeset = SettingsEntryChangeset {
+            settings: &settings_str,
+            updated_at: now,
+        };
+
+        diesel::insert_into(settings_entries::table)
+            .values(&insert)
+            .on_conflict(settings_entries::user_id)
+            .do_update()
+            .set(&changeset)
+            .execute(&mut connection)
+            .await
+            .context("failed to upsert settings")?;
+
+        Ok(())
+    }
+}
+
+#[derive(Clone)]
 pub struct DieselMemoryStore<Conn>
 where
     Conn: DieselBackendConnection,
@@ -2449,6 +2549,10 @@ where
 
     pub fn browser_session_store(&self) -> DieselBrowserSessionStore<Conn> {
         DieselBrowserSessionStore::new(self.pool.clone_store_pool())
+    }
+
+    pub fn settings_store(&self) -> DieselSettingsStore<Conn> {
+        DieselSettingsStore::new(self.pool.clone_store_pool())
     }
 
     pub fn pool(&self) -> DieselStorePool<Conn> {

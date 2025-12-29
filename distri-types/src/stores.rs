@@ -31,6 +31,7 @@ pub struct InitializedStores {
     pub external_tool_calls_store: Arc<dyn ExternalToolCallsStore>,
     pub plugin_store: Arc<dyn PluginCatalogStore>,
     pub browser_session_store: Arc<dyn BrowserSessionStore>,
+    pub settings_store: Arc<dyn SettingsStore>,
 }
 impl InitializedStores {
     pub fn set_tool_auth_store(&mut self, tool_auth_store: Arc<dyn ToolAuthStore>) {
@@ -71,6 +72,10 @@ impl InitializedStores {
 
     pub fn set_browser_session_store(&mut self, store: Arc<dyn BrowserSessionStore>) {
         self.browser_session_store = store;
+    }
+
+    pub fn set_settings_store(&mut self, store: Arc<dyn SettingsStore>) {
+        self.settings_store = store;
     }
 }
 
@@ -142,6 +147,13 @@ pub trait BrowserSessionStore: Send + Sync + std::fmt::Debug {
     async fn get_session(&self, user_id: &str) -> anyhow::Result<Option<BrowserSessionRecord>>;
 
     async fn delete_session(&self, user_id: &str) -> anyhow::Result<()>;
+}
+
+#[async_trait::async_trait]
+pub trait SettingsStore: Send + Sync + std::fmt::Debug {
+    async fn get_settings(&self, user_id: &str) -> anyhow::Result<Option<Value>>;
+
+    async fn upsert_settings(&self, user_id: &str, settings: &Value) -> anyhow::Result<()>;
 }
 
 // Higher-level MemoryStore trait - manages cross-session permanent memory using user_id

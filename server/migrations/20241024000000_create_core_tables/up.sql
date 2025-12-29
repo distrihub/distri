@@ -45,6 +45,14 @@ CREATE TABLE IF NOT EXISTS session_entries (
     PRIMARY KEY(thread_id, key)
 );
 
+-- Settings entries
+CREATE TABLE IF NOT EXISTS settings_entries (
+    user_id TEXT PRIMARY KEY NOT NULL,
+    settings TEXT NOT NULL,
+    created_at TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP NOT NULL
+);
+
 -- Memory entries
 CREATE TABLE IF NOT EXISTS memory_entries (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

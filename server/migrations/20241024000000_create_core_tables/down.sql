@@ -4,6 +4,7 @@ DROP TABLE IF EXISTS integrations;
 DROP TABLE IF EXISTS agent_configs;
 DROP TABLE IF EXISTS scratchpad_entries;
 DROP TABLE IF EXISTS memory_entries;
+DROP TABLE IF EXISTS settings_entries;
 DROP TABLE IF EXISTS session_entries;
 DROP TABLE IF EXISTS task_messages;
 DROP TABLE IF EXISTS tasks;

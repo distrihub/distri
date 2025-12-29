@@ -101,6 +101,11 @@ fn configure_routes(cfg: &mut web::ServiceConfig, include_browser: bool) {
     .service(web::resource("/llm/execute").route(web::post().to(llm_execute)))
     // Configuration endpoints
     .service(web::resource("/configuration").route(web::get().to(get_configuration)))
+    .service(
+        web::resource("/settings")
+            .route(web::get().to(get_settings))
+            .route(web::put().to(update_settings)),
+    )
     .service(web::resource("/device").route(web::get().to(get_device_info)))
     .service(web::resource("/home/stats").route(web::get().to(get_home_stats)))
     // Voice streaming endpoints - TODO: Implement after fixing compilation issues
@@ -121,10 +126,64 @@ struct ConfigurationMeta {
     configuration: DistriServerConfig,
 }
 
+#[derive(Debug, Serialize)]
+struct SettingsMeta {
+    settings: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize)]
+struct SettingsUpdateRequest {
+    settings: serde_json::Value,
+}
+
 async fn get_configuration(executor: web::Data<Arc<AgentOrchestrator>>) -> HttpResponse {
     // Use the orchestrator's in-memory configuration snapshot
     let cfg = executor.configuration.read().await.clone();
     HttpResponse::Ok().json(ConfigurationMeta { configuration: cfg })
+}
+
+async fn get_settings(
+    executor: web::Data<Arc<AgentOrchestrator>>,
+    http_request: HttpRequest,
+) -> HttpResponse {
+    let user_id = http_request
+        .extensions()
+        .get::<UserContext>()
+        .map(|ctx| ctx.user_id())
+        .unwrap_or_else(|| "local_dev_user".to_string());
+
+    match executor.stores.settings_store.get_settings(&user_id).await {
+        Ok(settings) => HttpResponse::Ok()
+            .json(SettingsMeta { settings: settings.unwrap_or_default() }),
+        Err(err) => HttpResponse::InternalServerError().json(json!({
+            "error": format!("Failed to load settings: {err}")
+        })),
+    }
+}
+
+async fn update_settings(
+    executor: web::Data<Arc<AgentOrchestrator>>,
+    http_request: HttpRequest,
+    payload: web::Json<SettingsUpdateRequest>,
+) -> HttpResponse {
+    let user_id = http_request
+        .extensions()
+        .get::<UserContext>()
+        .map(|ctx| ctx.user_id())
+        .unwrap_or_else(|| "local_dev_user".to_string());
+
+    let settings = payload.settings.clone();
+    match executor
+        .stores
+        .settings_store
+        .upsert_settings(&user_id, &settings)
+        .await
+    {
+        Ok(()) => HttpResponse::Ok().json(SettingsMeta { settings }),
+        Err(err) => HttpResponse::InternalServerError().json(json!({
+            "error": format!("Failed to save settings: {err}")
+        })),
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

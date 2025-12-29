@@ -80,6 +80,18 @@ diesel::table! {
     use diesel::sql_types::*;
     use crate::schema::types::Jsonb;
 
+    settings_entries (user_id) {
+        user_id -> Text,
+        settings -> Jsonb,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+    }
+}
+
+diesel::table! {
+    use diesel::sql_types::*;
+    use crate::schema::types::Jsonb;
+
     memory_entries (id) {
         id -> Integer,
         user_id -> Text,
@@ -184,6 +196,7 @@ diesel::allow_tables_to_appear_in_same_query!(
     tasks,
     task_messages,
     session_entries,
+    settings_entries,
     memory_entries,
     scratchpad_entries,
     integrations,

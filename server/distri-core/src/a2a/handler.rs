@@ -1,5 +1,5 @@
 use crate::a2a::stream::handle_message_send_streaming_sse;
-use crate::a2a::{unimplemented_error, A2AError, SseMessage};
+use crate::a2a::{settings_definition_overrides, unimplemented_error, A2AError, SseMessage};
 use crate::agent::context::BrowserSession;
 use crate::agent::types::ExecutorContextMetadata;
 use crate::agent::AgentOrchestrator;
@@ -376,6 +376,14 @@ impl A2AHandler {
                     }
                 }
             }
+        }
+
+        if definition_overrides.is_none() {
+            definition_overrides = settings_definition_overrides(
+                &self.executor.stores.settings_store,
+                &executor_context.user_id,
+            )
+            .await;
         }
 
         let _execution_result = coordinator

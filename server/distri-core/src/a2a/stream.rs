@@ -1,6 +1,6 @@
 use crate::a2a::handler::validate_message;
 use crate::a2a::mapper::{map_agent_event, map_final_result};
-use crate::a2a::{extract_text_from_message, SseMessage};
+use crate::a2a::{extract_text_from_message, settings_definition_overrides, SseMessage};
 use crate::agent::{
     context::BrowserSession, types::ExecutorContextMetadata, AgentEvent, AgentEventType,
     AgentOrchestrator, ExecutorContext,
@@ -165,10 +165,17 @@ pub async fn handle_message_send_streaming_sse(
         };
 
         let metadata_value = params.metadata.clone();
-        let metadata_struct: ExecutorContextMetadata = metadata_value
+        let mut metadata_struct: ExecutorContextMetadata = metadata_value
             .clone()
             .and_then(|m| serde_json::from_value(m).ok())
             .unwrap_or_default();
+        if metadata_struct.definition_overrides.is_none() {
+            metadata_struct.definition_overrides = settings_definition_overrides(
+                &executor.stores.settings_store,
+                &executor_context.user_id,
+            )
+            .await;
+        }
         let attr_session_id = metadata_struct
             .additional_attributes
             .as_ref()

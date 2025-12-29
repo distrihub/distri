@@ -1,9 +1,13 @@
 mod handler;
 mod stream;
 use distri_a2a::{EventKind, JsonRpcError, Message, Part, Role, TaskStatus, TaskStatusUpdateEvent};
-use distri_types::{a2a_converters::MessageMetadata, AgentError};
+use distri_types::{
+    a2a_converters::MessageMetadata, configuration::DefinitionOverrides, stores::SettingsStore,
+    AgentError,
+};
 pub use handler::A2AHandler;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use thiserror::Error;
 pub mod mapper;
 pub mod messages;
@@ -81,6 +85,35 @@ pub fn to_a2a_task_update(
         metadata: serde_json::to_value(event.event.clone()).ok(),
         kind: EventKind::TaskStatusUpdate,
         r#final: event.is_final,
+    }
+}
+
+pub async fn settings_definition_overrides(
+    settings_store: &Arc<dyn SettingsStore>,
+    user_id: &str,
+) -> Option<DefinitionOverrides> {
+    let settings = settings_store
+        .get_settings(user_id)
+        .await
+        .ok()
+        .flatten()?;
+
+    let overrides_value = settings
+        .get("definition_overrides")
+        .cloned()
+        .unwrap_or(settings);
+
+    let overrides: DefinitionOverrides = serde_json::from_value(overrides_value).ok()?;
+    if overrides.model.is_none()
+        && overrides.temperature.is_none()
+        && overrides.max_tokens.is_none()
+        && overrides.max_iterations.is_none()
+        && overrides.instructions.is_none()
+        && overrides.use_browser.is_none()
+    {
+        None
+    } else {
+        Some(overrides)
     }
 }
 

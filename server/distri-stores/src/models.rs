@@ -150,6 +150,31 @@ pub struct SessionEntryChangeset<'a> {
 }
 
 #[derive(Debug, Clone, Queryable, Identifiable, Selectable)]
+#[diesel(table_name = settings_entries, primary_key(user_id))]
+pub struct SettingsEntryModel {
+    pub user_id: String,
+    pub settings: String,
+    pub created_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
+}
+
+#[derive(Debug, Clone, Insertable)]
+#[diesel(table_name = settings_entries)]
+pub struct NewSettingsEntryModel<'a> {
+    pub user_id: &'a str,
+    pub settings: &'a str,
+    pub created_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
+}
+
+#[derive(Debug, Clone, AsChangeset)]
+#[diesel(table_name = settings_entries)]
+pub struct SettingsEntryChangeset<'a> {
+    pub settings: &'a str,
+    pub updated_at: NaiveDateTime,
+}
+
+#[derive(Debug, Clone, Queryable, Identifiable, Selectable)]
 #[diesel(table_name = memory_entries)]
 pub struct MemoryEntryModel {
     pub id: i32,
