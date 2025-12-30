@@ -1,0 +1,29 @@
+[package]
+name = "distri-plugin-executor"
+version = "0.2.7"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0"
+async-trait = "0.1"
+serde_json = { workspace = true }
+tokio = { version = "1.0", features = ["full"] }
+tracing = "0.1"
+toml = "0.8"
+chrono = { version = "0.4", features = ["serde"] }
+
+rustyscript = { workspace = true, optional = true }
+reqwest = { workspace = true, features = ["json"], optional = true }
+serde = { workspace = true }
+schemars = { workspace = true }
+uuid = { version = "1.0", features = ["v4"] }
+distri-types = { path = "../../distri-types", version = "0.2.7" }
+deno_error = "0.7"
+
+[features]
+default = ["typescript"]
+typescript = ["rustyscript", "reqwest", "distri-types/typescript"]
+
+[dev-dependencies]
+tempfile = "3.0"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "chrono"] }

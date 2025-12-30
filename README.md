@@ -2,9 +2,11 @@
 
 ![](https://img.shields.io/badge/Platform-macOS%20%7C%20Linux%20%7C%20Windows-blue?style=flat-square) ![](https://img.shields.io/badge/Runtime-Distri%20CLI-orange?style=flat-square)
 
-Distri is a programmable automation runtime for shipping AI-native workflows across your stack. This repository is the public home for official Distri releases plus a curated set of sample plugins you can use as starting points for your own automations.
+Distri is A2A compatible agent framework built in Rust. Build agents with simply markdown definition and integrate within your React frontend. Tools can be added as either backend tools via Deno or frontend tools which makes building agents much easier. 
 
 **Learn more in the [official documentation](https://distri.dev/docs/)** and explore product updates at [distri.dev](https://distri.dev/).
+
+Distri is built to work with any A2A agent server (https://a2a-protocol.org/). `distri-server` is one implementation and is available under the Elastic License 2.0 (ELv2).
 
 ![Distri CLI demo](https://distri.dev/img/social.png)
 
@@ -65,9 +67,22 @@ This repo ships ready-to-run examples that mirror how production Distri plugins 
 
 Clone the repo, open any plugin directory, and run the Deno snippets in the README to experiment, or copy the structure into your own repo when building new integrations.
 
+## Developing
+
+```bash
+cargo publish -p distri-a2a
+cargo publish -p distri-types
+cargo publish -p distri-filesystem
+cargo publish -p distri
+```
+
 ## Releases & updates
 
 Each tagged release in this repo corresponds to a shipped Distri build. Check the [GitHub Releases](https://github.com/distrihub/distri/releases) page for the latest binaries, changelog notes, and signing artifacts.
+
+## Licensing
+
+Everything in the repository root and common components is licensed under the [MIT License](LICENSE). Anything under `server/` is licensed under the [Elastic License 2.0 – Distri Edition](server/LICENSE). `distri-server` follows [fair-code principles](https://faircode.io/) and will always remain free to use.
 
 ## Support & feedback
 

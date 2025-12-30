@@ -1,0 +1,32 @@
+{
+  "name": "@distri/workspace",
+  "version": "0.2.5",
+  "private": true,
+  "packageManager": "pnpm@10.11.1",
+  "workspaces": [
+    "ui"
+  ],
+  "scripts": {
+    "build": "turbo build --filter=./distrijs/packages/core --filter=./distrijs/packages/react  --filter=./distri-home --filter=./distri-ui",
+    "build:all": "turbo build",
+    "dev": "turbo dev  --filter=./distrijs/packages/core --filter=./distrijs/packages/react --filter=./distri-home --filter=./distri-ui",
+    "lint": "turbo lint",
+    "lint:fix": "turbo lint -- --fix",
+    "clean": "turbo clean",
+    "type-check": "turbo type-check"
+  },
+  "devDependencies": {
+    "@typescript-eslint/eslint-plugin": "^6.21.0",
+    "@typescript-eslint/parser": "^6.21.0",
+    "eslint": "^8.57.0",
+    "eslint-plugin-react": "^7.33.2",
+    "eslint-plugin-react-hooks": "^4.6.0",
+    "turbo": "^2.0.0",
+    "typescript": "^5.0.0",
+    "vite": "^4.5.14"
+  },
+  "dependencies": {
+    "@a2a-js/sdk": "https://github.com/v3g42/a2a-js.git#51444c9",
+    "lucide-react": "^0.460.0"
+  }
+}

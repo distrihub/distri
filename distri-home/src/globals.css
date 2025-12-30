@@ -1,0 +1,94 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222.2 84% 4.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 222.2 84% 4.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222.2 84% 4.9%;
+    --primary: 188 100% 28%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 210 40% 96%;
+    --secondary-foreground: 222.2 84% 4.9%;
+    --muted: 210 40% 96%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+    --accent: 188 55% 92%;
+    --accent-foreground: 188 80% 20%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+    --ring: 188 100% 28%;
+    --radius: 0.5rem;
+    --highlight: 188 70% 45%;
+  }
+
+  .dark {
+    /* Background: #121418 */
+    --background: 220 16% 8%;
+    /* Foreground: #eef2f6 */
+    --foreground: 210 33% 95%;
+    /* Surface/Card: #1a1d23 */
+    --card: 220 17% 12%;
+    --card-foreground: 210 33% 95%;
+    --popover: 220 17% 12%;
+    --popover-foreground: 210 33% 95%;
+    /* Primary: #007C91, Highlight: rgb(34,174,195) */
+    --primary: 188 100% 28%;
+    --primary-foreground: 0 0% 100%;
+    --highlight: 188 70% 45%;
+    /* Secondary/Muted: reusable gray for sidebar, cards, etc. */
+    --secondary: 220 18% 16%;
+    --secondary-foreground: 210 33% 95%;
+    --muted: 220 18% 16%;
+    --muted-foreground: 215 20% 65%;
+    --accent: 188 30% 22%;
+    --accent-foreground: 188 70% 85%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 40% 98%;
+    /* Border: #2a2f3a */
+    --border: 220 18% 20%;
+    --input: 220 18% 20%;
+    --ring: 188 70% 45%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+@layer components {
+  .distri-home-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--muted-foreground)) transparent;
+    overflow-y: auto;
+    scroll-behavior: smooth;
+  }
+
+  .distri-home-scroll::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .distri-home-scroll::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .distri-home-scroll::-webkit-scrollbar-thumb {
+    background-color: hsl(var(--muted-foreground));
+    border-radius: 3px;
+  }
+
+  .distri-home-scroll::-webkit-scrollbar-thumb:hover {
+    background-color: hsl(var(--foreground));
+  }
+}

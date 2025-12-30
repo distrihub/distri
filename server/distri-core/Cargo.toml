@@ -1,0 +1,92 @@
+[package]
+name = "distri-core"
+version = "0.2.7"
+edition = "2021"
+
+[features]
+default = ["code", "sqlite"]
+inmemory = []
+code = ["dep:distri-js-sandbox"]
+sqlite = ["distri-stores/sqlite"]
+postgres = ["distri-stores/postgres"]
+sqlite_vendored = ["sqlite", "distri-stores/sqlite_vendored"]
+postgres_vendored = ["postgres", "distri-stores/postgres_vendored"]
+otel = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp"]
+
+[dependencies]
+distri-a2a = { path = "../../distri-a2a", version = "0.2.7" }
+distri-parsers = { path = "../distri-parsers", version = "0.2.7" }
+distri = { path = "../../distri", version = "0.2.7" }
+browsr-client = { workspace = true }
+browsr-types = { workspace = true }
+distri-js-sandbox = { workspace = true, optional = true }
+distri-types = { path = "../../distri-types", version = "0.2.7" }
+distri-stores = { path = "../distri-stores", version = "0.2.7", default-features = false }
+distri-filesystem = { path = "../../distri-filesystem", version = "0.2.7" }
+distri-auth = { path = "../distri-auth", version = "0.2.7" }
+distri-plugin-executor = { path = "../distri-plugin-executor", version = "0.2.7" }
+distri-plugins = { path = "../distri-plugins", version = "0.2.7" }
+
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = "0.9"
+toml = "0.8"
+tokio = { version = "1.0", features = ["full"] }
+tokio-util = { workspace = true }
+thiserror = "1.0"
+async-openai = { workspace = true, features = ["realtime"] }
+reqwest = { workspace = true }
+async-mcp = { workspace = true }
+regex = "1.5"
+tracing = "0.1"
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+futures = { workspace = true }
+jsonschema = { workspace = true }
+schemars = { workspace = true }
+secrecy = { version = "0.10.3", features = ["serde"] }
+uuid = "1.13.1"
+chrono = { version = "0.4", features = ["serde"] }
+comfy-table = "7.0"
+futures-util = "0.3"
+async-stream = "0.3"
+quick-xml = { version = "0.31", features = ["serialize"] }
+roxmltree = "0.20"
+crossbeam-channel = "0.5"
+base64 = "0.22.1"
+handlebars = "6.0"
+object_store = { version = "0.9", default-features = false, features = ["aws"] }
+dashmap = "5.5.3"
+once_cell = "1.19.0"
+
+# Voice streaming dependencies
+tokio-tungstenite = "0.24"
+futures-channel = "0.3"
+bytes = "1.0"
+
+
+opentelemetry = { version = "0.28.0", optional = true }
+opentelemetry_sdk = { version = "0.28.0", optional = true }
+opentelemetry-otlp = { version = "0.28.0", features = [
+  "grpc-tonic",
+], optional = true }
+
+# PostgreSQL and object storage dependencies moved to distri-stores
+
+# HTML handling
+html-escape = "0.2"
+
+# MCP servers for built-in functionality
+mcp-crawl = { workspace = true }
+mcp-tavily = { workspace = true }
+
+[dev-dependencies]
+dotenv = "0.15"
+tempfile = "3.15.0"
+tracing-subscriber = { workspace = true }
+
+
+[dependencies.openssl]
+version = "0.10"
+features = ["vendored"]

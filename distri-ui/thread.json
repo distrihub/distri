@@ -1,0 +1,856 @@
+[
+  {
+    "jsonrpc": "2.0",
+    "result": {
+      "kind": "status-update",
+      "taskId": "1ff6b472-fe0a-48d6-8fa5-a7459bf58217",
+      "contextId": "fd4abb62-f643-4876-9826-a24b606a4003",
+      "status": {
+        "state": "submitted",
+        "message": null,
+        "timestamp": "1754063299501"
+      },
+      "final": true,
+      "metadata": {
+        "type": "run_started"
+      }
+    },
+    "id": "1"
+  },
+  {
+    "jsonrpc": "2.0",
+    "result": {
+      "kind": "status-update",
+      "taskId": "1ff6b472-fe0a-48d6-8fa5-a7459bf58217",
+      "contextId": "fd4abb62-f643-4876-9826-a24b606a4003",
+      "status": {
+        "state": "working",
+        "message": null,
+        "timestamp": "1754063299501"
+      },
+      "final": false,
+      "metadata": {
+        "type": "plan_started",
+        "initial_plan": true
+      }
+    },
+    "id": "1"
+  },
+  {
+    "jsonrpc": "2.0",
+    "result": {
+      "kind": "status-update",
+      "taskId": "1ff6b472-fe0a-48d6-8fa5-a7459bf58217",
+      "contextId": "fd4abb62-f643-4876-9826-a24b606a4003",
+      "status": {
+        "state": "working",
+        "message": null,
+        "timestamp": "1754063299501"
+      },
+      "final": false,
+      "metadata": {
+        "type": "plan_finished",
+        "total_steps": 1
+      }
+    },
+    "id": "1"
+  },
+  {
+    "jsonrpc": "2.0",
+    "result": {
+      "kind": "status-update",
+      "taskId": "1ff6b472-fe0a-48d6-8fa5-a7459bf58217",
+      "contextId": "fd4abb62-f643-4876-9826-a24b606a4003",
+      "status": {
+        "state": "working",
+        "message": null,
+        "timestamp": "1754063299501"
+      },
+      "final": false,
+      "metadata": {
+        "type": "step_started",
+        "step_id": "1",
+        "step_index": 0,
+        "step_title": "Generating response ..."
+      }
+    },
+    "id": "1"
+  },
+  {
+    "jsonrpc": "2.0",
+    "result": {
+      "kind": "message",
+      "messageId": "9b74ae93-8bec-462f-8557-1112426bf49c",
+      "role": "agent",
+      "parts": [],
+      "contextId": "fd4abb62-f643-4876-9826-a24b606a4003",
+      "taskId": null,
+      "referenceTaskIds": [],
+      "extensions": [],
+      "metadata": {
+        "type": "text_message_start",
+        "message_id": "9b74ae93-8bec-462f-8557-1112426bf49c",
+        "role": "assistant"
+      }
+    },
+    "id": "1"
+  },
+  {
+    "jsonrpc": "2.0",
+    "result": {
+      "kind": "message",
+      "messageId": "9b74ae93-8bec-462f-8557-1112426bf49c",
+      "role": "agent",
+      "parts": [],
+      "contextId": "fd4abb62-f643-4876-9826-a24b606a4003",
+      "taskId": null,
+      "referenceTaskIds": [],
+      "extensions": [],
+      "metadata": {
+        "type": "text_message_end",
+        "message_id": "9b74ae93-8bec-462f-8557-1112426bf49c"
+      }
+    },
+    "id": "1"
+  },
+  {
+    "jsonrpc": "2.0",
+    "result": {
+      "kind": "status-update",
+      "taskId": "1ff6b472-fe0a-48d6-8fa5-a7459bf58217",
+      "contextId": "fd4abb62-f643-4876-9826-a24b606a4003",
+      "status": {
+        "state": "working",
+        "message": null,
+        "timestamp": "1754063302205"
+      },
+      "final": true,
+      "metadata": {
+        "type": "execution_result",
+        "result": {
+          "step_id": "1",
+          "type": "llm_response",
+          "content": "",
+          "tool_calls": [
+            {
+              "tool_call_id": "call_gzsni58xDb4n7oJl3jiLPxGT",
+              "tool_name": "search",
+              "input": "{\"query\":\"founders of tazapay\"}"
+            }
+          ],
+          "success": true,
+          "rejected": false,
+          "reason": null,
+          "timestamp": 1754063302202
+        }
+      }
+    },
+    "id": "1"
+  },
+  {
+    "jsonrpc": "2.0",
+    "result": {
+      "kind": "status-update",
+      "taskId": "1ff6b472-fe0a-48d6-8fa5-a7459bf58217",
+      "contextId": "fd4abb62-f643-4876-9826-a24b606a4003",
+      "status": {
+        "state": "working",
+        "message": null,
+        "timestamp": "1754063302206"
+      },
+      "final": false,
+      "metadata": {
+        "type": "step_completed",
+        "step_id": "1",
+        "success": true
+      }
+    },
+    "id": "1"
+  },
+  {
+    "jsonrpc": "2.0",
+    "result": {
+      "kind": "status-update",
+      "taskId": "1ff6b472-fe0a-48d6-8fa5-a7459bf58217",
+      "contextId": "fd4abb62-f643-4876-9826-a24b606a4003",
+      "status": {
+        "state": "working",
+        "message": null,
+        "timestamp": "1754063302206"
+      },
+      "final": false,
+      "metadata": {
+        "type": "step_started",
+        "step_id": "8f3ed669-e951-4fe3-83e6-60841c1b9d42",
+        "step_index": 1,
+        "step_title": "Executing tools: search"
+      }
+    },
+    "id": "1"
+  },
+  {
+    "jsonrpc": "2.0",
+    "result": {
+      "kind": "status-update",
+      "taskId": "1ff6b472-fe0a-48d6-8fa5-a7459bf58217",
+      "contextId": "fd4abb62-f643-4876-9826-a24b606a4003",
+      "status": {
+        "state": "working",
+        "message": null,
+        "timestamp": "1754063302206"
+      },
+      "final": false,
+      "metadata": {
+        "type": "tool_execution_start",
+        "tool_call_id": "call_gzsni58xDb4n7oJl3jiLPxGT",
+        "tool_call_name": "search",
+        "input": "{\"query\":\"founders of tazapay\"}"
+      }
+    },
+    "id": "1"
+  },
+  {
+    "jsonrpc": "2.0",
+    "result": {
+      "kind": "status-update",
+      "taskId": "1ff6b472-fe0a-48d6-8fa5-a7459bf58217",
+      "contextId": "fd4abb62-f643-4876-9826-a24b606a4003",
+      "status": {
+        "state": "working",
+        "message": null,
+        "timestamp": "1754063302206"
+      },
+      "final": false,
+      "metadata": {
+        "type": "tool_execution_end",
+        "tool_call_id": "call_gzsni58xDb4n7oJl3jiLPxGT",
+        "tool_call_name": "search",
+        "success": false
+      }
+    },
+    "id": "1"
+  },
+  {
+    "jsonrpc": "2.0",
+    "result": {
+      "kind": "status-update",
+      "taskId": "1ff6b472-fe0a-48d6-8fa5-a7459bf58217",
+      "contextId": "fd4abb62-f643-4876-9826-a24b606a4003",
+      "status": {
+        "state": "working",
+        "message": null,
+        "timestamp": "1754063302206"
+      },
+      "final": true,
+      "metadata": {
+        "type": "execution_result",
+        "result": {
+          "step_id": "8f3ed669-e951-4fe3-83e6-60841c1b9d42",
+          "type": "tool_results",
+          "results": [
+            {
+              "tool_call_id": "call_gzsni58xDb4n7oJl3jiLPxGT",
+              "tool_name": "search",
+              "result": "Execution error: Orchestrator not intialized"
+            }
+          ],
+          "success": true,
+          "rejected": false,
+          "reason": null,
+          "timestamp": 1754063302202
+        }
+      }
+    },
+    "id": "1"
+  },
+  {
+    "jsonrpc": "2.0",
+    "result": {
+      "kind": "status-update",
+      "taskId": "1ff6b472-fe0a-48d6-8fa5-a7459bf58217",
+      "contextId": "fd4abb62-f643-4876-9826-a24b606a4003",
+      "status": {
+        "state": "working",
+        "message": null,
+        "timestamp": "1754063302206"
+      },
+      "final": false,
+      "metadata": {
+        "type": "step_completed",
+        "step_id": "8f3ed669-e951-4fe3-83e6-60841c1b9d42",
+        "success": true
+      }
+    },
+    "id": "1"
+  },
+  {
+    "jsonrpc": "2.0",
+    "result": {
+      "kind": "status-update",
+      "taskId": "1ff6b472-fe0a-48d6-8fa5-a7459bf58217",
+      "contextId": "fd4abb62-f643-4876-9826-a24b606a4003",
+      "status": {
+        "state": "working",
+        "message": null,
+        "timestamp": "1754063302206"
+      },
+      "final": false,
+      "metadata": {
+        "type": "step_started",
+        "step_id": "da2a8c5a-9bd4-47fa-a6b2-5600c25d3dfe",
+        "step_index": 2,
+        "step_title": "Tools executed: search"
+      }
+    },
+    "id": "1"
+  },
+  {
+    "jsonrpc": "2.0",
+    "result": {
+      "kind": "message",
+      "messageId": "ff11282e-07fb-4cb8-a281-1223971bee82",
+      "role": "agent",
+      "parts": [],
+      "contextId": "fd4abb62-f643-4876-9826-a24b606a4003",
+      "taskId": null,
+      "referenceTaskIds": [],
+      "extensions": [],
+      "metadata": {
+        "type": "text_message_start",
+        "message_id": "ff11282e-07fb-4cb8-a281-1223971bee82",
+        "role": "assistant"
+      }
+    },
+    "id": "1"
+  },
+  {
+    "jsonrpc": "2.0",
+    "result": {
+      "kind": "message",
+      "messageId": "592a9053-06d7-46f9-adca-a9b566d240d8",
+      "role": "agent",
+      "parts": [],
+      "contextId": "fd4abb62-f643-4876-9826-a24b606a4003",
+      "taskId": null,
+      "referenceTaskIds": [],
+      "extensions": [],
+      "metadata": {
+        "type": "text_message_start",
+        "message_id": "592a9053-06d7-46f9-adca-a9b566d240d8",
+        "role": "assistant"
+      }
+    },
+    "id": "1"
+  },
+  {
+    "jsonrpc": "2.0",
+    "result": {
+      "kind": "message",
+      "messageId": "592a9053-06d7-46f9-adca-a9b566d240d8",
+      "role": "agent",
+      "parts": [
+        {
+          "kind": "text",
+          "text": ""
+        }
+      ],
+      "contextId": "fd4abb62-f643-4876-9826-a24b606a4003",
+      "taskId": null,
+      "referenceTaskIds": [],
+      "extensions": [],
+      "metadata": {
+        "type": "text_message_content",
+        "message_id": "592a9053-06d7-46f9-adca-a9b566d240d8",
+        "delta": ""
+      }
+    },
+    "id": "1"
+  },
+  {
+    "jsonrpc": "2.0",
+    "result": {
+      "kind": "message",
+      "messageId": "592a9053-06d7-46f9-adca-a9b566d240d8",
+      "role": "agent",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "There"
+        }
+      ],
+      "contextId": "fd4abb62-f643-4876-9826-a24b606a4003",
+      "taskId": null,
+      "referenceTaskIds": [],
+      "extensions": [],
+      "metadata": {
+        "type": "text_message_content",
+        "message_id": "592a9053-06d7-46f9-adca-a9b566d240d8",
+        "delta": "There"
+      }
+    },
+    "id": "1"
+  },
+  {
+    "jsonrpc": "2.0",
+    "result": {
+      "kind": "message",
+      "messageId": "592a9053-06d7-46f9-adca-a9b566d240d8",
+      "role": "agent",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "."
+        }
+      ],
+      "contextId": "fd4abb62-f643-4876-9826-a24b606a4003",
+      "taskId": null,
+      "referenceTaskIds": [],
+      "extensions": [],
+      "metadata": {
+        "type": "text_message_content",
+        "message_id": "592a9053-06d7-46f9-adca-a9b566d240d8",
+        "delta": "."
+      }
+    },
+    "id": "1"
+  },
+  {
+    "jsonrpc": "2.0",
+    "result": {
+      "kind": "message",
+      "messageId": "592a9053-06d7-46f9-adca-a9b566d240d8",
+      "role": "agent",
+      "parts": [],
+      "contextId": "fd4abb62-f643-4876-9826-a24b606a4003",
+      "taskId": null,
+      "referenceTaskIds": [],
+      "extensions": [],
+      "metadata": {
+        "type": "text_message_end",
+        "message_id": "592a9053-06d7-46f9-adca-a9b566d240d8"
+      }
+    },
+    "id": "1"
+  },
+  {
+    "jsonrpc": "2.0",
+    "result": {
+      "kind": "message",
+      "messageId": "ff11282e-07fb-4cb8-a281-1223971bee82",
+      "role": "agent",
+      "parts": [],
+      "contextId": "fd4abb62-f643-4876-9826-a24b606a4003",
+      "taskId": null,
+      "referenceTaskIds": [],
+      "extensions": [],
+      "metadata": {
+        "type": "text_message_end",
+        "message_id": "ff11282e-07fb-4cb8-a281-1223971bee82"
+      }
+    },
+    "id": "1"
+  },
+  {
+    "jsonrpc": "2.0",
+    "result": {
+      "kind": "status-update",
+      "taskId": "1ff6b472-fe0a-48d6-8fa5-a7459bf58217",
+      "contextId": "fd4abb62-f643-4876-9826-a24b606a4003",
+      "status": {
+        "state": "working",
+        "message": null,
+        "timestamp": "1754063305246"
+      },
+      "final": true,
+      "metadata": {
+        "type": "execution_result",
+        "result": {
+          "step_id": "da2a8c5a-9bd4-47fa-a6b2-5600c25d3dfe",
+          "type": "llm_response",
+          "content": "There was an error with the search tool. I will try to directly scrape relevant information about the founders of Tazapay from their official website or relevant pages.",
+          "tool_calls": [
+            {
+              "tool_call_id": "call_d6d2ly0z3L4lzpNk6Edfg1Tw",
+              "tool_name": "scrape",
+              "input": "{\"url\":\"https://www.tazapay.com/about\"}"
+            }
+          ],
+          "success": true,
+          "rejected": false,
+          "reason": null,
+          "timestamp": 1754063305238
+        }
+      }
+    },
+    "id": "1"
+  },
+  {
+    "jsonrpc": "2.0",
+    "result": {
+      "kind": "status-update",
+      "taskId": "1ff6b472-fe0a-48d6-8fa5-a7459bf58217",
+      "contextId": "fd4abb62-f643-4876-9826-a24b606a4003",
+      "status": {
+        "state": "working",
+        "message": null,
+        "timestamp": "1754063305246"
+      },
+      "final": false,
+      "metadata": {
+        "type": "step_completed",
+        "step_id": "da2a8c5a-9bd4-47fa-a6b2-5600c25d3dfe",
+        "success": true
+      }
+    },
+    "id": "1"
+  },
+  {
+    "jsonrpc": "2.0",
+    "result": {
+      "kind": "status-update",
+      "taskId": "1ff6b472-fe0a-48d6-8fa5-a7459bf58217",
+      "contextId": "fd4abb62-f643-4876-9826-a24b606a4003",
+      "status": {
+        "state": "working",
+        "message": null,
+        "timestamp": "1754063305246"
+      },
+      "final": false,
+      "metadata": {
+        "type": "step_started",
+        "step_id": "ceafc5fb-fa9f-437c-930c-3a5d9f17f5c5",
+        "step_index": 3,
+        "step_title": "Executing tools: scrape"
+      }
+    },
+    "id": "1"
+  },
+  {
+    "jsonrpc": "2.0",
+    "result": {
+      "kind": "status-update",
+      "taskId": "1ff6b472-fe0a-48d6-8fa5-a7459bf58217",
+      "contextId": "fd4abb62-f643-4876-9826-a24b606a4003",
+      "status": {
+        "state": "working",
+        "message": null,
+        "timestamp": "1754063305246"
+      },
+      "final": false,
+      "metadata": {
+        "type": "tool_execution_start",
+        "tool_call_id": "call_d6d2ly0z3L4lzpNk6Edfg1Tw",
+        "tool_call_name": "scrape",
+        "input": "{\"url\":\"https://www.tazapay.com/about\"}"
+      }
+    },
+    "id": "1"
+  },
+  {
+    "jsonrpc": "2.0",
+    "result": {
+      "kind": "status-update",
+      "taskId": "1ff6b472-fe0a-48d6-8fa5-a7459bf58217",
+      "contextId": "fd4abb62-f643-4876-9826-a24b606a4003",
+      "status": {
+        "state": "working",
+        "message": null,
+        "timestamp": "1754063305246"
+      },
+      "final": false,
+      "metadata": {
+        "type": "tool_execution_end",
+        "tool_call_id": "call_d6d2ly0z3L4lzpNk6Edfg1Tw",
+        "tool_call_name": "scrape",
+        "success": false
+      }
+    },
+    "id": "1"
+  },
+  {
+    "jsonrpc": "2.0",
+    "result": {
+      "kind": "status-update",
+      "taskId": "1ff6b472-fe0a-48d6-8fa5-a7459bf58217",
+      "contextId": "fd4abb62-f643-4876-9826-a24b606a4003",
+      "status": {
+        "state": "working",
+        "message": null,
+        "timestamp": "1754063305246"
+      },
+      "final": true,
+      "metadata": {
+        "type": "execution_result",
+        "result": {
+          "step_id": "ceafc5fb-fa9f-437c-930c-3a5d9f17f5c5",
+          "type": "tool_results",
+          "results": [
+            {
+              "tool_call_id": "call_d6d2ly0z3L4lzpNk6Edfg1Tw",
+              "tool_name": "scrape",
+              "result": "Execution error: Orchestrator not intialized"
+            }
+          ],
+          "success": true,
+          "rejected": false,
+          "reason": null,
+          "timestamp": 1754063305242
+        }
+      }
+    },
+    "id": "1"
+  },
+  {
+    "jsonrpc": "2.0",
+    "result": {
+      "kind": "status-update",
+      "taskId": "1ff6b472-fe0a-48d6-8fa5-a7459bf58217",
+      "contextId": "fd4abb62-f643-4876-9826-a24b606a4003",
+      "status": {
+        "state": "working",
+        "message": null,
+        "timestamp": "1754063305246"
+      },
+      "final": false,
+      "metadata": {
+        "type": "step_completed",
+        "step_id": "ceafc5fb-fa9f-437c-930c-3a5d9f17f5c5",
+        "success": true
+      }
+    },
+    "id": "1"
+  },
+  {
+    "jsonrpc": "2.0",
+    "result": {
+      "kind": "status-update",
+      "taskId": "1ff6b472-fe0a-48d6-8fa5-a7459bf58217",
+      "contextId": "fd4abb62-f643-4876-9826-a24b606a4003",
+      "status": {
+        "state": "working",
+        "message": null,
+        "timestamp": "1754063305246"
+      },
+      "final": false,
+      "metadata": {
+        "type": "step_started",
+        "step_id": "eff0a17e-5dcb-4ad6-b9d1-e736ec094ac0",
+        "step_index": 4,
+        "step_title": "Tools executed: scrape"
+      }
+    },
+    "id": "1"
+  },
+  {
+    "jsonrpc": "2.0",
+    "result": {
+      "kind": "message",
+      "messageId": "bcaf7150-0b68-4563-9106-e09bed546a75",
+      "role": "agent",
+      "parts": [],
+      "contextId": "fd4abb62-f643-4876-9826-a24b606a4003",
+      "taskId": null,
+      "referenceTaskIds": [],
+      "extensions": [],
+      "metadata": {
+        "type": "text_message_start",
+        "message_id": "bcaf7150-0b68-4563-9106-e09bed546a75",
+        "role": "assistant"
+      }
+    },
+    "id": "1"
+  },
+  {
+    "jsonrpc": "2.0",
+    "result": {
+      "kind": "message",
+      "messageId": "97ef3a39-f41c-4c89-bb94-88a778b89e9f",
+      "role": "agent",
+      "parts": [],
+      "contextId": "fd4abb62-f643-4876-9826-a24b606a4003",
+      "taskId": null,
+      "referenceTaskIds": [],
+      "extensions": [],
+      "metadata": {
+        "type": "text_message_start",
+        "message_id": "97ef3a39-f41c-4c89-bb94-88a778b89e9f",
+        "role": "assistant"
+      }
+    },
+    "id": "1"
+  },
+  {
+    "jsonrpc": "2.0",
+    "result": {
+      "kind": "message",
+      "messageId": "97ef3a39-f41c-4c89-bb94-88a778b89e9f",
+      "role": "agent",
+      "parts": [
+        {
+          "kind": "text",
+          "text": ""
+        }
+      ],
+      "contextId": "fd4abb62-f643-4876-9826-a24b606a4003",
+      "taskId": null,
+      "referenceTaskIds": [],
+      "extensions": [],
+      "metadata": {
+        "type": "text_message_content",
+        "message_id": "97ef3a39-f41c-4c89-bb94-88a778b89e9f",
+        "delta": ""
+      }
+    },
+    "id": "1"
+  },
+  {
+    "jsonrpc": "2.0",
+    "result": {
+      "kind": "message",
+      "messageId": "97ef3a39-f41c-4c89-bb94-88a778b89e9f",
+      "role": "agent",
+      "parts": [
+        {
+          "kind": "text",
+          "text": " inquiry"
+        }
+      ],
+      "contextId": "fd4abb62-f643-4876-9826-a24b606a4003",
+      "taskId": null,
+      "referenceTaskIds": [],
+      "extensions": [],
+      "metadata": {
+        "type": "text_message_content",
+        "message_id": "97ef3a39-f41c-4c89-bb94-88a778b89e9f",
+        "delta": " inquiry"
+      }
+    },
+    "id": "1"
+  },
+  {
+    "jsonrpc": "2.0",
+    "result": {
+      "kind": "message",
+      "messageId": "97ef3a39-f41c-4c89-bb94-88a778b89e9f",
+      "role": "agent",
+      "parts": [
+        {
+          "kind": "text",
+          "text": "?"
+        }
+      ],
+      "contextId": "fd4abb62-f643-4876-9826-a24b606a4003",
+      "taskId": null,
+      "referenceTaskIds": [],
+      "extensions": [],
+      "metadata": {
+        "type": "text_message_content",
+        "message_id": "97ef3a39-f41c-4c89-bb94-88a778b89e9f",
+        "delta": "?"
+      }
+    },
+    "id": "1"
+  },
+  {
+    "jsonrpc": "2.0",
+    "result": {
+      "kind": "message",
+      "messageId": "97ef3a39-f41c-4c89-bb94-88a778b89e9f",
+      "role": "agent",
+      "parts": [],
+      "contextId": "fd4abb62-f643-4876-9826-a24b606a4003",
+      "taskId": null,
+      "referenceTaskIds": [],
+      "extensions": [],
+      "metadata": {
+        "type": "text_message_end",
+        "message_id": "97ef3a39-f41c-4c89-bb94-88a778b89e9f"
+      }
+    },
+    "id": "1"
+  },
+  {
+    "jsonrpc": "2.0",
+    "result": {
+      "kind": "message",
+      "messageId": "bcaf7150-0b68-4563-9106-e09bed546a75",
+      "role": "agent",
+      "parts": [],
+      "contextId": "fd4abb62-f643-4876-9826-a24b606a4003",
+      "taskId": null,
+      "referenceTaskIds": [],
+      "extensions": [],
+      "metadata": {
+        "type": "text_message_end",
+        "message_id": "bcaf7150-0b68-4563-9106-e09bed546a75"
+      }
+    },
+    "id": "1"
+  },
+  {
+    "jsonrpc": "2.0",
+    "result": {
+      "kind": "status-update",
+      "taskId": "1ff6b472-fe0a-48d6-8fa5-a7459bf58217",
+      "contextId": "fd4abb62-f643-4876-9826-a24b606a4003",
+      "status": {
+        "state": "working",
+        "message": null,
+        "timestamp": "1754063309647"
+      },
+      "final": true,
+      "metadata": {
+        "type": "execution_result",
+        "result": {
+          "step_id": "eff0a17e-5dcb-4ad6-b9d1-e736ec094ac0",
+          "type": "llm_response",
+          "content": "It seems I am currently unable to perform web searches or scrapes for real-time information. However, I can provide information based on my pre-existing knowledge.\n\nTazapay is a cross-border payment platform focusing on secure international trade payments. If you want to know the founders of Tazapay, typically this information can be found on their company website under sections like \"About Us\" or \"Team,\" or on professional networking sites such as LinkedIn.\n\nWould you like me to provide guidance on how to find their founders' information, or assist you with some other inquiry?",
+          "tool_calls": [],
+          "success": true,
+          "rejected": false,
+          "reason": null,
+          "timestamp": 1754063309645
+        }
+      }
+    },
+    "id": "1"
+  },
+  {
+    "jsonrpc": "2.0",
+    "result": {
+      "kind": "status-update",
+      "taskId": "1ff6b472-fe0a-48d6-8fa5-a7459bf58217",
+      "contextId": "fd4abb62-f643-4876-9826-a24b606a4003",
+      "status": {
+        "state": "working",
+        "message": null,
+        "timestamp": "1754063309647"
+      },
+      "final": false,
+      "metadata": {
+        "type": "step_completed",
+        "step_id": "eff0a17e-5dcb-4ad6-b9d1-e736ec094ac0",
+        "success": true
+      }
+    },
+    "id": "1"
+  },
+  {
+    "jsonrpc": "2.0",
+    "result": {
+      "kind": "status-update",
+      "taskId": "1ff6b472-fe0a-48d6-8fa5-a7459bf58217",
+      "contextId": "fd4abb62-f643-4876-9826-a24b606a4003",
+      "status": {
+        "state": "working",
+        "message": null,
+        "timestamp": "1754063309647"
+      },
+      "final": true,
+      "metadata": {
+        "type": "run_finished"
+      }
+    },
+    "id": "1"
+  }
+]

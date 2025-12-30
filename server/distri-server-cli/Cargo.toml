@@ -1,0 +1,66 @@
+[package]
+name = "distri-server-cli"
+version = "0.2.7"
+edition = "2021"
+
+[features]
+default = ["sqlite"]
+sqlite = ["distri-core/sqlite", "distri-server/sqlite"]
+postgres = ["distri-core/postgres", "distri-server/postgres"]
+sqlite_vendored = [
+  "sqlite",
+  "distri-core/sqlite_vendored",
+  "distri-server/sqlite_vendored",
+]
+postgres_vendored = [
+  "postgres",
+  "distri-core/postgres_vendored",
+  "distri-server/postgres_vendored",
+]
+otel = ["distri-server/otel", "distri-core/otel"]
+ui = ["distri-server/ui"]
+[dependencies]
+distri-core = { path = "../distri-core", version = "0.2.7", default-features = false }
+distri-types = { path = "../../distri-types", version = "0.2.7" }
+distri-server = { path = "../distri-server", version = "0.2.7", default-features = false }
+distri-auth = { path = "../distri-auth", version = "0.2.7" }
+distri-plugins = { path = "../distri-plugins", version = "0.2.7" }
+open = "5.0"
+dotenv = "0.15"
+clap = { version = "4.5", features = ["derive"] }
+anyhow = { workspace = true }
+tracing = "0.1"
+tracing-subscriber = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { version = "1.0", features = ["full"] }
+serde_yaml = "0.9"
+regex = "1.5"
+toml = "0.9.5"
+dirs = "5.0"
+uuid = { version = "1.13.1", features = ["v4"] }
+async-trait = "0.1"
+comfy-table = "7.0"
+futures = "0.3.31"
+futures-util = "0.3.31"
+syntect = "5.0"
+chrono = { workspace = true }
+crossterm = "0.27"
+inquire = "0.7"
+fuzzy-matcher = "0.3"
+deno_ast = { version = "0.42" }
+viuer = "0.9.2"
+image = { version = "0.25", default-features = false, features = [
+  "png",
+  "jpeg",
+] }
+base64 = "0.21"
+
+# MCP servers for built-in functionality
+mcp-crawl = { workspace = true }
+mcp-tavily = { workspace = true }
+
+
+[[bin]]
+name = "distri-server"
+path = "src/main.rs"

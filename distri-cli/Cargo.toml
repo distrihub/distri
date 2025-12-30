@@ -1,0 +1,32 @@
+[package]
+name = "distri-cli"
+version = "0.2.7"
+edition = "2021"
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { version = "4.5", features = ["derive"] }
+dotenv = "0.15"
+fuzzy-matcher = "0.3"
+inquire = "0.7"
+crossterm = "0.27"
+serde_json = { workspace = true }
+tokio = { version = "1.0", features = ["full"] }
+toml = "0.8"
+
+distri = { path = "../distri", version = "0.2.7" }
+distri-a2a = { path = "../distri-a2a", version = "0.2.7" }
+distri-types = { path = "../distri-types", version = "0.2.7" }
+uuid = { version = "1.13.1", features = ["v4"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[dependencies.openssl]
+version = "0.10"
+features = ["vendored"]
+
+
+[[bin]]
+name = "distri"
+path = "src/main.rs"

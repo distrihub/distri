@@ -1,0 +1,18 @@
+[package]
+name = "distri-a2a"
+version = "0.2.7"
+edition = "2021"
+description = "A2A protocol types for the Distri ecosystem"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/distrihub/distri"
+homepage = "https://distri.dev"
+documentation = "https://docs.rs/distri-a2a"
+keywords = ["distri", "a2a", "agent", "protocol"]
+categories = ["api-bindings", "data-structures"]
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = { workspace = true }
+uuid = "1.13.1"

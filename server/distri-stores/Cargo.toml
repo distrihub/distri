@@ -1,0 +1,54 @@
+[package]
+name = "distri-stores"
+version = "0.2.7"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0"
+async-trait = { workspace = true }
+distri-types = { path = "../../distri-types", version = "0.2.7" }
+distri-filesystem = { path = "../../distri-filesystem", version = "0.2.7" }
+distri-auth = { path = "../distri-auth", version = "0.2.7" }
+distri-plugins = { path = "../distri-plugins", version = "0.2.7" }
+tracing = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+thiserror = "2.0"
+handlebars = "6.0"
+
+toml = "0.8"
+
+dirs = "6.0.0"
+
+diesel = { version = "2.2.5", default-features = false, features = [
+  "chrono",
+  "serde_json",
+] }
+diesel-async = { version = "0.7.3", default-features = false, features = [
+  "deadpool",
+  "async-connection-wrapper",
+  "migrations",
+] }
+diesel_migrations = { version = "2.2.0", default-features = false }
+dashmap = "5.5"
+libsqlite3-sys = { version = "0.30", optional = true, features = ["bundled"] }
+pq-sys = { version = "0.7.2", optional = true, features = ["bundled"] }
+
+
+[dev-dependencies]
+tempfile = "3.8"
+
+[features]
+default = []
+inmemory = []
+postgres = [
+  "diesel/postgres",
+  "diesel-async/postgres",
+  "diesel_migrations/postgres",
+]
+sqlite = ["diesel/sqlite", "diesel-async/sqlite", "diesel_migrations/sqlite"]
+sqlite_vendored = ["sqlite", "libsqlite3-sys"]
+postgres_vendored = ["postgres", "pq-sys"]

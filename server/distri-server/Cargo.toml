@@ -1,0 +1,66 @@
+[package]
+name = "distri-server"
+version = "0.2.7"
+edition = "2021"
+build = "build.rs"
+
+[features]
+default = ["sqlite"]
+ui = ["actix-web-static-files", "static-files"]
+sqlite = ["distri-core/sqlite"]
+postgres = ["distri-core/postgres"]
+sqlite_vendored = ["sqlite", "distri-core/sqlite_vendored"]
+postgres_vendored = ["postgres", "distri-core/postgres_vendored"]
+otel = ["distri-core/otel"]
+[dependencies]
+dotenv = { version = "0.15", optional = true }
+actix-web.workspace = true
+actix-web-lab.workspace = true
+actix-ws.workspace = true
+actix-rt.workspace = true
+actix-cors.workspace = true
+actix-files.workspace = true
+actix-web-static-files = { version = "4.1", optional = true, features = [
+  "static-files-03",
+] }
+static-files = { version = "0.3", optional = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = "0.9"
+serde_urlencoded = "0.7"
+tokio = { workspace = true }
+tokio-stream = { version = "0.1", features = ["sync"] }
+futures-util = "0.3"
+async-stream = "0.3"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.13", features = ["v4"] }
+base64 = "0.22"
+dirs = "5.0"
+dashmap = "5.5"
+once_cell = "1.19"
+
+env_logger = "0.11"
+
+tracing = "0.1"
+tracing-subscriber = "0.3"
+distri-core = { path = "../distri-core", version = "0.2.7", default-features = false }
+distri-filesystem = { path = "../../distri-filesystem", version = "0.2.7" }
+distri-types = { path = "../../distri-types", version = "0.2.7" }
+distri-a2a = { path = "../../distri-a2a", version = "0.2.7" }
+distri-auth = { path = "../distri-auth", version = "0.2.7" }
+
+schemars = { workspace = true }
+async-openai = { workspace = true }
+reqwest = { workspace = true }
+bytes = "1.0"
+flate2 = "1.0"
+actix-multipart.workspace = true
+rand.workspace = true
+toml = { version = "0.8", features = ["preserve_order"] }
+
+[build-dependencies]
+static-files = "0.3"
+
+[dev-dependencies]
+tempfile = "3.12"

@@ -1,0 +1,33 @@
+[package]
+name = "distri-plugins"
+version = "0.2.7"
+edition = "2021"
+
+# Binary targets removed - files don't exist
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { version = "4.0", features = ["derive"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+toml = "0.8"
+futures = { workspace = true }
+walkdir = "2.3"
+semver = "1.0"
+sha2 = "0.10"
+reqwest = { workspace = true }
+tar = "0.4"
+flate2 = "1.0"
+tempfile = "3.0"
+urlencoding = "2.1"
+chrono = { version = "0.4", features = ["serde"] }
+base64 = "0.22"
+distri-types = { path = "../../distri-types", version = "0.2.7" }
+dotenv = "0.15"
+
+uuid = { version = "1.0", features = ["v4"] }
+lazy_static = "1.4"
+distri-plugin-executor = { path = "../distri-plugin-executor", version = "0.2.7" }

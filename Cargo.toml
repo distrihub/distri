@@ -1,0 +1,80 @@
+[workspace]
+resolver = "2"
+
+members = [
+  "distri-cli",
+  "distri-a2a",
+  "distri-types",
+  "distri-filesystem",
+  "distri",
+  # server
+  "server/distri-core",
+  "server/distri-stores",
+  "server/cli-auth-server",
+  "server/distri-server",
+  "server/distri-plugins",
+  "server/distri-server-cli",
+  "server/distri-plugin-executor",
+
+]
+default-members = ["distri-cli", "server/distri-server-cli"]
+
+
+[workspace.dependencies]
+async-trait = "0.1"
+async-mcp = { version = "0.1.3" }
+async-openai = { version = "0.32.2", features = [
+  "completion-types",
+  "chat-completion",
+  "audio-types",
+  "audio",
+  "realtime-types",
+  "realtime",
+] }
+anyhow = "1.0"
+tracing = "0.1"
+serde = { version = "=1.0.219", features = ["derive"] }
+serde_json = "=1.0.143"
+tokio = { version = "1.0", features = ["full"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "chrono"] }
+futures = "0.3.31"
+reqwest = { version = "0.12.8", features = ["json"] }
+tokio-util = { version = "0.7", features = ["full"] }
+uuid = { version = "1.0", features = ["v4", "js"] }
+schemars = "1.0.4"
+jsonschema = "0.33"
+
+# Actix web dependencies (standardized across distri-server and distri-auth)
+actix-web = "4.4"
+actix-cors = "0.7"
+actix-web-lab = "0.22"
+actix-ws = "0.3"
+actix-rt = "2.9"
+actix-files = "0.6"
+actix-multipart = "0.7"
+
+# browsr-client = { version = "0.1.1" }
+# browsr-types = { version = "0.1.1" }
+
+browsr-client = { version = "0.1.1" }
+browsr-types = { version = "0.1.1" }
+# Other shared dependencies
+rand = "0.8"
+futures-util = "0.3.31"
+
+## Server dependencies
+# MCP servers
+mcp-tavily = { git = "https://github.com/distrihub/mcp-servers.git", rev = "0af3104" }
+mcp-crawl = { git = "https://github.com/distrihub/mcp-servers.git", rev = "0af3104" }
+mcp-reddit = { git = "https://github.com/distrihub/mcp-servers.git", rev = "0af3104" }
+mcp-twitter = { git = "https://github.com/distrihub/mcp-servers.git", rev = "0af3104" }
+chrono = { version = "0.4", features = ["serde"] }
+rustyscript = { git = "https://github.com/rscarson/rustyscript.git", version = "0.12.3", default-features = false, features = [
+  "worker",
+  "url_import",
+  "url",
+  "fs",
+  "fs_import",
+] }
+
+distri-js-sandbox = { git = "https://github.com/distrihub/js-sandbox", rev = "b3bb928" }

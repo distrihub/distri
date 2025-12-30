@@ -28,7 +28,7 @@ The app features a modern layout with:
    ```
 3. Set your Distri API URL (optional):
    ```
-   VITE_DISTRI_API_URL=http://localhost:8080/api/v1
+   VITE_DISTRI_API_URL=http://localhost:8080/v1
    ```
 
 ## Development

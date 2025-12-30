@@ -21,7 +21,7 @@ Installer highlights:
 ```bash
 distri serve
 ```
-Starts `distri-server` (API-only by default). Add `--ui` to enable the web interface. Default API endpoint: `http://localhost:8081/api/v1`.
+Starts `distri-server` (API-only by default). Add `--ui` to enable the web interface. Default API endpoint: `http://localhost:8081/v1`.
 
 ### Verify & learn more
 - Check install: `distri --version`

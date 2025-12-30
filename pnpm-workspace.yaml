@@ -1,3 +1,5 @@
 packages:
+  - 'distri-ui'
+  - 'distri-home'
   - 'samples/*'
-
+  - 'distrijs/packages/*'
