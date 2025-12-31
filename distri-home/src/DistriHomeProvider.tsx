@@ -3,18 +3,6 @@ import { DistriClient, DistriClientConfig } from '@distri/core';
 import { DistriHomeClient } from './DistriHomeClient';
 
 export interface DistriHomeConfig {
-  /**
-   * Enable API Keys management in SettingsView.
-   * Set to false for local/OSS versions.
-   * @default true
-   */
-  enableApiKeys?: boolean;
-  /**
-   * Enable Account & billing section in SettingsView.
-   * Set to false for local/OSS versions.
-   * @default true
-   */
-  enableAccountBilling?: boolean;
 
   /**
    * Custom navigation path generators.
@@ -27,6 +15,15 @@ export interface DistriHomeConfig {
      */
     agentDetails?: (agentId: string) => string;
   };
+  /**
+   * Custom tabs to add to the Agent Details page.
+   */
+  customTabs?: {
+    id: string;
+    label: string;
+    icon?: ReactNode;
+    render: (props: { agentId: string }) => ReactNode;
+  }[];
 }
 
 export interface NavigateFunction {
@@ -58,10 +55,7 @@ export interface DistriHomeProviderProps {
   children: ReactNode;
 }
 
-const DEFAULT_CONFIG: DistriHomeConfig = {
-  enableApiKeys: true,
-  enableAccountBilling: true,
-};
+const DEFAULT_CONFIG: DistriHomeConfig = {};
 
 export function DistriHomeProvider({
   client,

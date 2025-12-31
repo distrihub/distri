@@ -7,7 +7,7 @@ export default defineConfig({
   // Base path for GitHub Pages deployment
   base: process.env.NODE_ENV === 'production' ? '/distri/samples/maps/' : '/',
   server: {
-    port: 3000,
+    port: 3009,
     open: true
   },
   build: {
