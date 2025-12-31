@@ -1,4 +1,4 @@
-import { MapPin, RefreshCw, Loader2, Plus, Trash2, ArrowLeft, ArrowBigRight, ArrowRight, ColumnsIcon } from 'lucide-react';
+import { MapPin, RefreshCw, Loader2, Plus, Trash2, ColumnsIcon } from 'lucide-react';
 import {
   Sidebar,
   SidebarContent,
@@ -12,7 +12,6 @@ import {
   SidebarMenuAction,
   SidebarGroupAction,
   SidebarSeparator,
-  SidebarTrigger,
   useSidebar,
 } from '@distri/components';
 

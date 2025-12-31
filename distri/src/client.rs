@@ -143,7 +143,7 @@ impl Distri {
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
         Err(ClientError::InvalidResponse(format!(
-            "agent markdown registration failed (status {status}): {body}"
+            "Agent registration failed (status {status}): {body}"
         )))
     }
 
