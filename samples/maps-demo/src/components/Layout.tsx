@@ -32,7 +32,7 @@ const Layout: React.FC<LayoutProps> = ({
       style={{
         "--sidebar-width": "20rem",
         "--sidebar-width-mobile": "18rem",
-      } as React.CSSProperties}
+      } as any}
     >
       <ConversationsSidebar
         threads={threads}

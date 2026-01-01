@@ -1,5 +1,5 @@
 import { useMemo, useState, useCallback } from 'react';
-import { DistriProvider, Chat, ChatEmbed, DistriAnyTool, useThreads } from '@distri/react';
+import { DistriProvider, Chat, DistriAnyTool, useThreads } from '@distri/react';
 import { AlertCircle } from 'lucide-react';
 import { APIProvider } from '@vis.gl/react-google-maps';
 import type { GoogleMapsManagerRef } from './components/GoogleMapsManager';
@@ -8,12 +8,8 @@ import { getTools } from './Tools.tsx';
 
 // Environment variables validation
 const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
-const DISTRI_API_URL = import.meta.env.VITE_DISTRI_API_URL || 'http://localhost:8080/v1';
-const CLIENT_ID = import.meta.env.VITE_DISTRI_CLIENT_ID || 'dpc_FRpvDH5ZzLrNF9vWto57Nfl8bd6wKtcD';
-const EMBED_URL = import.meta.env.VITE_DISTRI_EMBED_URL;
-// When true, use ChatEmbed with iframe + Turnstile auth (for deployed demos)
-const USE_EMBED = import.meta.env.VITE_USE_EMBED === 'true';
-console.log("USE_EMBED", USE_EMBED)
+const DISTRI_API_URL = (import.meta.env.VITE_DISTRI_API_URL || 'https://localhost:8081/v1').replace(/\/+$/, '');
+const CLIENT_ID = import.meta.env.VITE_DISTRI_CLIENT_ID;
 
 function getThreadId() {
   const threadId = localStorage.getItem('MapsDemo:threadId');
@@ -28,11 +24,9 @@ function getThreadId() {
 function MapsContent() {
   const [selectedThreadId, setSelectedThreadId] = useState<string>(getThreadId());
   const [tools, setTools] = useState<DistriAnyTool[]>([]);
-  const [voiceEnabled, setVoiceEnabled] = useState<boolean>(false);
-
 
   // Thread management
-  const { threads, loading: threadsLoading, refetch, deleteThread } = useThreads({ enabled: !USE_EMBED });
+  const { threads, loading: threadsLoading, refetch, deleteThread } = useThreads();
 
   // Get tools when map manager is ready
   const handleMapReady = useCallback((mapRef: GoogleMapsManagerRef) => {
@@ -67,7 +61,6 @@ function MapsContent() {
     const newThreadId = crypto.randomUUID();
     setSelectedThreadId(newThreadId);
     localStorage.setItem('MapsDemo:threadId', newThreadId);
-    // Optionally, refetch threads to show the new one if backend supports creation
   }, []);
 
   return (
@@ -83,46 +76,14 @@ function MapsContent() {
     >
       {tools.length > 0 && (
         <div className="h-full flex flex-col">
-          <div className="p-2 border-b border-gray-700 bg-gray-800">
-            <button
-              onClick={() => setVoiceEnabled(!voiceEnabled)}
-              className={`px-3 py-1 rounded text-sm transition-colors ${voiceEnabled
-                ? 'bg-green-600 hover:bg-green-700 text-white'
-                : 'bg-gray-600 hover:bg-gray-700 text-gray-300'
-                }`}
-            >
-              🎤 Voice {voiceEnabled ? 'ON' : 'OFF'}
-            </button>
-          </div>
-
           <div className="flex-1 overflow-hidden">
-            {USE_EMBED ? (
-              <ChatEmbed
-                clientId={CLIENT_ID}
-                agentId="maps_agent"
-                theme="dark"
-                baseUrl={DISTRI_API_URL}
-                threadId={selectedThreadId}
-                tools={tools}
-                height="100%"
-                enableHistory={true}
-                embedUrl={EMBED_URL}
-              />
-            ) : (
-              <Chat
-                agentId="maps_agent"
-                threadId={selectedThreadId}
-                externalTools={tools}
-                enableHistory={true}
-                theme="dark"
-                voiceEnabled={voiceEnabled}
-                ttsConfig={{
-                  model: 'openai',
-                  voice: 'alloy',
-                  speed: 1.0
-                }}
-              />
-            )}
+            <Chat
+              agentId="maps_agent"
+              threadId={selectedThreadId}
+              externalTools={tools}
+              enableHistory={true}
+              theme="dark"
+            />
           </div>
         </div>
       )}
@@ -131,38 +92,104 @@ function MapsContent() {
 }
 
 function EnvironmentCheck() {
+  const [activeTab, setActiveTab] = useState<'cloud' | 'local'>('cloud');
+
   if (!GOOGLE_MAPS_API_KEY) {
     return (
       <div className="flex h-screen items-center justify-center bg-gray-50">
-        <div className="max-w-md p-6 bg-white rounded-lg shadow-lg text-center">
-          <AlertCircle className="h-12 w-12 text-red-500 mx-auto mb-4" />
-          <h2 className="text-lg font-semibold text-gray-900 mb-2">
-            Google Maps API Key Required
-          </h2>
-          <p className="text-gray-600 mb-4">
-            To use this sample, you need to configure your Google Maps API key.
-          </p>
-          <div className="bg-gray-50 rounded-lg p-4 mb-4">
-            <p className="text-sm text-gray-700 mb-2">
-              1. Get an API key from the <a
-                href="https://developers.google.com/maps/documentation/javascript/get-api-key"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-blue-600 hover:underline"
-              >
-                Google Maps Platform
-              </a>
-            </p>
-            <p className="text-sm text-gray-700 mb-2">
-              2. Copy <code className="bg-gray-200 px-1 rounded">.env.example</code> to <code className="bg-gray-200 px-1 rounded">.env</code>
-            </p>
-            <p className="text-sm text-gray-700">
-              3. Set <code className="bg-gray-200 px-1 rounded">VITE_GOOGLE_MAPS_API_KEY</code> to your API key
+        <div className="max-w-xl w-full p-8 bg-white rounded-xl shadow-xl">
+          <div className="text-center mb-8">
+            <h2 className="text-2xl font-bold text-gray-900 mb-2">
+              Setup Instructions
+            </h2>
+            <p className="text-gray-600">
+              Follow these steps to get the maps-demo running.
             </p>
           </div>
-          <p className="text-xs text-gray-500">
-            Make sure to enable Maps JavaScript API and Places API in your Google Cloud Console
-          </p>
+
+          <div className="flex border-b border-gray-200 mb-6">
+            <button
+              onClick={() => setActiveTab('cloud')}
+              className={`flex-1 py-3 text-sm font-medium border-b-2 transition-colors ${activeTab === 'cloud'
+                ? 'border-blue-500 text-blue-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+            >
+              Distri Cloud
+            </button>
+            <button
+              onClick={() => setActiveTab('local')}
+              className={`flex-1 py-3 text-sm font-medium border-b-2 transition-colors ${activeTab === 'local'
+                ? 'border-blue-500 text-blue-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+            >
+              Local Server
+            </button>
+          </div>
+
+          <div className="space-y-6">
+            {!GOOGLE_MAPS_API_KEY && (
+              <div className="bg-red-50 border-l-4 border-red-400 p-4">
+                <div className="flex">
+                  <AlertCircle className="h-5 w-5 text-red-400 mr-3" />
+                  <p className="text-sm text-red-700">
+                    Google Maps API Key is missing. Get one from the{' '}
+                    <a
+                      href="https://developers.google.com/maps/documentation/javascript/get-api-key"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-bold underline"
+                    >
+                      Google Cloud Console
+                    </a>.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'cloud' ? (
+              <div className="space-y-4">
+                <div className="flex items-start">
+                  <div className="flex-shrink-0 h-6 w-6 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-xs font-bold mr-3 mt-0.5">1</div>
+                  <p className="text-sm text-gray-700">Run <code className="bg-gray-100 px-1 rounded">distri push</code> to sync tools.</p>
+                </div>
+                <div className="flex items-start">
+                  <div className="flex-shrink-0 h-6 w-6 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-xs font-bold mr-3 mt-0.5">2</div>
+                  <p className="text-sm text-gray-700">Get a <code className="bg-gray-100 px-1 rounded">clientId</code> from <a href="https://app.distri.dev" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">app.distri.dev</a>.</p>
+                </div>
+                <div className="flex items-start">
+                  <div className="flex-shrink-0 h-6 w-6 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-xs font-bold mr-3 mt-0.5">3</div>
+                  <p className="text-sm text-gray-700">Copy <code className="bg-gray-100 px-1 rounded">.env.example</code> to <code className="bg-gray-100 px-1 rounded">.env</code>.</p>
+                </div>
+                <div className="flex items-start">
+                  <div className="flex-shrink-0 h-6 w-6 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-xs font-bold mr-3 mt-0.5">4</div>
+                  <p className="text-sm text-gray-700">Update <code className="bg-gray-100 px-1 rounded">VITE_DISTRI_CLIENT_ID</code> in your <code className="bg-gray-100 px-1 rounded">.env</code>.</p>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="flex items-start">
+                  <div className="flex-shrink-0 h-6 w-6 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-xs font-bold mr-3 mt-0.5">1</div>
+                  <p className="text-sm text-gray-700">Run <code className="bg-gray-100 px-1 rounded">distri push</code> to sync tools.</p>
+                </div>
+                <div className="flex items-start">
+                  <div className="flex-shrink-0 h-6 w-6 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-xs font-bold mr-3 mt-0.5">2</div>
+                  <p className="text-sm text-gray-700">Start your local server with <code className="bg-gray-100 px-1 rounded">distri serve</code>.</p>
+                </div>
+                <div className="flex items-start">
+                  <div className="flex-shrink-0 h-6 w-6 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-xs font-bold mr-3 mt-0.5">3</div>
+                  <p className="text-sm text-gray-700">Ensure <code className="bg-gray-100 px-1 rounded">VITE_DISTRI_API_URL</code> points to your local endpoint.</p>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="mt-8 pt-6 border-t border-gray-100 text-center">
+            <p className="text-xs text-gray-500">
+              Need help? Check our <a href="https://docs.distri.dev" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">documentation</a> or join our Slack.
+            </p>
+          </div>
         </div>
       </div>
     );
