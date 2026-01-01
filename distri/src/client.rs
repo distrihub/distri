@@ -126,7 +126,10 @@ impl Distri {
         )))
     }
 
-    pub async fn register_agent_markdown(&self, markdown: &str) -> Result<(), ClientError> {
+    pub async fn register_agent_markdown(
+        &self,
+        markdown: &str,
+    ) -> Result<StandardDefinition, ClientError> {
         let create_url = format!("{}/agents", self.base_url);
         let resp = self
             .http
@@ -137,7 +140,10 @@ impl Distri {
             .await?;
 
         if resp.status().is_success() {
-            return Ok(());
+            let definition: StandardDefinition = resp.json().await.map_err(|e| {
+                ClientError::InvalidResponse(format!("Failed to parse agent response: {}", e))
+            })?;
+            return Ok(definition);
         }
 
         let status = resp.status();

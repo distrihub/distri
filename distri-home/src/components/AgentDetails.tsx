@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Chat, useAgent, useTheme, useDistri } from '@distri/react';
 import { useDistriHomeNavigate, useDistriHome } from '../DistriHomeProvider';
+import { useAgentValidation } from '../hooks/useAgentValidation';
 import {
   ArrowUpRight,
   ChevronRight,
@@ -78,6 +79,7 @@ export function AgentDetails({
   const { config } = useDistriHome();
   const { client } = useDistri();
   const { agent, loading: agentLoading, error: agentError } = useAgent({ agentIdOrDef: agentId || '' });
+  const { warnings, loading: validationLoading } = useAgentValidation({ agentId, enabled: !!agentId });
   const { theme, setTheme } = useTheme();
 
   const [definition, setDefinition] = useState<AgentDefinitionEnvelope | null>(null);
@@ -371,6 +373,44 @@ export function AgentDetails({
             </button>
           </div>
         </header>
+
+        {/* Configuration warnings */}
+        {!validationLoading && warnings.length > 0 && (
+          <div className="mt-4 space-y-2">
+            {warnings.map((warning, index) => (
+              <div
+                key={`${warning.code}-${index}`}
+                className={`flex items-start gap-3 rounded-lg border px-4 py-3 text-sm ${
+                  warning.severity === 'error'
+                    ? 'border-red-500/40 bg-red-500/10 text-red-900 dark:text-red-100'
+                    : 'border-amber-500/40 bg-amber-500/10 text-amber-900 dark:text-amber-100'
+                }`}
+              >
+                <AlertTriangle
+                  className={`h-5 w-5 shrink-0 ${
+                    warning.severity === 'error' ? 'text-red-500' : 'text-amber-500'
+                  }`}
+                />
+                <div className="flex-1">
+                  <p className="font-medium">{warning.message}</p>
+                  {warning.code === 'missing_provider_secret' && (
+                    <button
+                      type="button"
+                      onClick={() => navigate('/settings/secrets')}
+                      className={`mt-1 text-sm font-medium underline underline-offset-2 ${
+                        warning.severity === 'error'
+                          ? 'text-red-700 hover:text-red-600 dark:text-red-200 dark:hover:text-red-100'
+                          : 'text-amber-700 hover:text-amber-600 dark:text-amber-200 dark:hover:text-amber-100'
+                      }`}
+                    >
+                      Go to Secrets settings →
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
 
         <div className="mt-4 flex flex-1 min-h-0 flex-col gap-6 xl:flex-row">
           <div className="flex min-h-0 flex-col gap-6 xl:flex-[5]">

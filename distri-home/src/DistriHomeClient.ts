@@ -191,6 +191,20 @@ export class DistriHomeClient {
     return await response.json();
   }
 
+  /**
+   * Validate an agent's configuration
+   * Returns validation results including any warnings (e.g., missing secrets)
+   */
+  async validateAgent(agentId: string): Promise<AgentValidationResult> {
+    const response = await this.client.fetch(`/agents/${agentId}/validate`);
+
+    if (!response.ok) {
+      throw new Error(`Failed to validate agent: ${response.statusText}`);
+    }
+
+    return await response.json();
+  }
+
   // ---- Prompt Templates ----
 
   /**
@@ -361,4 +375,26 @@ export interface SessionSummary {
   keys: string[];
   key_count: number;
   updated_at?: string;
+}
+
+/**
+ * Severity level for validation warnings
+ */
+export type ValidationWarningSeverity = 'warning' | 'error';
+
+/**
+ * A single validation warning
+ */
+export interface ValidationWarning {
+  code: string;
+  message: string;
+  severity: ValidationWarningSeverity;
+}
+
+/**
+ * Result from agent validation
+ */
+export interface AgentValidationResult {
+  valid: boolean;
+  warnings: ValidationWarning[];
 }

@@ -1,5 +1,5 @@
 import { useMemo, useState, useCallback } from 'react';
-import { DistriProvider, Chat, DistriAnyTool, useThreads } from '@distri/react';
+import { DistriProvider, Chat, DistriAnyTool } from '@distri/react';
 import { AlertCircle } from 'lucide-react';
 import { APIProvider } from '@vis.gl/react-google-maps';
 import type { GoogleMapsManagerRef } from './components/GoogleMapsManager';
@@ -22,13 +22,9 @@ function getThreadId() {
 }
 
 function MapsContent() {
-  const [selectedThreadId, setSelectedThreadId] = useState<string>(getThreadId());
+  const [threadId, setThreadId] = useState<string>(getThreadId());
   const [tools, setTools] = useState<DistriAnyTool[]>([]);
 
-  // Thread management
-  const { threads, loading: threadsLoading, refetch, deleteThread } = useThreads();
-
-  // Get tools when map manager is ready
   const handleMapReady = useCallback((mapRef: GoogleMapsManagerRef) => {
     console.log('Map manager is ready, getting tools...');
     const mapTools = getTools(mapRef);
@@ -36,50 +32,20 @@ function MapsContent() {
     setTools(mapTools);
   }, []);
 
-  // Thread management functions
-  const handleThreadSelect = useCallback((threadId: string) => {
-    console.log('handleThreadSelect', threadId);
-    setSelectedThreadId(threadId);
-    localStorage.setItem('MapsDemo:threadId', threadId);
-  }, []);
-
-  const handleThreadDelete = useCallback(async (threadId: string) => {
-    try {
-      await deleteThread(threadId);
-      if (selectedThreadId === threadId) {
-        const newThreadId = crypto.randomUUID();
-        setSelectedThreadId(newThreadId);
-        localStorage.setItem('MapsDemo:threadId', newThreadId);
-      }
-    } catch (error) {
-      console.error('Failed to delete thread:', error);
-    }
-  }, [deleteThread, selectedThreadId]);
-
-  // New chat logic
   const handleNewChat = useCallback(() => {
     const newThreadId = crypto.randomUUID();
-    setSelectedThreadId(newThreadId);
+    setThreadId(newThreadId);
     localStorage.setItem('MapsDemo:threadId', newThreadId);
   }, []);
 
   return (
-    <Layout
-      onMapReady={handleMapReady}
-      threads={threads as any}
-      selectedThreadId={selectedThreadId}
-      loading={threadsLoading}
-      onThreadSelect={handleThreadSelect}
-      onThreadDelete={handleThreadDelete}
-      onRefresh={refetch}
-      onNewChat={handleNewChat}
-    >
+    <Layout onMapReady={handleMapReady} onNewChat={handleNewChat}>
       {tools.length > 0 && (
         <div className="h-full flex flex-col">
           <div className="flex-1 overflow-hidden">
             <Chat
               agentId="maps_agent"
-              threadId={selectedThreadId}
+              threadId={threadId}
               externalTools={tools}
               enableHistory={true}
               theme="dark"

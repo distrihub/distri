@@ -8,6 +8,7 @@ use distri_core::a2a::messages::get_a2a_messages;
 use distri_core::a2a::A2AHandler;
 use distri_core::agent::{parse_agent_markdown_content, AgentOrchestrator, ExecutorContext};
 use distri_core::llm::LLMExecutor;
+use distri_core::secrets::SecretResolver;
 use distri_core::types::UpdateThreadRequest;
 use distri_core::{AgentError, MessageFilter, ToolAuthRequestContext};
 use distri_types::configuration::ServerConfig;
@@ -65,6 +66,9 @@ fn configure_routes(cfg: &mut web::ServiceConfig, include_browser: bool) {
             .route(web::get().to(get_agent_definition))
             .route(web::post().to(a2a_handler))
             .route(web::put().to(update_agent)),
+    )
+    .service(
+        web::resource("/agents/{id}/validate").route(web::get().to(validate_agent_handler)),
     )
     .service(
         web::resource("/agents/{id}/complete-tool").route(web::post().to(complete_tool_handler)),
@@ -457,6 +461,83 @@ fn build_markdown_from_definition(def: &StandardDefinition) -> String {
 
     let toml_str = toml::to_string(&frontmatter_def).unwrap_or_default();
     format!("---\n{}---\n\n{}", toml_str, instructions)
+}
+
+/// Warning severity levels
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "lowercase")]
+enum WarningSeverity {
+    Warning,
+    Error,
+}
+
+/// A single validation warning
+#[derive(Debug, Clone, Serialize)]
+struct ValidationWarning {
+    code: String,
+    message: String,
+    severity: WarningSeverity,
+}
+
+/// Response from agent validation endpoint
+#[derive(Debug, Serialize)]
+struct AgentValidationResponse {
+    valid: bool,
+    warnings: Vec<ValidationWarning>,
+}
+
+/// Validate an agent's configuration and return any warnings
+async fn validate_agent_handler(
+    id: web::Path<String>,
+    executor: web::Data<Arc<AgentOrchestrator>>,
+) -> HttpResponse {
+    let agent_id = id.into_inner();
+    let mut warnings = Vec::new();
+
+    // Get agent configuration
+    let agent = match executor.get_agent(&agent_id).await {
+        Some(agent) => agent,
+        None => {
+            return HttpResponse::NotFound().json(json!({
+                "error": "Agent not found"
+            }));
+        }
+    };
+
+    // Extract provider from agent config
+    let provider = match &agent {
+        distri_types::configuration::AgentConfig::StandardAgent(def) => {
+            def.model_settings.provider.clone()
+        }
+        distri_types::configuration::AgentConfig::SequentialWorkflowAgent(_)
+        | distri_types::configuration::AgentConfig::DagWorkflowAgent(_)
+        | distri_types::configuration::AgentConfig::CustomAgent(_) => {
+            executor.default_model_settings.read().await.provider.clone()
+        }
+    };
+
+    // Check for missing provider secrets
+    let secret_store = executor.stores.secret_store.clone();
+    let resolver = SecretResolver::new(secret_store);
+    let missing_secrets = resolver.get_missing_secrets(&provider).await;
+
+    if !missing_secrets.is_empty() {
+        let provider_name = provider.display_name();
+        warnings.push(ValidationWarning {
+            code: "missing_provider_secret".to_string(),
+            message: format!(
+                "Missing API key for {}. Configure {} in Settings > Secrets.",
+                provider_name,
+                missing_secrets.join(", ")
+            ),
+            severity: WarningSeverity::Error,
+        });
+    }
+
+    HttpResponse::Ok().json(AgentValidationResponse {
+        valid: warnings.is_empty(),
+        warnings,
+    })
 }
 
 async fn get_agent_card(

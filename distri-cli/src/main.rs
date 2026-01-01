@@ -356,9 +356,8 @@ async fn main() -> Result<()> {
                     }
                     if pushed == 0 {
                         eprintln!("No markdown files found in {}", path.display());
-                    } else {
-                        println!("Pushed {} agent file(s) from {}", pushed, path.display());
                     }
+                    // Individual push_file calls already print success messages
                 } else {
                     anyhow::bail!("Path {} does not exist", path.display());
                 }
@@ -988,10 +987,42 @@ fn normalize_base_url(raw: &str) -> Option<String> {
 }
 
 async fn push_file(client: &Distri, path: &Path) -> Result<()> {
+    println!();
+    println!("→ Validating configuration...");
+
     let content = fs::read_to_string(path)
         .await
         .with_context(|| format!("reading {}", path.display()))?;
-    client.register_agent_markdown(&content).await?;
-    println!("Pushed agent from {}", path.display());
+
+    let definition = client.register_agent_markdown(&content).await?;
+
+    let version = definition.version.as_deref().unwrap_or("unknown");
+    println!(
+        "{}✔ Deployed version {}{}",
+        COLOR_BRIGHT_GREEN, version, COLOR_RESET
+    );
+    println!();
+
+    // Print agent URL
+    let agent_url = format!("{}/agents/{}", client.base_url(), definition.name);
+    println!("{}", agent_url);
+    println!();
+
+    // Print curl example
+    let api_key_header = if client.has_auth() {
+        "\n  -H \"Authorization: Bearer $DISTRI_API_KEY\" \\"
+    } else {
+        ""
+    };
+
+    println!("{}# Example curl command:{}", COLOR_GRAY, COLOR_RESET);
+    println!(
+        r#"{}curl -X POST "{}" \
+  -H "Content-Type: application/json" \{}
+  -d '{{"message": {{"role": "user", "parts": [{{"type": "text", "text": "Hello"}}]}}}}'
+{}"#,
+        COLOR_GRAY, agent_url, api_key_header, COLOR_RESET
+    );
+
     Ok(())
 }
