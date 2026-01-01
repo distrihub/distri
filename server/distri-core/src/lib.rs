@@ -3,6 +3,7 @@ pub mod agent;
 pub mod gateway_config;
 pub mod llm;
 pub mod logging;
+pub mod secrets;
 pub mod servers;
 pub mod tools;
 pub mod types {
@@ -28,3 +29,4 @@ pub use logging::init_logging;
 
 pub use agent::orchestrator::{AgentOrchestrator, AgentOrchestratorBuilder};
 pub use hooks_runtime::HookRegistry;
+pub use secrets::{ResolvedSecret, SecretResolver, SecretSource};

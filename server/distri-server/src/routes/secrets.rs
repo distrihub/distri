@@ -1,6 +1,7 @@
 use actix_web::{web, HttpResponse};
 use distri_core::agent::AgentOrchestrator;
 use distri_types::stores::NewSecret;
+use distri_types::ModelProvider;
 use serde::Deserialize;
 use serde_json::json;
 use std::sync::Arc;
@@ -12,11 +13,22 @@ pub fn configure_secret_routes(cfg: &mut web::ServiceConfig) {
             .route(web::post().to(create_secret)),
     )
     .service(
+        web::resource("/secrets/providers")
+            .route(web::get().to(list_provider_definitions)),
+    )
+    .service(
         web::resource("/secrets/{key}")
             .route(web::get().to(get_secret))
             .route(web::put().to(update_secret))
             .route(web::delete().to(delete_secret)),
     );
+}
+
+/// Returns the list of supported providers and their required secret keys.
+/// This allows the frontend to dynamically display the correct options.
+async fn list_provider_definitions() -> HttpResponse {
+    let definitions = ModelProvider::all_provider_definitions();
+    HttpResponse::Ok().json(definitions)
 }
 
 async fn list_secrets(executor: web::Data<Arc<AgentOrchestrator>>) -> HttpResponse {

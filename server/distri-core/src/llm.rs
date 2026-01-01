@@ -965,7 +965,7 @@ async fn completion(
     label: Option<String>,
 ) -> Result<CreateChatCompletionResponse, AgentError> {
     request.safety_identifier = Some(context.user_id.clone());
-    let client = get_client_with_context(llm_def, context, additional_headers, label);
+    let client = get_client_with_context(llm_def, context, additional_headers, label).await?;
     let response = client.chat().create(request).await.map_err(|e| {
         tracing::error!("LLM request failed: {}", e);
         AgentError::LLMError(e.to_string())
@@ -984,7 +984,7 @@ async fn completion_stream(
     AgentError,
 > {
     request.safety_identifier = Some(context.user_id.clone());
-    let client = get_client_with_context(llm_def, context, additional_headers, label);
+    let client = get_client_with_context(llm_def, context, additional_headers, label).await?;
     let stream = client.chat().create_stream(request).await.map_err(|e| {
         tracing::error!("LLM stream request failed: {}", e);
         AgentError::LLMError(e.to_string())
@@ -992,23 +992,45 @@ async fn completion_stream(
     Ok(stream)
 }
 
-fn get_client_with_context(
+/// Get the secret store from the executor context
+fn get_secret_store(context: &Arc<ExecutorContext>) -> Option<Arc<dyn distri_types::stores::SecretStore>> {
+    // First check if context has its own stores
+    if let Some(ref stores) = context.stores {
+        return stores.secret_store.clone();
+    }
+    // Fall back to orchestrator's stores
+    context
+        .orchestrator
+        .as_ref()
+        .and_then(|o| o.stores.secret_store.clone())
+}
+
+async fn get_client_with_context(
     llm_def: &LlmDefinition,
     context: Arc<ExecutorContext>,
     additional_headers: Option<HashMap<String, String>>,
     label: Option<String>,
-) -> Client<GatewayConfig> {
+) -> Result<Client<GatewayConfig>, AgentError> {
+    let secret_store = get_secret_store(&context);
+    let secret_resolver = crate::secrets::SecretResolver::new(secret_store);
+
+    // Validate that required secrets are configured
+    secret_resolver
+        .validate_provider(&llm_def.model_settings.provider)
+        .await?;
+
     match &llm_def.model_settings.provider {
         ModelProvider::OpenAI {} => {
             let additional_headers = get_headers(llm_def, additional_headers, label);
+            let api_key = secret_resolver.resolve_or_empty("OPENAI_API_KEY").await;
 
             let config = GatewayConfig::default()
                 .with_api_base(ModelProvider::openai_base_url())
-                .with_api_key(std::env::var("OPENAI_API_KEY").unwrap_or_else(|_| "".to_string()))
+                .with_api_key(api_key)
                 .with_context(context)
                 .with_additional_headers(additional_headers);
 
-            Client::with_config(config)
+            Ok(Client::with_config(config))
         }
         ModelProvider::OpenAICompatible {
             base_url,
@@ -1029,7 +1051,7 @@ fn get_client_with_context(
                 config = config.with_project_id(project_id);
             }
 
-            Client::with_config(config)
+            Ok(Client::with_config(config))
         }
 
         ModelProvider::Vllora { base_url } => {
@@ -1039,7 +1061,7 @@ fn get_client_with_context(
                 .with_api_base(base_url.clone())
                 .with_context(context)
                 .with_additional_headers(additional_headers);
-            Client::with_config(config)
+            Ok(Client::with_config(config))
         }
     }
 }

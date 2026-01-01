@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Trash2 } from 'lucide-react';
 import { useDistriHomeClient } from '../DistriHomeProvider';
+import type { ProviderSecretDefinition } from '../DistriHomeClient';
 
 // Types
 export interface Secret {
@@ -11,21 +12,22 @@ export interface Secret {
   updated_at?: string;
 }
 
-const PROVIDER_SECRET_DEFINITIONS = [
+// Default definitions used while loading or if API fails
+const DEFAULT_PROVIDER_DEFINITIONS: ProviderSecretDefinition[] = [
   {
     id: 'openai',
     label: 'OpenAI',
-    keys: [{ key: 'OPENAI_API_KEY', label: 'API key', placeholder: 'sk-...' }],
+    keys: [{ key: 'OPENAI_API_KEY', label: 'API key', placeholder: 'sk-...', required: true }],
   },
   {
     id: 'anthropic',
     label: 'Anthropic',
-    keys: [{ key: 'ANTHROPIC_API_KEY', label: 'API key', placeholder: 'sk-ant-...' }],
+    keys: [{ key: 'ANTHROPIC_API_KEY', label: 'API key', placeholder: 'sk-ant-...', required: true }],
   },
   {
     id: 'gemini',
     label: 'Google Gemini',
-    keys: [{ key: 'GEMINI_API_KEY', label: 'API key', placeholder: 'AIza...' }],
+    keys: [{ key: 'GEMINI_API_KEY', label: 'API key', placeholder: 'AIza...', required: true }],
   },
   {
     id: 'custom',
@@ -41,8 +43,9 @@ export interface SecretsViewProps {
 export function SecretsView({ className }: SecretsViewProps) {
   const homeClient = useDistriHomeClient();
   const [secrets, setSecrets] = useState<Secret[]>([]);
-  const [providerId, setProviderId] = useState(PROVIDER_SECRET_DEFINITIONS[0]?.id ?? '');
-  const [providerKey, setProviderKey] = useState(PROVIDER_SECRET_DEFINITIONS[0]?.keys[0]?.key ?? '');
+  const [providerDefinitions, setProviderDefinitions] = useState<ProviderSecretDefinition[]>(DEFAULT_PROVIDER_DEFINITIONS);
+  const [providerId, setProviderId] = useState(DEFAULT_PROVIDER_DEFINITIONS[0]?.id ?? '');
+  const [providerKey, setProviderKey] = useState(DEFAULT_PROVIDER_DEFINITIONS[0]?.keys[0]?.key ?? '');
   const [secretKey, setSecretKey] = useState('');
   const [secretValue, setSecretValue] = useState('');
   const [loading, setLoading] = useState(false);
@@ -50,8 +53,8 @@ export function SecretsView({ className }: SecretsViewProps) {
   const [error, setError] = useState<string | null>(null);
 
   const providerDefinition = useMemo(
-    () => PROVIDER_SECRET_DEFINITIONS.find((provider) => provider.id === providerId),
-    [providerId],
+    () => providerDefinitions.find((provider) => provider.id === providerId),
+    [providerId, providerDefinitions],
   );
 
   const providerKeyOptions = providerDefinition?.keys ?? [];
@@ -71,8 +74,15 @@ export function SecretsView({ className }: SecretsViewProps) {
     setLoading(true);
     setError(null);
     try {
-      const response = await homeClient.listSecrets();
-      setSecrets(response ?? []);
+      // Load both secrets and provider definitions in parallel
+      const [secretsResponse, definitionsResponse] = await Promise.all([
+        homeClient.listSecrets(),
+        homeClient.listProviderDefinitions().catch(() => null), // Gracefully fall back to defaults
+      ]);
+      setSecrets(secretsResponse ?? []);
+      if (definitionsResponse && definitionsResponse.length > 0) {
+        setProviderDefinitions(definitionsResponse);
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unable to load secrets';
       setError(message);
@@ -120,19 +130,19 @@ export function SecretsView({ className }: SecretsViewProps) {
 
   const providerLabelByKey = useCallback((key: string) => {
     return (
-      PROVIDER_SECRET_DEFINITIONS.find((provider) =>
+      providerDefinitions.find((provider) =>
         provider.keys.some((definition) => definition.key === key),
       )?.label ?? 'Custom'
     );
-  }, []);
+  }, [providerDefinitions]);
 
   const providerKeyLabel = useCallback((key: string) => {
-    for (const provider of PROVIDER_SECRET_DEFINITIONS) {
+    for (const provider of providerDefinitions) {
       const match = provider.keys.find((definition) => definition.key === key);
       if (match) return match.label;
     }
     return key;
-  }, []);
+  }, [providerDefinitions]);
 
   return (
     <div className={`flex-1 overflow-y-auto ${className ?? ''}`}>
@@ -157,7 +167,7 @@ export function SecretsView({ className }: SecretsViewProps) {
                 onChange={(event) => setProviderId(event.target.value)}
                 className="mt-2 h-10 w-full rounded-md border border-border/70 bg-background px-3 text-sm text-foreground shadow-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
               >
-                {PROVIDER_SECRET_DEFINITIONS.map((provider) => (
+                {providerDefinitions.map((provider) => (
                   <option key={provider.id} value={provider.id}>
                     {provider.label}
                   </option>

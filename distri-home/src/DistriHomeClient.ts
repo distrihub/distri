@@ -177,6 +177,20 @@ export class DistriHomeClient {
     }
   }
 
+  /**
+   * List provider secret definitions
+   * Returns the list of supported providers and their required secret keys
+   */
+  async listProviderDefinitions(): Promise<ProviderSecretDefinition[]> {
+    const response = await this.client.fetch('/secrets/providers');
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch provider definitions: ${response.statusText}`);
+    }
+
+    return await response.json();
+  }
+
   // ---- Prompt Templates ----
 
   /**
@@ -310,6 +324,25 @@ export interface Secret {
   masked_value: string;
   created_at?: string;
   updated_at?: string;
+}
+
+/**
+ * Definition of a secret key for a provider
+ */
+export interface SecretKeyDefinition {
+  key: string;
+  label: string;
+  placeholder: string;
+  required?: boolean;
+}
+
+/**
+ * Definition of a provider's secret requirements
+ */
+export interface ProviderSecretDefinition {
+  id: string;
+  label: string;
+  keys: SecretKeyDefinition[];
 }
 
 export interface PromptTemplate {
