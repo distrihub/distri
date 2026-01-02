@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Chat, useAgent, useTheme, useDistri } from '@distri/react';
-import { useDistriHomeNavigate } from '../DistriHomeProvider';
+import { useDistriHomeNavigate, useDistriHome } from '../DistriHomeProvider';
+import { useAgentValidation } from '../hooks/useAgentValidation';
 import {
   ArrowUpRight,
   ChevronRight,
@@ -10,6 +11,7 @@ import {
   Loader2,
   MessageCircle,
   Moon,
+  AlertTriangle,
   Play,
   Sun,
   Wrench,
@@ -51,6 +53,7 @@ export interface AgentDetailsProps {
    * Optional custom class name
    */
   className?: string;
+
   /**
    * Custom editor renderer for definition editing
    * If not provided, shows a simple pre block
@@ -69,19 +72,22 @@ export function AgentDetails({
   threadId: propThreadId,
   defaultTab = 'definition',
   className,
+
   renderEditor,
 }: AgentDetailsProps) {
   const navigate = useDistriHomeNavigate();
+  const { config } = useDistriHome();
   const { client } = useDistri();
   const { agent, loading: agentLoading, error: agentError } = useAgent({ agentIdOrDef: agentId || '' });
+  const { warnings, loading: validationLoading } = useAgentValidation({ agentId, enabled: !!agentId });
   const { theme, setTheme } = useTheme();
 
   const [definition, setDefinition] = useState<AgentDefinitionEnvelope | null>(null);
   const [sourceLoading, setSourceLoading] = useState(false);
-  const [activePanel, setActivePanel] = useState<'definition' | 'chat' | 'tools' | 'integrate'>(
+  const [activePanel, setActivePanel] = useState<string>(
     defaultTab
   );
-  const [activeSample, setActiveSample] = useState<'curl' | 'node' | 'python' | 'react'>('curl');
+  const [activeSample, setActiveSample] = useState<'curl' | 'node' | 'python'>('curl');
   const [copied, setCopied] = useState(false);
   const [definitionDraft, setDefinitionDraft] = useState('');
   const [definitionFormat, setDefinitionFormat] = useState<'markdown' | 'json'>('json');
@@ -252,14 +258,6 @@ export function AgentDetails({
       `  json={"input": "Hello, agent!"})`,
       `print(resp.json())`,
     ].join('\n'),
-    react: [
-      `import { useAgent, Chat } from "@distri/react"`,
-      ``,
-      `const MyAgentChat = () => {`,
-      `  const { agent } = useAgent({ agentIdOrDef: "${sampleAgentRef}" })`,
-      `  return agent ? <Chat agent={agent} threadId="my-thread" theme="dark" /> : null`,
-      `}`,
-    ].join('\n'),
   };
 
   const handleCopyDefinition = async () => {
@@ -305,18 +303,32 @@ export function AgentDetails({
   };
 
   const tabs = [
-    { id: 'definition' as const, label: 'Definition', icon: <FileText className="h-4 w-4" /> },
-    { id: 'chat' as const, label: 'Chat', icon: <MessageCircle className="h-4 w-4" /> },
-    { id: 'tools' as const, label: 'Tools', icon: <Wrench className="h-4 w-4" /> },
-    { id: 'integrate' as const, label: 'Integrate', icon: <Play className="h-4 w-4" /> },
+    { id: 'definition', label: 'Definition', icon: <FileText className="h-4 w-4" /> },
+    { id: 'chat', label: 'Chat', icon: <MessageCircle className="h-4 w-4" /> },
+    { id: 'tools', label: 'Tools', icon: <Wrench className="h-4 w-4" /> },
+    { id: 'integrate', label: 'Integrate', icon: <Play className="h-4 w-4" /> },
+    ...(config.customTabs || []).map(tab => ({
+      id: tab.id,
+      label: tab.label,
+      icon: tab.icon
+    }))
   ];
+
+  // Add default "Embed" tab for OSS if no custom embed tab is provided
+  const hasInjectedEmbed = (config.customTabs || []).some(t => t.id === 'embed');
+  if (!hasInjectedEmbed) {
+    tabs.push({
+      id: 'embed_oss',
+      label: 'Embed',
+      icon: <div className="relative"><Globe className="h-4 w-4" /><AlertTriangle className="absolute -right-1.5 -top-1.5 h-2.5 w-2.5 text-amber-500" /></div>
+    });
+  }
 
   const sampleTabs = [
     { id: 'curl' as const, label: 'cURL' },
     { id: 'node' as const, label: 'Node' },
     { id: 'python' as const, label: 'Python' },
-    { id: 'react' as const, label: 'React' },
-  ];
+  ] as const;
 
   return (
     <div className={`flex-1 overflow-hidden bg-background ${className ?? ''}`}>
@@ -361,6 +373,44 @@ export function AgentDetails({
             </button>
           </div>
         </header>
+
+        {/* Configuration warnings */}
+        {!validationLoading && warnings.length > 0 && (
+          <div className="mt-4 space-y-2">
+            {warnings.map((warning, index) => (
+              <div
+                key={`${warning.code}-${index}`}
+                className={`flex items-start gap-3 rounded-lg border px-4 py-3 text-sm ${
+                  warning.severity === 'error'
+                    ? 'border-red-500/40 bg-red-500/10 text-red-900 dark:text-red-100'
+                    : 'border-amber-500/40 bg-amber-500/10 text-amber-900 dark:text-amber-100'
+                }`}
+              >
+                <AlertTriangle
+                  className={`h-5 w-5 shrink-0 ${
+                    warning.severity === 'error' ? 'text-red-500' : 'text-amber-500'
+                  }`}
+                />
+                <div className="flex-1">
+                  <p className="font-medium">{warning.message}</p>
+                  {warning.code === 'missing_provider_secret' && (
+                    <button
+                      type="button"
+                      onClick={() => navigate('/settings/secrets')}
+                      className={`mt-1 text-sm font-medium underline underline-offset-2 ${
+                        warning.severity === 'error'
+                          ? 'text-red-700 hover:text-red-600 dark:text-red-200 dark:hover:text-red-100'
+                          : 'text-amber-700 hover:text-amber-600 dark:text-amber-200 dark:hover:text-amber-100'
+                      }`}
+                    >
+                      Go to Secrets settings →
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
 
         <div className="mt-4 flex flex-1 min-h-0 flex-col gap-6 xl:flex-row">
           <div className="flex min-h-0 flex-col gap-6 xl:flex-[5]">
@@ -702,6 +752,43 @@ export function AgentDetails({
                   </div>
                 </div>
               )}
+
+              {config.customTabs?.map((tab) =>
+                activePanel === tab.id ? (
+                  <div key={tab.id} className="flex-1 min-h-0 overflow-hidden p-4">
+                    <div className="flex h-full flex-col overflow-hidden rounded-xl border border-border/70 bg-background p-6 overflow-auto">
+                      {tab.render({ agentId: agentId || agentDefinition.id || '' })}
+                    </div>
+                  </div>
+                ) : null
+              )}
+
+              {activePanel === 'embed_oss' && (
+                <div className="flex-1 min-h-0 overflow-hidden p-4">
+                  <div className="flex h-full flex-col items-center justify-center rounded-xl border border-border/70 bg-background p-8 text-center">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-full bg-amber-500/10 text-amber-600">
+                      <AlertTriangle className="h-6 w-6" />
+                    </div>
+                    <h3 className="mt-4 text-lg font-semibold text-foreground">Cloud-only Feature</h3>
+                    <p className="mt-2 max-w-sm text-sm text-muted-foreground">
+                      Embed configuration is only available on Distri Cloud. This feature requires a secure managed backend for public client IDs and origin validation.
+                    </p>
+                    <div className="mt-6 flex flex-col gap-3">
+                      <a
+                        href="https://app.distri.dev"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+                      >
+                        Try Distri Cloud
+                      </a>
+                      <p className="text-xs text-muted-foreground">
+                        Securely embed agents in minutes withmanaged infrastructure.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -767,3 +854,5 @@ const formatAgentType = (value?: string) => {
     .replace(/_/g, ' ')
     .replace(/\b\w/g, (match) => match.toUpperCase());
 };
+
+

@@ -15,7 +15,9 @@ members = [
   "server/distri-plugins",
   "server/distri-server-cli",
   "server/distri-plugin-executor",
-
+  # samples
+  "samples/coder",
+  "samples/scraper",
 ]
 default-members = ["distri-cli", "server/distri-server-cli"]
 

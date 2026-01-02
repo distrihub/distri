@@ -25,3 +25,5 @@ target/*
 .distri/
 releases/*
 distri-home/node_modules/** 
+
+samples/maps-demo/.env

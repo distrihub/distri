@@ -1,6 +1,6 @@
 // Client exports
 export { DistriHomeClient } from './DistriHomeClient';
-export type { HomeStats, HomeStatsThread, ApiKey, Secret, PromptTemplate } from './DistriHomeClient';
+export type { HomeStats, HomeStatsThread, ApiKey, Secret, PromptTemplate, AgentValidationResult, ValidationWarning, ValidationWarningSeverity } from './DistriHomeClient';
 
 // Provider exports
 export { DistriHomeProvider, useDistriHome, useDistriHomeConfig, useDistriHomeNavigate, useDistriHomeClient } from './DistriHomeProvider';
@@ -11,6 +11,8 @@ export { useHomeStats } from './hooks/useHomeStats';
 export type { UseHomeStatsResult } from './hooks/useHomeStats';
 export { useApiKeys } from './hooks/useApiKeys';
 export type { UseApiKeysResult } from './hooks/useApiKeys';
+export { useAgentValidation } from './hooks/useAgentValidation';
+export type { UseAgentValidationOptions, UseAgentValidationResult } from './hooks/useAgentValidation';
 
 export { Home } from './components/Home';
 export { AgentDetails } from './components/AgentDetails';

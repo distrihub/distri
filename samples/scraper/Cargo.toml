@@ -1,0 +1,39 @@
+[package]
+name = "distri-scraper"
+version = "0.2.2"
+edition = "2021"
+
+[dependencies]
+# Core dependencies
+distri-core = { path = "../../server/distri-core" }
+distri-types = { path = "../../distri-types" }
+distri-server = { path = "../../server/distri-server" }
+
+# Web server dependencies
+actix-web = "4.4"
+actix-cors = "0.7"
+
+# CLI and utility dependencies
+clap = { version = "4.5", features = ["derive"] }
+tokio = { version = "1.0", features = ["full"] }
+anyhow = "1.0"
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = "0.9"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.0", features = ["v4"] }
+async-trait = "0.1"
+dotenv = "0.15"
+
+# MCP servers
+mcp-crawl = { workspace = true }
+mcp-tavily = { workspace = true }
+mcp-reddit = { workspace = true }
+mcp-twitter = { workspace = true }
+
+
+[[bin]]
+name = "distri-scraper"
+path = "src/main.rs"

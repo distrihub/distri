@@ -126,7 +126,10 @@ impl Distri {
         )))
     }
 
-    pub async fn register_agent_markdown(&self, markdown: &str) -> Result<(), ClientError> {
+    pub async fn register_agent_markdown(
+        &self,
+        markdown: &str,
+    ) -> Result<StandardDefinition, ClientError> {
         let create_url = format!("{}/agents", self.base_url);
         let resp = self
             .http
@@ -137,13 +140,16 @@ impl Distri {
             .await?;
 
         if resp.status().is_success() {
-            return Ok(());
+            let definition: StandardDefinition = resp.json().await.map_err(|e| {
+                ClientError::InvalidResponse(format!("Failed to parse agent response: {}", e))
+            })?;
+            return Ok(definition);
         }
 
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
         Err(ClientError::InvalidResponse(format!(
-            "agent markdown registration failed (status {status}): {body}"
+            "Agent registration failed (status {status}): {body}"
         )))
     }
 
@@ -421,7 +427,7 @@ impl Distri {
     /// ```
     pub async fn issue_token(&self) -> Result<TokenResponse, ClientError> {
         let url = format!("{}/token", self.base_url);
-        let resp = self.http.post(url).send().await?;
+        let resp = self.http.post(url).body("").send().await?;
         if !resp.status().is_success() {
             let text = resp.text().await.unwrap_or_default();
             return Err(ClientError::InvalidResponse(format!(
