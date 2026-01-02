@@ -1,13 +1,13 @@
 [package]
 name = "distri-scraper"
-version = "0.2.2"
+version = "0.2.8"
 edition = "2021"
 
 [dependencies]
 # Core dependencies
-distri-core = { path = "../../server/distri-core" }
-distri-types = { path = "../../distri-types" }
-distri-server = { path = "../../server/distri-server" }
+distri-core = { path = "../../server/distri-core" , version = "0.2.8" }
+distri-types = { path = "../../distri-types" , version = "0.2.8" }
+distri-server = { path = "../../server/distri-server" , version = "0.2.8" }
 
 # Web server dependencies
 actix-web = "4.4"

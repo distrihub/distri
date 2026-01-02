@@ -1,6 +1,6 @@
 [package]
 name = "distri-plugin-executor"
-version = "0.2.7"
+version = "0.2.8"
 edition = "2021"
 
 [dependencies]
@@ -17,7 +17,7 @@ reqwest = { workspace = true, features = ["json"], optional = true }
 serde = { workspace = true }
 schemars = { workspace = true }
 uuid = { version = "1.0", features = ["v4"] }
-distri-types = { path = "../../distri-types", version = "0.2.7" }
+distri-types = { path = "../../distri-types", version = "0.2.8" }
 deno_error = "0.7"
 
 [features]

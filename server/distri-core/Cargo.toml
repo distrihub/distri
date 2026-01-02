@@ -1,6 +1,6 @@
 [package]
 name = "distri-core"
-version = "0.2.7"
+version = "0.2.8"
 edition = "2021"
 
 [features]
@@ -14,18 +14,18 @@ postgres_vendored = ["postgres", "distri-stores/postgres_vendored"]
 otel = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp"]
 
 [dependencies]
-distri-a2a = { path = "../../distri-a2a", version = "0.2.7" }
-distri-parsers = { path = "../distri-parsers", version = "0.2.7" }
-distri = { path = "../../distri", version = "0.2.7" }
+distri-a2a = { path = "../../distri-a2a", version = "0.2.8" }
+distri-parsers = { path = "../distri-parsers", version = "0.2.8" }
+distri = { path = "../../distri", version = "0.2.8" }
 browsr-client = { workspace = true }
 browsr-types = { workspace = true }
 distri-js-sandbox = { workspace = true, optional = true }
-distri-types = { path = "../../distri-types", version = "0.2.7" }
-distri-stores = { path = "../distri-stores", version = "0.2.7", default-features = false }
-distri-filesystem = { path = "../../distri-filesystem", version = "0.2.7" }
-distri-auth = { path = "../distri-auth", version = "0.2.7" }
-distri-plugin-executor = { path = "../distri-plugin-executor", version = "0.2.7" }
-distri-plugins = { path = "../distri-plugins", version = "0.2.7" }
+distri-types = { path = "../../distri-types", version = "0.2.8" }
+distri-stores = { path = "../distri-stores", version = "0.2.8", default-features = false }
+distri-filesystem = { path = "../../distri-filesystem", version = "0.2.8" }
+distri-auth = { path = "../distri-auth", version = "0.2.8" }
+distri-plugin-executor = { path = "../distri-plugin-executor", version = "0.2.8" }
+distri-plugins = { path = "../distri-plugins", version = "0.2.8" }
 
 async-trait = { workspace = true }
 serde = { workspace = true }
