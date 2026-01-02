@@ -10,8 +10,9 @@ use thiserror::Error;
 pub use crate::external_tools_runtime::ExternalToolRegistry;
 pub use crate::hooks_runtime::HookRegistry;
 pub use client::{
-    ArtifactEntry, ArtifactListResponse, ArtifactNamespace, ArtifactNamespaceList,
-    ArtifactReadResponse, ArtifactSaveResponse, Distri, LlmExecuteResponse, TaskNamespaceResponse,
+    AgentRegistrationResponse, ArtifactEntry, ArtifactListResponse, ArtifactNamespace,
+    ArtifactNamespaceList, ArtifactReadResponse, ArtifactSaveResponse, Distri, LlmExecuteResponse,
+    TaskNamespaceResponse,
 };
 pub use client_app::{AppError, DistriClientApp, ToolListItem};
 pub use client_stream::{AgentStreamClient, StreamError, StreamItem};

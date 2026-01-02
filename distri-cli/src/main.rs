@@ -4,6 +4,7 @@ use std::process::Command;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use crossterm::terminal;
 use distri::{
     print_stream, AgentStreamClient, BuildHttpClient, Distri, DistriClientApp, DistriConfig,
     ExternalToolRegistry,
@@ -11,15 +12,15 @@ use distri::{
 use distri_a2a::{
     EventKind, Message as A2aMessage, MessageSendParams, Part as A2aPart, Role, TextPart,
 };
-use distri_types::ToolResponse;
 use distri_types::configuration::AgentConfig;
-use crossterm::terminal;
+use distri_types::ToolResponse;
 use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher};
 use inquire::{
     autocompletion::{Autocomplete, Replacement},
     CustomUserError, Select, Text,
 };
 use tokio::fs;
+mod logging;
 
 #[derive(Parser, Debug, Clone)]
 #[clap(author, version, about, arg_required_else_help = true)]
@@ -267,6 +268,9 @@ impl Autocomplete for DistriAutocomplete {
 async fn main() -> Result<()> {
     dotenv::dotenv().ok();
 
+    let level = std::env::var("DISTRI_LOG").unwrap_or_else(|_| "info".to_string());
+    logging::init_logging(&level);
+
     let cli = parse_cli_with_default_serve();
 
     let command = Cli::parse().command.clone().expect("command is expected");
@@ -289,6 +293,10 @@ async fn main() -> Result<()> {
     }
 
     let base_url = config.base_url.clone();
+
+    if cli.verbose {
+        println!("Distri Client Config {config:#?}");
+    }
     let client = Distri::from_config(config.clone());
     let workspace = resolve_workspace(&cli.config);
 
@@ -786,10 +794,7 @@ fn register_approval_handler(registry: &ExternalToolRegistry) {
             "{}Calling tool:{} {}",
             COLOR_BRIGHT_MAGENTA, COLOR_RESET, call.tool_name
         );
-        println!(
-            "{}Approval required{}",
-            COLOR_BRIGHT_YELLOW, COLOR_RESET
-        );
+        println!("{}Approval required{}", COLOR_BRIGHT_YELLOW, COLOR_RESET);
         print!(
             "{}Do you approve this operation? (y/n): {}",
             COLOR_BRIGHT_YELLOW, COLOR_RESET
@@ -996,7 +1001,7 @@ async fn push_file(client: &Distri, path: &Path) -> Result<()> {
 
     let definition = client.register_agent_markdown(&content).await?;
 
-    let version = definition.version.as_deref().unwrap_or("unknown");
+    let version = definition.version.as_deref().unwrap_or_default();
     println!(
         "{}✔ Deployed version {}{}",
         COLOR_BRIGHT_GREEN, version, COLOR_RESET

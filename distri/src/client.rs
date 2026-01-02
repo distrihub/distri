@@ -14,6 +14,14 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 
+/// Minimal response from agent registration - ignores extra fields like cloud-only `id`
+#[derive(Debug, Clone, Deserialize)]
+pub struct AgentRegistrationResponse {
+    pub name: String,
+    #[serde(default)]
+    pub version: Option<String>,
+}
+
 /// Simple HTTP/SSE client for invoking agents with Distri messages.
 ///
 /// # Example
@@ -129,8 +137,10 @@ impl Distri {
     pub async fn register_agent_markdown(
         &self,
         markdown: &str,
-    ) -> Result<StandardDefinition, ClientError> {
+    ) -> Result<AgentRegistrationResponse, ClientError> {
         let create_url = format!("{}/agents", self.base_url);
+
+        tracing::info!("Pushing agent to: {create_url}");
         let resp = self
             .http
             .post(&create_url)
@@ -140,10 +150,10 @@ impl Distri {
             .await?;
 
         if resp.status().is_success() {
-            let definition: StandardDefinition = resp.json().await.map_err(|e| {
-                ClientError::InvalidResponse(format!("Failed to parse agent response: {}", e))
+            let response: AgentRegistrationResponse = resp.json().await.map_err(|e| {
+                ClientError::InvalidResponse(format!("Failed to read response: {}", e))
             })?;
-            return Ok(definition);
+            return Ok(response);
         }
 
         let status = resp.status();
