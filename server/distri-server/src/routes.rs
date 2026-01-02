@@ -466,6 +466,7 @@ fn build_markdown_from_definition(def: &StandardDefinition) -> String {
 /// Warning severity levels
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "lowercase")]
+#[allow(dead_code)]
 enum WarningSeverity {
     Warning,
     Error,

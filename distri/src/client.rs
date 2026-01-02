@@ -427,7 +427,7 @@ impl Distri {
     /// ```
     pub async fn issue_token(&self) -> Result<TokenResponse, ClientError> {
         let url = format!("{}/token", self.base_url);
-        let resp = self.http.post(url).send().await?;
+        let resp = self.http.post(url).body("").send().await?;
         if !resp.status().is_success() {
             let text = resp.text().await.unwrap_or_default();
             return Err(ClientError::InvalidResponse(format!(
