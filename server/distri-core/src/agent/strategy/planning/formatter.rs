@@ -122,6 +122,11 @@ impl<'a> MessageFormatter<'a> {
 
         let mut formatted = vec![crate::types::Message::system(rendered_prompt, None)];
 
+        if native_json_tools && include_scratchpad {
+            let native_messages = Self::build_native_history_messages(&scratchpad_entries);
+            formatted.extend(native_messages);
+        }
+
         let user_message = if let Some(overrides) = &self.agent_def.user_message_overrides {
             self.build_overridden_user_message(
                 message,
@@ -135,11 +140,6 @@ impl<'a> MessageFormatter<'a> {
             Self::build_user_message(message, &user_additional_data)
         };
         formatted.push(user_message);
-
-        if native_json_tools && include_scratchpad {
-            let native_messages = Self::build_native_history_messages(&scratchpad_entries);
-            formatted.extend(native_messages);
-        }
 
         Ok(formatted)
     }
@@ -618,13 +618,13 @@ mod tests {
 
         assert_eq!(messages.len(), 4);
         assert!(matches!(messages[0].role, MessageRole::System));
-        assert!(matches!(messages[1].role, MessageRole::User));
-        let user_text = messages[1].as_text().unwrap_or_default();
+        assert!(matches!(messages[1].role, MessageRole::Assistant));
+        assert!(matches!(messages[2].role, MessageRole::Tool));
+        assert!(matches!(messages[3].role, MessageRole::User));
+        let user_text = messages[3].as_text().unwrap_or_default();
         assert!(user_text.contains("Steps remaining"));
-        assert!(matches!(messages[2].role, MessageRole::Assistant));
-        assert!(matches!(messages[3].role, MessageRole::Tool));
-        assert_eq!(messages[2].tool_calls().len(), 1);
-        assert_eq!(messages[3].tool_responses().len(), 1);
+        assert_eq!(messages[1].tool_calls().len(), 1);
+        assert_eq!(messages[2].tool_responses().len(), 1);
     }
 
     #[tokio::test]
