@@ -217,14 +217,15 @@ export function ThreadsView({ className }: ThreadsViewProps) {
   const uniqueAgentsValue = loading || error ? '—' : formatNumber(uniqueAgents);
 
   return (
-    <div className={`flex flex-1 flex-col overflow-hidden ${className ?? ''}`}>
-      <div className="flex h-full flex-col bg-background">
-        {/* Header */}
-        <header className="flex h-16 shrink-0 items-center justify-between border-b border-border/60 px-6 lg:px-10">
-          <h1 className="text-xl font-semibold text-foreground">Threads</h1>
-          <div className="flex items-center gap-3">
+    <div className={`flex-1 overflow-y-auto bg-background ${className ?? ''}`}>
+      <div className="mx-auto flex w-full max-w-7xl flex-col gap-8 px-4 py-6 sm:px-6 lg:px-8 lg:py-10">
+        <section className="flex flex-col gap-6">
+          {/* Header */}
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <h1 className="text-xl font-semibold text-foreground">Threads</h1>
+          <div className="flex flex-wrap items-center gap-3">
             {/* Search */}
-            <div className="relative hidden sm:block">
+            <div className="relative">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <input
                 value={searchInput}
@@ -272,47 +273,22 @@ export function ThreadsView({ className }: ThreadsViewProps) {
               )}
             </div>
           </div>
-        </header>
+        </div>
 
-        {/* Main content - flex-1 to fill remaining space */}
-        <div className="flex flex-1 flex-col overflow-hidden px-6 py-6 lg:px-10">
-          {showWarning && (
-            <div className="mb-6 flex shrink-0 items-start gap-3 rounded-lg border border-amber-300/50 bg-amber-100/60 px-4 py-3 text-xs text-amber-900 dark:border-amber-400/20 dark:bg-amber-400/10 dark:text-amber-100">
-              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-              <div>
-                <p className="font-semibold">We couldn't load threads right now.</p>
-                <p className="mt-1 text-amber-800/90 dark:text-amber-100/90">
-                  Some stats may be unavailable. Try refreshing soon.
-                </p>
-              </div>
-            </div>
-          )}
-
-          {/* Mobile search */}
-          <div className="mb-5 block shrink-0 sm:hidden">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <input
-                value={searchInput}
-                onChange={(e) => setSearchInput(e.target.value)}
-                onKeyDown={handleSearchKeyDown}
-                placeholder="Search threads... (Enter)"
-                className="h-10 w-full rounded-md border border-border/70 bg-card pl-9 pr-8 text-sm text-foreground shadow-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
-              />
-              {searchInput && (
-                <button
-                  type="button"
-                  onClick={handleSearchClear}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              )}
+        {showWarning && (
+          <div className="flex items-start gap-3 rounded-lg border border-amber-300/50 bg-amber-100/60 px-4 py-3 text-xs text-amber-900 dark:border-amber-400/20 dark:bg-amber-400/10 dark:text-amber-100">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            <div>
+              <p className="font-semibold">We couldn't load threads right now.</p>
+              <p className="mt-1 text-amber-800/90 dark:text-amber-100/90">
+                Some stats may be unavailable. Try refreshing soon.
+              </p>
             </div>
           </div>
+        )}
 
-          {/* Quick time filters */}
-          <div className="mb-4 flex shrink-0 flex-wrap items-center gap-2">
+        {/* Quick time filters */}
+        <div className="flex flex-wrap items-center gap-2">
             <Clock className="h-4 w-4 text-muted-foreground" />
             {(['5m', '1h', '24h', '7d'] as const).map((filter) => (
               <button
@@ -342,167 +318,164 @@ export function ThreadsView({ className }: ThreadsViewProps) {
             )}
           </div>
 
-          {/* Stat cards */}
-          <div className="mb-5 grid shrink-0 gap-4 md:grid-cols-3">
-            <StatCard
-              title="Total threads"
-              value={threadsCountValue}
-              helper={`Latest activity ${latestActivity}`}
-            />
-            <StatCard title="Messages on page" value={messageCountValue} helper="" />
-            <StatCard title="Agents on page" value={uniqueAgentsValue} helper="" />
+        {/* Stat cards */}
+        <div className="grid gap-4 md:grid-cols-3">
+          <StatCard
+            title="Total threads"
+            value={threadsCountValue}
+            helper={`Latest activity ${latestActivity}`}
+          />
+          <StatCard title="Messages on page" value={messageCountValue} helper="" />
+          <StatCard title="Agents on page" value={uniqueAgentsValue} helper="" />
+        </div>
+
+        {/* Threads list */}
+        <div className="rounded-2xl border border-border/70 bg-card shadow-sm">
+          {/* List header */}
+          <div className="flex items-center justify-between border-b border-border/60 px-6 py-4">
+            <h2 className="text-lg font-semibold text-foreground">Threads</h2>
+            <div className="flex items-center gap-4">
+              <span className="text-xs font-semibold text-muted-foreground">
+                {error ? '—' : `${total} total`}
+              </span>
+              <select
+                value={pageSize}
+                onChange={handlePageSizeChange}
+                className="h-8 rounded-md border border-border/70 bg-background px-2 text-xs text-foreground"
+              >
+                <option value={10}>10 per page</option>
+                <option value={30}>30 per page</option>
+                <option value={100}>100 per page</option>
+              </select>
+            </div>
           </div>
 
-          {/* Threads list - flex-1 to fill remaining space */}
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border/70 bg-card shadow-sm">
-            {/* List header */}
-            <div className="flex shrink-0 items-center justify-between border-b border-border/60 px-6 py-4">
-              <h2 className="text-lg font-semibold text-foreground">Threads</h2>
-              <div className="flex items-center gap-4">
-                <span className="text-xs font-semibold text-muted-foreground">
-                  {error ? '—' : `${total} total`}
-                </span>
-                <select
-                  value={pageSize}
-                  onChange={handlePageSizeChange}
-                  className="h-8 rounded-md border border-border/70 bg-background px-2 text-xs text-foreground"
-                >
-                  <option value={10}>10 per page</option>
-                  <option value={30}>30 per page</option>
-                  <option value={100}>100 per page</option>
-                </select>
+          {/* Thread list */}
+          <div className="divide-y divide-border/60">
+            {loading ? (
+              <div className="px-6 py-4 text-sm text-muted-foreground">Loading…</div>
+            ) : error ? (
+              <div className="px-6 py-4 text-sm text-muted-foreground">
+                We couldn't load threads. Please try again shortly.
               </div>
-            </div>
-
-            {/* Scrollable list */}
-            <div className="flex-1 divide-y divide-border/60 overflow-y-auto">
-              {loading ? (
-                <div className="px-6 py-4 text-sm text-muted-foreground">Loading…</div>
-              ) : error ? (
-                <div className="px-6 py-4 text-sm text-muted-foreground">
-                  We couldn't load threads. Please try again shortly.
-                </div>
-              ) : threads.length === 0 ? (
-                <div className="px-6 py-4 text-sm text-muted-foreground">No threads found.</div>
-              ) : (
-                threads.map((thread) => (
-                  <div
-                    key={thread.id}
-                    onClick={() => {
+            ) : threads.length === 0 ? (
+              <div className="px-6 py-4 text-sm text-muted-foreground">No threads found.</div>
+            ) : (
+              threads.map((thread) => (
+                <div
+                  key={thread.id}
+                  onClick={() => {
+                    if (thread.agent_id && thread.id) {
+                      navigate(
+                        `/chat?id=${encodeURIComponent(thread.agent_id)}&threadId=${encodeURIComponent(thread.id)}`
+                      );
+                    }
+                  }}
+                  className="group flex cursor-pointer items-center justify-between gap-4 px-6 py-4 transition hover:bg-muted/40"
+                >
+                  <div className="min-w-0 flex-1 overflow-hidden">
+                    <div className="flex items-baseline gap-3">
+                      <h3 className="max-w-[800px] truncate overflow-hidden text-ellipsis text-base font-medium text-foreground">
+                        {thread.title || 'Untitled thread'}
+                      </h3>
+                      <span className="shrink-0 whitespace-nowrap rounded border border-border/60 bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">
+                        {thread.message_count ? `${thread.message_count} msgs` : 'No messages'}
+                      </span>
+                    </div>
+                    <div className="mt-2 flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          thread.agent_id && handleAgentClick(thread.agent_id);
+                        }}
+                        className="hover:text-primary hover:underline"
+                        title={`Filter by agent: ${thread.agent_name || thread.agent_id}`}
+                      >
+                        {thread.agent_name || 'Agent'}
+                      </button>
+                      <span>{formatRelativeTime(thread.updated_at)}</span>
+                      {thread.external_id && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleExternalIdClick(thread.external_id!);
+                          }}
+                          className="font-mono text-[11px] text-muted-foreground/80 hover:text-primary hover:underline"
+                          title={`Filter by external ID: ${thread.external_id}`}
+                        >
+                          ext:{thread.external_id}
+                        </button>
+                      )}
+                      <span className="font-mono text-[11px] text-muted-foreground/80">
+                        ID: {thread.id.slice(0, 8)}...
+                      </span>
+                    </div>
+                    {thread.tags && thread.tags.length > 0 && (
+                      <div className="mt-2 flex flex-wrap gap-1">
+                        {thread.tags.map((tag) => (
+                          <span
+                            key={tag}
+                            className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground"
+                          >
+                            <Tag className="h-2.5 w-2.5" />
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
                       if (thread.agent_id && thread.id) {
                         navigate(
                           `/chat?id=${encodeURIComponent(thread.agent_id)}&threadId=${encodeURIComponent(thread.id)}`
                         );
                       }
                     }}
-                    className="group flex cursor-pointer items-center justify-between gap-4 px-6 py-4 transition hover:bg-muted/40"
+                    className="flex items-center gap-2 rounded-full p-2 text-primary"
+                    title="Open thread"
                   >
-                    <div className="min-w-0 flex-1 overflow-hidden">
-                      <div className="flex items-baseline gap-3">
-                        <h3 className="max-w-[800px] truncate overflow-hidden text-ellipsis text-base font-medium text-foreground">
-                          {thread.title || 'Untitled thread'}
-                        </h3>
-                        <span className="shrink-0 whitespace-nowrap rounded border border-border/60 bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">
-                          {thread.message_count ? `${thread.message_count} msgs` : 'No messages'}
-                        </span>
-                      </div>
-                      <div className="mt-2 flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
-                        {/* Clickable agent name */}
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            thread.agent_id && handleAgentClick(thread.agent_id);
-                          }}
-                          className="hover:text-primary hover:underline"
-                          title={`Filter by agent: ${thread.agent_name || thread.agent_id}`}
-                        >
-                          {thread.agent_name || 'Agent'}
-                        </button>
-                        <span>{formatRelativeTime(thread.updated_at)}</span>
-                        {/* Clickable external_id */}
-                        {thread.external_id && (
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleExternalIdClick(thread.external_id!);
-                            }}
-                            className="font-mono text-[11px] text-muted-foreground/80 hover:text-primary hover:underline"
-                            title={`Filter by external ID: ${thread.external_id}`}
-                          >
-                            ext:{thread.external_id}
-                          </button>
-                        )}
-                        <span className="font-mono text-[11px] text-muted-foreground/80">
-                          ID: {thread.id.slice(0, 8)}...
-                        </span>
-                      </div>
-                      {/* Tags */}
-                      {thread.tags && thread.tags.length > 0 && (
-                        <div className="mt-2 flex flex-wrap gap-1">
-                          {thread.tags.map((tag) => (
-                            <span
-                              key={tag}
-                              className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground"
-                            >
-                              <Tag className="h-2.5 w-2.5" />
-                              {tag}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (thread.agent_id && thread.id) {
-                          navigate(
-                            `/chat?id=${encodeURIComponent(thread.agent_id)}&threadId=${encodeURIComponent(thread.id)}`
-                          );
-                        }
-                      }}
-                      className="flex items-center gap-2 rounded-full p-2 text-primary"
-                      title="Open thread"
-                    >
-                      <ArrowRight className="h-4 w-4" />
-                    </button>
-                  </div>
-                ))
-              )}
-            </div>
-
-            {/* Pagination controls */}
-            {!loading && !error && total > 0 && (
-              <div className="flex shrink-0 items-center justify-between border-t border-border/60 px-6 py-3">
-                <span className="text-xs text-muted-foreground">
-                  Page {page} of {totalPages}
-                </span>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={prevPage}
-                    disabled={!hasPrevPage}
-                    className="inline-flex items-center gap-1 rounded-md border border-border/70 bg-card px-3 py-1.5 text-sm font-medium text-foreground transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    <ChevronLeft className="h-4 w-4" />
-                    Prev
-                  </button>
-                  <button
-                    type="button"
-                    onClick={nextPage}
-                    disabled={!hasNextPage}
-                    className="inline-flex items-center gap-1 rounded-md border border-border/70 bg-card px-3 py-1.5 text-sm font-medium text-foreground transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    Next
-                    <ChevronRight className="h-4 w-4" />
+                    <ArrowRight className="h-4 w-4" />
                   </button>
                 </div>
-              </div>
+              ))
             )}
           </div>
+
+          {/* Pagination controls */}
+          {!loading && !error && total > 0 && (
+            <div className="flex items-center justify-between border-t border-border/60 px-6 py-3">
+              <span className="text-xs text-muted-foreground">
+                Page {page} of {totalPages}
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={prevPage}
+                  disabled={!hasPrevPage}
+                  className="inline-flex items-center gap-1 rounded-md border border-border/70 bg-card px-3 py-1.5 text-sm font-medium text-foreground transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                  Prev
+                </button>
+                <button
+                  type="button"
+                  onClick={nextPage}
+                  disabled={!hasNextPage}
+                  className="inline-flex items-center gap-1 rounded-md border border-border/70 bg-card px-3 py-1.5 text-sm font-medium text-foreground transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Next
+                  <ChevronRight className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+          )}
         </div>
+        </section>
       </div>
 
       {/* Filter Dialog Modal */}
