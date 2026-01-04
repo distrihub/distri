@@ -109,7 +109,20 @@ export function SessionsView({ className }: SessionsViewProps) {
         <section className="flex flex-col gap-6">
           {/* Header */}
           <div className="flex flex-wrap items-center justify-between gap-4">
-            <h1 className="text-xl font-semibold text-foreground">Sessions</h1>
+            <div>
+              <h1 className="text-xl font-semibold text-foreground">Sessions</h1>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Store data to provide additional context to agents.{' '}
+                <a
+                  href="https://distri.dev/docs/concepts/using-session"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-primary hover:underline"
+                >
+                  Learn more
+                </a>
+              </p>
+            </div>
             <div className="flex flex-wrap items-center gap-3">
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -140,17 +153,8 @@ export function SessionsView({ className }: SessionsViewProps) {
             </div>
           )}
 
-          {/* Sessions table */}
+          {/* Sessions list */}
           <div className="rounded-2xl border border-border/70 bg-card shadow-sm">
-            {/* Table header */}
-            <div className="flex items-center justify-between border-b border-border/60 px-6 py-4">
-              <h2 className="text-lg font-semibold text-foreground">Sessions</h2>
-              <span className="text-xs font-semibold text-muted-foreground">
-                {sessions.length} results
-              </span>
-            </div>
-
-            {/* Table */}
             <div className="divide-y divide-border/60">
               {loading && sessions.length === 0 ? (
                 <div className="flex items-center justify-center py-12">
