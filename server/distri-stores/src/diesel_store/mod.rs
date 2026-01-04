@@ -29,10 +29,11 @@ use distri_types::auth::{AuthError, AuthSecret, AuthSession, OAuth2State, ToolAu
 use distri_types::configuration::PluginArtifact;
 use distri_types::stores::SessionSummary;
 use distri_types::stores::{
-    AgentStore, BrowserSessionStore, ExternalToolCallsStore, FilterMessageType, MemoryStore,
-    MessageFilter, NewPromptTemplate, NewSecret, PluginCatalogStore, PluginMetadataRecord,
-    PromptTemplateRecord, PromptTemplateStore, ScratchpadStore, SecretRecord, SecretStore,
-    SessionMemory, SessionStore, TaskStore, ThreadListFilter, ThreadStore, UpdatePromptTemplate,
+    AgentStore, AgentUsageInfo, BrowserSessionStore, ExternalToolCallsStore, FilterMessageType,
+    MemoryStore, MessageFilter, NewPromptTemplate, NewSecret, PluginCatalogStore,
+    PluginMetadataRecord, PromptTemplateRecord, PromptTemplateStore, ScratchpadStore, SecretRecord,
+    SecretStore, SessionMemory, SessionStore, TaskStore, ThreadListFilter, ThreadListResponse,
+    ThreadStore, UpdatePromptTemplate,
 };
 use distri_types::{
     AgentError, AgentEvent, AgentEventType, CreateThreadRequest, Message, ScratchpadEntry, Task,
@@ -179,6 +180,7 @@ fn to_thread_summary(thread: &Thread) -> ThreadSummary {
         last_message: thread.last_message.clone(),
         user_id: thread.user_id.clone(),
         external_id: thread.external_id.clone(),
+        tags: None,
     }
 }
 
@@ -843,8 +845,11 @@ where
         filter: &ThreadListFilter,
         limit: Option<u32>,
         offset: Option<u32>,
-    ) -> Result<Vec<ThreadSummary>> {
+    ) -> Result<ThreadListResponse> {
         let mut connection = self.conn().await?;
+        let page_size = limit.unwrap_or(30).min(100);
+        let offset_val = offset.unwrap_or(0);
+
         let mut query = threads::table.into_boxed();
 
         // Local store is single-tenant, so we ignore user_id filter
@@ -858,10 +863,26 @@ where
             query = query.filter(threads::external_id.eq(ext_id.as_str()));
         }
 
+        // Get total count first
+        let total: i64 = {
+            let mut count_query = threads::table.into_boxed();
+            if let Some(agent) = &filter.agent_id {
+                count_query = count_query.filter(threads::agent_id.eq(agent.as_str()));
+            }
+            if let Some(ext_id) = &filter.external_id {
+                count_query = count_query.filter(threads::external_id.eq(ext_id.as_str()));
+            }
+            count_query
+                .count()
+                .get_result(&mut connection)
+                .await
+                .unwrap_or(0)
+        };
+
         let rows = query
             .order(threads::updated_at.desc())
-            .offset(offset.unwrap_or(0) as i64)
-            .limit(limit.unwrap_or(50) as i64)
+            .offset(offset_val as i64)
+            .limit(page_size as i64)
             .load::<ThreadModel>(&mut connection)
             .await?;
 
@@ -878,7 +899,19 @@ where
             }
         }
 
-        Ok(summaries)
+        let page = (offset_val / page_size) + 1;
+
+        Ok(ThreadListResponse {
+            threads: summaries,
+            total,
+            page,
+            page_size,
+        })
+    }
+
+    async fn get_agents_by_usage(&self) -> Result<Vec<AgentUsageInfo>> {
+        // Local store doesn't track agent usage - return empty list
+        Ok(vec![])
     }
 
     async fn update_thread_with_message(&self, thread_id: &str, message: &str) -> Result<()> {

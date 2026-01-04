@@ -538,6 +538,9 @@ pub struct ThreadSummary {
     pub last_message: Option<String>,
     pub user_id: Option<String>,
     pub external_id: Option<String>,
+    /// Tags extracted from thread attributes
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tags: Option<Vec<String>>,
 }
 
 // CreateThreadRequest removed - threads are now auto-created from first messages
