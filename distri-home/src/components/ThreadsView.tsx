@@ -244,19 +244,33 @@ export function ThreadsView({ className }: ThreadsViewProps) {
               )}
             </div>
             {/* Filter button */}
-            <button
-              type="button"
-              onClick={openFilterDialog}
-              className="inline-flex items-center gap-2 rounded-md border border-border/70 bg-card px-3 py-2 text-sm font-medium text-muted-foreground transition hover:text-primary"
-            >
-              <Filter className="h-4 w-4" />
-              Filters
+            <div className="flex items-center">
+              <button
+                type="button"
+                onClick={openFilterDialog}
+                className={`inline-flex items-center gap-2 border border-border/70 bg-card px-3 py-2 text-sm font-medium text-muted-foreground transition hover:text-primary ${
+                  activeFilterCount > 0 ? 'rounded-l-md border-r-0' : 'rounded-md'
+                }`}
+              >
+                <Filter className="h-4 w-4" />
+                Filters
+                {activeFilterCount > 0 && (
+                  <span className="rounded-full bg-primary px-2 py-0.5 text-xs text-primary-foreground">
+                    {activeFilterCount}
+                  </span>
+                )}
+              </button>
               {activeFilterCount > 0 && (
-                <span className="ml-1 rounded-full bg-primary px-2 py-0.5 text-xs text-primary-foreground">
-                  {activeFilterCount}
-                </span>
+                <button
+                  type="button"
+                  onClick={clearAllFilters}
+                  className="inline-flex items-center rounded-r-md border border-border/70 bg-card px-2 py-2 text-muted-foreground transition hover:bg-destructive/10 hover:text-destructive"
+                  title="Clear all filters"
+                >
+                  <X className="h-4 w-4" />
+                </button>
               )}
-            </button>
+            </div>
           </div>
         </header>
 

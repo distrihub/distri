@@ -58,6 +58,9 @@ importers:
       clsx:
         specifier: ^2.0.0
         version: 2.1.1
+      codemirror:
+        specifier: ^5.65.16
+        version: 5.65.20
       lucide-react:
         specifier: ^0.460.0
         version: 0.460.0(react@18.3.1)
@@ -71,6 +74,9 @@ importers:
         specifier: ^2.0.0
         version: 2.6.0
     devDependencies:
+      '@types/codemirror':
+        specifier: ^5.60.15
+        version: 5.60.17
       '@types/node':
         specifier: ^20.0.0
         version: 20.19.27
