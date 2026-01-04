@@ -223,83 +223,81 @@ export function ThreadsView({ className }: ThreadsViewProps) {
           {/* Header */}
           <div className="flex flex-wrap items-center justify-between gap-4">
             <h1 className="text-xl font-semibold text-foreground">Threads</h1>
-          <div className="flex flex-wrap items-center gap-3">
-            {/* Search */}
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <input
-                value={searchInput}
-                onChange={(e) => setSearchInput(e.target.value)}
-                onKeyDown={handleSearchKeyDown}
-                placeholder="Search threads... (Enter)"
-                className="h-9 w-64 rounded-md border border-border/70 bg-card pl-9 pr-8 text-sm text-foreground shadow-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
-              />
-              {searchInput && (
-                <button
-                  type="button"
-                  onClick={handleSearchClear}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              )}
-            </div>
-            {/* Filter button */}
-            <div className="flex items-center">
-              <button
-                type="button"
-                onClick={openFilterDialog}
-                className={`inline-flex items-center gap-2 border border-border/70 bg-card px-3 py-2 text-sm font-medium text-muted-foreground transition hover:text-primary ${
-                  activeFilterCount > 0 ? 'rounded-l-md border-r-0' : 'rounded-md'
-                }`}
-              >
-                <Filter className="h-4 w-4" />
-                Filters
-                {activeFilterCount > 0 && (
-                  <span className="rounded-full bg-primary px-2 py-0.5 text-xs text-primary-foreground">
-                    {activeFilterCount}
-                  </span>
+            <div className="flex flex-wrap items-center gap-3">
+              {/* Search */}
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <input
+                  value={searchInput}
+                  onChange={(e) => setSearchInput(e.target.value)}
+                  onKeyDown={handleSearchKeyDown}
+                  placeholder="Search threads... (Enter)"
+                  className="h-9 w-64 rounded-md border border-border/70 bg-card pl-9 pr-8 text-sm text-foreground shadow-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+                {searchInput && (
+                  <button
+                    type="button"
+                    onClick={handleSearchClear}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
                 )}
-              </button>
-              {activeFilterCount > 0 && (
+              </div>
+              {/* Filter button */}
+              <div className="flex items-center">
                 <button
                   type="button"
-                  onClick={clearAllFilters}
-                  className="inline-flex items-center rounded-r-md border border-border/70 bg-card px-2 py-2 text-muted-foreground transition hover:bg-destructive/10 hover:text-destructive"
-                  title="Clear all filters"
+                  onClick={openFilterDialog}
+                  className={`inline-flex items-center gap-2 border border-border/70 bg-card px-3 py-2 text-sm font-medium text-muted-foreground transition hover:text-primary ${activeFilterCount > 0 ? 'rounded-l-md border-r-0' : 'rounded-md'
+                    }`}
                 >
-                  <X className="h-4 w-4" />
+                  <Filter className="h-4 w-4" />
+                  Filters
+                  {activeFilterCount > 0 && (
+                    <span className="rounded-full bg-primary px-2 py-0.5 text-xs text-primary-foreground">
+                      {activeFilterCount}
+                    </span>
+                  )}
                 </button>
-              )}
+                {activeFilterCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={clearAllFilters}
+                    className="inline-flex items-center rounded-r-md border border-border/70 bg-card px-2 py-2 text-muted-foreground transition hover:bg-destructive/10 hover:text-destructive"
+                    title="Clear all filters"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
             </div>
           </div>
-        </div>
 
-        {showWarning && (
-          <div className="flex items-start gap-3 rounded-lg border border-amber-300/50 bg-amber-100/60 px-4 py-3 text-xs text-amber-900 dark:border-amber-400/20 dark:bg-amber-400/10 dark:text-amber-100">
-            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-            <div>
-              <p className="font-semibold">We couldn't load threads right now.</p>
-              <p className="mt-1 text-amber-800/90 dark:text-amber-100/90">
-                Some stats may be unavailable. Try refreshing soon.
-              </p>
+          {showWarning && (
+            <div className="flex items-start gap-3 rounded-lg border border-amber-300/50 bg-amber-100/60 px-4 py-3 text-xs text-amber-900 dark:border-amber-400/20 dark:bg-amber-400/10 dark:text-amber-100">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              <div>
+                <p className="font-semibold">We couldn't load threads right now.</p>
+                <p className="mt-1 text-amber-800/90 dark:text-amber-100/90">
+                  Some stats may be unavailable. Try refreshing soon.
+                </p>
+              </div>
             </div>
-          </div>
-        )}
+          )}
 
-        {/* Quick time filters */}
-        <div className="flex flex-wrap items-center gap-2">
+          {/* Quick time filters */}
+          <div className="flex flex-wrap items-center gap-2">
             <Clock className="h-4 w-4 text-muted-foreground" />
             {(['5m', '1h', '24h', '7d'] as const).map((filter) => (
               <button
                 key={filter}
                 type="button"
                 onClick={() => handleQuickTimeFilter(filter)}
-                className={`rounded-md px-3 py-1.5 text-xs font-medium transition ${
-                  quickTimeFilter === filter
+                className={`rounded-md px-3 py-1.5 text-xs font-medium transition ${quickTimeFilter === filter
                     ? 'bg-primary text-primary-foreground'
                     : 'border border-border/70 bg-card text-muted-foreground hover:text-foreground'
-                }`}
+                  }`}
               >
                 {filter === '5m' && 'Last 5 min'}
                 {filter === '1h' && 'Last hour'}
@@ -318,163 +316,163 @@ export function ThreadsView({ className }: ThreadsViewProps) {
             )}
           </div>
 
-        {/* Stat cards */}
-        <div className="grid gap-4 md:grid-cols-3">
-          <StatCard
-            title="Total threads"
-            value={threadsCountValue}
-            helper={`Latest activity ${latestActivity}`}
-          />
-          <StatCard title="Messages on page" value={messageCountValue} helper="" />
-          <StatCard title="Agents on page" value={uniqueAgentsValue} helper="" />
-        </div>
-
-        {/* Threads list */}
-        <div className="rounded-2xl border border-border/70 bg-card shadow-sm">
-          {/* List header */}
-          <div className="flex items-center justify-between border-b border-border/60 px-6 py-4">
-            <h2 className="text-lg font-semibold text-foreground">Threads</h2>
-            <div className="flex items-center gap-4">
-              <span className="text-xs font-semibold text-muted-foreground">
-                {error ? '—' : `${total} total`}
-              </span>
-              <select
-                value={pageSize}
-                onChange={handlePageSizeChange}
-                className="h-8 rounded-md border border-border/70 bg-background px-2 text-xs text-foreground"
-              >
-                <option value={10}>10 per page</option>
-                <option value={30}>30 per page</option>
-                <option value={100}>100 per page</option>
-              </select>
-            </div>
+          {/* Stat cards */}
+          <div className="grid gap-4 md:grid-cols-3">
+            <StatCard
+              title="Total threads"
+              value={threadsCountValue}
+              helper={`Latest activity ${latestActivity}`}
+            />
+            <StatCard title="Messages on page" value={messageCountValue} helper="" />
+            <StatCard title="Agents on page" value={uniqueAgentsValue} helper="" />
           </div>
 
-          {/* Thread list */}
-          <div className="divide-y divide-border/60">
-            {loading ? (
-              <div className="px-6 py-4 text-sm text-muted-foreground">Loading…</div>
-            ) : error ? (
-              <div className="px-6 py-4 text-sm text-muted-foreground">
-                We couldn't load threads. Please try again shortly.
-              </div>
-            ) : threads.length === 0 ? (
-              <div className="px-6 py-4 text-sm text-muted-foreground">No threads found.</div>
-            ) : (
-              threads.map((thread) => (
-                <div
-                  key={thread.id}
-                  onClick={() => {
-                    if (thread.agent_id && thread.id) {
-                      navigate(
-                        `/chat?id=${encodeURIComponent(thread.agent_id)}&threadId=${encodeURIComponent(thread.id)}`
-                      );
-                    }
-                  }}
-                  className="group flex cursor-pointer items-center justify-between gap-4 px-6 py-4 transition hover:bg-muted/40"
+          {/* Threads list */}
+          <div className="rounded-2xl border border-border/70 bg-card shadow-sm">
+            {/* List header */}
+            <div className="flex items-center justify-between border-b border-border/60 px-6 py-4">
+              <h2 className="text-lg font-semibold text-foreground">Threads</h2>
+              <div className="flex items-center gap-4">
+                <span className="text-xs font-semibold text-muted-foreground">
+                  {error ? '—' : `${total} total`}
+                </span>
+                <select
+                  value={pageSize}
+                  onChange={handlePageSizeChange}
+                  className="h-8 rounded-md border border-border/70 bg-background px-2 text-xs text-foreground"
                 >
-                  <div className="min-w-0 flex-1 overflow-hidden">
-                    <div className="flex items-baseline gap-3">
-                      <h3 className="max-w-[800px] truncate overflow-hidden text-ellipsis text-base font-medium text-foreground">
-                        {thread.title || 'Untitled thread'}
-                      </h3>
-                      <span className="shrink-0 whitespace-nowrap rounded border border-border/60 bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">
-                        {thread.message_count ? `${thread.message_count} msgs` : 'No messages'}
-                      </span>
-                    </div>
-                    <div className="mt-2 flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          thread.agent_id && handleAgentClick(thread.agent_id);
-                        }}
-                        className="hover:text-primary hover:underline"
-                        title={`Filter by agent: ${thread.agent_name || thread.agent_id}`}
-                      >
-                        {thread.agent_name || 'Agent'}
-                      </button>
-                      <span>{formatRelativeTime(thread.updated_at)}</span>
-                      {thread.external_id && (
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleExternalIdClick(thread.external_id!);
-                          }}
-                          className="font-mono text-[11px] text-muted-foreground/80 hover:text-primary hover:underline"
-                          title={`Filter by external ID: ${thread.external_id}`}
-                        >
-                          ext:{thread.external_id}
-                        </button>
-                      )}
-                      <span className="font-mono text-[11px] text-muted-foreground/80">
-                        ID: {thread.id.slice(0, 8)}...
-                      </span>
-                    </div>
-                    {thread.tags && thread.tags.length > 0 && (
-                      <div className="mt-2 flex flex-wrap gap-1">
-                        {thread.tags.map((tag) => (
-                          <span
-                            key={tag}
-                            className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground"
-                          >
-                            <Tag className="h-2.5 w-2.5" />
-                            {tag}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
+                  <option value={10}>10 per page</option>
+                  <option value={30}>30 per page</option>
+                  <option value={100}>100 per page</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Thread list */}
+            <div className="divide-y divide-border/60">
+              {loading ? (
+                <div className="px-6 py-4 text-sm text-muted-foreground">Loading…</div>
+              ) : error ? (
+                <div className="px-6 py-4 text-sm text-muted-foreground">
+                  We couldn't load threads. Please try again shortly.
+                </div>
+              ) : threads.length === 0 ? (
+                <div className="px-6 py-4 text-sm text-muted-foreground">No threads found.</div>
+              ) : (
+                threads.map((thread) => (
+                  <div
+                    key={thread.id}
+                    onClick={() => {
                       if (thread.agent_id && thread.id) {
                         navigate(
                           `/chat?id=${encodeURIComponent(thread.agent_id)}&threadId=${encodeURIComponent(thread.id)}`
                         );
                       }
                     }}
-                    className="flex items-center gap-2 rounded-full p-2 text-primary"
-                    title="Open thread"
+                    className="group flex cursor-pointer items-center justify-between gap-4 px-6 py-4 transition hover:bg-muted/40"
                   >
-                    <ArrowRight className="h-4 w-4" />
+                    <div className="min-w-0 flex-1 overflow-hidden">
+                      <div className="flex items-baseline gap-3">
+                        <h3 className="max-w-[800px] truncate overflow-hidden text-ellipsis text-base font-medium text-foreground">
+                          {thread.title || 'Untitled thread'}
+                        </h3>
+                        <span className="shrink-0 whitespace-nowrap rounded border border-border/60 bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">
+                          {thread.message_count ? `${thread.message_count} msgs` : 'No messages'}
+                        </span>
+                      </div>
+                      <div className="mt-2 flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            thread.agent_id && handleAgentClick(thread.agent_id);
+                          }}
+                          className="hover:text-primary hover:underline"
+                          title={`Filter by agent: ${thread.agent_name || thread.agent_id}`}
+                        >
+                          {thread.agent_name || 'Agent'}
+                        </button>
+                        <span>{formatRelativeTime(thread.updated_at)}</span>
+                        {thread.external_id && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleExternalIdClick(thread.external_id!);
+                            }}
+                            className="font-mono text-[11px] text-muted-foreground/80 hover:text-primary hover:underline"
+                            title={`Filter by external ID: ${thread.external_id}`}
+                          >
+                            ext:{thread.external_id}
+                          </button>
+                        )}
+                        <span className="font-mono text-[11px] text-muted-foreground/80">
+                          ID: {thread.id.slice(0, 8)}...
+                        </span>
+                      </div>
+                      {thread.tags && thread.tags.length > 0 && (
+                        <div className="mt-2 flex flex-wrap gap-1">
+                          {thread.tags.map((tag) => (
+                            <span
+                              key={tag}
+                              className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground"
+                            >
+                              <Tag className="h-2.5 w-2.5" />
+                              {tag}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (thread.agent_id && thread.id) {
+                          navigate(
+                            `/chat?id=${encodeURIComponent(thread.agent_id)}&threadId=${encodeURIComponent(thread.id)}`
+                          );
+                        }
+                      }}
+                      className="flex items-center gap-2 rounded-full p-2 text-primary"
+                      title="Open thread"
+                    >
+                      <ArrowRight className="h-4 w-4" />
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* Pagination controls */}
+            {!loading && !error && total > 0 && (
+              <div className="flex items-center justify-between border-t border-border/60 px-6 py-3">
+                <span className="text-xs text-muted-foreground">
+                  Page {page} of {totalPages}
+                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={prevPage}
+                    disabled={!hasPrevPage}
+                    className="inline-flex items-center gap-1 rounded-md border border-border/70 bg-card px-3 py-1.5 text-sm font-medium text-foreground transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                    Prev
+                  </button>
+                  <button
+                    type="button"
+                    onClick={nextPage}
+                    disabled={!hasNextPage}
+                    className="inline-flex items-center gap-1 rounded-md border border-border/70 bg-card px-3 py-1.5 text-sm font-medium text-foreground transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Next
+                    <ChevronRight className="h-4 w-4" />
                   </button>
                 </div>
-              ))
+              </div>
             )}
           </div>
-
-          {/* Pagination controls */}
-          {!loading && !error && total > 0 && (
-            <div className="flex items-center justify-between border-t border-border/60 px-6 py-3">
-              <span className="text-xs text-muted-foreground">
-                Page {page} of {totalPages}
-              </span>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={prevPage}
-                  disabled={!hasPrevPage}
-                  className="inline-flex items-center gap-1 rounded-md border border-border/70 bg-card px-3 py-1.5 text-sm font-medium text-foreground transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  <ChevronLeft className="h-4 w-4" />
-                  Prev
-                </button>
-                <button
-                  type="button"
-                  onClick={nextPage}
-                  disabled={!hasNextPage}
-                  className="inline-flex items-center gap-1 rounded-md border border-border/70 bg-card px-3 py-1.5 text-sm font-medium text-foreground transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  Next
-                  <ChevronRight className="h-4 w-4" />
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
         </section>
       </div>
 
