@@ -34,6 +34,7 @@ impl BrowserSessions {
         self.client
             .create_session()
             .await
+            .map(|session| session.session_id)
             .map_err(|e| format!("Failed to initialize browser session: {}", e))
     }
 

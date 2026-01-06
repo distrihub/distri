@@ -130,9 +130,7 @@ impl DistriAgentServer {
                     cfg.app_data(web::Data::new(executor))
                         .app_data(web::Data::new(verbose))
                         .configure(|cfg| {
-                            cfg.service(
-                                web::scope("/v1").configure(routes::distri_without_browser),
-                            );
+                            cfg.service(web::scope("/v1").configure(routes::distri));
                         });
                 });
 

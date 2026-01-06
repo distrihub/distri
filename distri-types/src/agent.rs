@@ -419,7 +419,7 @@ pub struct StandardDefinition {
     /// Optional hook names to attach to this agent
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub hooks: Vec<String>,
- 
+
     /// Custom user message construction (dynamic prompting)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user_message_overrides: Option<UserMessageOverrides>,
@@ -674,7 +674,7 @@ impl ModelProvider {
                 if api_key.is_some() {
                     vec![]
                 } else {
-                    vec![] // OpenAI compatible doesn't require secrets if base_url handles auth
+                    vec!["OPENAI_API_KEY"]
                 }
             }
             ModelProvider::Vllora { .. } => vec![], // Local server, no API key needed

@@ -222,20 +222,12 @@ impl PluginRegistry {
         let default_agents = vec![
             ("distri", include_str!("../../../agents/distri.md")),
             ("scripter", include_str!("../../../agents/scripter.md")),
-            ("cli_agent", include_str!("../../../agents/cli_agent.md")),
             ("search", include_str!("../../../agents/search.md")),
-            (
-                "inline_search",
-                include_str!("../../../agents/inline_search.md"),
-            ),
-            ("deepsearch", include_str!("../../../agents/deepsearch.md")),
             ("browser_agent", include_str!("../../../agents/browser.md")),
-            ("deepagent", include_str!("../../../agents/deepagent.md")),
             (
                 "deepresearch",
                 include_str!("../../../agents/deepresearch.md"),
             ),
-            ("scrape", include_str!("../../../agents/scrape.md")),
             (
                 "agent_designer",
                 include_str!("../../../agents/agent_designer.md"),

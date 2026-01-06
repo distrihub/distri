@@ -60,7 +60,7 @@ impl A2AServer {
                 .app_data(web::Data::new(server_config.clone()))
                 .app_data(web::Data::new(tts_service.clone()))
                 // Expose API only under /v1
-                .service(web::scope("/v1").configure(routes::distri_without_browser))
+                .service(web::scope("/v1").configure(routes::distri))
         })
         .bind((host, port))?
         .run()

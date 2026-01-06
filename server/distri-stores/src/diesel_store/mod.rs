@@ -29,8 +29,8 @@ use distri_types::auth::{AuthError, AuthSecret, AuthSession, OAuth2State, ToolAu
 use distri_types::configuration::PluginArtifact;
 use distri_types::stores::SessionSummary;
 use distri_types::stores::{
-    AgentStore, AgentUsageInfo, BrowserSessionStore, ExternalToolCallsStore, FilterMessageType,
-    MemoryStore, MessageFilter, NewPromptTemplate, NewSecret, PluginCatalogStore,
+    AgentStatsInfo, AgentStore, AgentUsageInfo, BrowserSessionStore, ExternalToolCallsStore,
+    FilterMessageType, MemoryStore, MessageFilter, NewPromptTemplate, NewSecret, PluginCatalogStore,
     PluginMetadataRecord, PromptTemplateRecord, PromptTemplateStore, ScratchpadStore, SecretRecord,
     SecretStore, SessionMemory, SessionStore, TaskStore, ThreadListFilter, ThreadListResponse,
     ThreadStore, UpdatePromptTemplate,
@@ -910,8 +910,110 @@ where
     }
 
     async fn get_agents_by_usage(&self) -> Result<Vec<AgentUsageInfo>> {
-        // Local store doesn't track agent usage - return empty list
-        Ok(vec![])
+        let mut connection = self.conn().await?;
+
+        #[derive(QueryableByName)]
+        struct AgentCount {
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            agent_id: String,
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            agent_name: String,
+            #[diesel(sql_type = diesel::sql_types::BigInt)]
+            thread_count: i64,
+        }
+
+        let results: Vec<AgentCount> = diesel::sql_query(
+            "SELECT t.agent_id, COALESCE(a.name, t.agent_id) as agent_name, COUNT(*) as thread_count
+             FROM threads t
+             LEFT JOIN agent_configs a ON t.agent_id = a.name
+             GROUP BY t.agent_id, a.name
+             ORDER BY thread_count DESC",
+        )
+        .get_results(&mut connection)
+        .await
+        .context("failed to get agents by usage")?;
+
+        Ok(results
+            .into_iter()
+            .map(|r| AgentUsageInfo {
+                agent_id: r.agent_id,
+                agent_name: r.agent_name,
+                thread_count: r.thread_count,
+            })
+            .collect())
+    }
+
+    async fn get_agent_stats_map(&self) -> Result<std::collections::HashMap<String, AgentStatsInfo>> {
+        let mut connection = self.conn().await?;
+
+        #[derive(QueryableByName)]
+        struct StatsRow {
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            agent_id: String,
+            #[diesel(sql_type = diesel::sql_types::BigInt)]
+            thread_count: i64,
+            #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Timestamp>)]
+            last_used_at: Option<chrono::NaiveDateTime>,
+        }
+
+        // Get thread stats
+        let thread_stats: Vec<StatsRow> = diesel::sql_query(
+            "SELECT agent_id, COUNT(*) as thread_count, MAX(updated_at) as last_used_at
+             FROM threads
+             GROUP BY agent_id",
+        )
+        .get_results(&mut connection)
+        .await
+        .unwrap_or_default();
+
+        // Get sub-agent usage counts using SQLite JSON functions
+        #[derive(QueryableByName)]
+        struct SubAgentRow {
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            sub_agent_name: String,
+            #[diesel(sql_type = diesel::sql_types::BigInt)]
+            usage_count: i64,
+        }
+
+        let sub_agent_stats: Vec<SubAgentRow> = diesel::sql_query(
+            "SELECT j.value AS sub_agent_name, COUNT(*) AS usage_count
+             FROM agent_configs, json_each(json_extract(config, '$.sub_agents')) AS j
+             WHERE json_extract(config, '$.sub_agents') IS NOT NULL
+             GROUP BY j.value",
+        )
+        .get_results(&mut connection)
+        .await
+        .unwrap_or_default();
+
+        let mut stats_map: std::collections::HashMap<String, AgentStatsInfo> = std::collections::HashMap::new();
+
+        // Add thread stats
+        for r in thread_stats {
+            stats_map.insert(
+                r.agent_id,
+                AgentStatsInfo {
+                    thread_count: r.thread_count,
+                    sub_agent_usage_count: 0,
+                    last_used_at: r.last_used_at.map(|dt| {
+                        chrono::DateTime::from_naive_utc_and_offset(dt, chrono::Utc)
+                    }),
+                },
+            );
+        }
+
+        // Add sub-agent usage counts
+        for r in sub_agent_stats {
+            stats_map
+                .entry(r.sub_agent_name)
+                .and_modify(|s| s.sub_agent_usage_count = r.usage_count)
+                .or_insert(AgentStatsInfo {
+                    thread_count: 0,
+                    sub_agent_usage_count: r.usage_count,
+                    last_used_at: None,
+                });
+        }
+
+        Ok(stats_map)
     }
 
     async fn update_thread_with_message(&self, thread_id: &str, message: &str) -> Result<()> {
@@ -1047,6 +1149,41 @@ where
 
         let avg_run_time_ms = avg_result.and_then(|r| r.avg_duration);
 
+        // Get recently used agents (last 10 distinct agents by most recent thread activity)
+        #[derive(QueryableByName)]
+        struct RecentAgentRow {
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            agent_id: String,
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            agent_name: String,
+            #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
+            description: Option<String>,
+            #[diesel(sql_type = diesel::sql_types::Timestamp)]
+            last_used_at: chrono::NaiveDateTime,
+        }
+
+        let recent_agents: Vec<RecentAgentRow> = diesel::sql_query(
+            "SELECT agent_id, COALESCE(a.name, agent_id) as agent_name, a.description, MAX(t.updated_at) as last_used_at
+             FROM threads t
+             LEFT JOIN agent_configs a ON t.agent_id = a.name
+             GROUP BY t.agent_id, a.name, a.description
+             ORDER BY last_used_at DESC
+             LIMIT 10",
+        )
+        .get_results(&mut connection)
+        .await
+        .unwrap_or_default();
+
+        let recently_used_agents: Vec<distri_types::stores::RecentlyUsedAgent> = recent_agents
+            .into_iter()
+            .map(|r| distri_types::stores::RecentlyUsedAgent {
+                id: r.agent_id,
+                name: r.agent_name,
+                description: r.description,
+                last_used_at: chrono::DateTime::from_naive_utc_and_offset(r.last_used_at, chrono::Utc),
+            })
+            .collect();
+
         Ok(distri_types::stores::HomeStats {
             total_agents,
             total_threads,
@@ -1057,6 +1194,7 @@ where
             total_accessible_agents: Some(total_agents),
             most_active_agent,
             latest_threads: Some(latest_threads),
+            recently_used_agents: Some(recently_used_agents),
         })
     }
 }

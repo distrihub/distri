@@ -44,14 +44,6 @@ pub fn all(cfg: &mut web::ServiceConfig) {
 
 // https://github.com/google-a2a/A2A/blob/main/specification/json/a2a.json
 pub fn distri(cfg: &mut web::ServiceConfig) {
-    configure_routes(cfg, true);
-}
-
-pub fn distri_without_browser(cfg: &mut web::ServiceConfig) {
-    configure_routes(cfg, false);
-}
-
-fn configure_routes(cfg: &mut web::ServiceConfig, include_browser: bool) {
     cfg.service(
         web::resource("/agents/{agent_name}/.well-known/agent.json")
             .route(web::get().to(get_agent_card)),
@@ -67,9 +59,7 @@ fn configure_routes(cfg: &mut web::ServiceConfig, include_browser: bool) {
             .route(web::post().to(a2a_handler))
             .route(web::put().to(update_agent)),
     )
-    .service(
-        web::resource("/agents/{id}/validate").route(web::get().to(validate_agent_handler)),
-    )
+    .service(web::resource("/agents/{id}/validate").route(web::get().to(validate_agent_handler)))
     .service(
         web::resource("/agents/{id}/complete-tool").route(web::post().to(complete_tool_handler)),
     )
@@ -103,7 +93,9 @@ fn configure_routes(cfg: &mut web::ServiceConfig, include_browser: bool) {
     // Speech-to-Text endpoints
     .service(web::resource("/tts/transcribe").route(web::post().to(transcribe_speech)))
     .configure(tools::configure)
-    // Browser sequences (DB-backed)
+    // Browser session endpoint
+    .service(web::resource("/browser/session").route(web::post().to(create_browser_session)))
+    // LLM execute
     .service(web::resource("/llm/execute").route(web::post().to(llm_execute)))
     // Configuration endpoints
     .service(web::resource("/configuration").route(web::get().to(get_configuration)))
@@ -115,13 +107,38 @@ fn configure_routes(cfg: &mut web::ServiceConfig, include_browser: bool) {
     // .service(web::resource("/voice/stream").route(web::get().to(voice_stream_handler)));
     // Authentication endpoints
     .configure(auth_routes::configure_auth_routes);
+}
 
-    let _ = include_browser;
+/// Agent with stats response
+#[derive(Debug, Serialize)]
+struct AgentWithStats {
+    #[serde(flatten)]
+    config: distri_types::configuration::AgentConfig,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stats: Option<distri_types::stores::AgentStatsInfo>,
 }
 
 async fn list_agents(executor: web::Data<Arc<AgentOrchestrator>>) -> HttpResponse {
     let (agents, _) = executor.stores.agent_store.list(None, None).await;
-    HttpResponse::Ok().json(agents)
+
+    // Get stats from thread store
+    let stats_map = executor
+        .stores
+        .thread_store
+        .get_agent_stats_map()
+        .await
+        .unwrap_or_default();
+
+    let agents_with_stats: Vec<AgentWithStats> = agents
+        .into_iter()
+        .map(|config| {
+            let name = config.get_name().to_string();
+            let stats = stats_map.get(&name).cloned();
+            AgentWithStats { config, stats }
+        })
+        .collect();
+
+    HttpResponse::Ok().json(agents_with_stats)
 }
 
 #[derive(Debug, Serialize)]
@@ -446,7 +463,8 @@ async fn get_agent_definition(
                 HttpResponse::Ok().json(AgentConfigWithTools {
                     agent,
                     resolved_tools: tools,
-                    markdown,
+                    markdown: Some(markdown),
+                    cloud: Default::default(),
                 })
             }
             _ => HttpResponse::Ok().json(agent),
@@ -513,9 +531,12 @@ async fn validate_agent_handler(
         }
         distri_types::configuration::AgentConfig::SequentialWorkflowAgent(_)
         | distri_types::configuration::AgentConfig::DagWorkflowAgent(_)
-        | distri_types::configuration::AgentConfig::CustomAgent(_) => {
-            executor.default_model_settings.read().await.provider.clone()
-        }
+        | distri_types::configuration::AgentConfig::CustomAgent(_) => executor
+            .default_model_settings
+            .read()
+            .await
+            .provider
+            .clone(),
     };
 
     // Check for missing provider secrets
@@ -717,11 +738,7 @@ async fn llm_execute(
                 );
             }
             Err(e) => {
-                tracing::warn!(
-                    "Failed to load thread history for {}: {}",
-                    thread_id,
-                    e
-                );
+                tracing::warn!("Failed to load thread history for {}: {}", thread_id, e);
             }
         }
     }
@@ -943,9 +960,7 @@ async fn list_threads_handler(
     }
 }
 
-async fn list_agents_by_usage(
-    coordinator: web::Data<Arc<AgentOrchestrator>>,
-) -> HttpResponse {
+async fn list_agents_by_usage(coordinator: web::Data<Arc<AgentOrchestrator>>) -> HttpResponse {
     match coordinator.get_agents_by_usage().await {
         Ok(agents) => HttpResponse::Ok().json(agents),
         Err(e) => HttpResponse::InternalServerError().json(json!({
@@ -1059,7 +1074,6 @@ async fn get_thread_messages(
     }
 }
 
-
 async fn get_home_stats(executor: web::Data<Arc<AgentOrchestrator>>) -> HttpResponse {
     match executor.stores.thread_store.get_home_stats().await {
         Ok(stats) => HttpResponse::Ok().json(stats),
@@ -1115,13 +1129,60 @@ async fn create_agent(
     }
 }
 
+/// Request body for updating an agent - supports either full definition or markdown only
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum UpdateAgentRequest {
+    MarkdownOnly { markdown: String },
+    Full(StandardDefinition),
+}
+
 async fn update_agent(
     id: web::Path<String>,
-    req: web::Json<StandardDefinition>,
+    req: actix_web::HttpRequest,
+    body: web::Bytes,
     executor: web::Data<Arc<AgentOrchestrator>>,
 ) -> HttpResponse {
     let agent_id = id.into_inner();
-    let mut definition = req.into_inner();
+
+    let content_type = req
+        .headers()
+        .get(actix_web::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+
+    // Parse the request - supports full definition, markdown-only JSON, or raw markdown
+    let parsed: Result<StandardDefinition, AgentError> =
+        if content_type.contains("application/json") {
+            // Try parsing as UpdateAgentRequest (either markdown-only or full definition)
+            match serde_json::from_slice::<UpdateAgentRequest>(&body) {
+                Ok(UpdateAgentRequest::MarkdownOnly { markdown }) => {
+                    parse_agent_markdown_content(&markdown).await
+                }
+                Ok(UpdateAgentRequest::Full(def)) => Ok(def),
+                Err(e) => Err(AgentError::from(e)),
+            }
+        } else {
+            // Assume raw markdown
+            let content = match String::from_utf8(body.to_vec()) {
+                Ok(s) => s,
+                Err(e) => {
+                    return HttpResponse::BadRequest().json(json!({
+                        "error": format!("Invalid UTF-8 body: {}", e)
+                    }))
+                }
+            };
+            parse_agent_markdown_content(&content).await
+        };
+
+    let mut definition = match parsed {
+        Ok(def) => def,
+        Err(e) => {
+            return HttpResponse::BadRequest().json(json!({
+                "error": format!("Failed to parse agent definition: {}", e)
+            }))
+        }
+    };
 
     // Ensure the name matches the path parameter
     definition.name = agent_id;
@@ -1225,6 +1286,19 @@ async fn complete_hook_handler(
         Err(e) => HttpResponse::BadRequest().json(json!({
             "success": false,
             "error": e
+        })),
+    }
+}
+
+/// Create a new browser session via browsr
+/// Returns the session info directly from browsr (session_id, viewer_url, stream_url)
+async fn create_browser_session() -> HttpResponse {
+    let client = browsr_client::BrowsrClient::from_config(browsr_client::default_transport());
+
+    match client.create_session().await {
+        Ok(session) => HttpResponse::Ok().json(session),
+        Err(e) => HttpResponse::InternalServerError().json(json!({
+            "error": format!("Failed to create browser session: {}", e)
         })),
     }
 }

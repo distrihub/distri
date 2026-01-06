@@ -134,6 +134,12 @@ pub enum AgentEventType {
         timestamp_ms: Option<i64>,
     },
 
+    BrowserSessionStarted {
+        session_id: String,
+        viewer_url: Option<String>,
+        stream_url: Option<String>,
+    },
+
     InlineHookRequested {
         request: InlineHookRequest,
     },

@@ -1064,13 +1064,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a895057091c69e02e4da1fa12b5add4826925d91664cb5576bf821b14c5efcea"
 dependencies = [
  "anyhow",
- "browsr-types",
+ "browsr-types 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "reqwest 0.12.8",
  "serde",
  "serde_json",
  "thiserror 2.0.17",
  "tokio",
  "which 8.0.0",
+]
+
+[[package]]
+name = "browsr-types"
+version = "0.1.1"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tokio",
+ "toml 0.8.23",
 ]
 
 [[package]]
@@ -1328,7 +1342,7 @@ checksum = "a1d728cc89cf3aee9ff92b05e62b19ee65a02b5702cff7d5a377e32c6ae29d8d"
 
 [[package]]
 name = "cli-auth-server"
-version = "0.2.7"
+version = "0.2.10"
 dependencies = [
  "actix-cors",
  "actix-web",
@@ -2928,7 +2942,7 @@ dependencies = [
 
 [[package]]
 name = "distri"
-version = "0.2.7"
+version = "0.2.10"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2958,7 +2972,7 @@ dependencies = [
 
 [[package]]
 name = "distri-a2a"
-version = "0.2.7"
+version = "0.2.10"
 dependencies = [
  "schemars",
  "serde",
@@ -2968,7 +2982,7 @@ dependencies = [
 
 [[package]]
 name = "distri-auth"
-version = "0.2.7"
+version = "0.2.10"
 dependencies = [
  "actix-cors",
  "actix-web",
@@ -2995,7 +3009,7 @@ dependencies = [
 
 [[package]]
 name = "distri-core"
-version = "0.2.7"
+version = "0.2.10"
 dependencies = [
  "anyhow",
  "async-mcp",
@@ -3004,7 +3018,7 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "browsr-client",
- "browsr-types",
+ "browsr-types 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "bytes",
  "chrono",
  "comfy-table",
@@ -3057,7 +3071,7 @@ dependencies = [
 
 [[package]]
 name = "distri-filesystem"
-version = "0.2.7"
+version = "0.2.10"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3097,7 +3111,7 @@ dependencies = [
 
 [[package]]
 name = "distri-parsers"
-version = "0.2.7"
+version = "0.2.10"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3122,7 +3136,7 @@ dependencies = [
 
 [[package]]
 name = "distri-plugin-executor"
-version = "0.2.7"
+version = "0.2.10"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3144,7 +3158,7 @@ dependencies = [
 
 [[package]]
 name = "distri-plugins"
-version = "0.2.7"
+version = "0.2.10"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3174,7 +3188,7 @@ dependencies = [
 
 [[package]]
 name = "distri-server"
-version = "0.2.7"
+version = "0.2.10"
 dependencies = [
  "actix-cors",
  "actix-files",
@@ -3188,6 +3202,8 @@ dependencies = [
  "async-openai",
  "async-stream",
  "base64 0.22.1",
+ "browsr-client",
+ "browsr-types 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "bytes",
  "chrono",
  "dashmap 5.5.3",
@@ -3221,7 +3237,7 @@ dependencies = [
 
 [[package]]
 name = "distri-server-cli"
-version = "0.2.7"
+version = "0.2.10"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3261,7 +3277,7 @@ dependencies = [
 
 [[package]]
 name = "distri-stores"
-version = "0.2.7"
+version = "0.2.10"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3290,7 +3306,7 @@ dependencies = [
 
 [[package]]
 name = "distri-types"
-version = "0.2.7"
+version = "0.2.10"
 dependencies = [
  "anyhow",
  "async-mcp",
@@ -3298,7 +3314,7 @@ dependencies = [
  "async-stream",
  "async-trait",
  "base64 0.22.1",
- "browsr-types",
+ "browsr-types 0.1.1",
  "chrono",
  "comfy-table",
  "crossbeam-channel",

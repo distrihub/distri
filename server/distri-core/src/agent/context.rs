@@ -61,11 +61,6 @@ pub struct AdditionalAttributes {
     pub task: Option<serde_json::Value>,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct BrowserSession {
-    pub browser_session_id: Option<String>,
-    pub sequence_id: Option<String>,
-}
 
 #[derive(Debug, Clone, Default)]
 pub struct PromptTemplateOverride {
@@ -109,6 +104,8 @@ pub struct ExecutorContext {
     pub agent_id: String,
     pub session_id: String,
     pub user_id: String,
+    /// Browser session ID for browsr - if None, browsr will auto-create one
+    pub browser_session_id: Option<String>,
     pub additional_attributes: Option<AdditionalAttributes>,
     // External tools per agent
     pub tools: Arc<RwLock<Vec<Arc<dyn Tool>>>>,
@@ -159,6 +156,7 @@ impl Default for ExecutorContext {
             agent_id: "default".to_string(),
             user_id: uuid::Uuid::new_v4().to_string(),
             session_id: uuid::Uuid::new_v4().to_string(),
+            browser_session_id: None,
             tools: Arc::default(),
             orchestrator: None,
             stores: None,
@@ -227,25 +225,15 @@ impl ExecutorContext {
         Ok(orchestrator)
     }
 
-    /// Resolve browser session and sequence identifiers consistently from additional attributes,
-    /// falling back to the executor context identifiers when not provided.
-    pub fn browser_session_ids(&self) -> (String, String) {
-        let session = self
-            .additional_attributes
-            .as_ref()
-            .and_then(|a| a.thread.as_ref())
-            .and_then(|v| serde_json::from_value::<BrowserSession>(v.clone()).ok());
+    /// Get the browser session ID if set.
+    /// Returns None if no session exists - browsr will auto-create one.
+    pub fn get_browser_session_id(&self) -> Option<String> {
+        self.browser_session_id.clone()
+    }
 
-        let session_id = session
-            .as_ref()
-            .and_then(|s| s.browser_session_id.clone())
-            .unwrap_or_else(|| self.session_id.clone());
-
-        let sequence_id = session
-            .and_then(|s| s.sequence_id)
-            .unwrap_or_else(|| self.task_id.clone());
-
-        (session_id, sequence_id)
+    /// Set the browser session ID (called after browsr creates a session)
+    pub fn set_browser_session_id(&mut self, session_id: Option<String>) {
+        self.browser_session_id = session_id;
     }
 
     pub fn get_registry(&self) -> Result<Arc<RwLock<McpServerRegistry>>, AgentError> {
@@ -742,6 +730,7 @@ impl ExecutorContext {
             agent_id: self.agent_id.clone(),
             session_id: self.session_id.clone(),
             user_id: self.user_id.clone(),
+            browser_session_id: self.browser_session_id.clone(),
             tools: self.tools.clone(),               // Arc::clone
             orchestrator: self.orchestrator.clone(), // Arc::clone
             stores: self

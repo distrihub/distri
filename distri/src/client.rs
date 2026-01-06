@@ -9,7 +9,7 @@ use distri_types::{
     ExternalTool, LLmContext, LlmDefinition, Message, MessageRole, TokenResponse, ToolCall,
     a2a_converters::MessageMetadata,
 };
-use distri_types::{StandardDefinition, ToolResponse};
+use distri_types::{configuration::AgentConfigWithTools, StandardDefinition, ToolResponse};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -132,6 +132,25 @@ impl Distri {
         Err(ClientError::InvalidResponse(format!(
             "agent registration failed (status {status}): {body}"
         )))
+    }
+
+    pub async fn fetch_agent(
+        &self,
+        agent_id: &str,
+    ) -> Result<Option<AgentConfigWithTools>, ClientError> {
+        let url = format!("{}/agents/{}", self.base_url, agent_id);
+        let resp = self.http.get(&url).send().await?;
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if !resp.status().is_success() {
+            return Err(ClientError::InvalidResponse(format!(
+                "failed to fetch agent {}: {}",
+                agent_id,
+                resp.status()
+            )));
+        }
+        Ok(Some(resp.json::<AgentConfigWithTools>().await?))
     }
 
     pub async fn register_agent_markdown(

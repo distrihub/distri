@@ -1082,8 +1082,6 @@ dependencies = [
 [[package]]
 name = "browsr-client"
 version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a895057091c69e02e4da1fa12b5add4826925d91664cb5576bf821b14c5efcea"
 dependencies = [
  "anyhow",
  "browsr-types",
@@ -1098,8 +1096,6 @@ dependencies = [
 [[package]]
 name = "browsr-types"
 version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4c960e36ff6811ea8be3c66491f5ea6dde89d90331fea7283b3b5fe11db1dc56"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3306,6 +3302,8 @@ dependencies = [
  "async-openai",
  "async-stream",
  "base64 0.22.1",
+ "browsr-client",
+ "browsr-types",
  "bytes",
  "chrono",
  "dashmap 5.5.3",

@@ -11,7 +11,7 @@ use tokio::sync::RwLock;
 use crate::agent::todos::TodosTool;
 use crate::agent::ExecutorContext;
 use crate::servers::registry::McpServerRegistry;
-use crate::tools::browser::{DistriBrowserSharedTool, DistriScrapeSharedTool};
+use crate::tools::browser::{BrowserStepTool, DistriBrowserSharedTool, DistriScrapeSharedTool};
 use crate::tools::builtin::ArtifactTool;
 use crate::types::{McpDefinition, McpToolConfig, ToolCall, ToolsConfig};
 use crate::AgentError;
@@ -244,6 +244,7 @@ pub fn cast_to_executor_context_tool(
         // Shared browser tools
         "distri_scrape" => Ok(Box::new(DistriScrapeSharedTool)),
         "distri_browser" => Ok(Box::new(DistriBrowserSharedTool)),
+        "browser_step" => Ok(Box::new(BrowserStepTool)),
         "artifact_tool" => Ok(Box::new(ArtifactTool)),
         name if name.starts_with("call_") => {
             let safe_agent_name = name.strip_prefix("call_").unwrap_or(name);

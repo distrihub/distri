@@ -50,6 +50,10 @@ distri-types = { path = "../../distri-types", version = "0.2.10" }
 distri-a2a = { path = "../../distri-a2a", version = "0.2.10" }
 distri-auth = { path = "../distri-auth", version = "0.2.10" }
 
+# Browser automation
+browsr-client = { workspace = true }
+browsr-types = { workspace = true }
+
 schemars = { workspace = true }
 async-openai = { workspace = true }
 reqwest = { workspace = true }

@@ -364,6 +364,9 @@ pub trait ThreadStore: Send + Sync {
 
     /// Get agents sorted by thread count (most active first)
     async fn get_agents_by_usage(&self) -> anyhow::Result<Vec<AgentUsageInfo>>;
+
+    /// Get a map of agent name -> stats for all agents with activity
+    async fn get_agent_stats_map(&self) -> anyhow::Result<std::collections::HashMap<String, AgentStatsInfo>>;
 }
 
 /// Home statistics for dashboard
@@ -382,6 +385,9 @@ pub struct HomeStats {
     pub most_active_agent: Option<MostActiveAgent>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub latest_threads: Option<Vec<LatestThreadInfo>>,
+    /// Recently used agents (last 10 by most recent thread activity)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recently_used_agents: Option<Vec<RecentlyUsedAgent>>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -391,6 +397,15 @@ pub struct MostActiveAgent {
     pub thread_count: i64,
 }
 
+/// Agent that was recently used (based on thread activity)
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct RecentlyUsedAgent {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub last_used_at: chrono::DateTime<chrono::Utc>,
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct LatestThreadInfo {
     pub id: String,
@@ -398,6 +413,14 @@ pub struct LatestThreadInfo {
     pub agent_id: String,
     pub agent_name: String,
     pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Agent statistics for display
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct AgentStatsInfo {
+    pub thread_count: i64,
+    pub sub_agent_usage_count: i64,
+    pub last_used_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 #[async_trait]

@@ -14,6 +14,25 @@ export interface HomeStatsThread {
 }
 
 /**
+ * Recently used agent info
+ */
+export interface RecentlyUsedAgent {
+  id: string;
+  name: string;
+  description?: string | null;
+  last_used_at: string;
+}
+
+/**
+ * Agent usage info - agents sorted by thread count
+ */
+export interface AgentUsageInfo {
+  agent_id: string;
+  agent_name: string;
+  thread_count: number;
+}
+
+/**
  * Home stats response from the server
  */
 export interface HomeStats {
@@ -29,6 +48,7 @@ export interface HomeStats {
     name: string;
     count: number;
   };
+  recently_used_agents?: RecentlyUsedAgent[];
 }
 
 /**
@@ -80,6 +100,19 @@ export class DistriHomeClient {
 
     if (!response.ok) {
       throw new Error(`Failed to fetch home stats: ${response.statusText}`);
+    }
+
+    return await response.json();
+  }
+
+  /**
+   * Get agents sorted by usage (thread count)
+   */
+  async getAgentsByUsage(): Promise<AgentUsageInfo[]> {
+    const response = await this.client.fetch('/agents/usage');
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch agents by usage: ${response.statusText}`);
     }
 
     return await response.json();

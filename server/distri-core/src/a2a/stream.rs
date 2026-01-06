@@ -2,7 +2,7 @@ use crate::a2a::handler::validate_message;
 use crate::a2a::mapper::{map_agent_event, map_final_result};
 use crate::a2a::{extract_text_from_message, SseMessage};
 use crate::agent::{
-    context::BrowserSession, types::ExecutorContextMetadata, AgentEvent, AgentEventType,
+    types::ExecutorContextMetadata, AgentEvent, AgentEventType,
     AgentOrchestrator, ExecutorContext,
 };
 use crate::secrets::SecretResolver;
@@ -11,8 +11,6 @@ use distri_auth::context::with_user_id;
 use distri_types::HookMutation;
 
 use anyhow::{anyhow, Result as AnyhowResult};
-use browsr_client::ObserveOptions;
-use browsr_types::FileType;
 use distri_a2a::{JsonRpcError, JsonRpcResponse, MessageSendParams};
 use distri_types::configuration::{AgentConfig, DefinitionOverrides};
 
@@ -22,7 +20,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
-use tokio::sync::{mpsc, watch};
+use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 struct TaskGuard {
@@ -50,7 +48,12 @@ pub async fn validate_provider_secrets(
         | Some(AgentConfig::DagWorkflowAgent(_))
         | Some(AgentConfig::CustomAgent(_)) => {
             // Workflow and custom agents use the orchestrator's default model settings
-            executor.default_model_settings.read().await.provider.clone()
+            executor
+                .default_model_settings
+                .read()
+                .await
+                .provider
+                .clone()
         }
         None => {
             // If agent not found, we'll get an error later; skip validation here
@@ -102,74 +105,44 @@ where
     }
 }
 
-async fn stream_browser_frames_remote(
-    executor: Arc<AgentOrchestrator>,
+/// Get the browsr base URL from environment or default
+fn get_browsr_base_url() -> String {
+    std::env::var("BROWSR_BASE_URL")
+        .or_else(|_| std::env::var("BROWSR_API_URL"))
+        .unwrap_or_else(|_| "http://127.0.0.1:8082".to_string())
+}
+
+/// Emit browser session started event with browsr URLs.
+/// Clients should connect directly to browsr's SSE stream for frames.
+/// The browser_session_id MUST already be in context (created by UI when user clicks browser icon).
+async fn emit_browser_session_started(
     context: Arc<ExecutorContext>,
     event_tx: mpsc::Sender<AgentEvent>,
-    mut stop_rx: watch::Receiver<bool>,
 ) -> AnyhowResult<()> {
-    // Ensure a session exists; use browsr-client for observations.
-    let (session_alias, _) = executor
-        .ensure_browser_session(None)
-        .await
-        .map_err(|e| anyhow!(e))?;
-    let session_id = executor
-        .browser_sessions
-        .session_id_for(&session_alias)
-        .unwrap_or(session_alias.clone());
+    // Session must be created by the UI before this is called
+    let session_id = context
+        .browser_session_id
+        .as_ref()
+        .ok_or_else(|| anyhow!("No browser_session_id in context - UI must create session first"))?
+        .clone();
 
-    let client = executor.browser_sessions.client();
-    let mut ticker = tokio::time::interval(tokio::time::Duration::from_millis(1000));
+    // Emit BrowserSessionStarted event with browsr URLs
+    let browsr_base = get_browsr_base_url();
+    let viewer_url = format!("{}/ui/explore?session_id={}", browsr_base, session_id);
+    let stream_url = format!("{}/stream/sse?session_id={}", browsr_base, session_id);
 
-    loop {
-        tokio::select! {
-            changed = stop_rx.changed() => {
-                if changed.is_err() || *stop_rx.borrow() {
-                    break;
-                }
-            }
-            _ = ticker.tick() => {
-                let obs = match client.observe(Some(session_id.clone()), Some(true), ObserveOptions::default()).await {
-                    Ok(o) => o,
-                    Err(e) => {
-                        tracing::debug!("Skipping browser frame (observe failed): {}", e);
-                        continue;
-                    }
-                };
-
-                if let Some(screenshot) = obs.screenshot {
-                    let (image, format, filename) = match screenshot {
-                        FileType::Bytes { bytes, mime_type, name } => (
-                            format!("data:{};base64,{}", mime_type, bytes),
-                            Some(mime_type),
-                            name,
-                        ),
-                        FileType::Url { url, mime_type, name } => (
-                            url,
-                            Some(mime_type),
-                            name,
-                        ),
-                    };
-
-                    let event = AgentEvent::with_context(
-                        AgentEventType::BrowserScreenshot {
-                            image,
-                            format,
-                            filename,
-                            size: None,
-                            timestamp_ms: Some(obs.dom_snapshot.captured_at),
-                        },
-                        context.thread_id.clone(),
-                        context.run_id.clone(),
-                        context.task_id.clone(),
-                        context.agent_id.clone(),
-                    );
-
-                    let _ = event_tx.send(event).await;
-                }
-            }
-        }
-    }
+    let session_event = AgentEvent::with_context(
+        AgentEventType::BrowserSessionStarted {
+            session_id: session_id.clone(),
+            viewer_url: Some(viewer_url),
+            stream_url: Some(stream_url),
+        },
+        context.thread_id.clone(),
+        context.run_id.clone(),
+        context.task_id.clone(),
+        context.agent_id.clone(),
+    );
+    let _ = event_tx.send(session_event).await;
 
     Ok(())
 }
@@ -265,12 +238,6 @@ pub async fn handle_message_send_streaming_sse(
             .clone()
             .and_then(|m| serde_json::from_value(m).ok())
             .unwrap_or_default();
-        let attr_session_id = metadata_struct
-            .additional_attributes
-            .as_ref()
-            .and_then(|a| a.thread.as_ref())
-            .and_then(|v| serde_json::from_value::<BrowserSession>(v.clone()).ok())
-            .and_then(|bs| bs.browser_session_id);
 
         let (_thread_id, message) = match init_thread_get_message(
             agent_id.clone(),
@@ -305,65 +272,16 @@ pub async fn handle_message_send_streaming_sse(
         let (sse_tx, mut sse_rx) = mpsc::channel(100);
         let sse_tx_clone = sse_tx.clone();
         let mut exec_ctx = executor_context.clone_with_tx(event_tx);
-        // carry session_id override from metadata if provided
-        if let Some(session_id) = metadata_value
+
+        // Extract browser_session_id from metadata if provided
+        if let Some(browser_session_id) = metadata_value
             .as_ref()
-            .and_then(|m| m.get("session_id").and_then(|v| v.as_str()).map(String::from))
-            .or(attr_session_id.clone()) {
-            exec_ctx.session_id = session_id;
+            .and_then(|m| m.get("browser_session_id").and_then(|v| v.as_str()).map(String::from))
+        {
+            exec_ctx.browser_session_id = Some(browser_session_id);
         }
         if let Some(tool_meta) = metadata_struct.tool_metadata.clone() {
             exec_ctx.tool_metadata = Some(tool_meta);
-        }
-        {
-            // Normalize additional_attributes to ensure browser_session_id/sequence_id stay in sync with context
-            let mut normalized = metadata_struct
-                .additional_attributes
-                .clone()
-                .or_else(|| exec_ctx.additional_attributes.clone())
-                .unwrap_or_default();
-            if normalized.thread.is_none() {
-                normalized.thread = exec_ctx
-                    .additional_attributes
-                    .as_ref()
-                    .and_then(|a| a.thread.clone());
-            }
-            if normalized.task.is_none() {
-                normalized.task = exec_ctx
-                    .additional_attributes
-                    .as_ref()
-                    .and_then(|a| a.task.clone());
-            }
-
-            let mut browser_session: BrowserSession = normalized
-                .thread
-                .clone()
-                .and_then(|v| serde_json::from_value(v).ok())
-                .unwrap_or_default();
-
-            let has_explicit_session = browser_session.browser_session_id.is_some()
-                || attr_session_id.is_some()
-                || metadata_value
-                    .as_ref()
-                    .and_then(|m| m.get("session_id").and_then(|v| v.as_str()))
-                    .is_some();
-
-            if has_explicit_session && browser_session.browser_session_id.is_none() {
-                browser_session.browser_session_id = Some(exec_ctx.session_id.clone());
-            }
-            if browser_session.sequence_id.is_none() {
-                browser_session.sequence_id = Some(exec_ctx.thread_id.clone());
-            }
-
-            let has_thread_data =
-                browser_session.browser_session_id.is_some() || browser_session.sequence_id.is_some();
-
-            if has_thread_data {
-                if let Ok(val) = serde_json::to_value(browser_session) {
-                    normalized.thread = Some(val);
-                }
-            }
-            exec_ctx.additional_attributes = Some(normalized);
         }
         let executor_context = Arc::new(exec_ctx);
 
@@ -383,29 +301,22 @@ pub async fn handle_message_send_streaming_sse(
             }
         }
 
-        let mut browser_stop_tx: Option<watch::Sender<bool>> = None;
-        let mut browser_handle: Option<tokio::task::JoinHandle<()>> = None;
-
+        // Emit browser session started event if browser is enabled
+        // Clients connect directly to browsr for streaming frames
         if should_stream_browser {
-            let (stop_tx, stop_rx) = watch::channel(false);
-            let executor_for_browser = executor.clone();
             let context_for_browser = executor_context.clone();
             let event_tx_for_browser = browser_event_tx.clone();
-            let user_id_for_browser = user_id.clone();
 
-            browser_handle = Some(tokio::spawn(with_user_id(user_id_for_browser, async move {
-                if let Err(err) = stream_browser_frames_remote(
-                    executor_for_browser,
+            tokio::spawn(async move {
+                if let Err(err) = emit_browser_session_started(
                     context_for_browser,
                     event_tx_for_browser,
-                    stop_rx,
                 )
                 .await
                 {
-                    tracing::warn!("Browser screenshot stream failed: {}", err);
+                    tracing::warn!("Failed to emit browser session started: {}", err);
                 }
-            })));
-            browser_stop_tx = Some(stop_tx);
+            });
         }
 
         let main_task_id = executor_context.task_id.clone();
@@ -524,13 +435,6 @@ pub async fn handle_message_send_streaming_sse(
             });
         }
         cancel_token.cancel();
-
-        if let Some(stop_tx) = browser_stop_tx.as_mut() {
-            let _ = stop_tx.send(true);
-        }
-        if let Some(handle) = browser_handle.take() {
-            let _ = handle.await;
-        }
 
         let completed = completion_task.await.unwrap_or(false);
         if completed {

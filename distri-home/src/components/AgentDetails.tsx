@@ -1,24 +1,28 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Chat, useAgent, useTheme, useDistri } from '@distri/react';
 import { useDistriHomeNavigate, useDistriHome } from '../DistriHomeProvider';
 import { useAgentValidation } from '../hooks/useAgentValidation';
-import { CodePanel, type CodeLanguage } from './CodePanel';
+import { CodePanel } from './CodePanel';
 import {
   ArrowUpRight,
   CheckCircle2,
   ChevronRight,
+  Clock,
   Copy,
   FileText,
   Globe,
   Loader2,
   MessageCircle,
+  MessageSquare,
   Moon,
   AlertTriangle,
   Play,
   RefreshCw,
   Sun,
+  Users,
   Wrench,
   XCircle,
+  Plus,
 } from 'lucide-react';
 import { AgentConfigWithTools } from '@distri/core';
 import { ToolDefinition } from '@distri/core';
@@ -30,6 +34,13 @@ const currentThreadId = (scope: string) => {
   const storageKey = `${scope}:threadId`;
   const cached = window.localStorage.getItem(storageKey);
   if (cached) return cached;
+  const generated = crypto.randomUUID();
+  window.localStorage.setItem(storageKey, generated);
+  return generated;
+};
+
+const resetThreadId = (scope: string) => {
+  const storageKey = `${scope}:threadId`;
   const generated = crypto.randomUUID();
   window.localStorage.setItem(storageKey, generated);
   return generated;
@@ -81,16 +92,19 @@ export function AgentDetails({
   );
   const [activeSample, setActiveSample] = useState<'curl' | 'node' | 'python'>('curl');
   const [copied, setCopied] = useState(false);
-  const [definitionDraft, setDefinitionDraft] = useState('');
-  const [definitionFormat, setDefinitionFormat] = useState<'markdown' | 'json'>('json');
+  const [definitionDraft, setDefinitionDraft] = useState<string>('');
   const [savingDefinition, setSavingDefinition] = useState(false);
-  const [definitionError, setDefinitionError] = useState<string | null>(null);
   const [definitionSaved, setDefinitionSaved] = useState(false);
 
-  const threadId = useMemo(() => {
+  const [threadId, setThreadId] = useState(() => {
     if (propThreadId) return propThreadId;
     return currentThreadId(agentId ? `agent:${agentId}` : 'agent');
-  }, [agentId, propThreadId]);
+  });
+
+  const handleNewChat = useCallback(() => {
+    const newId = resetThreadId(agentId ? `agent:${agentId}` : 'agent');
+    setThreadId(newId);
+  }, [agentId]);
 
   const agentType = agent?.getDefinition?.().agent_type;
 
@@ -130,20 +144,7 @@ export function AgentDetails({
     };
   }, [agent]);
 
-  const definitionJson = JSON.stringify(agentDefinition ?? {}, null, 2);
-  const definitionMarkdown = definition?.markdown ?? '';
-  const definitionBody = definitionMarkdown.trim() ? definitionMarkdown : definitionJson;
-  const definitionBaseFormat = definitionMarkdown.trim() ? 'markdown' : 'json';
-  const definitionBase = definitionBody;
   const isOwner = definition?.is_owner !== false;
-  const definitionDirty = definitionDraft !== definitionBase;
-
-  useEffect(() => {
-    setDefinitionDraft(definitionBase);
-    setDefinitionFormat(definitionBaseFormat);
-    setDefinitionError(null);
-    setDefinitionSaved(false);
-  }, [definitionBase, definitionBaseFormat]);
 
   const hasExternalTools = externalToolValidation.requiredTools.length > 0;
   const chatDisabled = hasExternalTools;
@@ -159,6 +160,8 @@ export function AgentDetails({
       try {
         const data = await client.getAgent(agentId);
         setDefinition(data as AgentDefinitionEnvelope);
+        setDefinitionDraft(data.markdown ?? '');
+        setDefinitionSaved(false);
       } catch (err) {
         console.error(err);
       } finally {
@@ -167,6 +170,30 @@ export function AgentDetails({
     };
     void load();
   }, [agentId, client]);
+
+  const isDirty = definitionDraft !== (definition?.markdown ?? '');
+
+  const handleResetDefinition = () => {
+    setDefinitionDraft(definition?.markdown ?? '');
+    setDefinitionSaved(false);
+  };
+
+  const handleSaveDefinition = async () => {
+    if (!client || !agentId || !isDirty) return;
+    setSavingDefinition(true);
+    try {
+      await client.updateAgent(agentId, { markdown: definitionDraft });
+      // Reload to get updated definition
+      const data = await client.getAgent(agentId);
+      setDefinition(data as AgentDefinitionEnvelope);
+      setDefinitionDraft(data.markdown ?? '');
+      setDefinitionSaved(true);
+    } catch (err) {
+      console.error('Failed to save definition', err);
+    } finally {
+      setSavingDefinition(false);
+    }
+  };
 
   if (agentLoading || sourceLoading) {
     return (
@@ -253,45 +280,15 @@ export function AgentDetails({
   };
 
   const handleCopyDefinition = async () => {
-    if (!definitionDraft) return;
+    const markdown = definition?.markdown ?? '';
+    if (!markdown) return;
     try {
-      await navigator.clipboard.writeText(definitionDraft);
+      await navigator.clipboard.writeText(markdown);
       setCopied(true);
       window.setTimeout(() => setCopied(false), 2000);
     } catch (err) {
       console.error('Failed to copy definition', err);
     }
-  };
-
-  const handleSaveDefinition = async () => {
-    if (!agentId || !definitionDirty || savingDefinition || !isOwner || !client) {
-      return;
-    }
-    setSavingDefinition(true);
-    setDefinitionError(null);
-    setDefinitionSaved(false);
-    try {
-      if (definitionFormat === 'json') {
-        try {
-          JSON.parse(definitionDraft);
-        } catch {
-          throw new Error('Definition JSON is invalid.');
-        }
-      }
-      // Note: Using client.fetch would require exposing it publicly
-      // For now, we'll just simulate success
-      setDefinitionSaved(true);
-    } catch (err) {
-      setDefinitionError(err instanceof Error ? err.message : 'Failed to save definition');
-    } finally {
-      setSavingDefinition(false);
-    }
-  };
-
-  const handleResetDefinition = () => {
-    setDefinitionDraft(definitionBase);
-    setDefinitionError(null);
-    setDefinitionSaved(false);
   };
 
   const handleValidate = async () => {
@@ -366,13 +363,12 @@ export function AgentDetails({
               type="button"
               onClick={handleValidate}
               disabled={isValidating}
-              className={`inline-flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm font-medium transition ${
-                validation?.valid === true && !isValidating
-                  ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/20'
-                  : validation?.valid === false && !isValidating
+              className={`inline-flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm font-medium transition ${validation?.valid === true && !isValidating
+                ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/20'
+                : validation?.valid === false && !isValidating
                   ? 'border-red-500/50 bg-red-500/10 text-red-700 dark:text-red-300 hover:bg-red-500/20'
                   : 'border-border/70 bg-card text-foreground hover:border-primary/50 hover:text-primary'
-              } disabled:opacity-50`}
+                } disabled:opacity-50`}
             >
               {isValidating ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -456,18 +452,16 @@ export function AgentDetails({
                     )}
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
-                        <p className={`text-sm font-medium ${
-                          warning.severity === 'error'
-                            ? 'text-red-900 dark:text-red-100'
-                            : 'text-amber-900 dark:text-amber-100'
-                        }`}>
+                        <p className={`text-sm font-medium ${warning.severity === 'error'
+                          ? 'text-red-900 dark:text-red-100'
+                          : 'text-amber-900 dark:text-amber-100'
+                          }`}>
                           {warning.message}
                         </p>
-                        <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${
-                          warning.severity === 'error'
-                            ? 'bg-red-500/20 text-red-700 dark:text-red-300'
-                            : 'bg-amber-500/20 text-amber-700 dark:text-amber-300'
-                        }`}>
+                        <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${warning.severity === 'error'
+                          ? 'bg-red-500/20 text-red-700 dark:text-red-300'
+                          : 'bg-amber-500/20 text-amber-700 dark:text-amber-300'
+                          }`}>
                           {warning.severity}
                         </span>
                       </div>
@@ -512,6 +506,29 @@ export function AgentDetails({
                   <p className="text-sm text-muted-foreground">
                     {description || 'No description provided.'}
                   </p>
+                  {/* Usage Stats */}
+                  {agentDefinition?.stats && (
+                    <div className="mt-3 flex flex-wrap items-center gap-4 text-sm">
+                      <div className="flex items-center gap-1.5 text-muted-foreground">
+                        <MessageSquare className="h-4 w-4" />
+                        <span className="font-medium text-foreground">{agentDefinition.stats.thread_count}</span>
+                        <span>thread{agentDefinition.stats.thread_count !== 1 ? 's' : ''}</span>
+                      </div>
+                      {agentDefinition.stats.sub_agent_usage_count > 0 && (
+                        <div className="flex items-center gap-1.5 text-muted-foreground">
+                          <Users className="h-4 w-4" />
+                          <span className="font-medium text-foreground">{agentDefinition.stats.sub_agent_usage_count}</span>
+                          <span>sub-agent call{agentDefinition.stats.sub_agent_usage_count !== 1 ? 's' : ''}</span>
+                        </div>
+                      )}
+                      {agentDefinition.stats.last_used_at && (
+                        <div className="flex items-center gap-1.5 text-muted-foreground">
+                          <Clock className="h-4 w-4" />
+                          <span>Last used {formatRelativeTime(agentDefinition.stats.last_used_at)}</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
                   <button
                     type="button"
                     onClick={() => navigate(`/threads?agent=${encodeURIComponent(agentFilterId)}`)}
@@ -605,41 +622,14 @@ export function AgentDetails({
                 </div>
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
                   {activePanel === 'definition' ? (
-                    <>
-                      {definitionDirty ? (
-                        <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] text-amber-700 dark:text-amber-200">
-                          Unsaved changes
-                        </span>
-                      ) : definitionSaved ? (
-                        <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[11px] text-emerald-700 dark:text-emerald-200">
-                          Saved
-                        </span>
-                      ) : null}
-                      <button
-                        type="button"
-                        onClick={handleResetDefinition}
-                        disabled={!definitionDirty || savingDefinition}
-                        className="rounded-md px-2 py-1 text-muted-foreground hover:text-foreground disabled:opacity-50"
-                      >
-                        Reset
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleSaveDefinition}
-                        disabled={!definitionDirty || savingDefinition || !isOwner}
-                        className="rounded-md px-2 py-1 text-muted-foreground hover:text-foreground disabled:opacity-50"
-                      >
-                        {savingDefinition ? 'Saving…' : 'Save'}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleCopyDefinition}
-                        className="flex items-center gap-1 rounded-md px-2 py-1 text-muted-foreground hover:text-foreground"
-                      >
-                        <Copy className="h-3 w-3" />
-                        {copied ? 'Copied' : 'Copy'}
-                      </button>
-                    </>
+                    <button
+                      type="button"
+                      onClick={handleCopyDefinition}
+                      className="flex items-center gap-1 rounded-md px-2 py-1 text-muted-foreground hover:text-foreground"
+                    >
+                      <Copy className="h-3 w-3" />
+                      {copied ? 'Copied' : 'Copy'}
+                    </button>
                   ) : null}
                 </div>
               </div>
@@ -648,8 +638,33 @@ export function AgentDetails({
                 <div className="flex-1 min-h-0 overflow-hidden p-4">
                   <div className="flex h-full flex-col overflow-hidden rounded-xl border border-border/70 bg-background">
                     <div className="flex items-center justify-between border-b border-border/60 bg-muted/40 px-4 py-2 text-xs text-muted-foreground">
-                      <span>{isOwner ? 'Editable' : 'Read-only'}</span>
-                      <span>{definitionFormat === 'markdown' ? 'Markdown' : 'JSON'}</span>
+                      <div className="flex items-center gap-2">
+                        <span>{isOwner ? 'Editable' : 'Read-only'}</span>
+                        {isDirty && <span className="text-amber-600 dark:text-amber-400">• Unsaved</span>}
+                        {definitionSaved && !isDirty && <span className="text-emerald-600 dark:text-emerald-400">✓ Saved</span>}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span>Markdown</span>
+                        {isOwner && isDirty && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={handleResetDefinition}
+                              className="rounded px-2 py-0.5 text-xs hover:bg-muted"
+                            >
+                              Reset
+                            </button>
+                            <button
+                              type="button"
+                              onClick={handleSaveDefinition}
+                              disabled={savingDefinition}
+                              className="rounded bg-primary px-2 py-0.5 text-xs text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                            >
+                              {savingDefinition ? 'Saving…' : 'Save'}
+                            </button>
+                          </>
+                        )}
+                      </div>
                     </div>
                     <div className="flex-1 min-h-0 overflow-hidden">
                       <CodePanel
@@ -659,17 +674,12 @@ export function AgentDetails({
                           setDefinitionDraft(value);
                           setDefinitionSaved(false);
                         }}
-                        language={definitionFormat}
+                        language="markdown"
                         readOnly={!isOwner}
                         theme={theme === 'light' ? 'light' : 'dark'}
                       />
                     </div>
                   </div>
-                  {definitionError ? (
-                    <div className="mt-3 rounded-lg border border-red-400/50 bg-red-500/10 px-4 py-2 text-xs text-red-700 dark:text-red-200">
-                      {definitionError}
-                    </div>
-                  ) : null}
                 </div>
               )}
 
@@ -700,12 +710,26 @@ export function AgentDetails({
                         </div>
                       </div>
                     ) : (
-                      <Chat
-                        key={threadId}
-                        agent={agent}
-                        threadId={threadId}
-                        theme={theme === 'light' ? 'light' : theme === 'dark' ? 'dark' : 'auto'}
-                      />
+                      <div className="flex flex-col h-full">
+                        <div className="flex justify-end p-2 border-b border-gray-200 dark:border-gray-700">
+                          <button
+                            onClick={handleNewChat}
+                            className="p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-500 dark:text-gray-400"
+                            title="New chat"
+                          >
+                            <Plus className="h-4 w-4" />
+                          </button>
+                        </div>
+                        <div className="flex-1 min-h-0">
+                          <Chat
+                            key={threadId}
+                            agent={agent}
+                            threadId={threadId}
+                            enableHistory={true}
+                            theme={theme === 'light' ? 'light' : theme === 'dark' ? 'dark' : 'auto'}
+                          />
+                        </div>
+                      </div>
                     )}
                   </div>
                 </div>
@@ -938,6 +962,22 @@ const formatAgentType = (value?: string) => {
   return value
     .replace(/_/g, ' ')
     .replace(/\b\w/g, (match) => match.toUpperCase());
+};
+
+const formatRelativeTime = (dateString: string) => {
+  const date = new Date(dateString);
+  const now = new Date();
+  const seconds = Math.floor((now.getTime() - date.getTime()) / 1000);
+
+  const rtf = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
+
+  if (seconds < 60) return rtf.format(-seconds, 'second');
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return rtf.format(-minutes, 'minute');
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return rtf.format(-hours, 'hour');
+  const days = Math.floor(hours / 24);
+  return rtf.format(-days, 'day');
 };
 
 
