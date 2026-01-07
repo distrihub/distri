@@ -9,7 +9,7 @@ use crate::{
     llm::LLMExecutor,
     servers::registry::McpServerRegistry,
     tools::Tool,
-    types::{CreateThreadRequest, Message, Thread, ThreadSummary, UpdateThreadRequest},
+    types::{CreateThreadRequest, Message, Thread, UpdateThreadRequest},
     AgentError, HookRegistry,
 };
 
@@ -146,7 +146,7 @@ impl AgentOrchestratorBuilder {
     pub fn with_prompt_template_store(mut self, store: Arc<dyn PromptTemplateStore>) -> Self {
         if let Some(stores) = &mut self.stores {
             stores.prompt_template_store = Some(store);
-        } 
+        }
         self
     }
 
@@ -1045,20 +1045,23 @@ impl AgentOrchestrator {
 
     pub async fn list_threads(
         &self,
-        agent_id: Option<&str>,
+        filter: &distri_types::stores::ThreadListFilter,
         limit: Option<u32>,
         offset: Option<u32>,
-        attributes_filter: Option<&serde_json::Value>,
-    ) -> Result<Vec<ThreadSummary>, AgentError> {
-        let filter = distri_types::stores::ThreadListFilter {
-            agent_id: agent_id.map(|s| s.to_string()),
-            external_id: None,
-            attributes: attributes_filter.cloned(),
-        };
-
+    ) -> Result<distri_types::stores::ThreadListResponse, AgentError> {
         self.stores
             .thread_store
-            .list_threads(&filter, limit, offset)
+            .list_threads(filter, limit, offset)
+            .await
+            .map_err(|e| AgentError::Session(e.to_string()))
+    }
+
+    pub async fn get_agents_by_usage(
+        &self,
+    ) -> Result<Vec<distri_types::stores::AgentUsageInfo>, AgentError> {
+        self.stores
+            .thread_store
+            .get_agents_by_usage()
             .await
             .map_err(|e| AgentError::Session(e.to_string()))
     }

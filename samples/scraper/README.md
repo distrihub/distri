@@ -1,36 +1,66 @@
 # Distri Scraper Sample
 
-This sample demonstrates how to use the **Distri Scraper** agent to programmatically scrape websites and extract structured data using the `distri` CLI.
+This sample demonstrates how to use the **Distri Scraper** agent to programmatically scrape websites and extract structured data.
 
-## Prerequisites
+## Quick Start with Distri Cloud
 
-- `distri` CLI installed.
-- Access to a running Distri server.
-- MCP servers enabled (Spider, Search).
+1. **Install Distri CLI**:
+   ```bash
+   curl -fsSL https://distri.dev/install.sh | bash
+   ```
 
-## Setup
+2. **Push the Agent to Distri Cloud**:
+   ```bash
+   distri push
+   ```
 
-1. **Start the Distri Server**:
+3. **Run Scraping Tasks**:
+   ```bash
+   distri run --agent distri-scraper --task "Extract the top 5 headlines from news.ycombinator.com"
+   ```
+
+## Local Development (Optional)
+
+If you prefer to run a local distri server:
+
+1. **Start the Local Server**:
    ```bash
    distri serve
    ```
 
-2. **Push the Agent Definition**:
-   Push the scraper agent definition to the server:
+2. **Push the Agent Locally**:
    ```bash
-   distri agents push agents/scraper.md
+   distri push --local
    ```
 
-## Usage
+3. **Run Tasks**:
+   ```bash
+   distri run --agent distri-scraper --task "Your scraping task here"
+   ```
 
-Run the scraper agent using the `distri run` command. You can provide a specific task to scrape a website.
+## Features
 
-**Example 1: Basic Scrape**
+- Web scraping with intelligent content extraction
+- Structured data output (JSON, Markdown)
+- Search integration via Tavily
+- Rate limiting and session management
+
+## Example Tasks
+
 ```bash
-distri run --agent distri-scraper --task "Scrape news from cnn.com and give me the top 5 headlines"
+# Basic headline extraction
+distri run --agent distri-scraper --task "Get the top 5 headlines from cnn.com"
+
+# Product scraping
+distri run --agent distri-scraper --task "Extract product names and prices from https://example-store.com"
+
+# Research queries
+distri run --agent distri-scraper --task "Research recent AI news and summarize top 3 stories"
 ```
 
-**Example 2: Extraction**
-```bash
-distri run --agent distri-scraper --task "Extract product prices from https://example-store.com and format as JSON"
-```
+## Configuration
+
+Environment variables (optional):
+- `TAVILY_API_KEY`: Enable enhanced search capabilities
+
+The agent configuration is in `definition.yaml`.

@@ -618,6 +618,35 @@ pub enum ModelProvider {
         base_url: String,
     },
 }
+/// Defines the secret requirements for a provider
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderSecretDefinition {
+    /// Provider identifier (e.g., "openai", "anthropic")
+    pub id: String,
+    /// Human-readable label
+    pub label: String,
+    /// List of required secret keys with metadata
+    pub keys: Vec<SecretKeyDefinition>,
+}
+
+/// Defines a single secret key requirement
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SecretKeyDefinition {
+    /// The environment variable / secret store key (e.g., "OPENAI_API_KEY")
+    pub key: String,
+    /// Human-readable label
+    pub label: String,
+    /// Placeholder for UI input
+    pub placeholder: String,
+    /// Whether this secret is required (vs optional)
+    #[serde(default = "default_required")]
+    pub required: bool,
+}
+
+fn default_required() -> bool {
+    true
+}
+
 impl ModelProvider {
     pub fn openai_base_url() -> String {
         "https://api.openai.com/v1".to_string()
@@ -625,6 +654,81 @@ impl ModelProvider {
 
     pub fn vllora_url() -> String {
         "http://localhost:9090/v1".to_string()
+    }
+
+    /// Returns the provider ID for secret lookup
+    pub fn provider_id(&self) -> &'static str {
+        match self {
+            ModelProvider::OpenAI {} => "openai",
+            ModelProvider::OpenAICompatible { .. } => "openai_compat",
+            ModelProvider::Vllora { .. } => "vllora",
+        }
+    }
+
+    /// Returns the required secret keys for this provider
+    pub fn required_secret_keys(&self) -> Vec<&'static str> {
+        match self {
+            ModelProvider::OpenAI {} => vec!["OPENAI_API_KEY"],
+            ModelProvider::OpenAICompatible { api_key, .. } => {
+                // If api_key is already provided in config, no secret needed
+                if api_key.is_some() {
+                    vec![]
+                } else {
+                    vec![] // OpenAI compatible doesn't require secrets if base_url handles auth
+                }
+            }
+            ModelProvider::Vllora { .. } => vec![], // Local server, no API key needed
+        }
+    }
+
+    /// Returns all provider secret definitions (static registry)
+    pub fn all_provider_definitions() -> Vec<ProviderSecretDefinition> {
+        vec![
+            ProviderSecretDefinition {
+                id: "openai".to_string(),
+                label: "OpenAI".to_string(),
+                keys: vec![SecretKeyDefinition {
+                    key: "OPENAI_API_KEY".to_string(),
+                    label: "API key".to_string(),
+                    placeholder: "sk-...".to_string(),
+                    required: true,
+                }],
+            },
+            ProviderSecretDefinition {
+                id: "anthropic".to_string(),
+                label: "Anthropic".to_string(),
+                keys: vec![SecretKeyDefinition {
+                    key: "ANTHROPIC_API_KEY".to_string(),
+                    label: "API key".to_string(),
+                    placeholder: "sk-ant-...".to_string(),
+                    required: true,
+                }],
+            },
+            ProviderSecretDefinition {
+                id: "gemini".to_string(),
+                label: "Google Gemini".to_string(),
+                keys: vec![SecretKeyDefinition {
+                    key: "GEMINI_API_KEY".to_string(),
+                    label: "API key".to_string(),
+                    placeholder: "AIza...".to_string(),
+                    required: true,
+                }],
+            },
+            ProviderSecretDefinition {
+                id: "custom".to_string(),
+                label: "Custom".to_string(),
+                keys: vec![],
+            },
+        ]
+    }
+
+    /// Get the human-readable name for a provider
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            ModelProvider::OpenAI {} => "OpenAI",
+            ModelProvider::OpenAICompatible { .. } => "OpenAI Compatible",
+            ModelProvider::Vllora { .. } => "vLLORA",
+        }
     }
 }
 

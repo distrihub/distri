@@ -5,6 +5,7 @@ use crate::agent::{
     context::BrowserSession, types::ExecutorContextMetadata, AgentEvent, AgentEventType,
     AgentOrchestrator, ExecutorContext,
 };
+use crate::secrets::SecretResolver;
 use crate::AgentError;
 use distri_auth::context::with_user_id;
 use distri_types::HookMutation;
@@ -32,6 +33,44 @@ impl Drop for TaskGuard {
     fn drop(&mut self) {
         self.token.cancel();
     }
+}
+
+/// Validates that required provider secrets are configured before execution starts.
+/// This provides an early, user-friendly error message instead of failing mid-stream.
+pub async fn validate_provider_secrets(
+    executor: &AgentOrchestrator,
+    agent_id: &str,
+) -> Result<(), AgentError> {
+    // Get the agent config to determine which provider is being used
+    let agent_config = executor.get_agent(agent_id).await;
+
+    let provider = match agent_config {
+        Some(AgentConfig::StandardAgent(def)) => def.model_settings.provider.clone(),
+        Some(AgentConfig::SequentialWorkflowAgent(_))
+        | Some(AgentConfig::DagWorkflowAgent(_))
+        | Some(AgentConfig::CustomAgent(_)) => {
+            // Workflow and custom agents use the orchestrator's default model settings
+            executor.default_model_settings.read().await.provider.clone()
+        }
+        None => {
+            // If agent not found, we'll get an error later; skip validation here
+            return Ok(());
+        }
+    };
+
+    // Get the secret store from the orchestrator
+    let secret_store = executor.stores.secret_store.clone();
+    let resolver = SecretResolver::new(secret_store);
+
+    // Validate the provider's required secrets
+    let missing = resolver.get_missing_secrets(&provider).await;
+    if !missing.is_empty() {
+        return Err(AgentError::InvalidConfiguration(
+            SecretResolver::format_missing_secrets_error(&missing),
+        ));
+    }
+
+    Ok(())
 }
 
 struct UserScopedStream<S> {
@@ -201,6 +240,25 @@ pub async fn handle_message_send_streaming_sse(
                 return;
             }
         };
+
+        // Validate provider secrets early to fail fast with a clear error message
+        if let Err(e) = validate_provider_secrets(&executor, &agent_id).await {
+            let error = JsonRpcResponse {
+                jsonrpc: "2.0".to_string(),
+                result: None,
+                error: Some(JsonRpcError {
+                    code: -32603,
+                    message: e.to_string(),
+                    data: None,
+                }),
+                id: Some(id_field_clone.clone().into()),
+            };
+            yield Ok::<_, std::convert::Infallible>(SseMessage {
+                event: None,
+                data: serde_json::to_string(&error).unwrap(),
+            });
+            return;
+        }
 
         let metadata_value = params.metadata.clone();
         let metadata_struct: ExecutorContextMetadata = metadata_value

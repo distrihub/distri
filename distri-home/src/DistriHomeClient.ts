@@ -177,6 +177,34 @@ export class DistriHomeClient {
     }
   }
 
+  /**
+   * List provider secret definitions
+   * Returns the list of supported providers and their required secret keys
+   */
+  async listProviderDefinitions(): Promise<ProviderSecretDefinition[]> {
+    const response = await this.client.fetch('/secrets/providers');
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch provider definitions: ${response.statusText}`);
+    }
+
+    return await response.json();
+  }
+
+  /**
+   * Validate an agent's configuration
+   * Returns validation results including any warnings (e.g., missing secrets)
+   */
+  async validateAgent(agentId: string): Promise<AgentValidationResult> {
+    const response = await this.client.fetch(`/agents/${agentId}/validate`);
+
+    if (!response.ok) {
+      throw new Error(`Failed to validate agent: ${response.statusText}`);
+    }
+
+    return await response.json();
+  }
+
   // ---- Prompt Templates ----
 
   /**
@@ -312,6 +340,25 @@ export interface Secret {
   updated_at?: string;
 }
 
+/**
+ * Definition of a secret key for a provider
+ */
+export interface SecretKeyDefinition {
+  key: string;
+  label: string;
+  placeholder: string;
+  required?: boolean;
+}
+
+/**
+ * Definition of a provider's secret requirements
+ */
+export interface ProviderSecretDefinition {
+  id: string;
+  label: string;
+  keys: SecretKeyDefinition[];
+}
+
 export interface PromptTemplate {
   id: string;
   name: string;
@@ -328,4 +375,26 @@ export interface SessionSummary {
   keys: string[];
   key_count: number;
   updated_at?: string;
+}
+
+/**
+ * Severity level for validation warnings
+ */
+export type ValidationWarningSeverity = 'warning' | 'error';
+
+/**
+ * A single validation warning
+ */
+export interface ValidationWarning {
+  code: string;
+  message: string;
+  severity: ValidationWarningSeverity;
+}
+
+/**
+ * Result from agent validation
+ */
+export interface AgentValidationResult {
+  valid: boolean;
+  warnings: ValidationWarning[];
 }

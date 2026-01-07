@@ -1,6 +1,6 @@
 [package]
 name = "distri-plugins"
-version = "0.2.7"
+version = "0.2.10"
 edition = "2021"
 
 # Binary targets removed - files don't exist
@@ -25,9 +25,9 @@ tempfile = "3.0"
 urlencoding = "2.1"
 chrono = { version = "0.4", features = ["serde"] }
 base64 = "0.22"
-distri-types = { path = "../../distri-types", version = "0.2.7" }
+distri-types = { path = "../../distri-types", version = "0.2.10" }
 dotenv = "0.15"
 
 uuid = { version = "1.0", features = ["v4"] }
 lazy_static = "1.4"
-distri-plugin-executor = { path = "../distri-plugin-executor", version = "0.2.7" }
+distri-plugin-executor = { path = "../distri-plugin-executor", version = "0.2.10" }

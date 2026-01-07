@@ -28,5 +28,11 @@
   "dependencies": {
     "@a2a-js/sdk": "https://github.com/v3g42/a2a-js.git#51444c9",
     "lucide-react": "^0.460.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "@types/react": "^19.0.0",
+      "@types/react-dom": "^19.0.0"
+    }
   }
 }

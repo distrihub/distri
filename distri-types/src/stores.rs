@@ -11,7 +11,7 @@ use tokio::sync::oneshot;
 use uuid::Uuid;
 
 use crate::{
-    AgentEvent, CreateThreadRequest, Message, Task, TaskMessage, TaskStatus, Thread, ThreadSummary,
+    AgentEvent, CreateThreadRequest, Message, Task, TaskMessage, TaskStatus, Thread,
     UpdateThreadRequest, browser::BrowserSessionRecord,
 };
 
@@ -27,6 +27,31 @@ pub struct ThreadListFilter {
     /// Filter by thread attributes (JSON matching)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub attributes: Option<serde_json::Value>,
+    /// Full-text search across title and last_message
+    pub search: Option<String>,
+    /// Filter threads updated after this time
+    pub from_date: Option<DateTime<Utc>>,
+    /// Filter threads updated before this time
+    pub to_date: Option<DateTime<Utc>>,
+    /// Filter by tags (array of tag strings to match)
+    pub tags: Option<Vec<String>>,
+}
+
+/// Paginated response for thread listing
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThreadListResponse {
+    pub threads: Vec<crate::ThreadSummary>,
+    pub total: i64,
+    pub page: u32,
+    pub page_size: u32,
+}
+
+/// Agent usage information for sorting agents by thread count
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentUsageInfo {
+    pub agent_id: String,
+    pub agent_name: String,
+    pub thread_count: i64,
 }
 
 /// Initialized store collection
@@ -319,12 +344,15 @@ pub trait ThreadStore: Send + Sync {
     ) -> anyhow::Result<Thread>;
     async fn delete_thread(&self, thread_id: &str) -> anyhow::Result<()>;
 
+    /// List threads with pagination and filtering
+    /// Returns a paginated response with total count
     async fn list_threads(
         &self,
         filter: &ThreadListFilter,
         limit: Option<u32>,
         offset: Option<u32>,
-    ) -> anyhow::Result<Vec<ThreadSummary>>;
+    ) -> anyhow::Result<ThreadListResponse>;
+
     async fn update_thread_with_message(
         &self,
         thread_id: &str,
@@ -333,6 +361,9 @@ pub trait ThreadStore: Send + Sync {
 
     /// Get aggregated home statistics
     async fn get_home_stats(&self) -> anyhow::Result<HomeStats>;
+
+    /// Get agents sorted by thread count (most active first)
+    async fn get_agents_by_usage(&self) -> anyhow::Result<Vec<AgentUsageInfo>>;
 }
 
 /// Home statistics for dashboard

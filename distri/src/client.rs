@@ -14,6 +14,14 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 
+/// Minimal response from agent registration - ignores extra fields like cloud-only `id`
+#[derive(Debug, Clone, Deserialize)]
+pub struct AgentRegistrationResponse {
+    pub name: String,
+    #[serde(default)]
+    pub version: Option<String>,
+}
+
 /// Simple HTTP/SSE client for invoking agents with Distri messages.
 ///
 /// # Example
@@ -126,8 +134,13 @@ impl Distri {
         )))
     }
 
-    pub async fn register_agent_markdown(&self, markdown: &str) -> Result<(), ClientError> {
+    pub async fn register_agent_markdown(
+        &self,
+        markdown: &str,
+    ) -> Result<AgentRegistrationResponse, ClientError> {
         let create_url = format!("{}/agents", self.base_url);
+
+        tracing::info!("Pushing agent to: {create_url}");
         let resp = self
             .http
             .post(&create_url)
@@ -137,13 +150,16 @@ impl Distri {
             .await?;
 
         if resp.status().is_success() {
-            return Ok(());
+            let response: AgentRegistrationResponse = resp.json().await.map_err(|e| {
+                ClientError::InvalidResponse(format!("Failed to read response: {}", e))
+            })?;
+            return Ok(response);
         }
 
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
         Err(ClientError::InvalidResponse(format!(
-            "agent markdown registration failed (status {status}): {body}"
+            "Agent registration failed (status {status}): {body}"
         )))
     }
 
@@ -421,7 +437,12 @@ impl Distri {
     /// ```
     pub async fn issue_token(&self) -> Result<TokenResponse, ClientError> {
         let url = format!("{}/token", self.base_url);
-        let resp = self.http.post(url).send().await?;
+        let resp = self
+            .http
+            .post(url)
+            .header(reqwest::header::CONTENT_LENGTH, "0")
+            .send()
+            .await?;
         if !resp.status().is_success() {
             let text = resp.text().await.unwrap_or_default();
             return Err(ClientError::InvalidResponse(format!(

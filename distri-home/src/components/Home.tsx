@@ -89,8 +89,8 @@ export function Home({ onNewAgent, renderNewAgentHelp, className }: HomeProps) {
   };
 
   return (
-    <div className={`flex-1 overflow-y-auto ${className ?? ''}`}>
-      <div className="mx-auto w-full max-w-6xl px-6 py-8 lg:px-10">
+    <div className={`flex-1 overflow-y-auto bg-background ${className ?? ''}`}>
+      <div className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-8 lg:py-10">
         <header className="mb-8 flex flex-wrap items-center justify-between gap-4">
           <div />
           <div className="flex flex-wrap gap-2">

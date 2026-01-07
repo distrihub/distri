@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Chat, useAgent, useTheme, useDistri } from '@distri/react';
-import { useDistriHomeNavigate } from '../DistriHomeProvider';
+import { useDistriHomeNavigate, useDistriHome } from '../DistriHomeProvider';
+import { useAgentValidation } from '../hooks/useAgentValidation';
+import { CodePanel, type CodeLanguage } from './CodePanel';
 import {
   ArrowUpRight,
+  CheckCircle2,
   ChevronRight,
   Copy,
   FileText,
@@ -10,9 +13,12 @@ import {
   Loader2,
   MessageCircle,
   Moon,
+  AlertTriangle,
   Play,
+  RefreshCw,
   Sun,
   Wrench,
+  XCircle,
 } from 'lucide-react';
 import { AgentConfigWithTools } from '@distri/core';
 import { ToolDefinition } from '@distri/core';
@@ -51,17 +57,6 @@ export interface AgentDetailsProps {
    * Optional custom class name
    */
   className?: string;
-  /**
-   * Custom editor renderer for definition editing
-   * If not provided, shows a simple pre block
-   */
-  renderEditor?: (props: {
-    value: string;
-    onChange: (value: string) => void;
-    language: 'json' | 'markdown';
-    readOnly: boolean;
-    theme: 'light' | 'dark';
-  }) => ReactNode;
 }
 
 export function AgentDetails({
@@ -69,19 +64,22 @@ export function AgentDetails({
   threadId: propThreadId,
   defaultTab = 'definition',
   className,
-  renderEditor,
 }: AgentDetailsProps) {
   const navigate = useDistriHomeNavigate();
+  const { config } = useDistriHome();
   const { client } = useDistri();
   const { agent, loading: agentLoading, error: agentError } = useAgent({ agentIdOrDef: agentId || '' });
+  const { validation, warnings, loading: validationLoading, refetch: refetchValidation } = useAgentValidation({ agentId, enabled: !!agentId });
   const { theme, setTheme } = useTheme();
+  const [isValidating, setIsValidating] = useState(false);
+  const [showValidationPanel, setShowValidationPanel] = useState(false);
 
   const [definition, setDefinition] = useState<AgentDefinitionEnvelope | null>(null);
   const [sourceLoading, setSourceLoading] = useState(false);
-  const [activePanel, setActivePanel] = useState<'definition' | 'chat' | 'tools' | 'integrate'>(
+  const [activePanel, setActivePanel] = useState<string>(
     defaultTab
   );
-  const [activeSample, setActiveSample] = useState<'curl' | 'node' | 'python' | 'react'>('curl');
+  const [activeSample, setActiveSample] = useState<'curl' | 'node' | 'python'>('curl');
   const [copied, setCopied] = useState(false);
   const [definitionDraft, setDefinitionDraft] = useState('');
   const [definitionFormat, setDefinitionFormat] = useState<'markdown' | 'json'>('json');
@@ -252,14 +250,6 @@ export function AgentDetails({
       `  json={"input": "Hello, agent!"})`,
       `print(resp.json())`,
     ].join('\n'),
-    react: [
-      `import { useAgent, Chat } from "@distri/react"`,
-      ``,
-      `const MyAgentChat = () => {`,
-      `  const { agent } = useAgent({ agentIdOrDef: "${sampleAgentRef}" })`,
-      `  return agent ? <Chat agent={agent} threadId="my-thread" theme="dark" /> : null`,
-      `}`,
-    ].join('\n'),
   };
 
   const handleCopyDefinition = async () => {
@@ -304,19 +294,43 @@ export function AgentDetails({
     setDefinitionSaved(false);
   };
 
+  const handleValidate = async () => {
+    setIsValidating(true);
+    setShowValidationPanel(true);
+    try {
+      await refetchValidation();
+    } finally {
+      setIsValidating(false);
+    }
+  };
+
   const tabs = [
-    { id: 'definition' as const, label: 'Definition', icon: <FileText className="h-4 w-4" /> },
-    { id: 'chat' as const, label: 'Chat', icon: <MessageCircle className="h-4 w-4" /> },
-    { id: 'tools' as const, label: 'Tools', icon: <Wrench className="h-4 w-4" /> },
-    { id: 'integrate' as const, label: 'Integrate', icon: <Play className="h-4 w-4" /> },
+    { id: 'definition', label: 'Definition', icon: <FileText className="h-4 w-4" /> },
+    { id: 'chat', label: 'Chat', icon: <MessageCircle className="h-4 w-4" /> },
+    { id: 'tools', label: 'Tools', icon: <Wrench className="h-4 w-4" /> },
+    { id: 'integrate', label: 'Integrate', icon: <Play className="h-4 w-4" /> },
+    ...(config.customTabs || []).map(tab => ({
+      id: tab.id,
+      label: tab.label,
+      icon: tab.icon
+    }))
   ];
+
+  // Add default "Embed" tab for OSS if no custom embed tab is provided
+  const hasInjectedEmbed = (config.customTabs || []).some(t => t.id === 'embed');
+  if (!hasInjectedEmbed) {
+    tabs.push({
+      id: 'embed_oss',
+      label: 'Embed',
+      icon: <div className="relative"><Globe className="h-4 w-4" /><AlertTriangle className="absolute -right-1.5 -top-1.5 h-2.5 w-2.5 text-amber-500" /></div>
+    });
+  }
 
   const sampleTabs = [
     { id: 'curl' as const, label: 'cURL' },
     { id: 'node' as const, label: 'Node' },
     { id: 'python' as const, label: 'Python' },
-    { id: 'react' as const, label: 'React' },
-  ];
+  ] as const;
 
   return (
     <div className={`flex-1 overflow-hidden bg-background ${className ?? ''}`}>
@@ -350,6 +364,29 @@ export function AgentDetails({
             <div className="h-6 w-px bg-border/70" />
             <button
               type="button"
+              onClick={handleValidate}
+              disabled={isValidating}
+              className={`inline-flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm font-medium transition ${
+                validation?.valid === true && !isValidating
+                  ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/20'
+                  : validation?.valid === false && !isValidating
+                  ? 'border-red-500/50 bg-red-500/10 text-red-700 dark:text-red-300 hover:bg-red-500/20'
+                  : 'border-border/70 bg-card text-foreground hover:border-primary/50 hover:text-primary'
+              } disabled:opacity-50`}
+            >
+              {isValidating ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : validation?.valid === true ? (
+                <CheckCircle2 className="h-4 w-4" />
+              ) : validation?.valid === false ? (
+                <XCircle className="h-4 w-4" />
+              ) : (
+                <RefreshCw className="h-4 w-4" />
+              )}
+              {isValidating ? 'Validating…' : 'Validate'}
+            </button>
+            <button
+              type="button"
               onClick={() => {
                 const cloneTarget = definition?.id ?? agentId ?? agentDefinition?.name ?? displayName;
                 navigate(`/home/new?clone_from_id=${encodeURIComponent(cloneTarget)}`);
@@ -361,6 +398,107 @@ export function AgentDetails({
             </button>
           </div>
         </header>
+
+        {/* Validation Panel */}
+        {(showValidationPanel || warnings.length > 0) && !validationLoading && (
+          <div className="mt-4 rounded-xl border border-border/70 bg-card overflow-hidden">
+            <div className="flex items-center justify-between border-b border-border/60 bg-muted/40 px-4 py-3">
+              <div className="flex items-center gap-2">
+                {validation?.valid === true ? (
+                  <>
+                    <CheckCircle2 className="h-5 w-5 text-emerald-500" />
+                    <span className="text-sm font-medium text-emerald-700 dark:text-emerald-300">
+                      Validation Passed
+                    </span>
+                  </>
+                ) : validation?.valid === false ? (
+                  <>
+                    <XCircle className="h-5 w-5 text-red-500" />
+                    <span className="text-sm font-medium text-red-700 dark:text-red-300">
+                      Validation Failed ({warnings.filter(w => w.severity === 'error').length} error{warnings.filter(w => w.severity === 'error').length !== 1 ? 's' : ''}, {warnings.filter(w => w.severity === 'warning').length} warning{warnings.filter(w => w.severity === 'warning').length !== 1 ? 's' : ''})
+                    </span>
+                  </>
+                ) : warnings.length > 0 ? (
+                  <>
+                    <AlertTriangle className="h-5 w-5 text-amber-500" />
+                    <span className="text-sm font-medium text-amber-700 dark:text-amber-300">
+                      {warnings.length} Warning{warnings.length !== 1 ? 's' : ''}
+                    </span>
+                  </>
+                ) : null}
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowValidationPanel(false)}
+                className="text-xs text-muted-foreground hover:text-foreground"
+              >
+                Dismiss
+              </button>
+            </div>
+
+            {validation?.valid === true && warnings.length === 0 ? (
+              <div className="p-4">
+                <p className="text-sm text-muted-foreground">
+                  All checks passed. Your agent is correctly configured and ready to use.
+                </p>
+              </div>
+            ) : warnings.length > 0 ? (
+              <div className="divide-y divide-border/60">
+                {warnings.map((warning, index) => (
+                  <div
+                    key={`${warning.code}-${index}`}
+                    className="flex items-start gap-3 px-4 py-3"
+                  >
+                    {warning.severity === 'error' ? (
+                      <XCircle className="h-5 w-5 shrink-0 text-red-500 mt-0.5" />
+                    ) : (
+                      <AlertTriangle className="h-5 w-5 shrink-0 text-amber-500 mt-0.5" />
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <p className={`text-sm font-medium ${
+                          warning.severity === 'error'
+                            ? 'text-red-900 dark:text-red-100'
+                            : 'text-amber-900 dark:text-amber-100'
+                        }`}>
+                          {warning.message}
+                        </p>
+                        <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${
+                          warning.severity === 'error'
+                            ? 'bg-red-500/20 text-red-700 dark:text-red-300'
+                            : 'bg-amber-500/20 text-amber-700 dark:text-amber-300'
+                        }`}>
+                          {warning.severity}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-xs text-muted-foreground font-mono">
+                        Code: {warning.code}
+                      </p>
+                      {warning.code === 'missing_provider_secret' && (
+                        <button
+                          type="button"
+                          onClick={() => navigate('/settings/secrets')}
+                          className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-primary hover:text-primary/80"
+                        >
+                          Configure secrets <ArrowUpRight className="h-3 w-3" />
+                        </button>
+                      )}
+                      {warning.code === 'missing_model_config' && (
+                        <button
+                          type="button"
+                          onClick={() => navigate('/settings')}
+                          className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-primary hover:text-primary/80"
+                        >
+                          Configure model settings <ArrowUpRight className="h-3 w-3" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        )}
 
         <div className="mt-4 flex flex-1 min-h-0 flex-col gap-6 xl:flex-row">
           <div className="flex min-h-0 flex-col gap-6 xl:flex-[5]">
@@ -513,24 +651,18 @@ export function AgentDetails({
                       <span>{isOwner ? 'Editable' : 'Read-only'}</span>
                       <span>{definitionFormat === 'markdown' ? 'Markdown' : 'JSON'}</span>
                     </div>
-                    <div className="flex-1 min-h-0 overflow-auto p-4">
-                      {renderEditor ? (
-                        renderEditor({
-                          value: definitionDraft,
-                          onChange: (value) => {
-                            if (!isOwner) return;
-                            setDefinitionDraft(value);
-                            setDefinitionSaved(false);
-                          },
-                          language: definitionFormat,
-                          readOnly: !isOwner,
-                          theme: theme === 'light' ? 'light' : 'dark',
-                        })
-                      ) : (
-                        <pre className="whitespace-pre-wrap text-xs font-mono text-foreground">
-                          {definitionDraft}
-                        </pre>
-                      )}
+                    <div className="flex-1 min-h-0 overflow-hidden">
+                      <CodePanel
+                        value={definitionDraft}
+                        onChange={(value) => {
+                          if (!isOwner) return;
+                          setDefinitionDraft(value);
+                          setDefinitionSaved(false);
+                        }}
+                        language={definitionFormat}
+                        readOnly={!isOwner}
+                        theme={theme === 'light' ? 'light' : 'dark'}
+                      />
                     </div>
                   </div>
                   {definitionError ? (
@@ -686,18 +818,58 @@ export function AgentDetails({
                         ))}
                       </div>
                     </div>
-                    <div className="flex-1 space-y-3 overflow-hidden px-4 pb-4 pt-3">
-                      <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+                    <div className="flex-1 flex flex-col min-h-0 overflow-hidden px-4 pb-4 pt-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground mb-3">
                         <span>Base URL: {sampleBaseUrl}</span>
                         <span className="rounded-md border border-border/70 bg-muted px-2 py-1">
                           Agent: {sampleAgentRef}
                         </span>
                       </div>
-                      <div className="h-[220px] min-h-[180px] overflow-auto rounded-md border border-border/70 bg-[#0d1117] p-4">
-                        <pre className="whitespace-pre-wrap text-xs font-mono text-gray-300">
-                          {sampleSnippets[activeSample]}
-                        </pre>
+                      <div className="flex-1 min-h-[180px] overflow-hidden rounded-md border border-border/70">
+                        <CodePanel
+                          value={sampleSnippets[activeSample]}
+                          language={activeSample === 'curl' ? 'shell' : activeSample === 'node' ? 'javascript' : 'python'}
+                          readOnly
+                          theme="dark"
+                        />
                       </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {config.customTabs?.map((tab) =>
+                activePanel === tab.id ? (
+                  <div key={tab.id} className="flex-1 min-h-0 overflow-hidden p-4">
+                    <div className="flex h-full flex-col overflow-hidden rounded-xl border border-border/70 bg-background p-6 overflow-auto">
+                      {tab.render({ agentId: agentId || agentDefinition.id || '' })}
+                    </div>
+                  </div>
+                ) : null
+              )}
+
+              {activePanel === 'embed_oss' && (
+                <div className="flex-1 min-h-0 overflow-hidden p-4">
+                  <div className="flex h-full flex-col items-center justify-center rounded-xl border border-border/70 bg-background p-8 text-center">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-full bg-amber-500/10 text-amber-600">
+                      <AlertTriangle className="h-6 w-6" />
+                    </div>
+                    <h3 className="mt-4 text-lg font-semibold text-foreground">Cloud-only Feature</h3>
+                    <p className="mt-2 max-w-sm text-sm text-muted-foreground">
+                      Embed configuration is only available on Distri Cloud. This feature requires a secure managed backend for public client IDs and origin validation.
+                    </p>
+                    <div className="mt-6 flex flex-col gap-3">
+                      <a
+                        href="https://app.distri.dev"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+                      >
+                        Try Distri Cloud
+                      </a>
+                      <p className="text-xs text-muted-foreground">
+                        Securely embed agents in minutes withmanaged infrastructure.
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -767,3 +939,5 @@ const formatAgentType = (value?: string) => {
     .replace(/_/g, ' ')
     .replace(/\b\w/g, (match) => match.toUpperCase());
 };
+
+

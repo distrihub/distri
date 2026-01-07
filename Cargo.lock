@@ -419,6 +419,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "agent-twitter-client"
+version = "0.1.2"
+source = "git+https://github.com/distrihub/agent-twitter-client.git?rev=019a59829af72c9410233529b098e67bb4a568f9#019a59829af72c9410233529b098e67bb4a568f9"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "cookie 0.16.2",
+ "dotenv",
+ "lazy_static",
+ "regex",
+ "reqwest 0.11.27",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "totp-rs",
+ "tracing",
+ "url",
+ "urlencoding",
+]
+
+[[package]]
 name = "ahash"
 version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1328,7 +1350,7 @@ checksum = "a1d728cc89cf3aee9ff92b05e62b19ee65a02b5702cff7d5a377e32c6ae29d8d"
 
 [[package]]
 name = "cli-auth-server"
-version = "0.2.7"
+version = "0.2.10"
 dependencies = [
  "actix-cors",
  "actix-web",
@@ -1448,6 +1470,12 @@ name = "const-oid"
 version = "0.9.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2459377285ad874054d797f3ccebf984978aa39129f6eafde5cdc8315b612f8"
+
+[[package]]
+name = "constant_time_eq"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7c74b8349d32d297c9134b8c88677813a227df8f779daa29bfc29c183fe3dca6"
 
 [[package]]
 name = "convert_case"
@@ -2912,7 +2940,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users 0.5.2",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2928,7 +2956,7 @@ dependencies = [
 
 [[package]]
 name = "distri"
-version = "0.2.7"
+version = "0.2.10"
 dependencies = [
  "actix-web",
  "anyhow",
@@ -2959,7 +2987,7 @@ dependencies = [
 
 [[package]]
 name = "distri-a2a"
-version = "0.2.7"
+version = "0.2.10"
 dependencies = [
  "schemars",
  "serde",
@@ -2969,7 +2997,7 @@ dependencies = [
 
 [[package]]
 name = "distri-auth"
-version = "0.2.7"
+version = "0.2.10"
 dependencies = [
  "actix-cors",
  "actix-web",
@@ -2996,7 +3024,7 @@ dependencies = [
 
 [[package]]
 name = "distri-cli"
-version = "0.2.7"
+version = "0.2.10"
 dependencies = [
  "anyhow",
  "clap",
@@ -3012,12 +3040,52 @@ dependencies = [
  "tempfile",
  "tokio",
  "toml 0.8.23",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "distri-coder"
+version = "0.2.10"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "clap",
+ "comfy-table",
+ "crossterm 0.27.0",
+ "deno_ast 0.42.2",
+ "dirs 5.0.1",
+ "distri",
+ "distri-cli",
+ "distri-filesystem",
+ "distri-server",
+ "distri-types",
+ "dotenv",
+ "futures",
+ "futures-util",
+ "fuzzy-matcher",
+ "inquire",
+ "mcp-crawl",
+ "mcp-tavily",
+ "open",
+ "regex",
+ "reqwest 0.12.8",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "syntect",
+ "tokio",
+ "toml 0.9.5",
+ "tracing",
+ "tracing-subscriber",
  "uuid",
 ]
 
 [[package]]
 name = "distri-core"
-version = "0.2.7"
+version = "0.2.10"
 dependencies = [
  "anyhow",
  "async-mcp",
@@ -3079,7 +3147,7 @@ dependencies = [
 
 [[package]]
 name = "distri-filesystem"
-version = "0.2.7"
+version = "0.2.10"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3120,7 +3188,7 @@ dependencies = [
 
 [[package]]
 name = "distri-parsers"
-version = "0.2.7"
+version = "0.2.10"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3145,7 +3213,7 @@ dependencies = [
 
 [[package]]
 name = "distri-plugin-executor"
-version = "0.2.7"
+version = "0.2.10"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3167,7 +3235,7 @@ dependencies = [
 
 [[package]]
 name = "distri-plugins"
-version = "0.2.7"
+version = "0.2.10"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3196,8 +3264,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "distri-scraper"
+version = "0.2.10"
+dependencies = [
+ "actix-cors",
+ "actix-web",
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "clap",
+ "distri-core",
+ "distri-server",
+ "distri-types",
+ "dotenv",
+ "mcp-crawl",
+ "mcp-reddit",
+ "mcp-tavily",
+ "mcp-twitter",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
 name = "distri-server"
-version = "0.2.7"
+version = "0.2.10"
 dependencies = [
  "actix-cors",
  "actix-files",
@@ -3244,7 +3339,7 @@ dependencies = [
 
 [[package]]
 name = "distri-server-cli"
-version = "0.2.7"
+version = "0.2.10"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3284,7 +3379,7 @@ dependencies = [
 
 [[package]]
 name = "distri-stores"
-version = "0.2.7"
+version = "0.2.10"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3313,7 +3408,7 @@ dependencies = [
 
 [[package]]
 name = "distri-types"
-version = "0.2.7"
+version = "0.2.10"
 dependencies = [
  "anyhow",
  "async-mcp",
@@ -3629,7 +3724,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -5418,6 +5513,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "mcp-reddit"
+version = "0.1.0"
+source = "git+https://github.com/distrihub/mcp-servers.git?rev=0af3104#0af3104c35b92847a6c9753f6e5a9b01af1f9d94"
+dependencies = [
+ "anyhow",
+ "async-mcp",
+ "chrono",
+ "reqwest 0.12.8",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+]
+
+[[package]]
 name = "mcp-tavily"
 version = "0.1.0"
 source = "git+https://github.com/distrihub/mcp-servers.git?rev=0af3104#0af3104c35b92847a6c9753f6e5a9b01af1f9d94"
@@ -5428,6 +5540,23 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+]
+
+[[package]]
+name = "mcp-twitter"
+version = "0.1.0"
+source = "git+https://github.com/distrihub/mcp-servers.git?rev=0af3104#0af3104c35b92847a6c9753f6e5a9b01af1f9d94"
+dependencies = [
+ "agent-twitter-client",
+ "anyhow",
+ "async-mcp",
+ "async-trait",
+ "serde",
+ "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -5693,7 +5822,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -6948,7 +7077,7 @@ dependencies = [
  "once_cell",
  "socket2 0.6.1",
  "tracing",
- "windows-sys 0.60.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -7258,6 +7387,7 @@ dependencies = [
  "js-sys",
  "log",
  "mime",
+ "mime_guess",
  "native-tls",
  "once_cell",
  "percent-encoding",
@@ -7488,7 +7618,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.11.0",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -9304,7 +9434,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.2",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -9759,6 +9889,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "totp-rs"
+version = "5.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f124352108f58ef88299e909f6e9470f1cdc8d2a1397963901b4a6366206bf72"
+dependencies = [
+ "base32",
+ "constant_time_eq",
+ "hmac",
+ "sha1",
+ "sha2",
+]
+
+[[package]]
 name = "tower"
 version = "0.4.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9977,7 +10120,7 @@ dependencies = [
  "fastrand",
  "serde",
  "serde_json",
- "toml 0.9.5",
+ "toml 0.8.23",
  "ureq",
 ]
 
@@ -10594,7 +10737,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

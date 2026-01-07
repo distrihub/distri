@@ -8,6 +8,7 @@ use distri_core::a2a::messages::get_a2a_messages;
 use distri_core::a2a::A2AHandler;
 use distri_core::agent::{parse_agent_markdown_content, AgentOrchestrator, ExecutorContext};
 use distri_core::llm::LLMExecutor;
+use distri_core::secrets::SecretResolver;
 use distri_core::types::UpdateThreadRequest;
 use distri_core::{AgentError, MessageFilter, ToolAuthRequestContext};
 use distri_types::configuration::ServerConfig;
@@ -67,6 +68,9 @@ fn configure_routes(cfg: &mut web::ServiceConfig, include_browser: bool) {
             .route(web::put().to(update_agent)),
     )
     .service(
+        web::resource("/agents/{id}/validate").route(web::get().to(validate_agent_handler)),
+    )
+    .service(
         web::resource("/agents/{id}/complete-tool").route(web::post().to(complete_tool_handler)),
     )
     .service(web::resource("/event/hooks").route(web::post().to(complete_hook_handler)))
@@ -76,6 +80,7 @@ fn configure_routes(cfg: &mut web::ServiceConfig, include_browser: bool) {
     // Webhook endpoint for triggering agents
     // Thread endpoints
     .service(web::resource("/threads").route(web::get().to(list_threads_handler)))
+    .service(web::resource("/threads/agents").route(web::get().to(list_agents_by_usage)))
     .service(
         web::resource("/threads/{thread_id}/messages").route(web::get().to(get_thread_messages)),
     )
@@ -459,6 +464,84 @@ fn build_markdown_from_definition(def: &StandardDefinition) -> String {
     format!("---\n{}---\n\n{}", toml_str, instructions)
 }
 
+/// Warning severity levels
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "lowercase")]
+#[allow(dead_code)]
+enum WarningSeverity {
+    Warning,
+    Error,
+}
+
+/// A single validation warning
+#[derive(Debug, Clone, Serialize)]
+struct ValidationWarning {
+    code: String,
+    message: String,
+    severity: WarningSeverity,
+}
+
+/// Response from agent validation endpoint
+#[derive(Debug, Serialize)]
+struct AgentValidationResponse {
+    valid: bool,
+    warnings: Vec<ValidationWarning>,
+}
+
+/// Validate an agent's configuration and return any warnings
+async fn validate_agent_handler(
+    id: web::Path<String>,
+    executor: web::Data<Arc<AgentOrchestrator>>,
+) -> HttpResponse {
+    let agent_id = id.into_inner();
+    let mut warnings = Vec::new();
+
+    // Get agent configuration
+    let agent = match executor.get_agent(&agent_id).await {
+        Some(agent) => agent,
+        None => {
+            return HttpResponse::NotFound().json(json!({
+                "error": "Agent not found"
+            }));
+        }
+    };
+
+    // Extract provider from agent config
+    let provider = match &agent {
+        distri_types::configuration::AgentConfig::StandardAgent(def) => {
+            def.model_settings.provider.clone()
+        }
+        distri_types::configuration::AgentConfig::SequentialWorkflowAgent(_)
+        | distri_types::configuration::AgentConfig::DagWorkflowAgent(_)
+        | distri_types::configuration::AgentConfig::CustomAgent(_) => {
+            executor.default_model_settings.read().await.provider.clone()
+        }
+    };
+
+    // Check for missing provider secrets
+    let secret_store = executor.stores.secret_store.clone();
+    let resolver = SecretResolver::new(secret_store);
+    let missing_secrets = resolver.get_missing_secrets(&provider).await;
+
+    if !missing_secrets.is_empty() {
+        let provider_name = provider.display_name();
+        warnings.push(ValidationWarning {
+            code: "missing_provider_secret".to_string(),
+            message: format!(
+                "Missing API key for {}. Configure {} in Settings > Secrets.",
+                provider_name,
+                missing_secrets.join(", ")
+            ),
+            severity: WarningSeverity::Error,
+        });
+    }
+
+    HttpResponse::Ok().json(AgentValidationResponse {
+        valid: warnings.is_empty(),
+        warnings,
+    })
+}
+
 async fn get_agent_card(
     agent_name: web::Path<String>,
     executor: web::Data<Arc<AgentOrchestrator>>,
@@ -547,6 +630,22 @@ struct LLmRequest {
     is_sub_task: bool,
     #[serde(default)]
     headers: Option<HashMap<String, String>>,
+    /// Optional agent ID to associate with the thread (default: "llm_execute")
+    #[serde(default)]
+    agent_id: Option<String>,
+    /// Optional external ID for linking to external systems
+    #[serde(default)]
+    external_id: Option<String>,
+    /// Whether to load thread history when thread_id is provided (default: true)
+    #[serde(default = "default_load_history")]
+    load_history: bool,
+    /// Optional title for the thread (auto-generated if not provided)
+    #[serde(default)]
+    title: Option<String>,
+}
+
+fn default_load_history() -> bool {
+    true
 }
 
 async fn llm_execute(
@@ -563,12 +662,23 @@ async fn llm_execute(
         .map(|ctx| ctx.user_id())
         .unwrap_or_else(|| "anonymous".to_string());
 
+    // Use provided agent_id or default to "llm_execute"
+    let agent_id = payload
+        .agent_id
+        .clone()
+        .unwrap_or_else(|| "llm_execute".to_string());
+
+    // Generate or use provided thread_id
+    let thread_id = payload
+        .thread_id
+        .clone()
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+
     let mut context = ExecutorContext::default();
-    context.user_id = user_id;
-    context.agent_id = "llm_execute".to_string();
-    if let Some(thread_id) = payload.thread_id.as_ref() {
-        context.thread_id = thread_id.clone();
-    }
+    context.user_id = user_id.clone();
+    context.agent_id = agent_id.clone();
+    context.thread_id = thread_id.clone();
+
     if let Some(run_id) = payload.run_id.as_ref() {
         context.run_id = run_id.clone();
     }
@@ -583,6 +693,42 @@ async fn llm_execute(
     context.orchestrator = Some(executor.get_ref().clone());
     let context = Arc::new(context);
 
+    // Load thread history if requested
+    let mut all_messages = Vec::new();
+    if payload.load_history && payload.thread_id.is_some() {
+        match executor
+            .stores
+            .task_store
+            .get_history(&thread_id, None)
+            .await
+        {
+            Ok(history) => {
+                for (_task, task_messages) in history {
+                    for task_msg in task_messages {
+                        if let distri_types::TaskMessage::Message(msg) = task_msg {
+                            all_messages.push(msg);
+                        }
+                    }
+                }
+                tracing::debug!(
+                    "Loaded {} messages from thread history for thread_id: {}",
+                    all_messages.len(),
+                    thread_id
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to load thread history for {}: {}",
+                    thread_id,
+                    e
+                );
+            }
+        }
+    }
+
+    // Append the new messages from the request
+    all_messages.extend(payload.messages.clone());
+
     let mut model_settings = executor.get_default_model_settings().await;
     if let Some(override_ms) = payload.model_settings.clone() {
         model_settings = override_ms;
@@ -590,7 +736,7 @@ async fn llm_execute(
 
     let llm_def = LlmDefinition {
         name: format!("llm_execute{}", model_settings.model),
-        model_settings,
+        model_settings: model_settings.clone(),
         tool_format: ToolCallFormat::Provider,
     };
 
@@ -610,15 +756,129 @@ async fn llm_execute(
         Some("llm_execute".to_string()),
     );
 
-    match llm.execute(&payload.messages).await {
-        Ok(resp) => HttpResponse::Ok().json(json!({
-            "finish_reason": format!("{:?}", resp.finish_reason),
-            "content": resp.content,
-            "tool_calls": resp.tool_calls,
-            "token_usage": resp.token_usage,
-        })),
+    match llm.execute(&all_messages).await {
+        Ok(resp) => {
+            // Store the LLM call as a thread entry (non-ephemeral only)
+            if !payload.is_sub_task {
+                // Create or update the thread
+                let title = payload.title.clone().unwrap_or_else(|| {
+                    // Generate title from first user message
+                    payload
+                        .messages
+                        .iter()
+                        .find(|m| m.role == distri_types::MessageRole::User)
+                        .and_then(|m| {
+                            m.parts.iter().find_map(|p| {
+                                if let distri_types::Part::Text(text) = p {
+                                    Some(text.chars().take(100).collect::<String>())
+                                } else {
+                                    None
+                                }
+                            })
+                        })
+                        .unwrap_or_else(|| "LLM Execute".to_string())
+                });
+
+                // Get or create thread
+                let thread_exists = executor
+                    .stores
+                    .thread_store
+                    .get_thread(&thread_id)
+                    .await
+                    .ok()
+                    .flatten()
+                    .is_some();
+
+                if !thread_exists {
+                    // Create new thread
+                    let create_req = distri_types::CreateThreadRequest {
+                        agent_id: agent_id.clone(),
+                        title: Some(title),
+                        thread_id: Some(thread_id.clone()),
+                        attributes: None,
+                        user_id: Some(user_id.clone()),
+                        external_id: payload.external_id.clone(),
+                    };
+                    if let Err(e) = executor.stores.thread_store.create_thread(create_req).await {
+                        tracing::warn!("Failed to create thread {}: {}", thread_id, e);
+                    }
+                }
+
+                // Store the user message(s) from the request
+                let task_id = context.task_id.clone();
+                // Ensure task exists
+                let _ = executor
+                    .stores
+                    .task_store
+                    .get_or_create_task(&thread_id, &task_id)
+                    .await;
+
+                for msg in &payload.messages {
+                    if let Err(e) = executor
+                        .stores
+                        .task_store
+                        .add_message_to_task(&task_id, msg)
+                        .await
+                    {
+                        tracing::warn!("Failed to store user message: {}", e);
+                    }
+                }
+
+                // Store the assistant response
+                let assistant_message = distri_types::Message {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    name: None,
+                    role: distri_types::MessageRole::Assistant,
+                    parts: {
+                        let mut parts = Vec::new();
+                        if !resp.content.is_empty() {
+                            parts.push(distri_types::Part::Text(resp.content.clone()));
+                        }
+                        for tc in &resp.tool_calls {
+                            parts.push(distri_types::Part::ToolCall(tc.clone()));
+                        }
+                        parts
+                    },
+                    created_at: chrono::Utc::now().timestamp_millis(),
+                };
+
+                if let Err(e) = executor
+                    .stores
+                    .task_store
+                    .add_message_to_task(&task_id, &assistant_message)
+                    .await
+                {
+                    tracing::warn!("Failed to store assistant message: {}", e);
+                }
+
+                // Update thread with last message
+                let last_msg = if !resp.content.is_empty() {
+                    resp.content.chars().take(200).collect::<String>()
+                } else if !resp.tool_calls.is_empty() {
+                    format!("[Tool calls: {}]", resp.tool_calls.len())
+                } else {
+                    String::new()
+                };
+                if let Err(e) = executor
+                    .stores
+                    .thread_store
+                    .update_thread_with_message(&thread_id, &last_msg)
+                    .await
+                {
+                    tracing::warn!("Failed to update thread with message: {}", e);
+                }
+            }
+
+            HttpResponse::Ok().json(json!({
+                "finish_reason": format!("{:?}", resp.finish_reason),
+                "content": resp.content,
+                "tool_calls": resp.tool_calls,
+                "token_usage": resp.token_usage,
+                "thread_id": thread_id,
+            }))
+        }
         Err(error) => {
-            tracing::error!("[/chat/completion] LLM call failed: {}", error);
+            tracing::error!("[/llm/execute] LLM call failed: {}", error);
             HttpResponse::BadGateway().json(json!({
                 "error": error.to_string(),
             }))
@@ -630,27 +890,66 @@ async fn llm_execute(
 #[derive(Deserialize)]
 struct ListThreadsQuery {
     agent_id: Option<String>,
+    external_id: Option<String>,
+    search: Option<String>,
+    from_date: Option<String>, // ISO 8601 format
+    to_date: Option<String>,   // ISO 8601 format
+    tags: Option<String>,      // Comma-separated
     limit: Option<u32>,
     offset: Option<u32>,
-    filter: Option<serde_json::Value>,
+    filter: Option<serde_json::Value>, // Attributes filter
 }
 
 async fn list_threads_handler(
     query: web::Query<ListThreadsQuery>,
     coordinator: web::Data<Arc<AgentOrchestrator>>,
 ) -> HttpResponse {
+    // Parse dates from ISO 8601 format
+    let from_date = query
+        .from_date
+        .as_ref()
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .map(|dt| dt.with_timezone(&chrono::Utc));
+    let to_date = query
+        .to_date
+        .as_ref()
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .map(|dt| dt.with_timezone(&chrono::Utc));
+
+    // Parse comma-separated tags
+    let tags = query
+        .tags
+        .as_ref()
+        .map(|s| s.split(',').map(String::from).collect());
+
+    let filter = distri_types::stores::ThreadListFilter {
+        agent_id: query.agent_id.clone(),
+        external_id: query.external_id.clone(),
+        attributes: query.filter.clone(),
+        search: query.search.clone(),
+        from_date,
+        to_date,
+        tags,
+    };
+
     match coordinator
-        .list_threads(
-            query.agent_id.as_deref(),
-            query.limit,
-            query.offset,
-            query.filter.as_ref(),
-        )
+        .list_threads(&filter, query.limit, query.offset)
         .await
     {
-        Ok(threads) => HttpResponse::Ok().json(threads),
+        Ok(response) => HttpResponse::Ok().json(response),
         Err(e) => HttpResponse::InternalServerError().json(json!({
             "error": format!("Failed to list threads: {}", e)
+        })),
+    }
+}
+
+async fn list_agents_by_usage(
+    coordinator: web::Data<Arc<AgentOrchestrator>>,
+) -> HttpResponse {
+    match coordinator.get_agents_by_usage().await {
+        Ok(agents) => HttpResponse::Ok().json(agents),
+        Err(e) => HttpResponse::InternalServerError().json(json!({
+            "error": format!("Failed to get agents by usage: {}", e)
         })),
     }
 }
