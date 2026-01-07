@@ -1293,7 +1293,12 @@ async fn complete_hook_handler(
 /// Create a new browser session via browsr
 /// Returns the session info directly from browsr (session_id, viewer_url, stream_url)
 async fn create_browser_session() -> HttpResponse {
-    let client = browsr_client::BrowsrClient::from_config(browsr_client::default_transport());
+    let client = browsr_client::BrowsrClient::from_env();
+    tracing::info!(
+        "[browser] Creating session, base_url={}, has_api_key={}",
+        client.base_url(),
+        client.has_auth()
+    );
 
     match client.create_session().await {
         Ok(session) => HttpResponse::Ok().json(session),
