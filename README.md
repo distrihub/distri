@@ -1,30 +1,77 @@
-# Distri Releases
+# Distri
 
-![](https://img.shields.io/badge/Platform-macOS%20%7C%20Linux%20%7C%20Windows-blue?style=flat-square) ![](https://img.shields.io/badge/Runtime-Distri%20CLI-orange?style=flat-square)
+![](https://img.shields.io/badge/Platform-macOS%20%7C%20Linux%20%7C%20Windows-blue?style=flat-square) ![](https://img.shields.io/badge/Runtime-Distri%20CLI-orange?style=flat-square) ![](https://img.shields.io/badge/Protocol-A2A-green?style=flat-square)
 
-Distri is A2A compatible agent framework built in Rust. Build agents with simply markdown definition and integrate within your React frontend. Tools can be added as either backend tools via Deno or frontend tools which makes building agents much easier. 
+Distri is an A2A-compatible agent framework built in Rust. Build agents with simple markdown definitions and integrate them within your React frontend. Tools can be added as either backend tools via Deno or frontend tools, making building agents much easier.
 
-**Learn more in the [official documentation](https://distri.dev/docs/)** and explore product updates at [distri.dev](https://distri.dev/).
+**[Documentation](https://distri.dev/docs/)** · **[Website](https://distri.dev/)** · **[A2A Protocol](https://a2a-protocol.org/)**
 
-Distri is built to work with any A2A agent server (https://a2a-protocol.org/). `distri-server` is one implementation and is available under the Elastic License 2.0 (ELv2).
+![Distri Dashboard](https://distri.dev/img/page_home.png)
 
-![Distri CLI demo](https://distri.dev/img/social.png)
+## Architecture
+
+Distri is organized as a monorepo with Rust crates and TypeScript packages:
+
+```
+distri/
+├── Rust Crates
+│   ├── distri-cli          # CLI tool for agent management
+│   ├── distri-a2a          # A2A protocol implementation
+│   ├── distri-types        # Shared type definitions
+│   ├── distri-filesystem   # File system utilities
+│   └── distri              # Core library
+│
+├── Server (ELv2 License)
+│   ├── distri-server       # A2A-compatible agent server
+│   ├── distri-core         # Core server logic
+│   ├── distri-stores       # Storage backends
+│   ├── distri-plugins      # Plugin system
+│   └── distri-plugin-executor  # Deno-based plugin runtime
+│
+├── DistriJS (TypeScript)
+│   ├── @distri/core        # Agent client & A2A integration
+│   ├── @distri/react       # React hooks & components
+│   ├── @distri/components  # Shared UI components (shadcn/ui)
+│   └── @distri/fs          # File system tools for frontend
+│
+├── samples/                # Example applications
+└── plugins/                # Integration plugins
+```
+
+## Screenshots
+
+<table>
+  <tr>
+    <td><img src="https://distri.dev/img/page_agents.png" alt="Agents" width="400"/></td>
+    <td><img src="https://distri.dev/img/page_chat.png" alt="Chat" width="400"/></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Agent Library</b></td>
+    <td align="center"><b>Chat Interface</b></td>
+  </tr>
+  <tr>
+    <td><img src="https://distri.dev/img/page_threads.png" alt="Threads" width="400"/></td>
+    <td><img src="https://distri.dev/img/embedded.png" alt="Embedded" width="400"/></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Conversation Threads</b></td>
+    <td align="center"><b>Embedded Mode</b></td>
+  </tr>
+</table>
 
 ## Installation
 
 ### Prebuilt binary (recommended)
-Use the helper script to grab the latest release for your OS/arch:
 ```bash
 curl -fsSL https://distri.dev/install.sh | sh
 ```
 
-Pin a specific version or choose an install location (env vars are optional):
+Pin a specific version or choose an install location:
 ```bash
-DISTRI_VERSION=0.2.2 DISTRI_INSTALL_DIR=/usr/local/bin sh -c "$(curl -fsSL https://distri.dev/install.sh)"
+DISTRI_VERSION=0.3.0 DISTRI_INSTALL_DIR=/usr/local/bin sh -c "$(curl -fsSL https://distri.dev/install.sh)"
 ```
 
 ### Direct download (macOS / Linux)
-If you prefer a direct download instead of the script, pick the slug for your platform and unpack:
 ```bash
 # darwin-arm64 | darwin-x86_64 | linux-arm64 | linux-x86_64
 TARGET=darwin-arm64
@@ -45,30 +92,66 @@ Expand-Archive distri.zip -DestinationPath $Env:LOCALAPPDATA\distri -Force
 $Env:Path += ";$Env:LOCALAPPDATA\distri"
 ```
 
-### Verify & explore
+### Verify installation
 ```bash
 distri --version
 distri help
 ```
 
-### Run your first workflow
+## Quick Start
+
 ```bash
+# Navigate to your project
 cd path/to/your/project
-distri run
+
+# Push agents to Distri Cloud
+distri push
+
+# Run a task
+distri run --agent <agent-name> --task "Your task"
 ```
 
-## Sample plugins
+## Samples
 
-This repo ships ready-to-run examples that mirror how production Distri plugins are authored:
+| Sample | Type | Description | Demo |
+|--------|------|-------------|------|
+| [maps-demo](./samples/maps-demo) | React/Vite | Interactive Google Maps with AI chat | [Live](https://distrihub.github.io/distri/samples/maps) |
+| [coder](./samples/coder) | CLI/Rust | Code generation assistant | - |
+| [scraper](./samples/scraper) | CLI/Rust | Web scraping and data extraction agent | - |
 
-- `plugins/` – complete integrations and workflows (Slack, Notion, Google, etc.) including their `distri.toml` metadata files.
-- `runtime/` – lightweight TypeScript helpers (`registerPlugin`, `createTool`, `callTool`, etc.) that emulate the executor runtime so you can iterate locally without booting the Rust host.
-- `docs/` – integration checklists, plugin conventions, and guidance for crafting LLM-friendly workflows.
+### Embedding in iframe
+```html
+<iframe
+  src="https://distrihub.github.io/distri/samples/maps"
+  width="100%"
+  height="600"
+  frameborder="0">
+</iframe>
+```
 
-Clone the repo, open any plugin directory, and run the Deno snippets in the README to experiment, or copy the structure into your own repo when building new integrations.
+## Plugins
 
-## Developing
+Ready-to-use integrations in `plugins/`:
 
+| Plugin | Description |
+|--------|-------------|
+| `slack` | Slack messaging and workflows |
+| `notion` | Notion pages and databases |
+| `gmail` | Gmail read/send capabilities |
+| `google-calendar` | Calendar events management |
+| `google-docs` | Document creation and editing |
+| `google-sheets` | Spreadsheet operations |
+| `postgresql` | Database queries |
+| `clickhouse` | Analytics database |
+
+## Development
+
+### Building Rust crates
+```bash
+cargo build
+```
+
+### Publishing crates
 ```bash
 cargo publish -p distri-a2a
 cargo publish -p distri-types
@@ -76,14 +159,22 @@ cargo publish -p distri-filesystem
 cargo publish -p distri
 ```
 
-## Releases & updates
+### DistriJS development
+```bash
+cd distrijs
+pnpm install
+pnpm dev
+```
 
-Each tagged release in this repo corresponds to a shipped Distri build. Check the [GitHub Releases](https://github.com/distrihub/distri/releases) page for the latest binaries, changelog notes, and signing artifacts.
+## Releases
+
+Check the [GitHub Releases](https://github.com/distrihub/distri/releases) page for the latest binaries and changelog.
 
 ## Licensing
 
-Everything in the repository root and common components is licensed under the [MIT License](LICENSE). Anything under `server/` is licensed under the [Elastic License 2.0 – Distri Edition](server/LICENSE). `distri-server` follows [fair-code principles](https://faircode.io/) and will always remain free to use.
+- Repository root and common components: [MIT License](LICENSE)
+- Server components (`server/`): [Elastic License 2.0](server/LICENSE) - follows [fair-code principles](https://faircode.io/)
 
-## Support & feedback
+## Support
 
-Questions or ideas? Open an issue in this repository or reach out through [distri.dev/contact](https://distri.dev/contact/). The team actively monitors bug reports and feature requests from the community.
+Questions or feedback? [Open an issue](https://github.com/distrihub/distri/issues).

@@ -1,6 +1,6 @@
 [package]
 name = "distri-types"
-version = "0.2.10"
+version = "0.3.0"
 edition = "2024"
 description = "Shared message, tool, and config types for Distri"
 license = "MIT"
@@ -13,7 +13,7 @@ categories = ["api-bindings", "data-structures"]
 
 [dependencies]
 browsr-types = { workspace = true }
-distri-a2a = { path = "../distri-a2a", version = "0.2.10" }
+distri-a2a = { path = "../distri-a2a", version = "0.3.0" }
 
 async-trait = "0.1"
 serde = { workspace = true }
