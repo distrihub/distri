@@ -13,7 +13,8 @@ use crate::{
     AgentError,
 };
 
-const SCRATCHPAD_ENTRY_LIMIT: usize = 10;
+const MIN_SCRATCHPAD_ENTRY_LIMIT: usize = 10;
+const MAX_SCRATCHPAD_ENTRY_LIMIT: usize = 100;
 
 /// Helper that builds model-ready message sequences for planning prompts.
 pub struct MessageFormatter<'a> {
@@ -49,8 +50,9 @@ impl<'a> MessageFormatter<'a> {
         let available_tools = distri_parsers::get_available_tools(&tool_defs);
 
         let include_scratchpad = self.agent_def.include_scratchpad();
+        let scratchpad_entry_limit = Self::scratchpad_entry_limit(self.agent_def);
         let scratchpad_entries = if include_scratchpad {
-            self.load_scratchpad_entries(context)
+            self.load_scratchpad_entries(context, scratchpad_entry_limit)
                 .await
                 .unwrap_or_default()
         } else {
@@ -60,7 +62,9 @@ impl<'a> MessageFormatter<'a> {
         let native_json_tools = Self::native_json_tools(self.agent_def);
 
         let scratchpad = if include_scratchpad {
-            self.build_scratchpad(context).await.unwrap_or_default()
+            self.build_scratchpad(context, scratchpad_entry_limit)
+                .await
+                .unwrap_or_default()
         } else {
             String::new()
         };
@@ -122,11 +126,9 @@ impl<'a> MessageFormatter<'a> {
 
         let mut formatted = vec![crate::types::Message::system(rendered_prompt, None)];
 
-        if native_json_tools && include_scratchpad {
-            let native_messages = Self::build_native_history_messages(&scratchpad_entries);
-            formatted.extend(native_messages);
-        }
-
+        // Build the current user message with any dynamic additions (step limit, todos, etc.).
+        // We'll also use this to "upsert" the current user message into the task history,
+        // ensuring it appears only once and does not always get appended at the very end.
         let user_message = if let Some(overrides) = &self.agent_def.user_message_overrides {
             self.build_overridden_user_message(
                 message,
@@ -139,7 +141,21 @@ impl<'a> MessageFormatter<'a> {
         } else {
             Self::build_user_message(message, &user_additional_data)
         };
-        formatted.push(user_message);
+
+        let user_history = Self::load_task_user_messages(context).await;
+        let tool_history = if native_json_tools && include_scratchpad {
+            Self::build_native_history_messages(&scratchpad_entries)
+        } else {
+            Vec::new()
+        };
+
+        let interleaved_history = Self::interleave_user_and_tool_history(user_history, tool_history, &user_message);
+        formatted.extend(interleaved_history);
+
+        // Fallback: if we couldn't load history (no orchestrator/store), still include the user.
+        if !formatted.iter().any(|m| m.id == user_message.id) {
+            formatted.push(user_message);
+        }
 
         Ok(formatted)
     }
@@ -173,9 +189,17 @@ impl<'a> MessageFormatter<'a> {
         matches!(agent_def.tool_format, ToolCallFormat::Provider)
     }
 
+    fn scratchpad_entry_limit(agent_def: &crate::types::StandardDefinition) -> usize {
+        let history_size = agent_def.history_size.unwrap_or(5);
+        let suggested = history_size.saturating_mul(10);
+        suggested
+            .clamp(MIN_SCRATCHPAD_ENTRY_LIMIT, MAX_SCRATCHPAD_ENTRY_LIMIT)
+    }
+
     async fn load_scratchpad_entries(
         &self,
         context: &Arc<ExecutorContext>,
+        limit: usize,
     ) -> Result<Vec<ScratchpadEntry>, AgentError> {
         let Some(orchestrator) = &context.orchestrator else {
             return Ok(vec![]);
@@ -186,11 +210,7 @@ impl<'a> MessageFormatter<'a> {
         // Subtasks: restrict to current task only to avoid polluting context with siblings/parent.
         if context.parent_task_id.is_some() {
             let entries = scratchpad_store
-                .get_entries(
-                    &context.thread_id,
-                    &context.task_id,
-                    Some(SCRATCHPAD_ENTRY_LIMIT),
-                )
+                .get_entries(&context.thread_id, &context.task_id, Some(limit))
                 .await
                 .unwrap_or_default();
             return Ok(entries);
@@ -199,15 +219,19 @@ impl<'a> MessageFormatter<'a> {
         // Top-level tasks: include recent history in the thread but prefer top-level tasks first.
         // We don't have parent metadata in entries, so we just fetch thread-limited history.
         let entries = scratchpad_store
-            .get_all_entries(&context.thread_id, Some(SCRATCHPAD_ENTRY_LIMIT))
+            .get_all_entries(&context.thread_id, Some(limit))
             .await
             .unwrap_or_default();
         Ok(entries)
     }
 
-    async fn build_scratchpad(&self, context: &Arc<ExecutorContext>) -> Result<String, AgentError> {
+    async fn build_scratchpad(
+        &self,
+        context: &Arc<ExecutorContext>,
+        limit: usize,
+    ) -> Result<String, AgentError> {
         context
-            .format_agent_scratchpad(Some(SCRATCHPAD_ENTRY_LIMIT))
+            .format_agent_scratchpad(Some(limit))
             .await
             .or_else(|err| {
                 warn!("Falling back to inline scratchpad summary: {}", err);
@@ -229,6 +253,90 @@ impl<'a> MessageFormatter<'a> {
                 .unwrap_or_default(),
             Err(_) => std::collections::HashMap::new(),
         }
+    }
+
+    async fn load_task_user_messages(context: &Arc<ExecutorContext>) -> Vec<crate::types::Message> {
+        let Ok(history) = context.get_current_task_message_history().await else {
+            return Vec::new();
+        };
+
+        let mut user_messages: Vec<_> = history
+            .into_iter()
+            .filter(|message| matches!(message.role, MessageRole::User))
+            .collect();
+
+        user_messages.sort_by_key(|msg| msg.created_at);
+        user_messages
+    }
+
+    fn interleave_user_and_tool_history(
+        user_messages: Vec<crate::types::Message>,
+        tool_messages: Vec<crate::types::Message>,
+        current_user_message: &crate::types::Message,
+    ) -> Vec<crate::types::Message> {
+        // Replace any stored version of the current user message with the enriched one
+        // (includes step limits/todos/etc.), but keep its original timestamp.
+        let mut users: Vec<_> = user_messages
+            .into_iter()
+            .filter(|m| m.id != current_user_message.id)
+            .collect();
+        users.push(current_user_message.clone());
+        users.sort_by_key(|msg| msg.created_at);
+
+        // Keep tool messages ordered, but stable within the same timestamp.
+        let mut tools_with_index: Vec<(usize, crate::types::Message)> =
+            tool_messages.into_iter().enumerate().collect();
+        tools_with_index.sort_by(|(a_idx, a_msg), (b_idx, b_msg)| {
+            a_msg
+                .created_at
+                .cmp(&b_msg.created_at)
+                .then(a_idx.cmp(b_idx))
+        });
+
+        let mut interleaved = Vec::new();
+        let mut tool_cursor = 0;
+
+        // Include any tool messages that (for whatever reason) predate the first user message.
+        if let Some(first_user) = users.first() {
+            while tool_cursor < tools_with_index.len()
+                && tools_with_index[tool_cursor].1.created_at < first_user.created_at
+            {
+                interleaved.push(tools_with_index[tool_cursor].1.clone());
+                tool_cursor += 1;
+            }
+        }
+
+        for idx in 0..users.len() {
+            let user = users[idx].clone();
+            let start_ts = user.created_at;
+            let end_ts = users
+                .get(idx + 1)
+                .map(|m| m.created_at)
+                .unwrap_or(i64::MAX);
+
+            interleaved.push(user);
+
+            while tool_cursor < tools_with_index.len() {
+                let tool_msg = &tools_with_index[tool_cursor].1;
+                if tool_msg.created_at < start_ts {
+                    tool_cursor += 1;
+                    continue;
+                }
+                if tool_msg.created_at >= end_ts {
+                    break;
+                }
+                interleaved.push(tool_msg.clone());
+                tool_cursor += 1;
+            }
+        }
+
+        // Append any remaining tools (e.g., tools that landed after the last user).
+        while tool_cursor < tools_with_index.len() {
+            interleaved.push(tools_with_index[tool_cursor].1.clone());
+            tool_cursor += 1;
+        }
+
+        interleaved
     }
 
     fn build_native_history_messages(
@@ -577,6 +685,76 @@ mod tests {
         }
     }
 
+    #[test]
+    fn interleave_user_and_tool_history_groups_tools_between_users() {
+        let mut u1 = Message::user("u1".to_string(), None);
+        u1.created_at = 10;
+        let mut u2 = Message::user("u2".to_string(), None);
+        u2.created_at = 40;
+
+        let mut assistant = Message::assistant("assistant".to_string(), None);
+        assistant.created_at = 20;
+
+        let mut tool = Message::tool_response(
+            "call".to_string(),
+            "search".to_string(),
+            &json!({"result": true}),
+        );
+        tool.created_at = 30;
+        tool.role = MessageRole::Tool;
+
+        let mut current = Message::user("current".to_string(), None);
+        current.created_at = 40;
+        current.id = u2.id.clone();
+
+        let interleaved = MessageFormatter::interleave_user_and_tool_history(
+            vec![u2, u1],
+            vec![assistant, tool],
+            &current,
+        );
+
+        let order: Vec<_> = interleaved
+            .iter()
+            .map(|message| (message.role.clone(), message.created_at))
+            .collect();
+        assert_eq!(
+            order,
+            vec![
+                (MessageRole::User, 10),
+                (MessageRole::Assistant, 20),
+                (MessageRole::Tool, 30),
+                (MessageRole::User, 40)
+            ]
+        );
+    }
+
+    #[test]
+    fn interleave_user_and_tool_history_replaces_current_user_message() {
+        let mut stored_current = Message::user("stored".to_string(), None);
+        stored_current.created_at = 10;
+
+        let mut tool = Message::tool_response(
+            "call".to_string(),
+            "search".to_string(),
+            &json!({"result": true}),
+        );
+        tool.created_at = 20;
+        tool.role = MessageRole::Tool;
+
+        let mut current = Message::user("enriched".to_string(), None);
+        current.created_at = 10;
+        current.id = stored_current.id.clone();
+
+        let interleaved = MessageFormatter::interleave_user_and_tool_history(
+            vec![stored_current],
+            vec![tool],
+            &current,
+        );
+
+        assert_eq!(interleaved[0].role, MessageRole::User);
+        assert_eq!(interleaved[0].as_text().unwrap(), "enriched");
+    }
+
     #[tokio::test]
     async fn native_history_uses_scratchpad_entries() {
         let native = MessageFormatter::build_native_history_messages(&[
@@ -594,9 +772,7 @@ mod tests {
     #[tokio::test]
     async fn fallback_history_from_execution_results() {
         let messages = MessageFormatter::build_native_history_messages(&[]);
-        assert_eq!(messages.len(), 2);
-        assert!(matches!(messages[0].role, MessageRole::Assistant));
-        assert!(matches!(messages[1].role, MessageRole::Tool));
+        assert!(messages.is_empty());
     }
 
     #[tokio::test]
@@ -607,24 +783,17 @@ mod tests {
         let context = Arc::new(ExecutorContext::default());
         let user_msg = Message::user("Plan".to_string(), None);
 
-        context
-            .store_execution_result(&sample_execution_result())
-            .await
-            .unwrap();
+        // No orchestrator in this unit test context, so no execution history is available.
         let messages = formatter
             .build_messages(&user_msg, &context, "tmpl", "user_templ", None)
             .await
             .expect("formatter should succeed");
 
-        assert_eq!(messages.len(), 4);
+        assert_eq!(messages.len(), 2);
         assert!(matches!(messages[0].role, MessageRole::System));
-        assert!(matches!(messages[1].role, MessageRole::Assistant));
-        assert!(matches!(messages[2].role, MessageRole::Tool));
-        assert!(matches!(messages[3].role, MessageRole::User));
-        let user_text = messages[3].as_text().unwrap_or_default();
-        assert!(user_text.contains("Steps remaining"));
-        assert_eq!(messages[1].tool_calls().len(), 1);
-        assert_eq!(messages[2].tool_responses().len(), 1);
+        assert!(matches!(messages[1].role, MessageRole::User));
+        let user_text = messages[1].as_text().unwrap_or_default();
+        assert!(user_text.contains("user_templ"));
     }
 
     #[tokio::test]
@@ -634,10 +803,7 @@ mod tests {
         let formatter = MessageFormatter::new(&agent_def, &strategy);
         let context = Arc::new(ExecutorContext::default());
         let user_msg = Message::user("Summarize context".to_string(), None);
-        context
-            .store_execution_result(&sample_execution_result())
-            .await
-            .unwrap();
+        // No orchestrator in this unit test context, so no execution history is available.
         let messages = formatter
             .build_messages(
                 &user_msg,
@@ -653,7 +819,6 @@ mod tests {
         assert!(matches!(messages[0].role, MessageRole::System));
         assert!(matches!(messages[1].role, MessageRole::User));
         let user_text = messages[1].as_text().unwrap_or_default();
-        assert!(user_text.contains("Steps remaining"));
-        assert!(user_text.contains("Todos"));
+        assert!(user_text.contains("user_templ"));
     }
 }

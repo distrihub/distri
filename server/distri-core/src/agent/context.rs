@@ -617,7 +617,25 @@ impl ExecutorContext {
     pub async fn get_message_history(
         &self,
     ) -> Result<Vec<crate::types::Message>, crate::AgentError> {
-        tracing::debug!("Getting message history for thread_id: {}", self.thread_id);
+        self.collect_message_history(None).await
+    }
+
+    /// Get message history for the current task/run only
+    pub async fn get_current_task_message_history(
+        &self,
+    ) -> Result<Vec<crate::types::Message>, crate::AgentError> {
+        self.collect_message_history(Some(&self.task_id)).await
+    }
+
+    async fn collect_message_history(
+        &self,
+        task_filter: Option<&str>,
+    ) -> Result<Vec<crate::types::Message>, crate::AgentError> {
+        tracing::debug!(
+            "Getting message history for thread_id: {} (task filter: {:?})",
+            self.thread_id,
+            task_filter
+        );
 
         if let Some(orchestrator) = &self.orchestrator {
             if let Ok(task_history) = orchestrator
@@ -633,8 +651,17 @@ impl ExecutorContext {
                 );
 
                 let mut messages = Vec::new();
-                for (_task_id, task_messages) in &task_history {
-                    tracing::debug!("Processing task with {} messages", task_messages.len());
+                for (task, task_messages) in &task_history {
+                    if let Some(filter_task_id) = task_filter {
+                        if task.id != filter_task_id {
+                            continue;
+                        }
+                    }
+                    tracing::debug!(
+                        "Processing task {} with {} messages",
+                        task.id,
+                        task_messages.len()
+                    );
                     for task_message in task_messages {
                         if let crate::types::TaskMessage::Message(message) = task_message {
                             tracing::debug!("Found message: {:?}", message);
@@ -643,12 +670,12 @@ impl ExecutorContext {
                     }
                 }
 
-                // Sort by created_at to maintain chronological order
                 messages.sort_by_key(|m| m.created_at);
                 tracing::debug!(
-                    "Returning {} messages for thread_id: {}",
+                    "Returning {} messages for thread_id: {} (task filter: {:?})",
                     messages.len(),
-                    self.thread_id
+                    self.thread_id,
+                    task_filter
                 );
                 return Ok(messages);
             } else {
