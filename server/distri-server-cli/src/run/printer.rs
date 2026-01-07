@@ -854,6 +854,9 @@ impl EventPrinter {
             AgentEventType::InlineHookRequested { .. } => {
                 // Inline hooks are handled asynchronously; no direct CLI output needed.
             }
+            AgentEventType::BrowserSessionStarted { .. } => {
+                // Browser Session Started
+            }
         };
 
         Ok(())

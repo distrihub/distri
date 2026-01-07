@@ -57,8 +57,5 @@ pub use ui_tool_render::*;
 pub mod ui_tool_renderers;
 pub use ui_tool_renderers::*;
 
-// Re-export browsr_types::FileType for convenience
-pub use browsr_types::FileType;
-
 mod client_config;
 pub use client_config::DistriConfig;

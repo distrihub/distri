@@ -10,7 +10,7 @@ use crate::AgentError;
 use distri_auth::context::with_user_id;
 use distri_types::HookMutation;
 
-use anyhow::{anyhow, Result as AnyhowResult};
+use anyhow::anyhow;
 use distri_a2a::{JsonRpcError, JsonRpcResponse, MessageSendParams};
 use distri_types::configuration::{AgentConfig, DefinitionOverrides};
 
@@ -105,46 +105,51 @@ where
     }
 }
 
-/// Get the browsr base URL from environment or default
-fn get_browsr_base_url() -> String {
-    std::env::var("BROWSR_BASE_URL")
-        .or_else(|_| std::env::var("BROWSR_API_URL"))
-        .unwrap_or_else(|_| "http://127.0.0.1:8082".to_string())
+/// Create browser session via browsr and return session info.
+/// Returns (session_id, frame_url, sse_url) or None if creation fails.
+async fn create_browser_session() -> Option<(String, Option<String>, Option<String>)> {
+    tracing::info!("[stream] Creating browser session via browsr");
+    let client = browsr_client::BrowsrClient::from_env();
+
+    match client.create_session().await {
+        Ok(session) => {
+            tracing::info!(
+                "[stream] Created browser session: {}, frame_url: {:?}",
+                session.session_id,
+                session.frame_url
+            );
+            Some((session.session_id, session.frame_url, session.sse_url))
+        }
+        Err(e) => {
+            tracing::error!("[stream] Failed to create browser session: {}", e);
+            None
+        }
+    }
 }
 
-/// Emit browser session started event with browsr URLs.
-/// Clients should connect directly to browsr's SSE stream for frames.
-/// The browser_session_id MUST already be in context (created by UI when user clicks browser icon).
+/// Emit BrowserSessionStarted event with the given session info.
 async fn emit_browser_session_started(
-    context: Arc<ExecutorContext>,
-    event_tx: mpsc::Sender<AgentEvent>,
-) -> AnyhowResult<()> {
-    // Session must be created by the UI before this is called
-    let session_id = context
-        .browser_session_id
-        .as_ref()
-        .ok_or_else(|| anyhow!("No browser_session_id in context - UI must create session first"))?
-        .clone();
-
-    // Emit BrowserSessionStarted event with browsr URLs
-    let browsr_base = get_browsr_base_url();
-    let viewer_url = format!("{}/ui/explore?session_id={}", browsr_base, session_id);
-    let stream_url = format!("{}/stream/sse?session_id={}", browsr_base, session_id);
-
+    context: &ExecutorContext,
+    event_tx: &mpsc::Sender<AgentEvent>,
+    session_id: String,
+    frame_url: Option<String>,
+    sse_url: Option<String>,
+) {
     let session_event = AgentEvent::with_context(
         AgentEventType::BrowserSessionStarted {
-            session_id: session_id.clone(),
-            viewer_url: Some(viewer_url),
-            stream_url: Some(stream_url),
+            session_id,
+            viewer_url: frame_url,
+            stream_url: sse_url,
         },
         context.thread_id.clone(),
         context.run_id.clone(),
         context.task_id.clone(),
         context.agent_id.clone(),
     );
-    let _ = event_tx.send(session_event).await;
 
-    Ok(())
+    if let Err(e) = event_tx.send(session_event).await {
+        tracing::warn!("[stream] Failed to send BrowserSessionStarted event: {}", e);
+    }
 }
 
 pub async fn init_thread_get_message(
@@ -278,18 +283,21 @@ pub async fn handle_message_send_streaming_sse(
             .as_ref()
             .and_then(|m| m.get("browser_session_id").and_then(|v| v.as_str()).map(String::from))
         {
+            tracing::info!("[stream] Received browser_session_id from metadata: {}", browser_session_id);
             exec_ctx.browser_session_id = Some(browser_session_id);
+        } else {
+            tracing::debug!("[stream] No browser_session_id in metadata");
         }
         if let Some(tool_meta) = metadata_struct.tool_metadata.clone() {
             exec_ctx.tool_metadata = Some(tool_meta);
         }
-        let executor_context = Arc::new(exec_ctx);
 
         let mut definition_overrides: Option<DefinitionOverrides> = None;
         if let Some(overrides) = metadata_struct.definition_overrides.clone() {
             definition_overrides = Some(overrides);
         }
 
+        // Determine if browser should be used BEFORE wrapping context in Arc
         let mut should_stream_browser = match executor.get_agent(&agent_id).await {
             Some(AgentConfig::StandardAgent(def)) => def.should_use_browser(),
             _ => false,
@@ -301,21 +309,37 @@ pub async fn handle_message_send_streaming_sse(
             }
         }
 
-        // Emit browser session started event if browser is enabled
-        // Clients connect directly to browsr for streaming frames
-        if should_stream_browser {
-            let context_for_browser = executor_context.clone();
-            let event_tx_for_browser = browser_event_tx.clone();
+        // Track if we need to emit browser session event (only if we create a new session)
+        let mut browser_session_to_emit: Option<(String, Option<String>, Option<String>)> = None;
 
+        // If browser is needed but no session from UI, create one now
+        if should_stream_browser && exec_ctx.browser_session_id.is_none() {
+            if let Some((session_id, frame_url, sse_url)) = create_browser_session().await {
+                exec_ctx.browser_session_id = Some(session_id.clone());
+                browser_session_to_emit = Some((session_id, frame_url, sse_url));
+            }
+        } else if should_stream_browser {
+            tracing::info!(
+                "[stream] Using browser session from UI: {:?}",
+                exec_ctx.browser_session_id
+            );
+        }
+
+        let executor_context = Arc::new(exec_ctx);
+
+        // Emit browser session event if we created a new session
+        if let Some((session_id, frame_url, sse_url)) = browser_session_to_emit {
+            let event_tx_for_browser = browser_event_tx.clone();
+            let context_for_emit = executor_context.clone();
             tokio::spawn(async move {
-                if let Err(err) = emit_browser_session_started(
-                    context_for_browser,
-                    event_tx_for_browser,
+                emit_browser_session_started(
+                    &context_for_emit,
+                    &event_tx_for_browser,
+                    session_id,
+                    frame_url,
+                    sse_url,
                 )
-                .await
-                {
-                    tracing::warn!("Failed to emit browser session started: {}", err);
-                }
+                .await;
             });
         }
 

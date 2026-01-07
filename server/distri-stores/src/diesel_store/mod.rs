@@ -3,8 +3,8 @@ use std::{collections::HashMap, fmt::Display, sync::Arc};
 
 use crate::models::*;
 use crate::schema::{
-    agent_configs, browser_sessions, external_tool_calls, integrations, memory_entries,
-    plugin_catalog, scratchpad_entries, session_entries, task_messages, tasks, threads,
+    agent_configs, external_tool_calls, integrations, memory_entries, plugin_catalog,
+    scratchpad_entries, session_entries, task_messages, tasks, threads,
 };
 use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
@@ -29,8 +29,8 @@ use distri_types::auth::{AuthError, AuthSecret, AuthSession, OAuth2State, ToolAu
 use distri_types::configuration::PluginArtifact;
 use distri_types::stores::SessionSummary;
 use distri_types::stores::{
-    AgentStatsInfo, AgentStore, AgentUsageInfo, BrowserSessionStore, ExternalToolCallsStore,
-    FilterMessageType, MemoryStore, MessageFilter, NewPromptTemplate, NewSecret, PluginCatalogStore,
+    AgentStatsInfo, AgentStore, AgentUsageInfo, ExternalToolCallsStore, FilterMessageType,
+    MemoryStore, MessageFilter, NewPromptTemplate, NewSecret, PluginCatalogStore,
     PluginMetadataRecord, PromptTemplateRecord, PromptTemplateStore, ScratchpadStore, SecretRecord,
     SecretStore, SessionMemory, SessionStore, TaskStore, ThreadListFilter, ThreadListResponse,
     ThreadStore, UpdatePromptTemplate,
@@ -38,7 +38,6 @@ use distri_types::stores::{
 use distri_types::{
     AgentError, AgentEvent, AgentEventType, CreateThreadRequest, Message, ScratchpadEntry, Task,
     TaskEvent, TaskMessage, TaskStatus, Thread, ThreadSummary, ToolResponse, UpdateThreadRequest,
-    browser::{BrowserSessionRecord, BrowserSessionState},
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value as JsonValue;
@@ -943,7 +942,9 @@ where
             .collect())
     }
 
-    async fn get_agent_stats_map(&self) -> Result<std::collections::HashMap<String, AgentStatsInfo>> {
+    async fn get_agent_stats_map(
+        &self,
+    ) -> Result<std::collections::HashMap<String, AgentStatsInfo>> {
         let mut connection = self.conn().await?;
 
         #[derive(QueryableByName)]
@@ -985,7 +986,8 @@ where
         .await
         .unwrap_or_default();
 
-        let mut stats_map: std::collections::HashMap<String, AgentStatsInfo> = std::collections::HashMap::new();
+        let mut stats_map: std::collections::HashMap<String, AgentStatsInfo> =
+            std::collections::HashMap::new();
 
         // Add thread stats
         for r in thread_stats {
@@ -994,9 +996,9 @@ where
                 AgentStatsInfo {
                     thread_count: r.thread_count,
                     sub_agent_usage_count: 0,
-                    last_used_at: r.last_used_at.map(|dt| {
-                        chrono::DateTime::from_naive_utc_and_offset(dt, chrono::Utc)
-                    }),
+                    last_used_at: r
+                        .last_used_at
+                        .map(|dt| chrono::DateTime::from_naive_utc_and_offset(dt, chrono::Utc)),
                 },
             );
         }
@@ -1180,7 +1182,10 @@ where
                 id: r.agent_id,
                 name: r.agent_name,
                 description: r.description,
-                last_used_at: chrono::DateTime::from_naive_utc_and_offset(r.last_used_at, chrono::Utc),
+                last_used_at: chrono::DateTime::from_naive_utc_and_offset(
+                    r.last_used_at,
+                    chrono::Utc,
+                ),
             })
             .collect();
 
@@ -2020,75 +2025,6 @@ where
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DieselBrowserSessionStore").finish()
-    }
-}
-
-#[async_trait]
-impl<Conn> BrowserSessionStore for DieselBrowserSessionStore<Conn>
-where
-    Conn: DieselBackendConnection,
-    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
-    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
-    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
-{
-    async fn save_session(&self, record: BrowserSessionRecord) -> anyhow::Result<()> {
-        let mut connection = self.conn().await?;
-        let state_json = serde_json::to_string(&record.state)
-            .context("failed to serialize browser session state")?;
-        let timestamp = to_naive(record.updated_at);
-
-        let insert = NewBrowserSessionModel {
-            user_id: &record.user_id,
-            state: &state_json,
-            created_at: timestamp,
-            updated_at: timestamp,
-        };
-
-        let changeset = BrowserSessionChangeset {
-            state: &state_json,
-            updated_at: timestamp,
-        };
-
-        diesel::insert_into(browser_sessions::table)
-            .values(&insert)
-            .on_conflict(browser_sessions::user_id)
-            .do_update()
-            .set(&changeset)
-            .execute(&mut connection)
-            .await
-            .context("failed to upsert browser session state")?;
-
-        Ok(())
-    }
-
-    async fn get_session(&self, user_id: &str) -> anyhow::Result<Option<BrowserSessionRecord>> {
-        let mut connection = self.conn().await?;
-        match browser_sessions::table
-            .find(user_id)
-            .first::<BrowserSessionModel>(&mut connection)
-            .await
-        {
-            Ok(row) => {
-                let state: BrowserSessionState = serde_json::from_str(&row.state)
-                    .context("failed to deserialize browser session state")?;
-                Ok(Some(BrowserSessionRecord {
-                    user_id: row.user_id,
-                    state,
-                    updated_at: from_naive(row.updated_at),
-                }))
-            }
-            Err(DieselError::NotFound) => Ok(None),
-            Err(err) => Err(anyhow!("failed to load browser session: {err}")),
-        }
-    }
-
-    async fn delete_session(&self, user_id: &str) -> anyhow::Result<()> {
-        let mut connection = self.conn().await?;
-        diesel::delete(browser_sessions::table.find(user_id))
-            .execute(&mut connection)
-            .await
-            .context("failed to delete browser session")?;
-        Ok(())
     }
 }
 

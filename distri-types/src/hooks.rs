@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::{ExecutionResult, Message, PlanStep, browser::ObserveResponse};
+use crate::{ExecutionResult, Message, PlanStep};
 
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
@@ -59,10 +59,6 @@ pub struct InlineHookRequest {
     pub plan: Option<Vec<PlanStep>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result: Option<ExecutionResult>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub observation: Option<ObserveResponse>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sequence_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]

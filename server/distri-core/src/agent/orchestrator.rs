@@ -24,7 +24,7 @@ use distri_types::{
     ToolsConfig,
 };
 use distri_types::{
-    browser::DistriBrowserConfig,
+    browser::BrowsrClientConfig,
     configuration::{
         is_namespaced_plugin_id, namespace_plugin_item, split_namespaced_plugin_id,
         CustomAgentDefinition, CustomAgentExample, DistriServerConfig, StoreConfig,
@@ -51,7 +51,7 @@ pub struct AgentOrchestrator {
     pub workspace_filesystem: Arc<FileSystem>,
     pub session_filesystem: Arc<FileSystem>,
     pub session_root_prefix: Option<String>,
-    pub browser_config: Arc<RwLock<DistriBrowserConfig>>,
+    pub browser_config: Arc<RwLock<BrowsrClientConfig>>,
     pub additional_tools: Arc<RwLock<HashMap<String, Vec<Arc<dyn Tool>>>>>,
     pub plugin_registry: Arc<PluginRegistry>,
     pub plugin_tools: Arc<RwLock<HashMap<String, Vec<Arc<dyn Tool>>>>>,
@@ -91,7 +91,7 @@ pub struct AgentOrchestratorBuilder {
     plugin_tools: Option<HashMap<String, Vec<Arc<dyn Tool>>>>,
     workspace_filesystem: Option<Arc<FileSystem>>,
     workspace_path: Option<std::path::PathBuf>,
-    browser_config: Option<DistriBrowserConfig>,
+    browser_config: Option<BrowsrClientConfig>,
     stores: Option<InitializedStores>,
     prompt_registry: Option<Arc<PromptRegistry>>,
     store_config: Option<StoreConfig>,
@@ -174,7 +174,7 @@ impl AgentOrchestratorBuilder {
         self
     }
 
-    pub fn with_browser_config(mut self, browser_config: DistriBrowserConfig) -> Self {
+    pub fn with_browser_config(mut self, browser_config: BrowsrClientConfig) -> Self {
         self.browser_config = Some(browser_config);
         self
     }
@@ -771,8 +771,8 @@ impl AgentOrchestrator {
         // Auto-include browser_agent sub-agent when browser_config.enabled = true
         // This allows any agent with browser enabled to delegate browser tasks to the specialized browser agent
         // Skip if this agent IS browser_agent (don't add itself as a sub-agent)
-        let is_browser_agent = definition.name == "browser_agent"
-            || definition.name.ends_with("/browser_agent");
+        let is_browser_agent =
+            definition.name == "browser_agent" || definition.name.ends_with("/browser_agent");
         if definition.should_use_browser() && !is_browser_agent {
             let browser_agent_name = "browser_agent".to_string();
             // Check if browser_agent is not already in sub_agents

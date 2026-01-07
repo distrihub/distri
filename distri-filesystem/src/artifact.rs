@@ -71,7 +71,7 @@ impl ArtifactWrapper {
     /// to find artifacts that might be stored at either location.
     pub fn get_paths_to_check(artifact_id: &str) -> Vec<String> {
         let (thread_hash, task_hash) = Self::parse_artifact_id(artifact_id);
-        
+
         let mut paths = Vec::new();
         if let Some(thread) = &thread_hash {
             paths.push(format!("threads/{}", thread));
@@ -82,7 +82,7 @@ impl ArtifactWrapper {
             // Not a threads path, just check the original
             paths.push(artifact_id.to_string());
         }
-        
+
         paths
     }
 
@@ -296,7 +296,7 @@ impl ArtifactWrapper {
     /// Load artifact content if include_artifacts is true.
     /// Currently supports images (converts to Part::Image with base64 content).
     /// Future: will support PDFs and other file types.
-    /// 
+    ///
     /// Returns:
     /// - If include_artifacts is false: returns Part::Artifact(metadata) unchanged
     /// - If include_artifacts is true and artifact is an image: returns Part::Image with loaded content
@@ -339,7 +339,10 @@ impl ArtifactWrapper {
                                     Ok(base64_content) => {
                                         // Verify it's valid base64
                                         use base64::{engine::general_purpose, Engine as _};
-                                        if general_purpose::STANDARD.decode(&base64_content).is_err() {
+                                        if general_purpose::STANDARD
+                                            .decode(&base64_content)
+                                            .is_err()
+                                        {
                                             tracing::warn!(
                                                 "Image artifact {} does not contain valid base64. Keeping as artifact.",
                                                 metadata.file_id
@@ -355,7 +358,9 @@ impl ArtifactWrapper {
                                                 name: Some(metadata.file_id.clone()),
                                             });
                                             let image_size = match &image_part {
-                                                Part::Image(FileType::Bytes { bytes, .. }) => bytes.len(),
+                                                Part::Image(FileType::Bytes { bytes, .. }) => {
+                                                    bytes.len()
+                                                }
                                                 _ => 0,
                                             };
                                             tracing::info!(

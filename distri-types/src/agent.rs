@@ -1,6 +1,6 @@
 use crate::AgentError;
 use crate::a2a::AgentSkill;
-use crate::browser::{BrowserAgentConfig, DistriBrowserConfig};
+use crate::browser::{BrowserAgentConfig, BrowsrClientConfig};
 use crate::configuration::DefinitionOverrides;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -450,7 +450,7 @@ impl StandardDefinition {
     }
 
     /// Returns the runtime Chromium driver configuration if enabled
-    pub fn browser_runtime_config(&self) -> Option<DistriBrowserConfig> {
+    pub fn browser_runtime_config(&self) -> Option<BrowsrClientConfig> {
         self.browser_config.as_ref().map(|cfg| cfg.runtime_config())
     }
 

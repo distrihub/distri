@@ -30,7 +30,6 @@ pub trait StoreFactory: Send + Sync {
     fn scratchpad_store(&self) -> Arc<dyn ScratchpadStore>;
     fn session_store(&self) -> Arc<dyn SessionStore>;
     fn plugin_catalog_store(&self) -> Arc<dyn PluginCatalogStore>;
-    fn browser_session_store(&self) -> Arc<dyn BrowserSessionStore>;
     fn prompt_template_store(&self) -> Arc<dyn PromptTemplateStore>;
     fn secret_store(&self) -> Arc<dyn SecretStore>;
 }
@@ -77,10 +76,6 @@ where
         Arc::new(DieselStoreBuilder::plugin_catalog_store(self)) as Arc<dyn PluginCatalogStore>
     }
 
-    fn browser_session_store(&self) -> Arc<dyn BrowserSessionStore> {
-        Arc::new(DieselStoreBuilder::browser_session_store(self)) as Arc<dyn BrowserSessionStore>
-    }
-
     fn prompt_template_store(&self) -> Arc<dyn PromptTemplateStore> {
         Arc::new(DieselStoreBuilder::prompt_template_store(self)) as Arc<dyn PromptTemplateStore>
     }
@@ -122,7 +117,6 @@ pub struct StoreBuilder {
     pub workflow_store: Option<Arc<dyn WorkflowStore>>,
     pub external_tool_calls_store: Option<Arc<dyn ExternalToolCallsStore>>,
     pub plugin_store: Option<Arc<dyn PluginCatalogStore>>,
-    pub browser_session_store: Option<Arc<dyn BrowserSessionStore>>,
     pub prompt_template_store: Option<Arc<dyn PromptTemplateStore>>,
     pub secret_store: Option<Arc<dyn SecretStore>>,
 }
@@ -142,7 +136,6 @@ impl StoreBuilder {
             workflow_store: None,
             external_tool_calls_store: None,
             plugin_store: None,
-            browser_session_store: None,
             prompt_template_store: None,
             secret_store: None,
         }
@@ -246,12 +239,6 @@ impl StoreBuilder {
         self
     }
 
-    /// Set a pre-initialized browser session store (won't be reinitialized)
-    pub fn with_browser_session_store(mut self, store: Arc<dyn BrowserSessionStore>) -> Self {
-        self.browser_session_store = Some(store);
-        self
-    }
-
     /// Build InitializedStores, initializing only stores that weren't pre-provided
     pub async fn build(self) -> Result<InitializedStores> {
         let metadata_factory = self
@@ -273,10 +260,6 @@ impl StoreBuilder {
             .plugin_store
             .clone()
             .unwrap_or_else(|| metadata_factory.plugin_catalog_store());
-        let browser_session_store = self
-            .browser_session_store
-            .clone()
-            .unwrap_or_else(|| metadata_factory.browser_session_store());
         let prompt_template_store = self
             .prompt_template_store
             .clone()
@@ -374,7 +357,6 @@ impl StoreBuilder {
             crawl_store: None,
             external_tool_calls_store,
             plugin_store,
-            browser_session_store,
             prompt_template_store: Some(prompt_template_store),
             secret_store: Some(secret_store),
         })
@@ -483,7 +465,6 @@ pub async fn create_ephemeral_execution_stores(
         crawl_store: base_stores.crawl_store.clone(),
         external_tool_calls_store: base_stores.external_tool_calls_store.clone(),
         plugin_store: base_stores.plugin_store.clone(),
-        browser_session_store: base_stores.browser_session_store.clone(),
         prompt_template_store: base_stores.prompt_template_store.clone(),
         secret_store: base_stores.secret_store.clone(),
     })
@@ -527,7 +508,6 @@ pub async fn prepare_stores_for_execution(
         crawl_store: base_stores.crawl_store.clone(),
         external_tool_calls_store: base_stores.external_tool_calls_store.clone(),
         plugin_store: base_stores.plugin_store.clone(),
-        browser_session_store: base_stores.browser_session_store.clone(),
         prompt_template_store: base_stores.prompt_template_store.clone(),
         secret_store: base_stores.secret_store.clone(),
     })

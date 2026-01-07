@@ -1,9 +1,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use browsr_types::FileType;
-
-use crate::{Part, PlanStep, TaskStatus, ToolResponse};
+use crate::{Part, PlanStep, TaskStatus, ToolResponse, core::FileType};
 
 /// Execution strategy types
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
