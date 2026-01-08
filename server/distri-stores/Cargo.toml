@@ -1,15 +1,15 @@
 [package]
 name = "distri-stores"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2024"
 
 [dependencies]
 anyhow = "1.0"
 async-trait = { workspace = true }
-distri-types = { path = "../../distri-types", version = "0.3.0" }
-distri-filesystem = { path = "../../distri-filesystem", version = "0.3.0" }
-distri-auth = { path = "../distri-auth", version = "0.3.0" }
-distri-plugins = { path = "../distri-plugins", version = "0.3.0" }
+distri-types = { path = "../../distri-types", version = "0.3.1" }
+distri-filesystem = { path = "../../distri-filesystem", version = "0.3.1" }
+distri-auth = { path = "../distri-auth", version = "0.3.1" }
+distri-plugins = { path = "../distri-plugins", version = "0.3.1" }
 tracing = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }

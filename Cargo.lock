@@ -1350,7 +1350,7 @@ checksum = "a1d728cc89cf3aee9ff92b05e62b19ee65a02b5702cff7d5a377e32c6ae29d8d"
 
 [[package]]
 name = "cli-auth-server"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "actix-cors",
  "actix-web",
@@ -2956,7 +2956,7 @@ dependencies = [
 
 [[package]]
 name = "distri"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "actix-web",
  "anyhow",
@@ -2987,7 +2987,7 @@ dependencies = [
 
 [[package]]
 name = "distri-a2a"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "schemars",
  "serde",
@@ -2997,7 +2997,7 @@ dependencies = [
 
 [[package]]
 name = "distri-auth"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "actix-cors",
  "actix-web",
@@ -3024,7 +3024,7 @@ dependencies = [
 
 [[package]]
 name = "distri-cli"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -3047,7 +3047,7 @@ dependencies = [
 
 [[package]]
 name = "distri-coder"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3085,7 +3085,7 @@ dependencies = [
 
 [[package]]
 name = "distri-core"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "async-mcp",
@@ -3147,7 +3147,7 @@ dependencies = [
 
 [[package]]
 name = "distri-filesystem"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3188,7 +3188,7 @@ dependencies = [
 
 [[package]]
 name = "distri-parsers"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3213,7 +3213,7 @@ dependencies = [
 
 [[package]]
 name = "distri-plugin-executor"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3235,7 +3235,7 @@ dependencies = [
 
 [[package]]
 name = "distri-plugins"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3265,7 +3265,7 @@ dependencies = [
 
 [[package]]
 name = "distri-scraper"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "actix-cors",
  "actix-web",
@@ -3292,7 +3292,7 @@ dependencies = [
 
 [[package]]
 name = "distri-server"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "actix-cors",
  "actix-files",
@@ -3341,7 +3341,7 @@ dependencies = [
 
 [[package]]
 name = "distri-server-cli"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3381,7 +3381,7 @@ dependencies = [
 
 [[package]]
 name = "distri-stores"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3410,7 +3410,7 @@ dependencies = [
 
 [[package]]
 name = "distri-types"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "async-mcp",
@@ -10643,7 +10643,7 @@ dependencies = [
 
 [[package]]
 name = "web-transport-proto"
-version = "0.3.0"
+version = "0.2.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "974fa1e325e6cc5327de8887f189a441fcff4f8eedcd31ec87f0ef0cc5283fbc"
 dependencies = [

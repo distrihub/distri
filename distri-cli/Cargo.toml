@@ -1,6 +1,6 @@
 [package]
 name = "distri-cli"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2021"
 
 [dependencies]
@@ -14,9 +14,9 @@ serde_json = { workspace = true }
 tokio = { version = "1.0", features = ["full"] }
 toml = "0.8"
 
-distri = { path = "../distri", version = "0.3.0" }
-distri-a2a = { path = "../distri-a2a", version = "0.3.0" }
-distri-types = { path = "../distri-types", version = "0.3.0" }
+distri = { path = "../distri", version = "0.3.1" }
+distri-a2a = { path = "../distri-a2a", version = "0.3.1" }
+distri-types = { path = "../distri-types", version = "0.3.1" }
 uuid = { version = "1.13.1", features = ["v4"] }
 tracing-subscriber = { workspace = true }
 tracing = { workspace = true }
