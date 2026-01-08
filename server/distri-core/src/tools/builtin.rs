@@ -4,7 +4,9 @@ use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Arc};
 
 use crate::agent::todos::TodosTool;
-use crate::tools::browser::{DistriBrowserSharedTool, DistriScrapeSharedTool, SearchTool};
+use crate::tools::browser::{
+    BrowserStepTool, DistriBrowserSharedTool, DistriScrapeSharedTool, SearchTool,
+};
 use crate::{
     agent::{file::run_file_agent, ExecutorContext},
     tools::{emit_final, state::AgentExecutorState, ExecutorContextTool},
@@ -22,6 +24,7 @@ pub fn get_builtin_tools(
         Arc::new(FinalTool) as Arc<dyn Tool>,
         Arc::new(DistriScrapeSharedTool) as Arc<dyn Tool>,
         Arc::new(DistriBrowserSharedTool) as Arc<dyn Tool>,
+        Arc::new(BrowserStepTool) as Arc<dyn Tool>,
         Arc::new(SearchTool) as Arc<dyn Tool>,
         Arc::new(TodosTool) as Arc<dyn Tool>,
     ];

@@ -31,14 +31,30 @@ pub struct PluginWorkflowDefinition {
     pub examples: Vec<serde_json::Value>,
 }
 
+/// Cloud-specific metadata for agents (optional, only present in cloud responses)
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AgentCloudMetadata {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<uuid::Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub published: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub published_at: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_owner: Option<bool>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentConfigWithTools {
     #[serde(flatten)]
     pub agent: AgentConfig,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub resolved_tools: Vec<ToolDefinition>,
-    #[serde(skip_serializing_if = "String::is_empty")]
-    pub markdown: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub markdown: Option<String>,
+    /// Cloud-specific metadata (optional, only present in cloud responses)
+    #[serde(flatten, default)]
+    pub cloud: AgentCloudMetadata,
 }
 
 /// Unified agent configuration enum - combines all agent and workflow types

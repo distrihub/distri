@@ -4,7 +4,7 @@ use distri_core::{
     types::{McpServerMetadata, ServerTrait, TransportType},
     AgentOrchestratorBuilder,
 };
-use distri_types::browser::DistriBrowserConfig;
+use distri_types::browser::BrowsrClientConfig;
 use distri_types::configuration::{AgentConfig, DistriServerConfig, ObjectStorageConfig};
 use distri_types::ServerMetadataWrapper;
 pub mod workspace;
@@ -232,7 +232,7 @@ pub async fn init_orchestrator_with_configuration(
             builder = builder.with_default_analysis_model_settings(analysis_settings);
         }
     }
-    builder = builder.with_browser_config(DistriBrowserConfig::default());
+    builder = builder.with_browser_config(BrowsrClientConfig::default());
     let orchestrator = builder
         .with_stores(stores)
         .with_plugin_registry(Arc::new(plugin_registry))

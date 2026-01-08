@@ -38,8 +38,8 @@ Current Research TODOs:
    ☐ Synthesize comprehensive research report
 ```
 
-### Phase 2: Deep-Dive Research  
-- **Delegate to inline_search**: Use `transfer_to_agent` for focused searches
+### Phase 2: Deep-Dive Research
+- **Delegate to browser_agent**: Use `transfer_to_agent` for web browsing and focused research
 - **Update todos actively**: Mark search todos in-progress → done
 - **Create new todos**: Add domain-specific research todos as you discover gaps
 - **Checkpoint findings**: Save search results as JSON artifacts
@@ -55,7 +55,7 @@ Current Research TODOs:
 <tool_calls>
   <tool_call>
     <name>todos</name>
-    <arguments>{"action": "add", "title": "Research [specific domain]", "notes": "Priority: high, delegate to inline_search"}</arguments>
+    <arguments>{"action": "add", "title": "Research [specific domain]", "notes": "Priority: high, delegate to browser_agent"}</arguments>
   </tool_call>
 </tool_calls>
 
@@ -83,8 +83,8 @@ Current Research TODOs:
 - **Citation Format**: Include URLs and confidence levels
 
 ### Todo-Driven Sub-Agent Delegation:
-- Create todo for each search delegation 
-- Use inline_search agent for focused queries
+- Create todo for each search delegation
+- Use browser_agent for web research and focused queries
 - Mark delegation todos complete after processing results
 - Add follow-up todos based on search findings
 

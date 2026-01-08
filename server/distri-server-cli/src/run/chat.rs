@@ -194,11 +194,6 @@ async fn ensure_chat_browser_if_needed(
         return Ok(());
     }
 
-    executor
-        .ensure_browser_session(None)
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to initialize browser: {}", e))?;
-
     Ok(())
 }
 

@@ -1,6 +1,6 @@
 use browsr_client::{default_transport, BrowsrClient};
 use dashmap::DashMap;
-use distri_types::{browser::DistriBrowserConfig, OrchestratorRef, OrchestratorTrait};
+use distri_types::{browser::BrowsrClientConfig, OrchestratorRef, OrchestratorTrait};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::{Mutex, RwLock};
@@ -19,7 +19,7 @@ pub struct BrowserSessions {
 }
 
 impl BrowserSessions {
-    pub fn new(_config: Arc<RwLock<DistriBrowserConfig>>) -> Self {
+    pub fn new(_config: Arc<RwLock<BrowsrClientConfig>>) -> Self {
         Self {
             sessions: Arc::new(DashMap::new()),
             orchestrator_ref: Arc::new(OrchestratorRef::new()),
@@ -34,6 +34,7 @@ impl BrowserSessions {
         self.client
             .create_session()
             .await
+            .map(|session| session.session_id)
             .map_err(|e| format!("Failed to initialize browser session: {}", e))
     }
 

@@ -3,11 +3,10 @@ use distri_a2a::{
     TextPart,
 };
 
-use browsr_types::FileType;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::AgentError;
+use crate::{AgentError, core::FileType};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "snake_case")]

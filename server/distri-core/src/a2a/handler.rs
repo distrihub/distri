@@ -1,6 +1,5 @@
 use crate::a2a::stream::handle_message_send_streaming_sse;
 use crate::a2a::{unimplemented_error, A2AError, SseMessage};
-use crate::agent::context::BrowserSession;
 use crate::agent::types::ExecutorContextMetadata;
 use crate::agent::AgentOrchestrator;
 use crate::types::default_agent_version;
@@ -139,45 +138,7 @@ impl A2AHandler {
             .and_then(|metadata| serde_json::from_value(metadata).ok())
             .unwrap_or_default();
 
-        let mut additional_attributes = metadata.additional_attributes.unwrap_or_default();
-
-        // Load existing thread attributes when available to keep per-thread session data stable
-        let thread_attrs_from_store = if let Some(thread_id) = params.message.context_id.as_deref()
-        {
-            orchestrator
-                .stores
-                .thread_store
-                .get_thread(thread_id)
-                .await
-                .ok()
-                .flatten()
-                .and_then(|thread| {
-                    if thread.attributes.is_null() {
-                        None
-                    } else {
-                        Some(thread.attributes)
-                    }
-                })
-        } else {
-            None
-        };
-
-        // Merge stored thread attributes with metadata-provided attributes (metadata wins)
-        let mut browser_session: BrowserSession = thread_attrs_from_store
-            .and_then(|v| serde_json::from_value(v).ok())
-            .unwrap_or_default();
-        if let Some(attrs_val) = additional_attributes.thread.clone() {
-            if let Ok(meta_bs) = serde_json::from_value::<BrowserSession>(attrs_val) {
-                if meta_bs.browser_session_id.is_some() {
-                    browser_session.browser_session_id = meta_bs.browser_session_id;
-                }
-                if meta_bs.sequence_id.is_some() {
-                    browser_session.sequence_id = meta_bs.sequence_id;
-                }
-            }
-        }
-
-        let attr_session_id = browser_session.browser_session_id.clone();
+        let additional_attributes = metadata.additional_attributes.unwrap_or_default();
 
         let thread_id = params
             .message
@@ -185,36 +146,14 @@ impl A2AHandler {
             .clone()
             .unwrap_or_else(|| Uuid::new_v4().to_string());
 
-        let session_id_from_meta = metadata_value.as_ref().and_then(|m| {
-            m.get("session_id")
+        // Extract browser_session_id from metadata if provided
+        let browser_session_id = metadata_value.as_ref().and_then(|m| {
+            m.get("browser_session_id")
                 .and_then(|v| v.as_str())
                 .map(String::from)
         });
 
-        let has_explicit_session = session_id_from_meta.is_some() || attr_session_id.is_some();
-
-        let session_id = session_id_from_meta
-            .clone()
-            .or(attr_session_id.clone())
-            .unwrap_or_else(|| thread_id.clone());
-
-        // Keep thread attributes in sync so tools can validate presence of browser_session_id/sequence_id
-        if has_explicit_session && browser_session.browser_session_id.is_none() {
-            browser_session.browser_session_id = Some(session_id.clone());
-        }
-
-        if browser_session.sequence_id.is_none() {
-            browser_session.sequence_id = Some(thread_id.clone());
-        }
-
-        let has_thread_data =
-            browser_session.browser_session_id.is_some() || browser_session.sequence_id.is_some();
-
-        if has_thread_data {
-            if let Ok(val) = serde_json::to_value(&browser_session) {
-                additional_attributes.thread = Some(val);
-            }
-        }
+        let session_id = thread_id.clone();
 
         let tools = metadata.external_tools.unwrap_or_default();
         let tools = tools
@@ -232,6 +171,7 @@ impl A2AHandler {
             verbose,
             user_id,
             session_id,
+            browser_session_id,
             dynamic_tools: Some(Arc::new(RwLock::new(tools))),
             tool_metadata: metadata.tool_metadata,
             orchestrator: Some(orchestrator.clone()),

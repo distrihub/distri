@@ -1,5 +1,4 @@
 use anyhow::Context;
-use browsr_types::FileType;
 use chrono;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -563,4 +562,30 @@ pub struct UpdateThreadRequest {
     pub metadata: Option<HashMap<String, serde_json::Value>>,
     pub attributes: Option<serde_json::Value>,
     pub user_id: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, PartialEq)]
+#[serde(rename_all = "snake_case", tag = "type")]
+pub enum FileType {
+    Bytes {
+        bytes: String,
+        mime_type: String,
+        name: Option<String>,
+    },
+    Url {
+        url: String,
+        mime_type: String,
+        name: Option<String>,
+    },
+}
+
+impl FileType {
+    pub fn as_image_url(&self) -> Option<String> {
+        match self {
+            FileType::Url { url, .. } => Some(url.clone()),
+            FileType::Bytes {
+                bytes, mime_type, ..
+            } => Some(format!("data:{};base64,{}", mime_type, bytes)),
+        }
+    }
 }

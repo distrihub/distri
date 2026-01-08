@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 use crate::{
     AgentEvent, CreateThreadRequest, Message, Task, TaskMessage, TaskStatus, Thread,
-    UpdateThreadRequest, browser::BrowserSessionRecord,
+    UpdateThreadRequest,
 };
 
 // Redis and PostgreSQL stores moved to distri-stores crate
@@ -68,7 +68,6 @@ pub struct InitializedStores {
     pub crawl_store: Option<Arc<dyn CrawlStore>>,
     pub external_tool_calls_store: Arc<dyn ExternalToolCallsStore>,
     pub plugin_store: Arc<dyn PluginCatalogStore>,
-    pub browser_session_store: Arc<dyn BrowserSessionStore>,
     pub prompt_template_store: Option<Arc<dyn PromptTemplateStore>>,
     pub secret_store: Option<Arc<dyn SecretStore>>,
 }
@@ -107,10 +106,6 @@ impl InitializedStores {
 
     pub fn with_plugin_store(&mut self, plugin_store: Arc<dyn PluginCatalogStore>) {
         self.plugin_store = plugin_store;
-    }
-
-    pub fn set_browser_session_store(&mut self, store: Arc<dyn BrowserSessionStore>) {
-        self.browser_session_store = store;
     }
 }
 
@@ -189,15 +184,6 @@ pub trait SessionStoreExt: SessionStore {
     }
 }
 impl<T: SessionStore + ?Sized> SessionStoreExt for T {}
-
-#[async_trait::async_trait]
-pub trait BrowserSessionStore: Send + Sync + std::fmt::Debug {
-    async fn save_session(&self, record: BrowserSessionRecord) -> anyhow::Result<()>;
-
-    async fn get_session(&self, user_id: &str) -> anyhow::Result<Option<BrowserSessionRecord>>;
-
-    async fn delete_session(&self, user_id: &str) -> anyhow::Result<()>;
-}
 
 // Higher-level MemoryStore trait - manages cross-session permanent memory using user_id
 #[async_trait::async_trait]
@@ -364,6 +350,11 @@ pub trait ThreadStore: Send + Sync {
 
     /// Get agents sorted by thread count (most active first)
     async fn get_agents_by_usage(&self) -> anyhow::Result<Vec<AgentUsageInfo>>;
+
+    /// Get a map of agent name -> stats for all agents with activity
+    async fn get_agent_stats_map(
+        &self,
+    ) -> anyhow::Result<std::collections::HashMap<String, AgentStatsInfo>>;
 }
 
 /// Home statistics for dashboard
@@ -382,6 +373,9 @@ pub struct HomeStats {
     pub most_active_agent: Option<MostActiveAgent>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub latest_threads: Option<Vec<LatestThreadInfo>>,
+    /// Recently used agents (last 10 by most recent thread activity)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recently_used_agents: Option<Vec<RecentlyUsedAgent>>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -391,6 +385,15 @@ pub struct MostActiveAgent {
     pub thread_count: i64,
 }
 
+/// Agent that was recently used (based on thread activity)
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct RecentlyUsedAgent {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub last_used_at: chrono::DateTime<chrono::Utc>,
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct LatestThreadInfo {
     pub id: String,
@@ -398,6 +401,14 @@ pub struct LatestThreadInfo {
     pub agent_id: String,
     pub agent_name: String,
     pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Agent statistics for display
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct AgentStatsInfo {
+    pub thread_count: i64,
+    pub sub_agent_usage_count: i64,
+    pub last_used_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 #[async_trait]

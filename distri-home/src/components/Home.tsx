@@ -2,11 +2,12 @@ import { useMemo, useState } from 'react';
 import { useAgentDefinitions } from '@distri/react';
 import { useDistriHomeNavigate, useDistriHomeConfig } from '../DistriHomeProvider';
 import { useHomeStats } from '../hooks/useHomeStats';
-import { HomeStatsThread } from '../DistriHomeClient';
+import { HomeStatsThread, RecentlyUsedAgent } from '../DistriHomeClient';
 import {
   AlertTriangle,
   ArrowUpRight,
   Bot,
+  Clock,
   Gauge,
   Loader2,
   MessageSquare,
@@ -45,6 +46,8 @@ export function Home({ onNewAgent, renderNewAgentHelp, className }: HomeProps) {
 
   const latestThreads = (stats?.latest_threads ?? []) as HomeStatsThread[];
   const mostActiveAgent = stats?.most_active_agent ?? null;
+  // Show first 5 of the recently used agents
+  const recentlyUsedAgents = (stats?.recently_used_agents ?? []).slice(0, 5) as RecentlyUsedAgent[];
 
   const latestActivityLabel = useMemo(() => {
     if (statsError) return 'Unavailable';
@@ -125,137 +128,106 @@ export function Home({ onNewAgent, renderNewAgentHelp, className }: HomeProps) {
           </div>
         ) : null}
 
-        <div className="grid gap-6 lg:grid-cols-3">
-          <div className="relative overflow-hidden rounded-2xl border border-border/70 bg-card p-6 shadow-sm lg:col-span-2">
-            <div className="absolute right-4 top-4 text-primary/10">
-              <Gauge className="h-20 w-20" />
-            </div>
-            <div className="relative z-10">
-              <div className="flex items-center gap-2 text-lg font-semibold text-foreground">
-                <Gauge className="h-4 w-4 text-primary" />
-                Overview
-              </div>
-              <div className="mt-6 grid gap-6 md:grid-cols-3">
-                <OverviewStat
-                  label="Total messages"
-                  value={messageCountValue}
-                  helper={statsLoading || statsError ? 'Unavailable' : 'Across all threads'}
-                />
-                <OverviewStat
-                  label="Total threads"
-                  value={threadsCountValue}
-                  helper={`Latest ${latestActivityLabel}`}
-                  className="md:border-l md:border-border/60 md:pl-6"
-                />
-                <OverviewStat
-                  label="Avg time per run"
-                  value={avgTimeLabel}
-                  helper={statsLoading || statsError ? 'Unavailable' : 'Across all runs'}
-                  className="md:border-l md:border-border/60 md:pl-6"
-                />
-              </div>
-            </div>
+        {/* Stats Overview - Single Row */}
+        <div className="relative overflow-hidden rounded-2xl border border-border/70 bg-card p-6 shadow-sm">
+          <div className="absolute right-4 top-4 text-primary/10">
+            <Gauge className="h-20 w-20" />
           </div>
-
-          <div className="flex flex-col justify-between rounded-2xl border border-border/70 bg-card p-6 shadow-sm">
-            <div>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2 text-lg font-semibold text-foreground">
-                  <Users className="h-4 w-4 text-primary" />
-                  Agents
-                </div>
-                <button
-                  type="button"
-                  onClick={() => navigate('agents')}
-                  className="rounded-md border border-primary/20 bg-primary/5 px-2 py-1 text-xs font-semibold text-primary transition hover:bg-primary/10"
-                >
-                  View all
-                </button>
-              </div>
-              <div className="mt-5 text-4xl font-semibold text-foreground">
-                {agentCountValue}
-              </div>
-              <p className="mt-2 text-sm text-muted-foreground">
-                {statsLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Owned / All agents'}
-              </p>
+          <div className="relative z-10">
+            <div className="flex items-center gap-2 text-lg font-semibold text-foreground">
+              <Gauge className="h-4 w-4 text-primary" />
+              Overview
             </div>
-            <div className="mt-6 border-t border-border/60 pt-4 text-sm text-muted-foreground">
-              <div className="flex items-center justify-between">
-                <span>Most active</span>
-                {statsError ? (
-                  <span className="font-medium text-foreground">Unavailable</span>
-                ) : mostActiveAgent?.id ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const getPath = config.navigationPaths?.agentDetails;
-                      const path = getPath
-                        ? getPath(mostActiveAgent.id)
-                        : `agents/${encodeURIComponent(mostActiveAgent.id)}`;
-                      navigate(path);
-                    }}
-                    className="font-medium text-primary transition hover:text-primary/80"
-                  >
-                    {mostActiveLabel}
-                  </button>
-                ) : (
-                  <span className="font-medium text-foreground">{mostActiveLabel}</span>
-                )}
+            <div className="mt-6 grid gap-6 grid-cols-2 md:grid-cols-5">
+              <OverviewStat
+                label="Messages"
+                value={messageCountValue}
+                helper={statsLoading || statsError ? 'Unavailable' : 'Across all threads'}
+              />
+              <OverviewStat
+                label="Threads"
+                value={threadsCountValue}
+                helper={`Latest ${latestActivityLabel}`}
+                className="md:border-l md:border-border/60 md:pl-6"
+              />
+              <OverviewStat
+                label="Avg run time"
+                value={avgTimeLabel}
+                helper={statsLoading || statsError ? 'Unavailable' : 'Across all runs'}
+                className="md:border-l md:border-border/60 md:pl-6"
+              />
+              <OverviewStat
+                label="Agents"
+                value={agentCountValue}
+                helper={statsLoading || statsError ? 'Unavailable' : 'Owned / All'}
+                className="md:border-l md:border-border/60 md:pl-6"
+              />
+              <div className="md:border-l md:border-border/60 md:pl-6">
+                <div className="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">Most active</div>
+                <div className="mt-2">
+                  {statsError ? (
+                    <span className="text-xl font-semibold text-foreground">—</span>
+                  ) : mostActiveAgent?.id ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const getPath = config.navigationPaths?.agentDetails;
+                        const path = getPath
+                          ? getPath(mostActiveAgent.id)
+                          : `agents/${encodeURIComponent(mostActiveAgent.id)}`;
+                        navigate(path);
+                      }}
+                      className="text-xl font-semibold text-primary transition hover:text-primary/80"
+                    >
+                      {mostActiveLabel}
+                    </button>
+                  ) : (
+                    <span className="text-xl font-semibold text-foreground">{mostActiveLabel}</span>
+                  )}
+                </div>
+                <div className="mt-2 text-xs text-muted-foreground">
+                  {statsLoading || statsError ? 'Unavailable' : `${mostActiveAgent?.count ?? 0} threads`}
+                </div>
               </div>
             </div>
           </div>
         </div>
 
-        <div className="mt-8 rounded-2xl border border-border/70 bg-card shadow-sm">
-          <div className="flex items-center justify-between border-b border-border/60 px-6 py-4">
-            <div className="flex items-center gap-2 text-lg font-semibold text-foreground">
-              <MessageSquare className="h-4 w-4 text-primary" />
-              Latest threads
-            </div>
-            <button
-              type="button"
-              onClick={() => navigate('threads')}
-              className="rounded-lg border border-primary/20 bg-primary/5 px-3 py-1.5 text-xs font-semibold text-primary transition hover:bg-primary/10"
-            >
-              View all
-            </button>
-          </div>
-          <div className="divide-y divide-border/60">
-            {statsLoading ? (
-              <div className="px-6 py-4 text-sm text-muted-foreground">Loading…</div>
-            ) : statsError ? (
-              <div className="px-6 py-4 text-sm text-muted-foreground">
-                We couldn't load threads right now.
+        {/* Latest Threads and Recently Used Agents - aligned with top row */}
+        <div className="mt-6 grid gap-6 lg:grid-cols-3">
+          {/* Latest Threads - spans 2 columns to align with Overview */}
+          <div className="rounded-2xl border border-border/70 bg-card shadow-sm lg:col-span-2">
+            <div className="flex items-center justify-between border-b border-border/60 px-6 py-4">
+              <div className="flex items-center gap-2 text-lg font-semibold text-foreground">
+                <MessageSquare className="h-4 w-4 text-primary" />
+                Latest threads
               </div>
-            ) : latestThreads.length === 0 ? (
-              <div className="px-6 py-4 text-sm text-muted-foreground">No conversations yet.</div>
-            ) : (
-              latestThreads.map((thread: HomeStatsThread, index: number) => {
-                const avatarStyle = threadAvatarStyles[index % threadAvatarStyles.length];
-                return (
-                  <div
-                    key={thread.id}
-                    className="group flex items-center justify-between gap-4 px-6 py-4 transition hover:bg-muted/40"
-                  >
-                    <div className="flex min-w-0 items-start gap-3">
-                      <div
-                        className={`flex h-9 w-9 items-center justify-center rounded-full ${avatarStyle.bg} ${avatarStyle.text}`}
-                      >
-                        <Bot className="h-4 w-4" />
-                      </div>
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-semibold text-foreground group-hover:text-primary">
-                          {thread.title || 'Untitled thread'}
-                        </p>
-                        <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                          <span className="rounded border border-border/60 bg-muted/60 px-1.5 py-0.5">
-                            {thread.agent_name || 'Unknown agent'}
-                          </span>
-                          <span>• {formatRelativeTime(thread.updated_at)}</span>
-                        </div>
-                      </div>
-                    </div>
+              <button
+                type="button"
+                onClick={() => navigate('threads')}
+                className="rounded-md border border-primary/20 bg-primary/5 px-2 py-1 text-xs font-semibold text-primary transition hover:bg-primary/10"
+              >
+                View all
+              </button>
+            </div>
+            <div className="divide-y divide-border/60">
+              {statsLoading ? (
+                <div className="flex items-center justify-center py-12 text-sm text-muted-foreground">
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Loading…
+                </div>
+              ) : statsError ? (
+                <div className="py-12 text-center text-sm text-muted-foreground">
+                  We couldn't load threads right now.
+                </div>
+              ) : latestThreads.length === 0 ? (
+                <div className="py-12 text-center text-sm text-muted-foreground">No conversations yet.</div>
+              ) : (
+                latestThreads.slice(0, 4).map((thread: HomeStatsThread, index: number) => {
+                  const avatarStyle = threadAvatarStyles[index % threadAvatarStyles.length];
+                  return (
                     <button
+                      key={thread.id}
                       type="button"
                       onClick={() => {
                         if (thread.agent_id && thread.id) {
@@ -266,15 +238,88 @@ export function Home({ onNewAgent, renderNewAgentHelp, className }: HomeProps) {
                           navigate('threads');
                         }
                       }}
-                      className="flex items-center gap-1 rounded-md border border-border/70 bg-background px-3 py-1.5 text-xs font-semibold text-foreground opacity-0 transition group-hover:opacity-100 hover:border-primary/50 hover:text-primary"
+                      className="group flex w-full items-center gap-4 px-6 py-3.5 text-left transition hover:bg-muted/40"
                     >
-                      Open
-                      <ArrowUpRight className="h-3 w-3" />
+                      <div
+                        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${avatarStyle.bg} ${avatarStyle.text}`}
+                      >
+                        <MessageSquare className="h-3.5 w-3.5" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-medium text-foreground group-hover:text-primary">
+                          {thread.title || 'Untitled thread'}
+                        </p>
+                        <p className="mt-0.5 text-xs text-muted-foreground">
+                          {thread.agent_name || 'Unknown agent'} · {formatRelativeTime(thread.updated_at)}
+                        </p>
+                      </div>
+                      <ArrowUpRight className="h-4 w-4 shrink-0 text-muted-foreground opacity-0 transition group-hover:opacity-100" />
                     </button>
-                  </div>
-                );
-              })
-            )}
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          {/* Recently Active Agents */}
+          <div className="flex flex-col rounded-2xl border border-border/70 bg-card shadow-sm">
+            <div className="flex items-center justify-between border-b border-border/60 px-6 py-4">
+              <div className="flex items-center gap-2 text-lg font-semibold text-foreground">
+                <Clock className="h-4 w-4 text-primary" />
+                Recently Active Agents
+              </div>
+              <button
+                type="button"
+                onClick={() => navigate('agents')}
+                className="rounded-md border border-primary/20 bg-primary/5 px-2 py-1 text-xs font-semibold text-primary transition hover:bg-primary/10"
+              >
+                View all
+              </button>
+            </div>
+            <div className="flex-1 divide-y divide-border/60">
+              {statsLoading ? (
+                <div className="flex h-full items-center justify-center py-12 text-sm text-muted-foreground">
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Loading…
+                </div>
+              ) : recentlyUsedAgents.length === 0 ? (
+                <div className="flex h-full items-center justify-center py-12 text-center text-sm text-muted-foreground">
+                  No recently used agents.
+                </div>
+              ) : (
+                recentlyUsedAgents.slice(0, 4).map((agent, index) => {
+                  const avatarStyle = agentAvatarStyles[index % agentAvatarStyles.length];
+                  return (
+                    <button
+                      key={agent.id}
+                      type="button"
+                      onClick={() => {
+                        const getPath = config.navigationPaths?.agentDetails;
+                        const path = getPath
+                          ? getPath(agent.id)
+                          : `agents/${encodeURIComponent(agent.id)}`;
+                        navigate(path);
+                      }}
+                      className="group flex w-full items-center gap-3 px-6 py-3.5 text-left transition hover:bg-muted/40"
+                    >
+                      <div
+                        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${avatarStyle.bg} ${avatarStyle.text}`}
+                      >
+                        <Bot className="h-3.5 w-3.5" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-medium text-foreground group-hover:text-primary">
+                          {agent.name}
+                        </p>
+                        <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                          {formatRelativeTime(agent.last_used_at)}
+                        </p>
+                      </div>
+                    </button>
+                  );
+                })
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -346,6 +391,14 @@ const threadAvatarStyles = [
   { bg: 'bg-sky-100 dark:bg-sky-500/20', text: 'text-sky-600 dark:text-sky-300' },
   { bg: 'bg-purple-100 dark:bg-purple-500/20', text: 'text-purple-600 dark:text-purple-300' },
   { bg: 'bg-emerald-100 dark:bg-emerald-500/20', text: 'text-emerald-600 dark:text-emerald-300' },
+];
+
+const agentAvatarStyles = [
+  { bg: 'bg-indigo-100 dark:bg-indigo-500/20', text: 'text-indigo-600 dark:text-indigo-300' },
+  { bg: 'bg-amber-100 dark:bg-amber-500/20', text: 'text-amber-600 dark:text-amber-300' },
+  { bg: 'bg-rose-100 dark:bg-rose-500/20', text: 'text-rose-600 dark:text-rose-300' },
+  { bg: 'bg-teal-100 dark:bg-teal-500/20', text: 'text-teal-600 dark:text-teal-300' },
+  { bg: 'bg-cyan-100 dark:bg-cyan-500/20', text: 'text-cyan-600 dark:text-cyan-300' },
 ];
 
 function OverviewStat({

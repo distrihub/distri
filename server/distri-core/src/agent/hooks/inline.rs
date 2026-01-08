@@ -7,7 +7,6 @@ use uuid::Uuid;
 use crate::agent::context::{ExecutorContext, HookPromptState};
 use crate::agent::types::AgentHooks;
 use crate::AgentError;
-use browsr_client::{default_transport as browsr_default_transport, BrowsrClient};
 use distri::{HookContext, HookMutation};
 use distri_types::{AgentEventType, ExecutionResult, InlineHookRequest, Message, PlanStep};
 
@@ -76,19 +75,12 @@ impl InlineHook {
             message: message.clone(),
             plan: plan.clone(),
             result: result.clone(),
-            observation: None,
-            sequence_id: None,
         };
 
         // Fire-and-forget: execute hook handler if registered (no return value)
         if let Some(registry) = context.hook_registry.read().await.as_ref() {
             registry.try_handle(&context.agent_id, &request).await;
             // Since hooks are fire-and-forget, we continue to the fallback logic below
-        }
-
-        // Best-effort inline enrichment for the browsr agent without external callbacks.
-        if let Some(mutation) = maybe_enrich_browsr(hook, &context).await {
-            return mutation;
         }
 
         let Some(orchestrator) = context.orchestrator.clone() else {
@@ -205,39 +197,4 @@ impl AgentHooks for InlineHook {
             .await;
         Ok(())
     }
-}
-
-async fn maybe_enrich_browsr(
-    hook: &str,
-    context: &ExecutorContext,
-) -> Option<distri_types::HookMutation> {
-    // Only for browsr agent and for early lifecycle hooks.
-    if context.agent_id != "browsr" {
-        return None;
-    }
-    if hook != "plan_start" && hook != "before_execute" {
-        return None;
-    }
-
-    let client = BrowsrClient::from_config(browsr_default_transport());
-    let observe = client
-        .observe(None, Some(true), Default::default())
-        .await
-        .ok()?;
-    let mut values = std::collections::HashMap::new();
-    values.insert(
-        "browser_state".to_string(),
-        serde_json::json!(observe.state_text),
-    );
-    values.insert(
-        "browser_url".to_string(),
-        serde_json::json!(observe.dom_snapshot.url),
-    );
-    values.insert(
-        "browser_title".to_string(),
-        serde_json::json!(observe.dom_snapshot.title),
-    );
-    Some(distri_types::HookMutation {
-        dynamic_values: values,
-    })
 }

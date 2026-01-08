@@ -11,6 +11,8 @@ import {
   X,
   Clock,
   Tag,
+  Plus,
+  ExternalLink,
 } from 'lucide-react';
 
 interface Thread {
@@ -224,6 +226,15 @@ export function ThreadsView({ className }: ThreadsViewProps) {
           <div className="flex flex-wrap items-center justify-between gap-4">
             <h1 className="text-xl font-semibold text-foreground">Threads</h1>
             <div className="flex flex-wrap items-center gap-3">
+              {/* New Chat button */}
+              <button
+                type="button"
+                onClick={() => navigate('/chat')}
+                className="inline-flex items-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition hover:bg-primary/90"
+              >
+                <Plus className="h-4 w-4" />
+                New Chat
+              </button>
               {/* Search */}
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -424,21 +435,38 @@ export function ThreadsView({ className }: ThreadsViewProps) {
                         </div>
                       )}
                     </div>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (thread.agent_id && thread.id) {
-                          navigate(
-                            `/chat?id=${encodeURIComponent(thread.agent_id)}&threadId=${encodeURIComponent(thread.id)}`
-                          );
-                        }
-                      }}
-                      className="flex items-center gap-2 rounded-full p-2 text-primary"
-                      title="Open thread"
-                    >
-                      <ArrowRight className="h-4 w-4" />
-                    </button>
+                    <div className="flex items-center gap-1">
+                      {/* New chat with this agent */}
+                      {thread.agent_id && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            navigate(`/chat?id=${encodeURIComponent(thread.agent_id!)}`);
+                          }}
+                          className="flex items-center gap-2 rounded-full p-2 text-muted-foreground opacity-0 transition hover:text-primary group-hover:opacity-100"
+                          title={`New chat with ${thread.agent_name || thread.agent_id}`}
+                        >
+                          <ExternalLink className="h-4 w-4" />
+                        </button>
+                      )}
+                      {/* Open this thread */}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (thread.agent_id && thread.id) {
+                            navigate(
+                              `/chat?id=${encodeURIComponent(thread.agent_id)}&threadId=${encodeURIComponent(thread.id)}`
+                            );
+                          }
+                        }}
+                        className="flex items-center gap-2 rounded-full p-2 text-primary"
+                        title="Open thread"
+                      >
+                        <ArrowRight className="h-4 w-4" />
+                      </button>
+                    </div>
                   </div>
                 ))
               )}

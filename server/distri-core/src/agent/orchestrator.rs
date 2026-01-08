@@ -1,6 +1,5 @@
 use crate::{
     agent::{
-        browser_sessions::BrowserSessions,
         plugin_registry::{PluginOptions, PluginRegistry},
         prompt_registry::PromptRegistry,
         todos::TodosTool,
@@ -25,7 +24,7 @@ use distri_types::{
     ToolsConfig,
 };
 use distri_types::{
-    browser::DistriBrowserConfig,
+    browser::BrowsrClientConfig,
     configuration::{
         is_namespaced_plugin_id, namespace_plugin_item, split_namespaced_plugin_id,
         CustomAgentDefinition, CustomAgentExample, DistriServerConfig, StoreConfig,
@@ -52,8 +51,7 @@ pub struct AgentOrchestrator {
     pub workspace_filesystem: Arc<FileSystem>,
     pub session_filesystem: Arc<FileSystem>,
     pub session_root_prefix: Option<String>,
-    pub browser_config: Arc<RwLock<DistriBrowserConfig>>,
-    pub browser_sessions: Arc<BrowserSessions>,
+    pub browser_config: Arc<RwLock<BrowsrClientConfig>>,
     pub additional_tools: Arc<RwLock<HashMap<String, Vec<Arc<dyn Tool>>>>>,
     pub plugin_registry: Arc<PluginRegistry>,
     pub plugin_tools: Arc<RwLock<HashMap<String, Vec<Arc<dyn Tool>>>>>,
@@ -93,8 +91,7 @@ pub struct AgentOrchestratorBuilder {
     plugin_tools: Option<HashMap<String, Vec<Arc<dyn Tool>>>>,
     workspace_filesystem: Option<Arc<FileSystem>>,
     workspace_path: Option<std::path::PathBuf>,
-    browser_config: Option<DistriBrowserConfig>,
-    browser_sessions: Option<Arc<BrowserSessions>>,
+    browser_config: Option<BrowsrClientConfig>,
     stores: Option<InitializedStores>,
     prompt_registry: Option<Arc<PromptRegistry>>,
     store_config: Option<StoreConfig>,
@@ -177,7 +174,7 @@ impl AgentOrchestratorBuilder {
         self
     }
 
-    pub fn with_browser_config(mut self, browser_config: DistriBrowserConfig) -> Self {
+    pub fn with_browser_config(mut self, browser_config: BrowsrClientConfig) -> Self {
         self.browser_config = Some(browser_config);
         self
     }
@@ -276,9 +273,6 @@ impl AgentOrchestratorBuilder {
         let session_root_prefix = Some(session_prefix.to_string());
 
         let browser_config = Arc::new(RwLock::new(browser_config));
-        let browser_sessions = self
-            .browser_sessions
-            .unwrap_or_else(|| Arc::new(BrowserSessions::new(browser_config.clone())));
 
         let provider_registry = Arc::new(ProviderRegistry::new());
         if let Err(e) = provider_registry.load_default_providers().await {
@@ -317,8 +311,6 @@ impl AgentOrchestratorBuilder {
             )
         };
 
-        let browser_sessions_clone = browser_sessions.clone();
-
         let orchestrator = AgentOrchestrator {
             tool_auth_handler,
             mcp_registry: registry,
@@ -328,7 +320,6 @@ impl AgentOrchestratorBuilder {
             session_filesystem,
             session_root_prefix,
             browser_config,
-            browser_sessions: browser_sessions_clone,
             additional_tools: Arc::new(RwLock::new(self.additional_tools.unwrap_or_default())),
             plugin_registry: plugin_registry.clone(),
             plugin_tools: Arc::new(RwLock::new(self.plugin_tools.unwrap_or_default())),
@@ -356,7 +347,6 @@ impl AgentOrchestratorBuilder {
         // Set orchestrator on the existing registry (which already has plugins loaded)
         plugin_registry.set_orchestrator(orch.clone() as Arc<dyn OrchestratorTrait>);
 
-        browser_sessions.set_orchestrator(orch.clone() as Arc<dyn OrchestratorTrait>);
         Ok(orchestrator)
     }
 }
@@ -775,6 +765,27 @@ impl AgentOrchestrator {
                 tools.push(Arc::new(crate::tools::AgentTool::new(
                     sub_agent_name.clone(),
                 )));
+            }
+        }
+
+        // Auto-include browser_agent sub-agent when browser_config.enabled = true
+        // This allows any agent with browser enabled to delegate browser tasks to the specialized browser agent
+        // Skip if this agent IS browser_agent (don't add itself as a sub-agent)
+        let is_browser_agent =
+            definition.name == "browser_agent" || definition.name.ends_with("/browser_agent");
+        if definition.should_use_browser() && !is_browser_agent {
+            let browser_agent_name = "browser_agent".to_string();
+            // Check if browser_agent is not already in sub_agents
+            let already_has_browser_agent = definition
+                .sub_agents
+                .iter()
+                .any(|name| name == &browser_agent_name || name.ends_with("/browser_agent"));
+            if !already_has_browser_agent {
+                tools.push(Arc::new(crate::tools::AgentTool::new(browser_agent_name)));
+                tracing::debug!(
+                    "Auto-included browser_agent sub-agent for agent '{}' (browser_config.enabled = true)",
+                    definition.name
+                );
             }
         }
 
@@ -1370,33 +1381,6 @@ impl AgentOrchestrator {
         }
 
         false
-    }
-
-    /// Whether a shared browser session is currently active.
-    pub async fn browser_session_active(&self) -> bool {
-        !self.browser_sessions.list().is_empty()
-    }
-
-    pub async fn create_browser_session(
-        &self,
-        requested_name: Option<String>,
-    ) -> Result<(String, Arc<Mutex<()>>), String> {
-        self.browser_sessions.create(requested_name).await
-    }
-
-    pub async fn ensure_browser_session(
-        &self,
-        requested: Option<String>,
-    ) -> Result<(String, Arc<Mutex<()>>), String> {
-        self.browser_sessions.ensure(requested).await
-    }
-
-    pub fn list_browser_sessions(&self) -> Vec<String> {
-        self.browser_sessions.list()
-    }
-
-    pub fn stop_browser_session(&self, id: &str) -> bool {
-        self.browser_sessions.stop(id)
     }
 
     /// Update task status
