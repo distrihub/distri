@@ -33,6 +33,18 @@ export interface AgentUsageInfo {
 }
 
 /**
+ * Custom metric for dynamic stats display
+ */
+export interface CustomMetric {
+  label: string;
+  value: string;
+  helper?: string;
+  limit?: string;
+  raw_value?: number;
+  raw_limit?: number;
+}
+
+/**
  * Home stats response from the server
  */
 export interface HomeStats {
@@ -49,6 +61,7 @@ export interface HomeStats {
     count: number;
   };
   recently_used_agents?: RecentlyUsedAgent[];
+  custom_metrics?: Record<string, CustomMetric>;
 }
 
 /**

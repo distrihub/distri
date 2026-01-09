@@ -1064,7 +1064,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a895057091c69e02e4da1fa12b5add4826925d91664cb5576bf821b14c5efcea"
 dependencies = [
  "anyhow",
- "browsr-types 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "browsr-types 0.1.1",
  "reqwest 0.12.8",
  "serde",
  "serde_json",
@@ -1076,6 +1076,8 @@ dependencies = [
 [[package]]
 name = "browsr-types"
 version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4c960e36ff6811ea8be3c66491f5ea6dde89d90331fea7283b3b5fe11db1dc56"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1089,9 +1091,9 @@ dependencies = [
 
 [[package]]
 name = "browsr-types"
-version = "0.1.1"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4c960e36ff6811ea8be3c66491f5ea6dde89d90331fea7283b3b5fe11db1dc56"
+checksum = "f7bedb89cac93979bac9328504312becbf41ef4439e738ccbeafc29c85a15179"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1342,7 +1344,7 @@ checksum = "a1d728cc89cf3aee9ff92b05e62b19ee65a02b5702cff7d5a377e32c6ae29d8d"
 
 [[package]]
 name = "cli-auth-server"
-version = "0.2.10"
+version = "0.3.0"
 dependencies = [
  "actix-cors",
  "actix-web",
@@ -2942,7 +2944,7 @@ dependencies = [
 
 [[package]]
 name = "distri"
-version = "0.2.10"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2972,7 +2974,7 @@ dependencies = [
 
 [[package]]
 name = "distri-a2a"
-version = "0.2.10"
+version = "0.3.0"
 dependencies = [
  "schemars",
  "serde",
@@ -2982,7 +2984,7 @@ dependencies = [
 
 [[package]]
 name = "distri-auth"
-version = "0.2.10"
+version = "0.3.0"
 dependencies = [
  "actix-cors",
  "actix-web",
@@ -3009,7 +3011,7 @@ dependencies = [
 
 [[package]]
 name = "distri-core"
-version = "0.2.10"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "async-mcp",
@@ -3018,7 +3020,7 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "browsr-client",
- "browsr-types 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "browsr-types 0.1.1",
  "bytes",
  "chrono",
  "comfy-table",
@@ -3071,7 +3073,7 @@ dependencies = [
 
 [[package]]
 name = "distri-filesystem"
-version = "0.2.10"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3111,7 +3113,7 @@ dependencies = [
 
 [[package]]
 name = "distri-parsers"
-version = "0.2.10"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3136,7 +3138,7 @@ dependencies = [
 
 [[package]]
 name = "distri-plugin-executor"
-version = "0.2.10"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3158,7 +3160,7 @@ dependencies = [
 
 [[package]]
 name = "distri-plugins"
-version = "0.2.10"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3188,7 +3190,7 @@ dependencies = [
 
 [[package]]
 name = "distri-server"
-version = "0.2.10"
+version = "0.3.0"
 dependencies = [
  "actix-cors",
  "actix-files",
@@ -3203,7 +3205,7 @@ dependencies = [
  "async-stream",
  "base64 0.22.1",
  "browsr-client",
- "browsr-types 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "browsr-types 0.1.1",
  "bytes",
  "chrono",
  "dashmap 5.5.3",
@@ -3237,7 +3239,7 @@ dependencies = [
 
 [[package]]
 name = "distri-server-cli"
-version = "0.2.10"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3277,7 +3279,7 @@ dependencies = [
 
 [[package]]
 name = "distri-stores"
-version = "0.2.10"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3306,7 +3308,7 @@ dependencies = [
 
 [[package]]
 name = "distri-types"
-version = "0.2.10"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "async-mcp",
@@ -3314,7 +3316,7 @@ dependencies = [
  "async-stream",
  "async-trait",
  "base64 0.22.1",
- "browsr-types 0.1.1",
+ "browsr-types 0.2.0",
  "chrono",
  "comfy-table",
  "crossbeam-channel",
@@ -10485,7 +10487,7 @@ dependencies = [
 
 [[package]]
 name = "web-transport-proto"
-version = "0.3.0"
+version = "0.2.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "974fa1e325e6cc5327de8887f189a441fcff4f8eedcd31ec87f0ef0cc5283fbc"
 dependencies = [

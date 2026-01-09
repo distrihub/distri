@@ -4,7 +4,7 @@ export type { HomeStats, HomeStatsThread, RecentlyUsedAgent, AgentUsageInfo, Api
 
 // Provider exports
 export { DistriHomeProvider, useDistriHome, useDistriHomeConfig, useDistriHomeNavigate, useDistriHomeClient } from './DistriHomeProvider';
-export type { DistriHomeConfig, DistriHomeProviderProps, NavigateFunction } from './DistriHomeProvider';
+export type { DistriHomeConfig, DistriHomeProviderProps, NavigateFunction, HomeWidget } from './DistriHomeProvider';
 
 // Hook exports
 export { useHomeStats } from './hooks/useHomeStats';

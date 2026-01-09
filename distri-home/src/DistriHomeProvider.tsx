@@ -2,6 +2,11 @@ import { createContext, useContext, useMemo, ReactNode } from 'react';
 import { DistriClient, DistriClientConfig } from '@distri/core';
 import { DistriHomeClient } from './DistriHomeClient';
 
+export interface HomeWidget {
+  id: string;
+  render: () => ReactNode;
+}
+
 export interface DistriHomeConfig {
 
   /**
@@ -24,6 +29,11 @@ export interface DistriHomeConfig {
     icon?: ReactNode;
     render: (props: { agentId: string }) => ReactNode;
   }[];
+  /**
+   * Custom widgets to add to the Home page overview row.
+   * These render as additional cards in the top stats section.
+   */
+  homeWidgets?: HomeWidget[];
 }
 
 export interface NavigateFunction {
