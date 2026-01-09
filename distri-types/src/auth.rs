@@ -74,12 +74,38 @@ pub struct AuthSession {
     pub scopes: Vec<String>,
 }
 
+/// Usage limits that can be embedded in tokens
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Default)]
+pub struct TokenLimits {
+    /// Maximum tokens per day (None = unlimited)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub daily_tokens: Option<u64>,
+
+    /// Maximum tokens per month (None = unlimited)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub monthly_tokens: Option<u64>,
+
+    /// Maximum API calls per day (None = unlimited)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub daily_calls: Option<u64>,
+
+    /// Maximum API calls per month (None = unlimited)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub monthly_calls: Option<u64>,
+}
+
 /// Response for issuing access + refresh tokens.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 pub struct TokenResponse {
     pub access_token: String,
     pub refresh_token: String,
     pub expires_at: i64,
+    /// Identifier for usage tracking (e.g., "blinksheets", "my-app")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub identifier_id: Option<String>,
+    /// Effective limits applied to this token
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limits: Option<TokenLimits>,
 }
 
 /// Secret storage for API keys and other non-OAuth authentication
