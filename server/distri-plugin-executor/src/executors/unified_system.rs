@@ -63,6 +63,15 @@ impl UnifiedPluginSystem {
         *self.executors.write().unwrap() = None;
     }
 
+    /// Initialize the plugin system by eagerly creating the executor.
+    /// Call this after set_orchestrator to ensure the executor is ready.
+    pub fn initialize(&self) -> Result<()> {
+        debug!("🔄 UnifiedPluginSystem {} initializing executor eagerly", self.id);
+        self.get_or_create_executor()?;
+        info!("✅ UnifiedPluginSystem {} executor initialized", self.id);
+        Ok(())
+    }
+
     /// Infer build command for a plugin based on its type and structure
     pub fn infer_build_command(package_path: &Path) -> Result<Option<String>> {
         // Check for package.json for npm/pnpm build

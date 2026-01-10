@@ -31,6 +31,8 @@ interface Thread {
 
 export interface ThreadsViewProps {
   className?: string;
+  initialAgentId?: string;
+  initialExternalId?: string;
 }
 
 type QuickTimeFilter = '5m' | '1h' | '24h' | '7d' | null;
@@ -52,15 +54,15 @@ function getTimeFilterDate(filter: QuickTimeFilter): string | undefined {
   }
 }
 
-export function ThreadsView({ className }: ThreadsViewProps) {
+export function ThreadsView({ className, initialAgentId, initialExternalId }: ThreadsViewProps) {
   const navigate = useDistriHomeNavigate();
   const [showFilterDialog, setShowFilterDialog] = useState(false);
   const [searchInput, setSearchInput] = useState('');
   const [quickTimeFilter, setQuickTimeFilter] = useState<QuickTimeFilter>(null);
 
-  // Filter dialog state
-  const [dialogAgentId, setDialogAgentId] = useState('');
-  const [dialogExternalId, setDialogExternalId] = useState('');
+  // Filter dialog state - initialize from props
+  const [dialogAgentId, setDialogAgentId] = useState(initialAgentId || '');
+  const [dialogExternalId, setDialogExternalId] = useState(initialExternalId || '');
   const [dialogFromDate, setDialogFromDate] = useState('');
   const [dialogToDate, setDialogToDate] = useState('');
 
@@ -76,7 +78,12 @@ export function ThreadsView({ className }: ThreadsViewProps) {
     nextPage,
     prevPage,
     setPageSize,
-  } = useThreads();
+  } = useThreads({
+    initialParams: {
+      agent_id: initialAgentId || undefined,
+      external_id: initialExternalId || undefined,
+    },
+  });
 
   const { agents: agentsByUsage } = useAgentsByUsage();
 

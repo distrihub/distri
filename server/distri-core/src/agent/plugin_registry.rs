@@ -111,6 +111,12 @@ impl PluginRegistry {
         self.plugin_system.set_orchestrator(orchestrator);
     }
 
+    /// Initialize the plugin system executor eagerly.
+    /// Call this after set_orchestrator to ensure the executor is ready for use.
+    pub fn initialize_executor(&self) -> Result<()> {
+        self.plugin_system.initialize()
+    }
+
     pub async fn load_with_options(&self, options: PluginOptions) -> Result<()> {
         let store = build_object_store(&options.object_store)?;
         *self.object_store.write().unwrap() = store;
