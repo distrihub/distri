@@ -104,6 +104,8 @@ pub struct ExecutorContext {
     pub agent_id: String,
     pub session_id: String,
     pub user_id: String,
+    /// Identifier ID for tenant/project-level usage tracking (maps to tenant_id in auth)
+    pub identifier_id: Option<String>,
     /// Browser session ID for browsr - if None, browsr will auto-create one
     pub browser_session_id: Option<String>,
     pub additional_attributes: Option<AdditionalAttributes>,
@@ -156,6 +158,7 @@ impl Default for ExecutorContext {
             agent_id: "default".to_string(),
             user_id: uuid::Uuid::new_v4().to_string(),
             session_id: uuid::Uuid::new_v4().to_string(),
+            identifier_id: None,
             browser_session_id: None,
             tools: Arc::default(),
             orchestrator: None,
@@ -256,10 +259,22 @@ impl ExecutorContext {
             agent_id: self.agent_id.clone(),
             task_id: self.task_id.clone(),
             event,
+            user_id: Some(self.user_id.clone()),
+            identifier_id: self.identifier_id.clone(),
         };
 
         if let Some(tx) = tx {
             let _ = tx.send(event.clone()).await;
+        }
+
+        // Call on_event on all registered hooks
+        if let Some(orchestrator) = &self.orchestrator {
+            let hooks = orchestrator.hooks.read().await;
+            for hook in hooks.values() {
+                if let Err(e) = hook.on_event(&event).await {
+                    tracing::warn!("Hook on_event failed: {}", e);
+                }
+            }
         }
 
         // Skip saving artifacts to the task store through events
@@ -299,6 +314,8 @@ impl ExecutorContext {
                 agent_id: self.agent_id.clone(),
                 task_id: self.task_id.clone(),
                 event,
+                user_id: Some(self.user_id.clone()),
+                identifier_id: self.identifier_id.clone(),
             };
 
             let _ = tx.send(event).await;
@@ -688,6 +705,7 @@ impl ExecutorContext {
             agent_id: agent_id.to_string(),
             session_id: self.session_id.clone(),
             user_id: self.user_id.clone(),
+            identifier_id: self.identifier_id.clone(),
             usage: self.usage.clone(),
             verbose: self.verbose,
             orchestrator: self.orchestrator.clone(),
@@ -757,6 +775,7 @@ impl ExecutorContext {
             agent_id: self.agent_id.clone(),
             session_id: self.session_id.clone(),
             user_id: self.user_id.clone(),
+            identifier_id: self.identifier_id.clone(),
             browser_session_id: self.browser_session_id.clone(),
             tools: self.tools.clone(),               // Arc::clone
             orchestrator: self.orchestrator.clone(), // Arc::clone

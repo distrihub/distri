@@ -197,6 +197,8 @@ impl AgentStreamClient {
             task_id,
             event: event_type,
             agent_id: agent_id.to_string(),
+            user_id: None,
+            identifier_id: None,
         }))
     }
 

@@ -2,6 +2,7 @@ use std::env;
 
 use crate::{Distri, DistriClientApp, DistriConfig, ToolListItem};
 use distri_types::{LLmContext, LlmDefinition, Message, ModelSettings};
+use serde::Deserialize;
 
 #[tokio::test]
 async fn live_setup_and_invoke() -> anyhow::Result<()> {
@@ -158,4 +159,110 @@ async fn client_app_tools(base_url: &str) -> anyhow::Result<Vec<ToolListItem>> {
     let app = DistriClientApp::new(base_url.to_string());
     let tools = app.list_tools().await?;
     Ok(tools)
+}
+
+// ============================================================================
+// Usage Recording Tests
+// ============================================================================
+
+/// Response from /v1/usage endpoint
+#[derive(Debug, Deserialize)]
+struct UsageResponse {
+    current: CurrentUsage,
+}
+
+#[derive(Debug, Deserialize)]
+struct CurrentUsage {
+    day_tokens: i64,
+    month_tokens: i64,
+}
+
+/// Smoke test: Make an agent call and verify usage is recorded
+///
+/// This test:
+/// 1. Gets initial usage stats
+/// 2. Makes an agent call (which should trigger LLM usage)
+/// 3. Waits briefly for async usage recording
+/// 4. Gets usage stats again
+/// 5. Verifies tokens increased
+#[tokio::test]
+async fn live_usage_recording() -> anyhow::Result<()> {
+    if env::var("DISTRI_LIVE_USAGE_TEST").unwrap_or_default() != "1" {
+        eprintln!("skipping usage recording test; set DISTRI_LIVE_USAGE_TEST=1 to enable");
+        return Ok(());
+    }
+
+    let Some(ctx) = LiveCtx::new() else {
+        eprintln!("skipping live tests; set DISTRI_LIVE_TEST=1 to enable");
+        return Ok(());
+    };
+
+    // Need an API key for authenticated requests
+    let api_key = env::var("DISTRI_API_KEY").ok();
+    if api_key.is_none() {
+        eprintln!("skipping usage test; DISTRI_API_KEY required");
+        return Ok(());
+    }
+
+    ensure_agent(&ctx).await?;
+
+    let api_key = api_key.unwrap();
+    let config = DistriConfig::new(&ctx.base_url).with_api_key(&api_key);
+    let client = Distri::from_config(config);
+    let http = reqwest::Client::new();
+
+    // Get initial usage
+    let initial_usage = get_usage(&http, &ctx.base_url, &api_key).await?;
+    eprintln!("Initial usage - day_tokens: {}, month_tokens: {}",
+        initial_usage.current.day_tokens,
+        initial_usage.current.month_tokens);
+
+    // Make an agent call that will use tokens
+    let msg = Message::user("What is 2 + 2? Reply with just the number.".into(), None);
+    let resp = client.invoke(&ctx.agent_name, &[msg]).await?;
+
+    assert!(!resp.is_empty(), "no response from agent");
+    eprintln!("Agent response received");
+
+    // Wait for async usage recording to complete
+    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+
+    // Get updated usage
+    let final_usage = get_usage(&http, &ctx.base_url, &api_key).await?;
+    eprintln!("Final usage - day_tokens: {}, month_tokens: {}",
+        final_usage.current.day_tokens,
+        final_usage.current.month_tokens);
+
+    // Verify tokens increased
+    assert!(
+        final_usage.current.month_tokens > initial_usage.current.month_tokens,
+        "Usage should have increased after agent call. Initial: {}, Final: {}",
+        initial_usage.current.month_tokens,
+        final_usage.current.month_tokens
+    );
+
+    eprintln!(
+        "Usage recording verified! Tokens used: {}",
+        final_usage.current.month_tokens - initial_usage.current.month_tokens
+    );
+
+    Ok(())
+}
+
+async fn get_usage(http: &reqwest::Client, base_url: &str, api_key: &str) -> anyhow::Result<UsageResponse> {
+    let url = format!("{}/usage", base_url);
+    let resp = http
+        .get(&url)
+        .header("Authorization", format!("Bearer {}", api_key))
+        .send()
+        .await?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        anyhow::bail!("Failed to get usage ({}): {}", status, body);
+    }
+
+    let usage: UsageResponse = resp.json().await?;
+    Ok(usage)
 }
