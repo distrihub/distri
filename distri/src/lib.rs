@@ -12,6 +12,7 @@ pub use crate::hooks_runtime::HookRegistry;
 pub use client::{
     AgentRegistrationResponse, ArtifactEntry, ArtifactListResponse, ArtifactNamespace,
     ArtifactNamespaceList, ArtifactReadResponse, ArtifactSaveResponse, Distri, LlmExecuteResponse,
+    NewPromptTemplateRequest, PromptTemplateResponse, SyncPromptTemplatesResponse,
     TaskNamespaceResponse,
 };
 pub use client_app::{AppError, DistriClientApp, ToolListItem};

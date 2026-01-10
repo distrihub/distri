@@ -283,6 +283,7 @@ impl AgentOrchestratorBuilder {
         ));
 
         // Initialize prompt registry with defaults only (no auto-discovery)
+        // User-specific partials are loaded at render time in formatter.rs
         let prompt_registry = if let Some(registry) = self.prompt_registry {
             registry
         } else {

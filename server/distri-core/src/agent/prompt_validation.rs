@@ -1,4 +1,6 @@
 use comfy_table::{Attribute, Cell, Color, Table};
+use regex::Regex;
+use std::collections::HashSet;
 /// Prompt validation utilities for agent templates
 use distri_types::StandardDefinition;
 
@@ -195,5 +197,133 @@ pub fn validate_agent_prompt(agent_def: &StandardDefinition) -> Vec<ValidationIs
             // For append strategy, no specific validation needed as it uses the standard template
             Vec::new()
         }
+    }
+}
+
+/// Extract all partial references from a handlebars template
+/// Matches patterns like {{> partial_name}} or {{>partial_name}}
+pub fn extract_partial_references(template: &str) -> HashSet<String> {
+    let mut partials = HashSet::new();
+
+    // Match {{> partial_name}} or {{>partial_name}} with optional whitespace
+    // Partial names can contain alphanumeric chars, underscores, and hyphens
+    let re = Regex::new(r"\{\{>\s*([a-zA-Z_][a-zA-Z0-9_-]*)\s*\}\}").unwrap();
+
+    for cap in re.captures_iter(template) {
+        if let Some(partial_name) = cap.get(1) {
+            partials.insert(partial_name.as_str().to_string());
+        }
+    }
+
+    partials
+}
+
+/// Built-in partials that are always available (registered by default)
+pub fn builtin_partials() -> HashSet<String> {
+    [
+        "core_instructions",
+        "communication",
+        "todo_instructions",
+        "tools_xml",
+        "tools_json",
+        "reasoning",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect()
+}
+
+/// Validate that all partials referenced in the template are registered
+/// Returns a list of missing custom partials
+pub fn validate_partial_references(
+    template: &str,
+    registered_partials: &HashSet<String>,
+) -> Vec<ValidationIssue> {
+    let mut issues = Vec::new();
+
+    let referenced = extract_partial_references(template);
+    let builtin = builtin_partials();
+
+    // Find partials that are referenced but not registered
+    // (excluding built-in partials which are always available)
+    let mut missing: Vec<String> = referenced
+        .iter()
+        .filter(|p| !builtin.contains(*p) && !registered_partials.contains(*p))
+        .cloned()
+        .collect();
+
+    if !missing.is_empty() {
+        missing.sort(); // For consistent output
+        issues.push(ValidationIssue {
+            category: "Missing Custom Partial".to_string(),
+            missing_items: missing,
+            description: "Custom partial referenced but not registered. Ensure the partial file exists with .hbs extension in the partials directory.".to_string(),
+            criticality: Criticality::Critical,
+        });
+    }
+
+    issues
+}
+
+/// Validate agent prompt with registry context (checks custom partials)
+pub fn validate_agent_prompt_with_partials(
+    agent_def: &StandardDefinition,
+    registered_partials: &HashSet<String>,
+) -> Vec<ValidationIssue> {
+    let mut issues = validate_agent_prompt(agent_def);
+
+    // Also validate custom partial references if using custom instructions
+    if !agent_def.append_default_instructions.unwrap_or(true) {
+        issues.extend(validate_partial_references(
+            &agent_def.instructions,
+            registered_partials,
+        ));
+    }
+
+    issues
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_partial_references() {
+        let template = r#"
+            Some content
+            {{> core_instructions}}
+            More content
+            {{>custom_partial}}
+            {{> another-partial }}
+            Not a partial: {{ variable }}
+        "#;
+
+        let partials = extract_partial_references(template);
+        assert!(partials.contains("core_instructions"));
+        assert!(partials.contains("custom_partial"));
+        assert!(partials.contains("another-partial"));
+        assert!(!partials.contains("variable"));
+        assert_eq!(partials.len(), 3);
+    }
+
+    #[test]
+    fn test_validate_partial_references_missing() {
+        let template = "{{> core_instructions}}\n{{> custom_partial}}\n{{> missing_partial}}";
+        let registered: HashSet<String> = ["custom_partial"].iter().map(|s| s.to_string()).collect();
+
+        let issues = validate_partial_references(template, &registered);
+        assert_eq!(issues.len(), 1);
+        assert!(issues[0].missing_items.contains(&"missing_partial".to_string()));
+        assert!(!issues[0].missing_items.contains(&"core_instructions".to_string())); // builtin
+        assert!(!issues[0].missing_items.contains(&"custom_partial".to_string())); // registered
+    }
+
+    #[test]
+    fn test_validate_partial_references_all_present() {
+        let template = "{{> core_instructions}}\n{{> custom_partial}}";
+        let registered: HashSet<String> = ["custom_partial"].iter().map(|s| s.to_string()).collect();
+
+        let issues = validate_partial_references(template, &registered);
+        assert!(issues.is_empty());
     }
 }

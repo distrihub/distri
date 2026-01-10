@@ -819,6 +819,115 @@ impl Distri {
             )))
         }
     }
+
+    // ========== Prompt Template API ==========
+
+    /// List all prompt templates (user's templates + system templates).
+    pub async fn list_prompt_templates(&self) -> Result<Vec<PromptTemplateResponse>, ClientError> {
+        let url = format!("{}/prompts", self.base_url);
+        let resp = self.http.get(&url).send().await?;
+
+        if resp.status().is_success() {
+            resp.json().await.map_err(ClientError::from)
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!(
+                "failed to list prompt templates: {}",
+                text
+            )))
+        }
+    }
+
+    /// Create or update a prompt template.
+    pub async fn upsert_prompt_template(
+        &self,
+        template: &NewPromptTemplateRequest,
+    ) -> Result<PromptTemplateResponse, ClientError> {
+        let url = format!("{}/prompts", self.base_url);
+        let resp = self.http.post(&url).json(template).send().await?;
+
+        if resp.status().is_success() {
+            resp.json().await.map_err(ClientError::from)
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!(
+                "failed to upsert prompt template: {}",
+                text
+            )))
+        }
+    }
+
+    /// Sync multiple prompt templates (creates or updates by name).
+    pub async fn sync_prompt_templates(
+        &self,
+        templates: &[NewPromptTemplateRequest],
+    ) -> Result<SyncPromptTemplatesResponse, ClientError> {
+        let url = format!("{}/prompts/sync", self.base_url);
+        let resp = self
+            .http
+            .post(&url)
+            .json(&serde_json::json!({ "templates": templates }))
+            .send()
+            .await?;
+
+        if resp.status().is_success() {
+            resp.json().await.map_err(ClientError::from)
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!(
+                "failed to sync prompt templates: {}",
+                text
+            )))
+        }
+    }
+
+    /// Delete a prompt template by ID.
+    pub async fn delete_prompt_template(&self, template_id: &str) -> Result<(), ClientError> {
+        let url = format!("{}/prompts/{}", self.base_url, template_id);
+        let resp = self.http.delete(&url).send().await?;
+
+        if resp.status().is_success() || resp.status() == reqwest::StatusCode::NO_CONTENT {
+            Ok(())
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!(
+                "failed to delete prompt template: {}",
+                text
+            )))
+        }
+    }
+}
+
+/// Request to create/update a prompt template.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NewPromptTemplateRequest {
+    pub name: String,
+    pub template: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+}
+
+/// Response from prompt template API.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PromptTemplateResponse {
+    pub id: String,
+    pub name: String,
+    pub template: String,
+    pub description: Option<String>,
+    pub version: Option<String>,
+    pub is_system: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// Response from syncing prompt templates.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncPromptTemplatesResponse {
+    pub created: usize,
+    pub updated: usize,
+    pub templates: Vec<PromptTemplateResponse>,
 }
 
 /// Response listing all artifact namespaces.

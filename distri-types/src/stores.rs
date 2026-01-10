@@ -575,6 +575,7 @@ pub struct NewPromptTemplate {
     pub template: String,
     pub description: Option<String>,
     pub version: Option<String>,
+    #[serde(default)]
     pub is_system: bool,
 }
 

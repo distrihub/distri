@@ -69,6 +69,12 @@ enum Commands {
         command: ToolsCommands,
     },
 
+    /// Prompt template related commands
+    Prompts {
+        #[clap(subcommand)]
+        command: PromptsCommands,
+    },
+
     /// Manage local client configuration
     Config {
         #[clap(subcommand)]
@@ -132,6 +138,17 @@ enum ConfigCommands {
         key: String,
         #[clap(help = "Value to set (empty clears the key)", num_args = 1..)]
         value: Vec<String>,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum PromptsCommands {
+    /// List prompt templates from the server
+    List,
+    /// Push prompt templates from a file or directory
+    Push {
+        #[clap(help = "Path to a .hbs file or directory containing .hbs template files")]
+        path: PathBuf,
     },
 }
 
@@ -406,6 +423,9 @@ async fn main() -> Result<()> {
         },
         Commands::Config { command } => {
             handle_config_command(command)?;
+        }
+        Commands::Prompts { command } => {
+            handle_prompts_command(&client, command).await?;
         }
         Commands::Serve { .. } => unreachable!("serve handled earlier"),
     }
@@ -932,6 +952,110 @@ fn handle_config_command(command: ConfigCommands) -> Result<()> {
         }
     }
     Ok(())
+}
+
+async fn handle_prompts_command(client: &Distri, command: PromptsCommands) -> Result<()> {
+    match command {
+        PromptsCommands::List => {
+            println!("📋 Listing prompt templates...");
+            let templates = client.list_prompt_templates().await?;
+            if templates.is_empty() {
+                println!("No prompt templates found.");
+            } else {
+                for template in templates {
+                    let type_indicator = if template.is_system {
+                        "system"
+                    } else {
+                        "custom"
+                    };
+                    println!(
+                        "{} [{}] - {}",
+                        template.name,
+                        type_indicator,
+                        template.description.as_deref().unwrap_or("(no description)")
+                    );
+                }
+            }
+        }
+        PromptsCommands::Push { path } => {
+            if !path.exists() {
+                anyhow::bail!("Path does not exist: {}", path.display());
+            }
+
+            let mut templates = Vec::new();
+
+            if path.is_file() {
+                // Single file
+                templates.push(load_template_file(&path).await?);
+            } else if path.is_dir() {
+                // Read all .hbs files in the directory (recursively)
+                fn collect_hbs_files(dir: &Path, files: &mut Vec<PathBuf>) -> std::io::Result<()> {
+                    for entry in std::fs::read_dir(dir)? {
+                        let entry = entry?;
+                        let path = entry.path();
+                        if path.is_dir() {
+                            collect_hbs_files(&path, files)?;
+                        } else if path.is_file() {
+                            if let Some(ext) = path.extension() {
+                                if ext == "hbs" || ext == "handlebars" {
+                                    files.push(path);
+                                }
+                            }
+                        }
+                    }
+                    Ok(())
+                }
+
+                let mut files = Vec::new();
+                collect_hbs_files(&path, &mut files)?;
+                for file_path in files {
+                    templates.push(load_template_file(&file_path).await?);
+                }
+            }
+
+            if templates.is_empty() {
+                println!("No .hbs template files found in {}", path.display());
+                return Ok(());
+            }
+
+            println!(
+                "📤 Pushing {} template(s) to {}...",
+                templates.len(),
+                client.base_url()
+            );
+
+            let result = client.sync_prompt_templates(&templates).await?;
+
+            println!(
+                "{}✔ Synced: {} created, {} updated{}",
+                COLOR_BRIGHT_GREEN, result.created, result.updated, COLOR_RESET
+            );
+
+            for template in &result.templates {
+                println!("  - {}", template.name);
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn load_template_file(path: &Path) -> Result<distri::NewPromptTemplateRequest> {
+    let content = fs::read_to_string(path)
+        .await
+        .with_context(|| format!("reading {}", path.display()))?;
+
+    let name = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("unknown")
+        .to_string();
+
+    Ok(distri::NewPromptTemplateRequest {
+        name,
+        template: content,
+        description: None,
+        version: None,
+    })
 }
 
 fn set_client_config_value(key: &str, raw_value: &str) -> Result<PathBuf> {

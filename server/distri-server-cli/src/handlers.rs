@@ -1,10 +1,11 @@
 use anyhow::Result;
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use distri_core::{
     agent::{
         debug::{generate_agent_prompt, generate_agent_response},
-        format_validation_table, validate_agent_prompt,
+        format_validation_table, validate_agent_prompt_with_partials,
     },
     types::{OrchestratorTrait, ToolCall},
     AgentOrchestrator,
@@ -86,8 +87,16 @@ pub async fn handle_validate_prompt_command(
         }
     };
 
-    // Validate the agent's prompt
-    let issues = validate_agent_prompt(&agent_def);
+    // Get registered partials from the prompt registry
+    let registered_partials: HashSet<String> = executor
+        .get_prompt_registry()
+        .list_partials()
+        .await
+        .into_iter()
+        .collect();
+
+    // Validate the agent's prompt including custom partial references
+    let issues = validate_agent_prompt_with_partials(&agent_def, &registered_partials);
 
     // Display results in a formatted table
     let table_output = format_validation_table(&agent_name, &issues);
