@@ -1,0 +1,132 @@
+name: Test distri-home
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - 'distri-home/**'
+      - '.github/workflows/test-distri-home.yml'
+  pull_request:
+    branches:
+      - main
+      - master
+    paths:
+      - 'distri-home/**'
+      - '.github/workflows/test-distri-home.yml'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: [18.x, 20.x]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: Create stub packages for workspace dependencies
+        run: |
+          mkdir -p distrijs/packages/core/src
+          mkdir -p distrijs/packages/react/src
+          mkdir -p distrijs/packages/fs/src
+
+          # Create @distri/core stub
+          cat > distrijs/packages/core/package.json << 'EOF'
+          {
+            "name": "@distri/core",
+            "version": "0.1.0",
+            "type": "module",
+            "main": "src/index.ts",
+            "types": "src/index.ts"
+          }
+          EOF
+
+          cat > distrijs/packages/core/src/index.ts << 'EOF'
+          export interface DistriClientConfig {
+            baseUrl: string;
+            apiKey?: string;
+          }
+          export class DistriClient {
+            public baseUrl: string;
+            private apiKey?: string;
+            constructor(config: DistriClientConfig) {
+              this.baseUrl = config.baseUrl;
+              this.apiKey = config.apiKey;
+            }
+            async fetch(path: string, options?: RequestInit): Promise<Response> {
+              const url = `${this.baseUrl}${path}`;
+              const headers = new Headers(options?.headers);
+              if (this.apiKey) {
+                headers.set('Authorization', `Bearer ${this.apiKey}`);
+              }
+              return globalThis.fetch(url, { ...options, headers });
+            }
+          }
+          EOF
+
+          # Create @distri/react stub
+          cat > distrijs/packages/react/package.json << 'EOF'
+          {
+            "name": "@distri/react",
+            "version": "0.1.0",
+            "type": "module",
+            "main": "src/index.ts",
+            "types": "src/index.ts"
+          }
+          EOF
+
+          cat > distrijs/packages/react/src/index.ts << 'EOF'
+          export const useDistri = () => ({ client: null, isLoading: false, error: null });
+          export const useAgent = () => ({ agent: null, isLoading: false, error: null, refetch: () => {} });
+          export const useThreads = () => ({ threads: [], isLoading: false, error: null, hasMore: false, loadMore: () => {} });
+          export const useAgentsByUsage = () => ({ agents: [], isLoading: false, error: null });
+          export const DistriProvider = ({ children }: any) => children;
+          EOF
+
+          # Create @distri/fs stub
+          cat > distrijs/packages/fs/package.json << 'EOF'
+          {
+            "name": "@distri/fs",
+            "version": "0.1.0",
+            "type": "module",
+            "main": "src/index.ts",
+            "types": "src/index.ts"
+          }
+          EOF
+
+          cat > distrijs/packages/fs/src/index.ts << 'EOF'
+          export interface FileInfo { name: string; path: string; }
+          export const createFSProvider = () => ({});
+          EOF
+
+      - name: Install dependencies
+        working-directory: ./distri-home
+        run: npm install
+
+      - name: Run tests
+        working-directory: ./distri-home
+        run: npm test
+
+      - name: Run tests with coverage
+        working-directory: ./distri-home
+        run: npm run test:coverage
+
+      - name: Upload coverage reports
+        uses: codecov/codecov-action@v4
+        if: matrix.node-version == '20.x'
+        with:
+          file: ./distri-home/coverage/coverage-final.json
+          flags: distri-home
+          fail_ci_if_error: false
+        continue-on-error: true

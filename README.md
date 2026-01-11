@@ -1,6 +1,6 @@
 # Distri
 
-![](https://img.shields.io/badge/Platform-macOS%20%7C%20Linux%20%7C%20Windows-blue?style=flat-square) ![](https://img.shields.io/badge/Runtime-Distri%20CLI-orange?style=flat-square) ![](https://img.shields.io/badge/Protocol-A2A-green?style=flat-square)
+![](https://img.shields.io/badge/Platform-macOS%20%7C%20Linux%20%7C%20Windows-blue?style=flat-square) ![](https://img.shields.io/badge/Runtime-Distri%20CLI-orange?style=flat-square) ![](https://img.shields.io/badge/Protocol-A2A-green?style=flat-square) [![Test distri-home](https://github.com/distrihub/distri/actions/workflows/test-distri-home.yml/badge.svg)](https://github.com/distrihub/distri/actions/workflows/test-distri-home.yml)
 
 Distri is an A2A-compatible agent framework built in Rust. Build agents with simple markdown definitions and integrate them within your React frontend. Tools can be added as either backend tools via Deno or frontend tools, making building agents much easier.
 
