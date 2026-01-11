@@ -184,6 +184,11 @@ impl AgentLoop {
         // Save the initial message through orchestrator if available
         self.process_message(&message, context.clone()).await?;
 
+        // Calculate context size after message is saved but before LLM calls
+        if let Err(e) = context.calculate_context_size().await {
+            tracing::warn!("Failed to calculate context size: {}", e);
+        }
+
         // Start with existing plan or None (will be planned in the loop)
         let mut current_plan = context.get_current_plan().await;
 
