@@ -44,9 +44,7 @@ pub use orchestrator::AgentOrchestrator;
 pub use plugin_registry::{PluginOptions, PluginRegistry};
 
 // Export prompt registry
-pub use prompt_registry::{
-    PromptRegistry, PromptSection, PromptTemplate, TemplateData,
-};
+pub use prompt_registry::{PromptRegistry, PromptSection, PromptTemplate, TemplateData};
 
 // Export types from types module
 pub use types::{AgentType, CoordinatorMessage};

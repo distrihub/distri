@@ -161,10 +161,7 @@ pub struct ArtifactNamespace {
 impl ArtifactNamespace {
     /// Create a new namespace from thread_id and optional task_id
     pub fn new(thread_id: String, task_id: Option<String>) -> Self {
-        Self {
-            thread_id,
-            task_id,
-        }
+        Self { thread_id, task_id }
     }
 
     /// Convert ID to short hex (8 chars like git commits)

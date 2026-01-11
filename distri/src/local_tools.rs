@@ -5,7 +5,8 @@ use async_trait::async_trait;
 use distri_filesystem::{create_artifact_tools, create_core_filesystem_tools, create_file_system};
 use distri_types::{
     AgentEvent, ToolCall, ToolContext, ToolDefinition, ToolResponse,
-    configuration::ObjectStorageConfig, stores::{SessionStore, SessionSummary},
+    configuration::ObjectStorageConfig,
+    stores::{SessionStore, SessionSummary},
 };
 use tokio::sync::RwLock;
 
@@ -78,8 +79,9 @@ impl SessionStore for LocalSessionStore {
         offset: Option<usize>,
     ) -> anyhow::Result<Vec<SessionSummary>> {
         let guard = self.data.read().await;
-        
-        let mut sessions: Vec<SessionSummary> = guard.iter()
+
+        let mut sessions: Vec<SessionSummary> = guard
+            .iter()
             .filter(|(k, _)| namespace.map_or(true, |n| *k == n))
             .map(|(session_id, values)| SessionSummary {
                 session_id: session_id.clone(),

@@ -29,11 +29,9 @@ pub use context::to_tool_context;
 pub use mcp::get_mcp_tools;
 mod builtin;
 mod wasm;
-pub use builtin::{
-    get_builtin_tools, AgentTool, ConsoleLogTool, FinalTool, TransferToAgentTool,
-};
 #[cfg(feature = "code")]
 pub use builtin::DistriExecuteCodeTool;
+pub use builtin::{get_builtin_tools, AgentTool, ConsoleLogTool, FinalTool, TransferToAgentTool};
 pub use wasm::{WasmTool, WasmToolLoader, WasmToolMetadata};
 
 /// Unified plugin tool that executes DAP tools using the unified plugin system

@@ -57,4 +57,3 @@ impl HookRegistry {
         handler(request).await;
     }
 }
-

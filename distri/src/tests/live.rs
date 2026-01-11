@@ -213,9 +213,10 @@ async fn live_usage_recording() -> anyhow::Result<()> {
 
     // Get initial usage
     let initial_usage = get_usage(&http, &ctx.base_url, &api_key).await?;
-    eprintln!("Initial usage - day_tokens: {}, month_tokens: {}",
-        initial_usage.current.day_tokens,
-        initial_usage.current.month_tokens);
+    eprintln!(
+        "Initial usage - day_tokens: {}, month_tokens: {}",
+        initial_usage.current.day_tokens, initial_usage.current.month_tokens
+    );
 
     // Make an agent call that will use tokens
     let msg = Message::user("What is 2 + 2? Reply with just the number.".into(), None);
@@ -229,9 +230,10 @@ async fn live_usage_recording() -> anyhow::Result<()> {
 
     // Get updated usage
     let final_usage = get_usage(&http, &ctx.base_url, &api_key).await?;
-    eprintln!("Final usage - day_tokens: {}, month_tokens: {}",
-        final_usage.current.day_tokens,
-        final_usage.current.month_tokens);
+    eprintln!(
+        "Final usage - day_tokens: {}, month_tokens: {}",
+        final_usage.current.day_tokens, final_usage.current.month_tokens
+    );
 
     // Verify tokens increased
     assert!(
@@ -249,7 +251,11 @@ async fn live_usage_recording() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn get_usage(http: &reqwest::Client, base_url: &str, api_key: &str) -> anyhow::Result<UsageResponse> {
+async fn get_usage(
+    http: &reqwest::Client,
+    base_url: &str,
+    api_key: &str,
+) -> anyhow::Result<UsageResponse> {
     let url = format!("{}/usage", base_url);
     let resp = http
         .get(&url)

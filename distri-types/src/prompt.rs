@@ -53,8 +53,6 @@ pub struct PromptSection {
     pub content: String,
 }
 
-
-
 impl PromptRegistry {
     pub fn new() -> Self {
         Self {

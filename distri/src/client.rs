@@ -9,7 +9,7 @@ use distri_types::{
     ExternalTool, LLmContext, LlmDefinition, Message, MessageRole, TokenResponse, ToolCall,
     a2a_converters::MessageMetadata,
 };
-use distri_types::{configuration::AgentConfigWithTools, StandardDefinition, ToolResponse};
+use distri_types::{StandardDefinition, ToolResponse, configuration::AgentConfigWithTools};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;

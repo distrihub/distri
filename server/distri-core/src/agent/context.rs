@@ -61,7 +61,6 @@ pub struct AdditionalAttributes {
     pub task: Option<serde_json::Value>,
 }
 
-
 #[derive(Debug, Clone, Default)]
 pub struct PromptTemplateOverride {
     pub system: Option<String>,

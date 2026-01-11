@@ -998,7 +998,9 @@ async fn completion_stream(
 }
 
 /// Get the secret store from the executor context
-fn get_secret_store(context: &Arc<ExecutorContext>) -> Option<Arc<dyn distri_types::stores::SecretStore>> {
+fn get_secret_store(
+    context: &Arc<ExecutorContext>,
+) -> Option<Arc<dyn distri_types::stores::SecretStore>> {
     // First check if context has its own stores
     if let Some(ref stores) = context.stores {
         return stores.secret_store.clone();

@@ -240,9 +240,7 @@ async fn sync_prompt_templates(
     // Get existing templates for comparison
     let existing = match store.list().await {
         Ok(list) => list,
-        Err(e) => {
-            return HttpResponse::InternalServerError().json(json!({"error": e.to_string()}))
-        }
+        Err(e) => return HttpResponse::InternalServerError().json(json!({"error": e.to_string()})),
     };
 
     let mut created = 0usize;
@@ -285,7 +283,11 @@ async fn sync_prompt_templates(
                     .register_partial(template.name.clone(), template.template.clone())
                     .await
                 {
-                    tracing::warn!("Failed to register template '{}' in registry: {}", template.name, e);
+                    tracing::warn!(
+                        "Failed to register template '{}' in registry: {}",
+                        template.name,
+                        e
+                    );
                 }
                 result_templates.push(template);
             }

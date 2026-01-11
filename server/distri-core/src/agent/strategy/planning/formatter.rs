@@ -149,7 +149,8 @@ impl<'a> MessageFormatter<'a> {
             Vec::new()
         };
 
-        let interleaved_history = Self::interleave_user_and_tool_history(user_history, tool_history, &user_message);
+        let interleaved_history =
+            Self::interleave_user_and_tool_history(user_history, tool_history, &user_message);
         formatted.extend(interleaved_history);
 
         // Fallback: if we couldn't load history (no orchestrator/store), still include the user.
@@ -192,8 +193,7 @@ impl<'a> MessageFormatter<'a> {
     fn scratchpad_entry_limit(agent_def: &crate::types::StandardDefinition) -> usize {
         let history_size = agent_def.history_size.unwrap_or(5);
         let suggested = history_size.saturating_mul(10);
-        suggested
-            .clamp(MIN_SCRATCHPAD_ENTRY_LIMIT, MAX_SCRATCHPAD_ENTRY_LIMIT)
+        suggested.clamp(MIN_SCRATCHPAD_ENTRY_LIMIT, MAX_SCRATCHPAD_ENTRY_LIMIT)
     }
 
     async fn load_scratchpad_entries(
@@ -309,10 +309,7 @@ impl<'a> MessageFormatter<'a> {
         for idx in 0..users.len() {
             let user = users[idx].clone();
             let start_ts = user.created_at;
-            let end_ts = users
-                .get(idx + 1)
-                .map(|m| m.created_at)
-                .unwrap_or(i64::MAX);
+            let end_ts = users.get(idx + 1).map(|m| m.created_at).unwrap_or(i64::MAX);
 
             interleaved.push(user);
 

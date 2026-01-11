@@ -12,10 +12,7 @@ pub fn configure_secret_routes(cfg: &mut web::ServiceConfig) {
             .route(web::get().to(list_secrets))
             .route(web::post().to(create_secret)),
     )
-    .service(
-        web::resource("/secrets/providers")
-            .route(web::get().to(list_provider_definitions)),
-    )
+    .service(web::resource("/secrets/providers").route(web::get().to(list_provider_definitions)))
     .service(
         web::resource("/secrets/{key}")
             .route(web::get().to(get_secret))
