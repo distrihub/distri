@@ -1108,7 +1108,7 @@ pub struct LlmExecuteResponse {
 // Plugin API Types and Methods
 // ============================================================
 
-/// Plugin information returned from the API.
+/// Full plugin information including code - returned from get/create/update.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PluginResponse {
     pub id: String,
@@ -1119,7 +1119,61 @@ pub struct PluginResponse {
     pub version: Option<String>,
     pub code: String,
     #[serde(default)]
-    pub metadata: Option<serde_json::Value>,
+    pub schemas: Option<PluginSchemas>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub is_public: bool,
+    #[serde(default)]
+    pub is_system: bool,
+    #[serde(default)]
+    pub is_owner: bool,
+    #[serde(default)]
+    pub star_count: i32,
+    #[serde(default)]
+    pub clone_count: i32,
+    #[serde(default)]
+    pub is_starred: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// Plugin schemas containing extracted tool and workflow metadata.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PluginSchemas {
+    #[serde(default)]
+    pub tools: Vec<ToolSchema>,
+    #[serde(default)]
+    pub workflows: Vec<WorkflowSchema>,
+}
+
+/// Tool schema information.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolSchema {
+    pub name: String,
+    pub description: String,
+    pub parameters: serde_json::Value,
+}
+
+/// Workflow schema information.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowSchema {
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
+/// Lighter plugin information without code - returned from list endpoints.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginListItemResponse {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub version: Option<String>,
+    #[serde(default)]
+    pub schemas: Option<PluginSchemas>,
     #[serde(default)]
     pub tags: Vec<String>,
     #[serde(default)]
@@ -1185,14 +1239,14 @@ pub struct ValidatePluginResponse {
 /// Wrapped response for plugin lists.
 #[derive(Debug, Clone, Deserialize)]
 pub struct PluginsListResponse {
-    pub plugins: Vec<PluginResponse>,
+    pub plugins: Vec<PluginListItemResponse>,
 }
 
 impl Distri {
     // ========== Plugin API ==========
 
     /// List all plugins owned by the current user.
-    pub async fn list_plugins(&self) -> Result<Vec<PluginResponse>, ClientError> {
+    pub async fn list_plugins(&self) -> Result<Vec<PluginListItemResponse>, ClientError> {
         let url = format!("{}/plugins", self.base_url);
         let resp = self.http.get(&url).send().await?;
 
