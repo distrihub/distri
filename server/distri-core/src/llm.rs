@@ -770,6 +770,11 @@ impl LLMExecutor {
                         strict: Some(true),
                     },
                 }),
+            // Enable usage tracking in streaming responses
+            stream_options: Some(async_openai::types::chat::ChatCompletionStreamOptions {
+                include_usage: Some(true),
+                include_obfuscation: None,
+            }),
             ..Default::default()
         };
 

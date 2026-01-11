@@ -6,20 +6,41 @@ import {
   ExecutionContext,
 } from "https://distri.dev/base.ts";
 
-function resolveAccessToken(context?: ExecutionContext) {
-  const token = context?.auth_session?.access_token;
-  if (!token) {
-    throw new Error("Gmail requires OAuth authentication. Configure auth_session.access_token in the execution context.");
+function resolveAccessToken(params: Record<string, unknown>, context?: ExecutionContext): string {
+  // 1. Check params.access_token
+  if (params.access_token) {
+    return params.access_token as string;
   }
 
-  return token as string;
+  // 2. Check secrets
+  const secrets = context?.secrets || {};
+  const candidates = [
+    "google_access_token",
+    "gmail_access_token",
+    "google",
+    "gmail",
+  ];
+
+  for (const key of candidates) {
+    if (secrets[key]) {
+      return secrets[key];
+    }
+  }
+
+  // 3. Check auth_session (OAuth flow)
+  if (context?.auth_session?.access_token) {
+    return context.auth_session.access_token as string;
+  }
+
+  throw new Error("Gmail requires authentication. Provide access_token parameter, configure google_access_token secret, or use OAuth flow.");
 }
 
 async function listEmails(params: {
   query?: string;
   maxResults?: number;
+  access_token?: string;
 }, context?: ExecutionContext) {
-  const accessToken = resolveAccessToken(context);
+  const accessToken = resolveAccessToken(params, context);
   const query = params.query || "";
   const maxResults = params.maxResults ?? 10;
 
@@ -46,8 +67,9 @@ async function sendEmail(params: {
   subject: string;
   body: string;
   from?: string;
+  access_token?: string;
 }, context?: ExecutionContext) {
-  const accessToken = resolveAccessToken(context);
+  const accessToken = resolveAccessToken(params, context);
 
   const message = [
     `To: ${params.to}`,
@@ -86,6 +108,7 @@ function getGmailTools(): DapTool[] {
         properties: {
           query: { type: "string", description: "Gmail search query." },
           maxResults: { type: "number", description: "Maximum results (default: 10)." },
+          access_token: { type: "string", description: "Google OAuth access token (optional if configured in secrets)." },
         },
       },
       execute: listEmails,
@@ -100,6 +123,7 @@ function getGmailTools(): DapTool[] {
           subject: { type: "string", description: "Email subject." },
           body: { type: "string", description: "Email body." },
           from: { type: "string", description: "Optional custom from address." },
+          access_token: { type: "string", description: "Google OAuth access token (optional if configured in secrets)." },
         },
         required: ["to", "subject", "body"],
       },

@@ -7,7 +7,7 @@ use crate::{
     },
     llm::LLMExecutor,
     servers::registry::McpServerRegistry,
-    tools::Tool,
+    tools::{FinalTool, Tool},
     types::{CreateThreadRequest, Message, Thread, UpdateThreadRequest},
     AgentError, HookRegistry,
 };
@@ -39,8 +39,6 @@ use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{mpsc, Mutex, RwLock};
 
 pub const SKILL_STORAGE_ROOT: &str = "storage/skills";
-
-// Message types for coordinator communication
 
 #[derive(Clone)]
 pub struct AgentOrchestrator {
@@ -285,6 +283,7 @@ impl AgentOrchestratorBuilder {
         ));
 
         // Initialize prompt registry with defaults only (no auto-discovery)
+        // User-specific partials are loaded at render time in formatter.rs
         let prompt_registry = if let Some(registry) = self.prompt_registry {
             registry
         } else {
@@ -755,6 +754,13 @@ impl AgentOrchestrator {
             if !has_todos {
                 tools.push(todos_tool);
             }
+        }
+
+        // Always include FinalTool if not already present
+        let final_tool = Arc::new(FinalTool) as Arc<dyn Tool>;
+        let has_final = tools.iter().any(|t| t.get_name() == final_tool.get_name());
+        if !has_final {
+            tools.push(final_tool);
         }
 
         if definition.sub_agents.is_empty() {

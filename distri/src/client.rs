@@ -819,6 +819,115 @@ impl Distri {
             )))
         }
     }
+
+    // ========== Prompt Template API ==========
+
+    /// List all prompt templates (user's templates + system templates).
+    pub async fn list_prompt_templates(&self) -> Result<Vec<PromptTemplateResponse>, ClientError> {
+        let url = format!("{}/prompts", self.base_url);
+        let resp = self.http.get(&url).send().await?;
+
+        if resp.status().is_success() {
+            resp.json().await.map_err(ClientError::from)
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!(
+                "failed to list prompt templates: {}",
+                text
+            )))
+        }
+    }
+
+    /// Create or update a prompt template.
+    pub async fn upsert_prompt_template(
+        &self,
+        template: &NewPromptTemplateRequest,
+    ) -> Result<PromptTemplateResponse, ClientError> {
+        let url = format!("{}/prompts", self.base_url);
+        let resp = self.http.post(&url).json(template).send().await?;
+
+        if resp.status().is_success() {
+            resp.json().await.map_err(ClientError::from)
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!(
+                "failed to upsert prompt template: {}",
+                text
+            )))
+        }
+    }
+
+    /// Sync multiple prompt templates (creates or updates by name).
+    pub async fn sync_prompt_templates(
+        &self,
+        templates: &[NewPromptTemplateRequest],
+    ) -> Result<SyncPromptTemplatesResponse, ClientError> {
+        let url = format!("{}/prompts/sync", self.base_url);
+        let resp = self
+            .http
+            .post(&url)
+            .json(&serde_json::json!({ "templates": templates }))
+            .send()
+            .await?;
+
+        if resp.status().is_success() {
+            resp.json().await.map_err(ClientError::from)
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!(
+                "failed to sync prompt templates: {}",
+                text
+            )))
+        }
+    }
+
+    /// Delete a prompt template by ID.
+    pub async fn delete_prompt_template(&self, template_id: &str) -> Result<(), ClientError> {
+        let url = format!("{}/prompts/{}", self.base_url, template_id);
+        let resp = self.http.delete(&url).send().await?;
+
+        if resp.status().is_success() || resp.status() == reqwest::StatusCode::NO_CONTENT {
+            Ok(())
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!(
+                "failed to delete prompt template: {}",
+                text
+            )))
+        }
+    }
+}
+
+/// Request to create/update a prompt template.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NewPromptTemplateRequest {
+    pub name: String,
+    pub template: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+}
+
+/// Response from prompt template API.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PromptTemplateResponse {
+    pub id: String,
+    pub name: String,
+    pub template: String,
+    pub description: Option<String>,
+    pub version: Option<String>,
+    pub is_system: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// Response from syncing prompt templates.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncPromptTemplatesResponse {
+    pub created: usize,
+    pub updated: usize,
+    pub templates: Vec<PromptTemplateResponse>,
 }
 
 /// Response listing all artifact namespaces.
@@ -993,4 +1102,285 @@ pub struct LlmExecuteResponse {
     pub tool_calls: Vec<ToolCall>,
     #[serde(default)]
     pub token_usage: Option<u32>,
+}
+
+// ============================================================
+// Plugin API Types and Methods
+// ============================================================
+
+/// Full plugin information including code - returned from get/create/update.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginResponse {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub version: Option<String>,
+    pub code: String,
+    #[serde(default)]
+    pub schemas: Option<PluginSchemas>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub is_public: bool,
+    #[serde(default)]
+    pub is_system: bool,
+    #[serde(default)]
+    pub is_owner: bool,
+    #[serde(default)]
+    pub star_count: i32,
+    #[serde(default)]
+    pub clone_count: i32,
+    #[serde(default)]
+    pub is_starred: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// Plugin schemas containing extracted tool and workflow metadata.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PluginSchemas {
+    #[serde(default)]
+    pub tools: Vec<ToolSchema>,
+    #[serde(default)]
+    pub workflows: Vec<WorkflowSchema>,
+}
+
+/// Tool schema information.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolSchema {
+    pub name: String,
+    pub description: String,
+    pub parameters: serde_json::Value,
+}
+
+/// Workflow schema information.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowSchema {
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
+/// Lighter plugin information without code - returned from list endpoints.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginListItemResponse {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub version: Option<String>,
+    #[serde(default)]
+    pub schemas: Option<PluginSchemas>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub is_public: bool,
+    #[serde(default)]
+    pub is_system: bool,
+    #[serde(default)]
+    pub is_owner: bool,
+    #[serde(default)]
+    pub star_count: i32,
+    #[serde(default)]
+    pub clone_count: i32,
+    #[serde(default)]
+    pub is_starred: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// Request to create a new plugin.
+#[derive(Debug, Clone, Serialize)]
+pub struct CreatePluginRequest {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub code: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub is_public: bool,
+}
+
+/// Request to update an existing plugin.
+#[derive(Debug, Clone, Serialize)]
+pub struct UpdatePluginRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tags: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_public: Option<bool>,
+}
+
+/// Response from plugin validation.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ValidatePluginResponse {
+    pub valid: bool,
+    #[serde(default)]
+    pub error: Option<String>,
+    #[serde(default)]
+    pub tools: Vec<String>,
+    #[serde(default)]
+    pub workflows: Vec<String>,
+}
+
+/// Wrapped response for plugin lists.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PluginsListResponse {
+    pub plugins: Vec<PluginListItemResponse>,
+}
+
+impl Distri {
+    // ========== Plugin API ==========
+
+    /// List all plugins owned by the current user.
+    pub async fn list_plugins(&self) -> Result<Vec<PluginListItemResponse>, ClientError> {
+        let url = format!("{}/plugins", self.base_url);
+        let resp = self.http.get(&url).send().await?;
+
+        if resp.status().is_success() {
+            let list: PluginsListResponse = resp.json().await?;
+            Ok(list.plugins)
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!(
+                "failed to list plugins: {}",
+                text
+            )))
+        }
+    }
+
+    /// Get a plugin by ID.
+    pub async fn get_plugin(&self, id: &str) -> Result<Option<PluginResponse>, ClientError> {
+        let url = format!("{}/plugins/{}", self.base_url, id);
+        let resp = self.http.get(&url).send().await?;
+
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if resp.status().is_success() {
+            Ok(Some(resp.json().await?))
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!(
+                "failed to get plugin: {}",
+                text
+            )))
+        }
+    }
+
+    /// Create a new plugin.
+    pub async fn create_plugin(
+        &self,
+        request: &CreatePluginRequest,
+    ) -> Result<PluginResponse, ClientError> {
+        let url = format!("{}/plugins", self.base_url);
+        let resp = self.http.post(&url).json(request).send().await?;
+
+        if resp.status().is_success() {
+            resp.json().await.map_err(ClientError::from)
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!(
+                "failed to create plugin: {}",
+                text
+            )))
+        }
+    }
+
+    /// Update an existing plugin.
+    pub async fn update_plugin(
+        &self,
+        id: &str,
+        request: &UpdatePluginRequest,
+    ) -> Result<PluginResponse, ClientError> {
+        let url = format!("{}/plugins/{}", self.base_url, id);
+        let resp = self.http.put(&url).json(request).send().await?;
+
+        if resp.status().is_success() {
+            resp.json().await.map_err(ClientError::from)
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!(
+                "failed to update plugin: {}",
+                text
+            )))
+        }
+    }
+
+    /// Delete a plugin.
+    pub async fn delete_plugin(&self, id: &str) -> Result<(), ClientError> {
+        let url = format!("{}/plugins/{}", self.base_url, id);
+        let resp = self.http.delete(&url).send().await?;
+
+        if resp.status().is_success() || resp.status() == reqwest::StatusCode::NO_CONTENT {
+            Ok(())
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!(
+                "failed to delete plugin: {}",
+                text
+            )))
+        }
+    }
+
+    /// Validate plugin code without saving.
+    pub async fn validate_plugin(&self, code: &str) -> Result<ValidatePluginResponse, ClientError> {
+        let url = format!("{}/plugins/validate", self.base_url);
+        let resp = self
+            .http
+            .post(&url)
+            .json(&serde_json::json!({ "code": code }))
+            .send()
+            .await?;
+
+        if resp.status().is_success() {
+            resp.json().await.map_err(ClientError::from)
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!(
+                "failed to validate plugin: {}",
+                text
+            )))
+        }
+    }
+
+    /// Create or update a plugin by name (upsert).
+    /// If a plugin with the given name exists, it will be updated; otherwise, a new one is created.
+    pub async fn upsert_plugin(
+        &self,
+        request: &CreatePluginRequest,
+    ) -> Result<PluginResponse, ClientError> {
+        // First, try to find an existing plugin with this name
+        let plugins = self.list_plugins().await?;
+        let existing = plugins.iter().find(|p| p.name == request.name);
+
+        if let Some(plugin) = existing {
+            // Update existing plugin
+            let update = UpdatePluginRequest {
+                name: Some(request.name.clone()),
+                description: request.description.clone(),
+                code: Some(request.code.clone()),
+                metadata: request.metadata.clone(),
+                tags: Some(request.tags.clone()),
+                is_public: Some(request.is_public),
+            };
+            self.update_plugin(&plugin.id, &update).await
+        } else {
+            // Create new plugin
+            self.create_plugin(request).await
+        }
+    }
 }

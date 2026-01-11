@@ -626,6 +626,7 @@ impl EventPrinter {
                 success,
                 total_steps,
                 failed_steps: _,
+                usage: _,
             } => {
                 self.state.is_streaming = false;
                 self.ensure_newline();

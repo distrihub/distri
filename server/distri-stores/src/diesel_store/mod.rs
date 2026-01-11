@@ -1200,6 +1200,7 @@ where
             most_active_agent,
             latest_threads: Some(latest_threads),
             recently_used_agents: Some(recently_used_agents),
+            custom_metrics: None,
         })
     }
 }

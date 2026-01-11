@@ -29,7 +29,8 @@ pub use agent_loop::*;
 pub use distri_types::parse_agent_markdown_content;
 pub use parser::load_agents_from_dir;
 pub use prompt_validation::{
-    format_validation_table, validate_agent_prompt, Criticality, ValidationIssue,
+    builtin_partials, extract_partial_references, format_validation_table, validate_agent_prompt,
+    validate_agent_prompt_with_partials, validate_partial_references, Criticality, ValidationIssue,
 };
 pub use standard::*;
 pub use workflow::*;

@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useAgentDefinitions } from '@distri/react';
 import { useDistriHomeNavigate, useDistriHomeConfig } from '../DistriHomeProvider';
 import { useHomeStats } from '../hooks/useHomeStats';
-import { HomeStatsThread, RecentlyUsedAgent } from '../DistriHomeClient';
+import { HomeStatsThread, RecentlyUsedAgent, CustomMetric } from '../DistriHomeClient';
 import {
   AlertTriangle,
   ArrowUpRight,
@@ -48,6 +48,9 @@ export function Home({ onNewAgent, renderNewAgentHelp, className }: HomeProps) {
   const mostActiveAgent = stats?.most_active_agent ?? null;
   // Show first 5 of the recently used agents
   const recentlyUsedAgents = (stats?.recently_used_agents ?? []).slice(0, 5) as RecentlyUsedAgent[];
+
+  // Custom metrics from backend (e.g., monthly calls for cloud)
+  const customMetrics = stats?.custom_metrics ?? {};
 
   const latestActivityLabel = useMemo(() => {
     if (statsError) return 'Unavailable';
@@ -128,7 +131,6 @@ export function Home({ onNewAgent, renderNewAgentHelp, className }: HomeProps) {
           </div>
         ) : null}
 
-        {/* Stats Overview - Single Row */}
         <div className="relative overflow-hidden rounded-2xl border border-border/70 bg-card p-6 shadow-sm">
           <div className="absolute right-4 top-4 text-primary/10">
             <Gauge className="h-20 w-20" />
@@ -189,9 +191,29 @@ export function Home({ onNewAgent, renderNewAgentHelp, className }: HomeProps) {
                   {statsLoading || statsError ? 'Unavailable' : `${mostActiveAgent?.count ?? 0} threads`}
                 </div>
               </div>
+              {/* Custom metrics from backend */}
+              {Object.entries(customMetrics).map(([key, metric]) => (
+                <CustomMetricStat
+                  key={key}
+                  metric={metric}
+                  loading={statsLoading}
+                  error={!!statsError}
+                />
+              ))}
             </div>
           </div>
         </div>
+
+        {/* Custom Widgets Column */}
+        {config.homeWidgets && config.homeWidgets.length > 0 && (
+          <div className="space-y-4">
+            {config.homeWidgets.map((widget) => (
+              <div key={widget.id}>{widget.render()}</div>
+            ))}
+          </div>
+        )}
+
+
 
         {/* Latest Threads and Recently Used Agents - aligned with top row */}
         <div className="mt-6 grid gap-6 lg:grid-cols-3">
@@ -322,14 +344,17 @@ export function Home({ onNewAgent, renderNewAgentHelp, className }: HomeProps) {
             </div>
           </div>
         </div>
-      </div>
 
-      {/* Default push help dialog - can be replaced via renderNewAgentHelp prop */}
-      {renderNewAgentHelp ? (
-        renderNewAgentHelp({ open: showPushHelp, onOpenChange: setShowPushHelp })
-      ) : (
-        <DefaultAgentPushHelp open={showPushHelp} onOpenChange={setShowPushHelp} />
-      )}
+
+        {/* Default push help dialog - can be replaced via renderNewAgentHelp prop */}
+        {
+          renderNewAgentHelp ? (
+            renderNewAgentHelp({ open: showPushHelp, onOpenChange: setShowPushHelp })
+          ) : (
+            <DefaultAgentPushHelp open={showPushHelp} onOpenChange={setShowPushHelp} />
+          )
+        }
+      </div >
     </div>
   );
 }
@@ -438,4 +463,27 @@ function formatRelativeTime(value?: string) {
 
 function formatNumber(value: number) {
   return new Intl.NumberFormat().format(value);
+}
+
+function CustomMetricStat({
+  metric,
+  loading,
+  error,
+}: {
+  metric: CustomMetric;
+  loading: boolean;
+  error: boolean;
+}) {
+  const displayValue = loading ? '—' : metric.value;
+  const helperText = loading || error ? 'Unavailable' : metric.helper;
+
+  return (
+    <div className="md:border-l md:border-border/60 md:pl-6">
+      <div className="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+        {metric.label}
+      </div>
+      <div className="mt-2 text-3xl font-semibold text-foreground">{displayValue}</div>
+      {helperText ? <div className="mt-2 text-xs text-muted-foreground">{helperText}</div> : null}
+    </div>
+  );
 }

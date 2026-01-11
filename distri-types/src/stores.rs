@@ -376,6 +376,31 @@ pub struct HomeStats {
     /// Recently used agents (last 10 by most recent thread activity)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recently_used_agents: Option<Vec<RecentlyUsedAgent>>,
+    /// Custom metrics that can be displayed in the stats overview
+    /// Key is the metric name (e.g., "usage"), value is the metric data
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub custom_metrics: Option<std::collections::HashMap<String, CustomMetric>>,
+}
+
+/// A custom metric for display in the stats overview
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CustomMetric {
+    /// Display label (e.g., "Monthly Calls")
+    pub label: String,
+    /// Current value as a string (formatted)
+    pub value: String,
+    /// Optional helper text below the value
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub helper: Option<String>,
+    /// Optional limit (for progress display)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<String>,
+    /// Optional raw numeric value for calculations
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raw_value: Option<i64>,
+    /// Optional raw limit for calculations
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raw_limit: Option<i64>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -550,6 +575,7 @@ pub struct NewPromptTemplate {
     pub template: String,
     pub description: Option<String>,
     pub version: Option<String>,
+    #[serde(default)]
     pub is_system: bool,
 }
 

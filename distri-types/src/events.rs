@@ -4,6 +4,17 @@ use serde_json::Value;
 use crate::core::{MessageRole, ToolCall, ToolResponse};
 use crate::hooks::InlineHookRequest;
 
+/// Token usage information for a run
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct RunUsage {
+    /// Actual tokens used (from LLM response)
+    pub total_tokens: u32,
+    pub input_tokens: u32,
+    pub output_tokens: u32,
+    /// Estimated tokens (pre-call estimate)
+    pub estimated_tokens: u32,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "snake_case")]
 pub struct AgentEvent {
@@ -13,6 +24,12 @@ pub struct AgentEvent {
     pub event: AgentEventType,
     pub task_id: String,
     pub agent_id: String,
+    /// User ID for usage tracking
+    #[serde(default)]
+    pub user_id: Option<String>,
+    /// Identifier ID for tenant/project-level usage tracking
+    #[serde(default)]
+    pub identifier_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -24,6 +41,8 @@ pub enum AgentEventType {
         success: bool,
         total_steps: usize,
         failed_steps: usize,
+        /// Token usage for this run
+        usage: Option<RunUsage>,
     },
     RunError {
         message: String,
@@ -161,6 +180,8 @@ impl AgentEvent {
             event,
             task_id: uuid::Uuid::new_v4().to_string(),
             agent_id: "default".to_string(),
+            user_id: None,
+            identifier_id: None,
         }
     }
 
@@ -178,6 +199,8 @@ impl AgentEvent {
             task_id,
             event,
             agent_id,
+            user_id: None,
+            identifier_id: None,
         }
     }
 }

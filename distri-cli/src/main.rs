@@ -6,8 +6,8 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use crossterm::terminal;
 use distri::{
-    print_stream, AgentStreamClient, BuildHttpClient, Distri, DistriClientApp, DistriConfig,
-    ExternalToolRegistry,
+    print_stream, AgentStreamClient, BuildHttpClient, CreatePluginRequest, Distri,
+    DistriClientApp, DistriConfig, ExternalToolRegistry,
 };
 use distri_a2a::{
     EventKind, Message as A2aMessage, MessageSendParams, Part as A2aPart, Role, TextPart,
@@ -67,6 +67,18 @@ enum Commands {
     Tools {
         #[clap(subcommand)]
         command: ToolsCommands,
+    },
+
+    /// Prompt template related commands
+    Prompts {
+        #[clap(subcommand)]
+        command: PromptsCommands,
+    },
+
+    /// Plugin related commands
+    Plugins {
+        #[clap(subcommand)]
+        command: PluginsCommands,
     },
 
     /// Manage local client configuration
@@ -132,6 +144,39 @@ enum ConfigCommands {
         key: String,
         #[clap(help = "Value to set (empty clears the key)", num_args = 1..)]
         value: Vec<String>,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum PromptsCommands {
+    /// List prompt templates from the server
+    List,
+    /// Push prompt templates from a file or directory
+    Push {
+        #[clap(help = "Path to a .hbs file or directory containing .hbs template files")]
+        path: PathBuf,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum PluginsCommands {
+    /// List plugins from the server
+    List,
+    /// Push plugin(s) to the server from a file or directory
+    Push {
+        #[clap(help = "Path to a plugin .ts file or directory containing plugins")]
+        path: PathBuf,
+        /// Push all plugins in a directory
+        #[clap(long, help = "Push all plugin files in the directory")]
+        all: bool,
+        /// Make the plugin public
+        #[clap(long, help = "Make the plugin publicly visible")]
+        public: bool,
+    },
+    /// Validate a plugin without uploading
+    Validate {
+        #[clap(help = "Path to a plugin .ts file")]
+        path: PathBuf,
     },
 }
 
@@ -406,6 +451,12 @@ async fn main() -> Result<()> {
         },
         Commands::Config { command } => {
             handle_config_command(command)?;
+        }
+        Commands::Prompts { command } => {
+            handle_prompts_command(&client, command).await?;
+        }
+        Commands::Plugins { command } => {
+            handle_plugins_command(&client, command).await?;
         }
         Commands::Serve { .. } => unreachable!("serve handled earlier"),
     }
@@ -934,6 +985,110 @@ fn handle_config_command(command: ConfigCommands) -> Result<()> {
     Ok(())
 }
 
+async fn handle_prompts_command(client: &Distri, command: PromptsCommands) -> Result<()> {
+    match command {
+        PromptsCommands::List => {
+            println!("📋 Listing prompt templates...");
+            let templates = client.list_prompt_templates().await?;
+            if templates.is_empty() {
+                println!("No prompt templates found.");
+            } else {
+                for template in templates {
+                    let type_indicator = if template.is_system {
+                        "system"
+                    } else {
+                        "custom"
+                    };
+                    println!(
+                        "{} [{}] - {}",
+                        template.name,
+                        type_indicator,
+                        template.description.as_deref().unwrap_or("(no description)")
+                    );
+                }
+            }
+        }
+        PromptsCommands::Push { path } => {
+            if !path.exists() {
+                anyhow::bail!("Path does not exist: {}", path.display());
+            }
+
+            let mut templates = Vec::new();
+
+            if path.is_file() {
+                // Single file
+                templates.push(load_template_file(&path).await?);
+            } else if path.is_dir() {
+                // Read all .hbs files in the directory (recursively)
+                fn collect_hbs_files(dir: &Path, files: &mut Vec<PathBuf>) -> std::io::Result<()> {
+                    for entry in std::fs::read_dir(dir)? {
+                        let entry = entry?;
+                        let path = entry.path();
+                        if path.is_dir() {
+                            collect_hbs_files(&path, files)?;
+                        } else if path.is_file() {
+                            if let Some(ext) = path.extension() {
+                                if ext == "hbs" || ext == "handlebars" {
+                                    files.push(path);
+                                }
+                            }
+                        }
+                    }
+                    Ok(())
+                }
+
+                let mut files = Vec::new();
+                collect_hbs_files(&path, &mut files)?;
+                for file_path in files {
+                    templates.push(load_template_file(&file_path).await?);
+                }
+            }
+
+            if templates.is_empty() {
+                println!("No .hbs template files found in {}", path.display());
+                return Ok(());
+            }
+
+            println!(
+                "📤 Pushing {} template(s) to {}...",
+                templates.len(),
+                client.base_url()
+            );
+
+            let result = client.sync_prompt_templates(&templates).await?;
+
+            println!(
+                "{}✔ Synced: {} created, {} updated{}",
+                COLOR_BRIGHT_GREEN, result.created, result.updated, COLOR_RESET
+            );
+
+            for template in &result.templates {
+                println!("  - {}", template.name);
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn load_template_file(path: &Path) -> Result<distri::NewPromptTemplateRequest> {
+    let content = fs::read_to_string(path)
+        .await
+        .with_context(|| format!("reading {}", path.display()))?;
+
+    let name = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("unknown")
+        .to_string();
+
+    Ok(distri::NewPromptTemplateRequest {
+        name,
+        template: content,
+        description: None,
+        version: None,
+    })
+}
+
 fn set_client_config_value(key: &str, raw_value: &str) -> Result<PathBuf> {
     let path = DistriConfig::config_path()
         .ok_or_else(|| anyhow::anyhow!("Unable to resolve home directory for ~/.distri/config"))?;
@@ -1030,4 +1185,214 @@ async fn push_file(client: &Distri, path: &Path) -> Result<()> {
     );
 
     Ok(())
+}
+
+async fn handle_plugins_command(client: &Distri, command: PluginsCommands) -> Result<()> {
+    match command {
+        PluginsCommands::List => {
+            println!("📋 Listing plugins...");
+            let plugins = client.list_plugins().await?;
+            if plugins.is_empty() {
+                println!("No plugins found.");
+            } else {
+                for plugin in plugins {
+                    let visibility = if plugin.is_public { "public" } else { "private" };
+                    let stars = if plugin.star_count > 0 {
+                        format!(" ⭐{}", plugin.star_count)
+                    } else {
+                        String::new()
+                    };
+                    println!(
+                        "{} [{}]{} - {}",
+                        plugin.name,
+                        visibility,
+                        stars,
+                        plugin.description.as_deref().unwrap_or("(no description)")
+                    );
+                }
+            }
+        }
+        PluginsCommands::Push { path, all, public } => {
+            if !path.exists() {
+                anyhow::bail!("Path does not exist: {}", path.display());
+            }
+
+            // Collect plugins: (name, code_path)
+            let mut plugins: Vec<(String, PathBuf)> = Vec::new();
+
+            if path.is_file() {
+                // Single file: use filename as plugin name
+                let name = path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("plugin")
+                    .to_string();
+                plugins.push((name, path.clone()));
+            } else if path.is_dir() {
+                // Check if this directory itself is a plugin (has mod.ts)
+                let mod_ts = path.join("mod.ts");
+                if mod_ts.exists() && !all {
+                    // Single plugin directory
+                    let name = path
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("plugin")
+                        .to_string();
+                    plugins.push((name, mod_ts));
+                } else if all {
+                    // Look for subdirectories with mod.ts (Deno-style structure)
+                    let mut entries = fs::read_dir(&path).await?;
+                    while let Some(entry) = entries.next_entry().await? {
+                        let entry_path = entry.path();
+                        if entry_path.is_dir() {
+                            // Subdirectory: look for mod.ts (primary) or index.ts (fallback)
+                            let dir_name = entry_path
+                                .file_name()
+                                .and_then(|s| s.to_str())
+                                .unwrap_or("plugin")
+                                .to_string();
+
+                            let mod_ts = entry_path.join("mod.ts");
+                            let index_ts = entry_path.join("index.ts");
+
+                            if mod_ts.exists() {
+                                plugins.push((dir_name, mod_ts));
+                            } else if index_ts.exists() {
+                                plugins.push((dir_name, index_ts));
+                            }
+                        } else if entry_path.is_file() {
+                            // Also support standalone .ts files
+                            if let Some(ext) = entry_path.extension() {
+                                if ext == "ts" || ext == "tsx" {
+                                    let name = entry_path
+                                        .file_stem()
+                                        .and_then(|s| s.to_str())
+                                        .unwrap_or("plugin")
+                                        .to_string();
+                                    plugins.push((name, entry_path));
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    eprintln!(
+                        "Path is a directory without mod.ts. Re-run with --all to push all plugins inside."
+                    );
+                    std::process::exit(1);
+                }
+            }
+
+            if plugins.is_empty() {
+                println!("No plugins found in {}", path.display());
+                return Ok(());
+            }
+
+            println!(
+                "📤 Pushing {} plugin(s) to {}...",
+                plugins.len(),
+                client.base_url()
+            );
+
+            for (name, code_path) in plugins {
+                push_plugin_with_name(client, &name, &code_path, public).await?;
+            }
+        }
+        PluginsCommands::Validate { path } => {
+            if !path.exists() {
+                anyhow::bail!("Path does not exist: {}", path.display());
+            }
+
+            println!("🔍 Validating plugin: {}", path.display());
+
+            let code = fs::read_to_string(&path)
+                .await
+                .with_context(|| format!("reading {}", path.display()))?;
+
+            // Basic validation: check for required exports
+            let has_integration = code.contains("export const integration")
+                || code.contains("export { integration }");
+
+            if !has_integration {
+                eprintln!(
+                    "{}✗ Plugin must export an 'integration' object{}",
+                    "\x1b[91m", COLOR_RESET
+                );
+                std::process::exit(1);
+            }
+
+            // Check for tool or workflow definitions
+            let has_tools = code.contains("tools:") || code.contains("defineTool");
+            let has_workflows = code.contains("workflows:") || code.contains("defineWorkflow");
+
+            if !has_tools && !has_workflows {
+                eprintln!(
+                    "{}⚠ Warning: Plugin doesn't appear to define any tools or workflows{}",
+                    COLOR_BRIGHT_YELLOW, COLOR_RESET
+                );
+            }
+
+            println!(
+                "{}✔ Plugin structure looks valid{}",
+                COLOR_BRIGHT_GREEN, COLOR_RESET
+            );
+
+            if has_tools {
+                println!("  - Contains tool definitions");
+            }
+            if has_workflows {
+                println!("  - Contains workflow definitions");
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn push_plugin_with_name(client: &Distri, name: &str, path: &Path, is_public: bool) -> Result<()> {
+    let code = fs::read_to_string(path)
+        .await
+        .with_context(|| format!("reading {}", path.display()))?;
+
+    // Try to extract description from the code
+    let description = extract_plugin_description(&code);
+
+    let request = CreatePluginRequest {
+        name: name.to_string(),
+        description,
+        code,
+        metadata: None,
+        tags: vec![],
+        is_public,
+    };
+
+    let result = client.upsert_plugin(&request).await?;
+
+    let visibility = if result.is_public { "public" } else { "private" };
+    println!(
+        "{}✔ Pushed plugin '{}' [{}]{}",
+        COLOR_BRIGHT_GREEN, result.name, visibility, COLOR_RESET
+    );
+
+    Ok(())
+}
+
+/// Extract description from plugin code by looking for common patterns
+fn extract_plugin_description(code: &str) -> Option<String> {
+    // Look for description in integration export
+    // Pattern: description: "..." or description: '...'
+    let patterns = [
+        r#"description:\s*["']([^"']+)["']"#,
+        r#"description:\s*`([^`]+)`"#,
+    ];
+
+    for pattern in patterns {
+        if let Ok(re) = regex::Regex::new(pattern) {
+            if let Some(caps) = re.captures(code) {
+                if let Some(desc) = caps.get(1) {
+                    return Some(desc.as_str().to_string());
+                }
+            }
+        }
+    }
+
+    None
 }

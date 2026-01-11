@@ -42,12 +42,14 @@ interface CalendarListParams {
   timeMax?: string;
   singleEvents?: boolean;
   orderBy?: string;
+  access_token?: string;
 }
 
 interface CreateEventParams {
   calendarId?: string;
   event: CalendarEvent;
   sendNotifications?: boolean;
+  access_token?: string;
 }
 
 interface UpdateEventParams {
@@ -55,6 +57,36 @@ interface UpdateEventParams {
   eventId: string;
   event: Partial<CalendarEvent>;
   sendNotifications?: boolean;
+  access_token?: string;
+}
+
+function resolveAccessToken(params: Record<string, unknown>, context?: ExecutionContext): string {
+  // 1. Check params.access_token
+  if (params.access_token) {
+    return params.access_token as string;
+  }
+
+  // 2. Check secrets
+  const secrets = context?.secrets || {};
+  const candidates = [
+    "google_access_token",
+    "google_calendar_access_token",
+    "google",
+    "google_calendar",
+  ];
+
+  for (const key of candidates) {
+    if (secrets[key]) {
+      return secrets[key];
+    }
+  }
+
+  // 3. Check auth_session (OAuth flow)
+  if (context?.auth_session?.access_token) {
+    return context.auth_session.access_token as string;
+  }
+
+  throw new Error("Google Calendar requires authentication. Provide access_token parameter, configure google_access_token secret, or use OAuth flow.");
 }
 
 class GoogleCalendarIntegration {
@@ -65,13 +97,8 @@ class GoogleCalendarIntegration {
   private baseUrl = "https://www.googleapis.com/calendar/v3";
   private accessToken: string;
 
-  constructor(context?: ExecutionContext) {
-    const accessToken = context?.auth_session?.access_token;
-    if (!accessToken) {
-      throw new Error("Google Calendar requires OAuth authentication. Configure auth_session.access_token in the execution context.");
-    }
-
-    this.accessToken = accessToken as string;
+  constructor(accessToken: string) {
+    this.accessToken = accessToken;
   }
 
   private async makeRequest(endpoint: string, options: RequestInit = {}) {
@@ -209,10 +236,12 @@ function getCalendarTools(): DapTool[] {
           timeMin: { type: "string", description: "Start time (ISO 8601)." },
           timeMax: { type: "string", description: "End time (ISO 8601)." },
           days: { type: "number", description: "Shortcut to fetch next N days." },
+          access_token: { type: "string", description: "Google OAuth access token (optional if configured in secrets)." },
         },
       },
       execute: async (params, context) => {
-        const calendar = new GoogleCalendarIntegration(context);
+        const accessToken = resolveAccessToken(params, context);
+        const calendar = new GoogleCalendarIntegration(accessToken);
 
         if (params.days && !params.timeMin && !params.timeMax) {
           const now = new Date();
@@ -251,11 +280,13 @@ function getCalendarTools(): DapTool[] {
           },
           calendarId: { type: "string", description: "Target calendar ID." },
           sendNotifications: { type: "boolean", description: "Notify attendees." },
+          access_token: { type: "string", description: "Google OAuth access token (optional if configured in secrets)." },
         },
         required: ["summary", "startDateTime", "endDateTime"],
       },
       execute: async (params, context) => {
-        const calendar = new GoogleCalendarIntegration(context);
+        const accessToken = resolveAccessToken(params, context);
+        const calendar = new GoogleCalendarIntegration(accessToken);
         const event: CalendarEvent = {
           summary: params.summary,
           description: params.description,
@@ -292,11 +323,13 @@ function getCalendarTools(): DapTool[] {
           endDateTime: { type: "string", description: "New end time." },
           timeZone: { type: "string", description: "Time zone." },
           sendNotifications: { type: "boolean", description: "Notify attendees." },
+          access_token: { type: "string", description: "Google OAuth access token (optional if configured in secrets)." },
         },
         required: ["eventId"],
       },
       execute: async (params, context) => {
-        const calendar = new GoogleCalendarIntegration(context);
+        const accessToken = resolveAccessToken(params, context);
+        const calendar = new GoogleCalendarIntegration(accessToken);
         const event: Partial<CalendarEvent> = {};
 
         if (params.summary) event.summary = params.summary;
@@ -331,11 +364,13 @@ function getCalendarTools(): DapTool[] {
           eventId: { type: "string", description: "Event ID." },
           calendarId: { type: "string", description: "Calendar ID." },
           sendNotifications: { type: "boolean", description: "Notify attendees." },
+          access_token: { type: "string", description: "Google OAuth access token (optional if configured in secrets)." },
         },
         required: ["eventId"],
       },
       execute: async (params, context) => {
-        const calendar = new GoogleCalendarIntegration(context);
+        const accessToken = resolveAccessToken(params, context);
+        const calendar = new GoogleCalendarIntegration(accessToken);
         const calendarId = params.calendarId || "primary";
         await calendar.deleteEvent(calendarId, params.eventId, params.sendNotifications ?? false);
         return { success: true };
@@ -349,11 +384,13 @@ function getCalendarTools(): DapTool[] {
         properties: {
           eventId: { type: "string", description: "Event ID." },
           calendarId: { type: "string", description: "Calendar ID." },
+          access_token: { type: "string", description: "Google OAuth access token (optional if configured in secrets)." },
         },
         required: ["eventId"],
       },
       execute: async (params, context) => {
-        const calendar = new GoogleCalendarIntegration(context);
+        const accessToken = resolveAccessToken(params, context);
+        const calendar = new GoogleCalendarIntegration(accessToken);
         const calendarId = params.calendarId || "primary";
         return await calendar.getEvent(calendarId, params.eventId);
       },
@@ -363,10 +400,13 @@ function getCalendarTools(): DapTool[] {
       description: "List calendars available for the authenticated user.",
       parameters: {
         type: "object",
-        properties: {},
+        properties: {
+          access_token: { type: "string", description: "Google OAuth access token (optional if configured in secrets)." },
+        },
       },
-      execute: async (_params, context) => {
-        const calendar = new GoogleCalendarIntegration(context);
+      execute: async (params, context) => {
+        const accessToken = resolveAccessToken(params, context);
+        const calendar = new GoogleCalendarIntegration(accessToken);
         return await calendar.listCalendars();
       },
     }),
@@ -390,11 +430,13 @@ function getCalendarTools(): DapTool[] {
             },
           },
           timeZone: { type: "string", description: "Time zone override." },
+          access_token: { type: "string", description: "Google OAuth access token (optional if configured in secrets)." },
         },
         required: ["timeMin", "timeMax", "items"],
       },
       execute: async (params, context) => {
-        const calendar = new GoogleCalendarIntegration(context);
+        const accessToken = resolveAccessToken(params, context);
+        const calendar = new GoogleCalendarIntegration(accessToken);
         return await calendar.getFreeBusy(params);
       },
     }),
@@ -403,10 +445,13 @@ function getCalendarTools(): DapTool[] {
       description: "Verify the Google Calendar token is valid.",
       parameters: {
         type: "object",
-        properties: {},
+        properties: {
+          access_token: { type: "string", description: "Google OAuth access token (optional if configured in secrets)." },
+        },
       },
-      execute: async (_params, context) => {
-        const calendar = new GoogleCalendarIntegration(context);
+      execute: async (params, context) => {
+        const accessToken = resolveAccessToken(params, context);
+        const calendar = new GoogleCalendarIntegration(accessToken);
         return await calendar.testConnection();
       },
     }),

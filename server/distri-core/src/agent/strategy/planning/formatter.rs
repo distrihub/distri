@@ -593,6 +593,31 @@ async fn render_prompt(
 ) -> Result<String, AgentError> {
     if let Some(orchestrator) = &context.orchestrator {
         let prompt_registry = orchestrator.get_prompt_registry();
+
+        // Load all user templates from database and register as partials
+        // This allows any template to reference any other template via {{> name}}
+        if let Some(ref store) = orchestrator.stores.prompt_template_store {
+            match store.list().await {
+                Ok(templates) => {
+                    for tpl in templates {
+                        if let Err(e) = prompt_registry
+                            .register_partial(tpl.name.clone(), tpl.template.clone())
+                            .await
+                        {
+                            tracing::debug!(
+                                "Failed to register template '{}' as partial: {}",
+                                tpl.name,
+                                e
+                            );
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::debug!("Failed to load templates from database: {}", e);
+                }
+            }
+        }
+
         let rendered_prompt = prompt_registry
             .render_template(template, template_data)
             .await?;

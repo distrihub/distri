@@ -88,6 +88,12 @@ pub trait AgentHooks: Send + Sync + std::fmt::Debug {
     async fn on_halt(&self, _reason: &str) -> Result<(), AgentError> {
         Ok(())
     }
+
+    /// Called when any agent event is emitted
+    /// This allows hooks to listen to all events including RunFinished with usage info
+    async fn on_event(&self, _event: &AgentEvent) -> Result<(), AgentError> {
+        Ok(())
+    }
 }
 
 /// Result of agent invocation
