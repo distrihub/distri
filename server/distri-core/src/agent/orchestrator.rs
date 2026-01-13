@@ -722,16 +722,26 @@ impl AgentOrchestrator {
         // Use new tools configuration if available, fallback to old mcp_servers
         let tools_config = definition.tools.clone().unwrap_or(ToolsConfig::default());
 
-        // Get cached plugin tools from orchestrator
-        let plugin_tools = {
-            let plugin_tools_guard = self.plugin_tools.read().await;
-            plugin_tools_guard.clone()
-        };
+        // Get plugin tool loader - either from stores or create from plugin_tools
+        let plugin_tool_loader: Option<Box<dyn distri_types::stores::PluginToolLoader>> =
+            if let Some(ref loader) = self.stores.plugin_tool_loader {
+                Some(Box::new(LoaderWrapper(loader.clone())))
+            } else {
+                let plugin_tools = {
+                    let plugin_tools_guard = self.plugin_tools.read().await;
+                    plugin_tools_guard.clone()
+                };
+                if !plugin_tools.is_empty() {
+                    Some(Box::new(crate::tools::HashMapPluginToolLoader::new(plugin_tools)))
+                } else {
+                    None
+                }
+            };
 
         let mut tools = crate::tools::resolve_tools_config(
             &tools_config,
             self.mcp_registry.clone(),
-            plugin_tools,
+            plugin_tool_loader.as_deref(),
             self.workspace_filesystem.clone(),
             self.session_filesystem.clone(),
             definition.file_system.include_server_tools(),
@@ -1414,6 +1424,7 @@ impl AgentOrchestrator {
             self.session_filesystem.clone(),
             true,
         );
+
         // Create a ToolsConfig that includes all available tools
         let mut all_tools_config = ToolsConfig {
             builtin: vec![], // Don't include builtin tools by default for /toolcall
@@ -1435,24 +1446,40 @@ impl AgentOrchestrator {
             }
         }
 
-        // Add all plugin packages with wildcard to get all their tools
-        let plugin_tools = {
-            let plugin_tools_guard = self.plugin_tools.read().await;
-            plugin_tools_guard.clone()
-        };
+        // Get plugin tool loader - either from stores or create from plugin_tools
+        let plugin_tool_loader: Option<Box<dyn distri_types::stores::PluginToolLoader>> =
+            if let Some(ref loader) = self.stores.plugin_tool_loader {
+                // Use the configured loader (Cloud: DB-based, or custom)
+                Some(Box::new(LoaderWrapper(loader.clone())))
+            } else {
+                // Fallback to plugin_tools HashMap (OSS: filesystem-based)
+                let plugin_tools = {
+                    let plugin_tools_guard = self.plugin_tools.read().await;
+                    plugin_tools_guard.clone()
+                };
+                if !plugin_tools.is_empty() {
+                    Some(Box::new(crate::tools::HashMapPluginToolLoader::new(plugin_tools)))
+                } else {
+                    None
+                }
+            };
 
-        for package_name in plugin_tools.keys() {
-            all_tools_config.packages.insert(
-                package_name.clone(),
-                vec!["*".to_string()], // Get all tools from this package
-            );
+        // Add all plugin packages with wildcard to get all their tools
+        if let Some(ref loader) = plugin_tool_loader {
+            let packages = loader.list_packages().await.unwrap_or_default();
+            for package_name in packages {
+                all_tools_config.packages.insert(
+                    package_name,
+                    vec!["*".to_string()], // Get all tools from this package
+                );
+            }
         }
 
         // Use the standardized resolve_tools_config method
         let mut tools = crate::tools::resolve_tools_config(
             &all_tools_config,
             self.mcp_registry.clone(),
-            plugin_tools,
+            plugin_tool_loader.as_deref(),
             self.workspace_filesystem.clone(),
             self.session_filesystem.clone(),
             true,
@@ -1465,7 +1492,31 @@ impl AgentOrchestrator {
 
         Ok(tools)
     }
+}
 
+// Helper wrapper to allow using Arc<dyn PluginToolLoader> as &dyn PluginToolLoader
+struct LoaderWrapper(Arc<dyn distri_types::stores::PluginToolLoader>);
+
+impl std::fmt::Debug for LoaderWrapper {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LoaderWrapper").finish()
+    }
+}
+
+#[async_trait::async_trait]
+impl distri_types::stores::PluginToolLoader for LoaderWrapper {
+    async fn list_packages(&self) -> anyhow::Result<Vec<String>> {
+        self.0.list_packages().await
+    }
+    async fn get_package_tools(&self, package_name: &str) -> anyhow::Result<Vec<Arc<dyn crate::tools::Tool>>> {
+        self.0.get_package_tools(package_name).await
+    }
+    async fn has_package(&self, package_name: &str) -> anyhow::Result<bool> {
+        self.0.has_package(package_name).await
+    }
+}
+
+impl AgentOrchestrator {
     /// Complete an external tool execution
     pub async fn complete_tool(
         &self,

@@ -42,6 +42,7 @@ pub use orchestrator::AgentOrchestrator;
 
 // Export DAP registry
 pub use plugin_registry::{PluginOptions, PluginRegistry};
+pub use plugin_storage::InMemoryPluginResolver;
 
 // Export prompt registry
 pub use prompt_registry::{PromptRegistry, PromptSection, PromptTemplate, TemplateData};

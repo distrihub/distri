@@ -125,3 +125,34 @@ impl PluginFileResolver for ObjectStorePluginResolver {
         }
     }
 }
+
+/// In-memory plugin resolver for tenant plugins stored in database
+/// Returns the plugin code directly without filesystem access
+pub struct InMemoryPluginResolver {
+    code: String,
+    entrypoint: String,
+}
+
+impl InMemoryPluginResolver {
+    pub fn new(code: String, entrypoint: String) -> Self {
+        Self { code, entrypoint }
+    }
+}
+
+impl PluginFileResolver for InMemoryPluginResolver {
+    fn read(&self, path: &str) -> Result<Vec<u8>> {
+        // Normalize path to match entrypoint
+        let normalized_path = path.trim_start_matches('/').trim_start_matches("./");
+        let normalized_entrypoint = self.entrypoint.trim_start_matches('/').trim_start_matches("./");
+
+        if normalized_path == normalized_entrypoint {
+            Ok(self.code.as_bytes().to_vec())
+        } else {
+            Err(anyhow!(
+                "InMemoryPluginResolver only supports reading entrypoint '{}', not '{}'",
+                self.entrypoint,
+                path
+            ))
+        }
+    }
+}

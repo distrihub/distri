@@ -359,6 +359,7 @@ impl StoreBuilder {
             plugin_store,
             prompt_template_store: Some(prompt_template_store),
             secret_store: Some(secret_store),
+            plugin_tool_loader: None, // Cloud deployments set this separately
         })
     }
 }
@@ -467,6 +468,7 @@ pub async fn create_ephemeral_execution_stores(
         plugin_store: base_stores.plugin_store.clone(),
         prompt_template_store: base_stores.prompt_template_store.clone(),
         secret_store: base_stores.secret_store.clone(),
+        plugin_tool_loader: base_stores.plugin_tool_loader.clone(),
     })
 }
 
@@ -510,5 +512,6 @@ pub async fn prepare_stores_for_execution(
         plugin_store: base_stores.plugin_store.clone(),
         prompt_template_store: base_stores.prompt_template_store.clone(),
         secret_store: base_stores.secret_store.clone(),
+        plugin_tool_loader: base_stores.plugin_tool_loader.clone(),
     })
 }
