@@ -29,12 +29,38 @@ pub use context::to_tool_context;
 pub use mcp::get_mcp_tools;
 mod builtin;
 mod wasm;
-pub use builtin::{
-    get_builtin_tools, AgentTool, ConsoleLogTool, FinalTool, TransferToAgentTool,
-};
 #[cfg(feature = "code")]
 pub use builtin::DistriExecuteCodeTool;
+pub use builtin::{get_builtin_tools, AgentTool, ConsoleLogTool, FinalTool, TransferToAgentTool};
 pub use wasm::{WasmTool, WasmToolLoader, WasmToolMetadata};
+
+/// Plugin tool loader that wraps a pre-loaded HashMap of tools.
+/// Used for OSS deployments where plugins are loaded from filesystem via plugin_registry.
+#[derive(Debug, Clone)]
+pub struct HashMapPluginToolLoader {
+    tools: HashMap<String, Vec<Arc<dyn Tool>>>,
+}
+
+impl HashMapPluginToolLoader {
+    pub fn new(tools: HashMap<String, Vec<Arc<dyn Tool>>>) -> Self {
+        Self { tools }
+    }
+}
+
+#[async_trait::async_trait]
+impl distri_types::stores::PluginToolLoader for HashMapPluginToolLoader {
+    async fn list_packages(&self) -> anyhow::Result<Vec<String>> {
+        Ok(self.tools.keys().cloned().collect())
+    }
+
+    async fn get_package_tools(&self, package_name: &str) -> anyhow::Result<Vec<Arc<dyn Tool>>> {
+        Ok(self.tools.get(package_name).cloned().unwrap_or_default())
+    }
+
+    async fn has_package(&self, package_name: &str) -> anyhow::Result<bool> {
+        Ok(self.tools.contains_key(package_name))
+    }
+}
 
 /// Unified plugin tool that executes DAP tools using the unified plugin system
 #[derive(Debug, Clone)]
@@ -45,6 +71,20 @@ pub struct PluginTool {
     pub package_name: String,
     pub plugin_path: std::path::PathBuf,
     pub auth_requirement: Option<distri_types::auth::AuthRequirement>,
+}
+
+/// Tool wrapper for tenant plugins loaded from database.
+/// Similar to PluginTool but loads code on-demand from stored code.
+#[derive(Debug, Clone)]
+pub struct TenantPluginTool {
+    pub name: String,
+    pub description: String,
+    pub parameters: serde_json::Value,
+    pub package_name: String,  // e.g., "tenant:vivek/slack"
+    pub plugin_code: String,   // The actual plugin code
+    pub plugin_name: String,   // e.g., "slack"
+    pub plugin_version: Option<String>,
+    pub plugin_description: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -950,11 +990,156 @@ impl ExecutorContextTool for DynExecutorTool {
     }
 }
 
+// ========== TenantPluginTool Implementation ==========
+
+impl TenantPluginTool {
+    pub fn new(
+        name: String,
+        description: String,
+        parameters: serde_json::Value,
+        package_name: String,
+        plugin_code: String,
+        plugin_name: String,
+        plugin_version: Option<String>,
+        plugin_description: Option<String>,
+    ) -> Self {
+        Self {
+            name,
+            description,
+            parameters,
+            package_name,
+            plugin_code,
+            plugin_name,
+            plugin_version,
+            plugin_description,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl Tool for TenantPluginTool {
+    fn get_name(&self) -> String {
+        self.name.clone()
+    }
+
+    fn get_description(&self) -> String {
+        self.description.clone()
+    }
+
+    fn get_parameters(&self) -> serde_json::Value {
+        self.parameters.clone()
+    }
+
+    fn needs_executor_context(&self) -> bool {
+        true // Tenant plugin tools need ExecutorContext to access plugin system
+    }
+
+    fn get_plugin_name(&self) -> Option<String> {
+        Some(self.package_name.clone())
+    }
+
+    fn get_auth_metadata(&self) -> Option<Box<dyn distri_types::auth::AuthMetadata>> {
+        None // TODO: Support auth for tenant plugins
+    }
+
+    async fn execute(
+        &self,
+        _tool_call: ToolCall,
+        _context: Arc<distri_types::tool::ToolContext>,
+    ) -> Result<Vec<Part>, anyhow::Error> {
+        Err(anyhow::anyhow!(
+            "TenantPluginTool requires ExecutorContext for execution"
+        ))
+    }
+}
+
+#[async_trait::async_trait]
+impl ExecutorContextTool for TenantPluginTool {
+    async fn execute_with_executor_context(
+        &self,
+        tool_call: ToolCall,
+        context: Arc<ExecutorContext>,
+    ) -> Result<Vec<Part>, AgentError> {
+        use crate::agent::InMemoryPluginResolver;
+        use distri_plugin_executor::plugin_trait::PluginLoadContext;
+        use distri_plugin_executor::PluginContext;
+        use distri_types::configuration::DistriServerConfig;
+
+        tracing::debug!(
+            "Executing tenant plugin tool: {} from package: {}",
+            self.name,
+            self.package_name
+        );
+
+        // Get the orchestrator to access the plugin system
+        let orchestrator = context
+            .get_orchestrator()
+            .map_err(|e| AgentError::ToolExecution(format!("Failed to get orchestrator: {}", e)))?;
+
+        let plugin_system = orchestrator.plugin_registry.plugin_system();
+        let entrypoint = "index.ts".to_string();
+
+        // Load the plugin if not already loaded (uses package_name as cache key)
+        let resolver = Arc::new(InMemoryPluginResolver::new(
+            self.plugin_code.clone(),
+            entrypoint.clone(),
+        ));
+
+        let manifest = DistriServerConfig {
+            name: self.plugin_name.clone(),
+            version: self.plugin_version.clone().unwrap_or_else(|| "0.1.0".to_string()),
+            description: self.plugin_description.clone(),
+            ..Default::default()
+        };
+
+        let load_context = PluginLoadContext {
+            package_name: self.package_name.clone(),
+            entrypoint: Some(entrypoint),
+            manifest,
+            resolver,
+        };
+
+        // load_plugin is idempotent - if already loaded with same package_name, it returns Ok
+        plugin_system.load_plugin(load_context).await.map_err(|e| {
+            AgentError::ToolExecution(format!("Failed to load tenant plugin: {}", e))
+        })?;
+
+        // Create plugin execution context
+        let plugin_context = PluginContext {
+            call_id: uuid::Uuid::new_v4().to_string(),
+            agent_id: None,
+            session_id: Some(context.session_id.clone()),
+            task_id: Some(context.task_id.clone()),
+            run_id: Some(context.run_id.clone()),
+            user_id: Some(context.user_id.clone()),
+            params: serde_json::Value::Null,
+            secrets: std::collections::HashMap::new(),
+            auth_session: None,
+        };
+
+        // Execute the tool
+        let plugin_tool_call = ToolCall {
+            tool_call_id: tool_call.tool_call_id.clone(),
+            tool_name: self.name.clone(),
+            input: tool_call.input.clone(),
+        };
+
+        let result = plugin_system
+            .execute_tool(&self.package_name, &plugin_tool_call, plugin_context)
+            .await
+            .map_err(|e| AgentError::ToolExecution(format!("Tenant plugin execution failed: {}", e)))?;
+
+        // Wrap result in Part::Data
+        Ok(vec![Part::Data(result)])
+    }
+}
+
 /// Resolve tools from the new ToolsConfig format
+/// Uses PluginToolLoader for dynamic tool loading (supports both OSS and Cloud plugins)
 pub async fn resolve_tools_config(
     config: &ToolsConfig,
     registry: Arc<RwLock<McpServerRegistry>>,
-    plugin_tools: HashMap<String, Vec<Arc<dyn Tool>>>,
+    plugin_tool_loader: Option<&dyn distri_types::stores::PluginToolLoader>,
     workspace_filesystem: Arc<distri_filesystem::FileSystem>,
     session_filesystem: Arc<distri_filesystem::FileSystem>,
     include_filesystem_tools: bool,
@@ -998,13 +1183,28 @@ pub async fn resolve_tools_config(
         all_tools.extend(mcp_tools);
     }
 
-    // Add DAP tools from packages configuration
-    for (package_name, tool_names) in &config.packages {
-        if let Some(package_tools) = plugin_tools.get(package_name) {
+    // Add plugin tools from packages configuration using the loader
+    if let Some(loader) = plugin_tool_loader {
+        for (package_name, tool_names) in &config.packages {
+            // Check if package exists
+            let has_package = loader.has_package(package_name).await.unwrap_or(false);
+            if !has_package {
+                let available_packages = loader.list_packages().await.unwrap_or_default();
+                return Err(anyhow::anyhow!(
+                    "Package '{}' not found in plugin tools registry. Available packages: {:?}",
+                    package_name,
+                    available_packages
+                ));
+            }
+
+            // Get tools for this package
+            let package_tools = loader.get_package_tools(package_name).await?;
+            let mut tools_added = 0;
+
             for tool_name in tool_names {
                 if tool_name == "*" {
                     // Add all tools from this package
-                    for tool in package_tools {
+                    for tool in &package_tools {
                         all_tools.push(tool.clone());
                         tracing::debug!(
                             "Added tool {} from package {} (wildcard)",
@@ -1012,63 +1212,38 @@ pub async fn resolve_tools_config(
                             package_name
                         );
                     }
+                    tools_added += package_tools.len();
                 } else {
                     // Add specific tool by name
-                    for tool in package_tools {
-                        if tool.get_name() == *tool_name {
-                            all_tools.push(tool.clone());
-                            tracing::debug!(
-                                "Added tool {} from package {}",
-                                tool_name,
-                                package_name
-                            );
-                            break;
-                        }
+                    if let Some(tool) = package_tools.iter().find(|t| t.get_name() == *tool_name) {
+                        all_tools.push(tool.clone());
+                        tracing::debug!(
+                            "Added tool {} from package {}",
+                            tool_name,
+                            package_name
+                        );
+                        tools_added += 1;
                     }
                 }
             }
-        }
 
-        // Assert that the specified package exists
-        if !plugin_tools.contains_key(package_name) {
-            return Err(anyhow::anyhow!(
-                "Package '{}' not found in plugin tools registry. Available packages: {:?}",
-                package_name,
-                plugin_tools.keys().collect::<Vec<_>>()
-            ));
-        }
-
-        let mut tools_added_for_package = 0;
-
-        if let Some(package_tools) = plugin_tools.get(package_name) {
-            for tool_name in tool_names {
-                if tool_name == "*" {
-                    tools_added_for_package += package_tools.len();
-                } else {
-                    for tool in package_tools {
-                        if tool.get_name() == *tool_name {
-                            tools_added_for_package += 1;
-                            break;
-                        }
-                    }
-                }
+            // Assert that at least one tool was found
+            if tools_added == 0 {
+                let available_tool_names: Vec<String> =
+                    package_tools.iter().map(|t| t.get_name()).collect();
+                return Err(anyhow::anyhow!(
+                    "No tools found for package '{}' with requested tools {:?}. Available tools in package: {:?}",
+                    package_name,
+                    tool_names,
+                    available_tool_names
+                ));
             }
         }
-
-        // Assert that at least one tool was found for the specified package
-        if tools_added_for_package == 0 {
-            let available_tool_names: Vec<String> =
-                plugin_tools.get(package_name).map_or(Vec::new(), |tools| {
-                    tools.iter().map(|t| t.get_name()).collect()
-                });
-
-            return Err(anyhow::anyhow!(
-                "No tools found for package '{}' with requested tools {:?}. Available tools in package: {:?}",
-                package_name,
-                tool_names,
-                available_tool_names
-            ));
-        }
+    } else if !config.packages.is_empty() {
+        return Err(anyhow::anyhow!(
+            "Plugin tool loader not configured but packages requested: {:?}",
+            config.packages.keys().collect::<Vec<_>>()
+        ));
     }
 
     Ok(all_tools)

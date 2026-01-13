@@ -70,6 +70,10 @@ pub struct InitializedStores {
     pub plugin_store: Arc<dyn PluginCatalogStore>,
     pub prompt_template_store: Option<Arc<dyn PromptTemplateStore>>,
     pub secret_store: Option<Arc<dyn SecretStore>>,
+    /// Plugin tool loader for dynamic tool resolution
+    /// OSS: uses registry-based loader (filesystem plugins)
+    /// Cloud: uses DB-based loader (tenant plugins)
+    pub plugin_tool_loader: Option<Arc<dyn PluginToolLoader>>,
 }
 impl InitializedStores {
     pub fn set_tool_auth_store(&mut self, tool_auth_store: Arc<dyn ToolAuthStore>) {
@@ -599,6 +603,26 @@ pub trait PromptTemplateStore: Send + Sync {
     async fn delete(&self, id: &str) -> anyhow::Result<()>;
     async fn clone_template(&self, id: &str) -> anyhow::Result<PromptTemplateRecord>;
     async fn sync_system_templates(&self, templates: Vec<NewPromptTemplate>) -> anyhow::Result<()>;
+}
+
+// ========== Plugin Tool Loader ==========
+
+/// Trait for loading plugin tools dynamically.
+/// This abstraction allows different implementations for:
+/// - OSS: loads from filesystem/plugin registry
+/// - Cloud: loads from database (tenant plugins)
+///
+/// The loader is used by resolve_tools_config to get tools based on ToolsConfig.
+#[async_trait]
+pub trait PluginToolLoader: Send + Sync + std::fmt::Debug {
+    /// List all available package names (for wildcard resolution)
+    async fn list_packages(&self) -> anyhow::Result<Vec<String>>;
+
+    /// Get all tools for a specific package
+    async fn get_package_tools(&self, package_name: &str) -> anyhow::Result<Vec<Arc<dyn crate::Tool>>>;
+
+    /// Check if a package exists
+    async fn has_package(&self, package_name: &str) -> anyhow::Result<bool>;
 }
 
 // ========== Secret Store ==========

@@ -8,12 +8,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 /// Configure artifact routes under `/artifacts`
-/// 
+///
 /// The artifact_id is a flexible namespace identifier that can be:
 /// - A task namespace: `threads/{thread_hash}/tasks/{task_hash}` (computed from thread_id + task_id)
 /// - A shared space: `shared/{space_name}`
 /// - Any other namespace structure
-/// 
+///
 /// Routes:
 /// - GET /artifacts - List all accessible artifact namespaces
 /// - GET /artifacts/{artifact_id...} - List artifacts in a namespace
@@ -26,7 +26,10 @@ pub fn configure_artifact_routes(cfg: &mut web::ServiceConfig) {
         // List all accessible artifact namespaces
         .route("", web::get().to(list_all_namespaces))
         // Compute task namespace from thread_id and task_id (convenience endpoint)
-        .route("/task/{thread_id}/{task_id}", web::get().to(get_task_namespace))
+        .route(
+            "/task/{thread_id}/{task_id}",
+            web::get().to(get_task_namespace),
+        )
         // Operations on a specific namespace (artifact_id is the full path like "threads/abc/tasks/def")
         .service(
             web::resource("/{artifact_id:.*}/content/{filename}")
@@ -34,15 +37,9 @@ pub fn configure_artifact_routes(cfg: &mut web::ServiceConfig) {
                 .route(web::put().to(save_artifact))
                 .route(web::delete().to(delete_artifact)),
         )
-        .service(
-            web::resource("/{artifact_id:.*}/search")
-                .route(web::post().to(search_artifacts)),
-        )
+        .service(web::resource("/{artifact_id:.*}/search").route(web::post().to(search_artifacts)))
         // List artifacts in a namespace (must come last due to catch-all pattern)
-        .service(
-            web::resource("/{artifact_id:.*}")
-                .route(web::get().to(list_artifacts)),
-        );
+        .service(web::resource("/{artifact_id:.*}").route(web::get().to(list_artifacts)));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -138,36 +135,37 @@ struct SearchArtifactsRequest {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// List all accessible artifact namespaces
-async fn list_all_namespaces(
-    executor: web::Data<Arc<AgentOrchestrator>>,
-) -> HttpResponse {
+async fn list_all_namespaces(executor: web::Data<Arc<AgentOrchestrator>>) -> HttpResponse {
     let filesystem = executor.session_filesystem.clone();
-    
+
     // List top-level directories to find namespaces
     let mut namespaces = Vec::new();
-    
+
     // Check for "threads" directory (task-based artifacts)
     if let Ok(threads_listing) = filesystem.list("threads").await {
         for thread_entry in threads_listing.entries {
             if thread_entry.is_dir {
                 let thread_path = format!("threads/{}", thread_entry.name);
-                
+
                 // Check for "tasks" subdirectory
                 if let Ok(tasks_dir) = filesystem.list(&format!("{}/tasks", thread_path)).await {
                     for task_entry in tasks_dir.entries {
                         if task_entry.is_dir {
                             let artifact_id = format!("{}/tasks/{}", thread_path, task_entry.name);
-                            
+
                             // Count artifacts in content directory
                             let artifact_count = filesystem
                                 .list(&format!("{}/content", artifact_id))
                                 .await
                                 .map(|l| l.entries.len())
                                 .ok();
-                            
+
                             namespaces.push(ArtifactNamespace {
                                 artifact_id,
-                                description: Some(format!("Task artifacts for thread {}", thread_entry.name)),
+                                description: Some(format!(
+                                    "Task artifacts for thread {}",
+                                    thread_entry.name
+                                )),
                                 artifact_count,
                             });
                         }
@@ -176,19 +174,19 @@ async fn list_all_namespaces(
             }
         }
     }
-    
+
     // Check for "shared" directory (shared artifacts)
     if let Ok(shared_listing) = filesystem.list("shared").await {
         for entry in shared_listing.entries {
             if entry.is_dir {
                 let artifact_id = format!("shared/{}", entry.name);
-                
+
                 let artifact_count = filesystem
                     .list(&format!("{}/content", artifact_id))
                     .await
                     .map(|l| l.entries.len())
                     .ok();
-                
+
                 namespaces.push(ArtifactNamespace {
                     artifact_id,
                     description: Some(format!("Shared space: {}", entry.name)),
@@ -197,17 +195,15 @@ async fn list_all_namespaces(
             }
         }
     }
-    
+
     HttpResponse::Ok().json(NamespaceListResponse { namespaces })
 }
 
 /// Get the computed artifact_id (namespace) for a thread/task pair
-async fn get_task_namespace(
-    path: web::Path<(String, String)>,
-) -> HttpResponse {
+async fn get_task_namespace(path: web::Path<(String, String)>) -> HttpResponse {
     let (thread_id, task_id) = path.into_inner();
     let artifact_id = ArtifactWrapper::task_namespace(&thread_id, &task_id);
-    
+
     HttpResponse::Ok().json(TaskNamespaceResponse {
         artifact_id,
         thread_id,
@@ -221,25 +217,27 @@ async fn list_artifacts(
     executor: web::Data<Arc<AgentOrchestrator>>,
 ) -> HttpResponse {
     let artifact_id = path.into_inner();
-    
+
     // Handle empty path (should use list_all_namespaces instead)
     if artifact_id.is_empty() {
         return list_all_namespaces(executor).await;
     }
-    
+
     let filesystem = executor.session_filesystem.clone();
-    
+
     // Use ArtifactWrapper helper to list artifacts from all paths (thread and task level)
     let paths_to_check = ArtifactWrapper::get_paths_to_check(&artifact_id);
     let mut all_artifacts: Vec<ArtifactEntry> = Vec::new();
     let mut seen_filenames = std::collections::HashSet::new();
-    
+
     // Check each path and track which path each artifact came from
     for path_id in paths_to_check {
         if let Ok(wrapper) = ArtifactWrapper::new(
             filesystem.clone() as Arc<dyn FileSystemOps>,
             path_id.clone(),
-        ).await {
+        )
+        .await
+        {
             if let Ok(entries) = wrapper.list_artifacts().await {
                 for e in entries {
                     if !seen_filenames.contains(&e.name) {
@@ -256,7 +254,7 @@ async fn list_artifacts(
             }
         }
     }
-    
+
     HttpResponse::Ok().json(ArtifactListResponse {
         artifact_id: artifact_id.clone(),
         artifacts: all_artifacts,
@@ -271,9 +269,9 @@ async fn read_artifact(
     executor: web::Data<Arc<AgentOrchestrator>>,
 ) -> HttpResponse {
     let (artifact_id, filename) = path.into_inner();
-    
+
     let filesystem = executor.session_filesystem.clone();
-    
+
     // Use ArtifactWrapper helper to read artifact from all paths (thread and task level)
     match ArtifactWrapper::read_artifact_multi_path(
         filesystem.clone() as Arc<dyn FileSystemOps>,
@@ -281,7 +279,9 @@ async fn read_artifact(
         &filename,
         query.start_line,
         query.end_line,
-    ).await {
+    )
+    .await
+    {
         Ok((result, path_id)) => {
             // Found it! Return the result with the full relative path (threads/{hash}/content/{filename})
             let full_artifact_path = format!("{}/content/{}", path_id, filename);
@@ -316,16 +316,18 @@ async fn save_artifact(
     executor: web::Data<Arc<AgentOrchestrator>>,
 ) -> HttpResponse {
     let (artifact_id, filename) = path.into_inner();
-    
+
     let filesystem = executor.session_filesystem.clone();
-    
+
     // Get the filesystem root prefix to show absolute path (before moving filesystem)
     let filesystem_root = filesystem.root_prefix().unwrap_or_else(|| "".to_string());
-    
+
     let wrapper = match ArtifactWrapper::new(
         filesystem.clone() as Arc<dyn FileSystemOps>,
         artifact_id.clone(),
-    ).await {
+    )
+    .await
+    {
         Ok(w) => w,
         Err(e) => {
             return HttpResponse::InternalServerError().json(json!({
@@ -333,9 +335,9 @@ async fn save_artifact(
             }));
         }
     };
-    
+
     let artifact_path = format!("{}/content/{}", artifact_id, filename);
-    
+
     // Calculate the full path within the object store
     // filesystem_root is the prefix within the object store (e.g., "runs/default")
     let store_path = if filesystem_root.is_empty() {
@@ -343,7 +345,7 @@ async fn save_artifact(
     } else {
         format!("{}/{}", filesystem_root, artifact_path)
     };
-    
+
     // For local filesystem, try to get the actual absolute path on disk
     // The base_path is in the object store config, but we can construct it
     // Default base_path is ".distri/files" per FileSystemConfig::default()
@@ -360,7 +362,7 @@ async fn save_artifact(
                 .to_string_lossy()
                 .to_string()
         });
-    
+
     tracing::info!(
         "Saving artifact: artifact_id={}, filename={}, relative_path={}, store_path={}, absolute_path={}, size={} bytes",
         artifact_id,
@@ -370,7 +372,7 @@ async fn save_artifact(
         absolute_path,
         body.content.len()
     );
-    
+
     match wrapper.save_artifact(&filename, &body.content).await {
         Ok(()) => {
             // Log the full path that was used - try to get the actual canonical path after saving
@@ -379,7 +381,7 @@ async fn save_artifact(
                 .canonicalize()
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_else(|_| absolute_path.clone());
-            
+
             tracing::info!(
                 "Successfully saved artifact: relative_path={}, store_path={}, absolute_path={} (artifact_id: {}, filename: {})",
                 artifact_path,
@@ -396,11 +398,7 @@ async fn save_artifact(
             })
         }
         Err(e) => {
-            tracing::error!(
-                "Failed to save artifact at path {}: {}",
-                artifact_path,
-                e
-            );
+            tracing::error!("Failed to save artifact at path {}: {}", artifact_path, e);
             HttpResponse::InternalServerError().json(json!({
                 "error": format!("Failed to save artifact: {}", e),
                 "path": artifact_path
@@ -415,28 +413,25 @@ async fn delete_artifact(
     executor: web::Data<Arc<AgentOrchestrator>>,
 ) -> HttpResponse {
     let (artifact_id, _filename) = path.into_inner();
-    
+
     let filesystem = executor.session_filesystem.clone();
-    
-    let wrapper = match ArtifactWrapper::new(
-        filesystem as Arc<dyn FileSystemOps>,
-        artifact_id.clone(),
-    ).await {
-        Ok(w) => w,
-        Err(e) => {
-            return HttpResponse::InternalServerError().json(json!({
-                "error": format!("Failed to create artifact wrapper: {}", e)
-            }));
-        }
-    };
-    
+
+    let wrapper =
+        match ArtifactWrapper::new(filesystem as Arc<dyn FileSystemOps>, artifact_id.clone()).await
+        {
+            Ok(w) => w,
+            Err(e) => {
+                return HttpResponse::InternalServerError().json(json!({
+                    "error": format!("Failed to create artifact wrapper: {}", e)
+                }));
+            }
+        };
+
     match wrapper.cleanup_task_folder().await {
         Ok(()) => HttpResponse::NoContent().finish(),
-        Err(e) => {
-            HttpResponse::InternalServerError().json(json!({
-                "error": format!("Failed to delete artifact: {}", e)
-            }))
-        }
+        Err(e) => HttpResponse::InternalServerError().json(json!({
+            "error": format!("Failed to delete artifact: {}", e)
+        })),
     }
 }
 
@@ -447,31 +442,28 @@ async fn search_artifacts(
     executor: web::Data<Arc<AgentOrchestrator>>,
 ) -> HttpResponse {
     let artifact_id = path.into_inner();
-    
+
     let filesystem = executor.session_filesystem.clone();
-    
-    let wrapper = match ArtifactWrapper::new(
-        filesystem as Arc<dyn FileSystemOps>,
-        artifact_id.clone(),
-    ).await {
-        Ok(w) => w,
-        Err(e) => {
-            return HttpResponse::InternalServerError().json(json!({
-                "error": format!("Failed to create artifact wrapper: {}", e)
-            }));
-        }
-    };
-    
+
+    let wrapper =
+        match ArtifactWrapper::new(filesystem as Arc<dyn FileSystemOps>, artifact_id.clone()).await
+        {
+            Ok(w) => w,
+            Err(e) => {
+                return HttpResponse::InternalServerError().json(json!({
+                    "error": format!("Failed to create artifact wrapper: {}", e)
+                }));
+            }
+        };
+
     match wrapper.search_artifacts(&body.pattern).await {
         Ok(result) => HttpResponse::Ok().json(json!({
             "artifact_id": artifact_id,
             "pattern": body.pattern,
             "results": result
         })),
-        Err(e) => {
-            HttpResponse::InternalServerError().json(json!({
-                "error": format!("Failed to search artifacts: {}", e)
-            }))
-        }
+        Err(e) => HttpResponse::InternalServerError().json(json!({
+            "error": format!("Failed to search artifacts: {}", e)
+        })),
     }
 }

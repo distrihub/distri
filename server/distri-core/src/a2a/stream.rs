@@ -2,8 +2,7 @@ use crate::a2a::handler::validate_message;
 use crate::a2a::mapper::{map_agent_event, map_final_result};
 use crate::a2a::{extract_text_from_message, SseMessage};
 use crate::agent::{
-    types::ExecutorContextMetadata, AgentEvent, AgentEventType,
-    AgentOrchestrator, ExecutorContext,
+    types::ExecutorContextMetadata, AgentEvent, AgentEventType, AgentOrchestrator, ExecutorContext,
 };
 use crate::secrets::SecretResolver;
 use crate::AgentError;

@@ -1,8 +1,8 @@
 use comfy_table::{Attribute, Cell, Color, Table};
-use regex::Regex;
-use std::collections::HashSet;
 /// Prompt validation utilities for agent templates
 use distri_types::StandardDefinition;
+use regex::Regex;
+use std::collections::HashSet;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Criticality {
@@ -309,19 +309,27 @@ mod tests {
     #[test]
     fn test_validate_partial_references_missing() {
         let template = "{{> core_instructions}}\n{{> custom_partial}}\n{{> missing_partial}}";
-        let registered: HashSet<String> = ["custom_partial"].iter().map(|s| s.to_string()).collect();
+        let registered: HashSet<String> =
+            ["custom_partial"].iter().map(|s| s.to_string()).collect();
 
         let issues = validate_partial_references(template, &registered);
         assert_eq!(issues.len(), 1);
-        assert!(issues[0].missing_items.contains(&"missing_partial".to_string()));
-        assert!(!issues[0].missing_items.contains(&"core_instructions".to_string())); // builtin
-        assert!(!issues[0].missing_items.contains(&"custom_partial".to_string())); // registered
+        assert!(issues[0]
+            .missing_items
+            .contains(&"missing_partial".to_string()));
+        assert!(!issues[0]
+            .missing_items
+            .contains(&"core_instructions".to_string())); // builtin
+        assert!(!issues[0]
+            .missing_items
+            .contains(&"custom_partial".to_string())); // registered
     }
 
     #[test]
     fn test_validate_partial_references_all_present() {
         let template = "{{> core_instructions}}\n{{> custom_partial}}";
-        let registered: HashSet<String> = ["custom_partial"].iter().map(|s| s.to_string()).collect();
+        let registered: HashSet<String> =
+            ["custom_partial"].iter().map(|s| s.to_string()).collect();
 
         let issues = validate_partial_references(template, &registered);
         assert!(issues.is_empty());

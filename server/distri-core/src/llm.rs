@@ -359,6 +359,10 @@ impl LLMExecutor {
         let mut request = self.build_request(llm_messages);
 
         request.stream = Some(true);
+        request.stream_options = Some(async_openai::types::chat::ChatCompletionStreamOptions {
+            include_usage: Some(true),
+            include_obfuscation: None,
+        });
         let message_count = request.messages.len();
 
         let settings = format!("Max Tokens: {}", self.llm_def.model_settings.max_tokens);
@@ -770,11 +774,6 @@ impl LLMExecutor {
                         strict: Some(true),
                     },
                 }),
-            // Enable usage tracking in streaming responses
-            stream_options: Some(async_openai::types::chat::ChatCompletionStreamOptions {
-                include_usage: Some(true),
-                include_obfuscation: None,
-            }),
             ..Default::default()
         };
 
@@ -998,7 +997,9 @@ async fn completion_stream(
 }
 
 /// Get the secret store from the executor context
-fn get_secret_store(context: &Arc<ExecutorContext>) -> Option<Arc<dyn distri_types::stores::SecretStore>> {
+fn get_secret_store(
+    context: &Arc<ExecutorContext>,
+) -> Option<Arc<dyn distri_types::stores::SecretStore>> {
     // First check if context has its own stores
     if let Some(ref stores) = context.stores {
         return stores.secret_store.clone();

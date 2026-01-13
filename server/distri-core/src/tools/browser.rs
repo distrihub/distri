@@ -390,9 +390,7 @@ Extract structured content:
         _tool_call: distri_types::ToolCall,
         _context: Arc<ToolContext>,
     ) -> Result<Vec<Part>, anyhow::Error> {
-        Err(anyhow::anyhow!(
-            "BrowserStepTool requires ExecutorContext"
-        ))
+        Err(anyhow::anyhow!("BrowserStepTool requires ExecutorContext"))
     }
 }
 
@@ -426,7 +424,10 @@ impl ExecutorContextTool for BrowserStepTool {
             .with_tool_call_id(tool_call.tool_call_id.clone());
 
         let session_from_context = context.get_browser_session_id();
-        tracing::info!("[browser_step] browser_session_id from context: {:?}", session_from_context);
+        tracing::info!(
+            "[browser_step] browser_session_id from context: {:?}",
+            session_from_context
+        );
         if let Some(session_id) = session_from_context {
             request = request.with_session_id(session_id);
         }

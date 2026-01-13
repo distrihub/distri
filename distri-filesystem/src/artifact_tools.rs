@@ -137,7 +137,7 @@ impl Tool for ListArtifactsTool {
             context.thread_id.clone(),
             Some(context.task_id.clone()),
         );
-        
+
         // Check thread level first, then task level
         let thread_path = namespace.thread_path();
         let paths_to_check = if let Some(task_path) = namespace.task_path() {
@@ -145,18 +145,18 @@ impl Tool for ListArtifactsTool {
         } else {
             vec![thread_path]
         };
-        
+
         tracing::info!(
             "🔍 ListArtifactsTool: thread_id={}, task_id={}, checking paths: {:?}",
             context.thread_id,
             context.task_id,
             paths_to_check
         );
-        
+
         // Check all paths and merge results
         let mut all_artifacts = Vec::new();
         let mut seen_filenames = std::collections::HashSet::new();
-        
+
         for path in paths_to_check {
             if let Ok(wrapper) = ArtifactWrapper::new(self.filesystem.clone(), path.clone()).await {
                 if let Ok(entries) = wrapper.list_artifacts().await {
@@ -169,8 +169,11 @@ impl Tool for ListArtifactsTool {
                 }
             }
         }
-        
-        tracing::info!("✅ ListArtifactsTool: Found {} artifacts", all_artifacts.len());
+
+        tracing::info!(
+            "✅ ListArtifactsTool: Found {} artifacts",
+            all_artifacts.len()
+        );
         Ok(vec![distri_types::Part::Data(serde_json::to_value(
             all_artifacts,
         )?)])
@@ -228,13 +231,13 @@ impl Tool for ReadArtifactTool {
         context: Arc<ToolContext>,
     ) -> Result<Vec<distri_types::Part>, anyhow::Error> {
         let params: ReadArtifactParams = serde_json::from_value(tool_call.input)?;
-        
+
         // Use ArtifactNamespace to get thread and task paths
         let namespace = distri_types::ArtifactNamespace::new(
             context.thread_id.clone(),
             Some(context.task_id.clone()),
         );
-        
+
         // Check thread level first, then task level
         let thread_path = namespace.thread_path();
         let paths_to_check = if let Some(task_path) = namespace.task_path() {
@@ -242,7 +245,7 @@ impl Tool for ReadArtifactTool {
         } else {
             vec![thread_path]
         };
-        
+
         tracing::info!(
             "🔍 ReadArtifactTool: thread_id={}, task_id={}, filename={}, checking paths: {:?}",
             context.thread_id,
@@ -250,12 +253,15 @@ impl Tool for ReadArtifactTool {
             params.filename,
             paths_to_check
         );
-        
+
         // Try each path until we find the artifact
         let mut last_error = None;
         for path in paths_to_check {
             if let Ok(wrapper) = ArtifactWrapper::new(self.filesystem.clone(), path.clone()).await {
-                match wrapper.read_artifact(&params.filename, params.start_line, params.end_line).await {
+                match wrapper
+                    .read_artifact(&params.filename, params.start_line, params.end_line)
+                    .await
+                {
                     Ok(result) => {
                         tracing::info!("✅ ReadArtifactTool: Found artifact at path: {}", path);
                         return Ok(vec![distri_types::Part::Data(serde_json::to_value(
@@ -269,12 +275,14 @@ impl Tool for ReadArtifactTool {
                 }
             }
         }
-        
+
         // If we get here, artifact wasn't found in any path
-        Err(last_error.unwrap_or_else(|| anyhow::anyhow!(
-            "Artifact '{}' not found in any namespace path",
-            params.filename
-        )))
+        Err(last_error.unwrap_or_else(|| {
+            anyhow::anyhow!(
+                "Artifact '{}' not found in any namespace path",
+                params.filename
+            )
+        }))
     }
 }
 

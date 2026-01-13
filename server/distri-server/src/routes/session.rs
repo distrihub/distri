@@ -28,21 +28,18 @@ pub struct GetAllValuesResponse {
 }
 
 pub fn configure_session_routes(cfg: &mut web::ServiceConfig) {
-    cfg.service(
-        web::resource("")
-            .route(web::get().to(list_sessions)),
-    )
-    .service(
-        web::resource("/{session_id}/values")
-            .route(web::get().to(get_all_values))
-            .route(web::post().to(set_value)),
-    )
-    .service(
-        web::resource("/{session_id}/values/{key}")
-            .route(web::get().to(get_value))
-            .route(web::delete().to(delete_value)),
-    )
-    .service(web::resource("/{session_id}").route(web::delete().to(clear_session)));
+    cfg.service(web::resource("").route(web::get().to(list_sessions)))
+        .service(
+            web::resource("/{session_id}/values")
+                .route(web::get().to(get_all_values))
+                .route(web::post().to(set_value)),
+        )
+        .service(
+            web::resource("/{session_id}/values/{key}")
+                .route(web::get().to(get_value))
+                .route(web::delete().to(delete_value)),
+        )
+        .service(web::resource("/{session_id}").route(web::delete().to(clear_session)));
 }
 
 #[derive(Debug, Deserialize)]
@@ -70,11 +67,7 @@ async fn list_sessions(
     let sessions = match executor
         .stores
         .session_store
-        .list_sessions(
-            query.thread_id.as_deref(),
-            query.limit,
-            query.offset,
-        )
+        .list_sessions(query.thread_id.as_deref(), query.limit, query.offset)
         .await
     {
         Ok(sessions) => sessions,
@@ -259,4 +252,3 @@ async fn clear_session(
         })),
     }
 }
-

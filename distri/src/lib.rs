@@ -11,8 +11,8 @@ pub use crate::external_tools_runtime::ExternalToolRegistry;
 pub use crate::hooks_runtime::HookRegistry;
 pub use client::{
     AgentRegistrationResponse, ArtifactEntry, ArtifactListResponse, ArtifactNamespace,
-    ArtifactNamespaceList, ArtifactReadResponse, ArtifactSaveResponse, CreatePluginRequest,
-    Distri, LlmExecuteResponse, NewPromptTemplateRequest, PluginResponse, PluginsListResponse,
+    ArtifactNamespaceList, ArtifactReadResponse, ArtifactSaveResponse, CreatePluginRequest, Distri,
+    LlmExecuteResponse, NewPromptTemplateRequest, PluginResponse, PluginsListResponse,
     PromptTemplateResponse, SyncPromptTemplatesResponse, TaskNamespaceResponse,
     UpdatePluginRequest, ValidatePluginResponse,
 };
