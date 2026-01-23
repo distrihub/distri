@@ -15,7 +15,8 @@ use distri_types::configuration::ServerConfig;
 use distri_types::configuration::{AgentConfigWithTools, DistriServerConfig};
 use distri_types::StandardDefinition;
 use distri_types::{
-    ExternalTool, InlineHookResponse, LlmDefinition, Message, ModelSettings, ToolCallFormat,
+    AgentEventType, ExternalTool, InlineHookResponse, LlmDefinition, Message, ModelSettings,
+    RunUsage, ToolCallFormat,
 };
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -30,6 +31,7 @@ use crate::agent_server::VerboseLog;
 use crate::auth_routes;
 use crate::context::UserContext;
 use crate::tts::{get_available_voices, synthesize_tts, transcribe_speech};
+use distri_auth::context::with_user_and_workspace;
 
 mod artifacts;
 mod files;
@@ -678,11 +680,16 @@ async fn llm_execute(
     const EPHEMERAL_SUB_TASK_ID: &str = "__llm_execute_sub_task__";
     const EPHEMERAL_SUB_PARENT_ID: &str = "__llm_execute_parent__";
 
-    let (user_id, workspace_id) = http_request
+    let (user_id, workspace_id_str) = http_request
         .extensions()
         .get::<UserContext>()
         .map(|ctx| (ctx.user_id(), ctx.workspace_id()))
         .unwrap_or_else(|| ("anonymous".to_string(), None));
+
+    // Parse workspace_id from string to Uuid for task-local context
+    let workspace_id_uuid = workspace_id_str
+        .as_ref()
+        .and_then(|ws| uuid::Uuid::parse_str(ws).ok());
 
     // Use provided agent_id or default to "llm_execute"
     let agent_id = payload
@@ -698,7 +705,7 @@ async fn llm_execute(
 
     let mut context = ExecutorContext::default();
     context.user_id = user_id.clone();
-    context.workspace_id = workspace_id;
+    context.workspace_id = workspace_id_str.clone();
     context.agent_id = agent_id.clone();
     context.thread_id = thread_id.clone();
 
@@ -728,30 +735,33 @@ async fn llm_execute(
 
     // Load thread history if requested
     if payload.load_history && payload.thread_id.is_some() {
-        match executor
-            .stores
-            .task_store
-            .get_history(&thread_id, None)
-            .await
-        {
-            Ok(history) => {
-                for (_task, task_messages) in history {
-                    for task_msg in task_messages {
-                        if let distri_types::TaskMessage::Message(msg) = task_msg {
-                            all_messages.push(msg);
+        // Wrap in task-local context for workspace filtering
+        with_user_and_workspace(user_id.clone(), workspace_id_uuid, async {
+            match executor
+                .stores
+                .task_store
+                .get_history(&thread_id, None)
+                .await
+            {
+                Ok(history) => {
+                    for (_task, task_messages) in history {
+                        for task_msg in task_messages {
+                            if let distri_types::TaskMessage::Message(msg) = task_msg {
+                                all_messages.push(msg);
+                            }
                         }
                     }
+                    tracing::debug!(
+                        "Loaded {} messages from thread history for thread_id: {}",
+                        all_messages.len(),
+                        thread_id
+                    );
                 }
-                tracing::debug!(
-                    "Loaded {} messages from thread history for thread_id: {}",
-                    all_messages.len(),
-                    thread_id
-                );
+                Err(e) => {
+                    tracing::warn!("Failed to load thread history for {}: {}", thread_id, e);
+                }
             }
-            Err(e) => {
-                tracing::warn!("Failed to load thread history for {}: {}", thread_id, e);
-            }
-        }
+        }).await;
     }
 
     // Append the new messages from the request
@@ -800,113 +810,136 @@ async fn llm_execute(
         Ok(resp) => {
             // Store the LLM call as a thread entry (non-ephemeral only)
             if !payload.is_sub_task {
-                // Create or update the thread
-                let title = payload.title.clone().unwrap_or_else(|| {
-                    // Generate title from first user message
-                    payload
-                        .messages
-                        .iter()
-                        .find(|m| m.role == distri_types::MessageRole::User)
-                        .and_then(|m| {
-                            m.parts.iter().find_map(|p| {
-                                if let distri_types::Part::Text(text) = p {
-                                    Some(text.chars().take(100).collect::<String>())
-                                } else {
-                                    None
-                                }
+                // Wrap thread/task store operations in task-local context
+                with_user_and_workspace(user_id.clone(), workspace_id_uuid, async {
+                    // Create or update the thread
+                    let title = payload.title.clone().unwrap_or_else(|| {
+                        // Generate title from first user message
+                        payload
+                            .messages
+                            .iter()
+                            .find(|m| m.role == distri_types::MessageRole::User)
+                            .and_then(|m| {
+                                m.parts.iter().find_map(|p| {
+                                    if let distri_types::Part::Text(text) = p {
+                                        Some(text.chars().take(100).collect::<String>())
+                                    } else {
+                                        None
+                                    }
+                                })
                             })
-                        })
-                        .unwrap_or_else(|| "LLM Execute".to_string())
-                });
+                            .unwrap_or_else(|| "LLM Execute".to_string())
+                    });
 
-                // Get or create thread
-                let thread_exists = executor
-                    .stores
-                    .thread_store
-                    .get_thread(&thread_id)
-                    .await
-                    .ok()
-                    .flatten()
-                    .is_some();
+                    // Get or create thread
+                    let thread_exists = executor
+                        .stores
+                        .thread_store
+                        .get_thread(&thread_id)
+                        .await
+                        .ok()
+                        .flatten()
+                        .is_some();
 
-                if !thread_exists {
-                    // Create new thread
-                    let create_req = distri_types::CreateThreadRequest {
-                        agent_id: agent_id.clone(),
-                        title: Some(title),
-                        thread_id: Some(thread_id.clone()),
-                        attributes: None,
-                        user_id: Some(user_id.clone()),
-                        external_id: payload.external_id.clone(),
-                    };
-                    if let Err(e) = executor.stores.thread_store.create_thread(create_req).await {
-                        tracing::warn!("Failed to create thread {}: {}", thread_id, e);
+                    if !thread_exists {
+                        // Create new thread
+                        let create_req = distri_types::CreateThreadRequest {
+                            agent_id: agent_id.clone(),
+                            title: Some(title),
+                            thread_id: Some(thread_id.clone()),
+                            attributes: None,
+                            user_id: Some(user_id.clone()),
+                            external_id: payload.external_id.clone(),
+                        };
+                        if let Err(e) = executor.stores.thread_store.create_thread(create_req).await {
+                            tracing::warn!("Failed to create thread {}: {}", thread_id, e);
+                        }
                     }
-                }
 
-                // Store the user message(s) from the request
-                let task_id = context.task_id.clone();
-                // Ensure task exists
-                let _ = executor
-                    .stores
-                    .task_store
-                    .get_or_create_task(&thread_id, &task_id)
-                    .await;
+                    // Store the user message(s) from the request
+                    let task_id = context.task_id.clone();
+                    // Ensure task exists
+                    let _ = executor
+                        .stores
+                        .task_store
+                        .get_or_create_task(&thread_id, &task_id)
+                        .await;
 
-                for msg in &payload.messages {
+                    for msg in &payload.messages {
+                        if let Err(e) = executor
+                            .stores
+                            .task_store
+                            .add_message_to_task(&task_id, msg)
+                            .await
+                        {
+                            tracing::warn!("Failed to store user message: {}", e);
+                        }
+                    }
+
+                    // Store the assistant response
+                    let assistant_message = distri_types::Message {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        name: None,
+                        role: distri_types::MessageRole::Assistant,
+                        parts: {
+                            let mut parts = Vec::new();
+                            if !resp.content.is_empty() {
+                                parts.push(distri_types::Part::Text(resp.content.clone()));
+                            }
+                            for tc in &resp.tool_calls {
+                                parts.push(distri_types::Part::ToolCall(tc.clone()));
+                            }
+                            parts
+                        },
+                        created_at: chrono::Utc::now().timestamp_millis(),
+                    };
+
                     if let Err(e) = executor
                         .stores
                         .task_store
-                        .add_message_to_task(&task_id, msg)
+                        .add_message_to_task(&task_id, &assistant_message)
                         .await
                     {
-                        tracing::warn!("Failed to store user message: {}", e);
+                        tracing::warn!("Failed to store assistant message: {}", e);
                     }
-                }
 
-                // Store the assistant response
-                let assistant_message = distri_types::Message {
-                    id: uuid::Uuid::new_v4().to_string(),
-                    name: None,
-                    role: distri_types::MessageRole::Assistant,
-                    parts: {
-                        let mut parts = Vec::new();
-                        if !resp.content.is_empty() {
-                            parts.push(distri_types::Part::Text(resp.content.clone()));
-                        }
-                        for tc in &resp.tool_calls {
-                            parts.push(distri_types::Part::ToolCall(tc.clone()));
-                        }
-                        parts
-                    },
-                    created_at: chrono::Utc::now().timestamp_millis(),
+                    // Update thread with last message
+                    let last_msg = if !resp.content.is_empty() {
+                        resp.content.chars().take(200).collect::<String>()
+                    } else if !resp.tool_calls.is_empty() {
+                        format!("[Tool calls: {}]", resp.tool_calls.len())
+                    } else {
+                        String::new()
+                    };
+                    if let Err(e) = executor
+                        .stores
+                        .thread_store
+                        .update_thread_with_message(&thread_id, &last_msg)
+                        .await
+                    {
+                        tracing::warn!("Failed to update thread with message: {}", e);
+                    }
+                }).await;
+            }
+
+            // Emit RunFinished event for usage tracking
+            if !payload.is_sub_task {
+                let context_usage = context.get_usage().await;
+                let run_usage = RunUsage {
+                    total_tokens: context_usage.tokens,
+                    input_tokens: context_usage.input_tokens,
+                    output_tokens: context_usage.output_tokens,
+                    estimated_tokens: context_usage.context_size.total_estimated_tokens as u32,
                 };
 
-                if let Err(e) = executor
-                    .stores
-                    .task_store
-                    .add_message_to_task(&task_id, &assistant_message)
-                    .await
-                {
-                    tracing::warn!("Failed to store assistant message: {}", e);
-                }
-
-                // Update thread with last message
-                let last_msg = if !resp.content.is_empty() {
-                    resp.content.chars().take(200).collect::<String>()
-                } else if !resp.tool_calls.is_empty() {
-                    format!("[Tool calls: {}]", resp.tool_calls.len())
-                } else {
-                    String::new()
-                };
-                if let Err(e) = executor
-                    .stores
-                    .thread_store
-                    .update_thread_with_message(&thread_id, &last_msg)
-                    .await
-                {
-                    tracing::warn!("Failed to update thread with message: {}", e);
-                }
+                context
+                    .emit(AgentEventType::RunFinished {
+                        success: true,
+                        total_steps: 1,
+                        failed_steps: 0,
+                        usage: Some(run_usage),
+                    })
+                    .await;
             }
 
             HttpResponse::Ok().json(json!({
