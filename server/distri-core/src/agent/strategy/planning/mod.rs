@@ -37,6 +37,5 @@ pub fn get_planning_definition(
         name: agent_name,
         model_settings: model_settings.clone(),
         tool_format,
-        ..Default::default()
     }
 }

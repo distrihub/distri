@@ -106,6 +106,7 @@ impl A2AHandler {
         req: &JsonRpcRequest,
         agent_id: String,
         user_id: String,
+        workspace_id: Option<String>,
         verbose: bool,
         orchestrator: Arc<AgentOrchestrator>,
     ) -> Result<ExecutorContext, AgentError> {
@@ -170,6 +171,7 @@ impl A2AHandler {
             agent_id,
             verbose,
             user_id,
+            workspace_id,
             session_id,
             browser_session_id,
             dynamic_tools: Some(Arc::new(RwLock::new(tools))),
@@ -188,6 +190,7 @@ impl A2AHandler {
         &self,
         agent_id: String,
         user_id: String,
+        workspace_id: Option<String>,
         req: JsonRpcRequest,
         executor_context: Option<ExecutorContext>,
         verbose: bool,
@@ -206,6 +209,7 @@ impl A2AHandler {
                             &req,
                             agent_id.clone(),
                             user_id.clone(),
+                            workspace_id.clone(),
                             verbose,
                             self.executor.clone(),
                         )
@@ -236,6 +240,7 @@ impl A2AHandler {
                             &req,
                             agent_id.clone(),
                             user_id.clone(),
+                            workspace_id.clone(),
                             verbose,
                             self.executor.clone(),
                         )

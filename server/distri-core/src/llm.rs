@@ -13,13 +13,13 @@ use crate::{
 use async_openai::{
     types::chat::{
         ChatCompletionMessageToolCall, ChatCompletionMessageToolCalls,
-        ChatCompletionRequestAssistantMessageArgs, ChatCompletionRequestMessage,
-        ChatCompletionRequestMessageContentPartImage, ChatCompletionRequestMessageContentPartText,
-        ChatCompletionRequestSystemMessageArgs, ChatCompletionRequestToolMessage,
-        ChatCompletionRequestToolMessageContent, ChatCompletionRequestUserMessageArgs,
-        ChatCompletionRequestUserMessageContentPart, CreateChatCompletionRequest,
-        CreateChatCompletionResponse, CreateChatCompletionStreamResponse, ImageUrl,
-        ResponseFormatJsonSchema, Role,
+        ChatCompletionRequestAssistantMessageArgs, ChatCompletionRequestDeveloperMessageArgs,
+        ChatCompletionRequestMessage, ChatCompletionRequestMessageContentPartImage,
+        ChatCompletionRequestMessageContentPartText, ChatCompletionRequestSystemMessageArgs,
+        ChatCompletionRequestToolMessage, ChatCompletionRequestToolMessageContent,
+        ChatCompletionRequestUserMessageArgs, ChatCompletionRequestUserMessageContentPart,
+        CreateChatCompletionRequest, CreateChatCompletionResponse,
+        CreateChatCompletionStreamResponse, ImageUrl, ResponseFormatJsonSchema, Role,
     },
     Client,
 };
@@ -950,6 +950,30 @@ impl LLMExecutor {
                             }
                             msg.content(parts);
                             vec![ChatCompletionRequestMessage::User(msg.build().unwrap())]
+                        }
+                    }
+                    MessageRole::Developer => {
+                        // Developer messages are used for adding context without showing in UI.
+                        // For OpenAI, use the developer role. For other providers, map to user.
+                        match &self.llm_def.model_settings.provider {
+                            ModelProvider::OpenAI {} => {
+                                let mut msg =
+                                    ChatCompletionRequestDeveloperMessageArgs::default();
+                                msg.content(m.as_text().unwrap_or_default());
+                                if let Some(name) = &m.name {
+                                    msg.name(name);
+                                }
+                                vec![ChatCompletionRequestMessage::Developer(msg.build().unwrap())]
+                            }
+                            _ => {
+                                // For non-OpenAI providers, map developer to user
+                                let mut msg = ChatCompletionRequestUserMessageArgs::default();
+                                msg.content(m.as_text().unwrap_or_default());
+                                if let Some(name) = &m.name {
+                                    msg.name(name);
+                                }
+                                vec![ChatCompletionRequestMessage::User(msg.build().unwrap())]
+                            }
                         }
                     }
                 };

@@ -92,6 +92,10 @@ pub enum MessageRole {
     User,
     /// Represents a message from a tool.
     Tool,
+    /// Represents a developer message for adding context.
+    /// Maps to "developer" for OpenAI, "user" for other providers.
+    /// Hidden in UI by default, shown only in debug mode.
+    Developer,
 }
 
 impl From<async_openai::types::chat::Role> for MessageRole {
@@ -101,6 +105,8 @@ impl From<async_openai::types::chat::Role> for MessageRole {
             async_openai::types::chat::Role::Assistant => MessageRole::Assistant,
             async_openai::types::chat::Role::System => MessageRole::System,
             async_openai::types::chat::Role::Tool => MessageRole::Tool,
+            // Note: Developer role is handled via catch-all since async_openai
+            // may not have the Developer variant yet
             _ => MessageRole::Assistant,
         }
     }
@@ -202,6 +208,15 @@ impl Message {
     pub fn assistant(task: String, name: Option<String>) -> Self {
         Self {
             role: MessageRole::Assistant,
+            name,
+            parts: vec![Part::Text(task)],
+            ..Default::default()
+        }
+    }
+
+    pub fn developer(task: String, name: Option<String>) -> Self {
+        Self {
+            role: MessageRole::Developer,
             name,
             parts: vec![Part::Text(task)],
             ..Default::default()

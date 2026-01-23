@@ -199,6 +199,7 @@ impl AgentStreamClient {
             agent_id: agent_id.to_string(),
             user_id: None,
             identifier_id: None,
+            workspace_id: None,
         }))
     }
 

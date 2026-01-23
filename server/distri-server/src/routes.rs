@@ -33,6 +33,7 @@ use crate::tts::{get_available_voices, synthesize_tts, transcribe_speech};
 
 mod artifacts;
 mod files;
+mod llm_helpers;
 mod prompt_templates;
 mod secrets;
 mod session;
@@ -607,13 +608,13 @@ async fn a2a_handler(
 
     let handler = A2AHandler::new(executor.clone());
 
-    let user_id = http_request
+    let (user_id, workspace_id) = http_request
         .extensions()
         .get::<UserContext>()
-        .map(|ctx| ctx.user_id())
-        .unwrap_or_else(|| "local_dev_user".to_string());
+        .map(|ctx| (ctx.user_id(), ctx.workspace_id()))
+        .unwrap_or_else(|| ("local_dev_user".to_string(), None));
     let result = handler
-        .handle_jsonrpc(agent_id, user_id, req, None, verbose)
+        .handle_jsonrpc(agent_id, user_id, workspace_id, req, None, verbose)
         .await;
     match result {
         futures_util::future::Either::Left(stream) => {
@@ -677,11 +678,11 @@ async fn llm_execute(
     const EPHEMERAL_SUB_TASK_ID: &str = "__llm_execute_sub_task__";
     const EPHEMERAL_SUB_PARENT_ID: &str = "__llm_execute_parent__";
 
-    let user_id = http_request
+    let (user_id, workspace_id) = http_request
         .extensions()
         .get::<UserContext>()
-        .map(|ctx| ctx.user_id())
-        .unwrap_or_else(|| "anonymous".to_string());
+        .map(|ctx| (ctx.user_id(), ctx.workspace_id()))
+        .unwrap_or_else(|| ("anonymous".to_string(), None));
 
     // Use provided agent_id or default to "llm_execute"
     let agent_id = payload
@@ -697,6 +698,7 @@ async fn llm_execute(
 
     let mut context = ExecutorContext::default();
     context.user_id = user_id.clone();
+    context.workspace_id = workspace_id;
     context.agent_id = agent_id.clone();
     context.thread_id = thread_id.clone();
 
@@ -714,8 +716,17 @@ async fn llm_execute(
     context.orchestrator = Some(executor.get_ref().clone());
     let context = Arc::new(context);
 
-    // Load thread history if requested
+    // Load agent configuration and prepend system message if agent_id is provided
     let mut all_messages = Vec::new();
+
+    // Load agent system message if agent_id is provided
+    if let Some(system_msg) =
+        llm_helpers::load_agent_system_message(&executor, payload.agent_id.as_deref()).await
+    {
+        all_messages.push(system_msg);
+    }
+
+    // Load thread history if requested
     if payload.load_history && payload.thread_id.is_some() {
         match executor
             .stores

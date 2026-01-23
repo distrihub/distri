@@ -22,6 +22,33 @@ pub struct AgentRegistrationResponse {
     pub version: Option<String>,
 }
 
+/// Response from get_login_url - returns the web app login URL
+#[derive(Debug, Clone, Deserialize)]
+pub struct LoginUrlResponse {
+    pub login_url: String,
+}
+
+/// Response from API key creation
+#[derive(Debug, Clone, Deserialize)]
+pub struct ApiKeyResponse {
+    pub id: uuid::Uuid,
+    pub name: String,
+    pub key: Option<String>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+/// Workspace information
+#[derive(Debug, Clone, Deserialize)]
+pub struct WorkspaceResponse {
+    pub id: uuid::Uuid,
+    pub name: String,
+    pub slug: String,
+    pub description: Option<String>,
+    pub is_personal: bool,
+    pub role: String,
+}
+
 /// Simple HTTP/SSE client for invoking agents with Distri messages.
 ///
 /// # Example
@@ -29,7 +56,7 @@ pub struct AgentRegistrationResponse {
 /// ```rust
 /// use distri::{Distri, DistriConfig};
 ///
-/// // Default cloud endpoint (https://api.distri.dev)
+/// // Default cloud endpoint (https://api.distri.dev/v1)
 /// let client = Distri::new();
 ///
 /// // From environment variables (DISTRI_BASE_URL, DISTRI_API_KEY)
@@ -50,7 +77,7 @@ pub struct Distri {
 }
 
 impl Distri {
-    /// Create a new client using the default base URL (https://api.distri.dev).
+    /// Create a new client using the default base URL (https://api.distri.dev/v1).
     pub fn new() -> Self {
         let config = DistriConfig::default();
         Self::from_config(config)
@@ -58,7 +85,7 @@ impl Distri {
 
     /// Create a new client from environment variables.
     ///
-    /// - `DISTRI_BASE_URL`: Base URL (defaults to `https://api.distri.dev`)
+    /// - `DISTRI_BASE_URL`: Base URL (defaults to `https://api.distri.dev/v1`)
     /// - `DISTRI_API_KEY`: Optional API key for authentication
     pub fn from_env() -> Self {
         let config = DistriConfig::from_env();
@@ -91,6 +118,21 @@ impl Distri {
             .expect("Failed to build HTTP client");
         self.stream = self.stream.clone().with_http_client(self.http.clone());
         self
+    }
+
+    /// Set the workspace ID for multi-tenant context.
+    /// This rebuilds the HTTP client with the workspace ID header.
+    pub fn with_workspace_id(mut self, workspace_id: impl Into<String>) -> Self {
+        self.config = self.config.with_workspace_id(workspace_id);
+        self.http = <DistriConfig as BuildHttpClient>::build_http_client(&self.config)
+            .expect("Failed to build HTTP client");
+        self.stream = self.stream.clone().with_http_client(self.http.clone());
+        self
+    }
+
+    /// Get the current workspace ID.
+    pub fn workspace_id(&self) -> Option<&str> {
+        self.config.workspace_id.as_deref()
     }
 
     /// Set a custom HTTP client.
@@ -159,7 +201,12 @@ impl Distri {
     ) -> Result<AgentRegistrationResponse, ClientError> {
         let create_url = format!("{}/agents", self.base_url);
 
-        tracing::info!("Pushing agent to: {create_url}");
+        if let Some(workspace_id) = self.workspace_id() {
+            tracing::info!("Pushing agent to: {create_url} (workspace: {workspace_id})");
+        } else {
+            tracing::info!("Pushing agent to: {create_url}");
+        }
+
         let resp = self
             .http
             .post(&create_url)
@@ -473,6 +520,118 @@ impl Distri {
         Ok(response)
     }
 
+    // ============================================================
+    // Login API
+    // ============================================================
+
+    /// Get the login URL from the API server.
+    /// This returns the web app URL where users should authenticate.
+    pub async fn get_login_url(&self) -> Result<LoginUrlResponse, ClientError> {
+        let url = format!("{}/auth/login-url", self.base_url);
+
+        let resp = match self.http.get(&url).send().await {
+            Ok(r) => r,
+            Err(e) => {
+                return Err(ClientError::InvalidResponse(format!(
+                    "Failed to connect to server at {}: {}",
+                    url, e
+                )));
+            }
+        };
+
+        let status = resp.status();
+        if !status.is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            return Err(ClientError::InvalidResponse(format!(
+                "Server returned {} for {}: {}",
+                status, url, text
+            )));
+        }
+
+        resp.json().await.map_err(ClientError::from)
+    }
+
+    /// Create an API key using a JWT token.
+    /// This is typically used after successful web app authentication.
+    pub async fn create_api_key_with_token(
+        &self,
+        jwt_token: &str,
+        name: Option<String>,
+        ttl_hours: Option<i64>,
+    ) -> Result<ApiKeyResponse, ClientError> {
+        #[derive(Serialize)]
+        struct CreateApiKeyRequest {
+            #[serde(skip_serializing_if = "Option::is_none")]
+            name: Option<String>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            ttl_hours: Option<i64>,
+        }
+
+        let url = format!("{}/api-keys", self.base_url);
+        let payload = CreateApiKeyRequest { name, ttl_hours };
+
+        let resp = self
+            .http
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", jwt_token))
+            .json(&payload)
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            return Err(ClientError::InvalidResponse(format!(
+                "Failed to create API key: {}",
+                text
+            )));
+        }
+
+        resp.json().await.map_err(ClientError::from)
+    }
+
+    /// List all workspaces accessible to the user (using a JWT token).
+    pub async fn list_workspaces_with_token(
+        &self,
+        jwt_token: &str,
+    ) -> Result<Vec<WorkspaceResponse>, ClientError> {
+        let url = format!("{}/workspaces", self.base_url);
+
+        let resp = self
+            .http
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", jwt_token))
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            return Err(ClientError::InvalidResponse(format!(
+                "Failed to list workspaces: {}",
+                text
+            )));
+        }
+
+        resp.json().await.map_err(ClientError::from)
+    }
+
+    /// Get details about a specific workspace (using API key authentication).
+    /// Returns None if the workspace is not found or user doesn't have access.
+    pub async fn get_workspace(&self, workspace_id: &str) -> Result<WorkspaceResponse, ClientError> {
+        let url = format!("{}/workspaces/{}", self.base_url, workspace_id);
+
+        let resp = self.http.get(&url).send().await?;
+
+        if !resp.status().is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            return Err(ClientError::InvalidResponse(format!(
+                "Failed to get workspace: {}",
+                text
+            )));
+        }
+
+        resp.json().await.map_err(ClientError::from)
+    }
+
     pub fn with_stream_client(mut self, stream: AgentStreamClient) -> Self {
         self.stream = stream;
         self
@@ -580,13 +739,22 @@ impl Distri {
     }
 
     /// Execute a raw LLM call via `/llm/execute`, returning the structured response.
+    ///
+    /// # Arguments
+    /// * `llm_def` - Optional LLM definition with model settings. If None, server uses defaults.
+    /// * `llm_context` - Context including messages, thread_id, task_id, etc.
+    /// * `tools` - External tools available for the LLM to call.
+    /// * `headers` - Optional custom headers for the request.
+    /// * `is_sub_task` - Whether this is a sub-task (affects thread management).
+    /// * `agent_id` - Optional agent ID. If provided, server auto-loads agent's system prompt.
     pub async fn llm_execute(
         &self,
-        llm_def: &LlmDefinition,
+        llm_def: Option<&LlmDefinition>,
         llm_context: LLmContext,
         tools: Vec<ExternalTool>,
         headers: Option<HashMap<String, String>>,
         is_sub_task: bool,
+        agent_id: Option<String>,
     ) -> Result<LlmExecuteResponse, ClientError> {
         let payload = LlmExecuteRequest {
             messages: llm_context.messages,
@@ -594,9 +762,10 @@ impl Distri {
             thread_id: llm_context.thread_id,
             parent_task_id: llm_context.task_id,
             run_id: llm_context.run_id,
-            model_settings: Some(llm_def.model_settings.clone()),
+            model_settings: llm_def.map(|d| d.model_settings.clone()),
             is_sub_task,
             headers,
+            agent_id,
         };
 
         let url = format!("{}/llm/execute", self.base_url);
@@ -1091,6 +1260,9 @@ struct LlmExecuteRequest {
     is_sub_task: bool,
     #[serde(default)]
     headers: Option<HashMap<String, String>>,
+    /// Optional agent ID - if provided, server will load agent's system prompt automatically
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    agent_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

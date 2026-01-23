@@ -18,13 +18,26 @@ impl BuildHttpClient for DistriConfig {
         let mut builder =
             reqwest::Client::builder().timeout(std::time::Duration::from_secs(self.timeout_secs));
 
-        // Add default headers if API key is configured
+        let mut headers = reqwest::header::HeaderMap::new();
+
+        // Add API key header if configured
         if let Some(ref api_key) = self.api_key {
-            let mut headers = reqwest::header::HeaderMap::new();
             headers.insert(
                 "x-api-key",
                 reqwest::header::HeaderValue::from_str(api_key).expect("Invalid API key format"),
             );
+        }
+
+        // Add workspace ID header if configured
+        if let Some(workspace_id) = &self.workspace_id {
+            headers.insert(
+                "x-workspace-id",
+                reqwest::header::HeaderValue::from_str(workspace_id)
+                    .expect("Invalid workspace ID format"),
+            );
+        }
+
+        if !headers.is_empty() {
             builder = builder.default_headers(headers);
         }
 
@@ -39,7 +52,7 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = DistriConfig::default();
-        assert_eq!(config.base_url, "https://api.distri.dev");
+        assert_eq!(config.base_url, "https://api.distri.dev/v1");
         assert!(config.api_key.is_none());
         assert!(!config.is_local());
     }

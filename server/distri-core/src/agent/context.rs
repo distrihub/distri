@@ -105,6 +105,8 @@ pub struct ExecutorContext {
     pub user_id: String,
     /// Identifier ID for tenant/project-level usage tracking (maps to tenant_id in auth)
     pub identifier_id: Option<String>,
+    /// Workspace ID for multi-tenant workspace-scoped tracking
+    pub workspace_id: Option<String>,
     /// Browser session ID for browsr - if None, browsr will auto-create one
     pub browser_session_id: Option<String>,
     pub additional_attributes: Option<AdditionalAttributes>,
@@ -158,6 +160,7 @@ impl Default for ExecutorContext {
             user_id: uuid::Uuid::new_v4().to_string(),
             session_id: uuid::Uuid::new_v4().to_string(),
             identifier_id: None,
+            workspace_id: None,
             browser_session_id: None,
             tools: Arc::default(),
             orchestrator: None,
@@ -260,6 +263,7 @@ impl ExecutorContext {
             event,
             user_id: Some(self.user_id.clone()),
             identifier_id: self.identifier_id.clone(),
+            workspace_id: self.workspace_id.clone(),
         };
 
         if let Some(tx) = tx {
@@ -315,6 +319,7 @@ impl ExecutorContext {
                 event,
                 user_id: Some(self.user_id.clone()),
                 identifier_id: self.identifier_id.clone(),
+                workspace_id: self.workspace_id.clone(),
             };
 
             let _ = tx.send(event).await;
@@ -775,6 +780,7 @@ impl ExecutorContext {
             session_id: self.session_id.clone(),
             user_id: self.user_id.clone(),
             identifier_id: self.identifier_id.clone(),
+            workspace_id: self.workspace_id.clone(),
             browser_session_id: self.browser_session_id.clone(),
             tools: self.tools.clone(),               // Arc::clone
             orchestrator: self.orchestrator.clone(), // Arc::clone

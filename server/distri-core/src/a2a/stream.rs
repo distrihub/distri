@@ -6,7 +6,7 @@ use crate::agent::{
 };
 use crate::secrets::SecretResolver;
 use crate::AgentError;
-use distri_auth::context::with_user_id;
+use distri_auth::context::{with_user_and_workspace, with_user_id};
 use distri_types::HookMutation;
 
 use anyhow::anyhow;
@@ -162,24 +162,40 @@ pub async fn init_thread_get_message(
     let thread_store = executor.stores.thread_store.clone();
 
     let thread_title = extract_text_from_message(&params.message);
-    let thread = executor
-        .ensure_thread_exists(
-            &agent_id,
-            params.message.context_id.as_deref().map(String::from),
-            thread_title.as_deref(),
-            executor_context
-                .additional_attributes
-                .clone()
-                .map(|a| a.thread)
-                .flatten(),
-        )
-        .await?;
+
+    // Extract user_id and workspace_id from executor_context for task-local context
+    let user_id = executor_context.user_id.clone();
+    let workspace_id = executor_context
+        .workspace_id
+        .as_ref()
+        .and_then(|s| uuid::Uuid::parse_str(s).ok());
+
+    // Wrap thread operations in workspace context for cloud stores
+    let thread = with_user_and_workspace(user_id.clone(), workspace_id, async {
+        executor
+            .ensure_thread_exists(
+                &agent_id,
+                params.message.context_id.as_deref().map(String::from),
+                thread_title.as_deref(),
+                executor_context
+                    .additional_attributes
+                    .clone()
+                    .map(|a| a.thread)
+                    .flatten(),
+            )
+            .await
+    })
+    .await?;
+
     let thread_id = thread.id;
     // Update the thread with the message for title/last_message
     if let Some(thread_title) = thread_title {
-        let _ = thread_store
-            .update_thread_with_message(&thread_id, &thread_title)
-            .await;
+        let _ = with_user_and_workspace(user_id, workspace_id, async {
+            thread_store
+                .update_thread_with_message(&thread_id, &thread_title)
+                .await
+        })
+        .await;
     }
     Ok((thread_id, message))
 }
@@ -355,7 +371,13 @@ pub async fn handle_message_send_streaming_sse(
         let cancel_token_for_exec = cancel_token.clone();
         let executor_for_completion = executor.clone();
         let user_id_for_completion = user_id.clone();
-        let completion_task = tokio::spawn(with_user_id(user_id_for_completion, async move {
+        // Extract workspace_id for task-local context in spawned tasks
+        let workspace_id = executor_context
+            .workspace_id
+            .as_ref()
+            .and_then(|s| uuid::Uuid::parse_str(s).ok());
+        let workspace_id_for_completion = workspace_id;
+        let completion_task = tokio::spawn(with_user_and_workspace(user_id_for_completion, workspace_id_for_completion, async move {
             let cancel_token = cancel_token_for_completion;
             let mut completed = false;
             while let Some(event) = event_rx.recv().await {
@@ -398,7 +420,8 @@ pub async fn handle_message_send_streaming_sse(
         let req_id_clone = req_id.clone();
         let definition_overrides_clone = definition_overrides.clone();
         let user_id_for_exec = user_id.clone();
-        let exec_handle = tokio::spawn(with_user_id(user_id_for_exec, async move {
+        let workspace_id_for_exec = workspace_id;
+        let exec_handle = tokio::spawn(with_user_and_workspace(user_id_for_exec, workspace_id_for_exec, async move {
             let exec_fut = executor_clone.execute_stream(
                 &agent_id_clone,
                 message,

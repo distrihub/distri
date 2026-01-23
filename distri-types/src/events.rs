@@ -30,6 +30,9 @@ pub struct AgentEvent {
     /// Identifier ID for tenant/project-level usage tracking
     #[serde(default)]
     pub identifier_id: Option<String>,
+    /// Workspace ID for workspace-scoped usage tracking
+    #[serde(default)]
+    pub workspace_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -182,6 +185,7 @@ impl AgentEvent {
             agent_id: "default".to_string(),
             user_id: None,
             identifier_id: None,
+            workspace_id: None,
         }
     }
 
@@ -201,6 +205,7 @@ impl AgentEvent {
             agent_id,
             user_id: None,
             identifier_id: None,
+            workspace_id: None,
         }
     }
 }

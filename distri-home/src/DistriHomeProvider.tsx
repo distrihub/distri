@@ -46,6 +46,7 @@ interface DistriHomeContextValue {
   homeClient: DistriHomeClient | null;
   distriClient: DistriClient | null;
   isLoading: boolean;
+  workspaceId: string | undefined;
 }
 
 const DistriHomeContext = createContext<DistriHomeContextValue | null>(null);
@@ -93,6 +94,9 @@ export function DistriHomeProvider({
     return { homeClient: null, distriClient: null };
   }, [client, clientConfig]);
 
+  // Track workspaceId for triggering refetches when it changes
+  const workspaceId = distriClient?.workspaceId;
+
   return (
     <DistriHomeContext.Provider
       value={{
@@ -101,6 +105,7 @@ export function DistriHomeProvider({
         homeClient,
         distriClient,
         isLoading: false,
+        workspaceId,
       }}
     >
       {children}

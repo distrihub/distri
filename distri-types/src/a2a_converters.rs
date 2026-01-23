@@ -212,6 +212,9 @@ impl From<crate::MessageRole> for Role {
         match role {
             crate::MessageRole::User => Role::User,
             crate::MessageRole::Assistant => Role::Agent,
+            // Developer messages are mapped to User for A2A protocol
+            // since they contain context that should be treated like user input
+            crate::MessageRole::Developer => Role::User,
             _ => Role::Agent,
         }
     }

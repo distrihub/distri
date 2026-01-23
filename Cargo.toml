@@ -43,7 +43,7 @@ futures = "0.3.31"
 reqwest = { version = "0.12.8", features = ["json"] }
 tokio-util = { version = "0.7", features = ["full"] }
 uuid = { version = "1.0", features = ["v4", "js"] }
-schemars = "1.0.4"
+schemars = { version = "1.0.4", features = ["uuid1"] }
 jsonschema = "0.33"
 
 # Actix web dependencies (standardized across distri-server and distri-auth)
