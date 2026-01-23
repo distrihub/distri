@@ -749,23 +749,19 @@ impl Distri {
     /// * `agent_id` - Optional agent ID. If provided, server auto-loads agent's system prompt.
     pub async fn llm_execute(
         &self,
-        llm_def: Option<&LlmDefinition>,
-        llm_context: LLmContext,
-        tools: Vec<ExternalTool>,
-        headers: Option<HashMap<String, String>>,
-        is_sub_task: bool,
-        agent_id: Option<String>,
+        options: LlmExecuteOptions,
     ) -> Result<LlmExecuteResponse, ClientError> {
         let payload = LlmExecuteRequest {
-            messages: llm_context.messages,
-            tools,
-            thread_id: llm_context.thread_id,
-            parent_task_id: llm_context.task_id,
-            run_id: llm_context.run_id,
-            model_settings: llm_def.map(|d| d.model_settings.clone()),
-            is_sub_task,
-            headers,
-            agent_id,
+            messages: options.context.messages,
+            tools: options.tools,
+            thread_id: options.context.thread_id,
+            parent_task_id: options.context.task_id,
+            run_id: options.context.run_id,
+            model_settings: options.llm_def.map(|d| d.model_settings.clone()),
+            is_sub_task: options.is_sub_task,
+            headers: options.headers,
+            agent_id: options.agent_id,
+            load_history: options.load_history,
         };
 
         let url = format!("{}/llm/execute", self.base_url);
@@ -1243,6 +1239,58 @@ struct ToolCallRequest {
     metadata: Option<Value>,
 }
 
+/// Options for LLM execution
+#[derive(Debug, Clone, Default)]
+pub struct LlmExecuteOptions {
+    pub llm_def: Option<LlmDefinition>,
+    pub context: LLmContext,
+    pub tools: Vec<ExternalTool>,
+    pub headers: Option<HashMap<String, String>>,
+    pub is_sub_task: bool,
+    pub agent_id: Option<String>,
+    pub load_history: bool,
+}
+
+impl LlmExecuteOptions {
+    pub fn new(context: LLmContext) -> Self {
+        Self {
+            context,
+            load_history: true,
+            ..Default::default()
+        }
+    }
+
+    pub fn with_llm_def(mut self, llm_def: LlmDefinition) -> Self {
+        self.llm_def = Some(llm_def);
+        self
+    }
+
+    pub fn with_tools(mut self, tools: Vec<ExternalTool>) -> Self {
+        self.tools = tools;
+        self
+    }
+
+    pub fn with_headers(mut self, headers: HashMap<String, String>) -> Self {
+        self.headers = Some(headers);
+        self
+    }
+
+    pub fn with_agent_id(mut self, agent_id: String) -> Self {
+        self.agent_id = Some(agent_id);
+        self
+    }
+
+    pub fn with_load_history(mut self, load_history: bool) -> Self {
+        self.load_history = load_history;
+        self
+    }
+
+    pub fn is_sub_task(mut self, is_sub_task: bool) -> Self {
+        self.is_sub_task = is_sub_task;
+        self
+    }
+}
+
 #[derive(Debug, Serialize)]
 struct LlmExecuteRequest {
     messages: Vec<Message>,
@@ -1263,6 +1311,14 @@ struct LlmExecuteRequest {
     /// Optional agent ID - if provided, server will load agent's system prompt automatically
     #[serde(default, skip_serializing_if = "Option::is_none")]
     agent_id: Option<String>,
+    /// Whether to load thread history when thread_id is provided (default: true)
+    #[serde(default = "default_load_history")]
+    load_history: bool,
+}
+
+#[allow(dead_code)]
+fn default_load_history() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Deserialize)]

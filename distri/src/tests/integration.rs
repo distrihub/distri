@@ -77,8 +77,11 @@ async fn llm_execute_returns_payload() {
         ..Default::default()
     };
 
+    let options = crate::LlmExecuteOptions::new(ctx)
+        .with_llm_def(llm_def);
+
     let resp: LlmExecuteResponse = client
-        .llm_execute(&llm_def, ctx, Vec::new(), None, false)
+        .llm_execute(options)
         .await
         .unwrap();
 

@@ -41,7 +41,7 @@ pub trait OrchestratorTrait: Send + Sync {
     ) -> Result<serde_json::Value, anyhow::Error>;
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct LLmContext {
     pub thread_id: Option<String>,
     pub task_id: Option<String>,

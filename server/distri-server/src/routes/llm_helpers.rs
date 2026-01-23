@@ -122,11 +122,14 @@ pub async fn load_agent_system_message(
     }
 
     // Load agent configuration from store
+    tracing::info!("Loading system message for agent_id: {}", aid);
     let agent_config = executor.get_agent(aid).await?;
+    tracing::info!("Successfully loaded agent config for: {}", aid);
 
     // Extract instructions based on agent type
     let instructions = match &agent_config {
         distri_types::configuration::AgentConfig::StandardAgent(def) => {
+            tracing::info!("Agent '{}' is StandardAgent, instructions length: {}", aid, def.instructions.len());
             if !def.instructions.is_empty() {
                 Some(def.instructions.clone())
             } else {
@@ -134,6 +137,7 @@ pub async fn load_agent_system_message(
             }
         }
         distri_types::configuration::AgentConfig::SequentialWorkflowAgent(def) => {
+            tracing::info!("Agent '{}' is SequentialWorkflowAgent, description length: {}", aid, def.description.len());
             // For workflow agents, use description as system context
             if !def.description.is_empty() {
                 Some(def.description.clone())
@@ -142,6 +146,7 @@ pub async fn load_agent_system_message(
             }
         }
         distri_types::configuration::AgentConfig::DagWorkflowAgent(def) => {
+            tracing::info!("Agent '{}' is DagWorkflowAgent, description length: {}", aid, def.description.len());
             if !def.description.is_empty() {
                 Some(def.description.clone())
             } else {
@@ -149,6 +154,7 @@ pub async fn load_agent_system_message(
             }
         }
         distri_types::configuration::AgentConfig::CustomAgent(def) => {
+            tracing::info!("Agent '{}' is CustomAgent, description length: {}", aid, def.description.len());
             if !def.description.is_empty() {
                 Some(def.description.clone())
             } else {
@@ -158,10 +164,15 @@ pub async fn load_agent_system_message(
     };
 
     // If we have instructions, create a system message
+    if instructions.is_none() {
+        tracing::warn!("Agent '{}' found but has empty instructions", aid);
+    }
+
     instructions.map(|instructions| {
         tracing::debug!(
-            "Creating system message from agent '{}' configuration",
-            aid
+            "Creating system message from agent '{}' configuration with {} chars",
+            aid,
+            instructions.len()
         );
 
         Message {
