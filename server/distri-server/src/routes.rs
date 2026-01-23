@@ -757,10 +757,22 @@ async fn llm_execute(
     // Append the new messages from the request
     all_messages.extend(payload.messages.clone());
 
-    let mut model_settings = executor.get_default_model_settings().await;
-    if let Some(override_ms) = payload.model_settings.clone() {
-        model_settings = override_ms;
-    }
+    // Load agent model settings if agent_id is provided
+    let base_model_settings = if let Some(agent_ms) =
+        llm_helpers::load_agent_model_settings(&executor, payload.agent_id.as_deref()).await
+    {
+        agent_ms
+    } else {
+        executor.get_default_model_settings().await
+    };
+
+    // Merge with request's model_settings if provided
+    let model_settings = if let Some(override_ms) = payload.model_settings.clone() {
+        let sentinel = ModelSettings::default();
+        llm_helpers::merge_model_settings(&base_model_settings, &override_ms, &sentinel)
+    } else {
+        base_model_settings
+    };
 
     let llm_def = LlmDefinition {
         name: format!("llm_execute{}", model_settings.model),
