@@ -6,18 +6,14 @@ use dirs::home_dir;
 use distri_a2a::JsonRpcRequest;
 use distri_core::a2a::messages::get_a2a_messages;
 use distri_core::a2a::A2AHandler;
-use distri_core::agent::{parse_agent_markdown_content, AgentOrchestrator, ExecutorContext};
-use distri_core::llm::LLMExecutor;
+use distri_core::agent::{parse_agent_markdown_content, AgentOrchestrator};
 use distri_core::secrets::SecretResolver;
 use distri_core::types::UpdateThreadRequest;
 use distri_core::{AgentError, MessageFilter, ToolAuthRequestContext};
 use distri_types::configuration::ServerConfig;
 use distri_types::configuration::{AgentConfigWithTools, DistriServerConfig};
 use distri_types::StandardDefinition;
-use distri_types::{
-    AgentEventType, ExternalTool, InlineHookResponse, LlmDefinition, Message, ModelSettings,
-    RunUsage, ToolCallFormat,
-};
+use distri_types::{ExternalTool, InlineHookResponse, Message, ModelSettings};
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -31,7 +27,6 @@ use crate::agent_server::VerboseLog;
 use crate::auth_routes;
 use crate::context::UserContext;
 use crate::tts::{get_available_voices, synthesize_tts, transcribe_speech};
-use distri_auth::context::with_user_and_workspace;
 
 mod artifacts;
 mod files;
@@ -677,9 +672,6 @@ async fn llm_execute(
     http_request: HttpRequest,
     payload: web::Json<LLmRequest>,
 ) -> HttpResponse {
-    const EPHEMERAL_SUB_TASK_ID: &str = "__llm_execute_sub_task__";
-    const EPHEMERAL_SUB_PARENT_ID: &str = "__llm_execute_parent__";
-
     let (user_id, workspace_id_str) = http_request
         .extensions()
         .get::<UserContext>()
@@ -731,31 +723,11 @@ async fn llm_execute(
         .clone()
         .unwrap_or_else(|| "llm_execute".to_string());
 
-    // Generate or use provided thread_id
+    // Generate or use provided thread_id (needed for history loading)
     let thread_id = payload
         .thread_id
         .clone()
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-
-    let mut context = ExecutorContext::default();
-    context.user_id = user_id.clone();
-    context.workspace_id = workspace_id_str.clone();
-    context.agent_id = agent_id.clone();
-    context.thread_id = thread_id.clone();
-
-    if let Some(run_id) = payload.run_id.as_ref() {
-        context.run_id = run_id.clone();
-    }
-    if let Some(parent) = payload.parent_task_id.as_ref() {
-        // Attach to an existing task so history stays under that task_id
-        context.task_id = parent.clone();
-    } else if payload.is_sub_task {
-        // Ephemeral sub-task: keep out of history
-        context.parent_task_id = Some(EPHEMERAL_SUB_PARENT_ID.to_string());
-        context.task_id = EPHEMERAL_SUB_TASK_ID.to_string();
-    }
-    context.orchestrator = Some(executor.get_ref().clone());
-    let context = Arc::new(context);
 
     // Load agent configuration and prepend system message if agent_id is provided
     let mut all_messages = Vec::new();
@@ -766,9 +738,7 @@ async fn llm_execute(
         if aid != "llm_execute" {
             tracing::info!("Verifying and loading agent: {}", aid);
 
-            let agent_exists = with_user_and_workspace(user_id.clone(), workspace_id_uuid, async {
-                executor.get_agent(aid).await.is_some()
-            }).await;
+            let agent_exists = executor.get_agent(aid).await.is_some();
 
             if !agent_exists {
                 tracing::error!("Agent '{}' not found", aid);
@@ -777,62 +747,60 @@ async fn llm_execute(
                 }));
             }
 
-            // Load agent system message (also needs task-local context)
-            if let Some(system_msg) = with_user_and_workspace(user_id.clone(), workspace_id_uuid, async {
+            // Load agent system message
+            if let Some(system_msg) =
                 llm_helpers::load_agent_system_message(&executor, Some(aid.as_str())).await
-            }).await {
+            {
                 tracing::info!("Successfully loaded system message for agent: {}", aid);
                 all_messages.push(system_msg);
             } else {
-                tracing::warn!("Agent '{}' found but no system message loaded (empty instructions?)", aid);
+                tracing::warn!(
+                    "Agent '{}' found but no system message loaded (empty instructions?)",
+                    aid
+                );
             }
         }
     }
 
     // Load thread history if requested
     if payload.load_history && payload.thread_id.is_some() {
-        // Wrap in task-local context for workspace filtering
-        with_user_and_workspace(user_id.clone(), workspace_id_uuid, async {
-            match executor
-                .stores
-                .task_store
-                .get_history(&thread_id, None)
-                .await
-            {
-                Ok(history) => {
-                    for (_task, task_messages) in history {
-                        for task_msg in task_messages {
-                            if let distri_types::TaskMessage::Message(msg) = task_msg {
-                                all_messages.push(msg);
-                            }
+        match executor
+            .stores
+            .task_store
+            .get_history(&thread_id, None)
+            .await
+        {
+            Ok(history) => {
+                for (_task, task_messages) in history {
+                    for task_msg in task_messages {
+                        if let distri_types::TaskMessage::Message(msg) = task_msg {
+                            all_messages.push(msg);
                         }
                     }
-                    tracing::debug!(
-                        "Loaded {} messages from thread history for thread_id: {}",
-                        all_messages.len(),
-                        thread_id
-                    );
                 }
-                Err(e) => {
-                    tracing::warn!("Failed to load thread history for {}: {}", thread_id, e);
-                }
+                tracing::debug!(
+                    "Loaded {} messages from thread history for thread_id: {}",
+                    all_messages.len(),
+                    thread_id
+                );
             }
-        }).await;
+            Err(e) => {
+                tracing::warn!("Failed to load thread history for {}: {}", thread_id, e);
+            }
+        }
     }
 
     // Append the new messages from the request
     all_messages.extend(payload.messages.clone());
 
-    // Load agent model settings if agent_id is provided (needs task-local context)
-    let base_model_settings = with_user_and_workspace(user_id.clone(), workspace_id_uuid, async {
-        if let Some(agent_ms) =
-            llm_helpers::load_agent_model_settings(&executor, payload.agent_id.as_deref()).await
-        {
-            agent_ms
-        } else {
-            executor.get_default_model_settings().await
-        }
-    }).await;
+    // Load agent model settings if agent_id is provided
+    let base_model_settings = if let Some(agent_ms) =
+        llm_helpers::load_agent_model_settings(&executor, payload.agent_id.as_deref()).await
+    {
+        agent_ms
+    } else {
+        executor.get_default_model_settings().await
+    };
 
     // Merge with request's model_settings if provided
     let model_settings = if let Some(override_ms) = payload.model_settings.clone() {
@@ -842,12 +810,6 @@ async fn llm_execute(
         base_model_settings
     };
 
-    let llm_def = LlmDefinition {
-        name: format!("llm_execute{}", model_settings.model),
-        model_settings: model_settings.clone(),
-        tool_format: ToolCallFormat::Provider,
-    };
-
     let tools = payload
         .tools
         .iter()
@@ -855,14 +817,6 @@ async fn llm_execute(
         .collect();
 
     let headers = payload.headers.clone();
-    // No server tool execution; return tool calls for the frontend to execute
-    let llm = LLMExecutor::new(
-        llm_def,
-        tools,
-        context.clone(),
-        headers,
-        Some("llm_execute".to_string()),
-    );
 
     // Log final request that will be sent to LLM (if LOG_REQUESTS is set)
     if std::env::var("LOG_REQUESTS").is_ok() {
@@ -901,150 +855,54 @@ async fn llm_execute(
         });
     }
 
-    match llm.execute(&all_messages).await {
-        Ok(resp) => {
-            // Store the LLM call as a thread entry (non-ephemeral only)
-            if !payload.is_sub_task {
-                // Wrap thread/task store operations in task-local context
-                with_user_and_workspace(user_id.clone(), workspace_id_uuid, async {
-                    // Create or update the thread
-                    let title = payload.title.clone().unwrap_or_else(|| {
-                        // Generate title from first user message
-                        payload
-                            .messages
-                            .iter()
-                            .find(|m| m.role == distri_types::MessageRole::User)
-                            .and_then(|m| {
-                                m.parts.iter().find_map(|p| {
-                                    if let distri_types::Part::Text(text) = p {
-                                        Some(text.chars().take(100).collect::<String>())
-                                    } else {
-                                        None
-                                    }
-                                })
-                            })
-                            .unwrap_or_else(|| "LLM Execute".to_string())
-                    });
-
-                    // Get or create thread
-                    let thread_exists = executor
-                        .stores
-                        .thread_store
-                        .get_thread(&thread_id)
-                        .await
-                        .ok()
-                        .flatten()
-                        .is_some();
-
-                    if !thread_exists {
-                        // Create new thread
-                        let create_req = distri_types::CreateThreadRequest {
-                            agent_id: agent_id.clone(),
-                            title: Some(title),
-                            thread_id: Some(thread_id.clone()),
-                            attributes: None,
-                            user_id: Some(user_id.clone()),
-                            external_id: payload.external_id.clone(),
-                        };
-                        if let Err(e) = executor.stores.thread_store.create_thread(create_req).await {
-                            tracing::warn!("Failed to create thread {}: {}", thread_id, e);
-                        }
-                    }
-
-                    // Store the user message(s) from the request
-                    let task_id = context.task_id.clone();
-                    // Ensure task exists
-                    let _ = executor
-                        .stores
-                        .task_store
-                        .get_or_create_task(&thread_id, &task_id)
-                        .await;
-
-                    for msg in &payload.messages {
-                        if let Err(e) = executor
-                            .stores
-                            .task_store
-                            .add_message_to_task(&task_id, msg)
-                            .await
-                        {
-                            tracing::warn!("Failed to store user message: {}", e);
-                        }
-                    }
-
-                    // Store the assistant response
-                    let assistant_message = distri_types::Message {
-                        id: uuid::Uuid::new_v4().to_string(),
-                        name: None,
-                        role: distri_types::MessageRole::Assistant,
-                        parts: {
-                            let mut parts = Vec::new();
-                            if !resp.content.is_empty() {
-                                parts.push(distri_types::Part::Text(resp.content.clone()));
-                            }
-                            for tc in &resp.tool_calls {
-                                parts.push(distri_types::Part::ToolCall(tc.clone()));
-                            }
-                            parts
-                        },
-                        created_at: chrono::Utc::now().timestamp_millis(),
-                    };
-
-                    if let Err(e) = executor
-                        .stores
-                        .task_store
-                        .add_message_to_task(&task_id, &assistant_message)
-                        .await
-                    {
-                        tracing::warn!("Failed to store assistant message: {}", e);
-                    }
-
-                    // Update thread with last message
-                    let last_msg = if !resp.content.is_empty() {
-                        resp.content.chars().take(200).collect::<String>()
-                    } else if !resp.tool_calls.is_empty() {
-                        format!("[Tool calls: {}]", resp.tool_calls.len())
+    // Generate title from first user message
+    let title = payload.title.clone().or_else(|| {
+        payload
+            .messages
+            .iter()
+            .find(|m| m.role == distri_types::MessageRole::User)
+            .and_then(|m| {
+                m.parts.iter().find_map(|p| {
+                    if let distri_types::Part::Text(text) = p {
+                        Some(text.chars().take(100).collect::<String>())
                     } else {
-                        String::new()
-                    };
-                    if let Err(e) = executor
-                        .stores
-                        .thread_store
-                        .update_thread_with_message(&thread_id, &last_msg)
-                        .await
-                    {
-                        tracing::warn!("Failed to update thread with message: {}", e);
+                        None
                     }
-                }).await;
-            }
+                })
+            })
+    });
 
-            // Emit RunFinished event for usage tracking
-            if !payload.is_sub_task {
-                let context_usage = context.get_usage().await;
-                let run_usage = RunUsage {
-                    total_tokens: context_usage.tokens,
-                    input_tokens: context_usage.input_tokens,
-                    output_tokens: context_usage.output_tokens,
-                    estimated_tokens: context_usage.context_size.total_estimated_tokens as u32,
-                };
+    // Use the new LlmExecuteService to handle thread/task creation and execution
+    let service = distri_core::llm_service::LlmExecuteService::new(executor.get_ref().clone());
 
-                context
-                    .emit(AgentEventType::RunFinished {
-                        success: true,
-                        total_steps: 1,
-                        failed_steps: 0,
-                        usage: Some(run_usage),
-                    })
-                    .await;
-            }
+    // Middleware already set task-local context - just call service directly
+    let result = service
+        .execute(
+            user_id.clone(),
+            workspace_id_uuid,
+            agent_id.clone(),
+            Some(thread_id.clone()),
+            payload.run_id.clone(),
+            payload.parent_task_id.clone(),
+            all_messages,
+            tools,
+            model_settings,
+            headers,
+            title,
+            payload.external_id.clone(),
+            payload.is_sub_task,
+        )
+        .await;
 
-            HttpResponse::Ok().json(json!({
-                "finish_reason": format!("{:?}", resp.finish_reason),
-                "content": resp.content,
-                "tool_calls": resp.tool_calls,
-                "token_usage": resp.token_usage,
-                "thread_id": thread_id,
-            }))
-        }
+    match result {
+        Ok(exec_result) => HttpResponse::Ok().json(json!({
+            "finish_reason": format!("{:?}", exec_result.response.finish_reason),
+            "content": exec_result.response.content,
+            "tool_calls": exec_result.response.tool_calls,
+            "token_usage": exec_result.response.token_usage,
+            "thread_id": exec_result.thread_id,
+            "task_id": exec_result.task_id,
+        })),
         Err(error) => {
             tracing::error!("[/llm/execute] LLM call failed: {}", error);
             HttpResponse::BadGateway().json(json!({

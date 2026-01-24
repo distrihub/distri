@@ -6,6 +6,7 @@ mod agent;
 pub mod browser;
 pub mod configuration;
 mod orchestrator;
+pub mod tenant_context;
 pub use agent::*;
 pub mod prompt;
 pub use orchestrator::*;
@@ -33,6 +34,7 @@ pub use errors::*;
 pub use events::*;
 pub use hooks::*;
 pub use mcp::*;
+pub use tenant_context::*;
 pub mod a2a_converters;
 
 mod execution;

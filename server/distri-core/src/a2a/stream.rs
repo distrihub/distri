@@ -7,6 +7,8 @@ use crate::agent::{
 use crate::secrets::SecretResolver;
 use crate::AgentError;
 use distri_auth::context::{with_user_and_workspace, with_user_id};
+// Note: with_user_and_workspace IS needed for stream! macro and spawned tasks
+// because they don't inherit task-local storage from middleware
 use distri_types::HookMutation;
 
 use anyhow::anyhow;
@@ -163,39 +165,26 @@ pub async fn init_thread_get_message(
 
     let thread_title = extract_text_from_message(&params.message);
 
-    // Extract user_id and workspace_id from executor_context for task-local context
-    let user_id = executor_context.user_id.clone();
-    let workspace_id = executor_context
-        .workspace_id
-        .as_ref()
-        .and_then(|s| uuid::Uuid::parse_str(s).ok());
-
-    // Wrap thread operations in workspace context for cloud stores
-    let thread = with_user_and_workspace(user_id.clone(), workspace_id, async {
-        executor
-            .ensure_thread_exists(
-                &agent_id,
-                params.message.context_id.as_deref().map(String::from),
-                thread_title.as_deref(),
-                executor_context
-                    .additional_attributes
-                    .clone()
-                    .map(|a| a.thread)
-                    .flatten(),
-            )
-            .await
-    })
-    .await?;
+    // Middleware already set task-local context - no need to extract user_id/workspace_id here
+    let thread = executor
+        .ensure_thread_exists(
+            &agent_id,
+            params.message.context_id.as_deref().map(String::from),
+            thread_title.as_deref(),
+            executor_context
+                .additional_attributes
+                .clone()
+                .map(|a| a.thread)
+                .flatten(),
+        )
+        .await?;
 
     let thread_id = thread.id;
     // Update the thread with the message for title/last_message
     if let Some(thread_title) = thread_title {
-        let _ = with_user_and_workspace(user_id, workspace_id, async {
-            thread_store
-                .update_thread_with_message(&thread_id, &thread_title)
-                .await
-        })
-        .await;
+        let _ = thread_store
+            .update_thread_with_message(&thread_id, &thread_title)
+            .await;
     }
     Ok((thread_id, message))
 }
@@ -209,6 +198,11 @@ pub async fn handle_message_send_streaming_sse(
 ) -> impl futures_util::stream::Stream<Item = Result<SseMessage, std::convert::Infallible>> {
     let user_id = executor_context.user_id.clone();
     let stream_user_id = user_id.clone();
+    let workspace_id = executor_context
+        .workspace_id
+        .as_ref()
+        .and_then(|s| uuid::Uuid::parse_str(s).ok());
+    let stream_workspace_id = workspace_id;
     let id_field_clone = executor_context.session_id.clone();
 
     let stream = async_stream::stream! {
@@ -259,11 +253,16 @@ pub async fn handle_message_send_streaming_sse(
             .and_then(|m| serde_json::from_value(m).ok())
             .unwrap_or_default();
 
-        let (_thread_id, message) = match init_thread_get_message(
-            agent_id.clone(),
-            executor.clone(),
-            &params,
-            executor_context.clone(),
+        // stream! macro doesn't inherit task-local storage, so wrap here
+        let (_thread_id, message) = match with_user_and_workspace(
+            user_id.clone(),
+            stream_workspace_id,
+            init_thread_get_message(
+                agent_id.clone(),
+                executor.clone(),
+                &params,
+                executor_context.clone(),
+            )
         )
         .await
         {
