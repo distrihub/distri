@@ -122,7 +122,7 @@ export class DistriHomeClient {
    * Get agents sorted by usage (thread count)
    */
   async getAgentsByUsage(): Promise<AgentUsageInfo[]> {
-    const response = await this.client.fetch('/agents/usage');
+    const response = await this.client.fetch('/threads/agents');
 
     if (!response.ok) {
       throw new Error(`Failed to fetch agents by usage: ${response.statusText}`);

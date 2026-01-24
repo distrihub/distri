@@ -911,6 +911,11 @@ where
     async fn get_agents_by_usage(&self) -> Result<Vec<AgentUsageInfo>> {
         let mut connection = self.conn().await?;
 
+        // Get tenant context for filtering
+        let user_id = distri_auth::context::current_user_id()
+            .ok_or_else(|| anyhow::anyhow!("User context required"))?;
+        let workspace_id = distri_auth::context::current_workspace_id();
+
         #[derive(QueryableByName)]
         struct AgentCount {
             #[diesel(sql_type = diesel::sql_types::Text)]
@@ -921,16 +926,36 @@ where
             thread_count: i64,
         }
 
-        let results: Vec<AgentCount> = diesel::sql_query(
-            "SELECT t.agent_id, COALESCE(a.name, t.agent_id) as agent_name, COUNT(*) as thread_count
-             FROM threads t
-             LEFT JOIN agent_configs a ON t.agent_id = a.name
-             GROUP BY t.agent_id, a.name
-             ORDER BY thread_count DESC",
-        )
-        .get_results(&mut connection)
-        .await
-        .context("failed to get agents by usage")?;
+        let results: Vec<AgentCount> = if let Some(ws_id) = workspace_id {
+            // Filter by workspace
+            diesel::sql_query(
+                "SELECT t.agent_id, COALESCE(a.name, t.agent_id) as agent_name, COUNT(*) as thread_count
+                 FROM threads t
+                 LEFT JOIN agent_configs a ON t.agent_id = a.name AND a.workspace_id = $2::uuid
+                 WHERE t.user_id = $1::uuid AND t.workspace_id = $2::uuid
+                 GROUP BY t.agent_id, a.name
+                 ORDER BY thread_count DESC",
+            )
+            .bind::<diesel::sql_types::Text, _>(user_id.to_string())
+            .bind::<diesel::sql_types::Text, _>(ws_id.to_string())
+            .get_results(&mut connection)
+            .await
+            .context("failed to get agents by usage")?
+        } else {
+            // Filter by user only
+            diesel::sql_query(
+                "SELECT t.agent_id, COALESCE(a.name, t.agent_id) as agent_name, COUNT(*) as thread_count
+                 FROM threads t
+                 LEFT JOIN agent_configs a ON t.agent_id = a.name AND a.owner_user_id = $1::uuid AND a.workspace_id IS NULL
+                 WHERE t.user_id = $1::uuid AND t.workspace_id IS NULL
+                 GROUP BY t.agent_id, a.name
+                 ORDER BY thread_count DESC",
+            )
+            .bind::<diesel::sql_types::Text, _>(user_id.to_string())
+            .get_results(&mut connection)
+            .await
+            .context("failed to get agents by usage")?
+        };
 
         Ok(results
             .into_iter()
