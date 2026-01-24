@@ -384,14 +384,22 @@ impl LLMExecutor {
             self.additional_headers.clone(),
             self.label.clone(),
         )
-        .await
-        .map_err(|e| {
-            tracing::error!("LLM stream request failed: {}", e);
-            AgentError::LLMError(e.to_string())
-        });
+        .await;
 
-        if stream.is_err() {
-            println!("LLM stream request failed:");
+        // If stream creation fails, emit error event and return
+        if let Err(e) = stream {
+            let error_msg = format!("LLM stream request failed: {}", e);
+            tracing::error!("{}", error_msg);
+
+            // Emit RunError event so UI can display the error
+            context
+                .emit(AgentEventType::RunError {
+                    message: error_msg.clone(),
+                    code: Some("llm_stream_error".to_string()),
+                })
+                .await;
+
+            return Err(AgentError::LLMError(e.to_string()));
         }
         let stream = stream.unwrap();
 

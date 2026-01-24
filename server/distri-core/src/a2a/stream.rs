@@ -289,7 +289,7 @@ pub async fn handle_message_send_streaming_sse(
 
         let (event_tx, mut event_rx) = mpsc::channel::<AgentEvent>(100);
         let browser_event_tx = event_tx.clone();
-        let (sse_tx, mut sse_rx) = mpsc::channel(100);
+        let (sse_tx, mut sse_rx) = mpsc::channel::<Result<distri_a2a::MessageKind, anyhow::Error>>(100);
         let sse_tx_clone = sse_tx.clone();
         let mut exec_ctx = executor_context.clone_with_tx(event_tx);
 
@@ -434,14 +434,22 @@ pub async fn handle_message_send_streaming_sse(
             };
             match result {
                 Ok(result) => {
+                    // Save final result as assistant message to persist in conversation history
+                    if let Some(content) = &result.content {
+                        let final_message = distri_types::Message::assistant(content.clone(), None);
+                        executor_context_clone.save_message(&final_message).await;
+                    }
+
                     let msg = map_final_result(&result, executor_context_clone);
                     let _ = sse_tx_clone.send(Ok(msg)).await;
                 }
                 Err(e) => {
                     tracing::error!("Error from stream handler: {}", e);
 
-                    // Send error through the sse channel instead of yielding directly
-                    let _ = sse_tx_clone.send(Err(e)).await;
+                    // RunError events have already been emitted via context.emit()
+                    // and are being processed by completion_task. Don't send a duplicate
+                    // error here - let the RunError events propagate naturally.
+                    // The completion_task will complete when it sees RunError/RunFinished.
                 }
             }
         }));

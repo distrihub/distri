@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 import { Chat, useAgent, useTheme, useDistri } from '@distri/react';
 import { useDistriHomeNavigate, useDistriHome } from '../DistriHomeProvider';
 import { useAgentValidation } from '../hooks/useAgentValidation';
-import { CodePanel } from './CodePanel';
+import Editor from '@monaco-editor/react';
 import {
   ArrowUpRight,
   CheckCircle2,
@@ -80,10 +80,9 @@ export function AgentDetails({
   const { config } = useDistriHome();
   const { client } = useDistri();
   const { agent, loading: agentLoading, error: agentError } = useAgent({ agentIdOrDef: agentId || '' });
-  const { validation, warnings, loading: validationLoading, refetch: refetchValidation } = useAgentValidation({ agentId, enabled: !!agentId });
-  const { theme, setTheme } = useTheme();
-  const [isValidating, setIsValidating] = useState(false);
-  const [showValidationPanel, setShowValidationPanel] = useState(false);
+  const { warnings, loading: validationLoading } = useAgentValidation({ agentId, enabled: !!agentId });
+  const { theme } = useTheme();
+  const showValidationPanel = warnings.length > 0;
 
   const [definition, setDefinition] = useState<AgentDefinitionEnvelope | null>(null);
   const [sourceLoading, setSourceLoading] = useState(false);
@@ -291,16 +290,6 @@ export function AgentDetails({
     }
   };
 
-  const handleValidate = async () => {
-    setIsValidating(true);
-    setShowValidationPanel(true);
-    try {
-      await refetchValidation();
-    } finally {
-      setIsValidating(false);
-    }
-  };
-
   const tabs = [
     { id: 'definition', label: 'Definition', icon: <FileText className="h-4 w-4" /> },
     { id: 'chat', label: 'Chat', icon: <MessageCircle className="h-4 w-4" /> },
@@ -348,39 +337,10 @@ export function AgentDetails({
             <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 text-xs font-semibold text-emerald-600 dark:text-emerald-300">
               Active
             </span>
+
           </div>
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}
-              className="flex h-9 w-9 items-center justify-center rounded-full border border-border/70 text-muted-foreground transition hover:text-foreground"
-              title="Toggle theme"
-            >
-              {theme === 'light' ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
-            </button>
             <div className="h-6 w-px bg-border/70" />
-            <button
-              type="button"
-              onClick={handleValidate}
-              disabled={isValidating}
-              className={`inline-flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm font-medium transition ${validation?.valid === true && !isValidating
-                ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/20'
-                : validation?.valid === false && !isValidating
-                  ? 'border-red-500/50 bg-red-500/10 text-red-700 dark:text-red-300 hover:bg-red-500/20'
-                  : 'border-border/70 bg-card text-foreground hover:border-primary/50 hover:text-primary'
-                } disabled:opacity-50`}
-            >
-              {isValidating ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : validation?.valid === true ? (
-                <CheckCircle2 className="h-4 w-4" />
-              ) : validation?.valid === false ? (
-                <XCircle className="h-4 w-4" />
-              ) : (
-                <RefreshCw className="h-4 w-4" />
-              )}
-              {isValidating ? 'Validating…' : 'Validate'}
-            </button>
             <button
               type="button"
               onClick={() => {
@@ -396,49 +356,11 @@ export function AgentDetails({
         </header>
 
         {/* Validation Panel */}
-        {(showValidationPanel || warnings.length > 0) && !validationLoading && (
+        {showValidationPanel && !validationLoading && (
           <div className="mt-4 rounded-xl border border-border/70 bg-card overflow-hidden">
-            <div className="flex items-center justify-between border-b border-border/60 bg-muted/40 px-4 py-3">
-              <div className="flex items-center gap-2">
-                {validation?.valid === true ? (
-                  <>
-                    <CheckCircle2 className="h-5 w-5 text-emerald-500" />
-                    <span className="text-sm font-medium text-emerald-700 dark:text-emerald-300">
-                      Validation Passed
-                    </span>
-                  </>
-                ) : validation?.valid === false ? (
-                  <>
-                    <XCircle className="h-5 w-5 text-red-500" />
-                    <span className="text-sm font-medium text-red-700 dark:text-red-300">
-                      Validation Failed ({warnings.filter(w => w.severity === 'error').length} error{warnings.filter(w => w.severity === 'error').length !== 1 ? 's' : ''}, {warnings.filter(w => w.severity === 'warning').length} warning{warnings.filter(w => w.severity === 'warning').length !== 1 ? 's' : ''})
-                    </span>
-                  </>
-                ) : warnings.length > 0 ? (
-                  <>
-                    <AlertTriangle className="h-5 w-5 text-amber-500" />
-                    <span className="text-sm font-medium text-amber-700 dark:text-amber-300">
-                      {warnings.length} Warning{warnings.length !== 1 ? 's' : ''}
-                    </span>
-                  </>
-                ) : null}
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowValidationPanel(false)}
-                className="text-xs text-muted-foreground hover:text-foreground"
-              >
-                Dismiss
-              </button>
-            </div>
 
-            {validation?.valid === true && warnings.length === 0 ? (
-              <div className="p-4">
-                <p className="text-sm text-muted-foreground">
-                  All checks passed. Your agent is correctly configured and ready to use.
-                </p>
-              </div>
-            ) : warnings.length > 0 ? (
+
+            {warnings.length > 0 && (
               <div className="divide-y divide-border/60">
                 {warnings.map((warning, index) => (
                   <div
@@ -490,12 +412,12 @@ export function AgentDetails({
                   </div>
                 ))}
               </div>
-            ) : null}
+            )}
           </div>
         )}
 
-        <div className="mt-4 flex flex-1 min-h-0 flex-col gap-6 xl:flex-row">
-          <div className="flex min-h-0 flex-col gap-6 xl:flex-[5]">
+        <div className="mt-4 flex flex-1 min-h-0 flex-col gap-6 xl:flex-row overflow-auto">
+          <div className="flex flex-col gap-6 xl:flex-[5] max-h-[calc(100vh-180px)]">
             <div className="rounded-2xl border border-border/70 bg-card p-6 shadow-sm">
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div className="space-y-2">
@@ -570,7 +492,6 @@ export function AgentDetails({
                     )
                   }
                 />
-                <DetailRow label="Skills" value={skillCount ? String(skillCount) : 'None'} />
               </div>
             </div>
 
@@ -601,10 +522,10 @@ export function AgentDetails({
             </DetailCard>
           </div>
 
-          <div className="flex min-h-0 flex-1 flex-col gap-4 xl:flex-[7]">
-            <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border/70 bg-card shadow-sm">
-              <div className="flex items-center justify-between border-b border-border/60 bg-muted/40 px-4 py-3">
-                <div className="flex gap-1 rounded-lg bg-background/80 p-1">
+          <div className="flex flex-1 flex-col gap-4 xl:flex-[7]">
+            <div className="flex flex-1 flex-col rounded-2xl border border-border/70 bg-background shadow-sm">
+              <div className="flex items-center justify-between border-b border-border/60 px-4 py-3 bg-card">
+                <div className="flex gap-1 p-1">
                   {tabs.map((tab) => (
                     <button
                       key={tab.id}
@@ -621,7 +542,7 @@ export function AgentDetails({
                   ))}
                 </div>
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  {activePanel === 'definition' ? (
+                  {activePanel === 'definition' && (
                     <button
                       type="button"
                       onClick={handleCopyDefinition}
@@ -630,251 +551,280 @@ export function AgentDetails({
                       <Copy className="h-3 w-3" />
                       {copied ? 'Copied' : 'Copy'}
                     </button>
-                  ) : null}
+                  )}
+                  {activePanel === 'integrate' && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          await navigator.clipboard.writeText(sampleSnippets[activeSample]);
+                          setCopied(true);
+                          window.setTimeout(() => setCopied(false), 2000);
+                        } catch (err) {
+                          console.error('Failed to copy snippet', err);
+                        }
+                      }}
+                      className="flex items-center gap-1 rounded-md px-2 py-1 text-muted-foreground hover:text-foreground"
+                    >
+                      <Copy className="h-3 w-3" />
+                      {copied ? 'Copied' : 'Copy'}
+                    </button>
+                  )}
                 </div>
               </div>
 
               {activePanel === 'definition' && (
-                <div className="flex-1 min-h-0 overflow-hidden p-4">
-                  <div className="flex h-full flex-col overflow-hidden rounded-xl border border-border/70 bg-background">
-                    <div className="flex items-center justify-between border-b border-border/60 bg-muted/40 px-4 py-2 text-xs text-muted-foreground">
-                      <div className="flex items-center gap-2">
-                        <span>{isOwner ? 'Editable' : 'Read-only'}</span>
-                        {isDirty && <span className="text-amber-600 dark:text-amber-400">• Unsaved</span>}
-                        {definitionSaved && !isDirty && <span className="text-emerald-600 dark:text-emerald-400">✓ Saved</span>}
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span>Markdown</span>
-                        {isOwner && isDirty && (
-                          <>
-                            <button
-                              type="button"
-                              onClick={handleResetDefinition}
-                              className="rounded px-2 py-0.5 text-xs hover:bg-muted"
-                            >
-                              Reset
-                            </button>
-                            <button
-                              type="button"
-                              onClick={handleSaveDefinition}
-                              disabled={savingDefinition}
-                              className="rounded bg-primary px-2 py-0.5 text-xs text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-                            >
-                              {savingDefinition ? 'Saving…' : 'Save'}
-                            </button>
-                          </>
-                        )}
-                      </div>
+                <div className="flex flex-col p-6">
+                  <div className="flex items-center justify-between mb-4 text-xs text-muted-foreground">
+                    <div className="flex items-center gap-2">
+                      <span>{isOwner ? 'Editable' : 'Read-only'}</span>
+                      {isDirty && <span className="text-amber-600 dark:text-amber-400">• Unsaved</span>}
+                      {definitionSaved && !isDirty && <span className="text-emerald-600 dark:text-emerald-400">✓ Saved</span>}
                     </div>
-                    <div className="flex-1 min-h-0 overflow-hidden">
-                      <CodePanel
-                        value={definitionDraft}
-                        onChange={(value) => {
-                          if (!isOwner) return;
-                          setDefinitionDraft(value);
-                          setDefinitionSaved(false);
-                        }}
-                        language="markdown"
-                        readOnly={!isOwner}
-                        theme={theme === 'light' ? 'light' : 'dark'}
-                      />
+                    <div className="flex items-center gap-2">
+                      <span>Markdown</span>
+                      {isOwner && isDirty && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={handleResetDefinition}
+                            className="rounded px-2 py-0.5 text-xs hover:bg-muted"
+                          >
+                            Reset
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleSaveDefinition}
+                            disabled={savingDefinition}
+                            className="rounded bg-primary px-2 py-0.5 text-xs text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                          >
+                            {savingDefinition ? 'Saving…' : 'Save'}
+                          </button>
+                        </>
+                      )}
                     </div>
+                  </div>
+                  <div className="overflow-hidden max-h-[600px] rounded-md border border-border/70">
+                    <Editor
+                      height="600px"
+                      value={definitionDraft}
+                      defaultLanguage="markdown"
+                      theme={theme === 'light' ? 'light' : 'vs-dark'}
+                      onChange={(value) => {
+                        if (!isOwner) return;
+                        setDefinitionDraft(value ?? '');
+                        setDefinitionSaved(false);
+                      }}
+                      options={{
+                        fontSize: 14,
+                        minimap: { enabled: false },
+                        scrollBeyondLastLine: false,
+                        wordWrap: 'on',
+                        readOnly: !isOwner,
+                        padding: { top: 12, bottom: 12 },
+                      }}
+                    />
                   </div>
                 </div>
               )}
 
               {activePanel === 'chat' && (
-                <div className="flex-1 min-h-0 overflow-hidden p-4">
-                  <div className="flex h-full flex-col overflow-hidden rounded-xl border border-border/70 bg-background">
-                    {chatDisabled ? (
-                      <div className="flex h-full w-full items-center justify-center p-6">
-                        <div className="max-w-md rounded-lg border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-amber-900 dark:text-amber-100">
-                          <p className="text-sm font-semibold text-amber-900 dark:text-amber-200">
-                            Chat disabled
-                          </p>
-                          <p className="mt-2 text-sm text-amber-800/90 dark:text-amber-100/90">
-                            {embeddedAgentMessage}
-                          </p>
-                          {externalToolValidation.requiredTools.length ? (
-                            <div className="mt-3 flex flex-wrap gap-2 text-xs text-amber-900/90 dark:text-amber-100/90">
-                              {externalToolValidation.requiredTools.map((tool: string) => (
-                                <span
-                                  key={tool}
-                                  className="rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1"
-                                >
-                                  {tool}
-                                </span>
-                              ))}
-                            </div>
-                          ) : null}
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="flex flex-col h-full">
-                        <div className="flex justify-end p-2 border-b border-gray-200 dark:border-gray-700">
-                          <button
-                            onClick={handleNewChat}
-                            className="p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-500 dark:text-gray-400"
-                            title="New chat"
-                          >
-                            <Plus className="h-4 w-4" />
-                          </button>
-                        </div>
-                        <div className="flex-1 min-h-0">
-                          <Chat
-                            key={threadId}
-                            agent={agent}
-                            threadId={threadId}
-                            enableHistory={true}
-                            theme={theme === 'light' ? 'light' : theme === 'dark' ? 'dark' : 'auto'}
-                          />
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {activePanel === 'tools' && (
-                <div className="flex-1 min-h-0 overflow-hidden p-4">
-                  <div className="flex h-full flex-col overflow-hidden rounded-xl border border-border/70 bg-background">
-                    <div className="border-b border-border/60 px-4 py-2 text-xs text-muted-foreground">
-                      Registered tools
-                    </div>
-                    <div className="flex-1 overflow-y-auto p-4">
-                      {hasExternalTools ? (
-                        <div className="mb-4 space-y-2">
-                          <p className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">
-                            External tools required
-                          </p>
-                          <div className="flex flex-wrap gap-2">
+                <div className="flex flex-col">
+                  {chatDisabled ? (
+                    <div className="flex h-full w-full items-center justify-center p-6">
+                      <div className="max-w-md rounded-lg border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-amber-900 dark:text-amber-100">
+                        <p className="text-sm font-semibold text-amber-900 dark:text-amber-200">
+                          Chat disabled
+                        </p>
+                        <p className="mt-2 text-sm text-amber-800/90 dark:text-amber-100/90">
+                          {embeddedAgentMessage}
+                        </p>
+                        {externalToolValidation.requiredTools.length ? (
+                          <div className="mt-3 flex flex-wrap gap-2 text-xs text-amber-900/90 dark:text-amber-100/90">
                             {externalToolValidation.requiredTools.map((tool: string) => (
                               <span
                                 key={tool}
-                                className="rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-xs text-amber-900 dark:text-amber-100"
+                                className="rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1"
                               >
                                 {tool}
                               </span>
                             ))}
                           </div>
-                        </div>
-                      ) : null}
-
-                      {toolRows.length ? (
-                        <div className="overflow-hidden rounded-md border border-border/70">
-                          <table className="w-full table-fixed text-left text-sm">
-                            <colgroup>
-                              <col className="w-[35%]" />
-                              <col className="w-[65%]" />
-                            </colgroup>
-                            <thead className="bg-muted/60 text-muted-foreground">
-                              <tr>
-                                <th className="px-3 py-2 text-[11px] font-medium uppercase tracking-[0.2em]">
-                                  Name
-                                </th>
-                                <th className="px-3 py-2 text-[11px] font-medium uppercase tracking-[0.2em]">
-                                  Description
-                                </th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {toolRows.map((tool, index) => {
-                                const isExternal = externalToolValidation.requiredTools.includes(
-                                  tool.name
-                                );
-                                return (
-                                  <tr key={`${tool.name}-${index}`} className="border-t border-border/70">
-                                    <td className="px-3 py-2 text-foreground truncate">
-                                      <div className="flex items-center gap-2">
-                                        <span title={tool.name} className="truncate">
-                                          {tool.name}
-                                        </span>
-                                        {isExternal && (
-                                          <span title="External Tool"><Globe className="h-3 w-3 text-amber-500 shrink-0" /></span>
-                                        )}
-                                      </div>
-                                    </td>
-                                    <td
-                                      className="px-3 py-2 text-muted-foreground truncate"
-                                      title={tool.description || 'No description'}
-                                    >
-                                      {tool.description || 'No description'}
-                                    </td>
-                                  </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
-                        </div>
-                      ) : (
-                        <span className="text-sm text-muted-foreground">No tools registered.</span>
-                      )}
+                        ) : null}
+                      </div>
                     </div>
+                  ) : (
+                    <>
+                      <div className="flex justify-end p-2 shrink-0">
+                        <button
+                          onClick={handleNewChat}
+                          className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground"
+                          title="New chat"
+                        >
+                          <Plus className="h-4 w-4" />
+                        </button>
+                      </div>
+                      <div>
+                        <Chat
+                          key={threadId}
+                          agent={agent}
+                          threadId={threadId}
+                          enableHistory={true}
+                          theme={theme === 'light' ? 'light' : theme === 'dark' ? 'dark' : 'auto'}
+                        />
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+
+              {activePanel === 'tools' && (
+                <div className="flex flex-col p-6">
+                  <div className="mb-4">
+                    <p className="text-xs font-semibold uppercase tracking-[0.3em] text-muted-foreground">
+                      Registered tools
+                    </p>
                   </div>
+                  {hasExternalTools ? (
+                    <div className="mb-4 space-y-2">
+                      <p className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">
+                        External tools required
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {externalToolValidation.requiredTools.map((tool: string) => (
+                          <span
+                            key={tool}
+                            className="rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-xs text-amber-900 dark:text-amber-100"
+                          >
+                            {tool}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {toolRows.length ? (
+                    <div className="overflow-hidden rounded-md border border-border/70">
+                      <table className="w-full table-fixed text-left text-sm">
+                        <colgroup>
+                          <col className="w-[35%]" />
+                          <col className="w-[65%]" />
+                        </colgroup>
+                        <thead className="bg-muted/60 text-muted-foreground">
+                          <tr>
+                            <th className="px-3 py-2 text-[11px] font-medium uppercase tracking-[0.2em]">
+                              Name
+                            </th>
+                            <th className="px-3 py-2 text-[11px] font-medium uppercase tracking-[0.2em]">
+                              Description
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {toolRows.map((tool, index) => {
+                            const isExternal = externalToolValidation.requiredTools.includes(
+                              tool.name
+                            );
+                            return (
+                              <tr key={`${tool.name}-${index}`} className="border-t border-border/70">
+                                <td className="px-3 py-2 text-foreground truncate">
+                                  <div className="flex items-center gap-2">
+                                    <span title={tool.name} className="truncate">
+                                      {tool.name}
+                                    </span>
+                                    {isExternal && (
+                                      <span title="External Tool"><Globe className="h-3 w-3 text-amber-500 shrink-0" /></span>
+                                    )}
+                                  </div>
+                                </td>
+                                <td
+                                  className="px-3 py-2 text-muted-foreground truncate"
+                                  title={tool.description || 'No description'}
+                                >
+                                  {tool.description || 'No description'}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <span className="text-sm text-muted-foreground">No tools registered.</span>
+                  )}
                 </div>
               )}
 
               {activePanel === 'integrate' && (
-                <div className="flex-1 min-h-0 overflow-hidden p-4">
-                  <div className="flex h-full flex-col rounded-xl border border-border/70 bg-background">
-                    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/60 px-4 py-3">
-                      <div>
-                        <p className="text-xs font-semibold uppercase tracking-[0.3em] text-muted-foreground">
-                          Integrate
-                        </p>
-                        <p className="text-sm text-muted-foreground">
-                          Call this agent from your stack.
-                        </p>
-                      </div>
-                      <div className="flex gap-1 rounded-lg bg-muted/70 p-1">
-                        {sampleTabs.map((tab) => (
-                          <button
-                            key={tab.id}
-                            type="button"
-                            onClick={() => setActiveSample(tab.id)}
-                            className={`rounded-md px-3 py-1.5 text-sm font-medium transition ${activeSample === tab.id
-                              ? 'bg-background text-foreground'
-                              : 'text-muted-foreground hover:text-foreground'
-                              }`}
-                          >
-                            {tab.label}
-                          </button>
-                        ))}
-                      </div>
+                <div className="flex flex-col p-6">
+                  <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.3em] text-muted-foreground">
+                        Integrate
+                      </p>
+                      <p className="text-sm text-muted-foreground">
+                        Call this agent from your stack.
+                      </p>
                     </div>
-                    <div className="flex-1 flex flex-col min-h-0 overflow-hidden px-4 pb-4 pt-3">
-                      <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground mb-3">
-                        <span>Base URL: {sampleBaseUrl}</span>
-                        <span className="rounded-md border border-border/70 bg-muted px-2 py-1">
-                          Agent: {sampleAgentRef}
-                        </span>
-                      </div>
-                      <div className="flex-1 min-h-[180px] overflow-hidden rounded-md border border-border/70">
-                        <CodePanel
-                          value={sampleSnippets[activeSample]}
-                          language={activeSample === 'curl' ? 'shell' : activeSample === 'node' ? 'javascript' : 'python'}
-                          readOnly
-                          theme="dark"
-                        />
-                      </div>
+                    <div className="flex gap-1 rounded-lg bg-muted/70 p-1">
+                      {sampleTabs.map((tab) => (
+                        <button
+                          key={tab.id}
+                          type="button"
+                          onClick={() => setActiveSample(tab.id)}
+                          className={`rounded-md px-3 py-1.5 text-sm font-medium transition ${activeSample === tab.id
+                            ? 'bg-background text-foreground'
+                            : 'text-muted-foreground hover:text-foreground'
+                            }`}
+                        >
+                          {tab.label}
+                        </button>
+                      ))}
                     </div>
+                  </div>
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground mb-3">
+                    <span>Base URL: {sampleBaseUrl}</span>
+                    <span className="rounded-md border border-border/70 bg-muted px-2 py-1">
+                      Agent: {sampleAgentRef}
+                    </span>
+                  </div>
+                  <div className="rounded-md border border-border/70">
+                    <Editor
+                      key={activeSample}
+                      height="200px"
+                      value={sampleSnippets[activeSample]}
+                      defaultLanguage={activeSample === 'curl' ? 'shell' : activeSample === 'node' ? 'javascript' : 'python'}
+                      theme="vs-dark"
+                      options={{
+                        fontSize: 14,
+                        minimap: { enabled: false },
+                        scrollBeyondLastLine: false,
+                        wordWrap: 'on',
+                        readOnly: true,
+                        padding: { top: 12, bottom: 12 },
+                        automaticLayout: true,
+                      }}
+                    />
                   </div>
                 </div>
               )}
 
               {config.customTabs?.map((tab) =>
                 activePanel === tab.id ? (
-                  <div key={tab.id} className="flex-1 min-h-0 overflow-hidden p-4">
-                    <div className="flex h-full flex-col overflow-hidden rounded-xl border border-border/70 bg-background p-6 overflow-auto">
-                      {tab.render({ agentId: agentId || agentDefinition.id || '' })}
-                    </div>
+                  <div key={tab.id} className="overflow-auto p-6">
+                    {tab.render({ agentId: agentId || agentDefinition.id || '' })}
                   </div>
                 ) : null
               )}
 
               {activePanel === 'embed_oss' && (
-                <div className="flex-1 min-h-0 overflow-hidden p-4">
-                  <div className="flex h-full flex-col items-center justify-center rounded-xl border border-border/70 bg-background p-8 text-center">
+                <div className="flex flex-col p-6">
+                  <div className="mb-4">
+                    <p className="text-xs font-semibold uppercase tracking-[0.3em] text-muted-foreground">
+                      Embed
+                    </p>
+                  </div>
+                  <div className="flex flex-col items-center justify-center py-8 text-center">
                     <div className="flex h-12 w-12 items-center justify-center rounded-full bg-amber-500/10 text-amber-600">
                       <AlertTriangle className="h-6 w-6" />
                     </div>
@@ -882,19 +832,19 @@ export function AgentDetails({
                     <p className="mt-2 max-w-sm text-sm text-muted-foreground">
                       Embed configuration is only available on Distri Cloud. This feature requires a secure managed backend for public client IDs and origin validation.
                     </p>
-                    <div className="mt-6 flex flex-col gap-3">
-                      <a
-                        href="https://app.distri.dev"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
-                      >
-                        Try Distri Cloud
-                      </a>
-                      <p className="text-xs text-muted-foreground">
-                        Securely embed agents in minutes withmanaged infrastructure.
-                      </p>
-                    </div>
+                  </div>
+                  <div className="mt-6 flex flex-col gap-3">
+                    <a
+                      href="https://app.distri.dev"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+                    >
+                      Try Distri Cloud
+                    </a>
+                    <p className="text-xs text-muted-foreground">
+                      Securely embed agents in minutes withmanaged infrastructure.
+                    </p>
                   </div>
                 </div>
               )}
@@ -950,9 +900,9 @@ const DetailBadge = ({ label, value }: DetailBadgeProps) => {
 
 const InfoBlock = ({ label, value }: { label: string; value: ReactNode }) => {
   return (
-    <div className="rounded-lg border border-border/70 bg-muted/60 p-3">
-      <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">{label}</p>
-      <p className="mt-2 font-mono text-sm text-foreground">{value}</p>
+    <div className="rounded-lg border border-border/70 bg-muted/60 p-2">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">{label}</p>
+      <p className="mt-1 font-mono text-xs text-foreground">{value}</p>
     </div>
   );
 };

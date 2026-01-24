@@ -26,6 +26,7 @@
     "README.md"
   ],
   "dependencies": {
+    "@monaco-editor/react": "^4.6.0",
     "codemirror": "^5.65.16",
     "lucide-react": "^0.460.0",
     "class-variance-authority": "^0.7.1",
