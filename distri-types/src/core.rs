@@ -174,6 +174,9 @@ pub struct Message {
     pub role: MessageRole,
     pub parts: Vec<Part>,
     pub created_at: i64,
+    /// The ID of the agent that generated this message (for Assistant messages)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
 }
 
 impl Default for Message {
@@ -184,6 +187,7 @@ impl Default for Message {
             name: None,
             parts: vec![],
             created_at: chrono::Utc::now().timestamp_millis(),
+            agent_id: None,
         }
     }
 }

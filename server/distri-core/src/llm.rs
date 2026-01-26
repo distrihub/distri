@@ -301,6 +301,8 @@ impl LLMExecutor {
 
         // Create and save assistant message immediately after parsing
         let mut assistant_msg = crate::types::Message::assistant(content.clone(), None);
+        // Set agent_id to track which agent generated this message
+        assistant_msg.agent_id = Some(self.context.agent_id.clone());
         for tool_call in &tool_calls {
             assistant_msg
                 .parts
@@ -603,6 +605,8 @@ impl LLMExecutor {
 
         // Create and save assistant message for fallback case
         let mut assistant_msg = crate::types::Message::assistant(content.clone(), None);
+        // Set agent_id to track which agent generated this message
+        assistant_msg.agent_id = Some(self.context.agent_id.clone());
         for tool_call in &tool_calls {
             assistant_msg
                 .parts

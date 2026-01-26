@@ -49,6 +49,19 @@ impl SseMessage {
 
 pub fn to_a2a_message(message: &distri_types::Message, task: &distri_types::Task) -> Message {
     let content = &message.parts.clone();
+
+    // Build metadata with message type and optional agent info
+    let mut metadata = serde_json::json!({
+        "message_type": MessageMetadata::from(message.clone()),
+    });
+
+    // Add agent metadata if agent_id is present (for Assistant messages)
+    if let Some(agent_id) = &message.agent_id {
+        metadata["agent"] = serde_json::json!({
+            "agent_id": agent_id,
+        });
+    }
+
     Message {
         role: match &message.role {
             distri_types::MessageRole::User => Role::User,
@@ -61,7 +74,7 @@ pub fn to_a2a_message(message: &distri_types::Message, task: &distri_types::Task
         task_id: Some(task.id.clone()),
         kind: EventKind::Message,
         message_id: message.id.clone(),
-        metadata: serde_json::to_value(MessageMetadata::from(message.clone())).ok(),
+        metadata: Some(metadata),
         ..Default::default()
     }
 }

@@ -17,6 +17,17 @@ pub enum MessageMetadata {
     ToolResult,
 }
 
+/// A2A Extension for agent metadata
+/// This allows tracking which agent generated each message
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AgentMetadata {
+    /// The ID of the agent that generated this message
+    pub agent_id: String,
+    /// Optional agent name for display purposes
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_name: Option<String>,
+}
+
 impl From<crate::Message> for MessageMetadata {
     fn from(message: crate::Message) -> Self {
         for part in message.parts.iter() {
