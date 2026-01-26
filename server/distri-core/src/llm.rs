@@ -761,7 +761,17 @@ impl LLMExecutor {
 
         let tools: Vec<async_openai::types::chat::ChatCompletionTools> = self.map_tools();
 
-        let name = format!("{}_schema", self.llm_def.name);
+        let raw_name = format!("{}_schema", self.llm_def.name);
+        let _name: String = raw_name
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect();
 
         let tools = if !tools.is_empty() && self.llm_def.tool_format == ToolCallFormat::Provider {
             Some(tools)
@@ -778,13 +788,45 @@ impl LLMExecutor {
                 .model_settings
                 .response_format
                 .clone()
-                .map(|r| async_openai::types::chat::ResponseFormat::JsonSchema {
+                .map(|r| {
+                    // Unwrap user-provided response_format: expect { type: "json_schema", json_schema: { name, schema, strict } }
+                    // Use the inner schema; sanitize name to match OpenAI requirements.
+                    let (schema_value, provided_name) =
+                        if let Some(json_schema) = r.get("json_schema") {
+                            (
+                                json_schema
+                                    .get("schema")
+                                    .cloned()
+                                    .unwrap_or(json_schema.clone()),
+                                json_schema
+                                    .get("name")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string()),
+                            )
+                        } else {
+                            (r.clone(), None)
+                        };
+
+                    let final_name_raw = provided_name.unwrap_or_else(|| raw_name.clone());
+                    let final_name: String = final_name_raw
+                        .chars()
+                        .map(|c| {
+                            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                                c
+                            } else {
+                                '_'
+                            }
+                        })
+                        .collect();
+
+                    async_openai::types::chat::ResponseFormat::JsonSchema {
                     json_schema: ResponseFormatJsonSchema {
                         description: None,
-                        name,
-                        schema: Some(r),
+                            name: final_name,
+                            schema: Some(schema_value),
                         strict: Some(true),
                     },
+                    }
                 }),
             ..Default::default()
         };
