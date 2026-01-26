@@ -441,6 +441,7 @@ impl ExecutorContextTool for AgentTool {
             parts: vec![Part::Text(task.clone())],
             role: MessageRole::User,
             created_at: chrono::Utc::now().timestamp_millis(),
+            agent_id: None,
         };
 
         // Use regular execute instead of execute_stream to avoid circular event handling

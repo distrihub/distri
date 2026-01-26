@@ -327,6 +327,7 @@ impl WorkflowAgent {
                     parts: vec![distri_types::Part::Text(processed_task)],
                     role: distri_types::MessageRole::User,
                     created_at: chrono::Utc::now().timestamp_millis(),
+                    agent_id: None,
                 };
 
                 // Execute agent
