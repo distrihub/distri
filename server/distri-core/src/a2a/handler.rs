@@ -323,7 +323,7 @@ impl A2AHandler {
             }
         }
 
-        let _execution_result = coordinator
+        let execution_result = coordinator
             .execute(&agent_id, message, executor_context, definition_overrides)
             .await;
 
@@ -333,7 +333,25 @@ impl A2AHandler {
             .map_err(|e| AgentError::Session(e.to_string()))?
             .ok_or_else(|| AgentError::Session("Task disappeared".to_string()))?;
 
-        let updated_task: Task = updated_task.into();
+        let mut updated_task: Task = updated_task.into();
+
+        // Get the final result from execution_result and put it in status.message
+        if let Ok(result) = execution_result {
+            if let Some(text) = result.content {
+                updated_task.status.message = Some(distri_a2a::Message {
+                    kind: distri_a2a::EventKind::Message,
+                    message_id: Uuid::new_v4().to_string(),
+                    role: distri_a2a::Role::Agent,
+                    parts: vec![distri_a2a::Part::Text(distri_a2a::TextPart { text })],
+                    context_id: Some(updated_task.context_id.clone()),
+                    task_id: Some(updated_task.id.clone()),
+                    reference_task_ids: vec![],
+                    extensions: vec![],
+                    metadata: None,
+                });
+            }
+        }
+
         Ok(serde_json::to_value(updated_task)?)
     }
 
