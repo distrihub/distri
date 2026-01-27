@@ -6,17 +6,15 @@ use dirs::home_dir;
 use distri_a2a::JsonRpcRequest;
 use distri_core::a2a::messages::get_a2a_messages;
 use distri_core::a2a::A2AHandler;
-use distri_core::agent::{parse_agent_markdown_content, AgentOrchestrator, ExecutorContext};
-use distri_core::llm::LLMExecutor;
+use distri_core::agent::{parse_agent_markdown_content, AgentOrchestrator};
 use distri_core::secrets::SecretResolver;
 use distri_core::types::UpdateThreadRequest;
 use distri_core::{AgentError, MessageFilter, ToolAuthRequestContext};
 use distri_types::configuration::ServerConfig;
 use distri_types::configuration::{AgentConfigWithTools, DistriServerConfig};
 use distri_types::StandardDefinition;
-use distri_types::{
-    ExternalTool, InlineHookResponse, LlmDefinition, Message, ModelSettings, ToolCallFormat,
-};
+use distri_types::stores::{VoteMessageRequest, VoteType};
+use distri_types::{ExternalTool, InlineHookResponse, Message, ModelSettings};
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -33,6 +31,7 @@ use crate::tts::{get_available_voices, synthesize_tts, transcribe_speech};
 
 mod artifacts;
 mod files;
+mod llm_helpers;
 mod prompt_templates;
 mod secrets;
 mod session;
@@ -79,6 +78,27 @@ pub fn distri(cfg: &mut web::ServiceConfig) {
             .route(web::get().to(get_thread_handler))
             .route(web::put().to(update_thread_handler))
             .route(web::delete().to(delete_thread_handler)),
+    )
+    // Message read status endpoints
+    .service(
+        web::resource("/threads/{thread_id}/messages/{message_id}/read")
+            .route(web::post().to(mark_message_read_handler))
+            .route(web::get().to(get_message_read_status_handler)),
+    )
+    .service(
+        web::resource("/threads/{thread_id}/read-status")
+            .route(web::get().to(get_thread_read_status_handler)),
+    )
+    // Message voting endpoints
+    .service(
+        web::resource("/threads/{thread_id}/messages/{message_id}/vote")
+            .route(web::post().to(vote_message_handler))
+            .route(web::delete().to(remove_vote_handler))
+            .route(web::get().to(get_message_vote_summary_handler)),
+    )
+    .service(
+        web::resource("/threads/{thread_id}/messages/{message_id}/votes")
+            .route(web::get().to(get_message_votes_handler)),
     )
     .service(web::resource("/schema/agent").route(web::get().to(get_agent_schema))) // Note: External tools and approvals are now handled via message metadata
     // Workspace file endpoints
@@ -607,13 +627,13 @@ async fn a2a_handler(
 
     let handler = A2AHandler::new(executor.clone());
 
-    let user_id = http_request
+    let (user_id, workspace_id) = http_request
         .extensions()
         .get::<UserContext>()
-        .map(|ctx| ctx.user_id())
-        .unwrap_or_else(|| "local_dev_user".to_string());
+        .map(|ctx| (ctx.user_id(), ctx.workspace_id()))
+        .unwrap_or_else(|| ("local_dev_user".to_string(), None));
     let result = handler
-        .handle_jsonrpc(agent_id, user_id, req, None, verbose)
+        .handle_jsonrpc(agent_id, user_id, workspace_id, req, None, verbose)
         .await;
     match result {
         futures_util::future::Either::Left(stream) => {
@@ -634,7 +654,7 @@ async fn a2a_handler(
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 struct LLmRequest {
     messages: Vec<Message>,
     #[serde(default)]
@@ -674,14 +694,50 @@ async fn llm_execute(
     http_request: HttpRequest,
     payload: web::Json<LLmRequest>,
 ) -> HttpResponse {
-    const EPHEMERAL_SUB_TASK_ID: &str = "__llm_execute_sub_task__";
-    const EPHEMERAL_SUB_PARENT_ID: &str = "__llm_execute_parent__";
-
-    let user_id = http_request
+    let (user_id, workspace_id_str) = http_request
         .extensions()
         .get::<UserContext>()
-        .map(|ctx| ctx.user_id())
-        .unwrap_or_else(|| "anonymous".to_string());
+        .map(|ctx| (ctx.user_id(), ctx.workspace_id()))
+        .unwrap_or_else(|| ("anonymous".to_string(), None));
+
+    // Parse workspace_id from string to Uuid for task-local context
+    let workspace_id_uuid = workspace_id_str
+        .as_ref()
+        .and_then(|ws| uuid::Uuid::parse_str(ws).ok());
+
+    // Log request to file for debugging (if LOG_REQUESTS env var is set)
+    if std::env::var("LOG_REQUESTS").is_ok() {
+        tokio::spawn({
+            let payload_clone = payload.0.clone();
+            let user_id = user_id.clone();
+            let workspace_id_str = workspace_id_str.clone();
+            async move {
+                let home = home_dir().unwrap_or_else(|| PathBuf::from("."));
+                let requests_dir = home.join(".distri/requests");
+                if let Err(e) = fs::create_dir_all(&requests_dir).await {
+                    tracing::warn!("Failed to create requests directory: {}", e);
+                    return;
+                }
+
+                let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S_%3f");
+                let filename = format!("llm_execute_{}_{}.json", timestamp, user_id);
+                let filepath = requests_dir.join(filename);
+
+                let log_data = serde_json::json!({
+                    "timestamp": chrono::Utc::now().to_rfc3339(),
+                    "user_id": user_id,
+                    "workspace_id": workspace_id_str,
+                    "payload": payload_clone,
+                });
+
+                if let Ok(json_str) = serde_json::to_string_pretty(&log_data) {
+                    if let Err(e) = fs::write(&filepath, json_str).await {
+                        tracing::warn!("Failed to write request log: {}", e);
+                    }
+                }
+            }
+        });
+    }
 
     // Use provided agent_id or default to "llm_execute"
     let agent_id = payload
@@ -689,33 +745,46 @@ async fn llm_execute(
         .clone()
         .unwrap_or_else(|| "llm_execute".to_string());
 
-    // Generate or use provided thread_id
+    // Generate or use provided thread_id (needed for history loading)
     let thread_id = payload
         .thread_id
         .clone()
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
-    let mut context = ExecutorContext::default();
-    context.user_id = user_id.clone();
-    context.agent_id = agent_id.clone();
-    context.thread_id = thread_id.clone();
+    // Load agent configuration and prepend system message if agent_id is provided
+    let mut all_messages = Vec::new();
 
-    if let Some(run_id) = payload.run_id.as_ref() {
-        context.run_id = run_id.clone();
+    // Verify agent exists and load system message if agent_id is provided (and not the default)
+    // IMPORTANT: Wrap in task-local context so TenantAgentStore can access user_id and workspace_id
+    if let Some(ref aid) = payload.agent_id {
+        if aid != "llm_execute" {
+            tracing::info!("Verifying and loading agent: {}", aid);
+
+            let agent_exists = executor.get_agent(aid).await.is_some();
+
+            if !agent_exists {
+                tracing::error!("Agent '{}' not found", aid);
+                return HttpResponse::NotFound().json(json!({
+                    "error": format!("Agent '{}' not found", aid),
+                }));
+            }
+
+            // Load agent system message
+            if let Some(system_msg) =
+                llm_helpers::load_agent_system_message(&executor, Some(aid.as_str())).await
+            {
+                tracing::info!("Successfully loaded system message for agent: {}", aid);
+                all_messages.push(system_msg);
+            } else {
+                tracing::warn!(
+                    "Agent '{}' found but no system message loaded (empty instructions?)",
+                    aid
+                );
+            }
+        }
     }
-    if let Some(parent) = payload.parent_task_id.as_ref() {
-        // Attach to an existing task so history stays under that task_id
-        context.task_id = parent.clone();
-    } else if payload.is_sub_task {
-        // Ephemeral sub-task: keep out of history
-        context.parent_task_id = Some(EPHEMERAL_SUB_PARENT_ID.to_string());
-        context.task_id = EPHEMERAL_SUB_TASK_ID.to_string();
-    }
-    context.orchestrator = Some(executor.get_ref().clone());
-    let context = Arc::new(context);
 
     // Load thread history if requested
-    let mut all_messages = Vec::new();
     if payload.load_history && payload.thread_id.is_some() {
         match executor
             .stores
@@ -746,15 +815,21 @@ async fn llm_execute(
     // Append the new messages from the request
     all_messages.extend(payload.messages.clone());
 
-    let mut model_settings = executor.get_default_model_settings().await;
-    if let Some(override_ms) = payload.model_settings.clone() {
-        model_settings = override_ms;
-    }
+    // Load agent model settings if agent_id is provided
+    let base_model_settings = if let Some(agent_ms) =
+        llm_helpers::load_agent_model_settings(&executor, payload.agent_id.as_deref()).await
+    {
+        agent_ms
+    } else {
+        executor.get_default_model_settings().await
+    };
 
-    let llm_def = LlmDefinition {
-        name: format!("llm_execute{}", model_settings.model),
-        model_settings: model_settings.clone(),
-        tool_format: ToolCallFormat::Provider,
+    // Merge with request's model_settings if provided
+    let model_settings = if let Some(override_ms) = payload.model_settings.clone() {
+        let sentinel = ModelSettings::default();
+        llm_helpers::merge_model_settings(&base_model_settings, &override_ms, &sentinel)
+    } else {
+        base_model_settings
     };
 
     let tools = payload
@@ -764,136 +839,92 @@ async fn llm_execute(
         .collect();
 
     let headers = payload.headers.clone();
-    // No server tool execution; return tool calls for the frontend to execute
-    let llm = LLMExecutor::new(
-        llm_def,
-        tools,
-        context.clone(),
-        headers,
-        Some("llm_execute".to_string()),
-    );
 
-    match llm.execute(&all_messages).await {
-        Ok(resp) => {
-            // Store the LLM call as a thread entry (non-ephemeral only)
-            if !payload.is_sub_task {
-                // Create or update the thread
-                let title = payload.title.clone().unwrap_or_else(|| {
-                    // Generate title from first user message
-                    payload
-                        .messages
-                        .iter()
-                        .find(|m| m.role == distri_types::MessageRole::User)
-                        .and_then(|m| {
-                            m.parts.iter().find_map(|p| {
-                                if let distri_types::Part::Text(text) = p {
-                                    Some(text.chars().take(100).collect::<String>())
-                                } else {
-                                    None
-                                }
-                            })
-                        })
-                        .unwrap_or_else(|| "LLM Execute".to_string())
+    // Log final request that will be sent to LLM (if LOG_REQUESTS is set)
+    if std::env::var("LOG_REQUESTS").is_ok() {
+        tokio::spawn({
+            let all_messages_clone = all_messages.clone();
+            let user_id = user_id.clone();
+            let workspace_id_str = workspace_id_str.clone();
+            let agent_id = payload.agent_id.clone();
+            async move {
+                let home = home_dir().unwrap_or_else(|| PathBuf::from("."));
+                let requests_dir = home.join(".distri/requests");
+                if let Err(e) = fs::create_dir_all(&requests_dir).await {
+                    tracing::warn!("Failed to create requests directory: {}", e);
+                    return;
+                }
+
+                let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S_%3f");
+                let filename = format!("llm_execute_final_{}_{}.json", timestamp, user_id);
+                let filepath = requests_dir.join(filename);
+
+                let log_data = serde_json::json!({
+                    "timestamp": chrono::Utc::now().to_rfc3339(),
+                    "user_id": user_id,
+                    "workspace_id": workspace_id_str,
+                    "agent_id": agent_id,
+                    "final_messages": all_messages_clone,
+                    "message_count": all_messages_clone.len(),
                 });
 
-                // Get or create thread
-                let thread_exists = executor
-                    .stores
-                    .thread_store
-                    .get_thread(&thread_id)
-                    .await
-                    .ok()
-                    .flatten()
-                    .is_some();
-
-                if !thread_exists {
-                    // Create new thread
-                    let create_req = distri_types::CreateThreadRequest {
-                        agent_id: agent_id.clone(),
-                        title: Some(title),
-                        thread_id: Some(thread_id.clone()),
-                        attributes: None,
-                        user_id: Some(user_id.clone()),
-                        external_id: payload.external_id.clone(),
-                    };
-                    if let Err(e) = executor.stores.thread_store.create_thread(create_req).await {
-                        tracing::warn!("Failed to create thread {}: {}", thread_id, e);
+                if let Ok(json_str) = serde_json::to_string_pretty(&log_data) {
+                    if let Err(e) = fs::write(&filepath, json_str).await {
+                        tracing::warn!("Failed to write final request log: {}", e);
                     }
-                }
-
-                // Store the user message(s) from the request
-                let task_id = context.task_id.clone();
-                // Ensure task exists
-                let _ = executor
-                    .stores
-                    .task_store
-                    .get_or_create_task(&thread_id, &task_id)
-                    .await;
-
-                for msg in &payload.messages {
-                    if let Err(e) = executor
-                        .stores
-                        .task_store
-                        .add_message_to_task(&task_id, msg)
-                        .await
-                    {
-                        tracing::warn!("Failed to store user message: {}", e);
-                    }
-                }
-
-                // Store the assistant response
-                let assistant_message = distri_types::Message {
-                    id: uuid::Uuid::new_v4().to_string(),
-                    name: None,
-                    role: distri_types::MessageRole::Assistant,
-                    parts: {
-                        let mut parts = Vec::new();
-                        if !resp.content.is_empty() {
-                            parts.push(distri_types::Part::Text(resp.content.clone()));
-                        }
-                        for tc in &resp.tool_calls {
-                            parts.push(distri_types::Part::ToolCall(tc.clone()));
-                        }
-                        parts
-                    },
-                    created_at: chrono::Utc::now().timestamp_millis(),
-                };
-
-                if let Err(e) = executor
-                    .stores
-                    .task_store
-                    .add_message_to_task(&task_id, &assistant_message)
-                    .await
-                {
-                    tracing::warn!("Failed to store assistant message: {}", e);
-                }
-
-                // Update thread with last message
-                let last_msg = if !resp.content.is_empty() {
-                    resp.content.chars().take(200).collect::<String>()
-                } else if !resp.tool_calls.is_empty() {
-                    format!("[Tool calls: {}]", resp.tool_calls.len())
-                } else {
-                    String::new()
-                };
-                if let Err(e) = executor
-                    .stores
-                    .thread_store
-                    .update_thread_with_message(&thread_id, &last_msg)
-                    .await
-                {
-                    tracing::warn!("Failed to update thread with message: {}", e);
                 }
             }
+        });
+    }
 
-            HttpResponse::Ok().json(json!({
-                "finish_reason": format!("{:?}", resp.finish_reason),
-                "content": resp.content,
-                "tool_calls": resp.tool_calls,
-                "token_usage": resp.token_usage,
-                "thread_id": thread_id,
-            }))
-        }
+    // Generate title from first user message
+    let title = payload.title.clone().or_else(|| {
+        payload
+            .messages
+            .iter()
+            .find(|m| m.role == distri_types::MessageRole::User)
+            .and_then(|m| {
+                m.parts.iter().find_map(|p| {
+                    if let distri_types::Part::Text(text) = p {
+                        Some(text.chars().take(100).collect::<String>())
+                    } else {
+                        None
+                    }
+                })
+            })
+    });
+
+    // Use the new LlmExecuteService to handle thread/task creation and execution
+    let service = distri_core::llm_service::LlmExecuteService::new(executor.get_ref().clone());
+
+    // Middleware already set task-local context - just call service directly
+    let result = service
+        .execute(
+            user_id.clone(),
+            workspace_id_uuid,
+            agent_id.clone(),
+            Some(thread_id.clone()),
+            payload.run_id.clone(),
+            payload.parent_task_id.clone(),
+            all_messages,
+            tools,
+            model_settings,
+            headers,
+            title,
+            payload.external_id.clone(),
+            payload.is_sub_task,
+        )
+        .await;
+
+    match result {
+        Ok(exec_result) => HttpResponse::Ok().json(json!({
+            "finish_reason": format!("{:?}", exec_result.response.finish_reason),
+            "content": exec_result.response.content,
+            "tool_calls": exec_result.response.tool_calls,
+            "token_usage": exec_result.response.token_usage,
+            "thread_id": exec_result.thread_id,
+            "task_id": exec_result.task_id,
+        })),
         Err(error) => {
             tracing::error!("[/llm/execute] LLM call failed: {}", error);
             HttpResponse::BadGateway().json(json!({
@@ -1013,6 +1044,157 @@ async fn delete_thread_handler(
         Ok(_) => HttpResponse::NoContent().finish(),
         Err(e) => HttpResponse::InternalServerError().json(json!({
             "error": format!("Failed to delete thread: {}", e)
+        })),
+    }
+}
+
+// ========== Message Read Status Handlers ==========
+
+async fn mark_message_read_handler(
+    path: web::Path<(String, String)>,
+    executor: web::Data<Arc<AgentOrchestrator>>,
+) -> HttpResponse {
+    let (thread_id, message_id) = path.into_inner();
+    match executor
+        .stores
+        .thread_store
+        .mark_message_read(&thread_id, &message_id)
+        .await
+    {
+        Ok(status) => HttpResponse::Ok().json(status),
+        Err(e) => HttpResponse::InternalServerError().json(json!({
+            "error": format!("Failed to mark message as read: {}", e)
+        })),
+    }
+}
+
+async fn get_message_read_status_handler(
+    path: web::Path<(String, String)>,
+    executor: web::Data<Arc<AgentOrchestrator>>,
+) -> HttpResponse {
+    let (thread_id, message_id) = path.into_inner();
+    match executor
+        .stores
+        .thread_store
+        .get_message_read_status(&thread_id, &message_id)
+        .await
+    {
+        Ok(Some(status)) => HttpResponse::Ok().json(status),
+        Ok(None) => HttpResponse::NotFound().json(json!({
+            "error": "Message not marked as read"
+        })),
+        Err(e) => HttpResponse::InternalServerError().json(json!({
+            "error": format!("Failed to get read status: {}", e)
+        })),
+    }
+}
+
+async fn get_thread_read_status_handler(
+    path: web::Path<String>,
+    executor: web::Data<Arc<AgentOrchestrator>>,
+) -> HttpResponse {
+    let thread_id = path.into_inner();
+    match executor
+        .stores
+        .thread_store
+        .get_thread_read_status(&thread_id)
+        .await
+    {
+        Ok(statuses) => HttpResponse::Ok().json(statuses),
+        Err(e) => HttpResponse::InternalServerError().json(json!({
+            "error": format!("Failed to get thread read status: {}", e)
+        })),
+    }
+}
+
+// ========== Message Voting Handlers ==========
+
+#[derive(Debug, Deserialize)]
+struct VoteRequest {
+    vote_type: VoteType,
+    comment: Option<String>,
+}
+
+async fn vote_message_handler(
+    path: web::Path<(String, String)>,
+    request: web::Json<VoteRequest>,
+    executor: web::Data<Arc<AgentOrchestrator>>,
+) -> HttpResponse {
+    let (thread_id, message_id) = path.into_inner();
+    let vote_request = VoteMessageRequest {
+        thread_id,
+        message_id,
+        vote_type: request.vote_type,
+        comment: request.comment.clone(),
+    };
+
+    match executor.stores.thread_store.vote_message(vote_request).await {
+        Ok(vote) => HttpResponse::Ok().json(vote),
+        Err(e) => {
+            let error_msg = e.to_string();
+            if error_msg.contains("require a comment") {
+                HttpResponse::BadRequest().json(json!({
+                    "error": error_msg
+                }))
+            } else {
+                HttpResponse::InternalServerError().json(json!({
+                    "error": format!("Failed to vote on message: {}", e)
+                }))
+            }
+        }
+    }
+}
+
+async fn remove_vote_handler(
+    path: web::Path<(String, String)>,
+    executor: web::Data<Arc<AgentOrchestrator>>,
+) -> HttpResponse {
+    let (thread_id, message_id) = path.into_inner();
+    match executor
+        .stores
+        .thread_store
+        .remove_vote(&thread_id, &message_id)
+        .await
+    {
+        Ok(()) => HttpResponse::NoContent().finish(),
+        Err(e) => HttpResponse::InternalServerError().json(json!({
+            "error": format!("Failed to remove vote: {}", e)
+        })),
+    }
+}
+
+async fn get_message_vote_summary_handler(
+    path: web::Path<(String, String)>,
+    executor: web::Data<Arc<AgentOrchestrator>>,
+) -> HttpResponse {
+    let (thread_id, message_id) = path.into_inner();
+    match executor
+        .stores
+        .thread_store
+        .get_message_vote_summary(&thread_id, &message_id)
+        .await
+    {
+        Ok(summary) => HttpResponse::Ok().json(summary),
+        Err(e) => HttpResponse::InternalServerError().json(json!({
+            "error": format!("Failed to get vote summary: {}", e)
+        })),
+    }
+}
+
+async fn get_message_votes_handler(
+    path: web::Path<(String, String)>,
+    executor: web::Data<Arc<AgentOrchestrator>>,
+) -> HttpResponse {
+    let (thread_id, message_id) = path.into_inner();
+    match executor
+        .stores
+        .thread_store
+        .get_message_votes(&thread_id, &message_id)
+        .await
+    {
+        Ok(votes) => HttpResponse::Ok().json(votes),
+        Err(e) => HttpResponse::InternalServerError().json(json!({
+            "error": format!("Failed to get message votes: {}", e)
         })),
     }
 }

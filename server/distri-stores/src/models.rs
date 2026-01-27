@@ -434,3 +434,63 @@ pub struct SecretChangeset<'a> {
     pub value: &'a str,
     pub updated_at: NaiveDateTime,
 }
+
+// ========== Message Reads ==========
+
+#[derive(Debug, Clone, Queryable, Identifiable, Selectable)]
+#[diesel(table_name = message_reads)]
+pub struct MessageReadModel {
+    pub id: String,
+    pub thread_id: String,
+    pub message_id: String,
+    pub user_id: String,
+    pub read_at: NaiveDateTime,
+    pub created_at: NaiveDateTime,
+}
+
+#[derive(Debug, Clone, Insertable)]
+#[diesel(table_name = message_reads)]
+pub struct NewMessageReadModel<'a> {
+    pub id: &'a str,
+    pub thread_id: &'a str,
+    pub message_id: &'a str,
+    pub user_id: &'a str,
+    pub read_at: NaiveDateTime,
+    pub created_at: NaiveDateTime,
+}
+
+// ========== Message Votes ==========
+
+#[derive(Debug, Clone, Queryable, Identifiable, Selectable)]
+#[diesel(table_name = message_votes)]
+pub struct MessageVoteModel {
+    pub id: String,
+    pub thread_id: String,
+    pub message_id: String,
+    pub user_id: String,
+    pub vote_type: String,
+    pub comment: Option<String>,
+    pub created_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
+}
+
+#[derive(Debug, Clone, Insertable)]
+#[diesel(table_name = message_votes)]
+pub struct NewMessageVoteModel<'a> {
+    pub id: &'a str,
+    pub thread_id: &'a str,
+    pub message_id: &'a str,
+    pub user_id: &'a str,
+    pub vote_type: &'a str,
+    pub comment: Option<&'a str>,
+    pub created_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
+}
+
+#[derive(Debug, Clone, AsChangeset)]
+#[diesel(table_name = message_votes)]
+pub struct MessageVoteChangeset<'a> {
+    pub vote_type: &'a str,
+    pub comment: Option<Option<&'a str>>,
+    pub updated_at: NaiveDateTime,
+}

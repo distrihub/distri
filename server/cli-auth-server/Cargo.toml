@@ -1,6 +1,6 @@
 [package]
 name = "cli-auth-server"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
 
 [dependencies]
@@ -11,6 +11,6 @@ tracing.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 rand.workspace = true
-distri-types = { path = "../../distri-types", version = "0.3.1" }
+distri-types = { path = "../../distri-types", version = "0.3.2" }
 url = "2.5"
 dotenvy = "0.15"

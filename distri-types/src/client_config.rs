@@ -3,14 +3,17 @@ use std::path::PathBuf;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-/// Default base URL for the Distri cloud service
-pub(crate) const DEFAULT_BASE_URL: &str = "https://api.distri.dev";
+/// Default base URL for the Distri cloud service (includes /v1 API version)
+pub(crate) const DEFAULT_BASE_URL: &str = "https://api.distri.dev/v1";
 
 /// Environment variable for the base URL
 pub(crate) const ENV_BASE_URL: &str = "DISTRI_BASE_URL";
 
 /// Environment variable for the API key
 pub(crate) const ENV_API_KEY: &str = "DISTRI_API_KEY";
+
+/// Environment variable for the workspace ID
+pub(crate) const ENV_WORKSPACE_ID: &str = "DISTRI_WORKSPACE_ID";
 
 const CONFIG_DIR_NAME: &str = ".distri";
 const CONFIG_FILE_NAME: &str = "config";
@@ -24,6 +27,10 @@ pub struct DistriConfig {
     /// Optional API key for authentication
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub api_key: Option<String>,
+
+    /// Optional workspace ID for multi-tenant context
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,
 
     /// Request timeout in seconds (default: 30)
     #[serde(default = "default_timeout")]
@@ -46,6 +53,7 @@ fn default_retries() -> u32 {
 struct FileConfig {
     base_url: Option<String>,
     api_key: Option<String>,
+    workspace_id: Option<String>,
 }
 
 fn normalize_optional(value: String) -> Option<String> {
@@ -66,6 +74,7 @@ impl FileConfig {
         Self {
             base_url: self.base_url.and_then(normalize_base_url),
             api_key: self.api_key.and_then(normalize_optional),
+            workspace_id: self.workspace_id.and_then(normalize_optional),
         }
     }
 }
@@ -75,6 +84,7 @@ impl Default for DistriConfig {
         Self {
             base_url: DEFAULT_BASE_URL.to_string(),
             api_key: None,
+            workspace_id: None,
             timeout_secs: default_timeout(),
             retry_attempts: default_retries(),
         }
@@ -102,10 +112,11 @@ impl DistriConfig {
     /// Create a config from environment variables and the local config file.
     ///
     /// Precedence: environment variables > `~/.distri/config` > defaults.
-    /// `~/.distri/config` supports `base_url` and `api_key`.
+    /// `~/.distri/config` supports `base_url`, `api_key`, and `workspace_id`.
     ///
-    /// - `DISTRI_BASE_URL`: Base URL (defaults to `https://api.distri.dev`)
+    /// - `DISTRI_BASE_URL`: Base URL (defaults to `https://api.distri.dev/v1`)
     /// - `DISTRI_API_KEY`: Optional API key
+    /// - `DISTRI_WORKSPACE_ID`: Optional workspace ID (UUID)
     pub fn from_env() -> Self {
         let file_config = Self::config_path()
             .and_then(|path| std::fs::read_to_string(path).ok())
@@ -117,15 +128,20 @@ impl DistriConfig {
             .ok()
             .and_then(normalize_base_url);
         let env_api_key = std::env::var(ENV_API_KEY).ok().and_then(normalize_optional);
+        let env_workspace_id = std::env::var(ENV_WORKSPACE_ID)
+            .ok()
+            .and_then(normalize_optional);
 
         let base_url = env_base_url
             .or(file_config.base_url)
             .unwrap_or_else(|| DEFAULT_BASE_URL.to_string());
         let api_key = env_api_key.or(file_config.api_key);
+        let workspace_id = env_workspace_id.or(file_config.workspace_id);
 
         Self {
             base_url,
             api_key,
+            workspace_id,
             ..Default::default()
         }
     }
@@ -133,6 +149,12 @@ impl DistriConfig {
     /// Set the API key for authentication.
     pub fn with_api_key(mut self, api_key: impl Into<String>) -> Self {
         self.api_key = Some(api_key.into());
+        self
+    }
+
+    /// Set the workspace ID for multi-tenant context.
+    pub fn with_workspace_id(mut self, workspace_id: impl Into<String>) -> Self {
+        self.workspace_id = Some(workspace_id.into());
         self
     }
 

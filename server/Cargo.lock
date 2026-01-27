@@ -1344,7 +1344,7 @@ checksum = "a1d728cc89cf3aee9ff92b05e62b19ee65a02b5702cff7d5a377e32c6ae29d8d"
 
 [[package]]
 name = "cli-auth-server"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "actix-cors",
  "actix-web",
@@ -2944,7 +2944,7 @@ dependencies = [
 
 [[package]]
 name = "distri"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2974,7 +2974,7 @@ dependencies = [
 
 [[package]]
 name = "distri-a2a"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "schemars",
  "serde",
@@ -2984,7 +2984,7 @@ dependencies = [
 
 [[package]]
 name = "distri-auth"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "actix-cors",
  "actix-web",
@@ -3011,7 +3011,7 @@ dependencies = [
 
 [[package]]
 name = "distri-core"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "async-mcp",
@@ -3073,7 +3073,7 @@ dependencies = [
 
 [[package]]
 name = "distri-filesystem"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3113,7 +3113,7 @@ dependencies = [
 
 [[package]]
 name = "distri-parsers"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3138,7 +3138,7 @@ dependencies = [
 
 [[package]]
 name = "distri-plugin-executor"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3160,7 +3160,7 @@ dependencies = [
 
 [[package]]
 name = "distri-plugins"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3190,7 +3190,7 @@ dependencies = [
 
 [[package]]
 name = "distri-server"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "actix-cors",
  "actix-files",
@@ -3239,7 +3239,7 @@ dependencies = [
 
 [[package]]
 name = "distri-server-cli"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3279,7 +3279,7 @@ dependencies = [
 
 [[package]]
 name = "distri-stores"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3308,7 +3308,7 @@ dependencies = [
 
 [[package]]
 name = "distri-types"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "async-mcp",
@@ -7729,6 +7729,7 @@ dependencies = [
  "schemars_derive",
  "serde",
  "serde_json",
+ "uuid",
 ]
 
 [[package]]

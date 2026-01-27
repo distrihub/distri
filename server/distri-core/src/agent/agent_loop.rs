@@ -218,6 +218,15 @@ impl AgentLoop {
                     Err(e) => {
                         tracing::error!("Planning failed: {}", e);
                         error_iterations = error_iterations + 1;
+
+                        // Emit RunError event so UI can display the actual error
+                        context
+                            .emit(AgentEventType::RunError {
+                                message: format!("Planning failed: {}", e),
+                                code: Some("PLANNING_ERROR".to_string()),
+                            })
+                            .await;
+
                         let result = ExecutionResult {
                             step_id: uuid::Uuid::new_v4().to_string(),
                             status: ExecutionStatus::Failed,
@@ -433,6 +442,10 @@ impl AgentLoop {
             }
             step_index += 1;
         }
+
+        // Reload execution history from context to include any results stored during planning failures
+        execution_history = context.get_execution_history().await;
+
         let failed_steps = execution_history
             .iter()
             .filter(|result| result.is_failed())
@@ -479,6 +492,13 @@ impl AgentLoop {
             .await;
         // Return validation error if completion was invalid (to maintain existing behavior)
         if let Err(e) = validation_result {
+            // Emit RunError event so UI can display the validation error
+            context
+                .emit(AgentEventType::RunError {
+                    message: e.to_string(),
+                    code: Some("VALIDATION_ERROR".to_string()),
+                })
+                .await;
             return Err(e);
         }
 

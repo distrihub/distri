@@ -1,6 +1,6 @@
 [package]
 name = "distri-filesystem"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
 description = "Filesystem and artifact tools for Distri agents"
 license = "MIT"
@@ -20,7 +20,7 @@ async-trait = "0.1"
 uuid = { version = "1.0", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 tracing = "0.1"
-distri-types = { path = "../distri-types" , version = "0.3.1" }
+distri-types = { path = "../distri-types" , version = "0.3.2" }
 ignore = "0.4"
 regex = "1.0"
 grep = "0.3"

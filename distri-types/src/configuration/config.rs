@@ -125,7 +125,7 @@ pub struct PostgresConfig {
 }
 
 fn default_postgres_max_connections() -> u32 {
-    10
+    3
 }
 
 fn default_postgres_min_connections() -> u32 {
@@ -163,7 +163,7 @@ fn default_database_url() -> String {
 }
 
 fn default_connections() -> u32 {
-    10
+    3
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

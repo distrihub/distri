@@ -6,7 +6,9 @@ use crate::agent::{
 };
 use crate::secrets::SecretResolver;
 use crate::AgentError;
-use distri_auth::context::with_user_id;
+use distri_auth::context::{with_user_and_workspace, with_user_id};
+// Note: with_user_and_workspace IS needed for stream! macro and spawned tasks
+// because they don't inherit task-local storage from middleware
 use distri_types::HookMutation;
 
 use anyhow::anyhow;
@@ -162,6 +164,8 @@ pub async fn init_thread_get_message(
     let thread_store = executor.stores.thread_store.clone();
 
     let thread_title = extract_text_from_message(&params.message);
+
+    // Middleware already set task-local context - no need to extract user_id/workspace_id here
     let thread = executor
         .ensure_thread_exists(
             &agent_id,
@@ -174,6 +178,7 @@ pub async fn init_thread_get_message(
                 .flatten(),
         )
         .await?;
+
     let thread_id = thread.id;
     // Update the thread with the message for title/last_message
     if let Some(thread_title) = thread_title {
@@ -193,6 +198,11 @@ pub async fn handle_message_send_streaming_sse(
 ) -> impl futures_util::stream::Stream<Item = Result<SseMessage, std::convert::Infallible>> {
     let user_id = executor_context.user_id.clone();
     let stream_user_id = user_id.clone();
+    let workspace_id = executor_context
+        .workspace_id
+        .as_ref()
+        .and_then(|s| uuid::Uuid::parse_str(s).ok());
+    let stream_workspace_id = workspace_id;
     let id_field_clone = executor_context.session_id.clone();
 
     let stream = async_stream::stream! {
@@ -243,11 +253,16 @@ pub async fn handle_message_send_streaming_sse(
             .and_then(|m| serde_json::from_value(m).ok())
             .unwrap_or_default();
 
-        let (_thread_id, message) = match init_thread_get_message(
-            agent_id.clone(),
-            executor.clone(),
-            &params,
-            executor_context.clone(),
+        // stream! macro doesn't inherit task-local storage, so wrap here
+        let (_thread_id, message) = match with_user_and_workspace(
+            user_id.clone(),
+            stream_workspace_id,
+            init_thread_get_message(
+                agent_id.clone(),
+                executor.clone(),
+                &params,
+                executor_context.clone(),
+            )
         )
         .await
         {
@@ -273,7 +288,7 @@ pub async fn handle_message_send_streaming_sse(
 
         let (event_tx, mut event_rx) = mpsc::channel::<AgentEvent>(100);
         let browser_event_tx = event_tx.clone();
-        let (sse_tx, mut sse_rx) = mpsc::channel(100);
+        let (sse_tx, mut sse_rx) = mpsc::channel::<Result<distri_a2a::MessageKind, anyhow::Error>>(100);
         let sse_tx_clone = sse_tx.clone();
         let mut exec_ctx = executor_context.clone_with_tx(event_tx);
 
@@ -355,7 +370,13 @@ pub async fn handle_message_send_streaming_sse(
         let cancel_token_for_exec = cancel_token.clone();
         let executor_for_completion = executor.clone();
         let user_id_for_completion = user_id.clone();
-        let completion_task = tokio::spawn(with_user_id(user_id_for_completion, async move {
+        // Extract workspace_id for task-local context in spawned tasks
+        let workspace_id = executor_context
+            .workspace_id
+            .as_ref()
+            .and_then(|s| uuid::Uuid::parse_str(s).ok());
+        let workspace_id_for_completion = workspace_id;
+        let completion_task = tokio::spawn(with_user_and_workspace(user_id_for_completion, workspace_id_for_completion, async move {
             let cancel_token = cancel_token_for_completion;
             let mut completed = false;
             while let Some(event) = event_rx.recv().await {
@@ -398,7 +419,8 @@ pub async fn handle_message_send_streaming_sse(
         let req_id_clone = req_id.clone();
         let definition_overrides_clone = definition_overrides.clone();
         let user_id_for_exec = user_id.clone();
-        let exec_handle = tokio::spawn(with_user_id(user_id_for_exec, async move {
+        let workspace_id_for_exec = workspace_id;
+        let exec_handle = tokio::spawn(with_user_and_workspace(user_id_for_exec, workspace_id_for_exec, async move {
             let exec_fut = executor_clone.execute_stream(
                 &agent_id_clone,
                 message,
@@ -411,14 +433,22 @@ pub async fn handle_message_send_streaming_sse(
             };
             match result {
                 Ok(result) => {
+                    // Save final result as assistant message to persist in conversation history
+                    if let Some(content) = &result.content {
+                        let final_message = distri_types::Message::assistant(content.clone(), None);
+                        executor_context_clone.save_message(&final_message).await;
+                    }
+
                     let msg = map_final_result(&result, executor_context_clone);
                     let _ = sse_tx_clone.send(Ok(msg)).await;
                 }
                 Err(e) => {
                     tracing::error!("Error from stream handler: {}", e);
 
-                    // Send error through the sse channel instead of yielding directly
-                    let _ = sse_tx_clone.send(Err(e)).await;
+                    // RunError events have already been emitted via context.emit()
+                    // and are being processed by completion_task. Don't send a duplicate
+                    // error here - let the RunError events propagate naturally.
+                    // The completion_task will complete when it sees RunError/RunFinished.
                 }
             }
         }));

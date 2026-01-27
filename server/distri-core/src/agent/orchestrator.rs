@@ -23,6 +23,7 @@ use distri_types::{
     auth::OAuthHandler, LlmDefinition, ModelSettings, Part, ServerMetadataWrapper, ToolCall,
     ToolsConfig,
 };
+use distri_types::configuration::AgentConfig;
 use distri_types::{
     browser::BrowsrClientConfig,
     configuration::{
@@ -1029,6 +1030,7 @@ impl AgentOrchestrator {
             parts: vec![Part::Text(task.to_string())],
             role: distri_types::MessageRole::User,
             created_at: chrono::Utc::now().timestamp_millis(),
+            agent_id: None,
         };
         agent.invoke_stream(message, context).await
     }
@@ -1670,7 +1672,7 @@ impl OrchestratorTrait for AgentOrchestrator {
 
     async fn llm_execute(
         &self,
-        llm_def: LlmDefinition,
+        mut llm_def: LlmDefinition,
         llm_context: LLmContext,
     ) -> Result<serde_json::Value, anyhow::Error> {
         let mut ctx = ExecutorContext::default();
@@ -1691,6 +1693,26 @@ impl OrchestratorTrait for AgentOrchestrator {
         } else {
             llm_context.messages
         };
+
+        // Load agent definition to get base model_settings if available
+        // Only StandardAgent has model_settings; workflow agents don't
+        if let Some(agent_config) = self.get_agent(&llm_def.name).await {
+            if let AgentConfig::StandardAgent(def) = &agent_config {
+                // Merge: use agent's model_settings as base, override with request's model_settings
+                // Compare request settings against defaults to detect which fields were explicitly set
+                let sentinel = ModelSettings::default();
+                let final_model_settings = Self::merge_model_settings(
+                    &def.model_settings,
+                    &llm_def.model_settings,
+                    &sentinel
+                );
+
+                // Update llm_def with merged settings
+                llm_def.model_settings = final_model_settings;
+            }
+            // For other agent types (workflows, custom), use request's model_settings as-is
+        }
+        // If agent not found, use request's model_settings as-is
 
         let executor = LLMExecutor::new(
             llm_def,

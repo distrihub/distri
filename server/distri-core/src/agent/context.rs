@@ -105,6 +105,11 @@ pub struct ExecutorContext {
     pub user_id: String,
     /// Identifier ID for tenant/project-level usage tracking (maps to tenant_id in auth)
     pub identifier_id: Option<String>,
+    /// Workspace ID for multi-tenant workspace-scoped tracking
+    pub workspace_id: Option<String>,
+    /// Tenant context for multi-tenant operations
+    /// Stores can use this to filter data by tenant
+    pub tenant_context: distri_types::TenantContext,
     /// Browser session ID for browsr - if None, browsr will auto-create one
     pub browser_session_id: Option<String>,
     pub additional_attributes: Option<AdditionalAttributes>,
@@ -150,14 +155,20 @@ impl std::fmt::Debug for ExecutorContext {
 
 impl Default for ExecutorContext {
     fn default() -> Self {
+        let user_id = uuid::Uuid::new_v4().to_string();
+        let workspace_id = None;
+        let tenant_context = distri_types::TenantContext::new(user_id.clone(), workspace_id);
+
         Self {
             thread_id: uuid::Uuid::new_v4().to_string(),
             task_id: uuid::Uuid::new_v4().to_string(),
             run_id: uuid::Uuid::new_v4().to_string(),
             agent_id: "default".to_string(),
-            user_id: uuid::Uuid::new_v4().to_string(),
+            user_id,
             session_id: uuid::Uuid::new_v4().to_string(),
             identifier_id: None,
+            workspace_id: None,
+            tenant_context,
             browser_session_id: None,
             tools: Arc::default(),
             orchestrator: None,
@@ -260,6 +271,7 @@ impl ExecutorContext {
             event,
             user_id: Some(self.user_id.clone()),
             identifier_id: self.identifier_id.clone(),
+            workspace_id: self.workspace_id.clone(),
         };
 
         if let Some(tx) = tx {
@@ -287,10 +299,11 @@ impl ExecutorContext {
         }
 
         if let Some(orchestrator) = &self.orchestrator {
-            // Clone the Arc to keep stores alive during the async operation
-            let task_store = orchestrator.stores.task_store.clone();
-            if let Err(e) = task_store
-                .add_event_to_task(&self.task_id, event) // Use thread_id for conversation events
+            // Store will use task-local tenant context set at service boundary
+            if let Err(e) = orchestrator
+                .stores
+                .task_store
+                .add_event_to_task(&self.task_id, event.clone())
                 .await
             {
                 tracing::error!("Failed to save event: {}", e);
@@ -315,6 +328,7 @@ impl ExecutorContext {
                 event,
                 user_id: Some(self.user_id.clone()),
                 identifier_id: self.identifier_id.clone(),
+                workspace_id: self.workspace_id.clone(),
             };
 
             let _ = tx.send(event).await;
@@ -534,28 +548,33 @@ impl ExecutorContext {
     }
 
     /// Convenience method to add a message to the task store
+    /// Note: Caller must ensure task-local tenant context is set at service boundary
     pub async fn save_message(&self, message: &Message) {
         if let Some(orchestrator) = &self.orchestrator {
             tracing::debug!(
-                "Saving message to thread_id: {}, message: {:?}",
+                "Saving message to thread_id: {}, task_id: {}, user_id: {}, workspace_id: {:?}",
                 self.thread_id,
-                message
+                self.task_id,
+                self.user_id,
+                self.workspace_id
             );
+
             if let Err(e) = orchestrator
                 .stores
                 .task_store
-                .add_message_to_task(&self.task_id, message) // Use task_id to store messages in the correct task
+                .add_message_to_task(&self.task_id, message)
                 .await
             {
                 tracing::error!("Failed to save message: {}", e);
             } else {
                 tracing::debug!(
-                    "Successfully saved message to thread_id: {}",
-                    self.thread_id
+                    "Successfully saved message to thread_id: {}, task_id: {}",
+                    self.thread_id,
+                    self.task_id
                 );
             }
         } else {
-            tracing::error!("No orchestrator found - cannot save message. thread_id: {}, task_id: {}, run_id: {}", 
+            tracing::error!("No orchestrator found - cannot save message. thread_id: {}, task_id: {}, run_id: {}",
                           self.thread_id, self.task_id, self.run_id);
         }
     }
@@ -642,6 +661,7 @@ impl ExecutorContext {
         );
 
         if let Some(orchestrator) = &self.orchestrator {
+            // Store will use task-local tenant context set at service boundary
             if let Ok(task_history) = orchestrator
                 .stores
                 .task_store
@@ -775,6 +795,8 @@ impl ExecutorContext {
             session_id: self.session_id.clone(),
             user_id: self.user_id.clone(),
             identifier_id: self.identifier_id.clone(),
+            workspace_id: self.workspace_id.clone(),
+            tenant_context: self.tenant_context.clone(),
             browser_session_id: self.browser_session_id.clone(),
             tools: self.tools.clone(),               // Arc::clone
             orchestrator: self.orchestrator.clone(), // Arc::clone

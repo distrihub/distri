@@ -273,6 +273,7 @@ impl EventPrinter {
             MessageRole::User => "user",
             MessageRole::System => "system",
             MessageRole::Tool => "tool",
+            MessageRole::Developer => "developer",
         };
         print!("{}{}:{} ", COLOR_CYAN, role_label, COLOR_RESET);
     }

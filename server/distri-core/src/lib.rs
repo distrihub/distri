@@ -2,6 +2,7 @@ pub mod a2a;
 pub mod agent;
 pub mod gateway_config;
 pub mod llm;
+pub mod llm_service;
 pub mod logging;
 pub mod secrets;
 pub mod servers;

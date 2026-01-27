@@ -13,13 +13,13 @@ use crate::{
 use async_openai::{
     types::chat::{
         ChatCompletionMessageToolCall, ChatCompletionMessageToolCalls,
-        ChatCompletionRequestAssistantMessageArgs, ChatCompletionRequestMessage,
-        ChatCompletionRequestMessageContentPartImage, ChatCompletionRequestMessageContentPartText,
-        ChatCompletionRequestSystemMessageArgs, ChatCompletionRequestToolMessage,
-        ChatCompletionRequestToolMessageContent, ChatCompletionRequestUserMessageArgs,
-        ChatCompletionRequestUserMessageContentPart, CreateChatCompletionRequest,
-        CreateChatCompletionResponse, CreateChatCompletionStreamResponse, ImageUrl,
-        ResponseFormatJsonSchema, Role,
+        ChatCompletionRequestAssistantMessageArgs, ChatCompletionRequestDeveloperMessageArgs,
+        ChatCompletionRequestMessage, ChatCompletionRequestMessageContentPartImage,
+        ChatCompletionRequestMessageContentPartText, ChatCompletionRequestSystemMessageArgs,
+        ChatCompletionRequestToolMessage, ChatCompletionRequestToolMessageContent,
+        ChatCompletionRequestUserMessageArgs, ChatCompletionRequestUserMessageContentPart,
+        CreateChatCompletionRequest, CreateChatCompletionResponse,
+        CreateChatCompletionStreamResponse, ImageUrl, ResponseFormatJsonSchema, Role,
     },
     Client,
 };
@@ -301,6 +301,8 @@ impl LLMExecutor {
 
         // Create and save assistant message immediately after parsing
         let mut assistant_msg = crate::types::Message::assistant(content.clone(), None);
+        // Set agent_id to track which agent generated this message
+        assistant_msg.agent_id = Some(self.context.agent_id.clone());
         for tool_call in &tool_calls {
             assistant_msg
                 .parts
@@ -384,14 +386,22 @@ impl LLMExecutor {
             self.additional_headers.clone(),
             self.label.clone(),
         )
-        .await
-        .map_err(|e| {
-            tracing::error!("LLM stream request failed: {}", e);
-            AgentError::LLMError(e.to_string())
-        });
+        .await;
 
-        if stream.is_err() {
-            println!("LLM stream request failed:");
+        // If stream creation fails, emit error event and return
+        if let Err(e) = stream {
+            let error_msg = format!("LLM stream request failed: {}", e);
+            tracing::error!("{}", error_msg);
+
+            // Emit RunError event so UI can display the error
+            context
+                .emit(AgentEventType::RunError {
+                    message: error_msg.clone(),
+                    code: Some("llm_stream_error".to_string()),
+                })
+                .await;
+
+            return Err(AgentError::LLMError(e.to_string()));
         }
         let stream = stream.unwrap();
 
@@ -595,6 +605,8 @@ impl LLMExecutor {
 
         // Create and save assistant message for fallback case
         let mut assistant_msg = crate::types::Message::assistant(content.clone(), None);
+        // Set agent_id to track which agent generated this message
+        assistant_msg.agent_id = Some(self.context.agent_id.clone());
         for tool_call in &tool_calls {
             assistant_msg
                 .parts
@@ -992,6 +1004,30 @@ impl LLMExecutor {
                             }
                             msg.content(parts);
                             vec![ChatCompletionRequestMessage::User(msg.build().unwrap())]
+                        }
+                    }
+                    MessageRole::Developer => {
+                        // Developer messages are used for adding context without showing in UI.
+                        // For OpenAI, use the developer role. For other providers, map to user.
+                        match &self.llm_def.model_settings.provider {
+                            ModelProvider::OpenAI {} => {
+                                let mut msg =
+                                    ChatCompletionRequestDeveloperMessageArgs::default();
+                                msg.content(m.as_text().unwrap_or_default());
+                                if let Some(name) = &m.name {
+                                    msg.name(name);
+                                }
+                                vec![ChatCompletionRequestMessage::Developer(msg.build().unwrap())]
+                            }
+                            _ => {
+                                // For non-OpenAI providers, map developer to user
+                                let mut msg = ChatCompletionRequestUserMessageArgs::default();
+                                msg.content(m.as_text().unwrap_or_default());
+                                if let Some(name) = &m.name {
+                                    msg.name(name);
+                                }
+                                vec![ChatCompletionRequestMessage::User(msg.build().unwrap())]
+                            }
                         }
                     }
                 };

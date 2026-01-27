@@ -59,10 +59,10 @@ async fn call_tool_handler(
     payload: web::Json<ToolCallPayload>,
 ) -> HttpResponse {
     let user_ctx = req.extensions().get::<UserContext>().cloned();
-    let user_id = user_ctx
+    let (user_id, workspace_id) = user_ctx
         .as_ref()
-        .map(|c| c.user_id())
-        .unwrap_or_else(|| "anonymous".to_string());
+        .map(|c| (c.user_id(), c.workspace_id()))
+        .unwrap_or_else(|| ("anonymous".to_string(), None));
 
     let payload = payload.into_inner();
     let tool_call = ToolCall {
@@ -78,6 +78,7 @@ async fn call_tool_handler(
             .clone()
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
         user_id,
+        workspace_id,
         agent_id: format!("tool:{}", payload.tool_name),
         orchestrator: Some(executor.get_ref().clone()),
         stores: Some(executor.stores.clone()),

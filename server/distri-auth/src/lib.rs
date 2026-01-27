@@ -21,7 +21,7 @@ pub use distri_types::auth::{
 pub use cli_auth_server::oauth_handler::{OAuthCallback, OAuthHandlerState, OAuthStartParams};
 pub use cli_auth_server::{oauth_handler, CallbackConfig, CliAuthServer};
 pub use cli_commands::*;
-pub use context::{ToolAuthRequestContext, UserContext};
+pub use context::{current_workspace_id, ToolAuthRequestContext, UserContext};
 pub use file_store::FileToolAuthStore;
 pub use implementations::*;
 pub use provider_registry::{ProviderConfig, ProviderRegistry, ProvidersConfig};

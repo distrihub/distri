@@ -21,6 +21,7 @@ use inquire::{
 };
 use tokio::fs;
 mod logging;
+mod login;
 
 #[derive(Parser, Debug, Clone)]
 #[clap(author, version, about, arg_required_else_help = true)]
@@ -87,6 +88,14 @@ enum Commands {
         command: ConfigCommands,
     },
 
+    /// Login to Distri Cloud and configure workspace
+    Login {
+        #[clap(long, help = "Email address")]
+        email: Option<String>,
+        #[clap(long, help = "Skip workspace selection (use default)")]
+        skip_workspace: bool,
+    },
+
     /// Start the local server (delegates to distri-server)
     Serve {
         #[clap(long)]
@@ -140,7 +149,7 @@ enum ToolsCommands {
 enum ConfigCommands {
     /// Set a config value in ~/.distri/config
     Set {
-        #[clap(help = "Config key (api_key, base_url)")]
+        #[clap(help = "Config key (api_key, base_url, workspace_id)")]
         key: String,
         #[clap(help = "Value to set (empty clears the key)", num_args = 1..)]
         value: Vec<String>,
@@ -451,6 +460,12 @@ async fn main() -> Result<()> {
         },
         Commands::Config { command } => {
             handle_config_command(command)?;
+        }
+        Commands::Login {
+            email,
+            skip_workspace,
+        } => {
+            login::handle_login_command(email, skip_workspace).await?;
         }
         Commands::Prompts { command } => {
             handle_prompts_command(&client, command).await?;
@@ -1062,6 +1077,29 @@ async fn handle_prompts_command(client: &Distri, command: PromptsCommands) -> Re
                 COLOR_BRIGHT_GREEN, result.created, result.updated, COLOR_RESET
             );
 
+            // Display workspace information if configured
+            if let Some(workspace_id) = client.workspace_id() {
+                match client.get_workspace(workspace_id).await {
+                    Ok(workspace) => {
+                        let ws_type = if workspace.is_personal {
+                            "Personal"
+                        } else {
+                            "Team"
+                        };
+                        println!(
+                            "{}  Workspace: {} ({} - {}){}",
+                            COLOR_GRAY, workspace.name, ws_type, workspace.role, COLOR_RESET
+                        );
+                    }
+                    Err(_) => {
+                        println!(
+                            "{}  Workspace: {}{}",
+                            COLOR_GRAY, workspace_id, COLOR_RESET
+                        );
+                    }
+                }
+            }
+
             for template in &result.templates {
                 println!("  - {}", template.name);
             }
@@ -1100,8 +1138,17 @@ fn set_client_config_value(key: &str, raw_value: &str) -> Result<PathBuf> {
     let normalized = match key {
         "api_key" => normalize_optional(raw_value),
         "base_url" => normalize_base_url(raw_value),
+        "workspace_id" => {
+            let trimmed = normalize_optional(raw_value);
+            if let Some(ref value) = trimmed {
+                // Validate that it's a valid UUID
+                uuid::Uuid::parse_str(value)
+                    .with_context(|| format!("Invalid workspace_id: '{}' is not a valid UUID", value))?;
+            }
+            trimmed
+        }
         _ => anyhow::bail!(
-            "Unknown config key '{}'. Supported keys: api_key, base_url",
+            "Unknown config key '{}'. Supported keys: api_key, base_url, workspace_id",
             key
         ),
     };
@@ -1161,6 +1208,32 @@ async fn push_file(client: &Distri, path: &Path) -> Result<()> {
         "{}✔ Deployed version {}{}",
         COLOR_BRIGHT_GREEN, version, COLOR_RESET
     );
+
+    // Display workspace information if configured
+    if let Some(workspace_id) = client.workspace_id() {
+        // Try to fetch workspace details for a friendly display
+        match client.get_workspace(workspace_id).await {
+            Ok(workspace) => {
+                let ws_type = if workspace.is_personal {
+                    "Personal"
+                } else {
+                    "Team"
+                };
+                println!(
+                    "{}  Workspace: {} ({} - {}){}",
+                    COLOR_GRAY, workspace.name, ws_type, workspace.role, COLOR_RESET
+                );
+            }
+            Err(_) => {
+                // Fallback to just showing the ID if we can't fetch details
+                println!(
+                    "{}  Workspace: {}{}",
+                    COLOR_GRAY, workspace_id, COLOR_RESET
+                );
+            }
+        }
+    }
+
     println!();
 
     // Print agent URL
@@ -1371,6 +1444,29 @@ async fn push_plugin_with_name(client: &Distri, name: &str, path: &Path, is_publ
         "{}✔ Pushed plugin '{}' [{}]{}",
         COLOR_BRIGHT_GREEN, result.name, visibility, COLOR_RESET
     );
+
+    // Display workspace information if configured
+    if let Some(workspace_id) = client.workspace_id() {
+        match client.get_workspace(workspace_id).await {
+            Ok(workspace) => {
+                let ws_type = if workspace.is_personal {
+                    "Personal"
+                } else {
+                    "Team"
+                };
+                println!(
+                    "{}  Workspace: {} ({} - {}){}",
+                    COLOR_GRAY, workspace.name, ws_type, workspace.role, COLOR_RESET
+                );
+            }
+            Err(_) => {
+                println!(
+                    "{}  Workspace: {}{}",
+                    COLOR_GRAY, workspace_id, COLOR_RESET
+                );
+            }
+        }
+    }
 
     Ok(())
 }
