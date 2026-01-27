@@ -53,6 +53,14 @@ pub struct ExecutorContextMetadata {
     /// Optional definition overrides supplied by the client
     #[serde(default)]
     pub definition_overrides: Option<DefinitionOverrides>,
+
+    /// Dynamic prompt sections to inject into the template per-call
+    #[serde(default)]
+    pub dynamic_sections: Option<Vec<PromptSection>>,
+
+    /// Dynamic key-value pairs available in templates per-call
+    #[serde(default)]
+    pub dynamic_values: Option<HashMap<String, serde_json::Value>>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
