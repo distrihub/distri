@@ -359,6 +359,58 @@ pub trait ThreadStore: Send + Sync {
     async fn get_agent_stats_map(
         &self,
     ) -> anyhow::Result<std::collections::HashMap<String, AgentStatsInfo>>;
+
+    // ========== Message Read Status Methods ==========
+
+    /// Mark a message as read by the current user
+    async fn mark_message_read(
+        &self,
+        thread_id: &str,
+        message_id: &str,
+    ) -> anyhow::Result<MessageReadStatus>;
+
+    /// Get read status for a specific message
+    async fn get_message_read_status(
+        &self,
+        thread_id: &str,
+        message_id: &str,
+    ) -> anyhow::Result<Option<MessageReadStatus>>;
+
+    /// Get read status for all messages in a thread for the current user
+    async fn get_thread_read_status(
+        &self,
+        thread_id: &str,
+    ) -> anyhow::Result<Vec<MessageReadStatus>>;
+
+    // ========== Message Voting Methods ==========
+
+    /// Vote on a message (upvote or downvote)
+    /// For downvotes, a comment is required
+    async fn vote_message(&self, request: VoteMessageRequest) -> anyhow::Result<MessageVote>;
+
+    /// Remove a vote from a message
+    async fn remove_vote(&self, thread_id: &str, message_id: &str) -> anyhow::Result<()>;
+
+    /// Get the current user's vote on a message
+    async fn get_user_vote(
+        &self,
+        thread_id: &str,
+        message_id: &str,
+    ) -> anyhow::Result<Option<MessageVote>>;
+
+    /// Get vote summary for a message (counts + current user's vote)
+    async fn get_message_vote_summary(
+        &self,
+        thread_id: &str,
+        message_id: &str,
+    ) -> anyhow::Result<MessageVoteSummary>;
+
+    /// Get all votes for a message (admin/analytics use)
+    async fn get_message_votes(
+        &self,
+        thread_id: &str,
+        message_id: &str,
+    ) -> anyhow::Result<Vec<MessageVote>>;
 }
 
 /// Home statistics for dashboard
@@ -534,6 +586,66 @@ pub trait CrawlStore: Send + Sync {
         &self,
         before: chrono::DateTime<chrono::Utc>,
     ) -> anyhow::Result<usize>;
+}
+
+// ========== Message Read & Voting Types ==========
+
+/// Vote type for message feedback
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum VoteType {
+    Upvote,
+    Downvote,
+}
+
+/// Record of a message being read
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MessageReadStatus {
+    pub thread_id: String,
+    pub message_id: String,
+    pub user_id: String,
+    pub read_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Request to mark a message as read
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MarkMessageReadRequest {
+    pub thread_id: String,
+    pub message_id: String,
+}
+
+/// A vote on a message with optional feedback comment
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MessageVote {
+    pub id: String,
+    pub thread_id: String,
+    pub message_id: String,
+    pub user_id: String,
+    pub vote_type: VoteType,
+    /// Comment is required for downvotes, optional for upvotes
+    pub comment: Option<String>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Request to vote on a message
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VoteMessageRequest {
+    pub thread_id: String,
+    pub message_id: String,
+    pub vote_type: VoteType,
+    /// Required for downvotes
+    pub comment: Option<String>,
+}
+
+/// Summary of votes for a message
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct MessageVoteSummary {
+    pub message_id: String,
+    pub upvotes: i64,
+    pub downvotes: i64,
+    /// Current user's vote on this message, if any
+    pub user_vote: Option<VoteType>,
 }
 
 /// Store for managing external tool call completions using oneshot channels

@@ -3,8 +3,8 @@ use std::{collections::HashMap, fmt::Display, sync::Arc};
 
 use crate::models::*;
 use crate::schema::{
-    agent_configs, external_tool_calls, integrations, memory_entries, plugin_catalog,
-    scratchpad_entries, session_entries, task_messages, tasks, threads,
+    agent_configs, external_tool_calls, integrations, memory_entries, message_reads, message_votes,
+    plugin_catalog, scratchpad_entries, session_entries, task_messages, tasks, threads,
 };
 use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
@@ -30,10 +30,11 @@ use distri_types::configuration::PluginArtifact;
 use distri_types::stores::SessionSummary;
 use distri_types::stores::{
     AgentStatsInfo, AgentStore, AgentUsageInfo, ExternalToolCallsStore, FilterMessageType,
-    MemoryStore, MessageFilter, NewPromptTemplate, NewSecret, PluginCatalogStore,
-    PluginMetadataRecord, PromptTemplateRecord, PromptTemplateStore, ScratchpadStore, SecretRecord,
-    SecretStore, SessionMemory, SessionStore, TaskStore, ThreadListFilter, ThreadListResponse,
-    ThreadStore, UpdatePromptTemplate,
+    MemoryStore, MessageFilter, MessageReadStatus, MessageVote, MessageVoteSummary,
+    NewPromptTemplate, NewSecret, PluginCatalogStore, PluginMetadataRecord, PromptTemplateRecord,
+    PromptTemplateStore, ScratchpadStore, SecretRecord, SecretStore, SessionMemory, SessionStore,
+    TaskStore, ThreadListFilter, ThreadListResponse, ThreadStore, UpdatePromptTemplate,
+    VoteMessageRequest, VoteType,
 };
 use distri_types::{
     AgentError, AgentEvent, AgentEventType, CreateThreadRequest, Message, ScratchpadEntry, Task,
@@ -1227,6 +1228,339 @@ where
             recently_used_agents: Some(recently_used_agents),
             custom_metrics: None,
         })
+    }
+
+    // ========== Message Read Status Methods ==========
+
+    async fn mark_message_read(
+        &self,
+        thread_id: &str,
+        message_id: &str,
+    ) -> Result<MessageReadStatus> {
+        let user_id = distri_auth::context::current_user_id()
+            .unwrap_or_else(|| "anonymous".to_string());
+        let now = Utc::now();
+
+        let mut connection = self.conn().await?;
+
+        // Check if record already exists
+        let existing = message_reads::table
+            .filter(message_reads::thread_id.eq(thread_id))
+            .filter(message_reads::message_id.eq(message_id))
+            .filter(message_reads::user_id.eq(&user_id))
+            .select(MessageReadModel::as_select())
+            .first::<MessageReadModel>(&mut connection)
+            .await
+            .optional()
+            .context("failed to query existing read status")?;
+
+        if let Some(existing_read) = existing {
+            // Update existing record
+            diesel::update(message_reads::table.filter(message_reads::id.eq(&existing_read.id)))
+                .set(message_reads::read_at.eq(now.naive_utc()))
+                .execute(&mut connection)
+                .await
+                .context("failed to update message read status")?;
+        } else {
+            // Insert new record
+            let id = Uuid::new_v4().to_string();
+            let new_read = NewMessageReadModel {
+                id: &id,
+                thread_id,
+                message_id,
+                user_id: &user_id,
+                read_at: now.naive_utc(),
+                created_at: now.naive_utc(),
+            };
+
+            diesel::insert_into(message_reads::table)
+                .values(&new_read)
+                .execute(&mut connection)
+                .await
+                .context("failed to mark message as read")?;
+        }
+
+        Ok(MessageReadStatus {
+            thread_id: thread_id.to_string(),
+            message_id: message_id.to_string(),
+            user_id,
+            read_at: now,
+        })
+    }
+
+    async fn get_message_read_status(
+        &self,
+        thread_id: &str,
+        message_id: &str,
+    ) -> Result<Option<MessageReadStatus>> {
+        let user_id = distri_auth::context::current_user_id()
+            .unwrap_or_else(|| "anonymous".to_string());
+        let mut connection = self.conn().await?;
+
+        let row = message_reads::table
+            .filter(message_reads::thread_id.eq(thread_id))
+            .filter(message_reads::message_id.eq(message_id))
+            .filter(message_reads::user_id.eq(&user_id))
+            .select(MessageReadModel::as_select())
+            .first::<MessageReadModel>(&mut connection)
+            .await
+            .optional()
+            .context("failed to query message read status")?;
+
+        Ok(row.map(|r| MessageReadStatus {
+            thread_id: r.thread_id,
+            message_id: r.message_id,
+            user_id: r.user_id,
+            read_at: DateTime::from_naive_utc_and_offset(r.read_at, Utc),
+        }))
+    }
+
+    async fn get_thread_read_status(&self, thread_id: &str) -> Result<Vec<MessageReadStatus>> {
+        let user_id = distri_auth::context::current_user_id()
+            .unwrap_or_else(|| "anonymous".to_string());
+        let mut connection = self.conn().await?;
+
+        let rows = message_reads::table
+            .filter(message_reads::thread_id.eq(thread_id))
+            .filter(message_reads::user_id.eq(&user_id))
+            .select(MessageReadModel::as_select())
+            .load::<MessageReadModel>(&mut connection)
+            .await
+            .context("failed to query thread read status")?;
+
+        Ok(rows
+            .into_iter()
+            .map(|r| MessageReadStatus {
+                thread_id: r.thread_id,
+                message_id: r.message_id,
+                user_id: r.user_id,
+                read_at: DateTime::from_naive_utc_and_offset(r.read_at, Utc),
+            })
+            .collect())
+    }
+
+    // ========== Message Voting Methods ==========
+
+    async fn vote_message(&self, request: VoteMessageRequest) -> Result<MessageVote> {
+        let user_id = distri_auth::context::current_user_id()
+            .unwrap_or_else(|| "anonymous".to_string());
+        let now = Utc::now();
+
+        // Validate: downvotes require a comment
+        if request.vote_type == VoteType::Downvote && request.comment.is_none() {
+            return Err(anyhow!("Downvotes require a comment explaining the issue"));
+        }
+
+        let vote_type_str = match request.vote_type {
+            VoteType::Upvote => "upvote",
+            VoteType::Downvote => "downvote",
+        };
+
+        let mut connection = self.conn().await?;
+
+        // Check if user already voted on this message
+        let existing = message_votes::table
+            .filter(message_votes::thread_id.eq(&request.thread_id))
+            .filter(message_votes::message_id.eq(&request.message_id))
+            .filter(message_votes::user_id.eq(&user_id))
+            .select(MessageVoteModel::as_select())
+            .first::<MessageVoteModel>(&mut connection)
+            .await
+            .optional()
+            .context("failed to query existing vote")?;
+
+        if let Some(existing_vote) = existing {
+            // Update existing vote
+            let changeset = MessageVoteChangeset {
+                vote_type: vote_type_str,
+                comment: Some(request.comment.as_deref()),
+                updated_at: now.naive_utc(),
+            };
+
+            diesel::update(message_votes::table.filter(message_votes::id.eq(&existing_vote.id)))
+                .set(&changeset)
+                .execute(&mut connection)
+                .await
+                .context("failed to update vote")?;
+
+            Ok(MessageVote {
+                id: existing_vote.id,
+                thread_id: request.thread_id,
+                message_id: request.message_id,
+                user_id,
+                vote_type: request.vote_type,
+                comment: request.comment,
+                created_at: DateTime::from_naive_utc_and_offset(existing_vote.created_at, Utc),
+                updated_at: now,
+            })
+        } else {
+            // Insert new vote
+            let id = Uuid::new_v4().to_string();
+            let new_vote = NewMessageVoteModel {
+                id: &id,
+                thread_id: &request.thread_id,
+                message_id: &request.message_id,
+                user_id: &user_id,
+                vote_type: vote_type_str,
+                comment: request.comment.as_deref(),
+                created_at: now.naive_utc(),
+                updated_at: now.naive_utc(),
+            };
+
+            diesel::insert_into(message_votes::table)
+                .values(&new_vote)
+                .execute(&mut connection)
+                .await
+                .context("failed to insert vote")?;
+
+            Ok(MessageVote {
+                id,
+                thread_id: request.thread_id,
+                message_id: request.message_id,
+                user_id,
+                vote_type: request.vote_type,
+                comment: request.comment,
+                created_at: now,
+                updated_at: now,
+            })
+        }
+    }
+
+    async fn remove_vote(&self, thread_id: &str, message_id: &str) -> Result<()> {
+        let user_id = distri_auth::context::current_user_id()
+            .unwrap_or_else(|| "anonymous".to_string());
+        let mut connection = self.conn().await?;
+
+        diesel::delete(
+            message_votes::table
+                .filter(message_votes::thread_id.eq(thread_id))
+                .filter(message_votes::message_id.eq(message_id))
+                .filter(message_votes::user_id.eq(&user_id)),
+        )
+        .execute(&mut connection)
+        .await
+        .context("failed to remove vote")?;
+
+        Ok(())
+    }
+
+    async fn get_user_vote(
+        &self,
+        thread_id: &str,
+        message_id: &str,
+    ) -> Result<Option<MessageVote>> {
+        let user_id = distri_auth::context::current_user_id()
+            .unwrap_or_else(|| "anonymous".to_string());
+        let mut connection = self.conn().await?;
+
+        let row = message_votes::table
+            .filter(message_votes::thread_id.eq(thread_id))
+            .filter(message_votes::message_id.eq(message_id))
+            .filter(message_votes::user_id.eq(&user_id))
+            .select(MessageVoteModel::as_select())
+            .first::<MessageVoteModel>(&mut connection)
+            .await
+            .optional()
+            .context("failed to query user vote")?;
+
+        Ok(row.map(|r| MessageVote {
+            id: r.id,
+            thread_id: r.thread_id,
+            message_id: r.message_id,
+            user_id: r.user_id,
+            vote_type: match r.vote_type.as_str() {
+                "upvote" => VoteType::Upvote,
+                _ => VoteType::Downvote,
+            },
+            comment: r.comment,
+            created_at: DateTime::from_naive_utc_and_offset(r.created_at, Utc),
+            updated_at: DateTime::from_naive_utc_and_offset(r.updated_at, Utc),
+        }))
+    }
+
+    async fn get_message_vote_summary(
+        &self,
+        thread_id: &str,
+        message_id: &str,
+    ) -> Result<MessageVoteSummary> {
+        let user_id = distri_auth::context::current_user_id()
+            .unwrap_or_else(|| "anonymous".to_string());
+        let mut connection = self.conn().await?;
+
+        // Count upvotes
+        let upvotes: i64 = message_votes::table
+            .filter(message_votes::thread_id.eq(thread_id))
+            .filter(message_votes::message_id.eq(message_id))
+            .filter(message_votes::vote_type.eq("upvote"))
+            .count()
+            .get_result(&mut connection)
+            .await
+            .context("failed to count upvotes")?;
+
+        // Count downvotes
+        let downvotes: i64 = message_votes::table
+            .filter(message_votes::thread_id.eq(thread_id))
+            .filter(message_votes::message_id.eq(message_id))
+            .filter(message_votes::vote_type.eq("downvote"))
+            .count()
+            .get_result(&mut connection)
+            .await
+            .context("failed to count downvotes")?;
+
+        // Get current user's vote
+        let user_vote = message_votes::table
+            .filter(message_votes::thread_id.eq(thread_id))
+            .filter(message_votes::message_id.eq(message_id))
+            .filter(message_votes::user_id.eq(&user_id))
+            .select(message_votes::vote_type)
+            .first::<String>(&mut connection)
+            .await
+            .optional()
+            .context("failed to get user vote")?
+            .map(|vt| match vt.as_str() {
+                "upvote" => VoteType::Upvote,
+                _ => VoteType::Downvote,
+            });
+
+        Ok(MessageVoteSummary {
+            message_id: message_id.to_string(),
+            upvotes,
+            downvotes,
+            user_vote,
+        })
+    }
+
+    async fn get_message_votes(
+        &self,
+        thread_id: &str,
+        message_id: &str,
+    ) -> Result<Vec<MessageVote>> {
+        let mut connection = self.conn().await?;
+
+        let rows = message_votes::table
+            .filter(message_votes::thread_id.eq(thread_id))
+            .filter(message_votes::message_id.eq(message_id))
+            .select(MessageVoteModel::as_select())
+            .load::<MessageVoteModel>(&mut connection)
+            .await
+            .context("failed to query message votes")?;
+
+        Ok(rows
+            .into_iter()
+            .map(|r| MessageVote {
+                id: r.id,
+                thread_id: r.thread_id,
+                message_id: r.message_id,
+                user_id: r.user_id,
+                vote_type: match r.vote_type.as_str() {
+                    "upvote" => VoteType::Upvote,
+                    _ => VoteType::Downvote,
+                },
+                comment: r.comment,
+                created_at: DateTime::from_naive_utc_and_offset(r.created_at, Utc),
+                updated_at: DateTime::from_naive_utc_and_offset(r.updated_at, Utc),
+            })
+            .collect())
     }
 }
 

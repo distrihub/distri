@@ -209,11 +209,41 @@ diesel::table! {
     }
 }
 
+diesel::table! {
+    use diesel::sql_types::*;
+
+    message_reads (id) {
+        id -> Text,
+        thread_id -> Text,
+        message_id -> Text,
+        user_id -> Text,
+        read_at -> Timestamp,
+        created_at -> Timestamp,
+    }
+}
+
+diesel::table! {
+    use diesel::sql_types::*;
+
+    message_votes (id) {
+        id -> Text,
+        thread_id -> Text,
+        message_id -> Text,
+        user_id -> Text,
+        vote_type -> Text,
+        comment -> Nullable<Text>,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+    }
+}
+
 diesel::joinable!(task_messages -> tasks (task_id));
 diesel::joinable!(tasks -> threads (thread_id));
 diesel::joinable!(external_tool_call_events -> external_tool_calls (tool_call_id));
 diesel::joinable!(session_entries -> threads (thread_id));
 diesel::joinable!(scratchpad_entries -> threads (thread_id));
+diesel::joinable!(message_reads -> threads (thread_id));
+diesel::joinable!(message_votes -> threads (thread_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
     agent_configs,
@@ -231,4 +261,6 @@ diesel::allow_tables_to_appear_in_same_query!(
     prompt_templates,
     server_settings,
     secrets,
+    message_reads,
+    message_votes,
 );

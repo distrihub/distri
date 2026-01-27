@@ -13,6 +13,7 @@ use distri_core::{AgentError, MessageFilter, ToolAuthRequestContext};
 use distri_types::configuration::ServerConfig;
 use distri_types::configuration::{AgentConfigWithTools, DistriServerConfig};
 use distri_types::StandardDefinition;
+use distri_types::stores::{VoteMessageRequest, VoteType};
 use distri_types::{ExternalTool, InlineHookResponse, Message, ModelSettings};
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -77,6 +78,27 @@ pub fn distri(cfg: &mut web::ServiceConfig) {
             .route(web::get().to(get_thread_handler))
             .route(web::put().to(update_thread_handler))
             .route(web::delete().to(delete_thread_handler)),
+    )
+    // Message read status endpoints
+    .service(
+        web::resource("/threads/{thread_id}/messages/{message_id}/read")
+            .route(web::post().to(mark_message_read_handler))
+            .route(web::get().to(get_message_read_status_handler)),
+    )
+    .service(
+        web::resource("/threads/{thread_id}/read-status")
+            .route(web::get().to(get_thread_read_status_handler)),
+    )
+    // Message voting endpoints
+    .service(
+        web::resource("/threads/{thread_id}/messages/{message_id}/vote")
+            .route(web::post().to(vote_message_handler))
+            .route(web::delete().to(remove_vote_handler))
+            .route(web::get().to(get_message_vote_summary_handler)),
+    )
+    .service(
+        web::resource("/threads/{thread_id}/messages/{message_id}/votes")
+            .route(web::get().to(get_message_votes_handler)),
     )
     .service(web::resource("/schema/agent").route(web::get().to(get_agent_schema))) // Note: External tools and approvals are now handled via message metadata
     // Workspace file endpoints
@@ -1022,6 +1044,157 @@ async fn delete_thread_handler(
         Ok(_) => HttpResponse::NoContent().finish(),
         Err(e) => HttpResponse::InternalServerError().json(json!({
             "error": format!("Failed to delete thread: {}", e)
+        })),
+    }
+}
+
+// ========== Message Read Status Handlers ==========
+
+async fn mark_message_read_handler(
+    path: web::Path<(String, String)>,
+    executor: web::Data<Arc<AgentOrchestrator>>,
+) -> HttpResponse {
+    let (thread_id, message_id) = path.into_inner();
+    match executor
+        .stores
+        .thread_store
+        .mark_message_read(&thread_id, &message_id)
+        .await
+    {
+        Ok(status) => HttpResponse::Ok().json(status),
+        Err(e) => HttpResponse::InternalServerError().json(json!({
+            "error": format!("Failed to mark message as read: {}", e)
+        })),
+    }
+}
+
+async fn get_message_read_status_handler(
+    path: web::Path<(String, String)>,
+    executor: web::Data<Arc<AgentOrchestrator>>,
+) -> HttpResponse {
+    let (thread_id, message_id) = path.into_inner();
+    match executor
+        .stores
+        .thread_store
+        .get_message_read_status(&thread_id, &message_id)
+        .await
+    {
+        Ok(Some(status)) => HttpResponse::Ok().json(status),
+        Ok(None) => HttpResponse::NotFound().json(json!({
+            "error": "Message not marked as read"
+        })),
+        Err(e) => HttpResponse::InternalServerError().json(json!({
+            "error": format!("Failed to get read status: {}", e)
+        })),
+    }
+}
+
+async fn get_thread_read_status_handler(
+    path: web::Path<String>,
+    executor: web::Data<Arc<AgentOrchestrator>>,
+) -> HttpResponse {
+    let thread_id = path.into_inner();
+    match executor
+        .stores
+        .thread_store
+        .get_thread_read_status(&thread_id)
+        .await
+    {
+        Ok(statuses) => HttpResponse::Ok().json(statuses),
+        Err(e) => HttpResponse::InternalServerError().json(json!({
+            "error": format!("Failed to get thread read status: {}", e)
+        })),
+    }
+}
+
+// ========== Message Voting Handlers ==========
+
+#[derive(Debug, Deserialize)]
+struct VoteRequest {
+    vote_type: VoteType,
+    comment: Option<String>,
+}
+
+async fn vote_message_handler(
+    path: web::Path<(String, String)>,
+    request: web::Json<VoteRequest>,
+    executor: web::Data<Arc<AgentOrchestrator>>,
+) -> HttpResponse {
+    let (thread_id, message_id) = path.into_inner();
+    let vote_request = VoteMessageRequest {
+        thread_id,
+        message_id,
+        vote_type: request.vote_type,
+        comment: request.comment.clone(),
+    };
+
+    match executor.stores.thread_store.vote_message(vote_request).await {
+        Ok(vote) => HttpResponse::Ok().json(vote),
+        Err(e) => {
+            let error_msg = e.to_string();
+            if error_msg.contains("require a comment") {
+                HttpResponse::BadRequest().json(json!({
+                    "error": error_msg
+                }))
+            } else {
+                HttpResponse::InternalServerError().json(json!({
+                    "error": format!("Failed to vote on message: {}", e)
+                }))
+            }
+        }
+    }
+}
+
+async fn remove_vote_handler(
+    path: web::Path<(String, String)>,
+    executor: web::Data<Arc<AgentOrchestrator>>,
+) -> HttpResponse {
+    let (thread_id, message_id) = path.into_inner();
+    match executor
+        .stores
+        .thread_store
+        .remove_vote(&thread_id, &message_id)
+        .await
+    {
+        Ok(()) => HttpResponse::NoContent().finish(),
+        Err(e) => HttpResponse::InternalServerError().json(json!({
+            "error": format!("Failed to remove vote: {}", e)
+        })),
+    }
+}
+
+async fn get_message_vote_summary_handler(
+    path: web::Path<(String, String)>,
+    executor: web::Data<Arc<AgentOrchestrator>>,
+) -> HttpResponse {
+    let (thread_id, message_id) = path.into_inner();
+    match executor
+        .stores
+        .thread_store
+        .get_message_vote_summary(&thread_id, &message_id)
+        .await
+    {
+        Ok(summary) => HttpResponse::Ok().json(summary),
+        Err(e) => HttpResponse::InternalServerError().json(json!({
+            "error": format!("Failed to get vote summary: {}", e)
+        })),
+    }
+}
+
+async fn get_message_votes_handler(
+    path: web::Path<(String, String)>,
+    executor: web::Data<Arc<AgentOrchestrator>>,
+) -> HttpResponse {
+    let (thread_id, message_id) = path.into_inner();
+    match executor
+        .stores
+        .thread_store
+        .get_message_votes(&thread_id, &message_id)
+        .await
+    {
+        Ok(votes) => HttpResponse::Ok().json(votes),
+        Err(e) => HttpResponse::InternalServerError().json(json!({
+            "error": format!("Failed to get message votes: {}", e)
         })),
     }
 }
