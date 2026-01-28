@@ -154,6 +154,11 @@ fn to_task(model: TaskModel) -> Task {
 }
 
 fn to_thread(model: ThreadModel) -> Thread {
+    let user_id = if model.user_id.is_empty() {
+        None
+    } else {
+        Some(model.user_id)
+    };
     Thread {
         id: model.id,
         title: model.title,
@@ -164,7 +169,7 @@ fn to_thread(model: ThreadModel) -> Thread {
         last_message: model.last_message,
         metadata: metadata_from_str(&model.metadata),
         attributes: serde_json::from_str(&model.attributes).unwrap_or(serde_json::Value::Null),
-        user_id: None,
+        user_id,
         external_id: model.external_id,
     }
 }
@@ -724,6 +729,7 @@ where
         let created_at = to_naive(thread.created_at);
         let updated_at = to_naive(thread.updated_at);
 
+        let user_id = thread.user_id.as_deref().unwrap_or("");
         let new_model = NewThreadModel {
             id: &thread.id,
             agent_id: &thread.agent_id,
@@ -735,6 +741,7 @@ where
             metadata: &metadata_value,
             attributes: &thread.attributes.to_string(),
             external_id: thread.external_id.as_deref(),
+            user_id,
         };
 
         let mut connection = self
@@ -773,6 +780,8 @@ where
         );
         diesel::insert_into(threads::table)
             .values(&new_model)
+            .on_conflict(threads::id)
+            .do_nothing()
             .execute(&mut connection)
             .await
             .map_err(|e| {

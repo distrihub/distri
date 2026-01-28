@@ -31,6 +31,7 @@ diesel::table! {
         metadata -> Jsonb,
         attributes -> Jsonb,
         external_id -> Nullable<Text>,
+        user_id -> Text,
     }
 }
 

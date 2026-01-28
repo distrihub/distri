@@ -8,6 +8,7 @@ use distri_a2a::{
 use distri_types::{
     ExternalTool, LLmContext, LlmDefinition, Message, MessageRole, TokenResponse, ToolCall,
     a2a_converters::MessageMetadata,
+    prompt::PromptSection,
 };
 use distri_types::{StandardDefinition, ToolResponse, configuration::AgentConfigWithTools};
 use serde::{Deserialize, Serialize};
@@ -644,7 +645,7 @@ impl Distri {
         agent_id: &str,
         messages: &[Message],
     ) -> Result<Vec<Message>, ClientError> {
-        let params = build_params(messages, true)?;
+        let params = build_params(messages, true, None)?;
         let rpc = JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
             id: Some(serde_json::json!(uuid::Uuid::new_v4().to_string())),
@@ -705,7 +706,83 @@ impl Distri {
         H: FnMut(StreamItem) -> Fut,
         Fut: std::future::Future<Output = ()> + Send,
     {
-        let params = build_params(messages, false)
+        let params = build_params(messages, false, None)
+            .map_err(|e| StreamError::InvalidResponse(e.to_string()))?;
+        self.stream
+            .stream_agent(agent_id, params, move |evt| on_event(evt))
+            .await
+    }
+
+    /// Invoke an agent synchronously with additional options (dynamic_sections, dynamic_values, etc.).
+    pub async fn invoke_with_options(
+        &self,
+        agent_id: &str,
+        messages: &[Message],
+        options: InvokeOptions,
+    ) -> Result<Vec<Message>, ClientError> {
+        let params = build_params(messages, true, Some(&options))?;
+        let rpc = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::json!(uuid::Uuid::new_v4().to_string())),
+            method: "message/send".to_string(),
+            params: serde_json::to_value(params)?,
+        };
+
+        let url = format!("{}/agents/{}", self.base_url, agent_id);
+        let resp = self
+            .http
+            .post(url)
+            .json(&rpc)
+            .send()
+            .await?
+            .error_for_status()?;
+
+        let body: serde_json::Value = resp.json().await?;
+        if let Some(err) = body
+            .get("error")
+            .and_then(|e| e.get("message"))
+            .and_then(|m| m.as_str())
+        {
+            return Err(ClientError::InvalidResponse(err.to_string()));
+        }
+        let Some(result) = body.get("result").cloned() else {
+            return Ok(Vec::new());
+        };
+
+        let kinds: Vec<MessageKind> =
+            if let Ok(single) = serde_json::from_value::<MessageKind>(result.clone()) {
+                vec![single]
+            } else if let Ok(list) = serde_json::from_value::<Vec<MessageKind>>(result) {
+                list
+            } else {
+                return Err(ClientError::InvalidResponse(
+                    "Unexpected response format from message/send".into(),
+                ));
+            };
+
+        kinds
+            .into_iter()
+            .filter_map(|k| match convert_kind(k) {
+                Ok(Some(msg)) => Some(Ok(msg)),
+                Ok(None) => None,
+                Err(e) => Some(Err(e)),
+            })
+            .collect()
+    }
+
+    /// Stream an agent with additional options (dynamic_sections, dynamic_values, etc.).
+    pub async fn invoke_stream_with_options<H, Fut>(
+        &self,
+        agent_id: &str,
+        messages: &[Message],
+        options: InvokeOptions,
+        mut on_event: H,
+    ) -> Result<(), StreamError>
+    where
+        H: FnMut(StreamItem) -> Fut,
+        Fut: std::future::Future<Output = ()> + Send,
+    {
+        let params = build_params(messages, false, Some(&options))
             .map_err(|e| StreamError::InvalidResponse(e.to_string()))?;
         self.stream
             .stream_agent(agent_id, params, move |evt| on_event(evt))
@@ -1170,7 +1247,51 @@ pub struct ArtifactSaveResponse {
     pub size: usize,
 }
 
-fn build_params(messages: &[Message], blocking: bool) -> Result<MessageSendParams, ClientError> {
+/// Options for customizing agent invocations with dynamic template data.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct InvokeOptions {
+    /// Dynamic prompt sections injected into the template per-call.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dynamic_sections: Option<Vec<PromptSection>>,
+
+    /// Dynamic key-value pairs available in templates per-call.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dynamic_values: Option<HashMap<String, serde_json::Value>>,
+
+    /// Additional metadata to merge into the request metadata.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<serde_json::Value>,
+}
+
+impl InvokeOptions {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set dynamic prompt sections.
+    pub fn with_dynamic_sections(mut self, sections: Vec<PromptSection>) -> Self {
+        self.dynamic_sections = Some(sections);
+        self
+    }
+
+    /// Set dynamic key-value pairs.
+    pub fn with_dynamic_values(mut self, values: HashMap<String, serde_json::Value>) -> Self {
+        self.dynamic_values = Some(values);
+        self
+    }
+
+    /// Set additional metadata.
+    pub fn with_metadata(mut self, metadata: serde_json::Value) -> Self {
+        self.metadata = Some(metadata);
+        self
+    }
+}
+
+fn build_params(
+    messages: &[Message],
+    blocking: bool,
+    options: Option<&InvokeOptions>,
+) -> Result<MessageSendParams, ClientError> {
     let last = messages
         .last()
         .ok_or_else(|| ClientError::InvalidResponse("no messages provided".into()))?;
@@ -1205,10 +1326,36 @@ fn build_params(messages: &[Message], blocking: bool) -> Result<MessageSendParam
         None
     };
 
+    // Build metadata from InvokeOptions if provided
+    let metadata = options.and_then(|opts| {
+        let mut meta = opts
+            .metadata
+            .as_ref()
+            .and_then(|m| m.as_object().cloned())
+            .unwrap_or_default();
+
+        if let Some(sections) = &opts.dynamic_sections {
+            if let Ok(val) = serde_json::to_value(sections) {
+                meta.insert("dynamic_sections".to_string(), val);
+            }
+        }
+        if let Some(values) = &opts.dynamic_values {
+            if let Ok(val) = serde_json::to_value(values) {
+                meta.insert("dynamic_values".to_string(), val);
+            }
+        }
+
+        if meta.is_empty() {
+            None
+        } else {
+            Some(serde_json::Value::Object(meta))
+        }
+    });
+
     Ok(MessageSendParams {
         message: a2a_message,
         configuration,
-        metadata: None,
+        metadata,
         browser_session_id: None,
     })
 }

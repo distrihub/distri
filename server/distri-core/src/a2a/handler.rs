@@ -162,6 +162,18 @@ impl A2AHandler {
             .map(|tool| Arc::new(tool) as Arc<dyn crate::tools::Tool>)
             .collect::<Vec<_>>();
 
+        // Build initial hook_prompt_state from metadata dynamic_sections/dynamic_values
+        let hook_prompt_state = {
+            let mut state = crate::agent::context::HookPromptState::default();
+            if let Some(sections) = metadata.dynamic_sections {
+                state.dynamic_sections = sections;
+            }
+            if let Some(values) = metadata.dynamic_values {
+                state.dynamic_values = values;
+            }
+            Arc::new(RwLock::new(state))
+        };
+
         let context = ExecutorContext {
             thread_id,
             task_id: params
@@ -178,6 +190,7 @@ impl A2AHandler {
             tool_metadata: metadata.tool_metadata,
             orchestrator: Some(orchestrator.clone()),
             additional_attributes: Some(additional_attributes),
+            hook_prompt_state,
             ..Default::default()
         };
 

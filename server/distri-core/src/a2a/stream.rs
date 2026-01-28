@@ -306,6 +306,23 @@ pub async fn handle_message_send_streaming_sse(
             exec_ctx.tool_metadata = Some(tool_meta);
         }
 
+        // Merge dynamic_sections and dynamic_values from metadata into hook_prompt_state
+        {
+            let has_sections = metadata_struct.dynamic_sections.as_ref().map_or(false, |s| !s.is_empty());
+            let has_values = metadata_struct.dynamic_values.as_ref().map_or(false, |v| !v.is_empty());
+            if has_sections || has_values {
+                let mut hook_state = exec_ctx.hook_prompt_state.write().await;
+                if let Some(sections) = metadata_struct.dynamic_sections.clone() {
+                    hook_state.dynamic_sections = sections;
+                }
+                if let Some(values) = metadata_struct.dynamic_values.clone() {
+                    for (k, v) in values {
+                        hook_state.dynamic_values.insert(k, v);
+                    }
+                }
+            }
+        }
+
         let mut definition_overrides: Option<DefinitionOverrides> = None;
         if let Some(overrides) = metadata_struct.definition_overrides.clone() {
             definition_overrides = Some(overrides);
