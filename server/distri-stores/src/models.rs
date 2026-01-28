@@ -40,6 +40,7 @@ pub struct ThreadModel {
     pub metadata: String,
     pub attributes: String,
     pub external_id: Option<String>,
+    pub user_id: String,
 }
 
 #[derive(Debug, Clone, Insertable)]
@@ -55,6 +56,7 @@ pub struct NewThreadModel<'a> {
     pub metadata: &'a str,
     pub attributes: &'a str,
     pub external_id: Option<&'a str>,
+    pub user_id: &'a str,
 }
 
 #[derive(Debug, Clone, AsChangeset)]
