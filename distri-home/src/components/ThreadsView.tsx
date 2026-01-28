@@ -1,9 +1,10 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useThreads, useAgentsByUsage } from '@distri/react';
 import { useDistriHomeNavigate } from '../DistriHomeProvider';
 import {
   AlertTriangle,
   ArrowRight,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Filter,
@@ -14,6 +15,12 @@ import {
   Plus,
   ExternalLink,
 } from 'lucide-react';
+
+interface AgentUsageItem {
+  agent_id: string;
+  agent_name: string;
+  thread_count: number;
+}
 
 interface Thread {
   id: string;
@@ -27,6 +34,154 @@ interface Thread {
   updated_at?: string;
   message_count?: number;
   tags?: string[];
+}
+
+function AgentSearchDropdown({
+  agents,
+  selectedAgentId,
+  onSelect,
+  search,
+  onSearchChange,
+  allowAll,
+}: {
+  agents: AgentUsageItem[];
+  selectedAgentId: string;
+  onSelect: (agentId: string) => void;
+  search: string;
+  onSearchChange: (search: string) => void;
+  allowAll?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const selectedAgent = agents.find((a) => a.agent_id === selectedAgentId);
+  const displayName = selectedAgent
+    ? selectedAgent.agent_name || selectedAgent.agent_id
+    : allowAll
+      ? 'All agents'
+      : 'Select agent';
+
+  // Filter agents locally for immediate feedback
+  const filteredAgents = useMemo(() => {
+    if (!search) return agents;
+    const lower = search.toLowerCase();
+    return agents.filter(
+      (a) =>
+        a.agent_name.toLowerCase().includes(lower) ||
+        a.agent_id.toLowerCase().includes(lower)
+    );
+  }, [agents, search]);
+
+  // Close on click outside
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    if (open) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => document.removeEventListener('mousedown', handleClickOutside);
+    }
+  }, [open]);
+
+  // Focus search input when opening
+  useEffect(() => {
+    if (open) {
+      setTimeout(() => inputRef.current?.focus(), 0);
+    } else {
+      onSearchChange('');
+    }
+  }, [open, onSearchChange]);
+
+  return (
+    <div>
+      <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+        Agent
+      </label>
+      <div ref={containerRef} className="relative">
+        <button
+          type="button"
+          onClick={() => setOpen(!open)}
+          className="flex h-10 w-full items-center justify-between rounded-md border border-border/70 bg-background px-3 text-sm text-foreground"
+        >
+          <span className="truncate">{displayName}</span>
+          <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        </button>
+
+        {open && (
+          <div className="absolute left-0 top-full z-50 mt-1 w-full rounded-md border border-border bg-card shadow-xl">
+            {/* Search input */}
+            <div className="flex items-center border-b border-border/60 px-2">
+              <Search className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              <input
+                ref={inputRef}
+                type="text"
+                value={search}
+                onChange={(e) => onSearchChange(e.target.value)}
+                placeholder="Search agents..."
+                className="h-9 w-full bg-transparent px-2 text-sm text-foreground placeholder-muted-foreground focus:outline-none"
+              />
+              {search && (
+                <button
+                  type="button"
+                  onClick={() => onSearchChange('')}
+                  className="text-muted-foreground hover:text-foreground"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+
+            {/* Agent list */}
+            <div className="max-h-56 overflow-y-auto py-1">
+              {allowAll && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onSelect('');
+                    setOpen(false);
+                  }}
+                  className={`flex w-full items-center px-3 py-2 text-left text-sm transition hover:bg-muted/40 ${
+                    !selectedAgentId ? 'bg-muted/40 font-medium text-foreground' : 'text-muted-foreground'
+                  }`}
+                >
+                  All agents
+                </button>
+              )}
+              {filteredAgents.length === 0 ? (
+                <div className="px-3 py-2 text-sm text-muted-foreground">No agents found</div>
+              ) : (
+                filteredAgents.map((agent) => (
+                  <button
+                    key={agent.agent_id}
+                    type="button"
+                    onClick={() => {
+                      onSelect(agent.agent_id);
+                      setOpen(false);
+                    }}
+                    className={`flex w-full items-center justify-between px-3 py-2 text-left text-sm transition hover:bg-muted/40 ${
+                      agent.agent_id === selectedAgentId
+                        ? 'bg-muted/40 font-medium text-foreground'
+                        : 'text-foreground'
+                    }`}
+                  >
+                    <span className="truncate">{agent.agent_name}</span>
+                    {agent.thread_count > 0 && (
+                      <span className="ml-2 shrink-0 text-xs text-muted-foreground">
+                        {agent.thread_count} threads
+                      </span>
+                    )}
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 export interface ThreadsViewProps {
@@ -85,7 +240,7 @@ export function ThreadsView({ className, initialAgentId, initialExternalId }: Th
     },
   });
 
-  const { agents: agentsByUsage } = useAgentsByUsage();
+  const { agents: agentsByUsage, search: agentSearch, setSearch: setAgentSearch } = useAgentsByUsage();
 
   const threads = rawThreads as unknown as Thread[];
 
@@ -527,24 +682,15 @@ export function ThreadsView({ className, initialAgentId, initialExternalId }: Th
             </div>
 
             <div className="space-y-4">
-              {/* Agent dropdown */}
-              <div>
-                <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  Agent
-                </label>
-                <select
-                  value={dialogAgentId}
-                  onChange={(e) => setDialogAgentId(e.target.value)}
-                  className="h-10 w-full rounded-md border border-border/70 bg-background px-3 text-sm text-foreground"
-                >
-                  <option value="">All agents</option>
-                  {agentsByUsage.map((agent) => (
-                    <option key={agent.agent_id} value={agent.agent_id}>
-                      {agent.agent_name} ({agent.thread_count} threads)
-                    </option>
-                  ))}
-                </select>
-              </div>
+              {/* Agent searchable dropdown */}
+              <AgentSearchDropdown
+                agents={agentsByUsage}
+                selectedAgentId={dialogAgentId}
+                onSelect={setDialogAgentId}
+                search={agentSearch}
+                onSearchChange={setAgentSearch}
+                allowAll
+              />
 
               {/* External ID */}
               <div>

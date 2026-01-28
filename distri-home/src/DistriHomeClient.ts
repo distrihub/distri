@@ -58,7 +58,7 @@ export interface HomeStats {
   most_active_agent?: {
     id: string;
     name: string;
-    count: number;
+    thread_count: number;
   };
   recently_used_agents?: RecentlyUsedAgent[];
   custom_metrics?: Record<string, CustomMetric>;
@@ -119,10 +119,18 @@ export class DistriHomeClient {
   }
 
   /**
-   * Get agents sorted by usage (thread count)
+   * Get agents sorted by usage (thread count).
+   * Includes all registered agents, even those with 0 threads.
+   * Optionally filter by name with search parameter.
    */
-  async getAgentsByUsage(): Promise<AgentUsageInfo[]> {
-    const response = await this.client.fetch('/threads/agents');
+  async getAgentsByUsage(options?: { search?: string }): Promise<AgentUsageInfo[]> {
+    const params = new URLSearchParams();
+    if (options?.search) {
+      params.set('search', options.search);
+    }
+    const query = params.toString();
+    const url = query ? `/threads/agents?${query}` : '/threads/agents';
+    const response = await this.client.fetch(url);
 
     if (!response.ok) {
       throw new Error(`Failed to fetch agents by usage: ${response.statusText}`);

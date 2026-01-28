@@ -1087,10 +1087,11 @@ impl AgentOrchestrator {
 
     pub async fn get_agents_by_usage(
         &self,
+        search: Option<&str>,
     ) -> Result<Vec<distri_types::stores::AgentUsageInfo>, AgentError> {
         self.stores
             .thread_store
-            .get_agents_by_usage()
+            .get_agents_by_usage(search)
             .await
             .map_err(|e| AgentError::Session(e.to_string()))
     }

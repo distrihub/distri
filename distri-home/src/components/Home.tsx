@@ -75,7 +75,7 @@ export function Home({ onNewAgent, renderNewAgentHelp, className }: HomeProps) {
   const avgTimeLabel =
     statsLoading || stats?.avg_run_time_ms == null
       ? '—'
-      : `${Math.round((stats.avg_run_time_ms / 1000) * 10) / 10}s`;
+      : `${(stats.avg_run_time_ms / 1000).toFixed(2)}s`;
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -188,7 +188,7 @@ export function Home({ onNewAgent, renderNewAgentHelp, className }: HomeProps) {
                   )}
                 </div>
                 <div className="mt-2 text-xs text-muted-foreground">
-                  {statsLoading || statsError ? 'Unavailable' : `${mostActiveAgent?.count ?? 0} threads`}
+                  {statsLoading || statsError ? 'Unavailable' : `${mostActiveAgent?.thread_count ?? 0} threads`}
                 </div>
               </div>
               {/* Custom metrics from backend */}

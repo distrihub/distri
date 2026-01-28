@@ -918,7 +918,7 @@ where
         })
     }
 
-    async fn get_agents_by_usage(&self) -> Result<Vec<AgentUsageInfo>> {
+    async fn get_agents_by_usage(&self, search: Option<&str>) -> Result<Vec<AgentUsageInfo>> {
         let mut connection = self.conn().await?;
 
         // Get tenant context for filtering
@@ -936,35 +936,116 @@ where
             thread_count: i64,
         }
 
+        // Build search pattern for ILIKE filtering
+        let search_pattern = search
+            .filter(|s| !s.is_empty())
+            .map(|s| format!("%{}%", s.replace('%', "\\%").replace('_', "\\_")));
+
         let results: Vec<AgentCount> = if let Some(ws_id) = workspace_id {
-            // Filter by workspace
-            diesel::sql_query(
-                "SELECT t.agent_id, COALESCE(a.name, t.agent_id) as agent_name, COUNT(*) as thread_count
-                 FROM threads t
-                 LEFT JOIN agent_configs a ON t.agent_id = a.name AND a.workspace_id = $2::uuid
-                 WHERE t.user_id = $1::uuid AND t.workspace_id = $2::uuid
-                 GROUP BY t.agent_id, a.name
-                 ORDER BY thread_count DESC",
-            )
-            .bind::<diesel::sql_types::Text, _>(user_id.to_string())
-            .bind::<diesel::sql_types::Text, _>(ws_id.to_string())
-            .get_results(&mut connection)
-            .await
-            .context("failed to get agents by usage")?
+            // With workspace: UNION used agents (from threads) with unused agents (from agent_configs)
+            let sql = if search_pattern.is_some() {
+                "SELECT agent_id, agent_name, thread_count FROM (
+                    SELECT t.agent_id, COALESCE(a.name, t.agent_id) as agent_name, COUNT(*) as thread_count
+                    FROM threads t
+                    LEFT JOIN agent_configs a ON t.agent_id = a.name AND a.workspace_id = $2::uuid
+                    WHERE t.user_id = $1::uuid AND t.workspace_id = $2::uuid
+                    GROUP BY t.agent_id, a.name
+                    UNION ALL
+                    SELECT a.name as agent_id, a.name as agent_name, 0 as thread_count
+                    FROM agent_configs a
+                    WHERE a.workspace_id = $2::uuid
+                      AND a.name NOT IN (
+                          SELECT DISTINCT agent_id FROM threads WHERE user_id = $1::uuid AND workspace_id = $2::uuid
+                      )
+                ) combined
+                WHERE agent_name ILIKE $3
+                ORDER BY thread_count DESC, agent_name ASC"
+            } else {
+                "SELECT agent_id, agent_name, thread_count FROM (
+                    SELECT t.agent_id, COALESCE(a.name, t.agent_id) as agent_name, COUNT(*) as thread_count
+                    FROM threads t
+                    LEFT JOIN agent_configs a ON t.agent_id = a.name AND a.workspace_id = $2::uuid
+                    WHERE t.user_id = $1::uuid AND t.workspace_id = $2::uuid
+                    GROUP BY t.agent_id, a.name
+                    UNION ALL
+                    SELECT a.name as agent_id, a.name as agent_name, 0 as thread_count
+                    FROM agent_configs a
+                    WHERE a.workspace_id = $2::uuid
+                      AND a.name NOT IN (
+                          SELECT DISTINCT agent_id FROM threads WHERE user_id = $1::uuid AND workspace_id = $2::uuid
+                      )
+                ) combined
+                ORDER BY thread_count DESC, agent_name ASC"
+            };
+
+            let query = diesel::sql_query(sql)
+                .bind::<diesel::sql_types::Text, _>(user_id.to_string())
+                .bind::<diesel::sql_types::Text, _>(ws_id.to_string());
+
+            if let Some(ref pattern) = search_pattern {
+                query
+                    .bind::<diesel::sql_types::Text, _>(pattern.clone())
+                    .get_results(&mut connection)
+                    .await
+                    .context("failed to get agents by usage")?
+            } else {
+                query
+                    .get_results(&mut connection)
+                    .await
+                    .context("failed to get agents by usage")?
+            }
         } else {
-            // Filter by user only
-            diesel::sql_query(
-                "SELECT t.agent_id, COALESCE(a.name, t.agent_id) as agent_name, COUNT(*) as thread_count
-                 FROM threads t
-                 LEFT JOIN agent_configs a ON t.agent_id = a.name AND a.owner_user_id = $1::uuid AND a.workspace_id IS NULL
-                 WHERE t.user_id = $1::uuid AND t.workspace_id IS NULL
-                 GROUP BY t.agent_id, a.name
-                 ORDER BY thread_count DESC",
-            )
-            .bind::<diesel::sql_types::Text, _>(user_id.to_string())
-            .get_results(&mut connection)
-            .await
-            .context("failed to get agents by usage")?
+            // Without workspace: UNION used agents with unused agents
+            let sql = if search_pattern.is_some() {
+                "SELECT agent_id, agent_name, thread_count FROM (
+                    SELECT t.agent_id, COALESCE(a.name, t.agent_id) as agent_name, COUNT(*) as thread_count
+                    FROM threads t
+                    LEFT JOIN agent_configs a ON t.agent_id = a.name AND a.owner_user_id = $1::uuid AND a.workspace_id IS NULL
+                    WHERE t.user_id = $1::uuid AND t.workspace_id IS NULL
+                    GROUP BY t.agent_id, a.name
+                    UNION ALL
+                    SELECT a.name as agent_id, a.name as agent_name, 0 as thread_count
+                    FROM agent_configs a
+                    WHERE a.owner_user_id = $1::uuid AND a.workspace_id IS NULL
+                      AND a.name NOT IN (
+                          SELECT DISTINCT agent_id FROM threads WHERE user_id = $1::uuid AND workspace_id IS NULL
+                      )
+                ) combined
+                WHERE agent_name ILIKE $2
+                ORDER BY thread_count DESC, agent_name ASC"
+            } else {
+                "SELECT agent_id, agent_name, thread_count FROM (
+                    SELECT t.agent_id, COALESCE(a.name, t.agent_id) as agent_name, COUNT(*) as thread_count
+                    FROM threads t
+                    LEFT JOIN agent_configs a ON t.agent_id = a.name AND a.owner_user_id = $1::uuid AND a.workspace_id IS NULL
+                    WHERE t.user_id = $1::uuid AND t.workspace_id IS NULL
+                    GROUP BY t.agent_id, a.name
+                    UNION ALL
+                    SELECT a.name as agent_id, a.name as agent_name, 0 as thread_count
+                    FROM agent_configs a
+                    WHERE a.owner_user_id = $1::uuid AND a.workspace_id IS NULL
+                      AND a.name NOT IN (
+                          SELECT DISTINCT agent_id FROM threads WHERE user_id = $1::uuid AND workspace_id IS NULL
+                      )
+                ) combined
+                ORDER BY thread_count DESC, agent_name ASC"
+            };
+
+            let query = diesel::sql_query(sql)
+                .bind::<diesel::sql_types::Text, _>(user_id.to_string());
+
+            if let Some(ref pattern) = search_pattern {
+                query
+                    .bind::<diesel::sql_types::Text, _>(pattern.clone())
+                    .get_results(&mut connection)
+                    .await
+                    .context("failed to get agents by usage")?
+            } else {
+                query
+                    .get_results(&mut connection)
+                    .await
+                    .context("failed to get agents by usage")?
+            }
         };
 
         Ok(results
@@ -1169,7 +1250,8 @@ where
             thread_count: a.thread_count,
         });
 
-        // Calculate average run time from tasks
+        // Calculate average run time from run_started → run_finished/run_error events
+        // This measures actual agent run duration, not task creation-to-completion gaps
         #[derive(QueryableByName)]
         struct AvgResult {
             #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Double>)]
@@ -1177,7 +1259,16 @@ where
         }
 
         let avg_result: Option<AvgResult> = diesel::sql_query(
-            "SELECT AVG(updated_at - created_at) as avg_duration FROM tasks WHERE status = 'completed'",
+            "SELECT AVG(run_end - run_start) as avg_duration
+             FROM (
+                 SELECT task_id,
+                        MAX(CASE WHEN json_extract(payload, '$.event.type') = 'run_started' THEN created_at END) as run_start,
+                        MAX(CASE WHEN json_extract(payload, '$.event.type') IN ('run_finished', 'run_error') THEN created_at END) as run_end
+                 FROM task_messages
+                 WHERE kind = 'event'
+                 GROUP BY task_id
+             ) runs
+             WHERE run_start IS NOT NULL AND run_end IS NOT NULL AND run_end > run_start",
         )
         .get_result(&mut connection)
         .await
