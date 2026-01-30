@@ -328,6 +328,7 @@ impl WorkflowAgent {
                     role: distri_types::MessageRole::User,
                     created_at: chrono::Utc::now().timestamp_millis(),
                     agent_id: None,
+                    parts_metadata: None,
                 };
 
                 // Execute agent

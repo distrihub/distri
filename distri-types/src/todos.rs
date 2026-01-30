@@ -15,6 +15,12 @@ pub enum TodoStatus {
     Done,
 }
 
+impl Default for TodoStatus {
+    fn default() -> Self {
+        TodoStatus::Open
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TodoItem {
     pub id: String,
@@ -155,7 +161,9 @@ pub type SharedTodoList = Arc<tokio::sync::RwLock<TodoList>>;
 /// Simple todo structure for bulk operations (similar to deepagents)
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SimpleTodo {
+    #[serde(alias = "title", alias = "text", alias = "description")]
     pub content: String,
+    #[serde(default)]
     pub status: TodoStatus,
 }
 

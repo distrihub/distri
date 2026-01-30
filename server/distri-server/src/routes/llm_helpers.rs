@@ -182,6 +182,7 @@ pub async fn load_agent_system_message(
             parts: vec![Part::Text(instructions)],
             created_at: chrono::Utc::now().timestamp_millis(),
             agent_id: None,
+            parts_metadata: None,
         }
     })
 }

@@ -1812,7 +1812,22 @@ where
 
     async fn add_message_to_task(&self, task_id: &str, message: &Message) -> Result<()> {
         let mut connection = self.conn().await?;
-        let payload = serde_json::to_string(message).context("failed to serialize task message")?;
+
+        // Filter parts based on parts_metadata before saving
+        // Parts with save: false will be excluded from persistence
+        let message_to_save = message.filter_for_save(message.parts_metadata.as_ref());
+
+        // Skip saving if all parts were filtered out
+        if message_to_save.parts.is_empty() {
+            tracing::debug!(
+                "Skipping message save - all parts filtered out for message {}",
+                message.id
+            );
+            return Ok(());
+        }
+
+        let payload =
+            serde_json::to_string(&message_to_save).context("failed to serialize task message")?;
 
         let new_message = NewTaskMessageModel {
             task_id,

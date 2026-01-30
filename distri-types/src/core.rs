@@ -167,6 +167,25 @@ pub struct AdditionalParts {
     pub include_artifacts: bool,
 }
 
+/// Metadata for individual message parts.
+/// Used to control part behavior such as persistence.
+#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, Default)]
+pub struct PartMetadata {
+    /// If false, this part will be filtered out before saving to the database.
+    /// Useful for ephemeral/dynamic content that should only be sent in the current turn.
+    /// Defaults to true.
+    #[serde(default = "default_save")]
+    pub save: bool,
+}
+
+fn default_save() -> bool {
+    true
+}
+
+/// Mapping of part indices to their metadata.
+/// Used in message metadata to specify per-part behavior.
+pub type PartsMetadata = std::collections::HashMap<usize, PartMetadata>;
+
 #[derive(Debug, Serialize, Deserialize, Clone, JsonSchema)]
 pub struct Message {
     pub id: String,
@@ -177,6 +196,11 @@ pub struct Message {
     /// The ID of the agent that generated this message (for Assistant messages)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent_id: Option<String>,
+    /// Per-part metadata used to control part behavior during save.
+    /// Parts with `save: false` will be filtered out before saving to the database.
+    /// This field is used for processing only and is not persisted.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub parts_metadata: Option<PartsMetadata>,
 }
 
 impl Default for Message {
@@ -188,6 +212,7 @@ impl Default for Message {
             parts: vec![],
             created_at: chrono::Utc::now().timestamp_millis(),
             agent_id: None,
+            parts_metadata: None,
         }
     }
 }
@@ -281,6 +306,39 @@ impl Message {
         self.parts
             .iter()
             .any(|part| matches!(part, Part::ToolResult(_)))
+    }
+
+    /// Filter parts based on metadata, returning a new Message with only saveable parts.
+    /// Parts with `save: false` in the parts_metadata will be filtered out.
+    /// If parts_metadata is None, all parts are included.
+    pub fn filter_for_save(&self, parts_metadata: Option<&PartsMetadata>) -> Self {
+        let parts_metadata = match parts_metadata {
+            Some(meta) => meta,
+            None => return self.clone(),
+        };
+
+        let filtered_parts: Vec<Part> = self
+            .parts
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| {
+                parts_metadata
+                    .get(index)
+                    .map(|meta| meta.save)
+                    .unwrap_or(true) // Default to save=true if not specified
+            })
+            .map(|(_, part)| part.clone())
+            .collect();
+
+        Self {
+            id: self.id.clone(),
+            name: self.name.clone(),
+            role: self.role.clone(),
+            parts: filtered_parts,
+            created_at: self.created_at,
+            agent_id: self.agent_id.clone(),
+            parts_metadata: None, // Don't persist parts_metadata
+        }
     }
 }
 

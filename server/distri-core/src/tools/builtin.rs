@@ -442,6 +442,7 @@ impl ExecutorContextTool for AgentTool {
             role: MessageRole::User,
             created_at: chrono::Utc::now().timestamp_millis(),
             agent_id: None,
+            parts_metadata: None,
         };
 
         // Use regular execute instead of execute_stream to avoid circular event handling
