@@ -161,7 +161,6 @@ pub type SharedTodoList = Arc<tokio::sync::RwLock<TodoList>>;
 /// Simple todo structure for bulk operations (similar to deepagents)
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SimpleTodo {
-    #[serde(alias = "title", alias = "text", alias = "description")]
     pub content: String,
     #[serde(default)]
     pub status: TodoStatus,
