@@ -1031,6 +1031,7 @@ impl AgentOrchestrator {
             role: distri_types::MessageRole::User,
             created_at: chrono::Utc::now().timestamp_millis(),
             agent_id: None,
+            parts_metadata: None,
         };
         agent.invoke_stream(message, context).await
     }
@@ -1087,10 +1088,11 @@ impl AgentOrchestrator {
 
     pub async fn get_agents_by_usage(
         &self,
+        search: Option<&str>,
     ) -> Result<Vec<distri_types::stores::AgentUsageInfo>, AgentError> {
         self.stores
             .thread_store
-            .get_agents_by_usage()
+            .get_agents_by_usage(search)
             .await
             .map_err(|e| AgentError::Session(e.to_string()))
     }

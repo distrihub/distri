@@ -15,6 +15,12 @@ pub enum TodoStatus {
     Done,
 }
 
+impl Default for TodoStatus {
+    fn default() -> Self {
+        TodoStatus::Open
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TodoItem {
     pub id: String,
@@ -156,6 +162,7 @@ pub type SharedTodoList = Arc<tokio::sync::RwLock<TodoList>>;
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SimpleTodo {
     pub content: String,
+    #[serde(default)]
     pub status: TodoStatus,
 }
 

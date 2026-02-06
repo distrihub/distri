@@ -12,10 +12,10 @@ pub use crate::hooks_runtime::HookRegistry;
 pub use client::{
     AgentRegistrationResponse, ApiKeyResponse, ArtifactEntry, ArtifactListResponse,
     ArtifactNamespace, ArtifactNamespaceList, ArtifactReadResponse, ArtifactSaveResponse,
-    CreatePluginRequest, Distri, LlmExecuteOptions, LlmExecuteResponse, LoginUrlResponse,
-    NewPromptTemplateRequest, PluginResponse, PluginsListResponse, PromptTemplateResponse,
-    SyncPromptTemplatesResponse, TaskNamespaceResponse, UpdatePluginRequest,
-    ValidatePluginResponse, WorkspaceResponse,
+    CreatePluginRequest, Distri, InvokeOptions, LlmExecuteOptions, LlmExecuteResponse,
+    LoginUrlResponse, NewPromptTemplateRequest, PluginResponse, PluginsListResponse,
+    PromptTemplateResponse, SyncPromptTemplatesResponse, TaskNamespaceResponse,
+    UpdatePluginRequest, ValidatePluginResponse, WorkspaceResponse,
 };
 pub use client_app::{AppError, DistriClientApp, ToolListItem};
 pub use client_stream::{AgentStreamClient, StreamError, StreamItem};

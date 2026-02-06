@@ -1,16 +1,16 @@
 [package]
 name = "distri-coder"
-version = "0.3.2"
+version = "0.3.3"
 edition = "2024"
 
 [dependencies]
 anyhow = { workspace = true }
 clap = { version = "4.5", features = ["derive"] }
-distri = { path = "../../distri" , version = "0.3.2" }
-distri-cli = { path = "../../distri-cli" , version = "0.3.2" }
-distri-types = { path = "../../distri-types" , version = "0.3.2" }
-distri-server = { path = "../../server/distri-server" , version = "0.3.2" }
-distri-filesystem = { path = "../../distri-filesystem" , version = "0.3.2" }
+distri = { path = "../../distri" , version = "0.3.3" }
+distri-cli = { path = "../../distri-cli" , version = "0.3.3" }
+distri-types = { path = "../../distri-types" , version = "0.3.3" }
+distri-server = { path = "../../server/distri-server" , version = "0.3.3" }
+distri-filesystem = { path = "../../distri-filesystem" , version = "0.3.3" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { version = "1.0", features = ["full"] }

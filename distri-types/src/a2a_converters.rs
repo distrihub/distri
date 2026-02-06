@@ -63,14 +63,14 @@ impl TryFrom<Message> for crate::Message {
                             parts.push(part);
                         } else {
                             return Err(AgentError::Validation(
-                                "Missing data 
+                                "Missing data
                 field for typed part"
                                     .to_string(),
                             ));
                         }
                     } else {
                         return Err(AgentError::Validation(
-                            "Invalid part 
+                            "Invalid part
                 type"
                                 .to_string(),
                         ));
@@ -99,6 +99,13 @@ impl TryFrom<Message> for crate::Message {
             false
         });
 
+        // Extract parts_metadata from message metadata if present
+        let parts_metadata: Option<crate::PartsMetadata> = message
+            .metadata
+            .as_ref()
+            .and_then(|m| m.get("parts"))
+            .and_then(|p| serde_json::from_value(p.clone()).ok());
+
         Ok(crate::Message {
             id: message.message_id.clone(),
             role: if is_tool {
@@ -111,6 +118,7 @@ impl TryFrom<Message> for crate::Message {
             },
             name: None,
             parts,
+            parts_metadata,
             ..Default::default()
         })
     }

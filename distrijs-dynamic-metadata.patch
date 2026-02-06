@@ -1,0 +1,156 @@
+diff --git a/packages/core/src/agent.ts b/packages/core/src/agent.ts
+index f244a70..08a28f7 100644
+--- a/packages/core/src/agent.ts
++++ b/packages/core/src/agent.ts
+@@ -6,6 +6,7 @@ import {
+   ToolResult,
+   HookHandler,
+   AgentConfigWithTools,
++  DynamicMetadata,
+ } from './types';
+ import { Message, MessageSendParams } from '@a2a-js/sdk/client';
+ import { decodeA2AStreamEvent } from './encoder';
+@@ -20,6 +21,10 @@ export interface InvokeConfig {
+   contextId?: string;
+   /** Metadata for the requests */
+   metadata?: any;
++  /** Dynamic prompt sections injected into the template per-call */
++  dynamic_sections?: DynamicMetadata['dynamic_sections'];
++  /** Dynamic key-value pairs available in templates per-call */
++  dynamic_values?: DynamicMetadata['dynamic_values'];
+ }
+ 
+ /**
+@@ -201,12 +206,16 @@ export class Agent {
+   }
+ 
+   /**
+-   * Enhance message params with tool definitions
++   * Enhance message params with tool definitions and dynamic metadata.
++   *
++   * When `dynamic_sections` or `dynamic_values` are present in `params.metadata`,
++   * they are forwarded so the server injects them into the prompt template.
+    */
+   private enhanceParamsWithTools(params: MessageSendParams, tools?: DistriBaseTool[]): MessageSendParams {
+     this.assertExternalTools(tools);
+-    const metadata = {
+-      ...params.metadata,
++    const existingMeta = params.metadata ?? {};
++    const metadata: Record<string, unknown> = {
++      ...existingMeta,
+       external_tools: tools?.map(tool => ({
+         name: tool.name,
+         description: tool.description,
+@@ -214,6 +223,8 @@ export class Agent {
+         is_final: tool.is_final
+       })) || []
+     };
++    // Forward dynamic_sections / dynamic_values if they were placed in metadata
++    // (callers can set them on the params.metadata object directly)
+     return {
+       ...params,
+       metadata
+diff --git a/packages/core/src/distri-client.ts b/packages/core/src/distri-client.ts
+index 6650975..355442f 100644
+--- a/packages/core/src/distri-client.ts
++++ b/packages/core/src/distri-client.ts
+@@ -27,6 +27,7 @@ import {
+   MessageVote,
+   MessageVoteSummary,
+   VoteMessageRequest,
++  DynamicMetadata,
+ } from './types';
+ import { convertA2AMessageToDistri, convertDistriMessageToA2A } from './encoder';
+ 
+@@ -1392,13 +1393,23 @@ export class DistriClient {
+   }
+ 
+   /**
+-   * Helper method to create message send parameters
++   * Helper method to create message send parameters.
++   *
++   * Pass `dynamicMetadata` to inject `dynamic_sections` and/or `dynamic_values`
++   * into the metadata so the server can apply them to prompt templates.
+    */
+   static initMessageParams(
+     message: Message,
+     configuration?: MessageSendParams['configuration'],
+-    metadata?: any
++    metadata?: any,
++    dynamicMetadata?: DynamicMetadata,
+   ): MessageSendParams {
++    const mergedMetadata = {
++      ...metadata,
++      ...(dynamicMetadata?.dynamic_sections ? { dynamic_sections: dynamicMetadata.dynamic_sections } : {}),
++      ...(dynamicMetadata?.dynamic_values ? { dynamic_values: dynamicMetadata.dynamic_values } : {}),
++    };
++
+     return {
+       message,
+       configuration: {
+@@ -1406,19 +1417,31 @@ export class DistriClient {
+         blocking: false, // Default to non-blocking for streaming
+         ...configuration
+       },
+-      metadata
++      metadata: Object.keys(mergedMetadata).length > 0 ? mergedMetadata : metadata,
+     };
+   }
+ 
+   /**
+-   * Create MessageSendParams from a DistriMessage using InvokeContext
++   * Create MessageSendParams from a DistriMessage using InvokeContext.
++   *
++   * Pass `dynamicMetadata` to inject `dynamic_sections` and/or `dynamic_values`
++   * into the metadata so the server can apply them to prompt templates.
+    */
+-  static initDistriMessageParams(message: DistriMessage, context: InvokeContext): MessageSendParams {
++  static initDistriMessageParams(
++    message: DistriMessage,
++    context: InvokeContext,
++    dynamicMetadata?: DynamicMetadata,
++  ): MessageSendParams {
+     const a2aMessage = convertDistriMessageToA2A(message, context);
+     const contextMetadata = context.getMetadata?.() || {};
++    const mergedMetadata = {
++      ...contextMetadata,
++      ...(dynamicMetadata?.dynamic_sections ? { dynamic_sections: dynamicMetadata.dynamic_sections } : {}),
++      ...(dynamicMetadata?.dynamic_values ? { dynamic_values: dynamicMetadata.dynamic_values } : {}),
++    };
+     return {
+       message: a2aMessage,
+-      metadata: contextMetadata
++      metadata: Object.keys(mergedMetadata).length > 0 ? mergedMetadata : contextMetadata,
+     };
+   }
+ }
+diff --git a/packages/core/src/types.ts b/packages/core/src/types.ts
+index 84d1bb3..a090fc5 100644
+--- a/packages/core/src/types.ts
++++ b/packages/core/src/types.ts
+@@ -165,6 +165,25 @@ export type DistriStreamEvent = DistriMessage | DistriEvent;
+ 
+ 
+ 
++/**
++ * A named prompt section that can be dynamically injected into templates per-call.
++ */
++export interface PromptSection {
++  key: string;
++  content: string;
++}
++
++/**
++ * Dynamic metadata that can be provided per invoke call to customise
++ * prompt template rendering on the server.
++ */
++export interface DynamicMetadata {
++  /** Dynamic prompt sections injected into the template per-call */
++  dynamic_sections?: PromptSection[];
++  /** Dynamic key-value pairs available in templates per-call */
++  dynamic_values?: Record<string, unknown>;
++}
++
+ /**
+  * Context required for constructing A2A messages from DistriMessage
+  */

@@ -991,8 +991,12 @@ async fn list_threads_handler(
     }
 }
 
-async fn list_agents_by_usage(coordinator: web::Data<Arc<AgentOrchestrator>>) -> HttpResponse {
-    match coordinator.get_agents_by_usage().await {
+async fn list_agents_by_usage(
+    coordinator: web::Data<Arc<AgentOrchestrator>>,
+    query: web::Query<std::collections::HashMap<String, String>>,
+) -> HttpResponse {
+    let search = query.get("search").map(|s| s.as_str());
+    match coordinator.get_agents_by_usage(search).await {
         Ok(agents) => HttpResponse::Ok().json(agents),
         Err(e) => HttpResponse::InternalServerError().json(json!({
             "error": format!("Failed to get agents by usage: {}", e)

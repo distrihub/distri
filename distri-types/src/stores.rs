@@ -353,7 +353,9 @@ pub trait ThreadStore: Send + Sync {
     async fn get_home_stats(&self) -> anyhow::Result<HomeStats>;
 
     /// Get agents sorted by thread count (most active first)
-    async fn get_agents_by_usage(&self) -> anyhow::Result<Vec<AgentUsageInfo>>;
+    /// Includes all registered agents (even those with 0 threads).
+    /// Optionally filters by name using a search string.
+    async fn get_agents_by_usage(&self, search: Option<&str>) -> anyhow::Result<Vec<AgentUsageInfo>>;
 
     /// Get a map of agent name -> stats for all agents with activity
     async fn get_agent_stats_map(

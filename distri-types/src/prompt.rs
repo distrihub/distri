@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use handlebars::Handlebars;
 use handlebars::handlebars_helper;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
 use crate::{AgentError, Message, Part};
@@ -47,7 +47,7 @@ pub struct TemplateData<'a> {
     pub json_tools: bool,
 }
 
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PromptSection {
     pub key: String,
     pub content: String,
