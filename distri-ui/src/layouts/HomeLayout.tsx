@@ -19,13 +19,14 @@ import {
   SidebarSeparator,
 } from '@/components/ui/sidebar'
 
-import { Settings, Users, Home, MessageSquare, History, FileText } from 'lucide-react'
+import { Settings, Users, Home, MessageSquare, History, FileText, StickyNote } from 'lucide-react'
 import { useAccount } from '@/components/AccountProvider'
 
 const navItems = [
   { id: 'home', label: 'Home', href: '/home', icon: Home },
   { id: 'agents', label: 'Agents', href: '/home/agents', icon: Users },
   { id: 'threads', label: 'Threads', href: '/home/threads', icon: MessageSquare },
+  { id: 'notes', label: 'Notes', href: '/home/notes', icon: StickyNote },
   { id: 'templates', label: 'Templates', href: '/home/templates', icon: FileText },
   { id: 'sessions', label: 'Sessions', href: '/home/sessions', icon: History },
   { id: 'settings', label: 'Settings', href: '/home/settings', icon: Settings },

@@ -70,6 +70,7 @@ pub struct InitializedStores {
     pub plugin_store: Arc<dyn PluginCatalogStore>,
     pub prompt_template_store: Option<Arc<dyn PromptTemplateStore>>,
     pub secret_store: Option<Arc<dyn SecretStore>>,
+    pub note_store: Option<Arc<dyn NoteStore>>,
     /// Plugin tool loader for dynamic tool resolution
     /// OSS: uses registry-based loader (filesystem plugins)
     /// Cloud: uses DB-based loader (tenant plugins)
@@ -737,6 +738,113 @@ pub trait PluginToolLoader: Send + Sync + std::fmt::Debug {
 
     /// Check if a package exists
     async fn has_package(&self, package_name: &str) -> anyhow::Result<bool>;
+}
+
+// ========== Note Store ==========
+
+/// A note with markdown content, tags, headings index, and AI-generated summary
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NoteRecord {
+    pub id: String,
+    pub user_id: String,
+    pub title: String,
+    pub content: String,
+    pub summary: String,
+    pub tags: Vec<String>,
+    pub headings: Vec<String>,
+    pub keywords: Vec<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Request to create a new note
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateNoteRequest {
+    pub title: String,
+    pub content: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
+}
+
+/// Request to update an existing note
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateNoteRequest {
+    pub title: Option<String>,
+    pub content: Option<String>,
+    pub tags: Option<Vec<String>>,
+}
+
+/// Filter criteria for searching notes
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct NoteSearchFilter {
+    /// Full-text search across title, content, headings, keywords
+    pub query: Option<String>,
+    /// Filter by tags (notes must contain all specified tags)
+    pub tags: Option<Vec<String>>,
+    /// Filter by heading text (case-insensitive substring match)
+    pub heading: Option<String>,
+    /// Filter notes created after this time
+    pub from_date: Option<DateTime<Utc>>,
+    /// Filter notes created before this time
+    pub to_date: Option<DateTime<Utc>>,
+}
+
+/// Paginated response for note listing
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NoteListResponse {
+    pub notes: Vec<NoteRecord>,
+    pub total: i64,
+}
+
+#[async_trait]
+pub trait NoteStore: Send + Sync {
+    /// Create a new note
+    async fn create_note(
+        &self,
+        user_id: &str,
+        request: CreateNoteRequest,
+    ) -> anyhow::Result<NoteRecord>;
+
+    /// Get a note by ID
+    async fn get_note(&self, id: &str) -> anyhow::Result<Option<NoteRecord>>;
+
+    /// Update an existing note
+    async fn update_note(
+        &self,
+        id: &str,
+        request: UpdateNoteRequest,
+    ) -> anyhow::Result<NoteRecord>;
+
+    /// Delete a note
+    async fn delete_note(&self, id: &str) -> anyhow::Result<()>;
+
+    /// Search notes with filters and pagination
+    async fn search_notes(
+        &self,
+        user_id: &str,
+        filter: &NoteSearchFilter,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> anyhow::Result<NoteListResponse>;
+
+    /// List all notes for a user
+    async fn list_notes(
+        &self,
+        user_id: &str,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> anyhow::Result<NoteListResponse>;
+
+    /// Update note index metadata (summary, headings, keywords)
+    /// Called after AI summarisation
+    async fn update_note_index(
+        &self,
+        id: &str,
+        summary: &str,
+        headings: Vec<String>,
+        keywords: Vec<String>,
+        tags: Vec<String>,
+    ) -> anyhow::Result<()>;
 }
 
 // ========== Secret Store ==========

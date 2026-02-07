@@ -32,6 +32,7 @@ pub trait StoreFactory: Send + Sync {
     fn plugin_catalog_store(&self) -> Arc<dyn PluginCatalogStore>;
     fn prompt_template_store(&self) -> Arc<dyn PromptTemplateStore>;
     fn secret_store(&self) -> Arc<dyn SecretStore>;
+    fn note_store(&self) -> Arc<dyn NoteStore>;
 }
 
 impl<Conn> StoreFactory for DieselStoreBuilder<Conn>
@@ -83,6 +84,10 @@ where
     fn secret_store(&self) -> Arc<dyn SecretStore> {
         Arc::new(DieselStoreBuilder::secret_store(self)) as Arc<dyn SecretStore>
     }
+
+    fn note_store(&self) -> Arc<dyn NoteStore> {
+        Arc::new(DieselStoreBuilder::note_store(self)) as Arc<dyn NoteStore>
+    }
 }
 
 fn boxed_initializer<F, Fut, Factory>(initializer: F) -> StoreInitializer
@@ -119,6 +124,7 @@ pub struct StoreBuilder {
     pub plugin_store: Option<Arc<dyn PluginCatalogStore>>,
     pub prompt_template_store: Option<Arc<dyn PromptTemplateStore>>,
     pub secret_store: Option<Arc<dyn SecretStore>>,
+    pub note_store: Option<Arc<dyn NoteStore>>,
 }
 
 impl StoreBuilder {
@@ -138,6 +144,7 @@ impl StoreBuilder {
             plugin_store: None,
             prompt_template_store: None,
             secret_store: None,
+            note_store: None,
         }
         .register_default_store_types()
     }
@@ -268,6 +275,10 @@ impl StoreBuilder {
             .secret_store
             .clone()
             .unwrap_or_else(|| metadata_factory.secret_store());
+        let note_store = self
+            .note_store
+            .clone()
+            .unwrap_or_else(|| metadata_factory.note_store());
 
         // Initialize memory store if configured and not provided
         let memory_store = if let Some(store) = self.memory_store.clone() {
@@ -359,6 +370,7 @@ impl StoreBuilder {
             plugin_store,
             prompt_template_store: Some(prompt_template_store),
             secret_store: Some(secret_store),
+            note_store: Some(note_store),
             plugin_tool_loader: None, // Cloud deployments set this separately
         })
     }
@@ -468,6 +480,7 @@ pub async fn create_ephemeral_execution_stores(
         plugin_store: base_stores.plugin_store.clone(),
         prompt_template_store: base_stores.prompt_template_store.clone(),
         secret_store: base_stores.secret_store.clone(),
+        note_store: base_stores.note_store.clone(),
         plugin_tool_loader: base_stores.plugin_tool_loader.clone(),
     })
 }
@@ -512,6 +525,7 @@ pub async fn prepare_stores_for_execution(
         plugin_store: base_stores.plugin_store.clone(),
         prompt_template_store: base_stores.prompt_template_store.clone(),
         secret_store: base_stores.secret_store.clone(),
+        note_store: base_stores.note_store.clone(),
         plugin_tool_loader: base_stores.plugin_tool_loader.clone(),
     })
 }

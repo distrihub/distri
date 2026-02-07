@@ -496,3 +496,47 @@ pub struct MessageVoteChangeset<'a> {
     pub comment: Option<Option<&'a str>>,
     pub updated_at: NaiveDateTime,
 }
+
+// ========== Notes ==========
+
+#[derive(Debug, Clone, Queryable, Identifiable, Selectable)]
+#[diesel(table_name = crate::schema::notes)]
+pub struct NoteModel {
+    pub id: String,
+    pub user_id: String,
+    pub title: String,
+    pub content: String,
+    pub summary: String,
+    pub tags: String,
+    pub headings: String,
+    pub keywords: String,
+    pub created_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
+}
+
+#[derive(Debug, Clone, Insertable)]
+#[diesel(table_name = crate::schema::notes)]
+pub struct NewNoteModel<'a> {
+    pub id: &'a str,
+    pub user_id: &'a str,
+    pub title: &'a str,
+    pub content: &'a str,
+    pub summary: &'a str,
+    pub tags: &'a str,
+    pub headings: &'a str,
+    pub keywords: &'a str,
+    pub created_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
+}
+
+#[derive(Debug, Clone, AsChangeset)]
+#[diesel(table_name = crate::schema::notes)]
+pub struct NoteChangeset<'a> {
+    pub title: Option<&'a str>,
+    pub content: Option<&'a str>,
+    pub tags: Option<&'a str>,
+    pub headings: Option<&'a str>,
+    pub keywords: Option<&'a str>,
+    pub summary: Option<&'a str>,
+    pub updated_at: NaiveDateTime,
+}

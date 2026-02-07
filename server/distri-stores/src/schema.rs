@@ -238,6 +238,23 @@ diesel::table! {
     }
 }
 
+diesel::table! {
+    use diesel::sql_types::*;
+
+    notes (id) {
+        id -> Text,
+        user_id -> Text,
+        title -> Text,
+        content -> Text,
+        summary -> Text,
+        tags -> Text,
+        headings -> Text,
+        keywords -> Text,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+    }
+}
+
 diesel::joinable!(task_messages -> tasks (task_id));
 diesel::joinable!(tasks -> threads (thread_id));
 diesel::joinable!(external_tool_call_events -> external_tool_calls (tool_call_id));
@@ -264,4 +281,5 @@ diesel::allow_tables_to_appear_in_same_query!(
     secrets,
     message_reads,
     message_votes,
+    notes,
 );
