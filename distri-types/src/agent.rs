@@ -91,6 +91,11 @@ pub struct ReflectionConfig {
     /// Whether to enable reflection
     #[serde(default)]
     pub enabled: bool,
+    /// Name of the agent definition to use for reflection.
+    /// Must be an agent that has the "reflect" tool configured.
+    /// If not set, uses the built-in reflection_agent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reflection_agent: Option<String>,
     /// When to trigger reflection
     #[serde(default)]
     pub trigger: ReflectionTrigger,
@@ -288,32 +293,6 @@ pub struct LlmDefinition {
     pub tool_format: ToolCallFormat,
 }
 
-/// Hooks configuration to control how browser hooks interact with Browsr.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "mode", rename_all = "snake_case")]
-pub enum BrowserHooksConfig {
-    /// Disable browser hooks entirely.
-    Disabled,
-    /// Send hook events to Browsr via HTTP/stdout.
-    Webhook {
-        /// Optional override base URL for the Browsr HTTP API.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        api_base_url: Option<String>,
-    },
-    /// Await an inline hook completion (e.g., via POST /event/hooks) before continuing.
-    Inline {
-        /// Optional timeout in milliseconds to await the inline hook.
-        #[serde(default)]
-        timeout_ms: Option<u64>,
-    },
-}
-
-impl Default for BrowserHooksConfig {
-    fn default() -> Self {
-        BrowserHooksConfig::Disabled
-    }
-}
-
 /// Agent definition - complete configuration for an agent
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 #[serde(deny_unknown_fields)]
@@ -385,9 +364,9 @@ pub struct StandardDefinition {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub write_large_tool_responses_to_fs: Option<bool>,
 
-    /// Whether to enable reflection using a subagent (default: false)
+    /// Reflection configuration for post-execution analysis using a subagent
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub enable_reflection: Option<bool>,
+    pub reflection: Option<ReflectionConfig>,
     /// Whether to enable TODO management functionality
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enable_todos: Option<bool>,
@@ -395,9 +374,6 @@ pub struct StandardDefinition {
     /// Browser configuration for this agent (enables shared Chromium automation)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub browser_config: Option<BrowserAgentConfig>,
-    /// Browser hook configuration (API vs local)
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub browser_hooks: Option<BrowserHooksConfig>,
 
     /// Context size override for this agent (overrides model_settings.context_size)
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -464,7 +440,15 @@ impl StandardDefinition {
 
     /// Check if reflection is enabled (default: false)
     pub fn is_reflection_enabled(&self) -> bool {
-        self.enable_reflection.unwrap_or(false)
+        self.reflection
+            .as_ref()
+            .map(|r| r.enabled)
+            .unwrap_or(false)
+    }
+
+    /// Get the reflection configuration, if any
+    pub fn reflection_config(&self) -> Option<&ReflectionConfig> {
+        self.reflection.as_ref().filter(|r| r.enabled)
     }
     /// Check if TODO management functionality is enabled (default: false)
     pub fn is_todos_enabled(&self) -> bool {
@@ -824,6 +808,42 @@ impl StandardDefinition {
         if self.name.is_empty() {
             return Err(anyhow::anyhow!("Agent name cannot be empty"));
         }
+
+        // Validate reflection configuration
+        if let Some(ref reflection) = self.reflection {
+            if reflection.enabled {
+                // If a custom reflection_agent is specified, validate the name
+                if let Some(ref agent_name) = reflection.reflection_agent {
+                    if agent_name.is_empty() {
+                        return Err(anyhow::anyhow!(
+                            "Reflection agent name cannot be empty when specified"
+                        ));
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Validate that a reflection agent definition has the "reflect" tool configured.
+    /// This is called at registration time when we have access to the full agent config.
+    pub fn validate_reflection_agent(agent_def: &StandardDefinition) -> anyhow::Result<()> {
+        let has_reflect_tool = agent_def
+            .tools
+            .as_ref()
+            .map(|t| t.builtin.iter().any(|name| name == "reflect"))
+            .unwrap_or(false);
+
+        if !has_reflect_tool {
+            // The built-in reflection_agent gets the reflect tool automatically,
+            // but custom reflection agents must explicitly list it
+            anyhow::bail!(
+                "Reflection agent '{}' must have the 'reflect' tool in its tools.builtin configuration",
+                agent_def.name
+            );
+        }
+
         Ok(())
     }
 }

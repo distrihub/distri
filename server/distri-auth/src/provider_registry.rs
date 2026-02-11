@@ -344,6 +344,11 @@ mod tests {
     async fn test_get_provider_config() {
         let registry = ProviderRegistry::new();
 
+        // Load providers first (requires env vars for credentials)
+        env::set_var("GOOGLE_CLIENT_ID", "test_client_id");
+        env::set_var("GOOGLE_CLIENT_SECRET", "test_client_secret");
+        registry.load_default_providers().await.unwrap();
+
         let config = registry.get_auth_type("google").await;
         assert!(config.is_some());
 
@@ -359,5 +364,9 @@ mod tests {
             );
             assert_eq!(token_url, "https://oauth2.googleapis.com/token");
         }
+
+        // Clean up
+        env::remove_var("GOOGLE_CLIENT_ID");
+        env::remove_var("GOOGLE_CLIENT_SECRET");
     }
 }

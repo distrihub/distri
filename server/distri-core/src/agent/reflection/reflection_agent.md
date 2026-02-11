@@ -7,20 +7,21 @@ max_iterations = 1
 model = "gpt-4.1-mini"
 temperature = 0.1
 max_tokens = 800
+
+[tools]
+builtin = ["reflect"]
 ---
 
 Analyze the execution and determine if retry is needed.
 
 {{task}}
 
-REQUIRED OUTPUT FORMAT:
-**Quality:** [Excellent/Good/Fair/Poor]
-**Completeness:** [Complete/Partial/Incomplete]
-**Should Continue:** [YES/NO]
+You MUST use the `reflect` tool to report your analysis. Do not output your decision as text.
 
 Rules:
-- If Quality is Poor OR Completeness is Incomplete → Should Continue: YES
-- If Quality is Good/Excellent AND Completeness is Complete → Should Continue: NO
+- If quality is "poor" OR completeness is "incomplete" → should_continue: true
+- If quality is "good" or "excellent" AND completeness is "complete" → should_continue: false
+- Always provide a brief reason explaining your assessment
 
 {{#if available_tools}}
 # TOOLS
