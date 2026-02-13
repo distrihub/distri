@@ -783,6 +783,11 @@ impl LLMExecutor {
             model: settings.model.clone(),
             messages,
             tools,
+            temperature: Some(settings.temperature),
+            top_p: Some(settings.top_p),
+            max_tokens: Some(settings.max_tokens),
+            frequency_penalty: Some(settings.frequency_penalty),
+            presence_penalty: Some(settings.presence_penalty),
             response_format: self
                 .llm_def
                 .model_settings
