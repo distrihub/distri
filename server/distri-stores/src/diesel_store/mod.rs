@@ -2991,8 +2991,10 @@ where
         tool_response: ToolResponse,
     ) -> Result<()> {
         let mut connection = self.conn().await?;
+        // Filter out non-saveable parts (e.g., images) when storing to DB to prevent storage bloat
+        let filtered_response = tool_response.filter_for_save();
         let response_json =
-            serde_json::to_string(&tool_response).context("failed to serialize tool response")?;
+            serde_json::to_string(&filtered_response).context("failed to serialize tool response")?;
 
         let changes = ExternalToolCallChangeset {
             status: Some("completed"),
@@ -3008,6 +3010,7 @@ where
             .await
             .context("failed to update external tool call")?;
 
+        // Send full response (including images) to the running agent so it can see them in current turn
         if let Some((_, sender)) = self.pending_channels.remove(session_id) {
             if sender.send(tool_response).is_err() {
                 warn!(

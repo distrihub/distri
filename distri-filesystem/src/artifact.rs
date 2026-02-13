@@ -290,6 +290,7 @@ impl ArtifactWrapper {
             tool_call_id: response.tool_call_id,
             tool_name: response.tool_name,
             parts: processed_parts,
+            parts_metadata: None,
         })
     }
 

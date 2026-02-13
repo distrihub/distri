@@ -41,6 +41,7 @@ pub async fn run_file_agent(
         tool_call_id: tool_response.tool_call_id,
         tool_name: tool_response.tool_name,
         parts: vec![Part::Text(result.content.unwrap_or_default())],
+        parts_metadata: None,
     })
 }
 /// Process tool response using FileSystem's ArtifactWrapper for large content
@@ -69,6 +70,7 @@ pub async fn process_large_tool_responses(
                 tool_call_id: tool_response.tool_call_id.clone(),
                 tool_name: tool_response.tool_name.clone(),
                 parts: tool_response.parts.clone(),
+                parts_metadata: None,
             },
             &production_config,
         )
@@ -87,6 +89,7 @@ pub async fn process_large_tool_responses(
             tool_call_id: processed_response.tool_call_id,
             tool_name: processed_response.tool_name,
             parts: processed_response.parts,
+            parts_metadata: None,
         });
     }
 
@@ -184,5 +187,6 @@ pub async fn process_large_tool_responses(
         tool_call_id: tool_response.tool_call_id,
         tool_name: tool_response.tool_name,
         parts: result_parts,
+        parts_metadata: None,
     })
 }

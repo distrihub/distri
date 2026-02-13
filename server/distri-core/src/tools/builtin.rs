@@ -526,6 +526,7 @@ impl ExecutorContextTool for ArtifactTool {
             tool_call_id: tool_call.tool_call_id.clone(),
             tool_name: "artifact_tool".to_string(),
             parts: vec![Part::Text(task.to_string())],
+            parts_metadata: None,
         };
 
         // Call run_file_agent

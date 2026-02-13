@@ -978,31 +978,140 @@ impl LLMExecutor {
 
                         if self.llm_def.tool_format == ToolCallFormat::Provider {
                             let mut msgs = vec![];
+                            let mut image_parts: Vec<ChatCompletionRequestUserMessageContentPart> = vec![];
+
                             for response in tool_responses {
+                                // Collect text/data parts for tool message, images for user message
+                                let mut text_content = String::new();
+
+                                for part in &response.parts {
+                                    match part {
+                                        Part::Text(text) => {
+                                            if !text_content.is_empty() {
+                                                text_content.push('\n');
+                                            }
+                                            text_content.push_str(text);
+                                        }
+                                        Part::Image(file_type) => {
+                                            // Collect images to send in a follow-up user message
+                                            if let Some(url) = file_type.as_image_url() {
+                                                image_parts.push(
+                                                    ChatCompletionRequestUserMessageContentPart::ImageUrl(
+                                                        ChatCompletionRequestMessageContentPartImage {
+                                                            image_url: ImageUrl {
+                                                                url,
+                                                                detail: None,
+                                                            },
+                                                        },
+                                                    ),
+                                                );
+                                            }
+                                        }
+                                        Part::Data(data) => {
+                                            if !text_content.is_empty() {
+                                                text_content.push('\n');
+                                            }
+                                            text_content.push_str(&serde_json::to_string(data).unwrap_or_else(|_| "{}".to_string()));
+                                        }
+                                        Part::Artifact(artifact) => {
+                                            if !text_content.is_empty() {
+                                                text_content.push('\n');
+                                            }
+                                            if let Some(preview) = &artifact.preview {
+                                                text_content.push_str(&format!("[Artifact: {}]\n{}", artifact.file_id, preview));
+                                            } else {
+                                                text_content.push_str(&format!("[Artifact: {}] {}", artifact.file_id, artifact.summary()));
+                                            }
+                                        }
+                                        _ => {}
+                                    }
+                                }
+
+                                // If no text content, provide a default
+                                if text_content.is_empty() {
+                                    text_content = "Tool executed successfully".to_string();
+                                }
+
                                 let msg = ChatCompletionRequestToolMessage {
-                                    content: ChatCompletionRequestToolMessageContent::Text(
-                                        match response.result() {
-                                            Value::String(s) => s,
-                                            s => serde_json::to_string(&s).unwrap_or_default(),
-                                        },
-                                    ),
+                                    content: ChatCompletionRequestToolMessageContent::Text(text_content),
                                     tool_call_id: response.tool_call_id.clone(),
                                 };
                                 msgs.push(ChatCompletionRequestMessage::Tool(msg));
                             }
+
+                            // If there are images, add them in a user message after tool results
+                            if !image_parts.is_empty() {
+                                // Add context text before images
+                                image_parts.insert(0, ChatCompletionRequestUserMessageContentPart::Text(
+                                    ChatCompletionRequestMessageContentPartText {
+                                        text: "[Tool result images:]".to_string(),
+                                    },
+                                ));
+                                let mut user_msg = ChatCompletionRequestUserMessageArgs::default();
+                                user_msg.content(image_parts);
+                                msgs.push(ChatCompletionRequestMessage::User(user_msg.build().unwrap()));
+                            }
+
                             return msgs;
                             // If tools are not supported, we need to send the tool responses as a user message
                         } else {
                             let mut msg = ChatCompletionRequestUserMessageArgs::default();
-                            let mut parts = vec![];
-                            for response in tool_responses {
-                                parts.push(ChatCompletionRequestUserMessageContentPart::Text(
+                            let mut content_parts: Vec<ChatCompletionRequestUserMessageContentPart> = vec![];
+
+                            for response in &tool_responses {
+                                // Add text header for each tool response
+                                content_parts.push(ChatCompletionRequestUserMessageContentPart::Text(
                                     ChatCompletionRequestMessageContentPartText {
-                                        text: serde_json::to_string(&response).unwrap_or_default(),
+                                        text: format!("[Tool result for {}]:", response.tool_name),
                                     },
                                 ));
+
+                                for part in &response.parts {
+                                    match part {
+                                        Part::Text(text) => {
+                                            content_parts.push(ChatCompletionRequestUserMessageContentPart::Text(
+                                                ChatCompletionRequestMessageContentPartText {
+                                                    text: text.clone(),
+                                                },
+                                            ));
+                                        }
+                                        Part::Image(file_type) => {
+                                            if let Some(url) = file_type.as_image_url() {
+                                                content_parts.push(
+                                                    ChatCompletionRequestUserMessageContentPart::ImageUrl(
+                                                        ChatCompletionRequestMessageContentPartImage {
+                                                            image_url: ImageUrl {
+                                                                url,
+                                                                detail: None,
+                                                            },
+                                                        },
+                                                    ),
+                                                );
+                                            }
+                                        }
+                                        Part::Data(data) => {
+                                            content_parts.push(ChatCompletionRequestUserMessageContentPart::Text(
+                                                ChatCompletionRequestMessageContentPartText {
+                                                    text: serde_json::to_string(data).unwrap_or_else(|_| "{}".to_string()),
+                                                },
+                                            ));
+                                        }
+                                        Part::Artifact(artifact) => {
+                                            let text = if let Some(preview) = &artifact.preview {
+                                                format!("[Artifact: {}]\n{}", artifact.file_id, preview)
+                                            } else {
+                                                format!("[Artifact: {}] {}", artifact.file_id, artifact.summary())
+                                            };
+                                            content_parts.push(ChatCompletionRequestUserMessageContentPart::Text(
+                                                ChatCompletionRequestMessageContentPartText { text },
+                                            ));
+                                        }
+                                        _ => {}
+                                    }
+                                }
                             }
-                            msg.content(parts);
+
+                            msg.content(content_parts);
                             vec![ChatCompletionRequestMessage::User(msg.build().unwrap())]
                         }
                     }

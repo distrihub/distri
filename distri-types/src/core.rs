@@ -169,7 +169,7 @@ pub struct AdditionalParts {
 
 /// Metadata for individual message parts.
 /// Used to control part behavior such as persistence.
-#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, Default)]
+#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, Default, PartialEq)]
 pub struct PartMetadata {
     /// If false, this part will be filtered out before saving to the database.
     /// Useful for ephemeral/dynamic content that should only be sent in the current turn.
@@ -410,6 +410,9 @@ pub struct ToolResponse {
     pub tool_name: String,
     /// Content as parts - automatically converts large content to Part::Artifact
     pub parts: Vec<Part>,
+    /// Metadata for parts (e.g., which parts to save)
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub parts_metadata: Option<PartsMetadata>,
 }
 
 impl ToolResponse {
@@ -419,6 +422,7 @@ impl ToolResponse {
             tool_call_id,
             tool_name,
             parts: vec![Part::Data(result)],
+            parts_metadata: None,
         }
     }
 
@@ -428,6 +432,38 @@ impl ToolResponse {
             tool_call_id,
             tool_name,
             parts,
+            parts_metadata: None,
+        }
+    }
+
+    /// Filter parts based on metadata, returning a new ToolResponse with only saveable parts.
+    /// Parts with `save: false` in the parts_metadata will be filtered out.
+    /// If parts_metadata is None, all parts are included.
+    pub fn filter_for_save(&self) -> Self {
+        let parts_metadata = match &self.parts_metadata {
+            Some(meta) => meta,
+            None => return self.clone(),
+        };
+
+        let filtered_parts: Vec<Part> = self
+            .parts
+            .iter()
+            .cloned()
+            .enumerate()
+            .filter(|(index, _)| {
+                parts_metadata
+                    .get(index)
+                    .map(|meta| meta.save)
+                    .unwrap_or(true) // Default to save=true if not specified
+            })
+            .map(|(_, part)| part)
+            .collect();
+
+        Self {
+            tool_call_id: self.tool_call_id.clone(),
+            tool_name: self.tool_name.clone(),
+            parts: filtered_parts,
+            parts_metadata: None, // Don't persist parts_metadata
         }
     }
 
