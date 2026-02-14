@@ -4,7 +4,7 @@ use std::{collections::HashMap, fmt::Display, sync::Arc};
 use crate::models::*;
 use crate::schema::{
     agent_configs, external_tool_calls, integrations, memory_entries, message_reads, message_votes,
-    plugin_catalog, scratchpad_entries, session_entries, task_messages, tasks, threads,
+    notes, plugin_catalog, scratchpad_entries, session_entries, task_messages, tasks, threads,
 };
 use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
@@ -29,12 +29,13 @@ use distri_types::auth::{AuthError, AuthSecret, AuthSession, OAuth2State, ToolAu
 use distri_types::configuration::PluginArtifact;
 use distri_types::stores::SessionSummary;
 use distri_types::stores::{
-    AgentStatsInfo, AgentStore, AgentUsageInfo, ExternalToolCallsStore, FilterMessageType,
-    MemoryStore, MessageFilter, MessageReadStatus, MessageVote, MessageVoteSummary,
-    NewPromptTemplate, NewSecret, PluginCatalogStore, PluginMetadataRecord, PromptTemplateRecord,
+    AgentStatsInfo, AgentStore, AgentUsageInfo, CreateNoteRequest, ExternalToolCallsStore,
+    FilterMessageType, MemoryStore, MessageFilter, MessageReadStatus, MessageVote,
+    MessageVoteSummary, NewPromptTemplate, NewSecret, NoteListResponse, NoteRecord,
+    NoteSearchFilter, NoteStore, PluginCatalogStore, PluginMetadataRecord, PromptTemplateRecord,
     PromptTemplateStore, ScratchpadStore, SecretRecord, SecretStore, SessionMemory, SessionStore,
-    TaskStore, ThreadListFilter, ThreadListResponse, ThreadStore, UpdatePromptTemplate,
-    VoteMessageRequest, VoteType,
+    TaskStore, ThreadListFilter, ThreadListResponse, ThreadStore, UpdateNoteRequest,
+    UpdatePromptTemplate, VoteMessageRequest, VoteType,
 };
 use distri_types::{
     AgentError, AgentEvent, AgentEventType, CreateThreadRequest, Message, ScratchpadEntry, Task,
@@ -3255,6 +3256,10 @@ where
     pub fn secret_store(&self) -> DieselSecretStore<Conn> {
         DieselSecretStore::new(self.pool.clone_store_pool())
     }
+
+    pub fn note_store(&self) -> DieselNoteStore<Conn> {
+        DieselNoteStore::new(self.pool.clone_store_pool())
+    }
 }
 
 // ========== Prompt Template Store ==========
@@ -3643,6 +3648,385 @@ where
                     .await?;
             }
         }
+
+        Ok(())
+    }
+}
+
+// ========== Note Store ==========
+
+fn to_note_record(model: NoteModel) -> NoteRecord {
+    NoteRecord {
+        id: model.id,
+        user_id: model.user_id,
+        title: model.title,
+        content: model.content,
+        summary: model.summary,
+        tags: serde_json::from_str(&model.tags).unwrap_or_default(),
+        headings: serde_json::from_str(&model.headings).unwrap_or_default(),
+        keywords: serde_json::from_str(&model.keywords).unwrap_or_default(),
+        created_at: from_naive(model.created_at),
+        updated_at: from_naive(model.updated_at),
+    }
+}
+
+/// Extract markdown headings (lines starting with #) from content
+fn extract_headings(content: &str) -> Vec<String> {
+    content
+        .lines()
+        .filter_map(|line| {
+            let trimmed = line.trim();
+            if trimmed.starts_with('#') {
+                Some(trimmed.trim_start_matches('#').trim().to_string())
+            } else {
+                None
+            }
+        })
+        .filter(|h| !h.is_empty())
+        .collect()
+}
+
+/// Extract simple keywords from content by finding significant words
+fn extract_keywords(content: &str) -> Vec<String> {
+    let stop_words: std::collections::HashSet<&str> = [
+        "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for", "of", "with",
+        "by", "from", "is", "are", "was", "were", "be", "been", "being", "have", "has", "had",
+        "do", "does", "did", "will", "would", "could", "should", "may", "might", "can", "shall",
+        "this", "that", "these", "those", "it", "its", "not", "no", "so", "if", "then", "else",
+        "when", "where", "how", "what", "which", "who", "whom", "why", "all", "each", "every",
+        "both", "few", "more", "most", "other", "some", "such", "than", "too", "very", "just",
+        "about", "above", "after", "again", "also", "any", "as", "because", "before", "between",
+    ]
+    .iter()
+    .copied()
+    .collect();
+
+    let mut word_counts: HashMap<String, usize> = HashMap::new();
+    for word in content.split(|c: char| !c.is_alphanumeric()) {
+        let lower = word.to_lowercase();
+        if lower.len() >= 3 && !stop_words.contains(lower.as_str()) {
+            *word_counts.entry(lower).or_insert(0) += 1;
+        }
+    }
+
+    let mut words: Vec<(String, usize)> = word_counts.into_iter().collect();
+    words.sort_by(|a, b| b.1.cmp(&a.1));
+    words.into_iter().take(20).map(|(w, _)| w).collect()
+}
+
+#[derive(Clone)]
+pub struct DieselNoteStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    pool: DieselStorePool<Conn>,
+}
+
+impl<Conn> DieselNoteStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    pub fn new(pool: DieselStorePool<Conn>) -> Self {
+        Self { pool }
+    }
+
+    async fn conn(&self) -> Result<DieselConn<'_, Conn>> {
+        self.pool
+            .get()
+            .await
+            .context("failed to acquire diesel connection for notes")
+    }
+}
+
+#[async_trait]
+impl<Conn> NoteStore for DieselNoteStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    async fn create_note(
+        &self,
+        user_id: &str,
+        request: CreateNoteRequest,
+    ) -> Result<NoteRecord> {
+        let mut conn = self.conn().await?;
+        let now = now_naive();
+        let new_id = Uuid::new_v4().to_string();
+
+        let headings = extract_headings(&request.content);
+        let keywords = extract_keywords(&request.content);
+        let tags_json = serde_json::to_string(&request.tags).unwrap_or_else(|_| "[]".to_string());
+        let headings_json =
+            serde_json::to_string(&headings).unwrap_or_else(|_| "[]".to_string());
+        let keywords_json =
+            serde_json::to_string(&keywords).unwrap_or_else(|_| "[]".to_string());
+
+        let model = NewNoteModel {
+            id: &new_id,
+            user_id,
+            title: &request.title,
+            content: &request.content,
+            summary: "",
+            tags: &tags_json,
+            headings: &headings_json,
+            keywords: &keywords_json,
+            created_at: now,
+            updated_at: now,
+        };
+
+        diesel::insert_into(notes::table)
+            .values(&model)
+            .execute(&mut conn)
+            .await
+            .context("failed to insert note")?;
+
+        let result = notes::table
+            .filter(notes::id.eq(&new_id))
+            .select(NoteModel::as_select())
+            .first::<NoteModel>(&mut conn)
+            .await
+            .context("failed to retrieve created note")?;
+
+        Ok(to_note_record(result))
+    }
+
+    async fn get_note(&self, note_id: &str) -> Result<Option<NoteRecord>> {
+        let mut conn = self.conn().await?;
+        let result = notes::table
+            .filter(notes::id.eq(note_id))
+            .select(NoteModel::as_select())
+            .first::<NoteModel>(&mut conn)
+            .await
+            .optional()
+            .context("failed to get note")?;
+
+        Ok(result.map(to_note_record))
+    }
+
+    async fn update_note(
+        &self,
+        note_id: &str,
+        request: UpdateNoteRequest,
+    ) -> Result<NoteRecord> {
+        let mut conn = self.conn().await?;
+        let now = now_naive();
+
+        // Build changeset fields
+        let title_str = request.title;
+        let content_str = request.content.clone();
+
+        // Re-index if content changed
+        let headings_json = request.content.as_ref().map(|c| {
+            let h = extract_headings(c);
+            serde_json::to_string(&h).unwrap_or_else(|_| "[]".to_string())
+        });
+        let keywords_json = request.content.as_ref().map(|c| {
+            let k = extract_keywords(c);
+            serde_json::to_string(&k).unwrap_or_else(|_| "[]".to_string())
+        });
+        let tags_json = request.tags.as_ref().map(|t| {
+            serde_json::to_string(t).unwrap_or_else(|_| "[]".to_string())
+        });
+
+        let changeset = NoteChangeset {
+            title: title_str.as_deref(),
+            content: content_str.as_deref(),
+            tags: tags_json.as_deref(),
+            headings: headings_json.as_deref(),
+            keywords: keywords_json.as_deref(),
+            summary: None,
+            updated_at: now,
+        };
+
+        diesel::update(notes::table.filter(notes::id.eq(note_id)))
+            .set(&changeset)
+            .execute(&mut conn)
+            .await
+            .context("failed to update note")?;
+
+        let result = notes::table
+            .filter(notes::id.eq(note_id))
+            .select(NoteModel::as_select())
+            .first::<NoteModel>(&mut conn)
+            .await
+            .context("failed to retrieve updated note")?;
+
+        Ok(to_note_record(result))
+    }
+
+    async fn delete_note(&self, note_id: &str) -> Result<()> {
+        let mut conn = self.conn().await?;
+        diesel::delete(notes::table.filter(notes::id.eq(note_id)))
+            .execute(&mut conn)
+            .await
+            .context("failed to delete note")?;
+        Ok(())
+    }
+
+    async fn search_notes(
+        &self,
+        user_id: &str,
+        filter: &NoteSearchFilter,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> Result<NoteListResponse> {
+        let mut conn = self.conn().await?;
+        let limit = limit.unwrap_or(50) as i64;
+        let offset = offset.unwrap_or(0) as i64;
+
+        // Load all user notes and filter in-memory for flexible search
+        let all_notes = notes::table
+            .filter(notes::user_id.eq(user_id))
+            .order(notes::updated_at.desc())
+            .load::<NoteModel>(&mut conn)
+            .await
+            .context("failed to load notes for search")?;
+
+        let filtered: Vec<NoteModel> = all_notes
+            .into_iter()
+            .filter(|note| {
+                // Full-text search
+                if let Some(ref query) = filter.query {
+                    let q = query.to_lowercase();
+                    let matches = note.title.to_lowercase().contains(&q)
+                        || note.content.to_lowercase().contains(&q)
+                        || note.headings.to_lowercase().contains(&q)
+                        || note.keywords.to_lowercase().contains(&q)
+                        || note.summary.to_lowercase().contains(&q);
+                    if !matches {
+                        return false;
+                    }
+                }
+
+                // Tag filter
+                if let Some(ref tags) = filter.tags {
+                    let note_tags: Vec<String> =
+                        serde_json::from_str(&note.tags).unwrap_or_default();
+                    for tag in tags {
+                        if !note_tags
+                            .iter()
+                            .any(|t| t.to_lowercase() == tag.to_lowercase())
+                        {
+                            return false;
+                        }
+                    }
+                }
+
+                // Heading filter
+                if let Some(ref heading) = filter.heading {
+                    let h = heading.to_lowercase();
+                    if !note.headings.to_lowercase().contains(&h) {
+                        return false;
+                    }
+                }
+
+                // Date filters
+                if let Some(ref from) = filter.from_date {
+                    if from_naive(note.created_at) < *from {
+                        return false;
+                    }
+                }
+                if let Some(ref to) = filter.to_date {
+                    if from_naive(note.created_at) > *to {
+                        return false;
+                    }
+                }
+
+                true
+            })
+            .collect();
+
+        let total = filtered.len() as i64;
+
+        // Apply pagination
+        let start = offset as usize;
+        let end = std::cmp::min(start + limit as usize, filtered.len());
+        let page = if start < filtered.len() {
+            filtered[start..end].to_vec()
+        } else {
+            Vec::new()
+        };
+
+        Ok(NoteListResponse {
+            notes: page.into_iter().map(to_note_record).collect(),
+            total,
+        })
+    }
+
+    async fn list_notes(
+        &self,
+        user_id: &str,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> Result<NoteListResponse> {
+        let mut conn = self.conn().await?;
+        let limit_val = limit.unwrap_or(50) as i64;
+        let offset_val = offset.unwrap_or(0) as i64;
+
+        // Get total count
+        let all_notes = notes::table
+            .filter(notes::user_id.eq(user_id))
+            .load::<NoteModel>(&mut conn)
+            .await
+            .context("failed to count notes")?;
+        let total = all_notes.len() as i64;
+
+        // Get paginated results
+        let results = notes::table
+            .filter(notes::user_id.eq(user_id))
+            .order(notes::updated_at.desc())
+            .limit(limit_val)
+            .offset(offset_val)
+            .load::<NoteModel>(&mut conn)
+            .await
+            .context("failed to list notes")?;
+
+        Ok(NoteListResponse {
+            notes: results.into_iter().map(to_note_record).collect(),
+            total,
+        })
+    }
+
+    async fn update_note_index(
+        &self,
+        note_id: &str,
+        summary: &str,
+        headings: Vec<String>,
+        keywords: Vec<String>,
+        tags: Vec<String>,
+    ) -> Result<()> {
+        let mut conn = self.conn().await?;
+        let now = now_naive();
+
+        let headings_json =
+            serde_json::to_string(&headings).unwrap_or_else(|_| "[]".to_string());
+        let keywords_json =
+            serde_json::to_string(&keywords).unwrap_or_else(|_| "[]".to_string());
+        let tags_json = serde_json::to_string(&tags).unwrap_or_else(|_| "[]".to_string());
+
+        let changeset = NoteChangeset {
+            title: None,
+            content: None,
+            tags: Some(&tags_json),
+            headings: Some(&headings_json),
+            keywords: Some(&keywords_json),
+            summary: Some(summary),
+            updated_at: now,
+        };
+
+        diesel::update(notes::table.filter(notes::id.eq(note_id)))
+            .set(&changeset)
+            .execute(&mut conn)
+            .await
+            .context("failed to update note index")?;
 
         Ok(())
     }

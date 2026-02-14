@@ -19,6 +19,7 @@ import AgentsPage from './routes/home/AgentsPage';
 import NewAgentPage from './routes/home/NewAgentPage';
 import { Toaster } from './components/ui/sonner';
 import ChatPage from './routes/home/ChatPage';
+import NotesPage from './routes/home/NotesPage';
 
 // Wrapper components to pass props from router to @distri/home components
 function HomePageWrapper() {
@@ -131,6 +132,7 @@ function App() {
                   <Route path="agents" element={<AgentsPage />} />
                   <Route path="new" element={<NewAgentPage />} />
                   <Route path="chat" element={<ChatPage />} />
+                  <Route path="notes" element={<NotesPage />} />
                 </Route>
                 <Route path="workspace" element={<FilesPage />} />
 

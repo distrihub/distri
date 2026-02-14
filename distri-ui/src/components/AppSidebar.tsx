@@ -9,6 +9,7 @@ import {
   RefreshCw,
   Github,
   Loader2,
+  FileText,
 } from "lucide-react";
 import Logo from "@/assets/logo_small.svg";
 import {
@@ -142,13 +143,13 @@ const ThreadItem: React.FC<ThreadItemProps> = ({
 
 interface AppSidebarProps {
   selectedThreadId: string;
-  currentPage: "chat" | "agents";
+  currentPage: "chat" | "agents" | "notes";
   onNewChat: () => void;
   onThreadSelect: (threadId: string) => void;
   onThreadDelete: (threadId: string) => void;
   onThreadRename: (threadId: string, newTitle: string) => void;
   onLogoClick?: () => void;
-  onPageChange: (page: "chat" | "agents") => void;
+  onPageChange: (page: "chat" | "agents" | "notes") => void;
 }
 
 export function AppSidebar({
@@ -233,6 +234,15 @@ export function AppSidebar({
                 >
                   <Users className="h-4 w-4" />
                   Agents
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem className="mb-1">
+                <SidebarMenuButton
+                  isActive={currentPage === "notes"}
+                  onClick={() => onPageChange("notes")}
+                >
+                  <FileText className="h-4 w-4" />
+                  Notes
                 </SidebarMenuButton>
               </SidebarMenuItem>
             </SidebarMenu>
