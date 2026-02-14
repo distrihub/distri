@@ -39,6 +39,9 @@ impl ExecutionResult {
     }
 
     pub fn as_observation(&self) -> String {
+        const MAX_DATA_CHARS: usize = 500;
+        const MAX_TEXT_CHARS: usize = 1000;
+
         let mut txt = String::new();
         if let Some(reason) = &self.reason {
             txt.push_str(&reason);
@@ -47,14 +50,50 @@ impl ExecutionResult {
             .parts
             .iter()
             .filter_map(|p| match p {
-                Part::Text(text) => Some(text.clone()),
+                Part::Text(text) => {
+                    if text.len() > MAX_TEXT_CHARS {
+                        let truncated: String = text.chars().take(MAX_TEXT_CHARS).collect();
+                        Some(format!(
+                            "{}... [truncated, {} total chars]",
+                            truncated,
+                            text.len()
+                        ))
+                    } else {
+                        Some(text.clone())
+                    }
+                }
                 Part::ToolCall(tool_call) => Some(format!(
                     "Action: {} with {}",
                     tool_call.tool_name,
                     serde_json::to_string(&tool_call.input).unwrap_or_default()
                 )),
-                Part::Data(data) => serde_json::to_string(&data).ok(),
-                Part::ToolResult(tool_result) => serde_json::to_string(&tool_result.result()).ok(),
+                Part::Data(data) => {
+                    let serialized = serde_json::to_string(&data).unwrap_or_default();
+                    if serialized.len() > MAX_DATA_CHARS {
+                        let truncated: String = serialized.chars().take(MAX_DATA_CHARS).collect();
+                        Some(format!(
+                            "{}... [truncated, {} total chars]",
+                            truncated,
+                            serialized.len()
+                        ))
+                    } else {
+                        Some(serialized)
+                    }
+                }
+                Part::ToolResult(tool_result) => {
+                    let serialized =
+                        serde_json::to_string(&tool_result.result()).unwrap_or_default();
+                    if serialized.len() > MAX_DATA_CHARS {
+                        let truncated: String = serialized.chars().take(MAX_DATA_CHARS).collect();
+                        Some(format!(
+                            "{}... [truncated, {} total chars]",
+                            truncated,
+                            serialized.len()
+                        ))
+                    } else {
+                        Some(serialized)
+                    }
+                }
                 Part::Image(image) => match image {
                     FileType::Url { url, .. } => Some(format!("[Image: {}]", url)),
                     FileType::Bytes {

@@ -1,12 +1,32 @@
 use std::sync::Arc;
 
+use distri_types::configuration::{DbConnectionConfig, MetadataStoreConfig, StoreConfig};
 use distri_types::{Part, Tool, ToolCall};
 use serde_json::Value;
 
 use crate::{init_logging, tools::ToolContext};
 
+fn test_store_config() -> StoreConfig {
+    let db_name = uuid::Uuid::new_v4();
+    let db_url = format!("file:{}?mode=memory&cache=shared", db_name);
+    StoreConfig {
+        metadata: MetadataStoreConfig {
+            db_config: Some(DbConnectionConfig {
+                database_url: db_url,
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+}
+
 #[tokio::test]
 async fn test_artifact_agent() {
+    if std::env::var("OPENAI_API_KEY").is_err() {
+        eprintln!("skipping artifact agent test; OPENAI_API_KEY not set");
+        return;
+    }
     use crate::{
         agent::{file::file_agent_defintion, parse_agent_markdown_content, ExecutorContext},
         AgentOrchestratorBuilder,
@@ -14,7 +34,13 @@ async fn test_artifact_agent() {
     dotenv::dotenv().ok();
     init_logging("info");
 
-    let orchestrator = Arc::new(AgentOrchestratorBuilder::default().build().await.unwrap());
+    let orchestrator = Arc::new(
+        AgentOrchestratorBuilder::default()
+            .with_store_config(test_store_config())
+            .build()
+            .await
+            .unwrap(),
+    );
     let context = Arc::new(ExecutorContext {
         orchestrator: Some(orchestrator.clone()),
         verbose: true,

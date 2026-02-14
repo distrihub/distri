@@ -505,8 +505,10 @@ impl AgentLoop {
         Ok(final_result)
     }
 
-    /// Run reflection subagent to analyze execution and store results
-    /// Returns true if reflection recommends retrying execution
+    /// Run reflection subagent to analyze execution and store results.
+    /// The reflection agent uses the `reflect` tool call to signal its decision,
+    /// rather than relying on "Should Continue" string matching in text output.
+    /// Returns true if reflection recommends retrying execution.
     async fn reflect(
         &self,
         message: &Message,
@@ -547,17 +549,24 @@ impl AgentLoop {
             &execution_history,
         )
         .await?;
-        let should_retry = reflection_result.contains("Should Continue: YES")
-            || reflection_result.contains("Should Continue: yes")
-            || reflection_result.contains("should continue: YES")
-            || reflection_result.contains("should continue: yes");
+
+        // The reflection agent uses the `reflect` tool which stores its structured
+        // result as the final result. Extract `should_continue` from the tool call output.
+        let should_retry = reflection_result
+            .final_result
+            .as_ref()
+            .and_then(|v| v.get("should_continue"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        let reflection_text = reflection_result.content;
 
         if should_retry {
             context
                 .store_execution_result(&ExecutionResult {
                     step_id: "reflection".to_string(),
                     status: ExecutionStatus::Success,
-                    parts: vec![Part::Text(reflection_result)],
+                    parts: vec![Part::Text(reflection_text)],
                     timestamp: chrono::Utc::now().timestamp_millis(),
                     reason: Some("Reflection analysis completed".to_string()),
                 })

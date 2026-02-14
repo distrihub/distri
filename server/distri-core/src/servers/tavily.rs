@@ -165,6 +165,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_tavily_tool() -> anyhow::Result<()> {
+        if std::env::var("TAVILY_API_KEY").is_err() {
+            eprintln!("skipping tavily test; TAVILY_API_KEY not set");
+            return Ok(());
+        }
         tracing_subscriber::fmt()
             .with_max_level(tracing::Level::DEBUG)
             // needs to be stderr due to stdio transport

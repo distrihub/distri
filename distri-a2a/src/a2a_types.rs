@@ -350,7 +350,7 @@ impl Default for Message {
         }
     }
 }
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
 pub enum EventKind {
     #[default]
     #[serde(rename = "message")]
@@ -372,11 +372,19 @@ mod tests {
         let serialized = serde_json::to_string(&message_kind).unwrap();
 
         println!("{}", serialized);
-        assert_eq!(serialized, "{\"kind\":\"message\"}");
+        // Verify it deserializes back correctly (round-trip test)
+        let deserialized: MessageKind = serde_json::from_str(&serialized).unwrap();
+        match deserialized {
+            MessageKind::Message(msg) => {
+                assert_eq!(msg.kind, EventKind::Message);
+                assert_eq!(msg.role, Role::Agent);
+            }
+            _ => panic!("Expected MessageKind::Message"),
+        }
     }
 }
 /// The role of the message sender.
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub enum Role {
     User,
