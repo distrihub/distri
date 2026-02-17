@@ -785,7 +785,9 @@ impl LLMExecutor {
             tools,
             temperature: Some(settings.temperature),
             top_p: Some(settings.top_p),
+            #[allow(deprecated)]
             max_tokens: Some(settings.max_tokens),
+            // max_completion_tokens: Some(settings.max_tokens),
             frequency_penalty: Some(settings.frequency_penalty),
             presence_penalty: Some(settings.presence_penalty),
             response_format: self
@@ -825,12 +827,12 @@ impl LLMExecutor {
                         .collect();
 
                     async_openai::types::chat::ResponseFormat::JsonSchema {
-                    json_schema: ResponseFormatJsonSchema {
-                        description: None,
+                        json_schema: ResponseFormatJsonSchema {
+                            description: None,
                             name: final_name,
                             schema: Some(schema_value),
-                        strict: Some(true),
-                    },
+                            strict: Some(true),
+                        },
                     }
                 }),
             ..Default::default()

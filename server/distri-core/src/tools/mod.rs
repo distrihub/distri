@@ -287,6 +287,8 @@ pub fn cast_to_executor_context_tool(
         "distri_browser" => Ok(Box::new(DistriBrowserSharedTool)),
         "browser_step" => Ok(Box::new(BrowserStepTool)),
         "artifact_tool" => Ok(Box::new(ArtifactTool)),
+        "load_skill" => Ok(Box::new(skill_script::LoadSkillTool)),
+        "run_skill_script" => Ok(Box::new(skill_script::RunSkillScriptTool)),
         name if name.starts_with("call_") => {
             let safe_agent_name = name.strip_prefix("call_").unwrap_or(name);
             // Convert double underscores back to slashes for package/agent names

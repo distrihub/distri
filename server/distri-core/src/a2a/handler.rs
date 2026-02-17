@@ -47,7 +47,7 @@ impl A2AHandler {
                 def.description.clone(),
                 def.version.clone(),
                 def.icon_url.clone(),
-                def.skills.clone(),
+                def.skills_description.clone(),
             ),
             distri_types::configuration::AgentConfig::SequentialWorkflowAgent(def) => (
                 def.name.clone(),

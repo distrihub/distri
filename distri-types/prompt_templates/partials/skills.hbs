@@ -1,0 +1,18 @@
+{{#if available_skills}}
+# SKILLS
+You have skills available that provide specialized instructions and executable scripts.
+
+## How to use skills
+1. Call `load_skill` with the skill's ID to retrieve its full instructions and scripts
+2. Follow the loaded instructions to complete the task
+3. If the skill includes scripts, call `run_skill_script` with the skill ID, script name, and input to execute them
+
+## Running scripts
+Use `run_skill_script` to execute a script from a loaded skill:
+- `skill_id`: The ID of the skill
+- `script_name`: The exact name of the script to run
+- `input`: An object with input parameters for the script
+
+## Available Skills
+{{{available_skills}}}
+{{/if}}

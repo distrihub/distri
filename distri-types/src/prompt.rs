@@ -45,6 +45,9 @@ pub struct TemplateData<'a> {
     pub remaining_steps: usize,
     pub todos: Option<String>,
     pub json_tools: bool,
+    /// Formatted list of available skills the agent can load on demand
+    #[serde(default)]
+    pub available_skills: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -136,6 +139,10 @@ impl PromptRegistry {
             (
                 "reasoning",
                 include_str!("../prompt_templates/partials/reasoning.hbs"),
+            ),
+            (
+                "skills",
+                include_str!("../prompt_templates/partials/skills.hbs"),
             ),
         ];
 
@@ -493,6 +500,7 @@ mod tests {
             remaining_steps: 5,
             todos: None,
             json_tools: true,
+            available_skills: None,
         };
         let msgs = build_prompt_messages(
             &registry,
