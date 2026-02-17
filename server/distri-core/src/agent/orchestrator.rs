@@ -825,6 +825,64 @@ impl AgentOrchestrator {
                 };
                 let tools = self.get_agent_tools(&definition, &external_tools).await?;
                 context.extend_tools(tools).await;
+
+                // Load skills and inject into agent context
+                if !definition.skill_ids.is_empty() {
+                    if let Some(ref skill_store) = self.stores.skill_store {
+                        let mut skill_sections = Vec::new();
+                        let mut skill_tools: Vec<Arc<dyn Tool>> = Vec::new();
+
+                        for skill_id in &definition.skill_ids {
+                            match skill_store.get_skill(skill_id).await {
+                                Ok(Some(skill)) => {
+                                    skill_sections.push(distri_types::prompt::PromptSection {
+                                        key: format!("skill:{}", skill.name),
+                                        content: skill.content,
+                                    });
+                                    for script in &skill.scripts {
+                                        skill_tools.push(Arc::new(
+                                            crate::tools::skill_script::SkillScriptTool::new(
+                                                skill.name.clone(),
+                                                script.clone(),
+                                            ),
+                                        ));
+                                    }
+                                }
+                                Ok(None) => {
+                                    tracing::warn!(
+                                        "Skill '{}' not found for agent '{}'",
+                                        skill_id,
+                                        definition.name
+                                    );
+                                }
+                                Err(e) => {
+                                    tracing::warn!(
+                                        "Failed to load skill '{}' for agent '{}': {}",
+                                        skill_id,
+                                        definition.name,
+                                        e
+                                    );
+                                }
+                            }
+                        }
+
+                        if !skill_sections.is_empty() {
+                            context
+                                .merge_hook_prompt_state(
+                                    crate::agent::context::HookPromptState {
+                                        dynamic_sections: skill_sections,
+                                        ..Default::default()
+                                    },
+                                )
+                                .await;
+                        }
+
+                        if !skill_tools.is_empty() {
+                            context.extend_tools(skill_tools).await;
+                        }
+                    }
+                }
+
                 let tools = context.get_tools().await;
 
                 let hook_impl: Arc<dyn crate::agent::types::AgentHooks> = {

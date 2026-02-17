@@ -361,6 +361,10 @@ pub struct StandardDefinition {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skills: Vec<AgentSkill>,
 
+    /// Skill IDs linking this agent to stored skills
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skill_ids: Vec<String>,
+
     /// List of sub-agents that this agent can transfer control to
     #[serde(default)]
     pub sub_agents: Vec<String>,

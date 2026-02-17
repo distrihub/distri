@@ -28,6 +28,7 @@ pub use code::execute_code_with_tools;
 pub use context::to_tool_context;
 pub use mcp::get_mcp_tools;
 mod builtin;
+pub mod skill_script;
 mod wasm;
 #[cfg(feature = "code")]
 pub use builtin::DistriExecuteCodeTool;

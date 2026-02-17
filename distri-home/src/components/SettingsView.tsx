@@ -2,7 +2,8 @@ import { ComponentType } from 'react';
 import { ConfigurationPanel } from '@distri/react';
 import { useDistriHomeNavigate } from '../DistriHomeProvider';
 import { SecretsView } from './SecretsView';
-import { Settings as SettingsIcon, LockIcon, LucideIcon } from 'lucide-react';
+import { SkillsView } from './SkillsView';
+import { Settings as SettingsIcon, LockIcon, CodeIcon, LucideIcon } from 'lucide-react';
 
 // Section type definition - exported for consumers to create custom sections
 export interface SettingsSection {
@@ -48,6 +49,7 @@ function ConfigurationSection({ className }: { className?: string }) {
 export const defaultSections: SettingsSection[] = [
   { id: 'configuration', label: 'Configuration', icon: SettingsIcon, href: 'settings', section: ConfigurationSection },
   { id: 'secrets', label: 'Secrets', icon: LockIcon, href: 'settings/secrets', section: SecretsView },
+  { id: 'skills', label: 'Skills', icon: CodeIcon, href: 'settings/skills', section: SkillsView },
 ];
 
 // Empty fallback section

@@ -1,6 +1,6 @@
 // Client exports
 export { DistriHomeClient } from './DistriHomeClient';
-export type { HomeStats, HomeStatsThread, RecentlyUsedAgent, AgentUsageInfo, ApiKey, Secret, PromptTemplate, AgentValidationResult, ValidationWarning, ValidationWarningSeverity } from './DistriHomeClient';
+export type { HomeStats, HomeStatsThread, RecentlyUsedAgent, AgentUsageInfo, ApiKey, Secret, PromptTemplate, AgentValidationResult, ValidationWarning, ValidationWarningSeverity, SkillRecord, SkillScriptRecord, NewSkill, UpdateSkill, NewSkillScript, UpdateSkillScript } from './DistriHomeClient';
 
 // Provider exports
 export { DistriHomeProvider, useDistriHome, useDistriHomeConfig, useDistriHomeNavigate, useDistriHomeClient } from './DistriHomeProvider';
@@ -19,6 +19,7 @@ export { AgentDetails } from './components/AgentDetails';
 export { ThreadsView } from './components/ThreadsView';
 export { SettingsView } from './components/SettingsView';
 export { SecretsView } from './components/SecretsView';
+export { SkillsView } from './components/SkillsView';
 export { PromptTemplatesView } from './components/PromptTemplatesView';
 export { SessionsView } from './components/SessionsView';
 export { CodePanel } from './components/CodePanel';
@@ -27,5 +28,6 @@ export type { AgentDetailsProps } from './components/AgentDetails';
 export type { ThreadsViewProps } from './components/ThreadsView';
 export type { SettingsViewProps, SettingsSection } from './components/SettingsView';
 export type { SecretsViewProps } from './components/SecretsView';
+export type { SkillsViewProps } from './components/SkillsView';
 export type { SessionsViewProps } from './components/SessionsView';
 export type { CodePanelProps, CodeLanguage } from './components/CodePanel';
