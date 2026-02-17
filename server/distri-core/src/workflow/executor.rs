@@ -50,7 +50,7 @@ impl WorkflowExecutor {
             user_id: Some(context.user_id.clone()),
             params: params.clone(),
             secrets: std::collections::HashMap::new(), // TODO: Load secrets if needed for workflows
-            auth_session: None,                        // No auth session for workflow context
+            env_vars: context.env_vars.clone(),
         };
 
         // Create workflow execution parameters

@@ -293,14 +293,14 @@ pub async fn handle_message_send_streaming_sse(
         let mut exec_ctx = executor_context.clone_with_tx(event_tx);
 
         // Extract browser_session_id from metadata if provided
-        if let Some(browser_session_id) = metadata_value
-            .as_ref()
-            .and_then(|m| m.get("browser_session_id").and_then(|v| v.as_str()).map(String::from))
-        {
+        if let Some(browser_session_id) = metadata_struct.browser_session_id.clone() {
             tracing::info!("[stream] Received browser_session_id from metadata: {}", browser_session_id);
             exec_ctx.browser_session_id = Some(browser_session_id);
         } else {
             tracing::debug!("[stream] No browser_session_id in metadata");
+        }
+        if metadata_struct.env_vars.is_some() {
+            exec_ctx.env_vars = metadata_struct.env_vars.clone();
         }
         if let Some(tool_meta) = metadata_struct.tool_metadata.clone() {
             exec_ctx.tool_metadata = Some(tool_meta);

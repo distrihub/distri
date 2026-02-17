@@ -18,7 +18,9 @@ pub struct PluginContext {
     pub user_id: Option<String>,
     pub params: serde_json::Value,
     pub secrets: std::collections::HashMap<String, String>,
-    pub auth_session: Option<serde_json::Value>, // AuthSession as JSON for cross-language compatibility
+    /// Environment variables passed from the client, available during execution alongside secrets.
+    #[serde(default)]
+    pub env_vars: Option<std::collections::HashMap<String, String>>,
 }
 
 /// Standard plugin information structure that works for both WASM and TypeScript

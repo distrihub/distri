@@ -457,7 +457,7 @@ impl WorkflowAgent {
                     user_id: Some(context.user_id.clone()),
                     params: input_data,
                     secrets: std::collections::HashMap::new(), // TODO: Load secrets if needed for agent workflows
-                    auth_session: None, // No auth session for workflow context
+                    env_vars: context.env_vars.clone(),
                 },
             )
             .await

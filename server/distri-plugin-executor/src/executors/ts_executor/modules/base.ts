@@ -116,17 +116,9 @@ export interface Context {
     run_id?: string;
     params: any;
     secrets: { [key: string]: string };  // Environment secrets and API keys
-    auth_session?: AuthSession;          // OAuth session data
+    env_vars?: { [key: string]: string };  // Environment variables from client
     userId?: string;
     user_id?: string;
-}
-
-export interface AuthSession {
-    access_token: string;
-    refresh_token?: string;
-    expires_at?: string;  // ISO date string
-    token_type: string;   // e.g., "Bearer"
-    scopes: string[];
 }
 
 export interface ToolCall {

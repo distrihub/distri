@@ -917,6 +917,18 @@ impl ExecutorContextTool for PluginTool {
         // Load secrets from auth store for plugin context
         let secrets = self.load_secrets_from_auth_store(&context).await?;
 
+        // Build env_vars by merging ExecutorContext env_vars with resolved OAuth tokens
+        let mut merged_env_vars: std::collections::HashMap<String, String> =
+            context.env_vars.clone().unwrap_or_default();
+        if !session_data.is_null() {
+            if let Some(token) = session_data.get("access_token").and_then(|v| v.as_str()) {
+                merged_env_vars.insert("ACCESS_TOKEN".to_string(), token.to_string());
+            }
+            if let Some(token_type) = session_data.get("token_type").and_then(|v| v.as_str()) {
+                merged_env_vars.insert("TOKEN_TYPE".to_string(), token_type.to_string());
+            }
+        }
+
         // Create ExecutionContext for the plugin system
         let plugin_context = distri_plugin_executor::PluginContext {
             call_id: uuid::Uuid::new_v4().to_string(),
@@ -925,12 +937,12 @@ impl ExecutorContextTool for PluginTool {
             task_id: Some(context.task_id.clone()),
             run_id: Some(context.run_id.clone()),
             user_id: Some(context.user_id.clone()),
-            params: serde_json::json!({}), // Empty params for now
+            params: serde_json::json!({}),
             secrets,
-            auth_session: if session_data.is_null() {
+            env_vars: if merged_env_vars.is_empty() {
                 None
             } else {
-                Some(session_data)
+                Some(merged_env_vars)
             },
         };
 
@@ -1117,7 +1129,7 @@ impl ExecutorContextTool for TenantPluginTool {
             user_id: Some(context.user_id.clone()),
             params: serde_json::Value::Null,
             secrets: std::collections::HashMap::new(),
-            auth_session: None,
+            env_vars: context.env_vars.clone(),
         };
 
         // Execute the tool

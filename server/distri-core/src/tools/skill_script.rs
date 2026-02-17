@@ -202,7 +202,7 @@ impl ExecutorContextTool for RunSkillScriptTool {
             })?;
 
         // Execute the script using the JS sandbox if available
-        run_script(&script.code, &script.language, &input, &script.name).await
+        run_script(&script.code, &script.language, &input, &script.name, &context.env_vars).await
     }
 }
 
@@ -215,10 +215,11 @@ async fn run_script(
     language: &str,
     input: &serde_json::Value,
     script_name: &str,
+    env_vars: &Option<std::collections::HashMap<String, String>>,
 ) -> Result<Vec<Part>, AgentError> {
     #[cfg(feature = "code")]
     {
-        return run_script_with_sandbox(code, input, script_name);
+        return run_script_with_sandbox(code, input, script_name, env_vars);
     }
 
     #[cfg(not(feature = "code"))]
@@ -242,6 +243,7 @@ fn run_script_with_sandbox(
     code: &str,
     input: &serde_json::Value,
     script_name: &str,
+    env_vars: &Option<std::collections::HashMap<String, String>>,
 ) -> Result<Vec<Part>, AgentError> {
     use distri_js_sandbox::{JsWorker, JsWorkerOptions, JsExecutor, JsWorkerError};
 
@@ -258,10 +260,17 @@ fn run_script_with_sandbox(
         }
     }
 
-    // Wrap the script code to inject input as a global constant
+    // Serialize env_vars to inject alongside input
+    let env_vars_json = match env_vars {
+        Some(vars) => serde_json::to_string(vars).unwrap_or_else(|_| "{}".to_string()),
+        None => "{}".to_string(),
+    };
+
+    // Wrap the script code to inject input and env_vars as global constants
     let wrapped_code = format!(
-        "const input = {};\n{}",
+        "const input = {};\nconst env = {};\n{}",
         serde_json::to_string(input).unwrap_or_else(|_| "null".to_string()),
+        env_vars_json,
         code,
     );
 

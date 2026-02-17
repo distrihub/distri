@@ -6,8 +6,8 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use crossterm::terminal;
 use distri::{
-    print_stream, AgentStreamClient, BuildHttpClient, CreatePluginRequest, Distri,
-    DistriClientApp, DistriConfig, ExternalToolRegistry,
+    print_stream, AgentStreamClient, BuildHttpClient, CreatePluginRequest, CreateSkillRequest,
+    CreateSkillScriptRequest, Distri, DistriClientApp, DistriConfig, ExternalToolRegistry,
 };
 use distri_a2a::{
     EventKind, Message as A2aMessage, MessageSendParams, Part as A2aPart, Role, TextPart,
@@ -80,6 +80,12 @@ enum Commands {
     Plugins {
         #[clap(subcommand)]
         command: PluginsCommands,
+    },
+
+    /// Skill related commands
+    Skills {
+        #[clap(subcommand)]
+        command: SkillsCommands,
     },
 
     /// Manage local client configuration
@@ -186,6 +192,20 @@ enum PluginsCommands {
     Validate {
         #[clap(help = "Path to a plugin .ts file")]
         path: PathBuf,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum SkillsCommands {
+    /// List skills from the server
+    List,
+    /// Push skill(s) to the server from a file or directory
+    Push {
+        #[clap(help = "Path to a skill .md file or directory containing skill files")]
+        path: PathBuf,
+        /// Push all skill files in a directory
+        #[clap(long, help = "Push all skill markdown files in the directory")]
+        all: bool,
     },
 }
 
@@ -473,6 +493,9 @@ async fn main() -> Result<()> {
         Commands::Plugins { command } => {
             handle_plugins_command(&client, command).await?;
         }
+        Commands::Skills { command } => {
+            handle_skills_command(&client, command).await?;
+        }
         Commands::Serve { .. } => unreachable!("serve handled earlier"),
     }
 
@@ -558,7 +581,6 @@ fn build_message_params(content: String) -> MessageSendParams {
         },
         configuration: None,
         metadata: None,
-        browser_session_id: None,
     }
 }
 
@@ -587,7 +609,6 @@ fn build_chat_message_params(content: String, thread_id: &str, model: &str) -> M
         },
         configuration: None,
         metadata,
-        browser_session_id: None,
     }
 }
 
@@ -1491,4 +1512,241 @@ fn extract_plugin_description(code: &str) -> Option<String> {
     }
 
     None
+}
+
+// ============================================================
+// Skills CLI
+// ============================================================
+
+async fn handle_skills_command(client: &Distri, command: SkillsCommands) -> Result<()> {
+    match command {
+        SkillsCommands::List => {
+            println!("Listing skills...");
+            let skills = client.list_skills().await?;
+            if skills.is_empty() {
+                println!("No skills found.");
+            } else {
+                for skill in skills {
+                    let visibility = if skill.is_public { "public" } else { "private" };
+                    let stars = if skill.star_count > 0 {
+                        format!(" *{}", skill.star_count)
+                    } else {
+                        String::new()
+                    };
+                    println!(
+                        "{} [{}]{} - {}",
+                        skill.name,
+                        visibility,
+                        stars,
+                        skill.description.as_deref().unwrap_or("(no description)")
+                    );
+                }
+            }
+        }
+        SkillsCommands::Push { path, all } => {
+            if !path.exists() {
+                anyhow::bail!("Path does not exist: {}", path.display());
+            }
+
+            let mut skill_files: Vec<PathBuf> = Vec::new();
+
+            if path.is_file() {
+                skill_files.push(path.clone());
+            } else if path.is_dir() {
+                if !all {
+                    eprintln!(
+                        "Path is a directory. Re-run with --all to push all skill markdown files inside."
+                    );
+                    std::process::exit(1);
+                }
+                let mut entries = fs::read_dir(&path).await?;
+                while let Some(entry) = entries.next_entry().await? {
+                    let entry_path = entry.path();
+                    if entry_path.is_file() {
+                        if let Some(ext) = entry_path.extension() {
+                            if ext == "md" {
+                                skill_files.push(entry_path);
+                            }
+                        }
+                    }
+                }
+            }
+
+            if skill_files.is_empty() {
+                println!("No skill markdown files found in {}", path.display());
+                return Ok(());
+            }
+
+            println!(
+                "Pushing {} skill(s) to {}...",
+                skill_files.len(),
+                client.base_url()
+            );
+
+            for skill_path in skill_files {
+                let request = parse_skill_file(&skill_path).await?;
+                let script_count = request.scripts.len();
+                let result = client.upsert_skill(&request).await?;
+                let visibility = if result.is_public { "public" } else { "private" };
+                println!(
+                    "{}  Pushed skill '{}' [{}] ({} scripts){}",
+                    COLOR_BRIGHT_GREEN, result.name, visibility, script_count, COLOR_RESET
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+/// TOML frontmatter for skill files.
+#[derive(Debug, serde::Deserialize)]
+struct SkillFrontmatter {
+    name: String,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    tags: Vec<String>,
+    #[serde(default)]
+    is_public: bool,
+}
+
+/// Parse a skill markdown file into a CreateSkillRequest.
+///
+/// Format:
+/// ```text
+/// ---
+/// name = "my-skill"
+/// description = "A cool skill"
+/// tags = ["foo", "bar"]
+/// is_public = false
+/// ---
+///
+/// # My Skill
+/// ... content ...
+///
+/// ## Scripts
+///
+/// ### script_name
+///
+/// Description of the script.
+///
+/// ```javascript
+/// // code here
+/// ```
+/// ```
+async fn parse_skill_file(path: &Path) -> Result<CreateSkillRequest> {
+    let raw = fs::read_to_string(path)
+        .await
+        .with_context(|| format!("reading {}", path.display()))?;
+
+    // Split frontmatter and body
+    let (frontmatter_str, body) = if raw.starts_with("---") {
+        let rest = &raw[3..];
+        if let Some(end) = rest.find("---") {
+            let fm = &rest[..end];
+            let body = &rest[end + 3..];
+            (fm.trim(), body.trim_start_matches('\n').to_string())
+        } else {
+            anyhow::bail!(
+                "Invalid frontmatter in {}: missing closing ---",
+                path.display()
+            );
+        }
+    } else {
+        anyhow::bail!(
+            "Skill file {} must start with TOML frontmatter (---)",
+            path.display()
+        );
+    };
+
+    let frontmatter: SkillFrontmatter = toml::from_str(frontmatter_str)
+        .with_context(|| format!("parsing frontmatter in {}", path.display()))?;
+
+    // Extract scripts from the body
+    let scripts = extract_scripts_from_markdown(&body);
+
+    Ok(CreateSkillRequest {
+        name: frontmatter.name,
+        description: frontmatter.description,
+        content: body,
+        tags: frontmatter.tags,
+        is_public: frontmatter.is_public,
+        scripts,
+    })
+}
+
+/// Extract scripts from markdown body.
+///
+/// Looks for patterns like:
+/// ### script_name
+/// Description text...
+/// ```javascript
+/// code...
+/// ```
+fn extract_scripts_from_markdown(body: &str) -> Vec<CreateSkillScriptRequest> {
+    let mut scripts = Vec::new();
+    let lines: Vec<&str> = body.lines().collect();
+    let mut i = 0;
+
+    while i < lines.len() {
+        // Look for ### heading (H3)
+        if let Some(name) = lines[i].strip_prefix("### ") {
+            let name = name.trim().to_string();
+            i += 1;
+
+            // Collect description lines until we hit a code fence
+            let mut description_lines = Vec::new();
+            while i < lines.len() && !lines[i].starts_with("```") {
+                let line = lines[i].trim();
+                if !line.is_empty() {
+                    description_lines.push(line);
+                }
+                i += 1;
+            }
+            let description = if description_lines.is_empty() {
+                None
+            } else {
+                Some(description_lines.join(" "))
+            };
+
+            // Parse fenced code block
+            if i < lines.len() && lines[i].starts_with("```") {
+                let fence_line = lines[i];
+                let language = fence_line
+                    .trim_start_matches('`')
+                    .trim()
+                    .to_string();
+                let language = if language.is_empty() {
+                    "javascript".to_string()
+                } else {
+                    language
+                };
+
+                i += 1;
+                let mut code_lines = Vec::new();
+                while i < lines.len() && !lines[i].starts_with("```") {
+                    code_lines.push(lines[i]);
+                    i += 1;
+                }
+                // Skip closing fence
+                if i < lines.len() {
+                    i += 1;
+                }
+
+                let code = code_lines.join("\n");
+                if !code.trim().is_empty() {
+                    scripts.push(CreateSkillScriptRequest {
+                        name,
+                        description,
+                        code,
+                        language,
+                    });
+                }
+            }
+        } else {
+            i += 1;
+        }
+    }
+
+    scripts
 }

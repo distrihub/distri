@@ -377,7 +377,7 @@ impl TypeScriptPluginExecutor {
             user_id,
             params,
             secrets,
-            auth_session,
+            env_vars,
         } = context;
 
         let call_id_clone = call_id.clone();
@@ -392,7 +392,7 @@ impl TypeScriptPluginExecutor {
             .lock()
             .map_err(|e| anyhow!("Failed to acquire tool worker lock: {}", e))?;
 
-        // Prepare execution context with auth_session and secrets from the new fields
+        // Prepare execution context with env_vars and secrets
         let execution_context = serde_json::json!({
             "callId": call_id_clone,
             "call_id": call_id,
@@ -408,7 +408,7 @@ impl TypeScriptPluginExecutor {
             "user_id": user_id,
             "params": params,
             "secrets": secrets,
-            "auth_session": auth_session,
+            "env_vars": env_vars,
         });
 
         // Get module IDs
@@ -474,7 +474,7 @@ impl TypeScriptPluginExecutor {
             user_id,
             params,
             secrets,
-            auth_session,
+            env_vars,
         } = context;
 
         let agent_id_value = agent_id.unwrap_or_else(|| "unknown".to_string());
@@ -505,7 +505,7 @@ impl TypeScriptPluginExecutor {
             "userId": user_id_value,
             "params": params,
             "secrets": secrets,
-            "auth_session": auth_session,
+            "env_vars": env_vars,
         });
 
         let (execute_module, plugin_module) = {
