@@ -276,8 +276,6 @@ pub struct MessageSendParams {
     pub configuration: Option<MessageSendConfiguration>,
     #[serde(default)]
     pub metadata: Option<serde_json::Value>,
-    #[serde(default)]
-    pub browser_session_id: Option<String>,
 }
 
 /// Configuration for sending a message.

@@ -74,6 +74,7 @@ pub struct InitializedStores {
     /// OSS: uses registry-based loader (filesystem plugins)
     /// Cloud: uses DB-based loader (tenant plugins)
     pub plugin_tool_loader: Option<Arc<dyn PluginToolLoader>>,
+    pub skill_store: Option<Arc<dyn SkillStore>>,
 }
 impl InitializedStores {
     pub fn set_tool_auth_store(&mut self, tool_auth_store: Arc<dyn ToolAuthStore>) {
@@ -763,4 +764,98 @@ pub trait SecretStore: Send + Sync {
     async fn create(&self, secret: NewSecret) -> anyhow::Result<SecretRecord>;
     async fn update(&self, key: &str, value: &str) -> anyhow::Result<SecretRecord>;
     async fn delete(&self, key: &str) -> anyhow::Result<()>;
+}
+
+// ========== Skill Store ==========
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillRecord {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub content: String,
+    pub tags: Vec<String>,
+    pub is_public: bool,
+    pub is_system: bool,
+    pub star_count: i32,
+    pub clone_count: i32,
+    pub scripts: Vec<SkillScriptRecord>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillScriptRecord {
+    pub id: String,
+    pub skill_id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub code: String,
+    pub language: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NewSkill {
+    pub name: String,
+    pub description: Option<String>,
+    pub content: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub is_public: bool,
+    #[serde(default)]
+    pub scripts: Vec<NewSkillScript>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NewSkillScript {
+    pub name: String,
+    pub description: Option<String>,
+    pub code: String,
+    #[serde(default = "default_script_language")]
+    pub language: String,
+}
+
+fn default_script_language() -> String {
+    "javascript".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateSkill {
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub content: Option<String>,
+    pub tags: Option<Vec<String>>,
+    pub is_public: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateSkillScript {
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub code: Option<String>,
+    pub language: Option<String>,
+}
+
+#[async_trait]
+pub trait SkillStore: Send + Sync {
+    async fn list_skills(&self) -> anyhow::Result<Vec<SkillRecord>>;
+    async fn get_skill(&self, id: &str) -> anyhow::Result<Option<SkillRecord>>;
+    async fn create_skill(&self, skill: NewSkill) -> anyhow::Result<SkillRecord>;
+    async fn update_skill(&self, id: &str, update: UpdateSkill) -> anyhow::Result<SkillRecord>;
+    async fn delete_skill(&self, id: &str) -> anyhow::Result<()>;
+
+    // Script management
+    async fn add_script(&self, skill_id: &str, script: NewSkillScript) -> anyhow::Result<SkillScriptRecord>;
+    async fn update_script(&self, script_id: &str, update: UpdateSkillScript) -> anyhow::Result<SkillScriptRecord>;
+    async fn delete_script(&self, script_id: &str) -> anyhow::Result<()>;
+
+    // Discovery
+    async fn list_public_skills(&self) -> anyhow::Result<Vec<SkillRecord>>;
+    async fn star_skill(&self, skill_id: &str) -> anyhow::Result<()>;
+    async fn unstar_skill(&self, skill_id: &str) -> anyhow::Result<()>;
+    async fn list_starred_skills(&self) -> anyhow::Result<Vec<SkillRecord>>;
+    async fn clone_skill(&self, skill_id: &str) -> anyhow::Result<SkillRecord>;
 }

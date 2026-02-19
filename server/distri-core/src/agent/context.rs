@@ -1,7 +1,7 @@
 use crate::hooks_runtime::HookRegistry;
 use distri_stores::SessionStoreExt;
 use distri_types::{
-    auth::AuthSession, configuration::DefinitionOverrides, AgentContextSize, AgentPlan,
+    configuration::DefinitionOverrides, AgentContextSize, AgentPlan,
     ContextSize, ContextUsage, ExecutionHistoryEntry, ExecutionResult, Part, PlanStep,
     ScratchpadEntry, ScratchpadEntryType,
 };
@@ -61,6 +61,15 @@ pub struct ExecutorContextMetadata {
     /// Dynamic key-value pairs available in templates per-call
     #[serde(default)]
     pub dynamic_values: Option<HashMap<String, serde_json::Value>>,
+
+    /// Browser session ID for browser tool integration
+    #[serde(default)]
+    pub browser_session_id: Option<String>,
+
+    /// Environment variables passed from the client to be available during execution.
+    /// These are forwarded to skill scripts and plugin contexts alongside secrets.
+    #[serde(default)]
+    pub env_vars: Option<HashMap<String, String>>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -136,7 +145,8 @@ pub struct ExecutorContext {
     pub final_result: Arc<RwLock<Option<Value>>>,
     pub current_step_id: Arc<RwLock<Option<String>>>,
     pub current_message_id: Arc<RwLock<Option<String>>>,
-    pub auth_session: Option<AuthSession>,
+    /// Environment variables passed from the client, forwarded to skill scripts and plugin contexts.
+    pub env_vars: Option<HashMap<String, String>>,
     /// Channel for emitting events to parent agent (for subagent communication)
     pub parent_tx: Option<Arc<mpsc::Sender<AgentEvent>>>,
     /// Parent task_id for subagents to share session data with parent
@@ -191,7 +201,7 @@ impl Default for ExecutorContext {
             current_step_id: Arc::new(RwLock::new(None)),
             current_message_id: Arc::new(RwLock::new(None)),
             additional_attributes: None,
-            auth_session: None,
+            env_vars: None,
             parent_tx: None,
             parent_task_id: None,
             dynamic_tools: None,
@@ -822,7 +832,7 @@ impl ExecutorContext {
             current_step_id: self.current_step_id.clone(), // Arc::clone
             current_message_id: self.current_message_id.clone(), // Arc::clone
             additional_attributes: self.additional_attributes.clone(),
-            auth_session: self.auth_session.clone(),
+            env_vars: self.env_vars.clone(),
             parent_tx: self.parent_tx.clone(),
             parent_task_id: self.parent_task_id.clone(),
             dynamic_tools: self.dynamic_tools.clone(),

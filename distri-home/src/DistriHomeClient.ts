@@ -340,6 +340,114 @@ export class DistriHomeClient {
     return await response.json();
   }
 
+  // ---- Skills ----
+
+  /**
+   * List all skills
+   */
+  async listSkills(): Promise<SkillRecord[]> {
+    const response = await this.client.fetch('/skills');
+    if (!response.ok) {
+      throw new Error(`Failed to fetch skills: ${response.statusText}`);
+    }
+    return await response.json();
+  }
+
+  /**
+   * Get a skill by ID
+   */
+  async getSkill(id: string): Promise<SkillRecord> {
+    const response = await this.client.fetch(`/skills/${id}`);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch skill: ${response.statusText}`);
+    }
+    return await response.json();
+  }
+
+  /**
+   * Create a new skill
+   */
+  async createSkill(data: NewSkill): Promise<SkillRecord> {
+    const response = await this.client.fetch('/skills', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (!response.ok) {
+      throw new Error(`Failed to create skill: ${response.statusText}`);
+    }
+    return await response.json();
+  }
+
+  /**
+   * Update an existing skill
+   */
+  async updateSkill(id: string, data: UpdateSkill): Promise<SkillRecord> {
+    const response = await this.client.fetch(`/skills/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (!response.ok) {
+      throw new Error(`Failed to update skill: ${response.statusText}`);
+    }
+    return await response.json();
+  }
+
+  /**
+   * Delete a skill
+   */
+  async deleteSkill(id: string): Promise<void> {
+    const response = await this.client.fetch(`/skills/${id}`, {
+      method: 'DELETE',
+    });
+    if (!response.ok) {
+      throw new Error(`Failed to delete skill: ${response.statusText}`);
+    }
+  }
+
+  /**
+   * Add a script to a skill
+   */
+  async addScript(skillId: string, data: NewSkillScript): Promise<SkillScriptRecord> {
+    const response = await this.client.fetch(`/skills/${skillId}/scripts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (!response.ok) {
+      throw new Error(`Failed to add script: ${response.statusText}`);
+    }
+    return await response.json();
+  }
+
+  /**
+   * Update a script
+   */
+  async updateScript(scriptId: string, data: UpdateSkillScript): Promise<SkillScriptRecord> {
+    const response = await this.client.fetch(`/skills/scripts/${scriptId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (!response.ok) {
+      throw new Error(`Failed to update script: ${response.statusText}`);
+    }
+    return await response.json();
+  }
+
+  /**
+   * Delete a script
+   */
+  async deleteScript(scriptId: string): Promise<void> {
+    const response = await this.client.fetch(`/skills/scripts/${scriptId}`, {
+      method: 'DELETE',
+    });
+    if (!response.ok) {
+      throw new Error(`Failed to delete script: ${response.statusText}`);
+    }
+  }
+
   // ---- Sessions ----
 
   /**
@@ -451,4 +559,63 @@ export interface ValidationWarning {
 export interface AgentValidationResult {
   valid: boolean;
   warnings: ValidationWarning[];
+}
+
+// Skill types
+
+export interface SkillRecord {
+  id: string;
+  name: string;
+  description?: string;
+  content: string;
+  tags: string[];
+  is_public: boolean;
+  is_system: boolean;
+  star_count?: number;
+  clone_count?: number;
+  scripts: SkillScriptRecord[];
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface SkillScriptRecord {
+  id: string;
+  skill_id: string;
+  name: string;
+  description?: string;
+  code: string;
+  language: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface NewSkill {
+  name: string;
+  description?: string;
+  content: string;
+  tags?: string[];
+  is_public?: boolean;
+  scripts?: NewSkillScript[];
+}
+
+export interface UpdateSkill {
+  name?: string;
+  description?: string;
+  content?: string;
+  tags?: string[];
+  is_public?: boolean;
+}
+
+export interface NewSkillScript {
+  name: string;
+  description?: string;
+  code: string;
+  language?: string;
+}
+
+export interface UpdateSkillScript {
+  name?: string;
+  description?: string;
+  code?: string;
+  language?: string;
 }

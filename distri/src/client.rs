@@ -1356,7 +1356,6 @@ fn build_params(
         message: a2a_message,
         configuration,
         metadata,
-        browser_session_id: None,
     })
 }
 
@@ -1756,6 +1755,241 @@ impl Distri {
         } else {
             // Create new plugin
             self.create_plugin(request).await
+        }
+    }
+}
+
+// ============================================================
+// Skill API Types and Methods
+// ============================================================
+
+/// Full skill information including content and scripts.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillResponse {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    pub content: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub is_public: bool,
+    #[serde(default)]
+    pub is_system: bool,
+    #[serde(default)]
+    pub is_owner: bool,
+    #[serde(default)]
+    pub star_count: i32,
+    #[serde(default)]
+    pub clone_count: i32,
+    #[serde(default)]
+    pub is_starred: bool,
+    #[serde(default)]
+    pub scripts: Vec<SkillScriptResponse>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// Script within a skill.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillScriptResponse {
+    pub id: String,
+    pub skill_id: String,
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    pub code: String,
+    pub language: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// Lighter skill information without content - returned from list endpoints.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillListItemResponse {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub is_public: bool,
+    #[serde(default)]
+    pub is_system: bool,
+    #[serde(default)]
+    pub is_owner: bool,
+    #[serde(default)]
+    pub star_count: i32,
+    #[serde(default)]
+    pub clone_count: i32,
+    #[serde(default)]
+    pub is_starred: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// Request to create a new skill.
+#[derive(Debug, Clone, Serialize)]
+pub struct CreateSkillRequest {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub content: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub is_public: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scripts: Vec<CreateSkillScriptRequest>,
+}
+
+/// Request to create a script within a skill.
+#[derive(Debug, Clone, Serialize)]
+pub struct CreateSkillScriptRequest {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub code: String,
+    pub language: String,
+}
+
+/// Request to update an existing skill.
+#[derive(Debug, Clone, Serialize)]
+pub struct UpdateSkillRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tags: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_public: Option<bool>,
+}
+
+/// Wrapped response for skill lists.
+#[derive(Debug, Clone, Deserialize)]
+pub struct SkillsListResponse {
+    pub skills: Vec<SkillListItemResponse>,
+}
+
+impl Distri {
+    // ========== Skill API ==========
+
+    /// List all skills owned by the current user.
+    pub async fn list_skills(&self) -> Result<Vec<SkillListItemResponse>, ClientError> {
+        let url = format!("{}/skills", self.base_url);
+        let resp = self.http.get(&url).send().await?;
+
+        if resp.status().is_success() {
+            let list: SkillsListResponse = resp.json().await?;
+            Ok(list.skills)
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!(
+                "failed to list skills: {}",
+                text
+            )))
+        }
+    }
+
+    /// Get a skill by ID.
+    pub async fn get_skill(&self, id: &str) -> Result<Option<SkillResponse>, ClientError> {
+        let url = format!("{}/skills/{}", self.base_url, id);
+        let resp = self.http.get(&url).send().await?;
+
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if resp.status().is_success() {
+            Ok(Some(resp.json().await?))
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!(
+                "failed to get skill: {}",
+                text
+            )))
+        }
+    }
+
+    /// Create a new skill.
+    pub async fn create_skill(
+        &self,
+        request: &CreateSkillRequest,
+    ) -> Result<SkillResponse, ClientError> {
+        let url = format!("{}/skills", self.base_url);
+        let resp = self.http.post(&url).json(request).send().await?;
+
+        if resp.status().is_success() {
+            resp.json().await.map_err(ClientError::from)
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!(
+                "failed to create skill: {}",
+                text
+            )))
+        }
+    }
+
+    /// Update an existing skill.
+    pub async fn update_skill(
+        &self,
+        id: &str,
+        request: &UpdateSkillRequest,
+    ) -> Result<SkillResponse, ClientError> {
+        let url = format!("{}/skills/{}", self.base_url, id);
+        let resp = self.http.put(&url).json(request).send().await?;
+
+        if resp.status().is_success() {
+            resp.json().await.map_err(ClientError::from)
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!(
+                "failed to update skill: {}",
+                text
+            )))
+        }
+    }
+
+    /// Delete a skill.
+    pub async fn delete_skill(&self, id: &str) -> Result<(), ClientError> {
+        let url = format!("{}/skills/{}", self.base_url, id);
+        let resp = self.http.delete(&url).send().await?;
+
+        if resp.status().is_success() || resp.status() == reqwest::StatusCode::NO_CONTENT {
+            Ok(())
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!(
+                "failed to delete skill: {}",
+                text
+            )))
+        }
+    }
+
+    /// Create or update a skill by name (upsert).
+    /// If a skill with the given name exists, it will be updated; otherwise, a new one is created.
+    pub async fn upsert_skill(
+        &self,
+        request: &CreateSkillRequest,
+    ) -> Result<SkillResponse, ClientError> {
+        let skills = self.list_skills().await?;
+        let existing = skills.iter().find(|s| s.name == request.name);
+
+        if let Some(skill) = existing {
+            let update = UpdateSkillRequest {
+                name: Some(request.name.clone()),
+                description: request.description.clone(),
+                content: Some(request.content.clone()),
+                tags: Some(request.tags.clone()),
+                is_public: Some(request.is_public),
+            };
+            self.update_skill(&skill.id, &update).await
+        } else {
+            self.create_skill(request).await
         }
     }
 }

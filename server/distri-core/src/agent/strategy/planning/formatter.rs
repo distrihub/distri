@@ -80,10 +80,15 @@ impl<'a> MessageFormatter<'a> {
         let max_steps = self.agent_def.max_iterations.unwrap_or(MAX_ITERATIONS);
 
         let remaining_steps = max_steps.saturating_sub(current_steps);
-        let dynamic_values = hook_state.dynamic_values.clone();
+        let mut dynamic_values = hook_state.dynamic_values.clone();
 
         // Fetch session values from the session store
         let session_values = Self::load_session_values(context).await;
+
+        // Extract available_skills from dynamic_values if present
+        let available_skills = dynamic_values
+            .remove("available_skills")
+            .and_then(|v| v.as_str().map(|s| s.to_string()));
 
         let template_data = TemplateData {
             description: self.agent_def.description.clone(),
@@ -103,6 +108,7 @@ impl<'a> MessageFormatter<'a> {
             remaining_steps,
             todos: todos.clone(),
             json_tools: native_json_tools,
+            available_skills,
         };
 
         let template_to_use = hook_state

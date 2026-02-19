@@ -437,6 +437,64 @@ pub struct SecretChangeset<'a> {
     pub updated_at: NaiveDateTime,
 }
 
+// ========== Skills ==========
+
+#[derive(Debug, Clone, Queryable, Identifiable, Selectable)]
+#[diesel(table_name = skills)]
+pub struct SkillModel {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub content: String,
+    pub tags: String,
+    pub is_public: i32,
+    pub is_system: i32,
+    pub star_count: i32,
+    pub clone_count: i32,
+    pub created_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
+}
+
+#[derive(Debug, Clone, Insertable)]
+#[diesel(table_name = skills)]
+pub struct NewSkillModel<'a> {
+    pub id: &'a str,
+    pub name: &'a str,
+    pub description: Option<&'a str>,
+    pub content: &'a str,
+    pub tags: &'a str,
+    pub is_public: i32,
+    pub is_system: i32,
+    pub created_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
+}
+
+#[derive(Debug, Clone, Queryable, Identifiable, Selectable)]
+#[diesel(table_name = skill_scripts)]
+pub struct SkillScriptModel {
+    pub id: String,
+    pub skill_id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub code: String,
+    pub language: String,
+    pub created_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
+}
+
+#[derive(Debug, Clone, Insertable)]
+#[diesel(table_name = skill_scripts)]
+pub struct NewSkillScriptModel<'a> {
+    pub id: &'a str,
+    pub skill_id: &'a str,
+    pub name: &'a str,
+    pub description: Option<&'a str>,
+    pub code: &'a str,
+    pub language: &'a str,
+    pub created_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
+}
+
 // ========== Message Reads ==========
 
 #[derive(Debug, Clone, Queryable, Identifiable, Selectable)]

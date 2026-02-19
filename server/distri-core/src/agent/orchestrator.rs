@@ -825,6 +825,40 @@ impl AgentOrchestrator {
                 };
                 let tools = self.get_agent_tools(&definition, &external_tools).await?;
                 context.extend_tools(tools).await;
+
+                // Register load_skill tool and available skills metadata if agent has skills configured
+                if !definition.available_skills.is_empty() && self.stores.skill_store.is_some() {
+                    // Build the available skills description for the prompt template
+                    let skills_description = definition
+                        .available_skills
+                        .iter()
+                        .map(|s| {
+                            let desc = s.description.as_deref().unwrap_or("No description");
+                            format!("- **{}** (id: `{}`): {}", s.name, s.id, desc)
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+
+                    // Inject the skills list via dynamic_values so the {{> skills}} partial can render it
+                    context
+                        .merge_hook_prompt_state(crate::agent::context::HookPromptState {
+                            dynamic_values: std::collections::HashMap::from([(
+                                "available_skills".to_string(),
+                                serde_json::Value::String(skills_description),
+                            )]),
+                            ..Default::default()
+                        })
+                        .await;
+
+                    // Add skill tools: load_skill and run_skill_script
+                    context
+                        .extend_tools(vec![
+                            Arc::new(crate::tools::skill_script::LoadSkillTool) as Arc<dyn Tool>,
+                            Arc::new(crate::tools::skill_script::RunSkillScriptTool) as Arc<dyn Tool>,
+                        ])
+                        .await;
+                }
+
                 let tools = context.get_tools().await;
 
                 let hook_impl: Arc<dyn crate::agent::types::AgentHooks> = {

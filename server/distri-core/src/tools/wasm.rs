@@ -124,7 +124,7 @@ impl Tool for WasmTool {
                 user_id: Some(context.user_id.clone()),
                 params: serde_json::Value::Object(serde_json::Map::new()), // Empty params for now
                 secrets: std::collections::HashMap::new(), // TODO: Load secrets if needed for WASM tools
-                auth_session: None,                        // No auth session for WASM context
+                env_vars: None, // WASM tools don't have access to ExecutorContext env_vars
             };
 
             let result = plugin_system

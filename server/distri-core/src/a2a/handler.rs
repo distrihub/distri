@@ -47,7 +47,7 @@ impl A2AHandler {
                 def.description.clone(),
                 def.version.clone(),
                 def.icon_url.clone(),
-                def.skills.clone(),
+                def.skills_description.clone(),
             ),
             distri_types::configuration::AgentConfig::SequentialWorkflowAgent(def) => (
                 def.name.clone(),
@@ -147,12 +147,8 @@ impl A2AHandler {
             .clone()
             .unwrap_or_else(|| Uuid::new_v4().to_string());
 
-        // Extract browser_session_id from metadata if provided
-        let browser_session_id = metadata_value.as_ref().and_then(|m| {
-            m.get("browser_session_id")
-                .and_then(|v| v.as_str())
-                .map(String::from)
-        });
+        let browser_session_id = metadata.browser_session_id.clone();
+        let env_vars = metadata.env_vars.clone();
 
         let session_id = thread_id.clone();
 
@@ -191,6 +187,7 @@ impl A2AHandler {
             orchestrator: Some(orchestrator.clone()),
             additional_attributes: Some(additional_attributes),
             hook_prompt_state,
+            env_vars,
             ..Default::default()
         };
 

@@ -35,6 +35,7 @@ mod llm_helpers;
 mod prompt_templates;
 mod secrets;
 mod session;
+mod skills;
 mod tools;
 
 pub fn all(cfg: &mut web::ServiceConfig) {
@@ -123,6 +124,7 @@ pub fn distri(cfg: &mut web::ServiceConfig) {
     .service(web::resource("/home/stats").route(web::get().to(get_home_stats)))
     .configure(prompt_templates::configure_prompt_template_routes)
     .configure(secrets::configure_secret_routes)
+    .configure(skills::configure_skill_routes)
     // Voice streaming endpoints - TODO: Implement after fixing compilation issues
     // .service(web::resource("/voice/stream").route(web::get().to(voice_stream_handler)));
     // Authentication endpoints

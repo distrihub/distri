@@ -78,7 +78,7 @@ async fn load_execute_plugin() {
                 user_id: Some("user-123".to_string()),
                 params: serde_json::json!({}),
                 secrets: std::collections::HashMap::new(),
-                auth_session: None,
+                env_vars: None,
             },
         )
         .await

@@ -32,6 +32,7 @@ pub trait StoreFactory: Send + Sync {
     fn plugin_catalog_store(&self) -> Arc<dyn PluginCatalogStore>;
     fn prompt_template_store(&self) -> Arc<dyn PromptTemplateStore>;
     fn secret_store(&self) -> Arc<dyn SecretStore>;
+    fn skill_store(&self) -> Arc<dyn SkillStore>;
 }
 
 impl<Conn> StoreFactory for DieselStoreBuilder<Conn>
@@ -83,6 +84,10 @@ where
     fn secret_store(&self) -> Arc<dyn SecretStore> {
         Arc::new(DieselStoreBuilder::secret_store(self)) as Arc<dyn SecretStore>
     }
+
+    fn skill_store(&self) -> Arc<dyn SkillStore> {
+        Arc::new(DieselStoreBuilder::skill_store(self)) as Arc<dyn SkillStore>
+    }
 }
 
 fn boxed_initializer<F, Fut, Factory>(initializer: F) -> StoreInitializer
@@ -119,6 +124,7 @@ pub struct StoreBuilder {
     pub plugin_store: Option<Arc<dyn PluginCatalogStore>>,
     pub prompt_template_store: Option<Arc<dyn PromptTemplateStore>>,
     pub secret_store: Option<Arc<dyn SecretStore>>,
+    pub skill_store: Option<Arc<dyn SkillStore>>,
 }
 
 impl StoreBuilder {
@@ -138,6 +144,7 @@ impl StoreBuilder {
             plugin_store: None,
             prompt_template_store: None,
             secret_store: None,
+            skill_store: None,
         }
         .register_default_store_types()
     }
@@ -239,6 +246,12 @@ impl StoreBuilder {
         self
     }
 
+    /// Set a pre-initialized skill store (won't be reinitialized)
+    pub fn with_skill_store(mut self, store: Arc<dyn SkillStore>) -> Self {
+        self.skill_store = Some(store);
+        self
+    }
+
     /// Build InitializedStores, initializing only stores that weren't pre-provided
     pub async fn build(self) -> Result<InitializedStores> {
         let metadata_factory = self
@@ -268,6 +281,9 @@ impl StoreBuilder {
             .secret_store
             .clone()
             .unwrap_or_else(|| metadata_factory.secret_store());
+        let skill_store = self.skill_store.clone().or_else(|| {
+            Some(metadata_factory.skill_store())
+        });
 
         // Initialize memory store if configured and not provided
         let memory_store = if let Some(store) = self.memory_store.clone() {
@@ -360,6 +376,7 @@ impl StoreBuilder {
             prompt_template_store: Some(prompt_template_store),
             secret_store: Some(secret_store),
             plugin_tool_loader: None, // Cloud deployments set this separately
+            skill_store,
         })
     }
 }
@@ -469,6 +486,7 @@ pub async fn create_ephemeral_execution_stores(
         prompt_template_store: base_stores.prompt_template_store.clone(),
         secret_store: base_stores.secret_store.clone(),
         plugin_tool_loader: base_stores.plugin_tool_loader.clone(),
+        skill_store: base_stores.skill_store.clone(),
     })
 }
 
@@ -513,5 +531,6 @@ pub async fn prepare_stores_for_execution(
         prompt_template_store: base_stores.prompt_template_store.clone(),
         secret_store: base_stores.secret_store.clone(),
         plugin_tool_loader: base_stores.plugin_tool_loader.clone(),
+        skill_store: base_stores.skill_store.clone(),
     })
 }

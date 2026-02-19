@@ -9,6 +9,18 @@ use std::default::Default;
 /// Default timeout for external tool execution in seconds
 pub const DEFAULT_EXTERNAL_TOOL_TIMEOUT_SECS: u64 = 120;
 
+/// A reference to a stored skill that an agent can load on demand
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
+pub struct AvailableSkill {
+    /// The skill ID (UUID)
+    pub id: String,
+    /// Human-readable skill name (for display in the partial)
+    pub name: String,
+    /// Brief description of what this skill does (shown to the agent)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
 /// Unified Agent Strategy Configuration
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "snake_case")]
@@ -358,8 +370,13 @@ pub struct StandardDefinition {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_iterations: Option<usize>,
 
+    /// A2A agent card skills metadata (describes capabilities for agent-to-agent protocol)
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub skills: Vec<AgentSkill>,
+    pub skills_description: Vec<AgentSkill>,
+
+    /// Skills available for on-demand loading by this agent
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub available_skills: Vec<AvailableSkill>,
 
     /// List of sub-agents that this agent can transfer control to
     #[serde(default)]
