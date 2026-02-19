@@ -72,7 +72,7 @@ mcp-crawl = { git = "https://github.com/distrihub/mcp-servers.git", rev = "0af31
 mcp-reddit = { git = "https://github.com/distrihub/mcp-servers.git", rev = "0af3104" }
 mcp-twitter = { git = "https://github.com/distrihub/mcp-servers.git", rev = "0af3104" }
 chrono = { version = "0.4", features = ["serde"] }
-rustyscript = { git = "https://github.com/rscarson/rustyscript.git", version = "0.12.3", default-features = false, features = [
+rustyscript = { version = "0.12.3", default-features = false, features = [
   "worker",
   "url_import",
   "url",
@@ -80,4 +80,4 @@ rustyscript = { git = "https://github.com/rscarson/rustyscript.git", version = "
   "fs_import",
 ] }
 
-distri-js-sandbox = { git = "https://github.com/distrihub/js-sandbox", rev = "b3bb928" }
+distri-js-sandbox = { git = "https://github.com/distrihub/js-sandbox", rev = "be43f91" }
