@@ -1870,12 +1870,6 @@ pub struct UpdateSkillRequest {
     pub is_public: Option<bool>,
 }
 
-/// Wrapped response for skill lists.
-#[derive(Debug, Clone, Deserialize)]
-pub struct SkillsListResponse {
-    pub skills: Vec<SkillListItemResponse>,
-}
-
 impl Distri {
     // ========== Skill API ==========
 
@@ -1885,8 +1879,8 @@ impl Distri {
         let resp = self.http.get(&url).send().await?;
 
         if resp.status().is_success() {
-            let list: SkillsListResponse = resp.json().await?;
-            Ok(list.skills)
+            let list: Vec<SkillListItemResponse> = resp.json().await?;
+            Ok(list)
         } else {
             let text = resp.text().await.unwrap_or_default();
             Err(ClientError::InvalidResponse(format!(
