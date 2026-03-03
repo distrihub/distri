@@ -88,7 +88,33 @@ impl DistriClientApp {
                 status
             )));
         }
-        Ok(resp.json::<Vec<AgentConfig>>().await?)
+
+        /// Consumes server-side metadata fields (id, published, stats, etc.) that are
+        /// flattened alongside AgentConfig, preventing them from reaching
+        /// StandardDefinition's deny_unknown_fields.
+        #[derive(Deserialize)]
+        #[allow(dead_code)]
+        struct AgentListItem {
+            #[serde(default)]
+            id: Option<serde_json::Value>,
+            #[serde(default)]
+            published: Option<serde_json::Value>,
+            #[serde(default)]
+            published_at: Option<serde_json::Value>,
+            #[serde(default)]
+            is_owner: Option<serde_json::Value>,
+            #[serde(default)]
+            stats: Option<serde_json::Value>,
+            #[serde(flatten)]
+            config: AgentConfig,
+        }
+
+        Ok(resp
+            .json::<Vec<AgentListItem>>()
+            .await?
+            .into_iter()
+            .map(|item| item.config)
+            .collect())
     }
 
     pub async fn list_tools(&self) -> Result<Vec<ToolListItem>, ClientError> {
