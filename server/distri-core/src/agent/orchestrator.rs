@@ -371,11 +371,7 @@ impl AgentOrchestrator {
             } else {
                 base.model.clone()
             },
-            temperature: if (agent.temperature - sentinel.temperature).abs() > f32::EPSILON {
-                agent.temperature
-            } else {
-                base.temperature
-            },
+            temperature: agent.temperature.or(base.temperature),
             max_tokens: if agent.max_tokens != sentinel.max_tokens {
                 agent.max_tokens
             } else {
@@ -386,25 +382,9 @@ impl AgentOrchestrator {
             } else {
                 base.context_size
             },
-            top_p: if (agent.top_p - sentinel.top_p).abs() > f32::EPSILON {
-                agent.top_p
-            } else {
-                base.top_p
-            },
-            frequency_penalty: if (agent.frequency_penalty - sentinel.frequency_penalty).abs()
-                > f32::EPSILON
-            {
-                agent.frequency_penalty
-            } else {
-                base.frequency_penalty
-            },
-            presence_penalty: if (agent.presence_penalty - sentinel.presence_penalty).abs()
-                > f32::EPSILON
-            {
-                agent.presence_penalty
-            } else {
-                base.presence_penalty
-            },
+            top_p: agent.top_p.or(base.top_p),
+            frequency_penalty: agent.frequency_penalty.or(base.frequency_penalty),
+            presence_penalty: agent.presence_penalty.or(base.presence_penalty),
             provider,
             parameters: if agent.parameters.is_some() {
                 agent.parameters.clone()

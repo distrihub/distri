@@ -53,12 +53,7 @@ pub fn merge_model_settings(
         } else {
             base.model.clone()
         },
-        temperature: if (override_settings.temperature - sentinel.temperature).abs() > f32::EPSILON
-        {
-            override_settings.temperature
-        } else {
-            base.temperature
-        },
+        temperature: override_settings.temperature.or(base.temperature),
         max_tokens: if override_settings.max_tokens != sentinel.max_tokens {
             override_settings.max_tokens
         } else {
@@ -69,26 +64,9 @@ pub fn merge_model_settings(
         } else {
             base.context_size
         },
-        top_p: if (override_settings.top_p - sentinel.top_p).abs() > f32::EPSILON {
-            override_settings.top_p
-        } else {
-            base.top_p
-        },
-        frequency_penalty: if (override_settings.frequency_penalty - sentinel.frequency_penalty)
-            .abs()
-            > f32::EPSILON
-        {
-            override_settings.frequency_penalty
-        } else {
-            base.frequency_penalty
-        },
-        presence_penalty: if (override_settings.presence_penalty - sentinel.presence_penalty).abs()
-            > f32::EPSILON
-        {
-            override_settings.presence_penalty
-        } else {
-            base.presence_penalty
-        },
+        top_p: override_settings.top_p.or(base.top_p),
+        frequency_penalty: override_settings.frequency_penalty.or(base.frequency_penalty),
+        presence_penalty: override_settings.presence_penalty.or(base.presence_penalty),
         provider,
         parameters: override_settings.parameters.clone().or(base.parameters.clone()),
         response_format: override_settings

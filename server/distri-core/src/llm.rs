@@ -163,7 +163,7 @@ impl LLMExecutor {
         let sanitized_messages = self.sanitize_messages(messages);
         tracing::info!(
             target: "llm.execute",
-            "LLM request (non-stream) model={}, provider={:?}, max_tokens={}, temperature={}, tool_format={:?}, tools={} messages={}",
+            "LLM request (non-stream) model={}, provider={:?}, max_tokens={}, temperature={:?}, tool_format={:?}, tools={} messages={}",
             self.llm_def.model_settings.model,
             self.llm_def.model_settings.provider,
             self.llm_def.model_settings.max_tokens,
@@ -335,7 +335,7 @@ impl LLMExecutor {
         let sanitized_messages = self.sanitize_messages(messages);
         tracing::info!(
             target: "llm.execute_stream",
-            "LLM request (stream) model={}, provider={:?}, max_tokens={}, temperature={}, tool_format={:?}, tools={} messages={}",
+            "LLM request (stream) model={}, provider={:?}, max_tokens={}, temperature={:?}, tool_format={:?}, tools={} messages={}",
             self.llm_def.model_settings.model,
             self.llm_def.model_settings.provider,
             self.llm_def.model_settings.max_tokens,
@@ -783,13 +783,13 @@ impl LLMExecutor {
             model: settings.model.clone(),
             messages,
             tools,
-            temperature: Some(settings.temperature),
-            top_p: Some(settings.top_p),
+            temperature: settings.temperature,
+            top_p: settings.top_p,
             #[allow(deprecated)]
             max_tokens: Some(settings.max_tokens),
             // max_completion_tokens: Some(settings.max_tokens),
-            frequency_penalty: Some(settings.frequency_penalty),
-            presence_penalty: Some(settings.presence_penalty),
+            frequency_penalty: settings.frequency_penalty,
+            presence_penalty: settings.presence_penalty,
             response_format: self
                 .llm_def
                 .model_settings

@@ -514,7 +514,7 @@ impl StandardDefinition {
         }
 
         if let Some(temperature) = overrides.temperature {
-            self.model_settings.temperature = temperature;
+            self.model_settings.temperature = Some(temperature);
         }
 
         if let Some(max_tokens) = overrides.max_tokens {
@@ -755,18 +755,18 @@ impl ModelProvider {
 pub struct ModelSettings {
     #[serde(default = "default_model")]
     pub model: String,
-    #[serde(default = "default_temperature")]
-    pub temperature: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f32>,
     #[serde(default = "default_max_tokens")]
     pub max_tokens: u32,
     #[serde(default = "default_context_size")]
     pub context_size: u32,
-    #[serde(default = "default_top_p")]
-    pub top_p: f32,
-    #[serde(default = "default_frequency_penalty")]
-    pub frequency_penalty: f32,
-    #[serde(default = "default_presence_penalty")]
-    pub presence_penalty: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub top_p: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frequency_penalty: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub presence_penalty: Option<f32>,
     #[serde(default = "default_model_provider")]
     pub provider: ModelProvider,
     /// Additional parameters for the agent, if any.
@@ -781,12 +781,12 @@ impl Default for ModelSettings {
     fn default() -> Self {
         Self {
             model: "gpt-4.1-mini".to_string(),
-            temperature: 0.7,
+            temperature: None,
             max_tokens: 1000,
             context_size: 20000,
-            top_p: 1.0,
-            frequency_penalty: 0.0,
-            presence_penalty: 0.0,
+            top_p: None,
+            frequency_penalty: None,
+            presence_penalty: None,
             provider: default_model_provider(),
             parameters: None,
             response_format: None,
@@ -807,28 +807,12 @@ fn default_model() -> String {
     "gpt-4.1-mini".to_string()
 }
 
-fn default_temperature() -> f32 {
-    0.7
-}
-
 fn default_max_tokens() -> u32 {
     1000
 }
 
 fn default_context_size() -> u32 {
     20000 // Default limit for general use - agents can override with higher values as needed
-}
-
-fn default_top_p() -> f32 {
-    1.0
-}
-
-fn default_frequency_penalty() -> f32 {
-    0.0
-}
-
-fn default_presence_penalty() -> f32 {
-    0.0
 }
 
 fn default_history_size() -> Option<usize> {
