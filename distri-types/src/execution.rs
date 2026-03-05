@@ -1,5 +1,6 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 
 use crate::{Part, PlanStep, TaskStatus, ToolResponse, core::FileType};
 
@@ -82,6 +83,93 @@ impl ExecutionResult {
             txt.push_str(&parts_txt);
         }
         txt
+    }
+
+    /// Compact execution results before storing in scratchpad/history used for prompt construction.
+    ///
+    /// This keeps high-signal fields (tool ids/status/artifact refs) while stripping or truncating
+    /// large payloads that would otherwise bloat subsequent model calls.
+    pub fn compact_for_history(&self) -> Self {
+        const MAX_TEXT_CHARS: usize = 2_000;
+        const MAX_JSON_CHARS: usize = 4_000;
+
+        fn truncate(value: &str, max: usize) -> String {
+            if value.chars().count() <= max {
+                return value.to_string();
+            }
+
+            let truncated: String = value.chars().take(max).collect();
+            format!(
+                "{}\n...[truncated {} chars for history]",
+                truncated,
+                value.chars().count().saturating_sub(max)
+            )
+        }
+
+        fn compact_json(value: &serde_json::Value, max: usize) -> serde_json::Value {
+            match serde_json::to_string(value) {
+                Ok(serialized) if serialized.chars().count() > max => json!({
+                    "summary": "JSON payload omitted from history due to size",
+                    "preview": truncate(&serialized, std::cmp::min(500, max)),
+                    "truncated": true,
+                    "original_chars": serialized.chars().count()
+                }),
+                Ok(_) => value.clone(),
+                Err(_) => {
+                    json!({ "summary": "JSON payload omitted from history (serialization failed)" })
+                }
+            }
+        }
+
+        let compacted_parts = self
+            .parts
+            .iter()
+            .map(|part| match part {
+                Part::Text(text) => Part::Text(truncate(text, MAX_TEXT_CHARS)),
+                Part::Data(data) => Part::Data(compact_json(data, MAX_JSON_CHARS)),
+                Part::ToolCall(tool_call) => {
+                    let mut compacted_call = tool_call.clone();
+                    compacted_call.input = compact_json(&tool_call.input, MAX_JSON_CHARS);
+                    Part::ToolCall(compacted_call)
+                }
+                Part::ToolResult(tool_result) => {
+                    let filtered = tool_result.filter_for_save();
+                    let compacted_tool_parts = filtered
+                        .parts
+                        .iter()
+                        .map(|tool_part| match tool_part {
+                            Part::Text(text) => Part::Text(truncate(text, MAX_TEXT_CHARS)),
+                            Part::Data(data) => Part::Data(compact_json(data, MAX_JSON_CHARS)),
+                            // Keep artifact references; drop inline images from rolling context.
+                            Part::Image(_) => Part::Text(
+                                "[Image omitted from history; use artifact/reference if needed]"
+                                    .to_string(),
+                            ),
+                            other => other.clone(),
+                        })
+                        .collect();
+
+                    Part::ToolResult(ToolResponse {
+                        tool_call_id: filtered.tool_call_id,
+                        tool_name: filtered.tool_name,
+                        parts: compacted_tool_parts,
+                        parts_metadata: None,
+                    })
+                }
+                Part::Image(_) => {
+                    Part::Text("[Image omitted from history to reduce context size]".to_string())
+                }
+                Part::Artifact(artifact) => Part::Artifact(artifact.clone()),
+            })
+            .collect();
+
+        Self {
+            step_id: self.step_id.clone(),
+            parts: compacted_parts,
+            status: self.status.clone(),
+            reason: self.reason.as_ref().map(|r| truncate(r, MAX_TEXT_CHARS)),
+            timestamp: self.timestamp,
+        }
     }
 }
 
@@ -355,5 +443,57 @@ mod tests {
         }
 
         println!("✅ Observation truncation is working!");
+    }
+
+    #[test]
+    fn test_compact_for_history_filters_save_false_and_truncates_large_parts() {
+        let mut parts_metadata = std::collections::HashMap::new();
+        parts_metadata.insert(1, crate::PartMetadata { save: false });
+
+        let tool_response = ToolResponse {
+            tool_call_id: "call-1".to_string(),
+            tool_name: "search".to_string(),
+            parts: vec![
+                Part::Data(json!({"small": "kept"})),
+                Part::Data(json!({"secret": "do not persist"})),
+            ],
+            parts_metadata: Some(parts_metadata),
+        };
+
+        let huge = "x".repeat(6_000);
+        let execution_result = ExecutionResult {
+            step_id: "step-1".to_string(),
+            parts: vec![
+                Part::Text("y".repeat(2_500)),
+                Part::Data(json!({"huge": huge})),
+                Part::ToolResult(tool_response),
+            ],
+            status: ExecutionStatus::Success,
+            reason: Some("z".repeat(2_500)),
+            timestamp: 0,
+        };
+
+        let compacted = execution_result.compact_for_history();
+
+        assert_eq!(compacted.parts.len(), 3);
+        let text = match &compacted.parts[0] {
+            Part::Text(value) => value,
+            other => panic!("unexpected part: {:?}", other),
+        };
+        assert!(text.contains("[truncated"));
+
+        let data = match &compacted.parts[1] {
+            Part::Data(value) => value,
+            other => panic!("unexpected part: {:?}", other),
+        };
+        assert_eq!(data["truncated"], json!(true));
+
+        let tool = match &compacted.parts[2] {
+            Part::ToolResult(value) => value,
+            other => panic!("unexpected part: {:?}", other),
+        };
+        // save:false part should be removed.
+        assert_eq!(tool.parts.len(), 1);
+        assert!(tool.parts_metadata.is_none());
     }
 }
