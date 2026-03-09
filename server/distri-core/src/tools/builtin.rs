@@ -22,6 +22,7 @@ pub fn get_builtin_tools(
     let mut tools = vec![
         Arc::new(TransferToAgentTool) as Arc<dyn Tool>,
         Arc::new(FinalTool) as Arc<dyn Tool>,
+        Arc::new(ReflectTool) as Arc<dyn Tool>,
         Arc::new(DistriScrapeSharedTool) as Arc<dyn Tool>,
         Arc::new(DistriBrowserSharedTool) as Arc<dyn Tool>,
         Arc::new(BrowserStepTool) as Arc<dyn Tool>,
@@ -98,6 +99,83 @@ impl ExecutorContextTool for FinalTool {
         emit_final(tool_call, context.clone()).await?;
         // No direct parts to return
         Ok(Vec::new())
+    }
+}
+
+/// Reflection tool that the reflection agent uses to signal its decision
+/// instead of relying on "Should Continue" string matching in the output text.
+#[derive(Debug)]
+pub struct ReflectTool;
+
+#[async_trait::async_trait]
+impl Tool for ReflectTool {
+    fn get_name(&self) -> String {
+        "reflect".to_string()
+    }
+
+    fn get_description(&self) -> String {
+        "Report the reflection analysis result. Use this tool to indicate whether the agent should retry execution based on quality and completeness assessment.".to_string()
+    }
+
+    fn is_final(&self) -> bool {
+        true
+    }
+
+    fn needs_executor_context(&self) -> bool {
+        true
+    }
+
+    fn get_parameters(&self) -> serde_json::Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "quality": {
+                    "type": "string",
+                    "enum": ["excellent", "good", "fair", "poor"],
+                    "description": "Quality assessment of the execution"
+                },
+                "completeness": {
+                    "type": "string",
+                    "enum": ["complete", "partial", "incomplete"],
+                    "description": "Completeness assessment of the execution"
+                },
+                "should_continue": {
+                    "type": "boolean",
+                    "description": "Whether the agent should retry execution. true = retry, false = done"
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Brief explanation of the reflection decision"
+                }
+            },
+            "required": ["quality", "completeness", "should_continue"]
+        })
+    }
+
+    async fn execute(
+        &self,
+        _tool_call: ToolCall,
+        _context: Arc<ToolContext>,
+    ) -> Result<Vec<Part>, anyhow::Error> {
+        Err(anyhow::anyhow!(
+            "ReflectTool requires ExecutorContext, not ToolContext"
+        ))
+    }
+}
+
+#[async_trait::async_trait]
+impl ExecutorContextTool for ReflectTool {
+    async fn execute_with_executor_context(
+        &self,
+        tool_call: ToolCall,
+        context: Arc<ExecutorContext>,
+    ) -> Result<Vec<Part>, AgentError> {
+        // Store the reflection result as the final result so the agent loop can read it
+        let result = tool_call.input.clone();
+        context
+            .set_final_result(Some(result.clone()))
+            .await;
+        Ok(vec![Part::Data(result)])
     }
 }
 
