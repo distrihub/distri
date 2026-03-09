@@ -358,11 +358,12 @@ impl<'a> MessageFormatter<'a> {
     }
 
     fn execution_result_to_messages(result: &ExecutionResult) -> Vec<crate::types::Message> {
+        let compacted = result.compact_for_history();
         let mut messages = Vec::new();
         let mut assistant_parts: Vec<Part> = Vec::new();
         let mut responded_tool_ids = HashSet::new();
 
-        for part in result.parts.iter() {
+        for part in compacted.parts.iter() {
             match part {
                 Part::ToolResult(tool_response) => {
                     responded_tool_ids.insert(tool_response.tool_call_id.clone());
@@ -373,7 +374,7 @@ impl<'a> MessageFormatter<'a> {
                     );
                     message.role = MessageRole::Tool;
                     message.name = Some(tool_response.tool_name.clone());
-                    message.created_at = result.timestamp;
+                    message.created_at = compacted.timestamp;
                     message.parts = vec![Part::ToolResult(tool_response.clone())];
                     messages.push(message);
                 }
@@ -413,7 +414,7 @@ impl<'a> MessageFormatter<'a> {
                 .collect();
             let mut assistant_message = crate::types::Message::default();
             assistant_message.role = MessageRole::Assistant;
-            assistant_message.created_at = result.timestamp;
+            assistant_message.created_at = compacted.timestamp;
             assistant_message.parts = assistant_parts;
             messages.insert(0, assistant_message);
         }

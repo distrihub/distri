@@ -896,15 +896,13 @@ impl ExecutorContext {
 
     /// Store execution result in scratchpad store
     pub async fn store_execution_result(&self, result: &ExecutionResult) -> Result<(), AgentError> {
-        let compacted = result.compact_for_history();
-
         // Continue with the processed result
         tracing::debug!("Storing execution result for task_id: {}", self.task_id);
         let exec_entry = ExecutionHistoryEntry {
             thread_id: self.thread_id.clone(),
             task_id: self.task_id.clone(),
             run_id: self.run_id.clone(),
-            execution_result: compacted,
+            execution_result: result.clone(),
             stored_at: chrono::Utc::now().timestamp_millis(),
         };
 

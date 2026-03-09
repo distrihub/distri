@@ -85,6 +85,8 @@ pub fn format_scratchpad_with_task_filter(
                 }
             }
             ScratchpadEntryType::Execution(exec_entry) => {
+                let compacted = exec_entry.execution_result.compact_for_history();
+
                 // Add task separator when task changes
                 if current_task_id.as_ref() != Some(&exec_entry.task_id) {
                     if current_task_id.is_some() {
@@ -94,10 +96,7 @@ pub fn format_scratchpad_with_task_filter(
                 }
 
                 // Add execution result as observation
-                scratchpad.push_str(&format!(
-                    "Observation: {}\n",
-                    exec_entry.execution_result.as_observation()
-                ));
+                scratchpad.push_str(&format!("Observation: {}\n", compacted.as_observation()));
             }
         }
     }
