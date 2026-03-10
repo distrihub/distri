@@ -242,6 +242,7 @@ impl PluginRegistry {
                 "agent_designer",
                 include_str!("../../../agents/agent_designer.md"),
             ),
+            ("coder", include_str!("../../../agents/coder.md")),
         ];
 
         let mut loaded_agents = Vec::new();

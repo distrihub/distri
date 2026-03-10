@@ -15,13 +15,13 @@ const SHELL_SESSION_KEY: &str = "shell_session_id";
 // Browsr Shell HTTP Client
 // ============================================================
 
-struct BrowsrShellClient {
+pub(crate) struct BrowsrShellClient {
     client: reqwest::Client,
     base_url: String,
 }
 
 impl BrowsrShellClient {
-    fn from_env() -> Self {
+    pub(crate) fn from_env() -> Self {
         let base_url = std::env::var("BROWSR_BASE_URL")
             .or_else(|_| std::env::var("BROWSR_API_URL"))
             .unwrap_or_else(|_| "https://api.browsr.dev".to_string());
@@ -44,7 +44,39 @@ impl BrowsrShellClient {
         Self { client, base_url }
     }
 
-    async fn create_session(
+    /// Create a client with explicit env vars (used by skill scripts that carry their own env).
+    pub(crate) fn from_env_with_vars(env_vars: &std::collections::HashMap<String, String>) -> Self {
+        let base_url = env_vars
+            .get("BROWSR_BASE_URL")
+            .or_else(|| env_vars.get("BROWSR_API_URL"))
+            .cloned()
+            .or_else(|| std::env::var("BROWSR_BASE_URL").ok())
+            .or_else(|| std::env::var("BROWSR_API_URL").ok())
+            .unwrap_or_else(|| "https://api.browsr.dev".to_string());
+
+        let mut headers = reqwest::header::HeaderMap::new();
+        let api_key = env_vars
+            .get("BROWSR_API_KEY")
+            .cloned()
+            .or_else(|| std::env::var("BROWSR_API_KEY").ok());
+        if let Some(api_key) = api_key {
+            if let Ok(val) =
+                reqwest::header::HeaderValue::from_str(&format!("Bearer {}", api_key))
+            {
+                headers.insert(reqwest::header::AUTHORIZATION, val);
+            }
+        }
+
+        let client = reqwest::Client::builder()
+            .default_headers(headers)
+            .timeout(std::time::Duration::from_secs(300))
+            .build()
+            .expect("Failed to build HTTP client");
+
+        Self { client, base_url }
+    }
+
+    pub(crate) async fn create_session(
         &self,
         request: &CreateShellSessionRequest,
     ) -> Result<CreateShellSessionResponse, AgentError> {
@@ -72,7 +104,7 @@ impl BrowsrShellClient {
         })
     }
 
-    async fn exec(&self, request: &ShellExecRequest) -> Result<ShellExecResponse, AgentError> {
+    pub(crate) async fn exec(&self, request: &ShellExecRequest) -> Result<ShellExecResponse, AgentError> {
         let url = format!("{}/shell/exec", self.base_url);
         let resp = self
             .client
@@ -95,7 +127,7 @@ impl BrowsrShellClient {
             .map_err(|e| AgentError::ToolExecution(format!("Failed to parse exec response: {}", e)))
     }
 
-    async fn destroy_session(&self, session_id: &str) -> Result<(), AgentError> {
+    pub(crate) async fn destroy_session(&self, session_id: &str) -> Result<(), AgentError> {
         let url = format!("{}/shell/sessions/{}", self.base_url, session_id);
         let resp = self.client.delete(&url).send().await.map_err(|e| {
             AgentError::ToolExecution(format!("Shell session deletion failed: {}", e))
@@ -118,46 +150,46 @@ impl BrowsrShellClient {
 // ============================================================
 
 #[derive(Debug, Serialize)]
-struct CreateShellSessionRequest {
+pub(crate) struct CreateShellSessionRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
-    image: Option<String>,
+    pub image: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    memory_mb: Option<u32>,
+    pub memory_mb: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    disk_mb: Option<u32>,
+    pub disk_mb: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    cpu_cores: Option<f32>,
+    pub cpu_cores: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    timeout_secs: Option<u32>,
+    pub timeout_secs: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    language: Option<String>,
+    pub language: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
-struct CreateShellSessionResponse {
-    session_id: String,
+pub(crate) struct CreateShellSessionResponse {
+    pub session_id: String,
     #[serde(default)]
-    status: Option<String>,
+    pub status: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
-struct ShellExecRequest {
-    session_id: String,
-    command: String,
+pub(crate) struct ShellExecRequest {
+    pub session_id: String,
+    pub command: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    timeout_secs: Option<u32>,
+    pub timeout_secs: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    working_dir: Option<String>,
+    pub working_dir: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-struct ShellExecResponse {
-    session_id: String,
-    stdout: String,
-    stderr: String,
-    exit_code: i32,
-    duration_ms: u64,
-    timed_out: bool,
+pub(crate) struct ShellExecResponse {
+    pub session_id: String,
+    pub stdout: String,
+    pub stderr: String,
+    pub exit_code: i32,
+    pub duration_ms: u64,
+    pub timed_out: bool,
 }
 
 // ============================================================

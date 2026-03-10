@@ -20,6 +20,10 @@ type = "tools"
 
 [tools]
 builtin = ["transfer_to_agent", "todos", "artifact"]
+
+[[available_skills]]
+id = "*"
+name = "*"
 ---
 
 You are a Deep Research Agent that conducts thorough, multi-phase research using TODO-driven tracking and sub-agent delegation.

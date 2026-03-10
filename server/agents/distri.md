@@ -17,6 +17,10 @@ reasoning_depth = "deep"
 
 [strategy.execution_mode]
 type = "tools"
+
+[[available_skills]]
+id = "*"
+name = "*"
 ---
 
 # ROLE

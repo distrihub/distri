@@ -808,35 +808,74 @@ impl AgentOrchestrator {
 
                 // Register load_skill tool and available skills metadata if agent has skills configured
                 if !definition.available_skills.is_empty() && self.stores.skill_store.is_some() {
-                    // Build the available skills description for the prompt template
-                    let skills_description = definition
+                    // Resolve available skills - support wildcard "*"
+                    let has_wildcard = definition
                         .available_skills
                         .iter()
-                        .map(|s| {
-                            let desc = s.description.as_deref().unwrap_or("No description");
-                            format!("- **{}** (id: `{}`): {}", s.name, s.id, desc)
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n");
+                        .any(|s| s.id == "*" || s.name == "*");
 
-                    // Inject the skills list via dynamic_values so the {{> skills}} partial can render it
-                    context
-                        .merge_hook_prompt_state(crate::agent::context::HookPromptState {
-                            dynamic_values: std::collections::HashMap::from([(
-                                "available_skills".to_string(),
-                                serde_json::Value::String(skills_description),
-                            )]),
-                            ..Default::default()
-                        })
-                        .await;
+                    let resolved_skills = if has_wildcard {
+                        // Wildcard: load all skills from store
+                        if let Some(skill_store) = self.stores.skill_store.as_ref() {
+                            match skill_store.list_skills().await {
+                                Ok(skills) => skills
+                                    .into_iter()
+                                    .map(|s| {
+                                        distri_types::AvailableSkill {
+                                            id: s.id,
+                                            name: s.name,
+                                            description: s.description,
+                                        }
+                                    })
+                                    .collect(),
+                                Err(e) => {
+                                    tracing::warn!(
+                                        "Failed to load skills for wildcard: {}",
+                                        e
+                                    );
+                                    vec![]
+                                }
+                            }
+                        } else {
+                            vec![]
+                        }
+                    } else {
+                        definition.available_skills.clone()
+                    };
 
-                    // Add skill tools: load_skill and run_skill_script
-                    context
-                        .extend_tools(vec![
-                            Arc::new(crate::tools::skill_script::LoadSkillTool) as Arc<dyn Tool>,
-                            Arc::new(crate::tools::skill_script::RunSkillScriptTool) as Arc<dyn Tool>,
-                        ])
-                        .await;
+                    if !resolved_skills.is_empty() {
+                        // Build the available skills description for the prompt template
+                        let skills_description = resolved_skills
+                            .iter()
+                            .map(|s| {
+                                let desc =
+                                    s.description.as_deref().unwrap_or("No description");
+                                format!("- **{}** (id: `{}`): {}", s.name, s.id, desc)
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n");
+
+                        // Inject the skills list via dynamic_values so the {{> skills}} partial can render it
+                        context
+                            .merge_hook_prompt_state(crate::agent::context::HookPromptState {
+                                dynamic_values: std::collections::HashMap::from([(
+                                    "available_skills".to_string(),
+                                    serde_json::Value::String(skills_description),
+                                )]),
+                                ..Default::default()
+                            })
+                            .await;
+
+                        // Add skill tools: load_skill and run_skill_script
+                        context
+                            .extend_tools(vec![
+                                Arc::new(crate::tools::skill_script::LoadSkillTool)
+                                    as Arc<dyn Tool>,
+                                Arc::new(crate::tools::skill_script::RunSkillScriptTool)
+                                    as Arc<dyn Tool>,
+                            ])
+                            .await;
+                    }
                 }
 
                 let tools = context.get_tools().await;

@@ -5,7 +5,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use crate::agent::todos::TodosTool;
 use crate::tools::browser::{
-    BrowserStepTool, DistriBrowserSharedTool, DistriScrapeSharedTool, SearchTool,
+    BrowserStepTool, CrawlTool, DistriBrowserSharedTool, DistriScrapeSharedTool, SearchTool,
 };
 use crate::tools::shell::{ExecuteShellTool, StartShellTool, StopShellTool};
 use crate::{
@@ -28,6 +28,7 @@ pub fn get_builtin_tools(
         Arc::new(DistriBrowserSharedTool) as Arc<dyn Tool>,
         Arc::new(BrowserStepTool) as Arc<dyn Tool>,
         Arc::new(SearchTool) as Arc<dyn Tool>,
+        Arc::new(CrawlTool) as Arc<dyn Tool>,
         Arc::new(TodosTool) as Arc<dyn Tool>,
         Arc::new(StartShellTool) as Arc<dyn Tool>,
         Arc::new(ExecuteShellTool) as Arc<dyn Tool>,

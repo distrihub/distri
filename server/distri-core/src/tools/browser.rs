@@ -5,7 +5,7 @@ use crate::types::ToolCall;
 use crate::AgentError;
 use anyhow::Result;
 
-use browsr_client::{BrowserStepRequest, BrowsrClient, ScrapeApiRequest, ScrapeFormat};
+use browsr_client::{BrowserStepRequest, BrowsrClient, CrawlApiRequest, ScrapeApiRequest, ScrapeFormat};
 use browsr_types::{
     BrowserContext, BrowserStepInput, BrowserToolOptions, Commands, SearchOptions,
 };
@@ -580,5 +580,87 @@ impl ExecutorContextTool for BrowserStepTool {
             .map_err(|e| AgentError::ToolExecution(format!("Failed to serialize result: {}", e)))?;
 
         Ok(vec![Part::Data(response_value)])
+    }
+}
+
+// ============================================================
+// Crawl Tool
+// ============================================================
+
+/// CrawlTool - Crawl multiple pages starting from a URL
+#[derive(Debug)]
+pub struct CrawlTool;
+
+#[async_trait::async_trait]
+impl Tool for CrawlTool {
+    fn get_name(&self) -> String {
+        "browsr_crawl".to_string()
+    }
+
+    fn get_description(&self) -> String {
+        "Crawl multiple web pages starting from a URL. Follows links up to a specified depth and returns content from all crawled pages.".to_string()
+    }
+
+    fn get_parameters(&self) -> Value {
+        json!({
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "title": "CrawlInput",
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "description": "The starting URL to crawl"
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of pages to crawl (default: 10)"
+                },
+                "max_depth": {
+                    "type": "integer",
+                    "description": "Maximum link depth to follow (default: 2)"
+                },
+                "formats": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": ["markdown", "summary", "html", "raw_html", "links"]
+                    },
+                    "description": "Output formats (default: [\"markdown\"])"
+                },
+                "include_paths": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Only crawl URLs matching these path patterns"
+                },
+                "exclude_paths": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Skip URLs matching these path patterns"
+                }
+            },
+            "required": ["url"],
+            "additionalProperties": false
+        })
+    }
+
+    fn needs_executor_context(&self) -> bool {
+        false
+    }
+
+    async fn execute(
+        &self,
+        tool_call: distri_types::ToolCall,
+        _context: Arc<ToolContext>,
+    ) -> Result<Vec<Part>, anyhow::Error> {
+        let request: CrawlApiRequest = serde_json::from_value(tool_call.input)
+            .map_err(|e| anyhow::anyhow!("Invalid crawl request: {}", e))?;
+
+        let client = BrowsrClient::from_env();
+        let response = client
+            .crawl(request)
+            .await
+            .map_err(|e| anyhow::anyhow!("Crawl failed: {}", e))?;
+
+        Ok(vec![Part::Data(serde_json::to_value(response)?)])
     }
 }

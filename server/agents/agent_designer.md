@@ -18,6 +18,10 @@ type = "tools"
 
 [tools]
 builtin = ["final", "transfer_to_agent"]
+
+[[available_skills]]
+id = "*"
+name = "*"
 ---
 
 # ROLE
