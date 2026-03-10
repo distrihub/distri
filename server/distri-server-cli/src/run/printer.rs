@@ -858,6 +858,32 @@ impl EventPrinter {
             AgentEventType::BrowserSessionStarted { .. } => {
                 // Browser Session Started
             }
+            AgentEventType::ContextCompaction {
+                tier,
+                tokens_before,
+                tokens_after,
+                entries_affected,
+                usage_ratio,
+                summary,
+                ..
+            } => {
+                self.ensure_newline();
+                let tier_label = match tier {
+                    distri_types::events::CompactionTier::Trim => "trim",
+                    distri_types::events::CompactionTier::Summarize => "summarize",
+                    distri_types::events::CompactionTier::Reset => "reset",
+                };
+                eprintln!(
+                    "  {COLOR_YELLOW}Context compacted ({tier_label}): {tokens_before} → {tokens_after} tokens ({entries_affected} entries, {:.0}% usage){COLOR_RESET}",
+                    usage_ratio * 100.0,
+                );
+                if let Some(summary_text) = summary {
+                    let preview: String = summary_text.chars().take(120).collect();
+                    eprintln!(
+                        "  {COLOR_GRAY}Summary: {preview}...{COLOR_RESET}",
+                    );
+                }
+            }
         };
 
         Ok(())

@@ -359,6 +359,17 @@ impl<'a> MessageFormatter<'a> {
                     Self::execution_result_to_messages(&exec_entry.execution_result, use_compaction)
                 }
                 ScratchpadEntryType::Task(_) => Vec::new(),
+                ScratchpadEntryType::Summary(summary) => {
+                    // Render compaction summaries as system-like context messages
+                    let mut msg = crate::types::Message::default();
+                    msg.role = MessageRole::Assistant;
+                    msg.created_at = entry.1.timestamp;
+                    msg.parts = vec![Part::Text(format!(
+                        "[Context summary — {} earlier entries compacted]: {}",
+                        summary.entries_summarized, summary.summary_text
+                    ))];
+                    vec![msg]
+                }
             })
             .collect()
     }

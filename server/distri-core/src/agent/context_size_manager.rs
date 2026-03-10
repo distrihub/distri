@@ -1,4 +1,5 @@
 use crate::agent::token_estimator::{EstimationMethod, TokenEstimator};
+use distri_types::events::CompactionTier;
 use distri_types::{ScratchpadEntry, ScratchpadEntryType};
 use serde::{Deserialize, Serialize};
 
@@ -13,6 +14,14 @@ pub struct ContextSizeConfig {
     pub min_entries: usize,
     /// Whether to preserve the user task entry at the top
     pub preserve_user_task: bool,
+    /// Usage ratio threshold to trigger Tier 1 (mechanical) compaction (default: 0.6)
+    pub trim_threshold: f64,
+    /// Usage ratio threshold to trigger Tier 2 (semantic) compaction (default: 0.8)
+    pub summarize_threshold: f64,
+    /// Usage ratio threshold to trigger Tier 3 (emergency reset) (default: 0.95)
+    pub reset_threshold: f64,
+    /// Target usage ratio after compaction (default: 0.4)
+    pub post_compaction_target: f64,
 }
 
 impl Default for ContextSizeConfig {
@@ -22,8 +31,29 @@ impl Default for ContextSizeConfig {
             estimation_method: EstimationMethod::Max,
             min_entries: 3, // User task + at least 2 entries for context
             preserve_user_task: true,
+            trim_threshold: 0.6,
+            summarize_threshold: 0.8,
+            reset_threshold: 0.95,
+            post_compaction_target: 0.4,
         }
     }
+}
+
+/// Result of a compaction evaluation
+#[derive(Debug, Clone)]
+pub struct CompactionResult {
+    /// Which tier was applied, if any
+    pub tier: Option<CompactionTier>,
+    /// Token count before compaction
+    pub tokens_before: usize,
+    /// Token count after compaction
+    pub tokens_after: usize,
+    /// Number of entries affected
+    pub entries_affected: usize,
+    /// The compacted entries
+    pub entries: Vec<ScratchpadEntry>,
+    /// Usage ratio that triggered compaction
+    pub usage_ratio: f64,
 }
 
 /// Manages context size by trimming scratchpad entries based on token count
@@ -276,6 +306,107 @@ impl ContextSizeManager {
         }
 
         total_tokens
+    }
+
+    /// Evaluate whether compaction is needed and apply the appropriate tier.
+    ///
+    /// Returns a `CompactionResult` describing what happened:
+    /// - `tier: None` means no compaction was needed
+    /// - `tier: Some(Trim)` means mechanical compaction was applied
+    /// - `tier: Some(Summarize)` means semantic compaction is recommended
+    ///   (caller must perform LLM summarization and replace entries)
+    /// - `tier: Some(Reset)` means emergency — only essentials preserved
+    pub fn evaluate_and_compact(&self, entries: &[ScratchpadEntry]) -> CompactionResult {
+        let tokens_before = self.estimate_scratchpad_tokens(entries);
+        let usage_ratio = if self.config.max_tokens > 0 {
+            tokens_before as f64 / self.config.max_tokens as f64
+        } else {
+            0.0
+        };
+
+        // No compaction needed
+        if usage_ratio < self.config.trim_threshold {
+            return CompactionResult {
+                tier: None,
+                tokens_before,
+                tokens_after: tokens_before,
+                entries_affected: 0,
+                entries: entries.to_vec(),
+                usage_ratio,
+            };
+        }
+
+        // Tier 3: Emergency reset — keep only task + last 2 entries
+        if usage_ratio >= self.config.reset_threshold {
+            let trimmed = self.emergency_reset(entries);
+            let tokens_after = self.estimate_scratchpad_tokens(&trimmed);
+            let entries_affected = entries.len().saturating_sub(trimmed.len());
+            return CompactionResult {
+                tier: Some(CompactionTier::Reset),
+                tokens_before,
+                tokens_after,
+                entries_affected,
+                entries: trimmed,
+                usage_ratio,
+            };
+        }
+
+        // Tier 2: Semantic compaction recommended (>= summarize_threshold)
+        // We return the mechanically trimmed entries but signal that LLM summarization
+        // should be performed by the caller.
+        if usage_ratio >= self.config.summarize_threshold {
+            let trimmed = self.trim_scratchpad_entries(entries);
+            let tokens_after = self.estimate_scratchpad_tokens(&trimmed);
+            let entries_affected = entries.len().saturating_sub(trimmed.len());
+            return CompactionResult {
+                tier: Some(CompactionTier::Summarize),
+                tokens_before,
+                tokens_after,
+                entries_affected,
+                entries: trimmed,
+                usage_ratio,
+            };
+        }
+
+        // Tier 1: Mechanical trim
+        let trimmed = self.trim_scratchpad_entries(entries);
+        let tokens_after = self.estimate_scratchpad_tokens(&trimmed);
+        let entries_affected = entries.len().saturating_sub(trimmed.len());
+        CompactionResult {
+            tier: Some(CompactionTier::Trim),
+            tokens_before,
+            tokens_after,
+            entries_affected,
+            entries: trimmed,
+            usage_ratio,
+        }
+    }
+
+    /// Emergency reset: keep only user task + last 2 non-task entries
+    fn emergency_reset(&self, entries: &[ScratchpadEntry]) -> Vec<ScratchpadEntry> {
+        let mut result = Vec::new();
+
+        // Preserve user task
+        if self.config.preserve_user_task {
+            if let Some(task) = entries
+                .iter()
+                .find(|e| matches!(e.entry_type, ScratchpadEntryType::Task(_)))
+            {
+                result.push(task.clone());
+            }
+        }
+
+        // Keep last 2 non-task entries
+        let non_task: Vec<_> = entries
+            .iter()
+            .filter(|e| !matches!(e.entry_type, ScratchpadEntryType::Task(_)))
+            .collect();
+        let keep_count = std::cmp::min(2, non_task.len());
+        for entry in non_task.iter().rev().take(keep_count).rev() {
+            result.push((*entry).clone());
+        }
+
+        result
     }
 
     /// Get current configuration
