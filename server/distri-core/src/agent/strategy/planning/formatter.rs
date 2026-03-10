@@ -345,25 +345,38 @@ impl<'a> MessageFormatter<'a> {
     fn build_native_history_messages(
         scratchpad_entries: &[ScratchpadEntry],
     ) -> Vec<crate::types::Message> {
+        let latest_execution_index = scratchpad_entries
+            .iter()
+            .rposition(|entry| matches!(entry.entry_type, ScratchpadEntryType::Execution(_)));
+
         scratchpad_entries
             .iter()
+            .enumerate()
             .flat_map(|entry| match &entry.entry_type {
                 ScratchpadEntryType::PlanStep(_) => Vec::new(),
                 ScratchpadEntryType::Execution(exec_entry) => {
-                    Self::execution_result_to_messages(&exec_entry.execution_result)
+                    let use_compaction = Some(entry.0) != latest_execution_index;
+                    Self::execution_result_to_messages(&exec_entry.execution_result, use_compaction)
                 }
                 ScratchpadEntryType::Task(_) => Vec::new(),
             })
             .collect()
     }
 
-    fn execution_result_to_messages(result: &ExecutionResult) -> Vec<crate::types::Message> {
-        let compacted = result.compact_for_history();
+    fn execution_result_to_messages(
+        result: &ExecutionResult,
+        compact: bool,
+    ) -> Vec<crate::types::Message> {
+        let history_result = if compact {
+            result.compact_for_history()
+        } else {
+            result.clone()
+        };
         let mut messages = Vec::new();
         let mut assistant_parts: Vec<Part> = Vec::new();
         let mut responded_tool_ids = HashSet::new();
 
-        for part in compacted.parts.iter() {
+        for part in history_result.parts.iter() {
             match part {
                 Part::ToolResult(tool_response) => {
                     responded_tool_ids.insert(tool_response.tool_call_id.clone());
@@ -374,7 +387,7 @@ impl<'a> MessageFormatter<'a> {
                     );
                     message.role = MessageRole::Tool;
                     message.name = Some(tool_response.tool_name.clone());
-                    message.created_at = compacted.timestamp;
+                    message.created_at = history_result.timestamp;
                     message.parts = vec![Part::ToolResult(tool_response.clone())];
                     messages.push(message);
                 }
@@ -414,7 +427,7 @@ impl<'a> MessageFormatter<'a> {
                 .collect();
             let mut assistant_message = crate::types::Message::default();
             assistant_message.role = MessageRole::Assistant;
-            assistant_message.created_at = compacted.timestamp;
+            assistant_message.created_at = history_result.timestamp;
             assistant_message.parts = assistant_parts;
             messages.insert(0, assistant_message);
         }
@@ -714,6 +727,28 @@ mod tests {
         }
     }
 
+    fn sample_large_execution_entry(step_id: &str, timestamp: i64) -> ScratchpadEntry {
+        ScratchpadEntry {
+            timestamp,
+            entry_type: ScratchpadEntryType::Execution(ExecutionHistoryEntry {
+                thread_id: "thread".to_string(),
+                task_id: "task".to_string(),
+                run_id: "run".to_string(),
+                execution_result: ExecutionResult {
+                    step_id: step_id.to_string(),
+                    parts: vec![Part::Data(json!({"huge": "x".repeat(5000)}))],
+                    status: ExecutionStatus::Success,
+                    reason: None,
+                    timestamp,
+                },
+                stored_at: timestamp,
+            }),
+            task_id: "task".to_string(),
+            parent_task_id: None,
+            entry_kind: Some("task".to_string()),
+        }
+    }
+
     #[test]
     fn interleave_user_and_tool_history_groups_tools_between_users() {
         let mut u1 = Message::user("u1".to_string(), None);
@@ -802,6 +837,37 @@ mod tests {
     async fn fallback_history_from_execution_results() {
         let messages = MessageFormatter::build_native_history_messages(&[]);
         assert!(messages.is_empty());
+    }
+
+    #[test]
+    fn native_history_compacts_only_until_n_minus_1() {
+        let entries = vec![
+            sample_large_execution_entry("step-1", 1),
+            sample_large_execution_entry("step-2", 2),
+        ];
+
+        let messages = MessageFormatter::build_native_history_messages(&entries);
+        assert_eq!(messages.len(), 2);
+
+        let first_data = messages[0]
+            .parts
+            .iter()
+            .find_map(|part| match part {
+                Part::Data(value) => Some(value.clone()),
+                _ => None,
+            })
+            .expect("first message should contain data part");
+        assert_eq!(first_data["truncated"], json!(true));
+
+        let second_data = messages[1]
+            .parts
+            .iter()
+            .find_map(|part| match part {
+                Part::Data(value) => Some(value.clone()),
+                _ => None,
+            })
+            .expect("second message should contain data part");
+        assert!(second_data.get("truncated").is_none());
     }
 
     #[tokio::test]
