@@ -352,10 +352,10 @@ impl<'a> MessageFormatter<'a> {
         scratchpad_entries
             .iter()
             .enumerate()
-            .flat_map(|entry| match &entry.entry_type {
+            .flat_map(|(idx, entry)| match &entry.entry_type {
                 ScratchpadEntryType::PlanStep(_) => Vec::new(),
                 ScratchpadEntryType::Execution(exec_entry) => {
-                    let use_compaction = Some(entry.0) != latest_execution_index;
+                    let use_compaction = Some(idx) != latest_execution_index;
                     Self::execution_result_to_messages(&exec_entry.execution_result, use_compaction)
                 }
                 ScratchpadEntryType::Task(_) => Vec::new(),
