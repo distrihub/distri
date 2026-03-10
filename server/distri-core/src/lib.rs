@@ -1,5 +1,7 @@
 pub mod a2a;
 pub mod agent;
+pub mod claude_client;
+pub mod claude_llm;
 pub mod gateway_config;
 pub mod llm;
 pub mod llm_service;

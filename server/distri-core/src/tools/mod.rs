@@ -30,10 +30,12 @@ pub use context::to_tool_context;
 pub use mcp::get_mcp_tools;
 mod builtin;
 pub mod skill_script;
+pub mod tool_search;
 mod wasm;
 #[cfg(feature = "code")]
 pub use builtin::DistriExecuteCodeTool;
 pub use builtin::{get_builtin_tools, AgentTool, ConsoleLogTool, FinalTool, TransferToAgentTool};
+pub use tool_search::ToolSearchTool;
 pub use wasm::{WasmTool, WasmToolLoader, WasmToolMetadata};
 
 /// Plugin tool loader that wraps a pre-loaded HashMap of tools.
