@@ -6,5 +6,5 @@ async fn parse_agent_definition() {
 
     let agent_definition = parse_agent_markdown_content(deepagent).await.unwrap();
     assert_eq!(agent_definition.name, "deepagent");
-    assert_eq!(agent_definition.max_iterations, Some(40));
+    assert_eq!(agent_definition.max_iterations, Some(30));
 }

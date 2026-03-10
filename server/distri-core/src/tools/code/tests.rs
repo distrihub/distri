@@ -1,15 +1,36 @@
 use std::sync::Arc;
 
+use distri_types::configuration::{DbConnectionConfig, MetadataStoreConfig, StoreConfig};
+
 use crate::agent::ExecutorContext;
 use crate::tools::{execute_code_with_tools, FinalTool};
 use crate::AgentOrchestratorBuilder;
 
+fn test_store_config() -> StoreConfig {
+    let db_name = uuid::Uuid::new_v4();
+    let db_url = format!("file:{}?mode=memory&cache=shared", db_name);
+    StoreConfig {
+        metadata: MetadataStoreConfig {
+            db_config: Some(DbConnectionConfig {
+                database_url: db_url,
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+}
+
 #[tokio::test]
 async fn test_execute_code_with_console_log() {
-    tracing_subscriber::fmt::init();
+    let _ = tracing_subscriber::fmt::try_init();
     let context = Arc::new(ExecutorContext {
         orchestrator: Some(Arc::new(
-            AgentOrchestratorBuilder::default().build().await.unwrap(),
+            AgentOrchestratorBuilder::default()
+                .with_store_config(test_store_config())
+                .build()
+                .await
+                .unwrap(),
         )),
         ..Default::default()
     });

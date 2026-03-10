@@ -5,7 +5,7 @@ use std::path::Path;
 use tokio::fs;
 
 // Import config types
-use crate::agent::{BrowserHooksConfig, ModelSettings};
+use crate::agent::ModelSettings;
 use crate::configuration::config::{ExternalMcpServer, ServerConfig, StoreConfig};
 
 /// User configuration from distri.toml file
@@ -48,8 +48,6 @@ pub struct DistriServerConfig {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stores: Option<StoreConfig>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub hooks: Option<BrowserHooksConfig>,
     /// Optional filesystem/object storage configuration for workspace/session files
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub filesystem: Option<crate::configuration::config::ObjectStorageConfig>,
@@ -172,7 +170,6 @@ impl DistriServerConfig {
             model_settings: None,
             analysis_model_settings: None,
             keywords: None,
-            hooks: None,
             filesystem: None,
         }
     }

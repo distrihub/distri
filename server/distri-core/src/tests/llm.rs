@@ -1,10 +1,15 @@
-use distri_types::{AgentError, LlmDefinition, Message, Tool, ToolCallFormat};
+use distri_types::{LlmDefinition, Message, Tool, ToolCallFormat};
 use std::sync::Arc;
 
 use crate::{agent::ExecutorContext, llm::LLMExecutor, tools::FinalTool};
 
 #[tokio::test]
 async fn test_request_using_provider_tool_format() {
+    if std::env::var("OPENAI_API_KEY").is_err() {
+        eprintln!("skipping LLM test; OPENAI_API_KEY not set");
+        return;
+    }
+
     let executor = LLMExecutor::new(
         LlmDefinition {
             tool_format: ToolCallFormat::Provider,
@@ -27,20 +32,10 @@ async fn test_request_using_provider_tool_format() {
     match response {
         Ok(response) => {
             println!("Response: {:?}", response);
-
             assert!(!response.content.is_empty());
         }
         Err(e) => {
-            println!("Error: {:?}", e);
-            match e {
-                AgentError::OpenAIError(e) => {
-                    println!("OpenAI error message: {:?}", e);
-                }
-                _ => {
-                    println!("Other error: {:?}", e);
-                }
-            }
-            assert!(false);
+            panic!("LLM execution failed: {:?}", e);
         }
     }
 }

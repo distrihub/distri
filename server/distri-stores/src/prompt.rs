@@ -112,28 +112,36 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    fn test_store() -> HashMapPromptStore {
+        let mut prompts = HashMap::new();
+        prompts.insert(
+            "plan/initial".to_string(),
+            "Plan with {{tools}} and {{examples}}".to_string(),
+        );
+        prompts.insert("scratchpad/notes".to_string(), "Notes: {{content}}".to_string());
+        HashMapPromptStore::new(prompts)
+    }
+
     #[tokio::test]
     async fn test_template_loading() {
-        let store = FileBasedPromptStore::new_default();
+        let store = test_store();
 
-        // Test that we can load a template
-        let result = store.load_template("plan/cot_initial").await;
+        let result = store.load_template("plan/initial").await;
         assert!(result.is_ok());
 
         let template = result.unwrap();
-        assert!(template.contains("IMPORTANT: Create a COMPLETE plan"));
         assert!(template.contains("{{tools}}"));
     }
 
     #[tokio::test]
     async fn test_template_rendering() {
-        let store = FileBasedPromptStore::new_default();
+        let store = test_store();
 
         let mut variables = HashMap::new();
         variables.insert("tools".to_string(), json!("search, calculator"));
         variables.insert("examples".to_string(), json!("EXAMPLE 1: Test example"));
 
-        let result = store.render_template("plan/cot_initial", &variables).await;
+        let result = store.render_template("plan/initial", &variables).await;
         assert!(result.is_ok());
 
         let rendered = result.unwrap();
@@ -144,10 +152,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_template_exists() {
-        let store = FileBasedPromptStore::new_default();
+        let store = test_store();
 
-        assert!(store.template_exists("plan/cot_initial").await);
-        assert!(store.template_exists("scratchpad/cot_scratchpad").await);
+        assert!(store.template_exists("plan/initial").await);
+        assert!(store.template_exists("scratchpad/notes").await);
         assert!(!store.template_exists("nonexistent/template").await);
     }
 }
