@@ -416,6 +416,10 @@ pub struct StandardDefinition {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub browser_hooks: Option<BrowserHooksConfig>,
 
+    /// Whether to include shell/code execution tools (start_shell, execute_shell, stop_shell)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub include_shell: Option<bool>,
+
     /// Context size override for this agent (overrides model_settings.context_size)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_size: Option<u32>,
@@ -486,6 +490,11 @@ impl StandardDefinition {
     /// Check if TODO management functionality is enabled (default: false)
     pub fn is_todos_enabled(&self) -> bool {
         self.enable_todos.unwrap_or(false)
+    }
+
+    /// Check if shell/code execution tools should be included (default: false)
+    pub fn should_include_shell(&self) -> bool {
+        self.include_shell.unwrap_or(false)
     }
 
     /// Get the effective context size (agent-level override or model settings)

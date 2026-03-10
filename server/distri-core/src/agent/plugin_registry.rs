@@ -227,9 +227,13 @@ impl PluginRegistry {
 
         let default_agents = vec![
             ("distri", include_str!("../../../agents/distri.md")),
-            ("scripter", include_str!("../../../agents/scripter.md")),
             ("search", include_str!("../../../agents/search.md")),
-            ("browser_agent", include_str!("../../../agents/browser.md")),
+            (
+                "fast_search",
+                include_str!("../../../agents/fast_search.md"),
+            ),
+            ("web", include_str!("../../../agents/web_agent.md")),
+            ("code", include_str!("../../../agents/code_executor.md")),
             (
                 "deepresearch",
                 include_str!("../../../agents/deepresearch.md"),
@@ -238,7 +242,6 @@ impl PluginRegistry {
                 "agent_designer",
                 include_str!("../../../agents/agent_designer.md"),
             ),
-            ("web_agent", include_str!("../../../agents/web_agent.md")),
         ];
 
         let mut loaded_agents = Vec::new();

@@ -108,8 +108,49 @@ cd path/to/your/project
 distri push
 
 # Run a task
-distri run --agent <agent-name> --task "Your task"
+distri run <agent-name> --task "Your task"
 ```
+
+## Built-in Agents
+
+These agents are auto-loaded in both `distri-server` (self-hosted) and Distri Cloud. Access them via the CLI client (`distri run`) or the server directly (`distri-server run`).
+
+### fast_search — Quick lookups
+```bash
+distri run fast_search --task "What is the population of Tokyo?"
+```
+
+### search — Search + scrape
+```bash
+distri run search --task "What are the top 3 programming languages in 2026?"
+```
+
+### web — Browser automation + scraping
+```bash
+distri run web --task "Scrape https://news.ycombinator.com and extract the top 5 story titles and links"
+```
+
+### code — Sandboxed code execution (Python, bash, JavaScript)
+```bash
+distri run code --task "Calculate the sum of all prime numbers below 1000 using Python"
+```
+
+### deepresearch — Multi-phase research with sub-agent delegation
+```bash
+distri run deepresearch --task "Research the current state of quantum computing. What are the top 3 companies and their latest breakthroughs?"
+```
+
+### distri — Master orchestrator
+```bash
+distri run distri --task "Find the latest SpaceX launch date and calculate how many days from now"
+```
+
+### agent_designer — Design new agents
+```bash
+distri run agent_designer --task "Design an agent that monitors stock prices and sends alerts when they cross a threshold"
+```
+
+> **Environment:** `BROWSR_BASE_URL` and `BROWSR_API_KEY` are required for search, scrape, browser, and shell tools. When using Distri Cloud these are configured automatically.
 
 ## Samples
 

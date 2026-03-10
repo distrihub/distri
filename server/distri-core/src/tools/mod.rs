@@ -22,6 +22,7 @@ mod browser;
 mod code;
 pub mod context;
 mod mcp;
+pub mod shell;
 mod state;
 #[cfg(feature = "code")]
 pub use code::execute_code_with_tools;
@@ -282,11 +283,15 @@ pub fn cast_to_executor_context_tool(
         #[cfg(feature = "code")]
         "distri_execute_code" => Ok(Box::new(DistriExecuteCodeTool)),
         "write_todos" => Ok(Box::new(TodosTool)),
-        // Shared browser tools
-        "distri_scrape" => Ok(Box::new(DistriScrapeSharedTool)),
-        "distri_browser" => Ok(Box::new(DistriBrowserSharedTool)),
+        // Browsr tools
+        "browsr_scrape" => Ok(Box::new(DistriScrapeSharedTool)),
+        "browsr_browser" => Ok(Box::new(DistriBrowserSharedTool)),
         "browser_step" => Ok(Box::new(BrowserStepTool)),
         "artifact_tool" => Ok(Box::new(ArtifactTool)),
+        // Shell execution tools
+        "start_shell" => Ok(Box::new(shell::StartShellTool)),
+        "execute_shell" => Ok(Box::new(shell::ExecuteShellTool)),
+        "stop_shell" => Ok(Box::new(shell::StopShellTool)),
         "load_skill" => Ok(Box::new(skill_script::LoadSkillTool)),
         "run_skill_script" => Ok(Box::new(skill_script::RunSkillScriptTool)),
         name if name.starts_with("call_") => {

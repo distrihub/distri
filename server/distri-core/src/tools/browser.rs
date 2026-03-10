@@ -5,13 +5,11 @@ use crate::types::ToolCall;
 use crate::AgentError;
 use anyhow::Result;
 
-use browsr_client::{default_transport, BrowserStepRequest, BrowsrClient};
+use browsr_client::{BrowserStepRequest, BrowsrClient, ScrapeApiRequest, ScrapeFormat};
 use browsr_types::{
-    BrowserContext, BrowserStepInput, BrowserToolOptions, Commands, ScrapeOptions, SearchOptions,
-    SearchResponse,
+    BrowserContext, BrowserStepInput, BrowserToolOptions, Commands, SearchOptions,
 };
 use distri_types::{Part, Tool, ToolContext};
-use schemars::schema_for;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -22,20 +20,61 @@ pub struct DistriScrapeSharedTool;
 #[derive(Debug)]
 pub struct DistriBrowserSharedTool;
 
-/// DistriScrapeSharedTool - Targeted web scraping with shared browser instance
+/// DistriScrapeSharedTool - Web scraping using Browsr v1 API with markdown, HTML, screenshot, and structured extraction
 #[async_trait::async_trait]
 impl Tool for DistriScrapeSharedTool {
     fn get_name(&self) -> String {
-        "distri_scrape".to_string()
+        "browsr_scrape".to_string()
     }
 
     fn get_description(&self) -> String {
-        "Crawl web pages with optional JavaScript support to extract comprehensive content and metadata".to_string()
+        "Scrape web pages and extract content in multiple formats (markdown, HTML, screenshot, structured JSON). Uses Browsr v1 API with JavaScript rendering support.".to_string()
     }
 
     fn get_parameters(&self) -> Value {
-        let schema = schema_for!(ScrapeOptions);
-        serde_json::to_value(schema).unwrap_or_else(|_| json!({}))
+        json!({
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "title": "ScrapeInput",
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "description": "The URL to scrape"
+                },
+                "formats": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": ["markdown", "summary", "html", "rawHtml", "screenshot", "links", "json", "images", "branding"]
+                    },
+                    "description": "Output formats to request (default: [\"markdown\"])"
+                },
+                "wait_for": {
+                    "type": "integer",
+                    "description": "Milliseconds to wait for JavaScript rendering before scraping (optional)"
+                },
+                "only_main_content": {
+                    "type": "boolean",
+                    "description": "Extract only the main content, removing navigation/headers/footers (default: true)"
+                },
+                "json_options": {
+                    "type": "object",
+                    "properties": {
+                        "prompt": {
+                            "type": "string",
+                            "description": "Natural language prompt for JSON extraction"
+                        },
+                        "schema": {
+                            "type": "object",
+                            "description": "JSON Schema for structured extraction output"
+                        }
+                    },
+                    "description": "Options for AI-powered JSON extraction (requires 'json' format)"
+                }
+            },
+            "required": ["url"],
+            "additionalProperties": false
+        })
     }
 
     fn needs_executor_context(&self) -> bool {
@@ -43,7 +82,22 @@ impl Tool for DistriScrapeSharedTool {
     }
 
     fn get_tool_examples(&self) -> Option<String> {
-        None
+        Some(
+            r#"
+Scrape a page as markdown:
+{"url": "https://example.com"}
+
+Scrape with multiple formats:
+{"url": "https://example.com", "formats": ["markdown", "links", "screenshot"]}
+
+Extract structured data:
+{"url": "https://example.com/products", "formats": ["json"], "json_options": {"prompt": "Extract all product names and prices"}}
+
+Scrape a JavaScript-heavy page:
+{"url": "https://example.com/spa", "formats": ["markdown", "screenshot"], "wait_for": 3000}
+"#
+            .to_string(),
+        )
     }
 
     async fn execute(
@@ -64,18 +118,49 @@ impl ExecutorContextTool for DistriScrapeSharedTool {
         tool_call: ToolCall,
         _context: Arc<ExecutorContext>,
     ) -> Result<Vec<Part>, AgentError> {
-        let command: ScrapeOptions = serde_json::from_value(tool_call.input)
-            .map_err(|e| AgentError::ToolExecution(format!("Invalid browser command: {}", e)))?;
+        let input = tool_call.input;
 
-        let client = BrowsrClient::from_config(default_transport());
+        let url = input
+            .get("url")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| AgentError::ToolExecution("Missing 'url' parameter".to_string()))?;
 
-        // Execute using Browsr client
+        let mut request = ScrapeApiRequest::new(url);
+
+        // Parse optional formats
+        if let Some(formats) = input.get("formats").and_then(|v| v.as_array()) {
+            let parsed_formats: Vec<ScrapeFormat> = formats
+                .iter()
+                .filter_map(|f| serde_json::from_value(f.clone()).ok())
+                .collect();
+            if !parsed_formats.is_empty() {
+                request = request.with_formats(parsed_formats);
+            }
+        }
+
+        if let Some(wait_for) = input.get("wait_for").and_then(|v| v.as_u64()) {
+            request = request.with_wait(wait_for);
+        }
+
+        if let Some(only_main) = input.get("only_main_content").and_then(|v| v.as_bool()) {
+            request.only_main_content = only_main;
+        }
+
+        if let Some(json_opts) = input.get("json_options") {
+            request.json_options = serde_json::from_value(json_opts.clone()).ok();
+        }
+
+        let client = BrowsrClient::from_env();
+
         let response = client
-            .scrape(command)
+            .scrape_v1(request)
             .await
-            .map_err(|e| AgentError::ToolExecution(e.to_string()))?;
+            .map_err(|e| AgentError::ToolExecution(format!("Scrape failed: {}", e)))?;
 
-        Ok(vec![Part::Data(response)])
+        Ok(vec![Part::Data(
+            serde_json::to_value(response)
+                .map_err(|e| AgentError::ToolExecution(format!("Failed to serialize: {}", e)))?,
+        )])
     }
 }
 
@@ -83,7 +168,7 @@ impl ExecutorContextTool for DistriScrapeSharedTool {
 #[async_trait::async_trait]
 impl Tool for DistriBrowserSharedTool {
     fn get_name(&self) -> String {
-        "distri_browser".to_string()
+        "browsr_browser".to_string()
     }
 
     fn get_description(&self) -> String {
@@ -171,7 +256,7 @@ impl ExecutorContextTool for DistriBrowserSharedTool {
         let options: BrowserToolOptions = serde_json::from_value(tool_call.input)
             .map_err(|e| AgentError::ToolExecution(format!("Invalid browser command: {}", e)))?;
 
-        let client = BrowsrClient::from_config(default_transport());
+        let client = BrowsrClient::from_env();
 
         let context_payload = options.context.clone().map(|ctx| BrowserContext {
             thread_id: ctx.thread_id,
@@ -195,7 +280,7 @@ impl ExecutorContextTool for DistriBrowserSharedTool {
     }
 }
 
-/// SearchTool - Web search using Tavily API that returns structured data
+/// SearchTool - Web search via Browsr that returns structured data
 #[derive(Debug)]
 pub struct SearchTool;
 
@@ -206,16 +291,44 @@ impl Tool for SearchTool {
     }
 
     fn get_description(&self) -> String {
-        "Search the web using Tavily API and return structured results with titles, URLs, content, and relevance scores".to_string()
+        "Search the web and return structured results with titles, URLs, content, and relevance scores. Powered by Browsr search API.".to_string()
     }
 
     fn get_parameters(&self) -> Value {
-        let schema = schema_for!(SearchOptions);
-        serde_json::to_value(schema).unwrap_or_else(|_| json!({}))
+        json!({
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "title": "SearchInput",
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The search query"
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of results to return (optional)"
+                }
+            },
+            "required": ["query"],
+            "additionalProperties": false
+        })
     }
 
     fn needs_executor_context(&self) -> bool {
-        false // This tool doesn't need ExecutorContext
+        false
+    }
+
+    fn get_tool_examples(&self) -> Option<String> {
+        Some(
+            r#"
+Simple search:
+{"query": "rust programming language"}
+
+Search with result limit:
+{"query": "latest AI research papers 2024", "limit": 5}
+"#
+            .to_string(),
+        )
     }
 
     async fn execute(
@@ -226,14 +339,36 @@ impl Tool for SearchTool {
         let options: SearchOptions = serde_json::from_value(tool_call.input)
             .map_err(|e| anyhow::anyhow!("Invalid search options: {}", e))?;
 
-        let client = BrowsrClient::from_config(default_transport());
-        let response: SearchResponse = client
-            .search(options)
+        // Use raw HTTP call to avoid SearchResponse type mismatch between
+        // browsr-types (stdout transport format) and the HTTP API format.
+        let base_url = std::env::var("BROWSR_BASE_URL")
+            .or_else(|_| std::env::var("BROWSR_API_URL"))
+            .unwrap_or_else(|_| "https://api.browsr.dev".to_string());
+
+        let mut req = reqwest::Client::new()
+            .post(format!("{}/search", base_url))
+            .json(&options);
+
+        if let Ok(api_key) = std::env::var("BROWSR_API_KEY") {
+            req = req.header("Authorization", format!("Bearer {}", api_key));
+        }
+
+        let resp = req
+            .send()
             .await
             .map_err(|e| anyhow::anyhow!("Search failed: {}", e))?;
 
-        // Convert SearchResponse to Vec<Part> as structured data
-        let parts = vec![Part::Data(serde_json::to_value(response)?)];
+        if !resp.status().is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!("Search failed: {}", text));
+        }
+
+        let response: Value = resp
+            .json()
+            .await
+            .map_err(|e| anyhow::anyhow!("Search response parse failed: {}", e))?;
+
+        let parts = vec![Part::Data(response)];
         Ok(parts)
     }
 }

@@ -462,10 +462,11 @@ pub async fn handle_message_send_streaming_sse(
                 Err(e) => {
                     tracing::error!("Error from stream handler: {}", e);
 
-                    // RunError events have already been emitted via context.emit()
-                    // and are being processed by completion_task. Don't send a duplicate
-                    // error here - let the RunError events propagate naturally.
-                    // The completion_task will complete when it sees RunError/RunFinished.
+                    // Send the error to the SSE channel so the client receives it
+                    // and doesn't hang waiting for events that will never come.
+                    // This handles errors like "Agent not found" that occur before
+                    // any RunError events can be emitted via context.emit().
+                    let _ = sse_tx_clone.send(Err(e)).await;
                 }
             }
         }));

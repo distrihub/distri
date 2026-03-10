@@ -7,6 +7,7 @@ use crate::agent::todos::TodosTool;
 use crate::tools::browser::{
     BrowserStepTool, DistriBrowserSharedTool, DistriScrapeSharedTool, SearchTool,
 };
+use crate::tools::shell::{ExecuteShellTool, StartShellTool, StopShellTool};
 use crate::{
     agent::{file::run_file_agent, ExecutorContext},
     tools::{emit_final, state::AgentExecutorState, ExecutorContextTool},
@@ -27,6 +28,9 @@ pub fn get_builtin_tools(
         Arc::new(BrowserStepTool) as Arc<dyn Tool>,
         Arc::new(SearchTool) as Arc<dyn Tool>,
         Arc::new(TodosTool) as Arc<dyn Tool>,
+        Arc::new(StartShellTool) as Arc<dyn Tool>,
+        Arc::new(ExecuteShellTool) as Arc<dyn Tool>,
+        Arc::new(StopShellTool) as Arc<dyn Tool>,
     ];
 
     #[cfg(feature = "code")]
