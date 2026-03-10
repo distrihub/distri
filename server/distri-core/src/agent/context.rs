@@ -1,9 +1,8 @@
 use crate::hooks_runtime::HookRegistry;
 use distri_stores::SessionStoreExt;
 use distri_types::{
-    configuration::DefinitionOverrides, AgentContextSize, AgentPlan,
-    ContextSize, ContextUsage, ExecutionHistoryEntry, ExecutionResult, Part, PlanStep,
-    ScratchpadEntry, ScratchpadEntryType,
+    configuration::DefinitionOverrides, AgentContextSize, AgentPlan, ContextSize, ContextUsage,
+    ExecutionHistoryEntry, ExecutionResult, Part, PlanStep, ScratchpadEntry, ScratchpadEntryType,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

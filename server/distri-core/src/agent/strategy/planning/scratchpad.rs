@@ -43,12 +43,15 @@ pub fn format_scratchpad_with_task_filter(
     } else {
         filtered_entries
     };
+    let latest_execution_index = entries_to_use
+        .iter()
+        .rposition(|entry| matches!(entry.entry_type, ScratchpadEntryType::Execution(_)));
 
     // Format scratchpad with proper ReAct structure
     let mut scratchpad = String::new();
     let mut current_task_id: Option<String> = None;
 
-    for entry in entries_to_use.iter() {
+    for (entry_index, entry) in entries_to_use.iter().enumerate() {
         match &entry.entry_type {
             ScratchpadEntryType::Task(task) => {
                 let task_text = task
@@ -85,6 +88,12 @@ pub fn format_scratchpad_with_task_filter(
                 }
             }
             ScratchpadEntryType::Execution(exec_entry) => {
+                let observation_result = if Some(entry_index) == latest_execution_index {
+                    exec_entry.execution_result.clone()
+                } else {
+                    exec_entry.execution_result.compact_for_history()
+                };
+
                 // Add task separator when task changes
                 if current_task_id.as_ref() != Some(&exec_entry.task_id) {
                     if current_task_id.is_some() {
@@ -96,7 +105,7 @@ pub fn format_scratchpad_with_task_filter(
                 // Add execution result as observation
                 scratchpad.push_str(&format!(
                     "Observation: {}\n",
-                    exec_entry.execution_result.as_observation()
+                    observation_result.as_observation()
                 ));
             }
         }
