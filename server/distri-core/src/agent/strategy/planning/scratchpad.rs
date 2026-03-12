@@ -21,8 +21,10 @@ pub fn format_scratchpad_with_task_filter(
                     ScratchpadEntryType::Execution(exec_entry) => {
                         exec_entry.task_id == filter_task_id
                     }
-                    // Include plan steps and tasks for all agents for context
-                    ScratchpadEntryType::PlanStep(_) | ScratchpadEntryType::Task(_) => true,
+                    // Include plan steps, tasks, and summaries for all agents for context
+                    ScratchpadEntryType::PlanStep(_)
+                    | ScratchpadEntryType::Task(_)
+                    | ScratchpadEntryType::Summary(_) => true,
                 }
             })
             .collect()
@@ -106,6 +108,12 @@ pub fn format_scratchpad_with_task_filter(
                 scratchpad.push_str(&format!(
                     "Observation: {}\n",
                     observation_result.as_observation()
+                ));
+            }
+            ScratchpadEntryType::Summary(summary) => {
+                scratchpad.push_str(&format!(
+                    "Summary (compacted {} entries): {}\n",
+                    summary.entries_summarized, summary.summary_text
                 ));
             }
         }

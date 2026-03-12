@@ -2,7 +2,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::{Part, PlanStep, TaskStatus, ToolResponse, core::FileType};
+use crate::{core::FileType, Part, PlanStep, TaskStatus, ToolResponse};
 
 /// Execution strategy types
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -323,6 +323,23 @@ pub enum ScratchpadEntryType {
     PlanStep(PlanStep),
     #[serde(rename = "execution")]
     Execution(ExecutionHistoryEntry),
+    /// Compressed summary produced by Tier 2 (semantic) compaction
+    #[serde(rename = "summary")]
+    Summary(CompactionSummary),
+}
+
+/// Summary produced by semantic compaction of older scratchpad entries
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompactionSummary {
+    /// LLM-generated summary of compacted history
+    pub summary_text: String,
+    /// Number of entries that were summarized
+    pub entries_summarized: usize,
+    /// Timestamp range of summarized entries
+    pub from_timestamp: i64,
+    pub to_timestamp: i64,
+    /// Token count saved by this compaction
+    pub tokens_saved: usize,
 }
 
 #[cfg(test)]

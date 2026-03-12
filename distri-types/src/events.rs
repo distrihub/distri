@@ -172,6 +172,36 @@ pub enum AgentEventType {
         action: String,
         todo_count: usize,
     },
+
+    // Context management events
+    ContextCompaction {
+        /// Which tier of compaction was applied
+        tier: CompactionTier,
+        /// Token count before compaction
+        tokens_before: usize,
+        /// Token count after compaction
+        tokens_after: usize,
+        /// Number of entries removed or summarized
+        entries_affected: usize,
+        /// Context budget limit that triggered compaction
+        context_limit: usize,
+        /// Usage ratio that triggered compaction (0.0 - 1.0)
+        usage_ratio: f64,
+        /// Optional summary text (for Tier 2 summarization)
+        summary: Option<String>,
+    },
+}
+
+/// Tier of context compaction applied
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompactionTier {
+    /// Mechanical: drop old entries, truncate payloads
+    Trim,
+    /// Semantic: LLM-powered summarization of history
+    Summarize,
+    /// Emergency: preserve only essentials
+    Reset,
 }
 
 impl AgentEvent {

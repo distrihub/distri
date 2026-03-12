@@ -977,6 +977,95 @@ impl ExecutorContext {
         *guard = id;
     }
 
+    /// Evaluate context size and perform compaction if needed.
+    ///
+    /// This should be called before each LLM call in the agent loop.
+    /// It checks the current context usage ratio against configured thresholds
+    /// and applies the appropriate compaction tier:
+    /// - Tier 1 (Trim): Mechanical truncation of old entries
+    /// - Tier 2 (Summarize): Signals that LLM summarization is needed
+    /// - Tier 3 (Reset): Emergency - keeps only task + last 2 entries
+    ///
+    /// Emits a `ContextCompaction` event when compaction occurs.
+    /// Returns the compaction result for the caller to act on (e.g., perform LLM summarization).
+    pub async fn evaluate_compaction(
+        &self,
+    ) -> Result<
+        Option<crate::agent::context_size_manager::CompactionResult>,
+        AgentError,
+    > {
+        let orchestrator = self.orchestrator.as_ref().ok_or(AgentError::Execution(
+            "Orchestrator not initialized".to_string(),
+        ))?;
+
+        let scratchpad_store = orchestrator.stores.scratchpad_store.clone();
+        let entries = scratchpad_store
+            .get_entries(&self.thread_id, &self.task_id, None)
+            .await
+            .unwrap_or_default();
+
+        if entries.is_empty() {
+            return Ok(None);
+        }
+
+        let max_tokens = self.get_scratchpad_token_limit();
+        let manager =
+            crate::agent::context_size_manager::ContextSizeManager::with_max_tokens(max_tokens);
+        let result = manager.evaluate_and_compact(&entries);
+
+        // If compaction was applied, emit the event
+        if let Some(ref tier) = result.tier {
+            self.emit(AgentEventType::ContextCompaction {
+                tier: tier.clone(),
+                tokens_before: result.tokens_before,
+                tokens_after: result.tokens_after,
+                entries_affected: result.entries_affected,
+                context_limit: max_tokens,
+                usage_ratio: result.usage_ratio,
+                summary: None,
+            })
+            .await;
+
+            tracing::info!(
+                "Context compaction ({:?}): {} → {} tokens, {} entries affected, {:.0}% usage",
+                tier,
+                result.tokens_before,
+                result.tokens_after,
+                result.entries_affected,
+                result.usage_ratio * 100.0,
+            );
+
+            return Ok(Some(result));
+        }
+
+        Ok(None)
+    }
+
+    /// Store a compaction summary in the scratchpad.
+    /// Called after Tier 2 LLM summarization produces a summary text.
+    pub async fn store_compaction_summary(
+        &self,
+        summary: distri_types::CompactionSummary,
+    ) -> Result<(), AgentError> {
+        let orchestrator = self.orchestrator.as_ref().ok_or(AgentError::Execution(
+            "Orchestrator not initialized".to_string(),
+        ))?;
+
+        let entry = ScratchpadEntry {
+            timestamp: chrono::Utc::now().timestamp_millis(),
+            entry_type: ScratchpadEntryType::Summary(summary),
+            task_id: self.task_id.clone(),
+            parent_task_id: self.parent_task_id.clone(),
+            entry_kind: Some("summary".to_string()),
+        };
+
+        let scratchpad_store = orchestrator.stores.scratchpad_store.clone();
+        scratchpad_store
+            .add_entry(&self.thread_id, entry)
+            .await?;
+        Ok(())
+    }
+
     /// Set agent_id - for context switching in multi-agent scenarios
     pub async fn set_agent_id(&mut self, agent_id: String) {
         self.agent_id = agent_id;
