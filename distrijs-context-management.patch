@@ -1,11 +1,32 @@
+From 88c233f9286d6e09e338165f9cf503f3eeb79715 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 12 Mar 2026 09:19:19 +0000
+Subject: [PATCH] feat: add context compaction types, useContextHealth hook,
+ and ContextIndicator component
+
+- Add CompactionTier, ContextCompactionEvent, ContextHealth types to @distri/core
+- Add useContextHealth React hook for tracking context compaction events
+- Add ContextIndicator component for visual context usage display
+- Export new hook and component from @distri/react barrel
+
+https://claude.ai/code/session_01BG3BRtrAJf7C7uE11X8TXK
+---
+ packages/core/src/types.ts                    | 42 ++++++++++++
+ .../react/src/components/ContextIndicator.tsx | 66 +++++++++++++++++++
+ packages/react/src/hooks/useContextHealth.ts  | 64 ++++++++++++++++++
+ packages/react/src/index.ts                   |  2 +
+ 4 files changed, 174 insertions(+)
+ create mode 100644 packages/react/src/components/ContextIndicator.tsx
+ create mode 100644 packages/react/src/hooks/useContextHealth.ts
+
 diff --git a/packages/core/src/types.ts b/packages/core/src/types.ts
-index a090fc5..b1c2e3a 100644
+index 992153f..04ac46d 100644
 --- a/packages/core/src/types.ts
 +++ b/packages/core/src/types.ts
-@@ -183,6 +183,48 @@ export interface DynamicMetadata {
-   dynamic_values?: Record<string, unknown>;
+@@ -222,6 +222,48 @@ export interface DynamicMetadata {
+   parts?: Record<number, PartMetadata>;
  }
-
+ 
 +/**
 + * Tier of context compaction applied by the server.
 + */
@@ -51,79 +72,9 @@ index a090fc5..b1c2e3a 100644
  /**
   * Context required for constructing A2A messages from DistriMessage
   */
-diff --git a/packages/react/src/hooks/useContextHealth.ts b/packages/react/src/hooks/useContextHealth.ts
-new file mode 100644
-index 0000000..e8f1a2c
---- /dev/null
-+++ b/packages/react/src/hooks/useContextHealth.ts
-@@ -0,0 +1,64 @@
-+import { useCallback, useRef, useState } from 'react';
-+import type { ContextCompactionEvent, ContextHealth } from '@distri/core';
-+
-+/**
-+ * Hook that tracks context health by listening for ContextCompaction events
-+ * in the agent event stream.
-+ *
-+ * Usage:
-+ * ```tsx
-+ * const { contextHealth, lastCompaction, isCompacting } = useContextHealth();
-+ * ```
-+ *
-+ * This hook maintains a running picture of context usage. It updates whenever
-+ * a `context_compaction` event is received from the server event stream.
-+ */
-+export function useContextHealth() {
-+  const [contextHealth, setContextHealth] = useState<ContextHealth | null>(null);
-+  const [isCompacting, setIsCompacting] = useState(false);
-+  const lastCompactionRef = useRef<ContextCompactionEvent | null>(null);
-+
-+  /**
-+   * Process a raw event from the agent stream.
-+   * Call this from your event handling loop when you receive task status updates.
-+   */
-+  const handleEvent = useCallback((event: Record<string, unknown>) => {
-+    if (event?.type !== 'context_compaction') return;
-+
-+    const compactionEvent = event as unknown as ContextCompactionEvent;
-+    lastCompactionRef.current = compactionEvent;
-+
-+    setContextHealth({
-+      usage_ratio: compactionEvent.tokens_after / compactionEvent.context_limit,
-+      tokens_used: compactionEvent.tokens_after,
-+      tokens_limit: compactionEvent.context_limit,
-+      last_compaction: compactionEvent,
-+    });
-+
-+    // Brief compacting state for UI transitions
-+    setIsCompacting(true);
-+    setTimeout(() => setIsCompacting(false), 1500);
-+  }, []);
-+
-+  /**
-+   * Reset context health (e.g., on new thread).
-+   */
-+  const reset = useCallback(() => {
-+    setContextHealth(null);
-+    lastCompactionRef.current = null;
-+    setIsCompacting(false);
-+  }, []);
-+
-+  return {
-+    /** Current context health snapshot, or null if no compaction has occurred yet */
-+    contextHealth,
-+    /** The most recent compaction event */
-+    lastCompaction: lastCompactionRef.current,
-+    /** Whether a compaction just occurred (true for ~1.5s after event) */
-+    isCompacting,
-+    /** Call with raw event objects from the stream to update health */
-+    handleEvent,
-+    /** Reset state (e.g., when switching threads) */
-+    reset,
-+  };
-+}
 diff --git a/packages/react/src/components/ContextIndicator.tsx b/packages/react/src/components/ContextIndicator.tsx
 new file mode 100644
-index 0000000..a3c4d5e
+index 0000000..515c255
 --- /dev/null
 +++ b/packages/react/src/components/ContextIndicator.tsx
 @@ -0,0 +1,66 @@
@@ -193,22 +144,96 @@ index 0000000..a3c4d5e
 +  if (ratio < 0.85) return '#f97316'; // orange
 +  return '#ef4444';                    // red
 +}
+diff --git a/packages/react/src/hooks/useContextHealth.ts b/packages/react/src/hooks/useContextHealth.ts
+new file mode 100644
+index 0000000..93fb6cd
+--- /dev/null
++++ b/packages/react/src/hooks/useContextHealth.ts
+@@ -0,0 +1,64 @@
++import { useCallback, useRef, useState } from 'react';
++import type { ContextCompactionEvent, ContextHealth } from '@distri/core';
++
++/**
++ * Hook that tracks context health by listening for ContextCompaction events
++ * in the agent event stream.
++ *
++ * Usage:
++ * ```tsx
++ * const { contextHealth, lastCompaction, isCompacting } = useContextHealth();
++ * ```
++ *
++ * This hook maintains a running picture of context usage. It updates whenever
++ * a `context_compaction` event is received from the server event stream.
++ */
++export function useContextHealth() {
++  const [contextHealth, setContextHealth] = useState<ContextHealth | null>(null);
++  const [isCompacting, setIsCompacting] = useState(false);
++  const lastCompactionRef = useRef<ContextCompactionEvent | null>(null);
++
++  /**
++   * Process a raw event from the agent stream.
++   * Call this from your event handling loop when you receive task status updates.
++   */
++  const handleEvent = useCallback((event: Record<string, unknown>) => {
++    if (event?.type !== 'context_compaction') return;
++
++    const compactionEvent = event as unknown as ContextCompactionEvent;
++    lastCompactionRef.current = compactionEvent;
++
++    setContextHealth({
++      usage_ratio: compactionEvent.tokens_after / compactionEvent.context_limit,
++      tokens_used: compactionEvent.tokens_after,
++      tokens_limit: compactionEvent.context_limit,
++      last_compaction: compactionEvent,
++    });
++
++    // Brief compacting state for UI transitions
++    setIsCompacting(true);
++    setTimeout(() => setIsCompacting(false), 1500);
++  }, []);
++
++  /**
++   * Reset context health (e.g., on new thread).
++   */
++  const reset = useCallback(() => {
++    setContextHealth(null);
++    lastCompactionRef.current = null;
++    setIsCompacting(false);
++  }, []);
++
++  return {
++    /** Current context health snapshot, or null if no compaction has occurred yet */
++    contextHealth,
++    /** The most recent compaction event */
++    lastCompaction: lastCompactionRef.current,
++    /** Whether a compaction just occurred (true for ~1.5s after event) */
++    isCompacting,
++    /** Call with raw event objects from the stream to update health */
++    handleEvent,
++    /** Reset state (e.g., when switching threads) */
++    reset,
++  };
++}
 diff --git a/packages/react/src/index.ts b/packages/react/src/index.ts
-index 1234567..abcdef0 100644
+index 20e0b48..cdcb878 100644
 --- a/packages/react/src/index.ts
 +++ b/packages/react/src/index.ts
-@@ -1,3 +1,5 @@
- // NOTE: This patch adds new exports. Merge with existing index.ts exports.
- // Add these lines to the existing barrel export file:
-+export { useContextHealth } from './hooks/useContextHealth';
-+export { ContextIndicator } from './components/ContextIndicator';
- // End of context management additions
-diff --git a/packages/core/src/index.ts b/packages/core/src/index.ts
-index 1234567..abcdef0 100644
---- a/packages/core/src/index.ts
-+++ b/packages/core/src/index.ts
-@@ -1,3 +1,3 @@
- // NOTE: This patch adds new type exports. Merge with existing index.ts exports.
- // Add these to the existing barrel export file:
--// (existing exports)
-+export type { CompactionTier, ContextCompactionEvent, ContextHealth } from './types';
+@@ -18,6 +18,7 @@ export * from './components/ThemeToggle';
+ export * from './components/Toast';
+ export * from './components/AuthLoading';
+ export * from './components/AskFollowUp';
++export * from './components/ContextIndicator';
+ 
+ // Provider exports
+ export * from './DistriProvider';
+@@ -32,6 +33,7 @@ export * from './hooks/useTts';
+ export * from './hooks/useSpeechToText';
+ export * from './hooks/useConfiguration';
+ export * from './hooks/useMessageFeedback';
++export * from './hooks/useContextHealth';
+ export * from './stores/chatStateStore';
+ 
+ // Utility exports
+-- 
+2.43.0
+
