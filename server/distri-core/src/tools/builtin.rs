@@ -33,6 +33,7 @@ pub fn get_builtin_tools(
         Arc::new(StartShellTool) as Arc<dyn Tool>,
         Arc::new(ExecuteShellTool) as Arc<dyn Tool>,
         Arc::new(StopShellTool) as Arc<dyn Tool>,
+        Arc::new(crate::tools::tool_search::ToolSearchTool) as Arc<dyn Tool>,
     ];
 
     #[cfg(feature = "code")]

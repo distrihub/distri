@@ -163,7 +163,7 @@ impl LLMExecutor {
         let sanitized_messages = self.sanitize_messages(messages);
         tracing::info!(
             target: "llm.execute",
-            "LLM request (non-stream) model={}, provider={:?}, max_tokens={}, temperature={:?}, tool_format={:?}, tools={} messages={}",
+            "LLM request (non-stream) model={}, provider={:?}, max_tokens={:?}, temperature={:?}, tool_format={:?}, tools={} messages={}",
             self.llm_def.model_settings.model,
             self.llm_def.model_settings.provider,
             self.llm_def.model_settings.max_tokens,
@@ -188,7 +188,7 @@ impl LLMExecutor {
         let request = self.build_request(llm_messages);
         let message_count = request.messages.len();
 
-        let settings = format!("Max Tokens: {}", self.llm_def.model_settings.max_tokens);
+        let settings = format!("Max Tokens: {:?}", self.llm_def.model_settings.max_tokens);
 
         self.model_logger.log_model_execution(
             &self.llm_def.name,
@@ -335,7 +335,7 @@ impl LLMExecutor {
         let sanitized_messages = self.sanitize_messages(messages);
         tracing::info!(
             target: "llm.execute_stream",
-            "LLM request (stream) model={}, provider={:?}, max_tokens={}, temperature={:?}, tool_format={:?}, tools={} messages={}",
+            "LLM request (stream) model={}, provider={:?}, max_tokens={:?}, temperature={:?}, tool_format={:?}, tools={} messages={}",
             self.llm_def.model_settings.model,
             self.llm_def.model_settings.provider,
             self.llm_def.model_settings.max_tokens,
@@ -367,7 +367,7 @@ impl LLMExecutor {
         });
         let message_count = request.messages.len();
 
-        let settings = format!("Max Tokens: {}", self.llm_def.model_settings.max_tokens);
+        let settings = format!("Max Tokens: {:?}", self.llm_def.model_settings.max_tokens);
 
         self.model_logger.log_model_execution(
             &self.llm_def.name,
@@ -786,8 +786,8 @@ impl LLMExecutor {
             temperature: settings.temperature,
             top_p: settings.top_p,
             #[allow(deprecated)]
-            max_tokens: Some(settings.max_tokens),
-            // max_completion_tokens: Some(settings.max_tokens),
+            max_tokens: settings.max_tokens,
+            // max_completion_tokens: settings.max_tokens,
             frequency_penalty: settings.frequency_penalty,
             presence_penalty: settings.presence_penalty,
             response_format: self
@@ -1263,6 +1263,11 @@ async fn get_client_with_context(
                 .with_additional_headers(additional_headers);
             Ok(Client::with_config(config))
         }
+        ModelProvider::Anthropic { .. } => {
+            Err(AgentError::InvalidConfiguration(
+                "Anthropic provider should use ClaudeLLMExecutor, not the OpenAI client path".to_string(),
+            ))
+        }
     }
 }
 
@@ -1293,5 +1298,51 @@ impl LLMExecutorTrait for LLMExecutor {
         context: Arc<ExecutorContext>,
     ) -> Result<StreamResult, AgentError> {
         self.execute_stream(messages, context).await
+    }
+}
+
+#[async_trait::async_trait]
+impl LLMExecutorTrait for crate::claude_llm::ClaudeLLMExecutor {
+    async fn execute(&self, messages: &[Message]) -> Result<LLMResponse, AgentError> {
+        self.execute(messages).await
+    }
+
+    async fn execute_stream(
+        &self,
+        messages: &[Message],
+        context: Arc<ExecutorContext>,
+    ) -> Result<StreamResult, AgentError> {
+        self.execute_stream(messages, context).await
+    }
+}
+
+/// Factory function to create the appropriate LLM executor based on provider.
+/// Returns a trait object so callers don't need to match on provider type.
+pub fn create_llm_executor(
+    llm_def: LlmDefinition,
+    tools: Vec<Arc<dyn crate::tools::Tool>>,
+    context: Arc<ExecutorContext>,
+    additional_headers: Option<HashMap<String, String>>,
+    label: Option<String>,
+) -> Box<dyn LLMExecutorTrait> {
+    match &llm_def.model_settings.provider {
+        ModelProvider::Anthropic { .. } => {
+            Box::new(crate::claude_llm::ClaudeLLMExecutor::new(
+                llm_def,
+                tools,
+                context,
+                additional_headers,
+                label,
+            ))
+        }
+        _ => {
+            Box::new(LLMExecutor::new(
+                llm_def,
+                tools,
+                context,
+                additional_headers,
+                label,
+            ))
+        }
     }
 }

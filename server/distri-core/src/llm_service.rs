@@ -104,6 +104,7 @@ impl LlmExecuteService {
             name: format!("llm_execute_{}", model_settings.model),
             model_settings: model_settings.clone(),
             tool_format: ToolCallFormat::Provider,
+            tool_delivery_mode: Default::default(),
         };
 
         let llm = LLMExecutor::new(
