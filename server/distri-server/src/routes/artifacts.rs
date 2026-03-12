@@ -373,6 +373,13 @@ async fn save_artifact(
         body.content.len()
     );
 
+    if let Err(err) = filesystem.mkdir(&format!("{}/content", artifact_id)).await {
+        return HttpResponse::InternalServerError().json(json!({
+            "error": format!("Failed to prepare artifact directory: {}", err),
+            "path": format!("{}/content", artifact_id),
+        }));
+    }
+
     match wrapper.save_artifact(&filename, &body.content).await {
         Ok(()) => {
             // Log the full path that was used - try to get the actual canonical path after saving

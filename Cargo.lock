@@ -1031,9 +1031,7 @@ dependencies = [
 
 [[package]]
 name = "browsr-client"
-version = "0.3.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c664834942d7e79b8520fb036bcb96fd970f36c9111e2eab2080b4863045b3b1"
+version = "0.3.6"
 dependencies = [
  "anyhow",
  "browsr-types",
@@ -1047,9 +1045,7 @@ dependencies = [
 
 [[package]]
 name = "browsr-types"
-version = "0.3.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "160160f5f6f2e85ae9ffd9b920740878e9785881dc3135a73814a7e642bd8a44"
+version = "0.3.6"
 dependencies = [
  "anyhow",
  "async-trait",

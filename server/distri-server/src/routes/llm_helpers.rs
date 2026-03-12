@@ -54,11 +54,7 @@ pub fn merge_model_settings(
             base.model.clone()
         },
         temperature: override_settings.temperature.or(base.temperature),
-        max_tokens: if override_settings.max_tokens != sentinel.max_tokens {
-            override_settings.max_tokens
-        } else {
-            base.max_tokens
-        },
+        max_tokens: override_settings.max_tokens.or(base.max_tokens),
         context_size: if override_settings.context_size != sentinel.context_size {
             override_settings.context_size
         } else {
