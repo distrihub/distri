@@ -11,6 +11,17 @@ use crate::filesystem::FileMetadata;
 
 use crate::events::AgentEventType;
 
+/// Token usage breakdown from an LLM call.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct TokenUsage {
+    #[serde(default)]
+    pub input_tokens: u32,
+    #[serde(default)]
+    pub output_tokens: u32,
+    #[serde(default)]
+    pub total_tokens: u32,
+}
+
 /// External tool that delegates execution to the frontend
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]

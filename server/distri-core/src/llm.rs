@@ -41,7 +41,7 @@ pub struct LLMResponse {
     pub finish_reason: async_openai::types::chat::FinishReason,
     pub tool_calls: Vec<ToolCall>,
     pub content: String,
-    pub token_usage: u32,
+    pub usage: Option<distri_types::TokenUsage>,
 }
 
 #[async_trait::async_trait]
@@ -212,14 +212,16 @@ impl LLMExecutor {
             AgentError::LLMError(e.to_string())
         })?;
 
-        let token_usage = response.usage.as_ref().map(|a| a.total_tokens).unwrap_or(0);
+        let usage = response.usage.as_ref().map(|u| distri_types::TokenUsage {
+            input_tokens: u.prompt_tokens,
+            output_tokens: u.completion_tokens,
+            total_tokens: u.total_tokens,
+        });
 
         // Track usage in context
-        if let Some(usage) = response.usage.as_ref() {
-            let input_tokens = usage.prompt_tokens;
-            let output_tokens = usage.completion_tokens;
+        if let Some(u) = &usage {
             self.context
-                .increment_usage(input_tokens, output_tokens)
+                .increment_usage(u.input_tokens, u.output_tokens)
                 .await;
         }
 
@@ -228,7 +230,7 @@ impl LLMExecutor {
             &self.llm_def.model_settings.model,
             message_count,
             None,
-            Some(token_usage),
+            usage.as_ref().map(|u| u.total_tokens),
         );
 
         let choice = &response.choices[0];
@@ -317,7 +319,7 @@ impl LLMExecutor {
             finish_reason,
             tool_calls,
             content,
-            token_usage,
+            usage,
         })
     }
 

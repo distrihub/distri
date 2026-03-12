@@ -1475,7 +1475,7 @@ pub struct LlmExecuteResponse {
     #[serde(default)]
     pub tool_calls: Vec<ToolCall>,
     #[serde(default)]
-    pub token_usage: Option<u32>,
+    pub usage: Option<distri_types::TokenUsage>,
 }
 
 // ============================================================

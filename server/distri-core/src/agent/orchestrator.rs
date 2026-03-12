@@ -5,7 +5,6 @@ use crate::{
         todos::TodosTool,
         AgentEventType, BaseAgent, CoordinatorMessage, InvokeResult,
     },
-    llm::LLMExecutor,
     servers::registry::McpServerRegistry,
     tools::{FinalTool, Tool},
     types::{CreateThreadRequest, Message, Thread, UpdateThreadRequest},
@@ -1765,7 +1764,7 @@ impl OrchestratorTrait for AgentOrchestrator {
         }
         // If agent not found, use request's model_settings as-is
 
-        let executor = LLMExecutor::new(
+        let executor = crate::llm::create_llm_executor(
             llm_def,
             vec![],
             Arc::new(ctx),

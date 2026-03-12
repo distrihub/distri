@@ -180,7 +180,7 @@ async fn llm_handler(body: web::Json<serde_json::Value>) -> HttpResponse {
         "finish_reason": "stop",
         "content": "ok",
         "tool_calls": [],
-        "token_usage": messages as u32,
+        "usage": { "input_tokens": messages as u32, "output_tokens": 0, "total_tokens": messages as u32 },
     }))
 }
 

@@ -575,7 +575,11 @@ impl ClaudeLLMExecutor {
             .increment_usage(input_tokens, output_tokens)
             .await;
 
-        let token_usage = input_tokens + output_tokens;
+        let usage = Some(distri_types::TokenUsage {
+            input_tokens,
+            output_tokens,
+            total_tokens: input_tokens + output_tokens,
+        });
 
         // Extract content and tool calls from response
         let mut content = String::new();
@@ -665,7 +669,7 @@ impl ClaudeLLMExecutor {
             finish_reason,
             tool_calls,
             content,
-            token_usage,
+            usage,
         })
     }
 

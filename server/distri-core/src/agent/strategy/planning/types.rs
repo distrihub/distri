@@ -81,7 +81,7 @@ pub trait PlanningStrategy: Send + Sync + std::fmt::Debug {
     ) -> Result<LLMResponse, AgentError> {
         let agent_name = context.agent_id.clone();
         let tools = context.get_tools().await;
-        let planning_executor = crate::llm::LLMExecutor::new(
+        let planning_executor = crate::llm::create_llm_executor(
             get_planning_definition(agent_name, plan_config.model_settings.clone(), format),
             tools,
             context.clone(),
@@ -102,7 +102,7 @@ pub trait PlanningStrategy: Send + Sync + std::fmt::Debug {
     ) -> Result<StreamResult, AgentError> {
         let agent_name = context.agent_id.clone();
         let tools = context.get_tools().await;
-        let planning_executor = crate::llm::LLMExecutor::new(
+        let planning_executor = crate::llm::create_llm_executor(
             get_planning_definition(agent_name, plan_config.model_settings.clone(), format),
             tools,
             context.clone(),

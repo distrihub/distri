@@ -57,14 +57,14 @@ impl MockLLM {
                             input: "{}".into() 
                         }],
                         content: "I need to use a tool to help you.".into(),
-                        token_usage: 0,
+                        usage: None,
                     })
                 } else {
                     Ok(LLMResponse {
                         finish_reason: async_openai::types::chat::FinishReason::Stop,
                         tool_calls: vec![],
                         content: "I've completed the task using the tool. Here's what I found: mock data".into(),
-                        token_usage: 0,
+                        usage: None,
                     })
                 }
             }
@@ -80,7 +80,7 @@ impl MockLLM {
                             }
                         ],
                         content: "Let me search for information first.".into(),
-                        token_usage: 0,
+                        usage: None,
                     }),
                     2 => Ok(LLMResponse {
                         finish_reason: async_openai::types::chat::FinishReason::ToolCalls,
@@ -92,13 +92,13 @@ impl MockLLM {
                             }
                         ],
                         content: "Now let me process the search results.".into(),
-                        token_usage: 0,
+                        usage: None,
                     }),
                     _ => Ok(LLMResponse {
                         finish_reason: async_openai::types::chat::FinishReason::Stop,
                         tool_calls: vec![],
                         content: "I've completed the multi-step task. Here's the final result: processed data".into(),
-                        token_usage: 0,
+                        usage: None,
                     })
                 }
             }
@@ -108,7 +108,7 @@ impl MockLLM {
                         finish_reason: async_openai::types::chat::FinishReason::Stop,
                         tool_calls: vec![],
                         content: "Let me plan this step by step:\n1. First, I'll analyze the request\n2. Then I'll gather information\n3. Finally, I'll provide a comprehensive answer".into(),
-                        token_usage: 0,
+                        usage: None,
                     }),
                     2 => Ok(LLMResponse {
                         finish_reason: async_openai::types::chat::FinishReason::ToolCalls,
@@ -120,7 +120,7 @@ impl MockLLM {
                             }
                         ],
                         content: "Step 1: Analyzing the request...".into(),
-                        token_usage: 0,
+                        usage: None,
                     }),
                     3 => Ok(LLMResponse {
                         finish_reason: async_openai::types::chat::FinishReason::ToolCalls,
@@ -132,13 +132,13 @@ impl MockLLM {
                             }
                         ],
                         content: "Step 2: Gathering information...".into(),
-                        token_usage: 0,
+                        usage: None,
                     }),
                     _ => Ok(LLMResponse {
                         finish_reason: async_openai::types::chat::FinishReason::Stop,
                         tool_calls: vec![],
                         content: "Step 3: Providing comprehensive answer. Here's my analysis: The task has been completed successfully with detailed insights.".into(),
-                        token_usage: 0,
+                        usage: None,
                     })
                 }
             }
@@ -150,7 +150,7 @@ impl MockLLM {
                         finish_reason: async_openai::types::chat::FinishReason::Stop,
                         tool_calls: vec![],
                         content: "Recovered from error and completed the task.".into(),
-                        token_usage: 0,
+                        usage: None,
                     })
                 }
             }
@@ -162,7 +162,7 @@ impl MockLLM {
                         finish_reason: async_openai::types::chat::FinishReason::Stop,
                         tool_calls: vec![],
                         content: "Custom scenario completed.".into(),
-                        token_usage: 0,
+                        usage: None,
                     })
                 }
             }

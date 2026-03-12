@@ -923,7 +923,7 @@ async fn llm_execute(
             "finish_reason": format!("{:?}", exec_result.response.finish_reason),
             "content": exec_result.response.content,
             "tool_calls": exec_result.response.tool_calls,
-            "token_usage": exec_result.response.token_usage,
+            "usage": exec_result.response.usage,
             "thread_id": exec_result.thread_id,
             "task_id": exec_result.task_id,
         })),

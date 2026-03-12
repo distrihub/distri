@@ -1,5 +1,5 @@
 use crate::agent::ExecutorContext;
-use crate::llm::{LLMExecutor, LLMResponse};
+use crate::llm::LLMResponse;
 use crate::AgentError;
 use distri_types::{
     AgentEventType, CreateThreadRequest, LlmDefinition, Message, ModelSettings, RunUsage, Tool,
@@ -107,7 +107,7 @@ impl LlmExecuteService {
             tool_delivery_mode: Default::default(),
         };
 
-        let llm = LLMExecutor::new(
+        let llm = crate::llm::create_llm_executor(
             llm_def,
             tools,
             context.clone(),
