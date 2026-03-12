@@ -1,15 +1,13 @@
 use anyhow::Result;
 use distri_core::{
     agent::{AgentOrchestrator, PromptRegistry},
-    types::{McpServerMetadata, ServerTrait, TransportType},
     AgentOrchestratorBuilder,
 };
 use distri_types::browser::BrowsrClientConfig;
 use distri_types::configuration::{AgentConfig, DistriServerConfig};
-use distri_types::ServerMetadataWrapper;
 pub mod workspace;
 use crate::tool_renderers::ToolRendererRegistry;
-use std::{collections::HashMap, env, fs, path::Path, path::PathBuf, sync::Arc};
+use std::{env, fs, path::Path, path::PathBuf, sync::Arc};
 use tokio::sync::RwLock;
 use tracing::debug;
 
@@ -22,8 +20,6 @@ pub mod multi_agent_cli;
 pub mod run;
 pub mod slash_commands;
 pub mod tool_renderers;
-pub mod workflow_dag;
-// use run::{background, chat}; // Unused imports
 
 pub use cli::{Cli, Commands};
 
@@ -112,13 +108,11 @@ pub async fn init_orchestrator(
     home_dir: &Path,
     workspace_path: &Path,
     workspace_config: Option<&DistriServerConfig>,
-    disable_plugins: bool,
 ) -> Result<std::sync::Arc<distri_core::agent::AgentOrchestrator>> {
     init_orchestrator_with_configuration(
         home_dir,
         workspace_path,
         workspace_config,
-        disable_plugins,
         None,
     )
     .await
@@ -129,8 +123,6 @@ pub async fn init_orchestrator_with_configuration(
     home_dir: &Path,
     workspace_path: &Path,
     workspace_config: Option<&DistriServerConfig>,
-    disable_plugins: bool,
-
     configuration: Option<Arc<RwLock<DistriServerConfig>>>,
 ) -> Result<std::sync::Arc<distri_core::agent::AgentOrchestrator>> {
     use distri_types::configuration::StoreConfig;
@@ -233,13 +225,6 @@ pub async fn init_orchestrator_with_configuration(
     let orchestrator = Arc::new(orchestrator);
     register_workspace_assets(&orchestrator, workspace_path, merged_config).await?;
 
-    if !disable_plugins {
-        for mcp_server in custom_mcp_servers() {
-            orchestrator
-                .register_mcp_server(mcp_server.0, mcp_server.1)
-                .await;
-        }
-    }
     Ok(orchestrator)
 }
 
@@ -313,9 +298,3 @@ pub async fn run_agent_cli(
     Ok(())
 }
 
-/// Get custom MCP servers (spider, search)
-pub fn custom_mcp_servers() -> HashMap<String, ServerMetadataWrapper> {
-    let servers = HashMap::new();
-
-    servers
-}

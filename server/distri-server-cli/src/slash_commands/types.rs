@@ -27,8 +27,6 @@ pub enum SlashCommandType {
 pub enum InteractiveMenuType {
     Agents,
     Models,
-    Workflows,
-    Plugins,
     Custom { items: Vec<MenuItem> },
 }
 
@@ -81,11 +79,6 @@ pub enum SlashCommandResult {
     SetModel {
         model: String,
     },
-    CreateWorkflow {
-        description: String,
-    },
-    /// Create a new plugin
-    CreatePlugin,
     /// Execute auth command
     AuthCommand {
         subcommand: String,

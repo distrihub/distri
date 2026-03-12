@@ -19,14 +19,6 @@ pub struct Cli {
     #[clap(long, help = "Agent name to use (defaults to 'distri')")]
     pub agent: Option<String>,
 
-    /// Disable loading plugins and their agents/tools
-    #[clap(
-        long,
-        help = "Enable loading plugins (plugins, agents/tools)",
-        global = true
-    )]
-    pub disable_plugins: bool,
-
     /// Input data as JSON string (for agents that need structured input)
     #[clap(long, help = "Input data as JSON string  or text")]
     pub input: Option<String>,

@@ -125,8 +125,6 @@ pub async fn run(
                 | SlashCommandResult::ToolCall { .. }
                 | SlashCommandResult::ListTools
                 | SlashCommandResult::SetModel { .. }
-                | SlashCommandResult::CreateWorkflow { .. }
-                | SlashCommandResult::CreatePlugin
                 | SlashCommandResult::AuthCommand { .. } => {
                     // These cases are handled internally by the slash command system
                     continue;

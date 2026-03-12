@@ -54,12 +54,6 @@ pub enum SlashCommands {
     #[command(name = "available-tools")]
     AvailableTools,
 
-    /// Show workflows menu - create new or view existing
-    Workflows,
-
-    /// Show plugins menu - install and manage DAP plugins
-    Plugins,
-
     /// Call a tool directly with JSON parameters
     Toolcall {
         /// Name of the tool to call

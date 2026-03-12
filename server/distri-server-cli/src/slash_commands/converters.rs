@@ -1,9 +1,7 @@
 use crate::slash_commands::clap_parser::{
     parse_toolcall_parameters, AuthSubcommands, SecretsAction, SlashCommands,
 };
-use crate::slash_commands::handlers::{
-    create_plugins_menu, create_workflows_menu, generate_help_message,
-};
+use crate::slash_commands::handlers::generate_help_message;
 use crate::slash_commands::types::{
     InteractiveMenu, MenuItem, SlashCommandResult, SlashCommandType,
 };
@@ -86,10 +84,6 @@ impl From<SlashCommands> for SlashCommandResult {
             SlashCommands::Exit | SlashCommands::Quit => SlashCommandResult::Exit,
 
             SlashCommands::AvailableTools => SlashCommandResult::ListTools,
-
-            SlashCommands::Workflows => SlashCommandResult::ShowMenu(create_workflows_menu()),
-
-            SlashCommands::Plugins => SlashCommandResult::ShowMenu(create_plugins_menu()),
 
             SlashCommands::Toolcall {
                 tool_name,
