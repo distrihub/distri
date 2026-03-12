@@ -537,4 +537,198 @@ mod tests {
         let tokens = manager.estimate_entry_tokens(&entry);
         assert!(tokens > 0);
     }
+
+    /// Helper: create many execution entries to inflate token count
+    fn create_large_execution_entry(timestamp: i64, task_id: &str) -> ScratchpadEntry {
+        let large_text = "x".repeat(500); // ~125 tokens at 4 chars/token
+        let result = ExecutionResult {
+            step_id: format!("step_{}", timestamp),
+            parts: vec![Part::Text(large_text)],
+            status: ExecutionStatus::Success,
+            reason: None,
+            timestamp,
+        };
+        let exec_entry = ExecutionHistoryEntry {
+            task_id: task_id.to_string(),
+            thread_id: "thread_1".to_string(),
+            run_id: "run_1".to_string(),
+            execution_result: result,
+            stored_at: timestamp,
+        };
+        ScratchpadEntry {
+            timestamp,
+            entry_type: ScratchpadEntryType::Execution(exec_entry),
+            task_id: task_id.to_string(),
+            parent_task_id: None,
+            entry_kind: Some("execution".to_string()),
+        }
+    }
+
+    #[test]
+    fn test_no_compaction_when_under_threshold() {
+        // Large budget so entries fit comfortably
+        let config = ContextSizeConfig {
+            max_tokens: 100_000,
+            ..Default::default()
+        };
+        let manager = ContextSizeManager::new(config);
+
+        let entries = vec![
+            create_test_task_entry(),
+            create_test_execution_entry(2, "task_1"),
+            create_test_execution_entry(3, "task_1"),
+        ];
+
+        let result = manager.evaluate_and_compact(&entries);
+        assert!(result.tier.is_none(), "Expected no compaction");
+        assert_eq!(result.entries.len(), entries.len());
+        assert_eq!(result.entries_affected, 0);
+    }
+
+    #[test]
+    fn test_tier1_trim_when_above_trim_threshold() {
+        // First measure how big our entries are, then set max_tokens so usage is between 0.6-0.8
+        let manager_measure = ContextSizeManager::new(ContextSizeConfig {
+            max_tokens: 100_000,
+            ..Default::default()
+        });
+
+        let entries: Vec<_> = std::iter::once(create_test_task_entry())
+            .chain((2..=10).map(|i| create_large_execution_entry(i, "task_1")))
+            .collect();
+
+        let total_tokens = manager_measure.estimate_scratchpad_tokens(&entries);
+
+        // Set max_tokens so usage_ratio is ~0.7 (between trim 0.6 and summarize 0.8)
+        let max_tokens = (total_tokens as f64 / 0.7) as usize;
+        let config = ContextSizeConfig {
+            max_tokens,
+            ..Default::default()
+        };
+        let manager = ContextSizeManager::new(config);
+
+        let result = manager.evaluate_and_compact(&entries);
+        assert!(
+            matches!(result.tier, Some(CompactionTier::Trim)),
+            "Expected Tier 1 Trim, got {:?}",
+            result.tier
+        );
+        assert!(result.entries.len() <= entries.len());
+    }
+
+    #[test]
+    fn test_tier2_summarize_when_above_summarize_threshold() {
+        let manager_measure = ContextSizeManager::new(ContextSizeConfig {
+            max_tokens: 100_000,
+            ..Default::default()
+        });
+
+        let entries: Vec<_> = std::iter::once(create_test_task_entry())
+            .chain((2..=10).map(|i| create_large_execution_entry(i, "task_1")))
+            .collect();
+
+        let total_tokens = manager_measure.estimate_scratchpad_tokens(&entries);
+
+        // Set max_tokens so usage_ratio is ~0.85 (between summarize 0.8 and reset 0.95)
+        let max_tokens = (total_tokens as f64 / 0.85) as usize;
+        let config = ContextSizeConfig {
+            max_tokens,
+            ..Default::default()
+        };
+        let manager = ContextSizeManager::new(config);
+
+        let result = manager.evaluate_and_compact(&entries);
+        assert!(
+            matches!(result.tier, Some(CompactionTier::Summarize)),
+            "Expected Tier 2 Summarize, got {:?}",
+            result.tier
+        );
+    }
+
+    #[test]
+    fn test_tier3_reset_when_above_reset_threshold() {
+        let manager_measure = ContextSizeManager::new(ContextSizeConfig {
+            max_tokens: 100_000,
+            ..Default::default()
+        });
+
+        let entries: Vec<_> = std::iter::once(create_test_task_entry())
+            .chain((2..=10).map(|i| create_large_execution_entry(i, "task_1")))
+            .collect();
+
+        let total_tokens = manager_measure.estimate_scratchpad_tokens(&entries);
+
+        // Set max_tokens so usage_ratio is ~0.97 (above reset 0.95)
+        let max_tokens = (total_tokens as f64 / 0.97) as usize;
+        let config = ContextSizeConfig {
+            max_tokens,
+            ..Default::default()
+        };
+        let manager = ContextSizeManager::new(config);
+
+        let result = manager.evaluate_and_compact(&entries);
+        assert!(
+            matches!(result.tier, Some(CompactionTier::Reset)),
+            "Expected Tier 3 Reset, got {:?}",
+            result.tier
+        );
+        // Reset keeps task + last 2 entries
+        assert!(result.entries.len() <= 3);
+        assert!(matches!(
+            result.entries[0].entry_type,
+            ScratchpadEntryType::Task(_)
+        ));
+    }
+
+    #[test]
+    fn test_emergency_reset_preserves_task_and_last_entries() {
+        let config = ContextSizeConfig {
+            max_tokens: 10, // Extremely low — guarantees reset
+            ..Default::default()
+        };
+        let manager = ContextSizeManager::new(config);
+
+        let entries: Vec<_> = std::iter::once(create_test_task_entry())
+            .chain((2..=8).map(|i| create_test_execution_entry(i, "task_1")))
+            .collect();
+
+        let result = manager.emergency_reset(&entries);
+
+        // Should have task + 2 most recent
+        assert_eq!(result.len(), 3);
+        assert!(matches!(
+            result[0].entry_type,
+            ScratchpadEntryType::Task(_)
+        ));
+        // Last two entries should be the most recent (timestamps 7, 8)
+        assert_eq!(result[1].timestamp, 7);
+        assert_eq!(result[2].timestamp, 8);
+    }
+
+    #[test]
+    fn test_compaction_result_tracks_tokens() {
+        let manager_measure = ContextSizeManager::new(ContextSizeConfig {
+            max_tokens: 100_000,
+            ..Default::default()
+        });
+
+        let entries: Vec<_> = std::iter::once(create_test_task_entry())
+            .chain((2..=10).map(|i| create_large_execution_entry(i, "task_1")))
+            .collect();
+
+        let total_tokens = manager_measure.estimate_scratchpad_tokens(&entries);
+
+        // Force reset tier so entries are definitely dropped
+        let max_tokens = (total_tokens as f64 / 0.97) as usize;
+        let manager = ContextSizeManager::new(ContextSizeConfig {
+            max_tokens,
+            ..Default::default()
+        });
+
+        let result = manager.evaluate_and_compact(&entries);
+        assert_eq!(result.tokens_before, total_tokens);
+        assert!(result.tokens_after <= result.tokens_before);
+        assert!(result.entries_affected > 0);
+        assert!(result.usage_ratio > 0.0);
+    }
 }

@@ -17,7 +17,7 @@ mod hooks;
 pub mod auth;
 mod core;
 mod errors;
-mod events;
+pub mod events;
 
 mod mcp;
 pub use mcp::{McpServerMetadata, TransportType};

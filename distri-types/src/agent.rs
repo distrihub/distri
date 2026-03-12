@@ -438,12 +438,22 @@ pub struct StandardDefinition {
     /// Custom user message construction (dynamic prompting)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user_message_overrides: Option<UserMessageOverrides>,
+
+    /// Whether context compaction is enabled for this agent (default: true)
+    #[serde(default = "default_compaction_enabled", skip_serializing_if = "is_true")]
+    pub compaction_enabled: bool,
 }
 fn default_append_default_instructions() -> Option<bool> {
     Some(true)
 }
 fn default_include_scratchpad() -> Option<bool> {
     Some(true)
+}
+fn default_compaction_enabled() -> bool {
+    true
+}
+fn is_true(v: &bool) -> bool {
+    *v
 }
 impl StandardDefinition {
     /// Check if large tool responses should be written to filesystem (default: false)
@@ -1033,4 +1043,90 @@ pub fn validate_plugin_name(name: &str) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_compaction_enabled_defaults_to_true_via_serde() {
+        // serde default uses default_compaction_enabled() -> true
+        let json = r#"{"name": "test"}"#;
+        let def: StandardDefinition = serde_json::from_str(json).unwrap();
+        assert!(def.compaction_enabled);
+    }
+
+    #[test]
+    fn test_compaction_enabled_deserializes_true_when_absent() {
+        let json = r#"{"name": "test", "description": "test agent"}"#;
+        let def: StandardDefinition = serde_json::from_str(json).unwrap();
+        assert!(def.compaction_enabled);
+    }
+
+    #[test]
+    fn test_compaction_enabled_deserializes_false() {
+        let json = r#"{"name": "test", "description": "test agent", "compaction_enabled": false}"#;
+        let def: StandardDefinition = serde_json::from_str(json).unwrap();
+        assert!(!def.compaction_enabled);
+    }
+
+    #[test]
+    fn test_compaction_enabled_true_skipped_in_serialization() {
+        let def = StandardDefinition {
+            name: "test".to_string(),
+            compaction_enabled: true,
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&def).unwrap();
+        assert!(!json.contains("compaction_enabled"));
+    }
+
+    #[test]
+    fn test_compaction_enabled_false_serialized() {
+        let def = StandardDefinition {
+            name: "test".to_string(),
+            compaction_enabled: false,
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&def).unwrap();
+        assert!(json.contains("\"compaction_enabled\":false"));
+    }
+
+    #[test]
+    fn test_max_tokens_optional_defaults_to_none() {
+        let def = StandardDefinition::default();
+        assert!(def.model_settings.max_tokens.is_none());
+    }
+
+    #[test]
+    fn test_max_tokens_deserializes_when_present() {
+        let json = r#"{"name": "test", "model_settings": {"max_tokens": 4096}}"#;
+        let def: StandardDefinition = serde_json::from_str(json).unwrap();
+        assert_eq!(def.model_settings.max_tokens, Some(4096));
+    }
+
+    #[test]
+    fn test_max_tokens_none_when_absent() {
+        let json = r#"{"name": "test", "model_settings": {"model": "gpt-4.1"}}"#;
+        let def: StandardDefinition = serde_json::from_str(json).unwrap();
+        assert!(def.model_settings.max_tokens.is_none());
+    }
+
+    #[test]
+    fn test_max_tokens_none_skipped_in_serialization() {
+        let settings = ModelSettings::default();
+        let json = serde_json::to_string(&settings).unwrap();
+        assert!(!json.contains("max_tokens"));
+    }
+
+    #[test]
+    fn test_max_tokens_some_serialized() {
+        let settings = ModelSettings {
+            max_tokens: Some(2048),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&settings).unwrap();
+        assert!(json.contains("\"max_tokens\":2048"));
+    }
 }

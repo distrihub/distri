@@ -363,7 +363,7 @@ impl<'a> MessageFormatter<'a> {
                     // Render compaction summaries as system-like context messages
                     let mut msg = crate::types::Message::default();
                     msg.role = MessageRole::Assistant;
-                    msg.created_at = entry.1.timestamp;
+                    msg.created_at = entry.timestamp;
                     msg.parts = vec![Part::Text(format!(
                         "[Context summary — {} earlier entries compacted]: {}",
                         summary.entries_summarized, summary.summary_text

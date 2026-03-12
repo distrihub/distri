@@ -15,6 +15,9 @@
 
 use std::{collections::HashMap, sync::Arc};
 
+/// Default max_tokens for Anthropic API (which requires this field).
+const DEFAULT_ANTHROPIC_MAX_TOKENS: u32 = 8192;
+
 use crate::{
     agent::{log::ModelLogger, AgentEventType, ExecutorContext},
     claude_client::{
@@ -513,7 +516,7 @@ impl ClaudeLLMExecutor {
     pub async fn execute(&self, messages: &[Message]) -> Result<super::llm::LLMResponse, AgentError> {
         tracing::info!(
             target: "claude_llm.execute",
-            "Claude LLM request model={}, max_tokens={}, tools={}, messages={}",
+            "Claude LLM request model={}, max_tokens={:?}, tools={}, messages={}",
             self.llm_def.model_settings.model,
             self.llm_def.model_settings.max_tokens,
             self.tools.len(),
@@ -540,7 +543,7 @@ impl ClaudeLLMExecutor {
 
         let request = CreateMessageRequest {
             model: self.llm_def.model_settings.model.clone(),
-            max_tokens: self.llm_def.model_settings.max_tokens,
+            max_tokens: self.llm_def.model_settings.max_tokens.unwrap_or(DEFAULT_ANTHROPIC_MAX_TOKENS),
             messages: claude_messages,
             system,
             tools,
@@ -674,7 +677,7 @@ impl ClaudeLLMExecutor {
     ) -> Result<super::llm::StreamResult, AgentError> {
         tracing::info!(
             target: "claude_llm.execute_stream",
-            "Claude LLM stream request model={}, max_tokens={}, tools={}, messages={}",
+            "Claude LLM stream request model={}, max_tokens={:?}, tools={}, messages={}",
             self.llm_def.model_settings.model,
             self.llm_def.model_settings.max_tokens,
             self.tools.len(),
@@ -702,7 +705,7 @@ impl ClaudeLLMExecutor {
 
         let request = CreateMessageRequest {
             model: self.llm_def.model_settings.model.clone(),
-            max_tokens: self.llm_def.model_settings.max_tokens,
+            max_tokens: self.llm_def.model_settings.max_tokens.unwrap_or(DEFAULT_ANTHROPIC_MAX_TOKENS),
             messages: claude_messages,
             system,
             tools,
