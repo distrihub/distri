@@ -1,3 +1,4 @@
+mod agent_loop;
 mod definition;
 mod llm;
 pub mod mock_llm;

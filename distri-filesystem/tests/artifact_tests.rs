@@ -49,6 +49,7 @@ mod tests {
             tool_call_id: "call1".to_string(),
             tool_name: "get_singapore_data".to_string(),
             parts: vec![Part::Data(json1.clone())],
+            parts_metadata: None,
         };
 
         // Process tool response - should convert large data to artifacts
@@ -167,6 +168,7 @@ mod tests {
             parts: vec![Part::Text(
                 "This is a large text content that should be stored as an artifact.".to_string(),
             )],
+            parts_metadata: None,
         };
 
         // Test JSON data
@@ -176,6 +178,7 @@ mod tests {
             parts: vec![Part::Data(
                 json!({"key": "value", "numbers": [1, 2, 3, 4, 5]}),
             )],
+            parts_metadata: None,
         };
 
         let processed_text = wrapper
@@ -230,6 +233,7 @@ mod tests {
             tool_call_id: "small_call".to_string(),
             tool_name: "small_data".to_string(),
             parts: vec![Part::Text("Small text".to_string())],
+            parts_metadata: None,
         };
 
         let processed_small = wrapper
@@ -253,6 +257,7 @@ mod tests {
             tool_call_id: "small_call2".to_string(),
             tool_name: "small_data".to_string(),
             parts: vec![Part::Text("Small text".to_string())],
+            parts_metadata: None,
         };
 
         let processed_test = wrapper

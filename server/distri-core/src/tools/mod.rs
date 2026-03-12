@@ -432,3 +432,152 @@ pub async fn emit_final(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── cast_to_executor_context_tool ───────────────────────────
+
+    #[test]
+    fn cast_final_tool() {
+        let tool = FinalTool;
+        let result = cast_to_executor_context_tool(&tool);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn cast_transfer_to_agent_tool() {
+        let tool = TransferToAgentTool;
+        let result = cast_to_executor_context_tool(&tool);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn cast_start_shell_tool() {
+        let tool = shell::StartShellTool;
+        let result = cast_to_executor_context_tool(&tool);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn cast_execute_shell_tool() {
+        let tool = shell::ExecuteShellTool;
+        let result = cast_to_executor_context_tool(&tool);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn cast_stop_shell_tool() {
+        let tool = shell::StopShellTool;
+        let result = cast_to_executor_context_tool(&tool);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn cast_distri_execute_code_tool() {
+        let tool = DistriExecuteCodeTool;
+        let result = cast_to_executor_context_tool(&tool);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn cast_tool_search_tool() {
+        let tool = ToolSearchTool;
+        let result = cast_to_executor_context_tool(&tool);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn cast_agent_tool_with_call_prefix() {
+        // AgentTool is returned for any "call_*" tool name
+        let tool = AgentTool::new("my_agent".to_string());
+        let result = cast_to_executor_context_tool(&tool);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn cast_agent_tool_with_package_name() {
+        let tool = AgentTool::new("pkg/agent".to_string());
+        // Tool name becomes "call_pkg__agent"
+        assert_eq!(tool.get_name(), "call_pkg__agent");
+        let result = cast_to_executor_context_tool(&tool);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn cast_unknown_tool_returns_error() {
+        // Create a simple mock tool that returns an unknown name
+        #[derive(Debug)]
+        struct UnknownTool;
+        #[async_trait::async_trait]
+        impl Tool for UnknownTool {
+            fn get_name(&self) -> String { "totally_unknown_tool".to_string() }
+            fn get_description(&self) -> String { String::new() }
+            fn get_parameters(&self) -> serde_json::Value { serde_json::json!({}) }
+            async fn execute(
+                &self, _: ToolCall, _: Arc<distri_types::ToolContext>,
+            ) -> Result<Vec<Part>, anyhow::Error> { Ok(vec![]) }
+        }
+        let tool = UnknownTool;
+        let result = cast_to_executor_context_tool(&tool);
+        assert!(result.is_err());
+    }
+
+    // ── matches_pattern ─────────────────────────────────────────
+
+    #[test]
+    fn pattern_wildcard_matches_everything() {
+        assert!(matches_pattern("anything", "*"));
+    }
+
+    #[test]
+    fn pattern_exact_match() {
+        assert!(matches_pattern("search", "search"));
+    }
+
+    #[test]
+    fn pattern_exact_no_match() {
+        assert!(!matches_pattern("search", "scrape"));
+    }
+
+    #[test]
+    fn pattern_prefix_wildcard() {
+        assert!(matches_pattern("browsr_search", "browsr_*"));
+    }
+
+    #[test]
+    fn pattern_suffix_wildcard() {
+        assert!(matches_pattern("my_search_tool", "*_tool"));
+    }
+
+    #[test]
+    fn pattern_middle_wildcard() {
+        assert!(matches_pattern("browsr_search_tool", "browsr_*_tool"));
+    }
+
+    #[test]
+    fn pattern_wildcard_no_match() {
+        assert!(!matches_pattern("other_tool", "browsr_*"));
+    }
+
+    // ── Tool trait implementations ────────────────────────────────
+
+    #[test]
+    fn shell_tools_need_executor_context() {
+        assert!(shell::StartShellTool.needs_executor_context());
+        assert!(shell::ExecuteShellTool.needs_executor_context());
+        assert!(shell::StopShellTool.needs_executor_context());
+    }
+
+    #[test]
+    fn final_tool_is_final() {
+        assert!(FinalTool.is_final());
+    }
+
+    #[test]
+    fn distri_execute_code_tool_name() {
+        assert_eq!(DistriExecuteCodeTool.get_name(), "distri_execute_code");
+        assert!(DistriExecuteCodeTool.needs_executor_context());
+    }
+}
