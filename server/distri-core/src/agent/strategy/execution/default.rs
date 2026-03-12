@@ -251,18 +251,26 @@ impl ExecutionStrategy for AgentExecutor {
                 )
                 .await
             }
-            #[allow(unused)]
             Action::Code { code, .. } => {
-                tracing::warn!("Direct code execution removed. Use shell tools instead.");
-                Ok(ExecutionResult {
-                    step_id: step.id.clone(),
-                    status: ExecutionStatus::Failed,
-                    parts: vec![],
-                    timestamp: chrono::Utc::now().timestamp_millis(),
-                    reason: Some(
-                        "Direct code execution removed. Use shell tools instead.".to_string(),
-                    ),
-                })
+                match crate::tools::execute_code_with_tools(code, context.clone()).await {
+                    Ok((_, observations, _)) => Ok(ExecutionResult {
+                        step_id: step.id.clone(),
+                        status: ExecutionStatus::Success,
+                        parts: vec![Part::Text(observations.join("\n\n"))],
+                        timestamp: chrono::Utc::now().timestamp_millis(),
+                        reason: None,
+                    }),
+                    Err(e) => {
+                        tracing::warn!("Code execution failed: {}", e);
+                        Ok(ExecutionResult {
+                            step_id: step.id.clone(),
+                            status: ExecutionStatus::Failed,
+                            parts: vec![],
+                            timestamp: chrono::Utc::now().timestamp_millis(),
+                            reason: Some(format!("Code execution error: {}", e)),
+                        })
+                    }
+                }
             }
         }
     }

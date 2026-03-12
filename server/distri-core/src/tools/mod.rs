@@ -12,17 +12,22 @@ use crate::types::{McpDefinition, McpToolConfig, ToolCall, ToolsConfig};
 use crate::AgentError;
 use distri_types::Part;
 mod browser;
+pub mod code;
 // pub mod authenticated_example;
 pub mod context;
 mod mcp;
 pub mod shell;
 mod state;
+pub use code::execute_code_with_tools;
 pub use context::to_tool_context;
 pub use mcp::get_mcp_tools;
 mod builtin;
 pub mod skill_script;
 pub mod tool_search;
-pub use builtin::{get_builtin_tools, AgentTool, ConsoleLogTool, FinalTool, TransferToAgentTool};
+pub use builtin::{
+    get_builtin_tools, AgentTool, ConsoleLogTool, DistriExecuteCodeTool, FinalTool,
+    TransferToAgentTool,
+};
 pub use tool_search::ToolSearchTool;
 
 #[derive(Debug, Clone)]
@@ -144,6 +149,8 @@ pub fn cast_to_executor_context_tool(
         "stop_shell" => Ok(Box::new(shell::StopShellTool)),
         "load_skill" => Ok(Box::new(skill_script::LoadSkillTool)),
         "run_skill_script" => Ok(Box::new(skill_script::RunSkillScriptTool)),
+        // Code execution
+        "distri_execute_code" => Ok(Box::new(DistriExecuteCodeTool)),
         // Tool discovery
         "tool_search" => Ok(Box::new(tool_search::ToolSearchTool)),
         name if name.starts_with("call_") => {
