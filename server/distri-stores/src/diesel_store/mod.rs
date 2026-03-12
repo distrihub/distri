@@ -923,9 +923,9 @@ where
         let mut connection = self.conn().await?;
 
         // Get tenant context for filtering
-        let user_id = distri_auth::context::current_user_id()
+        let user_id = distri_types::context::current_user_id()
             .ok_or_else(|| anyhow::anyhow!("User context required"))?;
-        let workspace_id = distri_auth::context::current_workspace_id();
+        let workspace_id = distri_types::context::current_workspace_id();
 
         #[derive(QueryableByName)]
         struct AgentCount {
@@ -1338,7 +1338,7 @@ where
         thread_id: &str,
         message_id: &str,
     ) -> Result<MessageReadStatus> {
-        let user_id = distri_auth::context::current_user_id()
+        let user_id = distri_types::context::current_user_id()
             .unwrap_or_else(|| "anonymous".to_string());
         let now = Utc::now();
 
@@ -1394,7 +1394,7 @@ where
         thread_id: &str,
         message_id: &str,
     ) -> Result<Option<MessageReadStatus>> {
-        let user_id = distri_auth::context::current_user_id()
+        let user_id = distri_types::context::current_user_id()
             .unwrap_or_else(|| "anonymous".to_string());
         let mut connection = self.conn().await?;
 
@@ -1417,7 +1417,7 @@ where
     }
 
     async fn get_thread_read_status(&self, thread_id: &str) -> Result<Vec<MessageReadStatus>> {
-        let user_id = distri_auth::context::current_user_id()
+        let user_id = distri_types::context::current_user_id()
             .unwrap_or_else(|| "anonymous".to_string());
         let mut connection = self.conn().await?;
 
@@ -1443,7 +1443,7 @@ where
     // ========== Message Voting Methods ==========
 
     async fn vote_message(&self, request: VoteMessageRequest) -> Result<MessageVote> {
-        let user_id = distri_auth::context::current_user_id()
+        let user_id = distri_types::context::current_user_id()
             .unwrap_or_else(|| "anonymous".to_string());
         let now = Utc::now();
 
@@ -1528,7 +1528,7 @@ where
     }
 
     async fn remove_vote(&self, thread_id: &str, message_id: &str) -> Result<()> {
-        let user_id = distri_auth::context::current_user_id()
+        let user_id = distri_types::context::current_user_id()
             .unwrap_or_else(|| "anonymous".to_string());
         let mut connection = self.conn().await?;
 
@@ -1550,7 +1550,7 @@ where
         thread_id: &str,
         message_id: &str,
     ) -> Result<Option<MessageVote>> {
-        let user_id = distri_auth::context::current_user_id()
+        let user_id = distri_types::context::current_user_id()
             .unwrap_or_else(|| "anonymous".to_string());
         let mut connection = self.conn().await?;
 
@@ -1584,7 +1584,7 @@ where
         thread_id: &str,
         message_id: &str,
     ) -> Result<MessageVoteSummary> {
-        let user_id = distri_auth::context::current_user_id()
+        let user_id = distri_types::context::current_user_id()
             .unwrap_or_else(|| "anonymous".to_string());
         let mut connection = self.conn().await?;
 

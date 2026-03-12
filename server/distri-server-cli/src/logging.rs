@@ -13,7 +13,6 @@ pub fn init_logging(level: &str) {
         .add_directive("swc_ecma_transforms_base=off".parse().unwrap())
         .add_directive("reqwest=off".parse().unwrap())
         .add_directive("async_mcp=off".parse().unwrap())
-        .add_directive("mcp_crawl=off".parse().unwrap())
         .add_directive("html5ever=off".parse().unwrap())
         .add_directive("selectors=off".parse().unwrap())
         .add_directive("handlebars=off".parse().unwrap());

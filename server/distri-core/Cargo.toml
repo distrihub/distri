@@ -6,7 +6,7 @@ edition = "2021"
 [features]
 default = ["code", "sqlite"]
 inmemory = []
-code = ["dep:distri-js-sandbox"]
+code = []
 sqlite = ["distri-stores/sqlite"]
 postgres = ["distri-stores/postgres"]
 sqlite_vendored = ["sqlite", "distri-stores/sqlite_vendored"]
@@ -19,13 +19,10 @@ distri-parsers = { path = "../distri-parsers", version = "0.3.5" }
 distri = { path = "../../distri", version = "0.3.5" }
 browsr-client = { workspace = true }
 browsr-types = { workspace = true }
-distri-js-sandbox = { workspace = true, optional = true }
 distri-types = { path = "../../distri-types", version = "0.3.5" }
 distri-stores = { path = "../distri-stores", version = "0.3.5", default-features = false }
 distri-filesystem = { path = "../../distri-filesystem", version = "0.3.5" }
 distri-auth = { path = "../distri-auth", version = "0.3.5" }
-distri-plugin-executor = { path = "../distri-plugin-executor", version = "0.3.5" }
-distri-plugins = { path = "../distri-plugins", version = "0.3.5" }
 
 async-trait = { workspace = true }
 serde = { workspace = true }
@@ -77,9 +74,6 @@ opentelemetry-otlp = { version = "0.28.0", features = [
 # HTML handling
 html-escape = "0.2"
 
-# MCP servers for built-in functionality
-mcp-crawl = { workspace = true }
-mcp-tavily = { workspace = true }
 
 [dev-dependencies]
 dotenv = "0.15"

@@ -7,7 +7,7 @@ use crate::AgentError;
 use distri_a2a::{AgentCard, Task};
 
 use distri_a2a::{JsonRpcError, JsonRpcRequest, JsonRpcResponse, MessageSendParams, TaskIdParams};
-use distri_plugins::DefinitionOverrides;
+use distri_types::configuration::DefinitionOverrides;
 use futures::future::Either;
 use serde_json::Value;
 use std::sync::Arc;

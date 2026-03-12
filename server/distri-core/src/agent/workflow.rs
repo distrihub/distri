@@ -2,7 +2,6 @@ use crate::agent::{BaseAgent, ExecutorContext, InvokeResult};
 use crate::tools::Tool;
 use crate::types::{AgentError, Message, ToolCall};
 use anyhow::Result;
-use distri_plugin_executor::PluginExecutor;
 use distri_types::configuration::AgentConfig;
 use distri_types::configuration::{
     AgentRef, CustomAgentDefinition, DagWorkflowDefinition, DagWorkflowNode,
@@ -402,75 +401,16 @@ impl WorkflowAgent {
         }
     }
 
-    /// Execute a custom TypeScript agent using the plugin system
+    /// Execute a custom TypeScript agent (plugin system removed)
     async fn execute_custom(
         &self,
-        definition: &CustomAgentDefinition,
-        input_data: serde_json::Value,
-        context: Arc<ExecutorContext>,
+        _definition: &CustomAgentDefinition,
+        _input_data: serde_json::Value,
+        _context: Arc<ExecutorContext>,
     ) -> Result<InvokeResult, AgentError> {
-        info!("Executing custom TypeScript agent: {}", definition.name);
-
-        // Get the orchestrator and plugin registry
-        let orchestrator = context.orchestrator.as_ref().ok_or_else(|| {
-            AgentError::InvalidConfiguration(
-                "Orchestrator required for custom agent execution".to_string(),
-            )
-        })?;
-
-        let dap_registry = orchestrator.plugin_registry.clone();
-
-        // Determine package and workflow name
-        let script_name = std::path::Path::new(&definition.script_path)
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or(&definition.name);
-
-        let (name_package, name_component) = definition
-            .name
-            .split_once('/')
-            .map(|(pkg, workflow)| (Some(pkg.to_string()), workflow.to_string()))
-            .unwrap_or((None, script_name.to_string()));
-
-        let package_name = definition
-            .package
-            .clone()
-            .or(name_package)
-            .unwrap_or_else(|| "distri_local".to_string());
-
-        let workflow_name = name_component;
-
-        // Execute through plugin system directly with input data
-        let registry = dap_registry.clone();
-        let workflow_result = registry
-            .plugin_system
-            .execute_workflow(
-                &package_name,
-                &workflow_name,
-                input_data.clone(),
-                distri_plugin_executor::PluginContext {
-                    call_id: context.run_id.clone(),
-                    agent_id: Some(context.agent_id.clone()),
-                    session_id: Some(context.session_id.clone()),
-                    task_id: Some(context.task_id.clone()),
-                    run_id: Some(context.run_id.clone()),
-                    user_id: Some(context.user_id.clone()),
-                    params: input_data,
-                    secrets: std::collections::HashMap::new(), // TODO: Load secrets if needed for agent workflows
-                    env_vars: context.env_vars.clone(),
-                },
-            )
-            .await
-            .map_err(|e| AgentError::Execution(format!("Custom agent execution failed: {}", e)))?;
-
-        // Convert plugin result to InvokeResult
-        let result_str = serde_json::to_string_pretty(&workflow_result)
-            .unwrap_or_else(|_| format!("Custom agent '{}' completed", definition.name));
-
-        Ok(InvokeResult {
-            content: Some(result_str),
-            tool_calls: vec![],
-        })
+        Err(AgentError::InvalidConfiguration(
+            "Custom TypeScript agents are not supported (plugin system removed)".to_string(),
+        ))
     }
 }
 

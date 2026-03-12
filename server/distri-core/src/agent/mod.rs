@@ -9,8 +9,6 @@ pub mod log;
 pub mod memory;
 pub mod orchestrator;
 mod parser;
-pub mod plugin_registry;
-mod plugin_storage;
 pub mod prompt_registry {
     pub use distri_types::prompt::*;
 }
@@ -39,10 +37,6 @@ pub use types::{AgentEvent, AgentEventType, BaseAgent, ExecutorContext, InvokeRe
 
 // Export orchestrator types
 pub use orchestrator::AgentOrchestrator;
-
-// Export DAP registry
-pub use plugin_registry::{PluginOptions, PluginRegistry};
-pub use plugin_storage::InMemoryPluginResolver;
 
 // Export prompt registry
 pub use prompt_registry::{PromptRegistry, PromptSection, PromptTemplate, TemplateData};

@@ -10,11 +10,10 @@ members = [
   # server
   "server/distri-core",
   "server/distri-stores",
-  "server/cli-auth-server",
   "server/distri-server",
-  "server/distri-plugins",
   "server/distri-server-cli",
-  "server/distri-plugin-executor",
+  "server/distri-auth",
+  "server/distri-parsers",
   # samples
   "samples/coder",
   "samples/scraper",
@@ -61,19 +60,4 @@ browsr-types = { version = "0.3.5" }
 rand = "0.8"
 futures-util = "0.3.31"
 
-## Server dependencies
-# MCP servers
-mcp-tavily = { git = "https://github.com/distrihub/mcp-servers.git", rev = "0af3104" }
-mcp-crawl = { git = "https://github.com/distrihub/mcp-servers.git", rev = "0af3104" }
-mcp-reddit = { git = "https://github.com/distrihub/mcp-servers.git", rev = "0af3104" }
-mcp-twitter = { git = "https://github.com/distrihub/mcp-servers.git", rev = "0af3104" }
 chrono = { version = "0.4", features = ["serde"] }
-rustyscript = { version = "0.12.3", default-features = false, features = [
-  "worker",
-  "url_import",
-  "url",
-  "fs",
-  "fs_import",
-] }
-
-distri-js-sandbox = { git = "https://github.com/distrihub/js-sandbox", rev = "be43f91" }

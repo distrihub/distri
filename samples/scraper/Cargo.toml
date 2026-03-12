@@ -27,13 +27,6 @@ uuid = { version = "1.0", features = ["v4"] }
 async-trait = "0.1"
 dotenv = "0.15"
 
-# MCP servers
-mcp-crawl = { workspace = true }
-mcp-tavily = { workspace = true }
-mcp-reddit = { workspace = true }
-mcp-twitter = { workspace = true }
-
-
 [[bin]]
 name = "distri-scraper"
 path = "src/main.rs"

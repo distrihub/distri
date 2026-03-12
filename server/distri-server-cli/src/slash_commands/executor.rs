@@ -8,12 +8,10 @@ use crate::slash_commands::registry::SlashCommandRegistry;
 use crate::slash_commands::types::{
     InteractiveMenu, MenuItem, SlashCommandResult, SlashCommandType,
 };
-use distri_auth::AuthCli;
 use distri_types::auth::ToolAuthStore;
 /// Slash command executor
 pub struct SlashCommandExecutor {
     registry: SlashCommandRegistry,
-    auth_cli: Option<AuthCli>,
     tool_auth_store: Option<Arc<dyn ToolAuthStore>>,
 }
 
@@ -24,7 +22,6 @@ impl SlashCommandExecutor {
 
         Ok(Self {
             registry,
-            auth_cli: None, // Will be initialized lazily when first auth command is used
             tool_auth_store: None,
         })
     }
@@ -35,7 +32,6 @@ impl SlashCommandExecutor {
 
         Ok(Self {
             registry,
-            auth_cli: None,
             tool_auth_store: Some(tool_auth_store),
         })
     }
@@ -85,45 +81,15 @@ impl SlashCommandExecutor {
         }
     }
 
-    /// Handle auth commands using the AuthCli
+    /// Handle auth commands
     async fn handle_auth_command(
         &mut self,
-        subcommand: &str,
-        args: Vec<String>,
+        _subcommand: &str,
+        _args: Vec<String>,
     ) -> Result<SlashCommandResult> {
-        // Initialize AuthCli if not already done
-        if self.auth_cli.is_none() {
-            let auth_cli_result = if let Some(store) = &self.tool_auth_store {
-                AuthCli::new_with_store(store.clone()).await
-            } else {
-                AuthCli::new().await
-            };
-
-            match auth_cli_result {
-                Ok(cli) => self.auth_cli = Some(cli),
-                Err(e) => {
-                    return Ok(SlashCommandResult::Message(format!(
-                        "Failed to initialize authentication: {}",
-                        e
-                    )));
-                }
-            }
-        }
-
-        // Execute the auth command
-        if let Some(auth_cli) = &mut self.auth_cli {
-            match auth_cli.execute_command(subcommand, args).await {
-                Ok(result) => Ok(SlashCommandResult::Message(result)),
-                Err(e) => Ok(SlashCommandResult::Message(format!(
-                    "Authentication error: {}",
-                    e
-                ))),
-            }
-        } else {
-            Ok(SlashCommandResult::Message(
-                "Authentication system not available".to_string(),
-            ))
-        }
+        Ok(SlashCommandResult::Message(
+            "Auth CLI commands have been removed. Use the web UI for authentication.".to_string(),
+        ))
     }
 
     /// Create workflows menu with dynamic content

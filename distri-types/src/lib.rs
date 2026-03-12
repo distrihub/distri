@@ -15,6 +15,7 @@ pub use configuration::DistriServerConfig;
 mod hooks;
 
 pub mod auth;
+pub mod context;
 mod core;
 mod errors;
 pub mod events;

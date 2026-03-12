@@ -495,8 +495,6 @@ impl MultiAgentHarness {
             shared_state: self.runtime.shared_state(),
         };
         let executor = (self.executor_factory.as_ref())(context).await?;
-        // Register default agents
-        executor.register_distri_agents().await?;
         // Register statically provided agents (if any)
         for agent in &self.agents {
             match agent.clone() {

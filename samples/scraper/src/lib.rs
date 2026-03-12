@@ -33,40 +33,7 @@ pub fn get_agent_server() -> DistriAgentServer {
 }
 
 fn custom_mcp_servers() -> HashMap<String, ServerMetadataWrapper> {
-    let mut servers = HashMap::new();
-
-    // Add Spider scraping server
-    servers.insert(
-        "spider".to_string(),
-        ServerMetadataWrapper {
-            server_metadata: McpServerMetadata {
-                auth_session_key: None,
-                mcp_transport: TransportType::InMemory,
-                auth_type: None,
-            },
-            builder: Some(Arc::new(|_, transport| {
-                let server = mcp_crawl::build(transport)?;
-                Ok(Box::new(server) as Box<dyn ServerTrait>)
-            })),
-        },
-    );
-
-    // Add Tavily search server for enhanced research capabilities
-    servers.insert(
-        "search".to_string(),
-        ServerMetadataWrapper {
-            server_metadata: McpServerMetadata {
-                auth_session_key: Some("tavily_api_key".to_string()),
-                mcp_transport: TransportType::InMemory,
-                auth_type: None,
-            },
-            builder: Some(Arc::new(|_, transport| {
-                let server = mcp_tavily::build(transport)?;
-                Ok(Box::new(server) as Box<dyn ServerTrait>)
-            })),
-        },
-    );
-
+    let servers = HashMap::new();
     servers
 }
 
