@@ -813,7 +813,6 @@ fn required_external_tools(agent: &AgentConfig) -> Vec<String> {
             .as_ref()
             .and_then(|tools| tools.external.clone())
             .unwrap_or_default(),
-        _ => Vec::new(),
     }
 }
 

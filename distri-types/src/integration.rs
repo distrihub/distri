@@ -199,18 +199,6 @@ pub struct PluginData {
     #[serde(default)]
     pub package_name: String,
     pub integrations: Vec<IntegrationData>,
-    pub workflows: Vec<WorkflowDefinition>,
-}
-
-/// Workflow definition matching TypeScript DistriWorkflow
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WorkflowDefinition {
-    pub name: String,
-    pub description: String,
-    pub version: Option<String>,
-    pub parameters: serde_json::Value,
-    #[serde(default)]
-    pub examples: Vec<serde_json::Value>,
 }
 
 /// Tool definition extended with auth and integration info

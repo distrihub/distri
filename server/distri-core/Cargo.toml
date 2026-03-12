@@ -4,9 +4,8 @@ version = "0.3.5"
 edition = "2021"
 
 [features]
-default = ["code", "sqlite"]
+default = ["sqlite"]
 inmemory = []
-code = []
 sqlite = ["distri-stores/sqlite"]
 postgres = ["distri-stores/postgres"]
 sqlite_vendored = ["sqlite", "distri-stores/sqlite_vendored"]

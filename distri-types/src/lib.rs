@@ -24,7 +24,6 @@ mod mcp;
 pub use mcp::{McpServerMetadata, TransportType};
 pub mod skill;
 pub mod stores;
-pub mod workflow;
 
 pub use auth::*;
 

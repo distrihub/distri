@@ -45,7 +45,6 @@ pub fn build_server<T: Transport>(
                                 distri_types::configuration::AgentConfig::StandardAgent(def) => {
                                     def.model_settings.response_format.clone()
                                 }
-                                _ => None,
                             },
                         })
                         .collect(),

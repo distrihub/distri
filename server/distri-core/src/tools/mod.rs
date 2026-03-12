@@ -13,21 +13,15 @@ use crate::AgentError;
 use distri_types::Part;
 mod browser;
 // pub mod authenticated_example;
-#[cfg(feature = "code")]
-mod code;
 pub mod context;
 mod mcp;
 pub mod shell;
 mod state;
-#[cfg(feature = "code")]
-pub use code::execute_code_with_tools;
 pub use context::to_tool_context;
 pub use mcp::get_mcp_tools;
 mod builtin;
 pub mod skill_script;
 pub mod tool_search;
-#[cfg(feature = "code")]
-pub use builtin::DistriExecuteCodeTool;
 pub use builtin::{get_builtin_tools, AgentTool, ConsoleLogTool, FinalTool, TransferToAgentTool};
 pub use tool_search::ToolSearchTool;
 
@@ -138,8 +132,6 @@ pub fn cast_to_executor_context_tool(
     match tool_name.as_str() {
         "final" => Ok(Box::new(FinalTool)),
         "transfer_to_agent" => Ok(Box::new(TransferToAgentTool)),
-        #[cfg(feature = "code")]
-        "distri_execute_code" => Ok(Box::new(DistriExecuteCodeTool)),
         "write_todos" => Ok(Box::new(TodosTool)),
         // Browsr tools
         "browsr_scrape" => Ok(Box::new(DistriScrapeSharedTool)),

@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::agent::StandardDefinition;
 use crate::configuration::{
     AgentConfig, DistriServerConfig, EntryPoints, PluginAgentDefinition, PluginArtifact,
-    PluginToolDefinition, PluginWorkflowDefinition,
+    PluginToolDefinition,
 };
 use crate::stores::PluginMetadataRecord;
 
@@ -81,7 +81,6 @@ impl Skill {
         };
 
         let mut tools = Vec::new();
-        let mut workflows = Vec::new();
         if let Some(export) = self
             .files
             .iter()
@@ -98,15 +97,6 @@ impl Skill {
                         auth: None,
                     });
                 }
-                SkillExport::Workflow { agent_name } => {
-                    workflows.push(PluginWorkflowDefinition {
-                        name: agent_name,
-                        package_name: self.id.clone(),
-                        description: self.description.clone(),
-                        parameters: serde_json::Value::Null,
-                        examples: Vec::new(),
-                    });
-                }
             }
         }
 
@@ -115,7 +105,6 @@ impl Skill {
             path: PathBuf::from(&object_prefix),
             configuration,
             tools,
-            workflows,
             agents: vec![agent_definition],
         };
 
@@ -147,7 +136,6 @@ impl Skill {
             .iter()
             .find_map(|agent| match &agent.agent_config {
                 AgentConfig::StandardAgent(def) => Some(def.clone()),
-                _ => None,
             })
             .ok_or_else(|| anyhow!("Skill plugin does not contain a standard agent definition"))?;
 
@@ -159,10 +147,6 @@ impl Skill {
                 } else {
                     Some(tool.description.clone())
                 },
-            })
-        } else if let Some(workflow) = record.artifact.workflows.first() {
-            Some(SkillExport::Workflow {
-                agent_name: workflow.name.clone(),
             })
         } else {
             None
@@ -236,9 +220,6 @@ pub enum SkillExport {
     Tool {
         name: String,
         description: Option<String>,
-    },
-    Workflow {
-        agent_name: String,
     },
 }
 

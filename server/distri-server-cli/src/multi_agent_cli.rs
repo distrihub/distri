@@ -493,19 +493,8 @@ impl MultiAgentHarness {
         let executor = (self.executor_factory.as_ref())(context).await?;
         // Register statically provided agents (if any)
         for agent in &self.agents {
-            match agent.clone() {
-                AgentConfig::StandardAgent(def) => {
-                    executor.register_agent_definition(def).await?;
-                }
-                other => {
-                    executor
-                        .stores
-                        .agent_store
-                        .register(other)
-                        .await
-                        .map_err(|e| anyhow::anyhow!(e))?;
-                }
-            }
+            let AgentConfig::StandardAgent(def) = agent.clone();
+            executor.register_agent_definition(def).await?;
         }
 
         if let Some(initializer) = &self.tool_initializer {

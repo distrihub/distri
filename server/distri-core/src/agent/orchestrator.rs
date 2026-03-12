@@ -15,7 +15,7 @@ use crate::agent::hooks::inline::InlineHook;
 use distri_auth::ProviderRegistry;
 use distri_filesystem::FileSystem;
 use distri_stores::{initialize_stores, InitializedStores};
-pub use distri_stores::{workflow::InMemoryWorkflowStore, AgentStore, ThreadStore};
+pub use distri_stores::{AgentStore, ThreadStore};
 use distri_types::stores::{PromptTemplateStore, SecretStore};
 use distri_types::{
     auth::OAuthHandler, LlmDefinition, ModelSettings, Part, ServerMetadataWrapper, ToolCall,
@@ -751,21 +751,6 @@ impl AgentOrchestrator {
                 .await?;
                 Ok(Box::new(agent))
             }
-            distri_types::configuration::AgentConfig::SequentialWorkflowAgent(definition) => {
-                let tools = self.get_all_available_tools().await?;
-                let agent = crate::agent::WorkflowAgent::new_sequential(definition, tools);
-                Ok(Box::new(agent))
-            }
-            distri_types::configuration::AgentConfig::DagWorkflowAgent(definition) => {
-                let tools = self.get_all_available_tools().await?;
-                let agent = crate::agent::WorkflowAgent::new_dag(definition, tools);
-                Ok(Box::new(agent))
-            }
-            distri_types::configuration::AgentConfig::CustomAgent(definition) => {
-                let tools = self.get_all_available_tools().await?;
-                let agent = crate::agent::WorkflowAgent::new_custom(definition, tools);
-                Ok(Box::new(agent))
-            }
         }
     }
 
@@ -888,11 +873,10 @@ impl AgentOrchestrator {
             .await;
 
         // Check if todos are enabled for this agent and initialize shared_todos if needed
-        if let distri_types::configuration::AgentConfig::StandardAgent(definition) = &agent_config {
-            if definition.should_use_browser() {
-                tracing::debug!("🌐 Browser enabled for agent: {}", agent_id);
-                // No in-process browser initialization; sessions are handled via browsr-client.
-            }
+        let distri_types::configuration::AgentConfig::StandardAgent(definition) = &agent_config;
+        if definition.should_use_browser() {
+            tracing::debug!("🌐 Browser enabled for agent: {}", agent_id);
+            // No in-process browser initialization; sessions are handled via browsr-client.
         }
 
         tracing::debug!(
@@ -1196,32 +1180,30 @@ impl AgentOrchestrator {
         agent_config: &mut distri_types::configuration::AgentConfig,
         definition_overrides: Option<DefinitionOverrides>,
     ) {
-        if let distri_types::configuration::AgentConfig::StandardAgent(ref mut definition) =
-            agent_config
-        {
-            // Start from orchestrator defaults, then overlay agent-specific settings so agent wins.
-            let default_model_settings = self.get_default_model_settings().await;
-            let sentinel = ModelSettings::default();
-            let agent_model = definition.model_settings.clone();
-            definition.model_settings =
-                Self::merge_model_settings(&default_model_settings, &agent_model, &sentinel);
+        let distri_types::configuration::AgentConfig::StandardAgent(ref mut definition) =
+            agent_config;
+        // Start from orchestrator defaults, then overlay agent-specific settings so agent wins.
+        let default_model_settings = self.get_default_model_settings().await;
+        let sentinel = ModelSettings::default();
+        let agent_model = definition.model_settings.clone();
+        definition.model_settings =
+            Self::merge_model_settings(&default_model_settings, &agent_model, &sentinel);
 
-            let default_analysis_settings = self.get_default_analysis_model_settings().await;
-            definition.analysis_model_settings = definition
-                .analysis_model_settings
-                .clone()
-                .map(|agent_analysis| {
-                    Self::merge_model_settings(
-                        &default_analysis_settings,
-                        &agent_analysis,
-                        &sentinel,
-                    )
-                })
-                .or(Some(default_analysis_settings));
-            tracing::debug!("Applying definition overrides: {:?}", definition_overrides);
-            if let Some(overrides) = definition_overrides {
-                definition.apply_overrides(overrides);
-            }
+        let default_analysis_settings = self.get_default_analysis_model_settings().await;
+        definition.analysis_model_settings = definition
+            .analysis_model_settings
+            .clone()
+            .map(|agent_analysis| {
+                Self::merge_model_settings(
+                    &default_analysis_settings,
+                    &agent_analysis,
+                    &sentinel,
+                )
+            })
+            .or(Some(default_analysis_settings));
+        tracing::debug!("Applying definition overrides: {:?}", definition_overrides);
+        if let Some(overrides) = definition_overrides {
+            definition.apply_overrides(overrides);
         }
     }
 
@@ -1282,14 +1264,6 @@ impl AgentOrchestrator {
                         .unwrap_or(false)
                         && def.name == target_simple
                 }
-                distri_types::configuration::AgentConfig::CustomAgent(def) => {
-                    def.package
-                        .as_deref()
-                        .map(|pkg| pkg == target_package)
-                        .unwrap_or(false)
-                        && def.name == target_simple
-                }
-                _ => false,
             };
         }
 
@@ -1582,20 +1556,18 @@ impl OrchestratorTrait for AgentOrchestrator {
         // Load agent definition to get base model_settings if available
         // Only StandardAgent has model_settings; workflow agents don't
         if let Some(agent_config) = self.get_agent(&llm_def.name).await {
-            if let AgentConfig::StandardAgent(def) = &agent_config {
-                // Merge: use agent's model_settings as base, override with request's model_settings
-                // Compare request settings against defaults to detect which fields were explicitly set
-                let sentinel = ModelSettings::default();
-                let final_model_settings = Self::merge_model_settings(
-                    &def.model_settings,
-                    &llm_def.model_settings,
-                    &sentinel
-                );
+            let AgentConfig::StandardAgent(def) = &agent_config;
+            // Merge: use agent's model_settings as base, override with request's model_settings
+            // Compare request settings against defaults to detect which fields were explicitly set
+            let sentinel = ModelSettings::default();
+            let final_model_settings = Self::merge_model_settings(
+                &def.model_settings,
+                &llm_def.model_settings,
+                &sentinel
+            );
 
-                // Update llm_def with merged settings
-                llm_def.model_settings = final_model_settings;
-            }
-            // For other agent types (workflows, custom), use request's model_settings as-is
+            // Update llm_def with merged settings
+            llm_def.model_settings = final_model_settings;
         }
         // If agent not found, use request's model_settings as-is
 

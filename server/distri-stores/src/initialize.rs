@@ -9,11 +9,9 @@ use crate::diesel_store::DieselStoreBuilder;
 use crate::diesel_store::PgStoreBuilder;
 #[cfg(feature = "sqlite")]
 use crate::diesel_store::SqliteStoreBuilder;
-use crate::workflow::InMemoryWorkflowStore;
 use anyhow::{Result, anyhow};
 use distri_types::configuration::{DbConnectionConfig, StoreType};
 pub use distri_types::stores::*;
-use distri_types::workflow::WorkflowStore;
 use distri_types::{ToolAuthStore, configuration::StoreConfig};
 
 type StoreInitializerFuture = Pin<Box<dyn Future<Output = Result<Arc<dyn StoreFactory>>> + Send>>;
@@ -119,7 +117,6 @@ pub struct StoreBuilder {
     pub task_store: Option<Arc<dyn TaskStore>>,
     pub scratchpad_store: Option<Arc<dyn ScratchpadStore>>,
     pub session_store: Option<Arc<dyn SessionStore>>,
-    pub workflow_store: Option<Arc<dyn WorkflowStore>>,
     pub external_tool_calls_store: Option<Arc<dyn ExternalToolCallsStore>>,
     pub plugin_store: Option<Arc<dyn PluginCatalogStore>>,
     pub prompt_template_store: Option<Arc<dyn PromptTemplateStore>>,
@@ -139,7 +136,6 @@ impl StoreBuilder {
             task_store: None,
             scratchpad_store: None,
             session_store: None,
-            workflow_store: None,
             external_tool_calls_store: None,
             plugin_store: None,
             prompt_template_store: None,
@@ -222,12 +218,6 @@ impl StoreBuilder {
         self.task_store = Some(task_store);
         self.scratchpad_store = Some(scratchpad_store);
         self.session_store = Some(session_store);
-        self
-    }
-
-    /// Set a pre-initialized workflow store (won't be reinitialized)
-    pub fn with_workflow_store(mut self, store: Arc<dyn WorkflowStore>) -> Self {
-        self.workflow_store = Some(store);
         self
     }
 
@@ -351,11 +341,6 @@ impl StoreBuilder {
                 )
             };
 
-        // Initialize workflow store (always in-memory for now) if not provided
-        let workflow_store = self
-            .workflow_store
-            .unwrap_or_else(|| Arc::new(InMemoryWorkflowStore::new()) as Arc<dyn WorkflowStore>);
-
         // Initialize external tool calls store (always in-memory) if not provided
         let external_tool_calls_store = self.external_tool_calls_store.unwrap_or_else(|| {
             Arc::new(InMemoryExternalToolCallsStore::new()) as Arc<dyn ExternalToolCallsStore>
@@ -368,7 +353,6 @@ impl StoreBuilder {
             thread_store,
             tool_auth_store,
             scratchpad_store,
-            workflow_store,
             memory_store,
             crawl_store: None,
             external_tool_calls_store,
@@ -478,7 +462,6 @@ pub async fn create_ephemeral_execution_stores(
         // Reuse persistent stores from base
         agent_store: base_stores.agent_store.clone(),
         tool_auth_store: base_stores.tool_auth_store.clone(),
-        workflow_store: base_stores.workflow_store.clone(),
         memory_store: base_stores.memory_store.clone(),
         crawl_store: base_stores.crawl_store.clone(),
         external_tool_calls_store: base_stores.external_tool_calls_store.clone(),
@@ -523,7 +506,6 @@ pub async fn prepare_stores_for_execution(
         scratchpad_store: base_stores.scratchpad_store.clone(),
         agent_store: base_stores.agent_store.clone(),
         tool_auth_store: base_stores.tool_auth_store.clone(),
-        workflow_store: base_stores.workflow_store.clone(),
         memory_store: base_stores.memory_store.clone(),
         crawl_store: base_stores.crawl_store.clone(),
         external_tool_calls_store: base_stores.external_tool_calls_store.clone(),

@@ -1,6 +1,5 @@
 use crate::{
     ScratchpadEntry, ToolAuthStore, ToolResponse, configuration::PluginArtifact,
-    workflow::WorkflowStore,
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -63,7 +62,6 @@ pub struct InitializedStores {
     pub thread_store: Arc<dyn ThreadStore>,
     pub tool_auth_store: Arc<dyn ToolAuthStore>,
     pub scratchpad_store: Arc<dyn ScratchpadStore>,
-    pub workflow_store: Arc<dyn WorkflowStore>,
     pub memory_store: Option<Arc<dyn MemoryStore>>,
     pub crawl_store: Option<Arc<dyn CrawlStore>>,
     pub external_tool_calls_store: Arc<dyn ExternalToolCallsStore>,
@@ -103,10 +101,6 @@ impl InitializedStores {
 
     pub fn with_scratchpad_store(&mut self, scratchpad_store: Arc<dyn ScratchpadStore>) {
         self.scratchpad_store = scratchpad_store;
-    }
-
-    pub fn with_workflow_store(mut self, workflow_store: Arc<dyn WorkflowStore>) {
-        self.workflow_store = workflow_store;
     }
 
     pub fn with_plugin_store(&mut self, plugin_store: Arc<dyn PluginCatalogStore>) {

@@ -49,27 +49,6 @@ impl A2AHandler {
                 def.icon_url.clone(),
                 def.skills_description.clone(),
             ),
-            distri_types::configuration::AgentConfig::SequentialWorkflowAgent(def) => (
-                def.name.clone(),
-                def.description.clone(),
-                Some("1.0.0".to_string()),
-                None,
-                vec![],
-            ),
-            distri_types::configuration::AgentConfig::DagWorkflowAgent(def) => (
-                def.name.clone(),
-                def.description.clone(),
-                Some("1.0.0".to_string()),
-                None,
-                vec![],
-            ),
-            distri_types::configuration::AgentConfig::CustomAgent(def) => (
-                def.name.clone(),
-                def.description.clone(),
-                Some("1.0.0".to_string()),
-                None,
-                vec![],
-            ),
         };
 
         let server_config = server_config.unwrap_or_default();

@@ -1,7 +1,6 @@
 mod auth;
 pub mod external_tool_calls;
 pub mod prompt;
-pub mod workflow;
 use std::collections::HashMap;
 
 pub use auth::*;

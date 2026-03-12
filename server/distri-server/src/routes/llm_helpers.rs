@@ -24,12 +24,8 @@ pub async fn load_agent_model_settings(
 
     let agent_config = executor.get_agent(aid).await?;
 
-    match &agent_config {
-        distri_types::configuration::AgentConfig::StandardAgent(def) => {
-            Some(def.model_settings.clone())
-        }
-        _ => None,
-    }
+    let distri_types::configuration::AgentConfig::StandardAgent(def) = &agent_config;
+    Some(def.model_settings.clone())
 }
 
 /// Merge model settings: base settings are overridden by override settings
@@ -101,39 +97,13 @@ pub async fn load_agent_system_message(
     tracing::info!("Successfully loaded agent config for: {}", aid);
 
     // Extract instructions based on agent type
-    let instructions = match &agent_config {
-        distri_types::configuration::AgentConfig::StandardAgent(def) => {
-            tracing::info!("Agent '{}' is StandardAgent, instructions length: {}", aid, def.instructions.len());
-            if !def.instructions.is_empty() {
-                Some(def.instructions.clone())
-            } else {
-                None
-            }
-        }
-        distri_types::configuration::AgentConfig::SequentialWorkflowAgent(def) => {
-            tracing::info!("Agent '{}' is SequentialWorkflowAgent, description length: {}", aid, def.description.len());
-            // For workflow agents, use description as system context
-            if !def.description.is_empty() {
-                Some(def.description.clone())
-            } else {
-                None
-            }
-        }
-        distri_types::configuration::AgentConfig::DagWorkflowAgent(def) => {
-            tracing::info!("Agent '{}' is DagWorkflowAgent, description length: {}", aid, def.description.len());
-            if !def.description.is_empty() {
-                Some(def.description.clone())
-            } else {
-                None
-            }
-        }
-        distri_types::configuration::AgentConfig::CustomAgent(def) => {
-            tracing::info!("Agent '{}' is CustomAgent, description length: {}", aid, def.description.len());
-            if !def.description.is_empty() {
-                Some(def.description.clone())
-            } else {
-                None
-            }
+    let distri_types::configuration::AgentConfig::StandardAgent(def) = &agent_config;
+    let instructions = {
+        tracing::info!("Agent '{}' is StandardAgent, instructions length: {}", aid, def.instructions.len());
+        if !def.instructions.is_empty() {
+            Some(def.instructions.clone())
+        } else {
+            None
         }
     };
 

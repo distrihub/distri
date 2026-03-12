@@ -449,25 +449,23 @@ async fn get_agent_definition(
 
     let context = Arc::default();
     match agent {
-        Some(agent) => match &agent {
-            distri_types::configuration::AgentConfig::StandardAgent(def) => {
-                let markdown = build_markdown_from_definition(def);
-                let tools = executor
-                    .get_agent_tools(def, &context)
-                    .await
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|t| t.get_tool_definition())
-                    .collect();
-                HttpResponse::Ok().json(AgentConfigWithTools {
-                    agent,
-                    resolved_tools: tools,
-                    markdown: Some(markdown),
-                    cloud: Default::default(),
-                })
-            }
-            _ => HttpResponse::Ok().json(agent),
-        },
+        Some(agent) => {
+            let distri_types::configuration::AgentConfig::StandardAgent(def) = &agent;
+            let markdown = build_markdown_from_definition(def);
+            let tools = executor
+                .get_agent_tools(def, &context)
+                .await
+                .unwrap_or_default()
+                .into_iter()
+                .map(|t| t.get_tool_definition())
+                .collect();
+            HttpResponse::Ok().json(AgentConfigWithTools {
+                agent,
+                resolved_tools: tools,
+                markdown: Some(markdown),
+                cloud: Default::default(),
+            })
+        }
         None => HttpResponse::NotFound().finish(),
     }
 }
@@ -524,19 +522,8 @@ async fn validate_agent_handler(
     };
 
     // Extract provider from agent config
-    let provider = match &agent {
-        distri_types::configuration::AgentConfig::StandardAgent(def) => {
-            def.model_settings.provider.clone()
-        }
-        distri_types::configuration::AgentConfig::SequentialWorkflowAgent(_)
-        | distri_types::configuration::AgentConfig::DagWorkflowAgent(_)
-        | distri_types::configuration::AgentConfig::CustomAgent(_) => executor
-            .default_model_settings
-            .read()
-            .await
-            .provider
-            .clone(),
-    };
+    let distri_types::configuration::AgentConfig::StandardAgent(def) = &agent;
+    let provider = def.model_settings.provider.clone();
 
     // Check for missing provider secrets
     let secret_store = executor.stores.secret_store.clone();

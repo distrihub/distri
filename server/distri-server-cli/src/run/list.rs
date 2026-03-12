@@ -13,13 +13,8 @@ pub async fn list(executor: Arc<AgentOrchestrator>) -> anyhow::Result<()> {
 
     table.add_row(vec!["Agent", "Description", "Tools"]);
     for agent_config in agents.iter() {
-        // Only get tools for StandardAgent (others have built-in tools)
-        let tools = match agent_config {
-            distri_types::configuration::AgentConfig::StandardAgent(def) => {
-                executor.get_agent_tools(def, &Arc::default()).await?
-            }
-            _ => vec![], // Workflow agents have built-in tools
-        };
+        let distri_types::configuration::AgentConfig::StandardAgent(def) = agent_config;
+        let tools = executor.get_agent_tools(def, &Arc::default()).await?;
         let inner = tools_table(&tools);
 
         table.add_row(vec![

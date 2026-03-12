@@ -1,5 +1,3 @@
-#[cfg(feature = "code")]
-use crate::tools::DistriExecuteCodeTool;
 use crate::{
     agent::{
         file::process_large_tool_responses,
@@ -57,26 +55,8 @@ impl AgentExecutor {
             })
             .await;
 
-        #[allow(unused_mut)]
         // Get all available tools from context (including MCP tools)
-        let mut enhanced_tools = context.get_tools().await;
-
-        // Add code execution tools if we have a distri_execute_code call
-        let has_code_execution = tool_calls
-            .iter()
-            .any(|tc| tc.tool_name == "distri_execute_code");
-
-        if has_code_execution {
-            #[cfg(feature = "code")]
-            {
-                enhanced_tools.push(Arc::new(DistriExecuteCodeTool) as Arc<dyn Tool>);
-                tracing::debug!("Added DistriExecuteCodeTool for code execution");
-            }
-            #[cfg(not(feature = "code"))]
-            {
-                tracing::warn!("DistriExecuteCodeTool requested but 'code' feature is disabled");
-            }
-        }
+        let enhanced_tools = context.get_tools().await;
 
         // Get external tool timeout from agent definition strategy
         let external_tool_timeout_secs = self
@@ -273,41 +253,16 @@ impl ExecutionStrategy for AgentExecutor {
             }
             #[allow(unused)]
             Action::Code { code, .. } => {
-                #[cfg(feature = "code")]
-                {
-                    // Execute code and handle errors gracefully - centralized tool setup
-                    match crate::tools::execute_code_with_tools(code, context.clone()).await {
-                        Ok((_, observations, _)) => Ok(ExecutionResult {
-                            step_id: step.id.clone(),
-                            status: ExecutionStatus::Success,
-                            parts: vec![Part::Text(observations.join("\n\n"))],
-                            timestamp: chrono::Utc::now().timestamp_millis(),
-                            reason: None,
-                        }),
-                        Err(e) => {
-                            // Code execution failed - capture error but continue
-                            tracing::warn!("Direct code execution failed: {}", e);
-                            Ok(ExecutionResult {
-                                step_id: step.id.clone(),
-                                status: ExecutionStatus::Failed,
-                                parts: vec![],
-                                timestamp: chrono::Utc::now().timestamp_millis(),
-                                reason: Some(format!("Code execution error: {}", e)),
-                            })
-                        }
-                    }
-                }
-                #[cfg(not(feature = "code"))]
-                {
-                    tracing::warn!("Code execution requested but 'code' feature is disabled");
-                    Ok(ExecutionResult {
-                        step_id: step.id.clone(),
-                        status: ExecutionStatus::Failed,
-                        parts: vec![],
-                        timestamp: chrono::Utc::now().timestamp_millis(),
-                        reason: Some("Code execution feature disabled".to_string()),
-                    })
-                }
+                tracing::warn!("Direct code execution removed. Use shell tools instead.");
+                Ok(ExecutionResult {
+                    step_id: step.id.clone(),
+                    status: ExecutionStatus::Failed,
+                    parts: vec![],
+                    timestamp: chrono::Utc::now().timestamp_millis(),
+                    reason: Some(
+                        "Direct code execution removed. Use shell tools instead.".to_string(),
+                    ),
+                })
             }
         }
     }

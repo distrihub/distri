@@ -36,11 +36,6 @@ pub fn get_builtin_tools(
         Arc::new(crate::tools::tool_search::ToolSearchTool) as Arc<dyn Tool>,
     ];
 
-    #[cfg(feature = "code")]
-    {
-        tools.push(Arc::new(DistriExecuteCodeTool) as Arc<dyn Tool>);
-    }
-
     if include_filesystem_tools {
         tools.push(Arc::new(ArtifactTool) as Arc<dyn Tool>);
         // File operations should target the workspace filesystem; artifact tools use the session filesystem.
@@ -291,94 +286,6 @@ impl ExecutorContextTool for TransferToAgentTool {
             "Target agent '{}' not found",
             target_agent
         )))
-    }
-}
-
-#[cfg(feature = "code")]
-#[derive(Debug)]
-pub struct DistriExecuteCodeTool;
-
-#[cfg(feature = "code")]
-#[async_trait::async_trait]
-impl Tool for DistriExecuteCodeTool {
-    fn get_name(&self) -> String {
-        "distri_execute_code".to_string()
-    }
-
-    fn is_sync(&self) -> bool {
-        false
-    }
-
-    fn needs_executor_context(&self) -> bool {
-        true // This tool needs ExecutorContext
-    }
-
-    fn get_description(&self) -> String {
-        "Execute TypeScript/JavaScript code with access to console_log and final_answer tools"
-            .to_string()
-    }
-
-    fn get_parameters(&self) -> serde_json::Value {
-        json!({
-            "type": "object",
-            "properties": {
-                "thought": {
-                    "type": "string",
-                    "description": "Reasoning about what the code will do"
-                },
-                "code": {
-                    "type": "string",
-                    "description": "TypeScript/JavaScript code to execute"
-                }
-            },
-            "required": ["code"]
-        })
-    }
-
-    async fn execute(
-        &self,
-        _tool_call: ToolCall,
-        _context: Arc<ToolContext>,
-    ) -> Result<Vec<Part>, anyhow::Error> {
-        // This should never be called since needs_executor_context() returns true
-        Err(anyhow::anyhow!(
-            "DistriExecuteCodeTool requires ExecutorContext, not ToolContext"
-        ))
-    }
-}
-
-#[cfg(feature = "code")]
-#[async_trait::async_trait]
-impl ExecutorContextTool for DistriExecuteCodeTool {
-    async fn execute_with_executor_context(
-        &self,
-        tool_call: crate::types::ToolCall,
-        context: Arc<ExecutorContext>,
-    ) -> Result<Vec<Part>, crate::AgentError> {
-        // Parse the input to extract code
-        let input = tool_call.input.clone();
-        let code = input
-            .get("code")
-            .and_then(|c| c.as_str())
-            .ok_or_else(|| crate::AgentError::ToolExecution("Missing 'code' field".to_string()))?;
-
-        // Execute the code with centralized tool setup
-        match crate::tools::execute_code_with_tools(code, context).await {
-            Ok((result, observations, _)) => {
-                let value = json!({
-                    "result": result,
-                    "observations": observations
-                });
-                Ok(vec![Part::Data(value)])
-            }
-            Err(e) => {
-                // On failure, report error in result
-                let value = json!({
-                    "result": format!("Code execution failed: {}", e),
-                });
-                Ok(vec![Part::Data(value)])
-            }
-        }
     }
 }
 
