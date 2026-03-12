@@ -511,7 +511,7 @@ impl StandardDefinition {
         }
 
         if let Some(max_tokens) = overrides.max_tokens {
-            self.model_settings.max_tokens = max_tokens;
+            self.model_settings.max_tokens = Some(max_tokens);
         }
 
         // Override max_iterations
@@ -750,8 +750,8 @@ pub struct ModelSettings {
     pub model: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f32>,
-    #[serde(default = "default_max_tokens")]
-    pub max_tokens: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u32>,
     #[serde(default = "default_context_size")]
     pub context_size: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -775,7 +775,7 @@ impl Default for ModelSettings {
         Self {
             model: "gpt-4.1-mini".to_string(),
             temperature: None,
-            max_tokens: 1000,
+            max_tokens: None,
             context_size: 20000,
             top_p: None,
             frequency_penalty: None,
@@ -798,10 +798,6 @@ fn default_model_provider() -> ModelProvider {
 
 fn default_model() -> String {
     "gpt-4.1-mini".to_string()
-}
-
-fn default_max_tokens() -> u32 {
-    1000
 }
 
 fn default_context_size() -> u32 {

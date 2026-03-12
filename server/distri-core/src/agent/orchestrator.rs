@@ -372,11 +372,7 @@ impl AgentOrchestrator {
                 base.model.clone()
             },
             temperature: agent.temperature.or(base.temperature),
-            max_tokens: if agent.max_tokens != sentinel.max_tokens {
-                agent.max_tokens
-            } else {
-                base.max_tokens
-            },
+            max_tokens: agent.max_tokens.or(base.max_tokens),
             context_size: if agent.context_size != sentinel.context_size {
                 agent.context_size
             } else {
