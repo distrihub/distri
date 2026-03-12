@@ -141,14 +141,9 @@ impl InquireMenu {
                                 });
                             }
                             crate::slash_commands::types::SlashCommandType::Function {
-                                handler,
+                                handler: _,
                             } => {
-                                // Handle function calls like create_workflow_interactive
-                                if handler == "create_workflow_interactive" {
-                                    return Ok(SlashCommandResult::CreateWorkflow {
-                                        description: "".to_string(),
-                                    });
-                                }
+                                // Function calls handled elsewhere
                             }
                             crate::slash_commands::types::SlashCommandType::AgentCall {
                                 agent,

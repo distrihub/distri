@@ -9,7 +9,7 @@ use distri_core::a2a::A2AHandler;
 use distri_core::agent::{parse_agent_markdown_content, AgentOrchestrator};
 use distri_core::secrets::SecretResolver;
 use distri_core::types::UpdateThreadRequest;
-use distri_core::{AgentError, MessageFilter, ToolAuthRequestContext};
+use distri_core::{AgentError, MessageFilter};
 use distri_types::configuration::ServerConfig;
 use distri_types::configuration::{AgentConfigWithTools, DistriServerConfig};
 use distri_types::StandardDefinition;
@@ -435,30 +435,7 @@ async fn list_tools(
     HttpResponse::Ok().json(json!({ "tools": items }))
 }
 
-async fn build_workspace(executor: web::Data<Arc<AgentOrchestrator>>) -> HttpResponse {
-    let workspace_path = executor.workspace_path.clone();
-    let plugins_dir = workspace_path.join("plugins");
-
-    if let Err(err) = executor
-        .plugin_registry
-        .refresh_plugins_from_filesystem(&plugins_dir, Some("plugins"))
-        .await
-    {
-        return HttpResponse::InternalServerError().json(json!({
-            "error": format!("Failed to refresh plugins: {}", err)
-        }));
-    }
-
-    if let Err(err) = executor
-        .plugin_registry
-        .register_workspace_module(&workspace_path)
-        .await
-    {
-        return HttpResponse::InternalServerError().json(json!({
-            "error": format!("Failed to register workspace module: {}", err)
-        }));
-    }
-
+async fn build_workspace(_executor: web::Data<Arc<AgentOrchestrator>>) -> HttpResponse {
     HttpResponse::Ok().json(json!({ "status": "built" }))
 }
 
@@ -472,25 +449,23 @@ async fn get_agent_definition(
 
     let context = Arc::default();
     match agent {
-        Some(agent) => match &agent {
-            distri_types::configuration::AgentConfig::StandardAgent(def) => {
-                let markdown = build_markdown_from_definition(def);
-                let tools = executor
-                    .get_agent_tools(def, &context)
-                    .await
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|t| t.get_tool_definition())
-                    .collect();
-                HttpResponse::Ok().json(AgentConfigWithTools {
-                    agent,
-                    resolved_tools: tools,
-                    markdown: Some(markdown),
-                    cloud: Default::default(),
-                })
-            }
-            _ => HttpResponse::Ok().json(agent),
-        },
+        Some(agent) => {
+            let distri_types::configuration::AgentConfig::StandardAgent(def) = &agent;
+            let markdown = build_markdown_from_definition(def);
+            let tools = executor
+                .get_agent_tools(def, &context)
+                .await
+                .unwrap_or_default()
+                .into_iter()
+                .map(|t| t.get_tool_definition())
+                .collect();
+            HttpResponse::Ok().json(AgentConfigWithTools {
+                agent,
+                resolved_tools: tools,
+                markdown: Some(markdown),
+                cloud: Default::default(),
+            })
+        }
         None => HttpResponse::NotFound().finish(),
     }
 }
@@ -547,19 +522,8 @@ async fn validate_agent_handler(
     };
 
     // Extract provider from agent config
-    let provider = match &agent {
-        distri_types::configuration::AgentConfig::StandardAgent(def) => {
-            def.model_settings.provider.clone()
-        }
-        distri_types::configuration::AgentConfig::SequentialWorkflowAgent(_)
-        | distri_types::configuration::AgentConfig::DagWorkflowAgent(_)
-        | distri_types::configuration::AgentConfig::CustomAgent(_) => executor
-            .default_model_settings
-            .read()
-            .await
-            .provider
-            .clone(),
-    };
+    let distri_types::configuration::AgentConfig::StandardAgent(def) = &agent;
+    let provider = def.model_settings.provider.clone();
 
     // Check for missing provider secrets
     let secret_store = executor.stores.secret_store.clone();
@@ -1501,7 +1465,7 @@ mod tests {
     use super::*;
     use actix_web::http::header;
     use actix_web::test::TestRequest;
-    use distri_core::agent::{PluginRegistry, PromptRegistry};
+    use distri_core::agent::PromptRegistry;
     use distri_core::types::configuration::{DbConnectionConfig, StoreConfig};
     use distri_core::AgentOrchestratorBuilder;
     use std::path::Path;
@@ -1518,12 +1482,10 @@ mod tests {
         });
 
         let stores = distri_core::initialize_stores(&store_config).await.unwrap();
-        let plugin_registry = PluginRegistry::new(stores.plugin_store.clone()).unwrap();
         let prompt_registry = Arc::new(PromptRegistry::with_defaults().await.unwrap());
 
         let orchestrator = AgentOrchestratorBuilder::default()
             .with_stores(stores)
-            .with_plugin_registry(Arc::new(plugin_registry))
             .with_prompt_registry(prompt_registry)
             .with_store_config(store_config)
             .with_workspace_path(temp_path.to_path_buf())

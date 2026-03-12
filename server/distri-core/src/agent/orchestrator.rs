@@ -1,6 +1,5 @@
 use crate::{
     agent::{
-        plugin_registry::{PluginOptions, PluginRegistry},
         prompt_registry::PromptRegistry,
         todos::TodosTool,
         AgentEventType, BaseAgent, CoordinatorMessage, InvokeResult,
@@ -16,7 +15,7 @@ use crate::agent::hooks::inline::InlineHook;
 use distri_auth::ProviderRegistry;
 use distri_filesystem::FileSystem;
 use distri_stores::{initialize_stores, InitializedStores};
-pub use distri_stores::{workflow::InMemoryWorkflowStore, AgentStore, ThreadStore};
+pub use distri_stores::{AgentStore, ThreadStore};
 use distri_types::stores::{PromptTemplateStore, SecretStore};
 use distri_types::{
     auth::OAuthHandler, LlmDefinition, ModelSettings, Part, ServerMetadataWrapper, ToolCall,
@@ -26,8 +25,8 @@ use distri_types::configuration::AgentConfig;
 use distri_types::{
     browser::BrowsrClientConfig,
     configuration::{
-        is_namespaced_plugin_id, namespace_plugin_item, split_namespaced_plugin_id,
-        CustomAgentDefinition, CustomAgentExample, DistriServerConfig, StoreConfig,
+        is_namespaced_plugin_id, split_namespaced_plugin_id,
+        DistriServerConfig, StoreConfig,
     },
     HookMutation,
 };
@@ -51,8 +50,6 @@ pub struct AgentOrchestrator {
     pub session_root_prefix: Option<String>,
     pub browser_config: Arc<RwLock<BrowsrClientConfig>>,
     pub additional_tools: Arc<RwLock<HashMap<String, Vec<Arc<dyn Tool>>>>>,
-    pub plugin_registry: Arc<PluginRegistry>,
-    pub plugin_tools: Arc<RwLock<HashMap<String, Vec<Arc<dyn Tool>>>>>,
     pub workspace_path: std::path::PathBuf,
     pub prompt_registry: Arc<PromptRegistry>,
     /// Store configuration for creating new session stores
@@ -85,8 +82,6 @@ pub struct AgentOrchestratorBuilder {
     user_id: Option<String>,
     registry: Option<Arc<RwLock<McpServerRegistry>>>,
     additional_tools: Option<HashMap<String, Vec<Arc<dyn Tool>>>>,
-    plugin_registry: Option<Arc<PluginRegistry>>,
-    plugin_tools: Option<HashMap<String, Vec<Arc<dyn Tool>>>>,
     workspace_filesystem: Option<Arc<FileSystem>>,
     workspace_path: Option<std::path::PathBuf>,
     browser_config: Option<BrowsrClientConfig>,
@@ -115,16 +110,6 @@ impl AgentOrchestratorBuilder {
         additional_tools: HashMap<String, Vec<Arc<dyn Tool>>>,
     ) -> Self {
         self.additional_tools = Some(additional_tools);
-        self
-    }
-
-    pub fn with_plugin_registry(mut self, plugin_registry: Arc<PluginRegistry>) -> Self {
-        self.plugin_registry = Some(plugin_registry);
-        self
-    }
-
-    pub fn with_plugin_tools(mut self, plugin_tools: HashMap<String, Vec<Arc<dyn Tool>>>) -> Self {
-        self.plugin_tools = Some(plugin_tools);
         self
     }
 
@@ -229,23 +214,6 @@ impl AgentOrchestratorBuilder {
             cfg_guard.filesystem.clone()
         };
 
-        let plugin_registry = if let Some(registry) = self.plugin_registry {
-            registry
-        } else {
-            let registry = PluginRegistry::new(stores.plugin_store.clone())?;
-
-            let mut plugin_options = PluginOptions::default();
-            plugin_options.object_store =
-                filesystem_config
-                    .clone()
-                    .unwrap_or(ObjectStorageConfig::FileSystem {
-                        base_path: workspace_path.to_string_lossy().to_string(),
-                    });
-            plugin_options.filesystem_scan_path = Some(workspace_path.join("plugins"));
-            registry.load_with_options(plugin_options).await?;
-            Arc::new(registry)
-        };
-
         let workspace_filesystem = if let Some(fs) = self.workspace_filesystem {
             fs
         } else {
@@ -320,8 +288,6 @@ impl AgentOrchestratorBuilder {
             session_root_prefix,
             browser_config,
             additional_tools: Arc::new(RwLock::new(self.additional_tools.unwrap_or_default())),
-            plugin_registry: plugin_registry.clone(),
-            plugin_tools: Arc::new(RwLock::new(self.plugin_tools.unwrap_or_default())),
             workspace_path,
             prompt_registry,
             store_config,
@@ -341,10 +307,6 @@ impl AgentOrchestratorBuilder {
                 tracing::warn!("⚠️  Failed to sync system prompts to store: {}", e);
             }
         }
-
-        let orch = Arc::new(orchestrator.clone());
-        // Set orchestrator on the existing registry (which already has plugins loaded)
-        plugin_registry.set_orchestrator(orch.clone() as Arc<dyn OrchestratorTrait>);
 
         Ok(orchestrator)
     }
@@ -395,7 +357,7 @@ impl AgentOrchestrator {
     }
 
     pub fn cleanup(&self) {
-        self.plugin_registry.cleanup();
+        // No-op: plugin registry has been removed
     }
 
     pub async fn get_configuration(&self) -> DistriServerConfig {
@@ -581,115 +543,6 @@ impl AgentOrchestrator {
             .await
     }
 
-    /// Register distri tools - load plugin tools once and store them in the orchestrator
-    pub async fn register_distri_tools(&self) -> anyhow::Result<()> {
-        let plugin_records = self
-            .plugin_registry
-            .list_plugin_records()
-            .await?
-            .into_iter()
-            .map(Arc::new)
-            .collect::<Vec<_>>();
-        let total_tools = plugin_records
-            .iter()
-            .map(|record| record.artifact.tools.len())
-            .sum::<usize>();
-        tracing::debug!(
-            "Distri registry ready with {} packages and {} tools",
-            plugin_records.len(),
-            total_tools
-        );
-
-        let plugin_tools = self.plugin_registry.get_plugin_tools().await?;
-
-        // Store the loaded plugin tools in the orchestrator
-        {
-            let mut plugin_tools_guard = self.plugin_tools.write().await;
-            *plugin_tools_guard = plugin_tools;
-        }
-
-        tracing::debug!("DAP tools loaded and cached in orchestrator");
-
-        Ok(())
-    }
-
-    /// Register default agents
-    pub async fn register_distri_agents(&self) -> anyhow::Result<()> {
-        let plugin_records = self
-            .plugin_registry
-            .list_plugin_records()
-            .await?
-            .into_iter()
-            .map(Arc::new)
-            .collect::<Vec<_>>();
-        let total_agents = plugin_records
-            .iter()
-            .map(|record| record.artifact.agents.len())
-            .sum::<usize>();
-
-        // self.stores.agent_store.clear().await?;
-
-        tracing::debug!(
-            "Registering {} distri agents from {} packages",
-            total_agents,
-            plugin_records.len()
-        );
-
-        // 1. First register plugin agents and workflows with package prefix (lowest priority)
-        for record in &plugin_records {
-            for agent in &record.artifact.agents {
-                let agent_name = namespace_plugin_item(&agent.package_name, &agent.name);
-                let mut agent_config = agent.agent_config.clone();
-                match &mut agent_config {
-                    distri_types::configuration::AgentConfig::StandardAgent(def) => {
-                        def.name = agent_name.clone()
-                    }
-                    distri_types::configuration::AgentConfig::SequentialWorkflowAgent(def) => {
-                        def.name = agent_name.clone()
-                    }
-                    distri_types::configuration::AgentConfig::DagWorkflowAgent(def) => {
-                        def.name = agent_name.clone()
-                    }
-                    distri_types::configuration::AgentConfig::CustomAgent(def) => {
-                        def.name = agent_name.clone();
-                        def.package = Some(agent.package_name.clone());
-                    }
-                }
-
-                tracing::debug!("🤖 Registering plugin agent: {}", agent_name);
-                self.stores.agent_store.register(agent_config).await?;
-            }
-
-            for workflow in &record.artifact.workflows {
-                let agent_name = namespace_plugin_item(&workflow.package_name, &workflow.name);
-                let examples = workflow
-                    .examples
-                    .iter()
-                    .filter_map(|value| {
-                        serde_json::from_value::<CustomAgentExample>(value.clone()).ok()
-                    })
-                    .collect();
-
-                let custom_agent_def = CustomAgentDefinition {
-                    name: agent_name.clone(),
-                    description: workflow.description.clone(),
-                    script_path: format!("workflows/{}.ts", workflow.name),
-                    package: Some(workflow.package_name.clone()),
-                    parameters: workflow.parameters.clone(),
-                    examples,
-                    working_directory: None,
-                };
-                let agent_config =
-                    distri_types::configuration::AgentConfig::CustomAgent(custom_agent_def);
-
-                tracing::debug!("🤖 Registering workflow as agent: {}", agent_name);
-                self.stores.agent_store.register(agent_config).await?;
-            }
-        }
-
-        tracing::debug!("Successfully registered {} plugin agents", total_agents);
-        Ok(())
-    }
     pub async fn get_agent_tools(
         &self,
         definition: &crate::types::StandardDefinition,
@@ -698,20 +551,12 @@ impl AgentOrchestrator {
         // Use new tools configuration if available, fallback to old mcp_servers
         let tools_config = definition.tools.clone().unwrap_or(ToolsConfig::default());
 
-        // Get plugin tool loader - either from stores or create from plugin_tools
+        // Get plugin tool loader from stores if available
         let plugin_tool_loader: Option<Box<dyn distri_types::stores::PluginToolLoader>> =
             if let Some(ref loader) = self.stores.plugin_tool_loader {
                 Some(Box::new(LoaderWrapper(loader.clone())))
             } else {
-                let plugin_tools = {
-                    let plugin_tools_guard = self.plugin_tools.read().await;
-                    plugin_tools_guard.clone()
-                };
-                if !plugin_tools.is_empty() {
-                    Some(Box::new(crate::tools::HashMapPluginToolLoader::new(plugin_tools)))
-                } else {
-                    None
-                }
+                None
             };
 
         let mut tools = crate::tools::resolve_tools_config(
@@ -906,21 +751,6 @@ impl AgentOrchestrator {
                 .await?;
                 Ok(Box::new(agent))
             }
-            distri_types::configuration::AgentConfig::SequentialWorkflowAgent(definition) => {
-                let tools = self.get_all_available_tools().await?;
-                let agent = crate::agent::WorkflowAgent::new_sequential(definition, tools);
-                Ok(Box::new(agent))
-            }
-            distri_types::configuration::AgentConfig::DagWorkflowAgent(definition) => {
-                let tools = self.get_all_available_tools().await?;
-                let agent = crate::agent::WorkflowAgent::new_dag(definition, tools);
-                Ok(Box::new(agent))
-            }
-            distri_types::configuration::AgentConfig::CustomAgent(definition) => {
-                let tools = self.get_all_available_tools().await?;
-                let agent = crate::agent::WorkflowAgent::new_custom(definition, tools);
-                Ok(Box::new(agent))
-            }
         }
     }
 
@@ -1043,11 +873,10 @@ impl AgentOrchestrator {
             .await;
 
         // Check if todos are enabled for this agent and initialize shared_todos if needed
-        if let distri_types::configuration::AgentConfig::StandardAgent(definition) = &agent_config {
-            if definition.should_use_browser() {
-                tracing::debug!("🌐 Browser enabled for agent: {}", agent_id);
-                // No in-process browser initialization; sessions are handled via browsr-client.
-            }
+        let distri_types::configuration::AgentConfig::StandardAgent(definition) = &agent_config;
+        if definition.should_use_browser() {
+            tracing::debug!("🌐 Browser enabled for agent: {}", agent_id);
+            // No in-process browser initialization; sessions are handled via browsr-client.
         }
 
         tracing::debug!(
@@ -1351,32 +1180,30 @@ impl AgentOrchestrator {
         agent_config: &mut distri_types::configuration::AgentConfig,
         definition_overrides: Option<DefinitionOverrides>,
     ) {
-        if let distri_types::configuration::AgentConfig::StandardAgent(ref mut definition) =
-            agent_config
-        {
-            // Start from orchestrator defaults, then overlay agent-specific settings so agent wins.
-            let default_model_settings = self.get_default_model_settings().await;
-            let sentinel = ModelSettings::default();
-            let agent_model = definition.model_settings.clone();
-            definition.model_settings =
-                Self::merge_model_settings(&default_model_settings, &agent_model, &sentinel);
+        let distri_types::configuration::AgentConfig::StandardAgent(ref mut definition) =
+            agent_config;
+        // Start from orchestrator defaults, then overlay agent-specific settings so agent wins.
+        let default_model_settings = self.get_default_model_settings().await;
+        let sentinel = ModelSettings::default();
+        let agent_model = definition.model_settings.clone();
+        definition.model_settings =
+            Self::merge_model_settings(&default_model_settings, &agent_model, &sentinel);
 
-            let default_analysis_settings = self.get_default_analysis_model_settings().await;
-            definition.analysis_model_settings = definition
-                .analysis_model_settings
-                .clone()
-                .map(|agent_analysis| {
-                    Self::merge_model_settings(
-                        &default_analysis_settings,
-                        &agent_analysis,
-                        &sentinel,
-                    )
-                })
-                .or(Some(default_analysis_settings));
-            tracing::debug!("Applying definition overrides: {:?}", definition_overrides);
-            if let Some(overrides) = definition_overrides {
-                definition.apply_overrides(overrides);
-            }
+        let default_analysis_settings = self.get_default_analysis_model_settings().await;
+        definition.analysis_model_settings = definition
+            .analysis_model_settings
+            .clone()
+            .map(|agent_analysis| {
+                Self::merge_model_settings(
+                    &default_analysis_settings,
+                    &agent_analysis,
+                    &sentinel,
+                )
+            })
+            .or(Some(default_analysis_settings));
+        tracing::debug!("Applying definition overrides: {:?}", definition_overrides);
+        if let Some(overrides) = definition_overrides {
+            definition.apply_overrides(overrides);
         }
     }
 
@@ -1437,14 +1264,6 @@ impl AgentOrchestrator {
                         .unwrap_or(false)
                         && def.name == target_simple
                 }
-                distri_types::configuration::AgentConfig::CustomAgent(def) => {
-                    def.package
-                        .as_deref()
-                        .map(|pkg| pkg == target_package)
-                        .unwrap_or(false)
-                        && def.name == target_simple
-                }
-                _ => false,
             };
         }
 
@@ -1498,22 +1317,12 @@ impl AgentOrchestrator {
             }
         }
 
-        // Get plugin tool loader - either from stores or create from plugin_tools
+        // Get plugin tool loader from stores if available
         let plugin_tool_loader: Option<Box<dyn distri_types::stores::PluginToolLoader>> =
             if let Some(ref loader) = self.stores.plugin_tool_loader {
-                // Use the configured loader (Cloud: DB-based, or custom)
                 Some(Box::new(LoaderWrapper(loader.clone())))
             } else {
-                // Fallback to plugin_tools HashMap (OSS: filesystem-based)
-                let plugin_tools = {
-                    let plugin_tools_guard = self.plugin_tools.read().await;
-                    plugin_tools_guard.clone()
-                };
-                if !plugin_tools.is_empty() {
-                    Some(Box::new(crate::tools::HashMapPluginToolLoader::new(plugin_tools)))
-                } else {
-                    None
-                }
+                None
             };
 
         // Add all plugin packages with wildcard to get all their tools
@@ -1747,20 +1556,18 @@ impl OrchestratorTrait for AgentOrchestrator {
         // Load agent definition to get base model_settings if available
         // Only StandardAgent has model_settings; workflow agents don't
         if let Some(agent_config) = self.get_agent(&llm_def.name).await {
-            if let AgentConfig::StandardAgent(def) = &agent_config {
-                // Merge: use agent's model_settings as base, override with request's model_settings
-                // Compare request settings against defaults to detect which fields were explicitly set
-                let sentinel = ModelSettings::default();
-                let final_model_settings = Self::merge_model_settings(
-                    &def.model_settings,
-                    &llm_def.model_settings,
-                    &sentinel
-                );
+            let AgentConfig::StandardAgent(def) = &agent_config;
+            // Merge: use agent's model_settings as base, override with request's model_settings
+            // Compare request settings against defaults to detect which fields were explicitly set
+            let sentinel = ModelSettings::default();
+            let final_model_settings = Self::merge_model_settings(
+                &def.model_settings,
+                &llm_def.model_settings,
+                &sentinel
+            );
 
-                // Update llm_def with merged settings
-                llm_def.model_settings = final_model_settings;
-            }
-            // For other agent types (workflows, custom), use request's model_settings as-is
+            // Update llm_def with merged settings
+            llm_def.model_settings = final_model_settings;
         }
         // If agent not found, use request's model_settings as-is
 

@@ -237,7 +237,6 @@ pub enum ExecutionKind {
     #[default]
     Retriable,
     Interleaved,
-    Sequential,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]

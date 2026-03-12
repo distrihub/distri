@@ -130,26 +130,6 @@ impl SlashCommandRegistry {
                 builtin: true,
             },
             SlashCommand {
-                name: "workflows".to_string(),
-                description: "Show workflows menu - create new or view existing".to_string(),
-                hint: Some("orkflows".to_string()),
-                usage: Some("/workflows".to_string()),
-                command_type: SlashCommandType::Interactive {
-                    menu_type: InteractiveMenuType::Workflows,
-                },
-                builtin: true,
-            },
-            SlashCommand {
-                name: "plugins".to_string(),
-                description: "Show plugins menu - install from DAP registry".to_string(),
-                hint: Some("lugins".to_string()),
-                usage: Some("/plugins".to_string()),
-                command_type: SlashCommandType::Interactive {
-                    menu_type: InteractiveMenuType::Plugins,
-                },
-                builtin: true,
-            },
-            SlashCommand {
                 name: "toolcall".to_string(),
                 description: "Call a tool directly - automatically detects available tools"
                     .to_string(),

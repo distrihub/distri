@@ -7,7 +7,7 @@ use crate::AgentError;
 use distri_a2a::{AgentCard, Task};
 
 use distri_a2a::{JsonRpcError, JsonRpcRequest, JsonRpcResponse, MessageSendParams, TaskIdParams};
-use distri_plugins::DefinitionOverrides;
+use distri_types::configuration::DefinitionOverrides;
 use futures::future::Either;
 use serde_json::Value;
 use std::sync::Arc;
@@ -48,27 +48,6 @@ impl A2AHandler {
                 def.version.clone(),
                 def.icon_url.clone(),
                 def.skills_description.clone(),
-            ),
-            distri_types::configuration::AgentConfig::SequentialWorkflowAgent(def) => (
-                def.name.clone(),
-                def.description.clone(),
-                Some("1.0.0".to_string()),
-                None,
-                vec![],
-            ),
-            distri_types::configuration::AgentConfig::DagWorkflowAgent(def) => (
-                def.name.clone(),
-                def.description.clone(),
-                Some("1.0.0".to_string()),
-                None,
-                vec![],
-            ),
-            distri_types::configuration::AgentConfig::CustomAgent(def) => (
-                def.name.clone(),
-                def.description.clone(),
-                Some("1.0.0".to_string()),
-                None,
-                vec![],
             ),
         };
 

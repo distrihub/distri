@@ -9,7 +9,6 @@ use distri_core::agent::types::ExecutorContextMetadata;
 use distri_core::agent::AgentOrchestrator;
 use distri_core::agent::ExecutorContext;
 use distri_core::types::ToolCall;
-use distri_core::ToolAuthRequestContext;
 
 #[derive(Debug, Deserialize)]
 struct ToolCallPayload {

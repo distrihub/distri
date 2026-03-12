@@ -45,17 +45,6 @@ pub async fn validate_provider_secrets(
 
     let provider = match agent_config {
         Some(AgentConfig::StandardAgent(def)) => def.model_settings.provider.clone(),
-        Some(AgentConfig::SequentialWorkflowAgent(_))
-        | Some(AgentConfig::DagWorkflowAgent(_))
-        | Some(AgentConfig::CustomAgent(_)) => {
-            // Workflow and custom agents use the orchestrator's default model settings
-            executor
-                .default_model_settings
-                .read()
-                .await
-                .provider
-                .clone()
-        }
         None => {
             // If agent not found, we'll get an error later; skip validation here
             return Ok(());

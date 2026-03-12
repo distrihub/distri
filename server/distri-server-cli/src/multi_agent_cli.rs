@@ -73,7 +73,6 @@ pub struct ExecutorContext<'a> {
     pub home_dir: &'a Path,
     pub workspace_path: &'a Path,
     pub config: Option<&'a DistriServerConfig>,
-    pub disable_plugins: bool,
     pub shared_state: Option<&'a SharedState>,
 }
 
@@ -115,7 +114,6 @@ impl Default for MultiAgentCliBuilder {
                         ctx.home_dir,
                         ctx.workspace_path,
                         ctx.config,
-                        ctx.disable_plugins,
                     )
                     .await
                 })
@@ -490,28 +488,13 @@ impl MultiAgentHarness {
             home_dir: &self.runtime.home_dir,
             workspace_path: &self.runtime.workspace_path,
             config: self.runtime.config.as_ref(),
-            disable_plugins: self.runtime.cli.disable_plugins,
-
             shared_state: self.runtime.shared_state(),
         };
         let executor = (self.executor_factory.as_ref())(context).await?;
-        // Register default agents
-        executor.register_distri_agents().await?;
         // Register statically provided agents (if any)
         for agent in &self.agents {
-            match agent.clone() {
-                AgentConfig::StandardAgent(def) => {
-                    executor.register_agent_definition(def).await?;
-                }
-                other => {
-                    executor
-                        .stores
-                        .agent_store
-                        .register(other)
-                        .await
-                        .map_err(|e| anyhow::anyhow!(e))?;
-                }
-            }
+            let AgentConfig::StandardAgent(def) = agent.clone();
+            executor.register_agent_definition(def).await?;
         }
 
         if let Some(initializer) = &self.tool_initializer {

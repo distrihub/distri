@@ -15,6 +15,7 @@ pub use configuration::DistriServerConfig;
 mod hooks;
 
 pub mod auth;
+pub mod context;
 mod core;
 mod errors;
 pub mod events;
@@ -23,7 +24,6 @@ mod mcp;
 pub use mcp::{McpServerMetadata, TransportType};
 pub mod skill;
 pub mod stores;
-pub mod workflow;
 
 pub use auth::*;
 

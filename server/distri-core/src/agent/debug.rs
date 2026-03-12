@@ -45,12 +45,6 @@ pub async fn get_debug_context_def(
     // Convert agent config to StandardDefinition
     let agent_def = match agent_config {
         distri_types::configuration::AgentConfig::StandardAgent(def) => def,
-        _ => {
-            return Err(anyhow::anyhow!(
-                "Agent '{}' is not a standard agent - response generation not applicable",
-                agent_name
-            ));
-        }
     };
 
     // Create a basic ExecutorContext for response generation

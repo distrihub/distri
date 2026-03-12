@@ -116,6 +116,7 @@ mod tests {
             tool_call_id: "tool_123".to_string(),
             tool_name: "test_tool".to_string(),
             parts: vec![Part::Text("test response".to_string())],
+            parts_metadata: None,
         };
 
         store
@@ -159,6 +160,7 @@ mod tests {
             tool_call_id: "tool_123".to_string(),
             tool_name: "test_tool".to_string(),
             parts: vec![Part::Text("test response".to_string())],
+            parts_metadata: None,
         };
 
         // Try to complete non-existent session - should fail

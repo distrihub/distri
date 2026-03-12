@@ -15,11 +15,7 @@ pub mod types {
 pub mod hooks;
 mod hooks_runtime;
 pub mod voice;
-pub mod workflow;
-
-pub use distri_auth::{
-    auth_routes, CallbackConfig, CliAuthServer, ToolAuthRequestContext, UserContext,
-};
+pub use distri_auth::{UserContext};
 pub use distri_stores::*;
 pub use distri_types::AgentError;
 pub use types::{McpDefinition, McpSession, ModelSettings, StandardDefinition};

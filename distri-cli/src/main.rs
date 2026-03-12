@@ -6,18 +6,19 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use crossterm::terminal;
 use distri::{
-    print_stream, AgentStreamClient, BuildHttpClient, CreatePluginRequest, CreateSkillRequest,
+    AgentStreamClient, BuildHttpClient, CreateSkillRequest,
     CreateSkillScriptRequest, Distri, DistriClientApp, DistriConfig, ExternalToolRegistry,
+    print_stream,
 };
 use distri_a2a::{
     EventKind, Message as A2aMessage, MessageSendParams, Part as A2aPart, Role, TextPart,
 };
-use distri_types::configuration::AgentConfig;
 use distri_types::ToolResponse;
-use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher};
+use distri_types::configuration::AgentConfig;
+use fuzzy_matcher::{FuzzyMatcher, skim::SkimMatcherV2};
 use inquire::{
-    autocompletion::{Autocomplete, Replacement},
     CustomUserError, Select, Text,
+    autocompletion::{Autocomplete, Replacement},
 };
 use tokio::fs;
 mod logging;
@@ -76,12 +77,6 @@ enum Commands {
         command: PromptsCommands,
     },
 
-    /// Plugin related commands
-    Plugins {
-        #[clap(subcommand)]
-        command: PluginsCommands,
-    },
-
     /// Skill related commands
     Skills {
         #[clap(subcommand)]
@@ -111,9 +106,6 @@ enum Commands {
         /// Run headless (do not open the web UI automatically)
         #[clap(long, help = "Skip opening the web UI in your browser")]
         headless: bool,
-        /// Disable loading plugins and their agents/tools
-        #[clap(long, help = "Disable loading plugins (plugins, agents/tools)")]
-        disable_plugins: bool,
     },
 }
 
@@ -169,28 +161,6 @@ enum PromptsCommands {
     /// Push prompt templates from a file or directory
     Push {
         #[clap(help = "Path to a .hbs file or directory containing .hbs template files")]
-        path: PathBuf,
-    },
-}
-
-#[derive(Subcommand, Debug, Clone)]
-enum PluginsCommands {
-    /// List plugins from the server
-    List,
-    /// Push plugin(s) to the server from a file or directory
-    Push {
-        #[clap(help = "Path to a plugin .ts file or directory containing plugins")]
-        path: PathBuf,
-        /// Push all plugins in a directory
-        #[clap(long, help = "Push all plugin files in the directory")]
-        all: bool,
-        /// Make the plugin public
-        #[clap(long, help = "Make the plugin publicly visible")]
-        public: bool,
-    },
-    /// Validate a plugin without uploading
-    Validate {
-        #[clap(help = "Path to a plugin .ts file")]
         path: PathBuf,
     },
 }
@@ -353,11 +323,9 @@ async fn main() -> Result<()> {
         host,
         port,
         headless,
-
-        disable_plugins,
     } = &command
     {
-        run_distri_server(&cli, host.clone(), *port, *headless, *disable_plugins)?;
+        run_distri_server(&cli, host.clone(), *port, *headless)?;
         return Ok(());
     }
 
@@ -490,9 +458,6 @@ async fn main() -> Result<()> {
         Commands::Prompts { command } => {
             handle_prompts_command(&client, command).await?;
         }
-        Commands::Plugins { command } => {
-            handle_plugins_command(&client, command).await?;
-        }
         Commands::Skills { command } => {
             handle_skills_command(&client, command).await?;
         }
@@ -520,7 +485,6 @@ fn run_distri_server(
     host: Option<String>,
     port: Option<u16>,
     headless: bool,
-    disable_plugins: bool,
 ) -> Result<()> {
     let mut cmd = Command::new(resolve_distri_server_binary());
 
@@ -530,10 +494,6 @@ fn run_distri_server(
     if cli.verbose {
         cmd.arg("--verbose");
     }
-    if disable_plugins {
-        cmd.arg("--disable-plugins");
-    }
-
     cmd.arg("serve");
 
     if let Some(host) = host {
@@ -853,7 +813,6 @@ fn required_external_tools(agent: &AgentConfig) -> Vec<String> {
             .as_ref()
             .and_then(|tools| tools.external.clone())
             .unwrap_or_default(),
-        _ => Vec::new(),
     }
 }
 
@@ -1039,7 +998,10 @@ async fn handle_prompts_command(client: &Distri, command: PromptsCommands) -> Re
                         "{} [{}] - {}",
                         template.name,
                         type_indicator,
-                        template.description.as_deref().unwrap_or("(no description)")
+                        template
+                            .description
+                            .as_deref()
+                            .unwrap_or("(no description)")
                     );
                 }
             }
@@ -1113,10 +1075,7 @@ async fn handle_prompts_command(client: &Distri, command: PromptsCommands) -> Re
                         );
                     }
                     Err(_) => {
-                        println!(
-                            "{}  Workspace: {}{}",
-                            COLOR_GRAY, workspace_id, COLOR_RESET
-                        );
+                        println!("{}  Workspace: {}{}", COLOR_GRAY, workspace_id, COLOR_RESET);
                     }
                 }
             }
@@ -1163,8 +1122,9 @@ fn set_client_config_value(key: &str, raw_value: &str) -> Result<PathBuf> {
             let trimmed = normalize_optional(raw_value);
             if let Some(ref value) = trimmed {
                 // Validate that it's a valid UUID
-                uuid::Uuid::parse_str(value)
-                    .with_context(|| format!("Invalid workspace_id: '{}' is not a valid UUID", value))?;
+                uuid::Uuid::parse_str(value).with_context(|| {
+                    format!("Invalid workspace_id: '{}' is not a valid UUID", value)
+                })?;
             }
             trimmed
         }
@@ -1247,10 +1207,7 @@ async fn push_file(client: &Distri, path: &Path) -> Result<()> {
             }
             Err(_) => {
                 // Fallback to just showing the ID if we can't fetch details
-                println!(
-                    "{}  Workspace: {}{}",
-                    COLOR_GRAY, workspace_id, COLOR_RESET
-                );
+                println!("{}  Workspace: {}{}", COLOR_GRAY, workspace_id, COLOR_RESET);
             }
         }
     }
@@ -1279,239 +1236,6 @@ async fn push_file(client: &Distri, path: &Path) -> Result<()> {
     );
 
     Ok(())
-}
-
-async fn handle_plugins_command(client: &Distri, command: PluginsCommands) -> Result<()> {
-    match command {
-        PluginsCommands::List => {
-            println!("📋 Listing plugins...");
-            let plugins = client.list_plugins().await?;
-            if plugins.is_empty() {
-                println!("No plugins found.");
-            } else {
-                for plugin in plugins {
-                    let visibility = if plugin.is_public { "public" } else { "private" };
-                    let stars = if plugin.star_count > 0 {
-                        format!(" ⭐{}", plugin.star_count)
-                    } else {
-                        String::new()
-                    };
-                    println!(
-                        "{} [{}]{} - {}",
-                        plugin.name,
-                        visibility,
-                        stars,
-                        plugin.description.as_deref().unwrap_or("(no description)")
-                    );
-                }
-            }
-        }
-        PluginsCommands::Push { path, all, public } => {
-            if !path.exists() {
-                anyhow::bail!("Path does not exist: {}", path.display());
-            }
-
-            // Collect plugins: (name, code_path)
-            let mut plugins: Vec<(String, PathBuf)> = Vec::new();
-
-            if path.is_file() {
-                // Single file: use filename as plugin name
-                let name = path
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("plugin")
-                    .to_string();
-                plugins.push((name, path.clone()));
-            } else if path.is_dir() {
-                // Check if this directory itself is a plugin (has mod.ts)
-                let mod_ts = path.join("mod.ts");
-                if mod_ts.exists() && !all {
-                    // Single plugin directory
-                    let name = path
-                        .file_name()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("plugin")
-                        .to_string();
-                    plugins.push((name, mod_ts));
-                } else if all {
-                    // Look for subdirectories with mod.ts (Deno-style structure)
-                    let mut entries = fs::read_dir(&path).await?;
-                    while let Some(entry) = entries.next_entry().await? {
-                        let entry_path = entry.path();
-                        if entry_path.is_dir() {
-                            // Subdirectory: look for mod.ts (primary) or index.ts (fallback)
-                            let dir_name = entry_path
-                                .file_name()
-                                .and_then(|s| s.to_str())
-                                .unwrap_or("plugin")
-                                .to_string();
-
-                            let mod_ts = entry_path.join("mod.ts");
-                            let index_ts = entry_path.join("index.ts");
-
-                            if mod_ts.exists() {
-                                plugins.push((dir_name, mod_ts));
-                            } else if index_ts.exists() {
-                                plugins.push((dir_name, index_ts));
-                            }
-                        } else if entry_path.is_file() {
-                            // Also support standalone .ts files
-                            if let Some(ext) = entry_path.extension() {
-                                if ext == "ts" || ext == "tsx" {
-                                    let name = entry_path
-                                        .file_stem()
-                                        .and_then(|s| s.to_str())
-                                        .unwrap_or("plugin")
-                                        .to_string();
-                                    plugins.push((name, entry_path));
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    eprintln!(
-                        "Path is a directory without mod.ts. Re-run with --all to push all plugins inside."
-                    );
-                    std::process::exit(1);
-                }
-            }
-
-            if plugins.is_empty() {
-                println!("No plugins found in {}", path.display());
-                return Ok(());
-            }
-
-            println!(
-                "📤 Pushing {} plugin(s) to {}...",
-                plugins.len(),
-                client.base_url()
-            );
-
-            for (name, code_path) in plugins {
-                push_plugin_with_name(client, &name, &code_path, public).await?;
-            }
-        }
-        PluginsCommands::Validate { path } => {
-            if !path.exists() {
-                anyhow::bail!("Path does not exist: {}", path.display());
-            }
-
-            println!("🔍 Validating plugin: {}", path.display());
-
-            let code = fs::read_to_string(&path)
-                .await
-                .with_context(|| format!("reading {}", path.display()))?;
-
-            // Basic validation: check for required exports
-            let has_integration = code.contains("export const integration")
-                || code.contains("export { integration }");
-
-            if !has_integration {
-                eprintln!(
-                    "{}✗ Plugin must export an 'integration' object{}",
-                    "\x1b[91m", COLOR_RESET
-                );
-                std::process::exit(1);
-            }
-
-            // Check for tool or workflow definitions
-            let has_tools = code.contains("tools:") || code.contains("defineTool");
-            let has_workflows = code.contains("workflows:") || code.contains("defineWorkflow");
-
-            if !has_tools && !has_workflows {
-                eprintln!(
-                    "{}⚠ Warning: Plugin doesn't appear to define any tools or workflows{}",
-                    COLOR_BRIGHT_YELLOW, COLOR_RESET
-                );
-            }
-
-            println!(
-                "{}✔ Plugin structure looks valid{}",
-                COLOR_BRIGHT_GREEN, COLOR_RESET
-            );
-
-            if has_tools {
-                println!("  - Contains tool definitions");
-            }
-            if has_workflows {
-                println!("  - Contains workflow definitions");
-            }
-        }
-    }
-    Ok(())
-}
-
-async fn push_plugin_with_name(client: &Distri, name: &str, path: &Path, is_public: bool) -> Result<()> {
-    let code = fs::read_to_string(path)
-        .await
-        .with_context(|| format!("reading {}", path.display()))?;
-
-    // Try to extract description from the code
-    let description = extract_plugin_description(&code);
-
-    let request = CreatePluginRequest {
-        name: name.to_string(),
-        description,
-        code,
-        metadata: None,
-        tags: vec![],
-        is_public,
-    };
-
-    let result = client.upsert_plugin(&request).await?;
-
-    let visibility = if result.is_public { "public" } else { "private" };
-    println!(
-        "{}✔ Pushed plugin '{}' [{}]{}",
-        COLOR_BRIGHT_GREEN, result.name, visibility, COLOR_RESET
-    );
-
-    // Display workspace information if configured
-    if let Some(workspace_id) = client.workspace_id() {
-        match client.get_workspace(workspace_id).await {
-            Ok(workspace) => {
-                let ws_type = if workspace.is_personal {
-                    "Personal"
-                } else {
-                    "Team"
-                };
-                println!(
-                    "{}  Workspace: {} ({} - {}){}",
-                    COLOR_GRAY, workspace.name, ws_type, workspace.role, COLOR_RESET
-                );
-            }
-            Err(_) => {
-                println!(
-                    "{}  Workspace: {}{}",
-                    COLOR_GRAY, workspace_id, COLOR_RESET
-                );
-            }
-        }
-    }
-
-    Ok(())
-}
-
-/// Extract description from plugin code by looking for common patterns
-fn extract_plugin_description(code: &str) -> Option<String> {
-    // Look for description in integration export
-    // Pattern: description: "..." or description: '...'
-    let patterns = [
-        r#"description:\s*["']([^"']+)["']"#,
-        r#"description:\s*`([^`]+)`"#,
-    ];
-
-    for pattern in patterns {
-        if let Ok(re) = regex::Regex::new(pattern) {
-            if let Some(caps) = re.captures(code) {
-                if let Some(desc) = caps.get(1) {
-                    return Some(desc.as_str().to_string());
-                }
-            }
-        }
-    }
-
-    None
 }
 
 // ============================================================
@@ -1587,7 +1311,11 @@ async fn handle_skills_command(client: &Distri, command: SkillsCommands) -> Resu
                 let request = parse_skill_file(&skill_path).await?;
                 let script_count = request.scripts.len();
                 let result = client.upsert_skill(&request).await?;
-                let visibility = if result.is_public { "public" } else { "private" };
+                let visibility = if result.is_public {
+                    "public"
+                } else {
+                    "private"
+                };
                 println!(
                     "{}  Pushed skill '{}' [{}] ({} scripts){}",
                     COLOR_BRIGHT_GREEN, result.name, visibility, script_count, COLOR_RESET
@@ -1712,10 +1440,7 @@ fn extract_scripts_from_markdown(body: &str) -> Vec<CreateSkillScriptRequest> {
             // Parse fenced code block
             if i < lines.len() && lines[i].starts_with("```") {
                 let fence_line = lines[i];
-                let language = fence_line
-                    .trim_start_matches('`')
-                    .trim()
-                    .to_string();
+                let language = fence_line.trim_start_matches('`').trim().to_string();
                 let language = if language.is_empty() {
                     "javascript".to_string()
                 } else {

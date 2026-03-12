@@ -185,24 +185,23 @@ impl DistriClientApp {
             return Ok(());
         };
 
-        if let AgentConfig::StandardAgent(def) = config {
-            if def.file_system.include_server_tools() {
-                return Ok(());
-            }
-
-            let defs =
-                register_local_filesystem_tools(&self.registry, agent_id, workspace_path).await?;
-            for def in defs {
-                if !self
-                    .local_tool_definitions
-                    .iter()
-                    .any(|d| d.name == def.name)
-                {
-                    self.local_tool_definitions.push(def);
-                }
-            }
-            self.registered_local_agents.insert(agent_id.to_string());
+        let AgentConfig::StandardAgent(def) = config;
+        if def.file_system.include_server_tools() {
+            return Ok(());
         }
+
+        let defs =
+            register_local_filesystem_tools(&self.registry, agent_id, workspace_path).await?;
+        for def in defs {
+            if !self
+                .local_tool_definitions
+                .iter()
+                .any(|d| d.name == def.name)
+            {
+                self.local_tool_definitions.push(def);
+            }
+        }
+        self.registered_local_agents.insert(agent_id.to_string());
 
         Ok(())
     }

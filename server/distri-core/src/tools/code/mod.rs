@@ -1,4 +1,2 @@
 mod executor;
-pub use executor::execute_code_with_tools;
-#[cfg(test)]
-mod tests;
+pub use executor::{execute_code_with_tools, CodeExecutor};

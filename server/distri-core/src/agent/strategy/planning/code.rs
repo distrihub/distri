@@ -271,3 +271,101 @@ impl PlanningStrategy for CodePlanner {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── parse_typescript_from_content ────────────────────────────
+
+    #[test]
+    fn parse_single_typescript_block() {
+        let content = "Here's the code:\n```typescript\nconsole.log('hello');\n```\n";
+        let plan = CodePlanner::parse_typescript_from_content(content).unwrap();
+        assert_eq!(plan.code, "console.log('hello');");
+    }
+
+    #[test]
+    fn parse_ts_shorthand_block() {
+        let content = "```ts\nlet x = 1;\n```";
+        let plan = CodePlanner::parse_typescript_from_content(content).unwrap();
+        assert_eq!(plan.code, "let x = 1;");
+    }
+
+    #[test]
+    fn parse_javascript_block() {
+        let content = "```javascript\nconst y = 2;\n```";
+        let plan = CodePlanner::parse_typescript_from_content(content).unwrap();
+        assert_eq!(plan.code, "const y = 2;");
+    }
+
+    #[test]
+    fn parse_js_shorthand_block() {
+        let content = "```js\nvar z = 3;\n```";
+        let plan = CodePlanner::parse_typescript_from_content(content).unwrap();
+        assert_eq!(plan.code, "var z = 3;");
+    }
+
+    #[test]
+    fn parse_multiple_code_blocks_joined() {
+        let content = "Step 1:\n```typescript\nconst a = 1;\n```\nStep 2:\n```typescript\nconst b = 2;\n```\n";
+        let plan = CodePlanner::parse_typescript_from_content(content).unwrap();
+        assert!(plan.code.contains("const a = 1;"));
+        assert!(plan.code.contains("const b = 2;"));
+    }
+
+    #[test]
+    fn parse_returns_none_for_no_code() {
+        let content = "Just some text without code blocks.";
+        assert!(CodePlanner::parse_typescript_from_content(content).is_none());
+    }
+
+    #[test]
+    fn parse_returns_none_for_other_language_blocks() {
+        let content = "```python\nprint('hello')\n```";
+        assert!(CodePlanner::parse_typescript_from_content(content).is_none());
+    }
+
+    #[test]
+    fn parse_returns_none_for_empty_code_block() {
+        let content = "```typescript\n\n```";
+        assert!(CodePlanner::parse_typescript_from_content(content).is_none());
+    }
+
+    #[test]
+    fn parse_extracts_thought() {
+        let content = "I need to calculate the sum.\n```typescript\nconst sum = 1 + 2;\n```\n";
+        let plan = CodePlanner::parse_typescript_from_content(content).unwrap();
+        assert!(plan.thought.is_some());
+        assert!(plan.thought.unwrap().contains("calculate the sum"));
+    }
+
+    // ── extract_thoughts_from_content ───────────────────────────
+
+    #[test]
+    fn extract_thoughts_skips_code_blocks() {
+        let content = "Thinking here.\n```typescript\ncode here\n```\nMore thinking.";
+        let thought = CodePlanner::extract_thoughts_from_content(content).unwrap();
+        assert!(thought.contains("Thinking here."));
+        assert!(thought.contains("More thinking."));
+        assert!(!thought.contains("code here"));
+    }
+
+    #[test]
+    fn extract_thoughts_skips_headers_and_bullets() {
+        let content = "# Header\n- bullet\n* star\nActual thought.";
+        let thought = CodePlanner::extract_thoughts_from_content(content).unwrap();
+        assert_eq!(thought, "Actual thought.");
+    }
+
+    #[test]
+    fn extract_thoughts_returns_none_for_only_code() {
+        let content = "```typescript\ncode only\n```";
+        assert!(CodePlanner::extract_thoughts_from_content(content).is_none());
+    }
+
+    #[test]
+    fn extract_thoughts_returns_none_for_empty() {
+        assert!(CodePlanner::extract_thoughts_from_content("").is_none());
+    }
+}

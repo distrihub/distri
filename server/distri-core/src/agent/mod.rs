@@ -9,8 +9,6 @@ pub mod log;
 pub mod memory;
 pub mod orchestrator;
 mod parser;
-pub mod plugin_registry;
-mod plugin_storage;
 pub mod prompt_registry {
     pub use distri_types::prompt::*;
 }
@@ -23,7 +21,6 @@ pub mod todos;
 pub mod token_estimator;
 pub mod tool_lookup;
 pub mod types;
-pub mod workflow;
 // Export specific items to avoid conflicts
 pub use agent_loop::*;
 pub use distri_types::parse_agent_markdown_content;
@@ -33,16 +30,11 @@ pub use prompt_validation::{
     validate_agent_prompt_with_partials, validate_partial_references, Criticality, ValidationIssue,
 };
 pub use standard::*;
-pub use workflow::*;
 // Don't export AgentHooks from types to avoid conflict
 pub use types::{AgentEvent, AgentEventType, BaseAgent, ExecutorContext, InvokeResult};
 
 // Export orchestrator types
 pub use orchestrator::AgentOrchestrator;
-
-// Export DAP registry
-pub use plugin_registry::{PluginOptions, PluginRegistry};
-pub use plugin_storage::InMemoryPluginResolver;
 
 // Export prompt registry
 pub use prompt_registry::{PromptRegistry, PromptSection, PromptTemplate, TemplateData};

@@ -1,15 +1,13 @@
 use anyhow::Result;
 use distri_core::{
-    agent::{AgentOrchestrator, PluginOptions, PluginRegistry, PromptRegistry},
-    types::{McpServerMetadata, ServerTrait, TransportType},
+    agent::{AgentOrchestrator, PromptRegistry},
     AgentOrchestratorBuilder,
 };
 use distri_types::browser::BrowsrClientConfig;
-use distri_types::configuration::{AgentConfig, DistriServerConfig, ObjectStorageConfig};
-use distri_types::ServerMetadataWrapper;
+use distri_types::configuration::{AgentConfig, DistriServerConfig};
 pub mod workspace;
 use crate::tool_renderers::ToolRendererRegistry;
-use std::{collections::HashMap, env, fs, path::Path, path::PathBuf, sync::Arc};
+use std::{env, fs, path::Path, path::PathBuf, sync::Arc};
 use tokio::sync::RwLock;
 use tracing::debug;
 
@@ -22,8 +20,6 @@ pub mod multi_agent_cli;
 pub mod run;
 pub mod slash_commands;
 pub mod tool_renderers;
-pub mod workflow_dag;
-// use run::{background, chat}; // Unused imports
 
 pub use cli::{Cli, Commands};
 
@@ -112,13 +108,11 @@ pub async fn init_orchestrator(
     home_dir: &Path,
     workspace_path: &Path,
     workspace_config: Option<&DistriServerConfig>,
-    disable_plugins: bool,
 ) -> Result<std::sync::Arc<distri_core::agent::AgentOrchestrator>> {
     init_orchestrator_with_configuration(
         home_dir,
         workspace_path,
         workspace_config,
-        disable_plugins,
         None,
     )
     .await
@@ -129,8 +123,6 @@ pub async fn init_orchestrator_with_configuration(
     home_dir: &Path,
     workspace_path: &Path,
     workspace_config: Option<&DistriServerConfig>,
-    disable_plugins: bool,
-
     configuration: Option<Arc<RwLock<DistriServerConfig>>>,
 ) -> Result<std::sync::Arc<distri_core::agent::AgentOrchestrator>> {
     use distri_types::configuration::StoreConfig;
@@ -148,17 +140,6 @@ pub async fn init_orchestrator_with_configuration(
     store_config.session.ephemeral = false; // CLI needs persistent history
 
     let stores = distri_core::initialize_stores(&store_config).await?;
-
-    let plugin_registry = PluginRegistry::new(stores.plugin_store.clone())?;
-
-    if !disable_plugins {
-        let mut plugin_options = PluginOptions::default();
-        plugin_options.object_store = ObjectStorageConfig::FileSystem {
-            base_path: workspace_path.to_string_lossy().to_string(),
-        };
-
-        plugin_registry.load_with_options(plugin_options).await?;
-    }
 
     // Initialize prompt registry with defaults and auto-discovery for CLI
     let prompt_registry = Arc::new(PromptRegistry::with_defaults().await?);
@@ -235,7 +216,6 @@ pub async fn init_orchestrator_with_configuration(
     builder = builder.with_browser_config(BrowsrClientConfig::default());
     let orchestrator = builder
         .with_stores(stores)
-        .with_plugin_registry(Arc::new(plugin_registry))
         .with_prompt_registry(prompt_registry)
         .with_store_config(store_config)
         .with_workspace_path(workspace_path.to_path_buf())
@@ -245,13 +225,6 @@ pub async fn init_orchestrator_with_configuration(
     let orchestrator = Arc::new(orchestrator);
     register_workspace_assets(&orchestrator, workspace_path, merged_config).await?;
 
-    if !disable_plugins {
-        for mcp_server in custom_mcp_servers() {
-            orchestrator
-                .register_mcp_server(mcp_server.0, mcp_server.1)
-                .await;
-        }
-    }
     Ok(orchestrator)
 }
 
@@ -286,21 +259,12 @@ async fn register_workspace_assets(
 }
 
 pub async fn build_workspace(
-    orchestrator: &Arc<AgentOrchestrator>,
+    _orchestrator: &Arc<AgentOrchestrator>,
     workspace_path: &Path,
 ) -> Result<()> {
-    let plugins_dir = workspace_path.join("plugins");
-    orchestrator
-        .plugin_registry
-        .refresh_plugins_from_filesystem(&plugins_dir, Some("plugins"))
-        .await?;
-    orchestrator
-        .plugin_registry
-        .register_workspace_module(workspace_path)
-        .await?;
     tracing::info!(
-        "Workspace build complete (plugins from {}, workspace src)",
-        plugins_dir.display()
+        "Workspace build complete ({})",
+        workspace_path.display()
     );
     Ok(())
 }
@@ -334,41 +298,3 @@ pub async fn run_agent_cli(
     Ok(())
 }
 
-/// Get custom MCP servers (spider, search)
-pub fn custom_mcp_servers() -> HashMap<String, ServerMetadataWrapper> {
-    let mut servers = HashMap::new();
-
-    // Add Spider scraping server
-    servers.insert(
-        "spider".to_string(),
-        ServerMetadataWrapper {
-            server_metadata: McpServerMetadata {
-                auth_session_key: None,
-                mcp_transport: TransportType::InMemory,
-                auth_type: None,
-            },
-            builder: Some(Arc::new(|_, transport| {
-                let server = mcp_crawl::build(transport)?;
-                Ok(Box::new(server) as Box<dyn ServerTrait>)
-            })),
-        },
-    );
-
-    // Add Tavily search server
-    servers.insert(
-        "search".to_string(),
-        ServerMetadataWrapper {
-            server_metadata: McpServerMetadata {
-                auth_session_key: None,
-                mcp_transport: TransportType::InMemory,
-                auth_type: None,
-            },
-            builder: Some(Arc::new(|_, transport| {
-                let server = mcp_tavily::build(transport)?;
-                Ok(Box::new(server) as Box<dyn ServerTrait>)
-            })),
-        },
-    );
-
-    servers
-}

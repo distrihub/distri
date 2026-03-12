@@ -74,18 +74,7 @@ pub async fn handle_validate_prompt_command(
     };
 
     // Convert agent config to StandardDefinition
-    let agent_def = match agent_config {
-        distri_types::configuration::AgentConfig::StandardAgent(def) => def,
-        distri_types::configuration::AgentConfig::SequentialWorkflowAgent(_)
-        | distri_types::configuration::AgentConfig::DagWorkflowAgent(_)
-        | distri_types::configuration::AgentConfig::CustomAgent(_) => {
-            println!(
-                "ℹ️  Agent '{}' is not a standard agent - prompt validation not applicable",
-                agent_name
-            );
-            return Ok(());
-        }
-    };
+    let distri_types::configuration::AgentConfig::StandardAgent(agent_def) = agent_config;
 
     // Get registered partials from the prompt registry
     let registered_partials: HashSet<String> = executor

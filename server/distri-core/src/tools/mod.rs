@@ -1,11 +1,6 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::Result;
-use serde::Deserialize;
-
-use distri_auth::OAuthHandler;
-use distri_plugin_executor::PluginExecutor;
 use tokio::sync::RwLock;
 
 use crate::agent::todos::TodosTool;
@@ -15,81 +10,25 @@ use crate::tools::browser::{BrowserStepTool, DistriBrowserSharedTool, DistriScra
 use crate::tools::builtin::ArtifactTool;
 use crate::types::{McpDefinition, McpToolConfig, ToolCall, ToolsConfig};
 use crate::AgentError;
-use distri_types::{auth::AuthType, Part};
+use distri_types::Part;
 mod browser;
+pub mod code;
 // pub mod authenticated_example;
-#[cfg(feature = "code")]
-mod code;
 pub mod context;
 mod mcp;
 pub mod shell;
 mod state;
-#[cfg(feature = "code")]
 pub use code::execute_code_with_tools;
 pub use context::to_tool_context;
 pub use mcp::get_mcp_tools;
 mod builtin;
 pub mod skill_script;
 pub mod tool_search;
-mod wasm;
-#[cfg(feature = "code")]
-pub use builtin::DistriExecuteCodeTool;
-pub use builtin::{get_builtin_tools, AgentTool, ConsoleLogTool, FinalTool, TransferToAgentTool};
+pub use builtin::{
+    get_builtin_tools, AgentTool, ConsoleLogTool, DistriExecuteCodeTool, FinalTool,
+    TransferToAgentTool,
+};
 pub use tool_search::ToolSearchTool;
-pub use wasm::{WasmTool, WasmToolLoader, WasmToolMetadata};
-
-/// Plugin tool loader that wraps a pre-loaded HashMap of tools.
-/// Used for OSS deployments where plugins are loaded from filesystem via plugin_registry.
-#[derive(Debug, Clone)]
-pub struct HashMapPluginToolLoader {
-    tools: HashMap<String, Vec<Arc<dyn Tool>>>,
-}
-
-impl HashMapPluginToolLoader {
-    pub fn new(tools: HashMap<String, Vec<Arc<dyn Tool>>>) -> Self {
-        Self { tools }
-    }
-}
-
-#[async_trait::async_trait]
-impl distri_types::stores::PluginToolLoader for HashMapPluginToolLoader {
-    async fn list_packages(&self) -> anyhow::Result<Vec<String>> {
-        Ok(self.tools.keys().cloned().collect())
-    }
-
-    async fn get_package_tools(&self, package_name: &str) -> anyhow::Result<Vec<Arc<dyn Tool>>> {
-        Ok(self.tools.get(package_name).cloned().unwrap_or_default())
-    }
-
-    async fn has_package(&self, package_name: &str) -> anyhow::Result<bool> {
-        Ok(self.tools.contains_key(package_name))
-    }
-}
-
-/// Unified plugin tool that executes DAP tools using the unified plugin system
-#[derive(Debug, Clone)]
-pub struct PluginTool {
-    pub name: String,
-    pub description: String,
-    pub parameters: serde_json::Value,
-    pub package_name: String,
-    pub plugin_path: std::path::PathBuf,
-    pub auth_requirement: Option<distri_types::auth::AuthRequirement>,
-}
-
-/// Tool wrapper for tenant plugins loaded from database.
-/// Similar to PluginTool but loads code on-demand from stored code.
-#[derive(Debug, Clone)]
-pub struct TenantPluginTool {
-    pub name: String,
-    pub description: String,
-    pub parameters: serde_json::Value,
-    pub package_name: String,  // e.g., "tenant:vivek/slack"
-    pub plugin_code: String,   // The actual plugin code
-    pub plugin_name: String,   // e.g., "slack"
-    pub plugin_version: Option<String>,
-    pub plugin_description: Option<String>,
-}
 
 #[derive(Debug, Clone)]
 pub struct DynExecutorTool {
@@ -103,85 +42,6 @@ impl DynExecutorTool {
 
     pub fn inner(&self) -> Arc<dyn ExecutorContextTool> {
         self.inner.clone()
-    }
-}
-
-/// Auth providers configuration structure
-#[derive(Debug, Clone, Deserialize, Default)]
-pub struct AuthProvidersConfig {
-    #[serde(rename = "oauth_providers", default)]
-    pub oauth_providers: Option<OAuthProvidersConfig>,
-    #[serde(rename = "secret_providers", default)]
-    pub secret_providers: Vec<SecretProviderConfig>,
-    #[serde(default)]
-    pub tool_providers: HashMap<String, String>,
-}
-
-#[derive(Debug, Clone, Deserialize, Default)]
-pub struct OAuthProvidersConfig {
-    #[serde(default)]
-    pub providers: Vec<OAuthProviderConfig>,
-}
-
-#[derive(Debug, Clone, Deserialize, Default)]
-pub struct OAuthProviderConfig {
-    pub name: String,
-    #[serde(rename = "type")]
-    pub provider_type: String,
-    pub authorization_url: String,
-    pub token_url: String,
-    #[serde(default)]
-    pub refresh_url: Option<String>,
-    #[serde(default)]
-    pub scopes_supported: Vec<String>,
-    #[serde(default)]
-    pub default_scopes: Option<Vec<String>>,
-    #[serde(default)]
-    pub scope_mappings: HashMap<String, String>,
-    #[serde(default)]
-    pub env_vars: HashMap<String, String>,
-    #[serde(default)]
-    pub send_redirect_uri: Option<bool>,
-}
-
-#[derive(Debug, Clone, Deserialize, Default)]
-pub struct SecretProviderConfig {
-    pub name: String,
-    #[serde(default)]
-    pub secret_fields: Vec<SecretField>,
-    #[serde(default)]
-    pub scopes: Vec<String>,
-}
-
-#[derive(Debug, Clone, Deserialize, Default)]
-pub struct SecretField {
-    pub key: String,
-    pub label: String,
-    pub description: String,
-    #[serde(default)]
-    pub optional: bool,
-}
-
-impl PluginTool {
-    /// Load auth providers configuration
-    fn load_auth_providers_config(&self) -> AuthProvidersConfig {
-        // Try to load from environment variable first
-        if let Ok(path) = std::env::var("AUTH_PROVIDERS_CONFIG") {
-            if let Ok(contents) = std::fs::read_to_string(&path) {
-                if let Ok(config) = serde_json::from_str::<AuthProvidersConfig>(&contents) {
-                    return config;
-                } else {
-                    tracing::warn!("Failed to parse auth providers config at {}", path);
-                }
-            } else {
-                tracing::warn!("Failed to read auth providers config from {}", path);
-            }
-        }
-
-        // Fallback to default config
-        let default_config = distri_auth::default_auth_providers();
-        serde_json::from_str(&default_config)
-            .expect("Invalid default auth provider configuration JSON")
     }
 }
 
@@ -268,12 +128,7 @@ pub fn cast_to_executor_context_tool(
         )));
     }
 
-    // Try to downcast to PluginTool
     use std::any::Any;
-    if let Some(plugin_tool) = (tool as &dyn Any).downcast_ref::<PluginTool>() {
-        return Ok(Box::new(plugin_tool.clone()));
-    }
-
     if let Some(dyn_tool) = (tool as &dyn Any).downcast_ref::<DynExecutorTool>() {
         return Ok(Box::new(dyn_tool.clone()));
     }
@@ -282,8 +137,6 @@ pub fn cast_to_executor_context_tool(
     match tool_name.as_str() {
         "final" => Ok(Box::new(FinalTool)),
         "transfer_to_agent" => Ok(Box::new(TransferToAgentTool)),
-        #[cfg(feature = "code")]
-        "distri_execute_code" => Ok(Box::new(DistriExecuteCodeTool)),
         "write_todos" => Ok(Box::new(TodosTool)),
         // Browsr tools
         "browsr_scrape" => Ok(Box::new(DistriScrapeSharedTool)),
@@ -296,6 +149,8 @@ pub fn cast_to_executor_context_tool(
         "stop_shell" => Ok(Box::new(shell::StopShellTool)),
         "load_skill" => Ok(Box::new(skill_script::LoadSkillTool)),
         "run_skill_script" => Ok(Box::new(skill_script::RunSkillScriptTool)),
+        // Code execution
+        "distri_execute_code" => Ok(Box::new(DistriExecuteCodeTool)),
         // Tool discovery
         "tool_search" => Ok(Box::new(tool_search::ToolSearchTool)),
         name if name.starts_with("call_") => {
@@ -312,499 +167,6 @@ pub fn cast_to_executor_context_tool(
 }
 
 pub const APPROVAL_REQUEST_TOOL_NAME: &str = "approval_request";
-
-impl PluginTool {
-    pub fn new(
-        name: String,
-        description: String,
-        parameters: serde_json::Value,
-        package_name: String,
-        plugin_path: std::path::PathBuf,
-        auth_requirement: Option<distri_types::auth::AuthRequirement>,
-    ) -> Self {
-        Self {
-            name,
-            description,
-            parameters,
-            package_name,
-            plugin_path,
-            auth_requirement,
-        }
-    }
-
-    pub fn get_auth_handler(
-        &self,
-        context: &Arc<ExecutorContext>,
-    ) -> Result<Arc<OAuthHandler>, AgentError> {
-        let orchestrator = context.get_orchestrator()?;
-        let auth_handler = orchestrator.tool_auth_handler.clone();
-        Ok(auth_handler)
-    }
-
-    /// Get OAuth session for a tool that requires authentication
-    async fn get_oauth_session_for_tool(
-        &self,
-        auth_metadata: &Box<dyn distri_types::auth::AuthMetadata>,
-        context: &Arc<ExecutorContext>,
-    ) -> Result<serde_json::Value, AgentError> {
-        let provider_name = auth_metadata.get_auth_entity();
-
-        tracing::debug!(
-            "Getting OAuth session for tool '{}' with provider '{}'",
-            self.name,
-            provider_name
-        );
-        let auth_handler = self.get_auth_handler(context)?;
-
-        // Create auth store and load sessions
-
-        let session = auth_handler
-            .get_session(&provider_name, &context.user_id)
-            .await
-            .map_err(|e| {
-                AgentError::ToolExecution(format!(
-                    "Failed to get OAuth session for tool '{}': {}",
-                    self.name, e
-                ))
-            })?
-            .ok_or(AgentError::ToolExecution(format!(
-                "No OAuth session found for tool '{}' with provider '{}'",
-                self.name, provider_name
-            )))?;
-
-        tracing::debug!(
-            "🔐 Injecting OAuth session for tool '{}' with provider '{}' (possibly refreshed)",
-            self.name,
-            provider_name
-        );
-
-        // Clean session object that tools can access via context.session
-        Ok(serde_json::json!({
-            "type": "access_token",
-            "provider": provider_name,
-            "access_token": session.access_token,
-            "scopes": session.scopes,
-            "expires_at": session.expires_at
-        }))
-    }
-
-    /// Load API key secrets (not OAuth tokens) from auth store for plugin context
-    async fn load_secrets_from_auth_store(
-        &self,
-        context: &Arc<ExecutorContext>,
-    ) -> Result<std::collections::HashMap<String, String>, AgentError> {
-        let auth_handler = self.get_auth_handler(context)?;
-        let stored_secrets = auth_handler
-            .list_secrets(&context.user_id)
-            .await
-            .unwrap_or_default();
-        tracing::debug!("Found {} stored secrets for loading", stored_secrets.len());
-
-        if let Some(distri_types::auth::AuthRequirement::Secret { provider, fields }) =
-            &self.auth_requirement
-        {
-            let mut secrets = std::collections::HashMap::new();
-            let mut missing = Vec::new();
-
-            for field in fields {
-                let value = Self::resolve_secret_value(&stored_secrets, provider, &field.key);
-                if let Some(secret_value) = value {
-                    secrets.insert(field.key.clone(), secret_value);
-                } else if !field.optional {
-                    tracing::debug!(
-                        "Secret field '{}' missing for provider '{}' (available keys: {:?})",
-                        field.key,
-                        provider,
-                        stored_secrets.keys().collect::<Vec<_>>()
-                    );
-                    missing.push(field.key.clone());
-                }
-            }
-
-            if !missing.is_empty() {
-                return Err(AgentError::AuthRequired(format!(
-                    "Missing secrets for tool '{}': {}. Use `distri secrets set <key> <secret> --provider {}` to store them.",
-                    self.name,
-                    missing.join(", "),
-                    provider
-                )));
-            }
-
-            return Ok(secrets);
-        }
-
-        let mut secrets = std::collections::HashMap::new();
-
-        for (key, secret) in stored_secrets {
-            let normalized_key = key
-                .split_once('|')
-                .map(|(_, value)| value.to_string())
-                .or_else(|| key.split_once("::").map(|(_, value)| value.to_string()))
-                .unwrap_or(key);
-            secrets.insert(normalized_key, secret.get_secret().to_string());
-            tracing::debug!("Loaded stored secret entry");
-        }
-
-        Ok(secrets)
-    }
-
-    fn resolve_secret_value(
-        stored_secrets: &std::collections::HashMap<String, distri_types::auth::AuthSecret>,
-        provider: &str,
-        key: &str,
-    ) -> Option<String> {
-        let provider_key = format!("{}|{}", provider, key);
-        let provider_double_colon = format!("{}::{}", provider, key);
-        stored_secrets
-            .get(&provider_key)
-            .or_else(|| stored_secrets.get(&provider_double_colon))
-            .or_else(|| stored_secrets.get(key))
-            .map(|secret| secret.get_secret().to_string())
-    }
-
-    /// Simple validation: check if tool needs auth and if we have a saved token
-    async fn validate_authentication(
-        &self,
-        auth_metadata: &Box<dyn distri_types::auth::AuthMetadata>,
-        context: &Arc<ExecutorContext>,
-    ) -> Result<(), AgentError> {
-        let auth_type = auth_metadata.get_auth_type();
-        let provider_name = auth_metadata.get_auth_entity();
-        let orchestrator = context.get_orchestrator()?;
-        match &auth_type {
-            distri_types::auth::AuthType::OAuth2 { scopes, .. } => {
-                tracing::debug!(
-                    "Tool '{}' requires OAuth2 authentication with provider '{}'",
-                    self.name,
-                    provider_name
-                );
-                // Simple check: do we have any session for this provider?
-                match orchestrator
-                    .tool_auth_handler
-                    .refresh_get_session(&provider_name, &context.user_id, &auth_type)
-                    .await
-                {
-                    Ok(Some(session)) => {
-                        if !scopes.is_empty() {
-                            let missing_scopes: Vec<String> = scopes
-                                .iter()
-                                .filter(|required| {
-                                    session.scopes.iter().all(|granted| granted != *required)
-                                })
-                                .cloned()
-                                .collect();
-
-                            if !missing_scopes.is_empty() {
-                                tracing::debug!(
-                                    "OAuth scopes missing for '{}': {:?}",
-                                    self.name,
-                                    missing_scopes
-                                );
-                                return Err(AgentError::AuthRequired(
-                                    self.build_auth_login_message(
-                                        &provider_name,
-                                        Some(scopes),
-                                        Some(&missing_scopes),
-                                    ),
-                                ));
-                            }
-                        }
-
-                        tracing::debug!(
-                            "✅ Found saved authentication for tool '{}' with provider '{}'",
-                            self.name,
-                            provider_name
-                        );
-                        Ok(()) // We have a token, let the plugin do scope validation
-                    }
-                    Ok(None) => {
-                        // No session - need to authenticate
-                        Err(AgentError::AuthRequired(self.build_auth_login_message(
-                            &provider_name,
-                            Some(scopes),
-                            None,
-                        )))
-                    }
-                    Err(e) => {
-                        tracing::warn!("Error checking session for tool '{}': {}", self.name, e);
-                        Ok(()) // Allow execution, let TypeScript tool handle the error
-                    }
-                }
-            }
-            distri_types::auth::AuthType::Secret { .. } => {
-                // Ensure required secrets are present (errors bubble up)
-                let _ = self.load_secrets_from_auth_store(context).await?;
-                Ok(())
-            }
-            distri_types::auth::AuthType::None => Ok(()), // No auth required
-        }
-    }
-
-    /// Parse authentication errors from plugin execution to extract structured error info
-    fn parse_plugin_auth_error(&self, error_msg: &str) -> Option<String> {
-        // Look for common authentication error patterns
-        if error_msg.contains("requires authentication")
-            || error_msg.contains("Please run: /auth login")
-        {
-            // Extract the login command if present
-            if let Some(start) = error_msg.find("/auth login") {
-                if let Some(end) = error_msg[start..]
-                    .find('\n')
-                    .or_else(|| error_msg[start..].find('.'))
-                {
-                    let login_cmd = &error_msg[start..start + end];
-                    return Some(format!(
-                        "🔐 Tool '{}' requires authentication\n💡 Run: {}",
-                        self.name, login_cmd
-                    ));
-                } else {
-                    // Extract just the auth login part
-                    let login_cmd = &error_msg[start..];
-                    return Some(format!(
-                        "🔐 Tool '{}' requires authentication\n💡 Run: {}",
-                        self.name,
-                        login_cmd.trim()
-                    ));
-                }
-            }
-
-            // Fallback: generic auth required message
-            if let Some(auth_metadata) = self.get_auth_metadata() {
-                let provider_name = auth_metadata.get_auth_entity();
-                if let distri_types::auth::AuthType::OAuth2 { scopes, .. } =
-                    auth_metadata.get_auth_type()
-                {
-                    return Some(self.build_auth_login_message(
-                        &provider_name,
-                        Some(&scopes),
-                        None,
-                    ));
-                }
-                return Some(self.build_auth_login_message(&provider_name, None, None));
-            }
-        }
-
-        if error_msg.contains("insufficient authentication scopes")
-            || error_msg.contains("ACCESS_TOKEN_SCOPE_INSUFFICIENT")
-            || error_msg.contains("Insufficient Permission")
-        {
-            if let Some(auth_metadata) = self.get_auth_metadata() {
-                let provider_name = auth_metadata.get_auth_entity();
-                if let distri_types::auth::AuthType::OAuth2 { scopes, .. } =
-                    auth_metadata.get_auth_type()
-                {
-                    return Some(self.build_auth_login_message(
-                        &provider_name,
-                        Some(&scopes),
-                        None,
-                    ));
-                }
-
-                return Some(self.build_auth_login_message(&provider_name, None, None));
-            }
-        }
-
-        // Not an authentication error
-        None
-    }
-}
-
-impl PluginTool {
-    fn build_auth_login_message(
-        &self,
-        provider: &str,
-        required_scopes: Option<&[String]>,
-        missing_scopes: Option<&[String]>,
-    ) -> String {
-        let required_scopes = required_scopes.unwrap_or(&[]);
-
-        let joined_scopes = if required_scopes.is_empty() {
-            String::new()
-        } else {
-            required_scopes
-                .iter()
-                .map(|s| s.as_str())
-                .collect::<Vec<_>>()
-                .join(" ")
-        };
-
-        let scopes_description = if required_scopes.is_empty() {
-            String::new()
-        } else {
-            format!(
-                " with scopes [{}]",
-                required_scopes
-                    .iter()
-                    .map(|s| s.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )
-        };
-
-        let mut message = format!(
-            "🔐 Tool '{}' requires {} authentication{}",
-            self.name, provider, scopes_description
-        );
-
-        if let Some(missing) = missing_scopes {
-            if !missing.is_empty() {
-                message.push_str(&format!(
-                    "\n⚠️ Missing scopes detected: {}",
-                    missing
-                        .iter()
-                        .map(|s| s.as_str())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ));
-            }
-        }
-
-        let scope_suffix = if joined_scopes.is_empty() {
-            String::new()
-        } else {
-            format!(" {}", joined_scopes)
-        };
-
-        message.push_str(&format!(
-            "\n💡 Run: /auth login {}{}",
-            provider, scope_suffix
-        ));
-        message.push_str(&format!(
-            "\n💡 CLI: distri auth login {}{}",
-            provider, scope_suffix
-        ));
-
-        message
-    }
-}
-
-#[async_trait::async_trait]
-impl Tool for PluginTool {
-    fn get_name(&self) -> String {
-        self.name.clone()
-    }
-
-    fn get_description(&self) -> String {
-        self.description.clone()
-    }
-
-    fn get_parameters(&self) -> serde_json::Value {
-        self.parameters.clone()
-    }
-
-    fn needs_executor_context(&self) -> bool {
-        true // DAP tools need ExecutorContext to access plugin system
-    }
-
-    fn get_plugin_name(&self) -> Option<String> {
-        Some(self.package_name.clone())
-    }
-
-    fn get_auth_metadata(&self) -> Option<Box<dyn distri_types::auth::AuthMetadata>> {
-        let auth_config = self.load_auth_providers_config();
-        let get_oauth_provider = |provider: &str| {
-            auth_config
-                .oauth_providers
-                .as_ref()
-                .and_then(|cfg| cfg.providers.iter().find(|p| p.name == provider))
-        };
-
-        let from_auth_requirement = |auth_req: &distri_types::auth::AuthRequirement| -> Option<Box<dyn distri_types::auth::AuthMetadata>> {
-            match auth_req {
-                distri_types::auth::AuthRequirement::OAuth2 {
-                    provider,
-                    scopes,
-                    authorization_url,
-                    token_url,
-                    refresh_url,
-                    send_redirect_uri,
-                } => {
-                    let provider_cfg = get_oauth_provider(provider);
-                    let scopes = if scopes.is_empty() {
-                        provider_cfg
-                            .and_then(|cfg| cfg.default_scopes.clone())
-                            .unwrap_or_default()
-                    } else {
-                        scopes.clone()
-                    };
-
-                    let authorization_url = authorization_url
-                        .clone()
-                        .or_else(|| provider_cfg.map(|cfg| cfg.authorization_url.clone()))
-                        .unwrap_or_else(|| format!("https://accounts.{}.com/oauth/authorize", provider));
-                    let token_url = token_url
-                        .clone()
-                        .or_else(|| provider_cfg.map(|cfg| cfg.token_url.clone()))
-                        .unwrap_or_else(|| format!("https://oauth2.{}.com/token", provider));
-                    let refresh_url = refresh_url
-                        .clone()
-                        .or_else(|| provider_cfg.and_then(|cfg| cfg.refresh_url.clone()));
-                    let send_redirect = send_redirect_uri
-                        .or_else(|| provider_cfg.and_then(|cfg| cfg.send_redirect_uri))
-                        .unwrap_or(true);
-
-                    let mut metadata = distri_auth::OAuth2AuthMetadata::new(
-                        provider.clone(),
-                        authorization_url,
-                        token_url,
-                        scopes,
-                    );
-
-                    if let Some(refresh) = refresh_url {
-                        metadata = metadata.with_refresh_url(refresh);
-                    }
-
-                    metadata = metadata.with_redirect_behavior(send_redirect);
-
-                    Some(Box::new(metadata))
-                }
-                distri_types::auth::AuthRequirement::Secret { provider, fields } => {
-                    let resolved_fields = if !fields.is_empty() {
-                        fields.clone()
-                    } else {
-                            auth_config
-                                .secret_providers
-                                .iter()
-                                .find(|cfg| cfg.name == *provider)
-                                .map(|cfg| {
-                                    cfg.secret_fields
-                                        .iter()
-                                        .map(|field| distri_types::auth::SecretFieldSpec {
-                                            key: field.key.clone(),
-                                            label: Some(field.label.clone()),
-                                            description: Some(field.description.clone()),
-                                            optional: field.optional,
-                                        })
-                                        .collect()
-                                })
-                                .unwrap_or_default()
-                    };
-
-                    Some(Box::new(distri_auth::SecretAuthMetadata::new(
-                        provider.clone(),
-                        provider.clone(),
-                        resolved_fields,
-                    )))
-                }
-            }
-        };
-
-        self.auth_requirement
-            .as_ref()
-            .and_then(|req| from_auth_requirement(req))
-    }
-
-    async fn execute(
-        &self,
-        _tool_call: distri_types::ToolCall,
-        _context: std::sync::Arc<distri_types::tool::ToolContext>,
-    ) -> anyhow::Result<Vec<distri_types::Part>> {
-        // This should never be called since needs_executor_context() returns true
-        Err(anyhow::anyhow!(
-            "PluginTool requires ExecutorContext, not ToolContext"
-        ))
-    }
-}
 
 #[async_trait::async_trait]
 impl Tool for DynExecutorTool {
@@ -844,164 +206,6 @@ impl Tool for DynExecutorTool {
 }
 
 #[async_trait::async_trait]
-impl ExecutorContextTool for PluginTool {
-    async fn execute_with_executor_context(
-        &self,
-        tool_call: crate::types::ToolCall,
-        context: Arc<ExecutorContext>,
-    ) -> Result<Vec<distri_types::Part>, AgentError> {
-        tracing::debug!(
-            "Executing plugin tool: {} from package: {}",
-            self.name,
-            self.package_name
-        );
-
-        let auth_metadata = self.get_auth_metadata();
-
-        // Basic auth check: ensure we have a saved token if tool requires auth
-        if let Some(auth_metadata) = auth_metadata.as_ref() {
-            if let Err(e) = self.validate_authentication(auth_metadata, &context).await {
-                return Err(e);
-            }
-        }
-
-        // Parse input parameters
-        tracing::debug!("Tool parameters: {:?}", tool_call.input);
-
-        // Get the orchestrator to access the plugin system
-        let orchestrator = context
-            .get_orchestrator()
-            .map_err(|e| AgentError::ToolExecution(format!("Failed to get orchestrator: {}", e)))?;
-
-        // Get the plugin system from the DAP registry
-        let plugins_registry = orchestrator.plugin_registry.clone();
-
-        // Extract actual tool name from full name (remove package prefix if present)
-        let actual_tool_name = if self.name.contains('/') {
-            // self.name is "package/tool_name", extract just "tool_name"
-            self.name
-                .split('/')
-                .last()
-                .unwrap_or(&self.name)
-                .to_string()
-        } else {
-            // self.name is just "tool_name"
-            self.name.clone()
-        };
-
-        let mut tool_call = tool_call.clone();
-        tool_call.tool_name = actual_tool_name.clone();
-
-        // Get OAuth session for tools that require authentication
-        let session_data = if let Some(auth_metadata) = auth_metadata.as_ref() {
-            match auth_metadata.get_auth_type() {
-                AuthType::OAuth2 { .. } => {
-                    let session_info = self
-                        .get_oauth_session_for_tool(auth_metadata, &context)
-                        .await?;
-                    tracing::debug!(
-                        "🔧 Tool '{}' will receive session: {:?}",
-                        self.name,
-                        session_info
-                    );
-                    session_info
-                }
-                AuthType::Secret { .. } => {
-                    tracing::debug!(
-                        "Tool '{}' uses secret-based auth; skipping OAuth session injection",
-                        self.name
-                    );
-                    serde_json::Value::Null
-                }
-                AuthType::None => {
-                    tracing::debug!("Tool '{}' has no auth requirements", self.name);
-                    serde_json::Value::Null
-                }
-            }
-        } else {
-            tracing::debug!("Tool '{}' has no auth requirements", self.name);
-            serde_json::Value::Null
-        };
-
-        // Load secrets from auth store for plugin context
-        let secrets = self.load_secrets_from_auth_store(&context).await?;
-
-        // Build env_vars by merging ExecutorContext env_vars with resolved OAuth tokens
-        let mut merged_env_vars: std::collections::HashMap<String, String> =
-            context.env_vars.clone().unwrap_or_default();
-        if !session_data.is_null() {
-            if let Some(token) = session_data.get("access_token").and_then(|v| v.as_str()) {
-                merged_env_vars.insert("ACCESS_TOKEN".to_string(), token.to_string());
-            }
-            if let Some(token_type) = session_data.get("token_type").and_then(|v| v.as_str()) {
-                merged_env_vars.insert("TOKEN_TYPE".to_string(), token_type.to_string());
-            }
-        }
-
-        // Create ExecutionContext for the plugin system
-        let plugin_context = distri_plugin_executor::PluginContext {
-            call_id: uuid::Uuid::new_v4().to_string(),
-            agent_id: Some(context.agent_id.clone()),
-            session_id: Some(context.session_id.clone()),
-            task_id: Some(context.task_id.clone()),
-            run_id: Some(context.run_id.clone()),
-            user_id: Some(context.user_id.clone()),
-            params: serde_json::json!({}),
-            secrets,
-            env_vars: if merged_env_vars.is_empty() {
-                None
-            } else {
-                Some(merged_env_vars)
-            },
-        };
-
-        // Ensure plugin module is loaded before execution
-        if let Err(err) = orchestrator
-            .plugin_registry
-            .ensure_plugin_loaded(&self.package_name)
-            .await
-        {
-            return Err(AgentError::ToolExecution(format!(
-                "Failed to load plugin '{}': {}",
-                self.package_name, err
-            )));
-        }
-
-        // Execute the tool using the unified plugin system
-        match plugins_registry
-            .plugin_system
-            .execute_tool(&self.package_name, &tool_call, plugin_context)
-            .await
-        {
-            Ok(result) => {
-                // Check if the result is already a Part array (from new TypeScript tools)
-                if let Ok(parts) = serde_json::from_value::<Vec<distri_types::Part>>(result.clone())
-                {
-                    // TypeScript tool returned Part array - use it directly
-                    Ok(parts)
-                } else {
-                    // Legacy TypeScript tool returned plain data - wrap in Part::Data
-                    Ok(vec![distri_types::Part::Data(result)])
-                }
-            }
-            Err(e) => {
-                let error_msg = e.to_string();
-
-                // Check if this is an authentication error from the plugin
-                if let Some(auth_error) = self.parse_plugin_auth_error(&error_msg) {
-                    Err(AgentError::AuthRequired(auth_error))
-                } else {
-                    Err(AgentError::ToolExecution(format!(
-                        "Plugin execution failed: {}",
-                        e
-                    )))
-                }
-            }
-        }
-    }
-}
-
-#[async_trait::async_trait]
 impl ExecutorContextTool for DynExecutorTool {
     async fn execute_with_executor_context(
         &self,
@@ -1011,150 +215,6 @@ impl ExecutorContextTool for DynExecutorTool {
         self.inner
             .execute_with_executor_context(tool_call, context)
             .await
-    }
-}
-
-// ========== TenantPluginTool Implementation ==========
-
-impl TenantPluginTool {
-    pub fn new(
-        name: String,
-        description: String,
-        parameters: serde_json::Value,
-        package_name: String,
-        plugin_code: String,
-        plugin_name: String,
-        plugin_version: Option<String>,
-        plugin_description: Option<String>,
-    ) -> Self {
-        Self {
-            name,
-            description,
-            parameters,
-            package_name,
-            plugin_code,
-            plugin_name,
-            plugin_version,
-            plugin_description,
-        }
-    }
-}
-
-#[async_trait::async_trait]
-impl Tool for TenantPluginTool {
-    fn get_name(&self) -> String {
-        self.name.clone()
-    }
-
-    fn get_description(&self) -> String {
-        self.description.clone()
-    }
-
-    fn get_parameters(&self) -> serde_json::Value {
-        self.parameters.clone()
-    }
-
-    fn needs_executor_context(&self) -> bool {
-        true // Tenant plugin tools need ExecutorContext to access plugin system
-    }
-
-    fn get_plugin_name(&self) -> Option<String> {
-        Some(self.package_name.clone())
-    }
-
-    fn get_auth_metadata(&self) -> Option<Box<dyn distri_types::auth::AuthMetadata>> {
-        None // TODO: Support auth for tenant plugins
-    }
-
-    async fn execute(
-        &self,
-        _tool_call: ToolCall,
-        _context: Arc<distri_types::tool::ToolContext>,
-    ) -> Result<Vec<Part>, anyhow::Error> {
-        Err(anyhow::anyhow!(
-            "TenantPluginTool requires ExecutorContext for execution"
-        ))
-    }
-}
-
-#[async_trait::async_trait]
-impl ExecutorContextTool for TenantPluginTool {
-    async fn execute_with_executor_context(
-        &self,
-        tool_call: ToolCall,
-        context: Arc<ExecutorContext>,
-    ) -> Result<Vec<Part>, AgentError> {
-        use crate::agent::InMemoryPluginResolver;
-        use distri_plugin_executor::plugin_trait::PluginLoadContext;
-        use distri_plugin_executor::PluginContext;
-        use distri_types::configuration::DistriServerConfig;
-
-        tracing::debug!(
-            "Executing tenant plugin tool: {} from package: {}",
-            self.name,
-            self.package_name
-        );
-
-        // Get the orchestrator to access the plugin system
-        let orchestrator = context
-            .get_orchestrator()
-            .map_err(|e| AgentError::ToolExecution(format!("Failed to get orchestrator: {}", e)))?;
-
-        let plugin_system = orchestrator.plugin_registry.plugin_system();
-        let entrypoint = "index.ts".to_string();
-
-        // Load the plugin if not already loaded (uses package_name as cache key)
-        let resolver = Arc::new(InMemoryPluginResolver::new(
-            self.plugin_code.clone(),
-            entrypoint.clone(),
-        ));
-
-        let manifest = DistriServerConfig {
-            name: self.plugin_name.clone(),
-            version: self.plugin_version.clone().unwrap_or_else(|| "0.1.0".to_string()),
-            description: self.plugin_description.clone(),
-            ..Default::default()
-        };
-
-        let load_context = PluginLoadContext {
-            package_name: self.package_name.clone(),
-            entrypoint: Some(entrypoint),
-            manifest,
-            resolver,
-        };
-
-        // load_plugin is idempotent - if already loaded with same package_name, it returns Ok
-        plugin_system.load_plugin(load_context).await.map_err(|e| {
-            AgentError::ToolExecution(format!("Failed to load tenant plugin: {}", e))
-        })?;
-
-        // Create plugin execution context
-        let plugin_context = PluginContext {
-            call_id: uuid::Uuid::new_v4().to_string(),
-            agent_id: None,
-            session_id: Some(context.session_id.clone()),
-            task_id: Some(context.task_id.clone()),
-            run_id: Some(context.run_id.clone()),
-            user_id: Some(context.user_id.clone()),
-            params: serde_json::Value::Null,
-            secrets: std::collections::HashMap::new(),
-            env_vars: context.env_vars.clone(),
-        };
-
-        // Execute the tool
-        let plugin_tool_call = ToolCall {
-            tool_call_id: tool_call.tool_call_id.clone(),
-            tool_name: self.name.clone(),
-            input: tool_call.input.clone(),
-        };
-
-        let result = plugin_system
-            .execute_tool(&self.package_name, &plugin_tool_call, plugin_context)
-            .await
-            .map_err(|e| AgentError::ToolExecution(format!("Tenant plugin execution failed: {}", e)))?;
-
-        // Wrap result in Part::Data
-        Ok(vec![Part::Data(result)])
     }
 }
 
@@ -1371,4 +431,153 @@ pub async fn emit_final(
     context.set_final_result(Some(result)).await;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── cast_to_executor_context_tool ───────────────────────────
+
+    #[test]
+    fn cast_final_tool() {
+        let tool = FinalTool;
+        let result = cast_to_executor_context_tool(&tool);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn cast_transfer_to_agent_tool() {
+        let tool = TransferToAgentTool;
+        let result = cast_to_executor_context_tool(&tool);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn cast_start_shell_tool() {
+        let tool = shell::StartShellTool;
+        let result = cast_to_executor_context_tool(&tool);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn cast_execute_shell_tool() {
+        let tool = shell::ExecuteShellTool;
+        let result = cast_to_executor_context_tool(&tool);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn cast_stop_shell_tool() {
+        let tool = shell::StopShellTool;
+        let result = cast_to_executor_context_tool(&tool);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn cast_distri_execute_code_tool() {
+        let tool = DistriExecuteCodeTool;
+        let result = cast_to_executor_context_tool(&tool);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn cast_tool_search_tool() {
+        let tool = ToolSearchTool;
+        let result = cast_to_executor_context_tool(&tool);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn cast_agent_tool_with_call_prefix() {
+        // AgentTool is returned for any "call_*" tool name
+        let tool = AgentTool::new("my_agent".to_string());
+        let result = cast_to_executor_context_tool(&tool);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn cast_agent_tool_with_package_name() {
+        let tool = AgentTool::new("pkg/agent".to_string());
+        // Tool name becomes "call_pkg__agent"
+        assert_eq!(tool.get_name(), "call_pkg__agent");
+        let result = cast_to_executor_context_tool(&tool);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn cast_unknown_tool_returns_error() {
+        // Create a simple mock tool that returns an unknown name
+        #[derive(Debug)]
+        struct UnknownTool;
+        #[async_trait::async_trait]
+        impl Tool for UnknownTool {
+            fn get_name(&self) -> String { "totally_unknown_tool".to_string() }
+            fn get_description(&self) -> String { String::new() }
+            fn get_parameters(&self) -> serde_json::Value { serde_json::json!({}) }
+            async fn execute(
+                &self, _: ToolCall, _: Arc<distri_types::ToolContext>,
+            ) -> Result<Vec<Part>, anyhow::Error> { Ok(vec![]) }
+        }
+        let tool = UnknownTool;
+        let result = cast_to_executor_context_tool(&tool);
+        assert!(result.is_err());
+    }
+
+    // ── matches_pattern ─────────────────────────────────────────
+
+    #[test]
+    fn pattern_wildcard_matches_everything() {
+        assert!(matches_pattern("anything", "*"));
+    }
+
+    #[test]
+    fn pattern_exact_match() {
+        assert!(matches_pattern("search", "search"));
+    }
+
+    #[test]
+    fn pattern_exact_no_match() {
+        assert!(!matches_pattern("search", "scrape"));
+    }
+
+    #[test]
+    fn pattern_prefix_wildcard() {
+        assert!(matches_pattern("browsr_search", "browsr_*"));
+    }
+
+    #[test]
+    fn pattern_suffix_wildcard() {
+        assert!(matches_pattern("my_search_tool", "*_tool"));
+    }
+
+    #[test]
+    fn pattern_middle_wildcard() {
+        assert!(matches_pattern("browsr_search_tool", "browsr_*_tool"));
+    }
+
+    #[test]
+    fn pattern_wildcard_no_match() {
+        assert!(!matches_pattern("other_tool", "browsr_*"));
+    }
+
+    // ── Tool trait implementations ────────────────────────────────
+
+    #[test]
+    fn shell_tools_need_executor_context() {
+        assert!(shell::StartShellTool.needs_executor_context());
+        assert!(shell::ExecuteShellTool.needs_executor_context());
+        assert!(shell::StopShellTool.needs_executor_context());
+    }
+
+    #[test]
+    fn final_tool_is_final() {
+        assert!(FinalTool.is_final());
+    }
+
+    #[test]
+    fn distri_execute_code_tool_name() {
+        assert_eq!(DistriExecuteCodeTool.get_name(), "distri_execute_code");
+        assert!(DistriExecuteCodeTool.needs_executor_context());
+    }
 }

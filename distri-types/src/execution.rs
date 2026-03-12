@@ -7,7 +7,6 @@ use crate::{core::FileType, Part, PlanStep, TaskStatus, ToolResponse};
 /// Execution strategy types
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum ExecutionType {
-    Sequential,
     Interleaved,
     Retriable,
     React,

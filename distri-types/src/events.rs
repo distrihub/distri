@@ -121,33 +121,6 @@ pub enum AgentEventType {
         reason: Option<String>,
     },
 
-    // Workflow events
-    WorkflowStarted {
-        workflow_name: String,
-        total_steps: usize,
-    },
-    NodeStarted {
-        node_id: String,
-        node_name: String,
-        step_type: String,
-    },
-    NodeCompleted {
-        node_id: String,
-        node_name: String,
-        success: bool,
-        error: Option<String>,
-    },
-    RunCompleted {
-        workflow_name: String,
-        success: bool,
-        total_steps: usize,
-    },
-    RunFailed {
-        workflow_name: String,
-        error: String,
-        failed_at_step: Option<String>,
-    },
-
     BrowserScreenshot {
         image: String,
         format: Option<String>,

@@ -1,266 +1,298 @@
-use std::sync::{atomic::AtomicBool, Arc};
+use std::sync::Arc;
 
-use crate::{
-    agent::ExecutorContext,
-    tools::{context::to_tool_context, state::AgentExecutorState, ConsoleLogTool},
-    types::ToolCall,
+use crate::agent::ExecutorContext;
+use crate::tools::shell::{
+    BrowsrShellClient, CreateShellSessionRequest, ShellExecRequest,
 };
-use distri_types::Tool;
-
-// Note: distri_js_sandbox and rustyscript dependencies are disabled for now due to edition2024 compatibility issue
-use distri_js_sandbox::{FunctionDefinition, JsExecutor, JsWorker, JsWorkerError, JsWorkerOptions};
 use serde_json::Value;
 
 #[derive(Clone)]
 pub struct CodeExecutor {
-    pub context: Arc<ExecutorContext>,
-    pub tools: Vec<Arc<dyn Tool>>,
-    pub has_external_tools: Arc<AtomicBool>,
+    pub _context: Arc<ExecutorContext>,
 }
 
 impl CodeExecutor {
-    pub fn new(context: Arc<ExecutorContext>, tools: Vec<Arc<dyn Tool>>) -> Self {
-        Self {
-            context,
-            tools,
-            has_external_tools: Arc::new(AtomicBool::new(false)),
-        }
-    }
-
-    fn get_tool_def(&self, name: &str) -> Result<&Arc<dyn Tool>, JsWorkerError> {
-        let tool_def = self
-            .tools
-            .iter()
-            .find(|t| t.get_name() == name)
-            .ok_or_else(|| {
-                let available_tools: Vec<_> = self.tools.iter().map(|t| t.get_name()).collect();
-                tracing::error!(
-                    "🔧 CodeExecutor: Tool '{}' not found. Available tools: {:?}",
-                    name,
-                    available_tools
-                );
-                JsWorkerError::Other(format!(
-                    "Tool {} not found. Available tools: {:?}",
-                    name, available_tools
-                ))
-            })?;
-        Ok(tool_def)
+    pub fn new(context: Arc<ExecutorContext>) -> Self {
+        Self { _context: context }
     }
 }
 
-#[async_trait::async_trait]
-impl JsExecutor for CodeExecutor {
-    fn execute_sync(
-        &self,
-        name: &str,
-        args: Vec<serde_json::Value>,
-    ) -> Result<serde_json::Value, JsWorkerError> {
-        tracing::debug!(
-            "🔧 CodeExecutor: Executing tool '{}' with args: {:?}",
-            name,
-            args
-        );
-
-        // Handle tool calls by delegating to the actual tools
-        let tool_def = self.get_tool_def(name)?;
-        if !tool_def.is_sync() {
-            return Err(JsWorkerError::Other(format!("Tool {} is not sync", name)));
-        }
-
-        let input = if args.len() > 1 {
-            return Err(JsWorkerError::Other(
-                "Too many arguments provided".to_string(),
-            ));
-        } else if args.len() == 1 {
-            args.first().unwrap_or_default()
-        } else {
-            return Err(JsWorkerError::Other("No arguments provided".to_string()));
-        };
-        let tool_context = Arc::new(to_tool_context(&self.context));
-        let result = tool_def.execute_sync(
-            ToolCall {
-                tool_call_id: uuid::Uuid::new_v4().to_string(),
-                tool_name: name.to_string(),
-                input: input.clone(),
-            },
-            tool_context,
-        );
-        let result = match result {
-            Ok(result) => result,
-            Err(e) => {
-                tracing::error!(
-                    "🔧 CodeExecutor: Tool '{}' execution failed, error: {:?}",
-                    name,
-                    e
-                );
-                return Ok(Value::String(e.to_string()));
-            }
-        };
-
-        tracing::debug!("🔧 CodeExecutor: Tool '{}' execution successful", name,);
-
-        // Convert Vec<Part> back to Value for JavaScript compatibility
-        let value = if result.len() == 1 {
-            match &result[0] {
-                distri_types::Part::Data(data) => data.clone(),
-                _ => serde_json::json!({"result": result}),
-            }
-        } else {
-            serde_json::json!({"parts": result})
-        };
-
-        Ok(value)
-    }
-    async fn execute(
-        &self,
-        name: &str,
-        args: Vec<serde_json::Value>,
-    ) -> Result<serde_json::Value, JsWorkerError> {
-        tracing::debug!(
-            "🔧 CodeExecutor: Executing tool '{}' with args: {:?}",
-            name,
-            args
-        );
-
-        // Handle tool calls by delegating to the actual tools
-        let tool_def = self.get_tool_def(name)?;
-        if tool_def.is_sync() {
-            return Err(JsWorkerError::Other(format!("Tool {} is not async", name)));
-        }
-        let input = if args.len() > 1 {
-            return Err(JsWorkerError::Other("No arguments provided".to_string()));
-        } else if args.len() == 1 {
-            args.first().unwrap_or_default()
-        } else {
-            return Err(JsWorkerError::Other(
-                "Too many arguments provided".to_string(),
-            ));
-        };
-
-        let toolcall = ToolCall {
-            tool_call_id: uuid::Uuid::new_v4().to_string(),
-            tool_name: name.to_string(),
-            input: input.clone(),
-        };
-
-        // Emit tool call event
-        self.context
-            .emit(distri_types::AgentEventType::ToolCalls {
-                step_id: self.context.get_current_step_id().await.unwrap_or_default(),
-                parent_message_id: self.context.get_current_message_id().await,
-                tool_calls: vec![toolcall.clone()],
-            })
-            .await;
-        if tool_def.is_external() {
-            self.context
-                .update_status(crate::types::TaskStatus::InputRequired)
-                .await;
-            tracing::debug!("🔧 CodeExecutor: Tool '{}' is external", name);
-            self.has_external_tools
-                .store(true, std::sync::atomic::Ordering::Relaxed);
-            Ok(Value::Null)
-        } else {
-            // Check if tool needs ExecutorContext
-            let result = if tool_def.needs_executor_context() {
-                // Use unified tool execution function
-                use crate::tools::execute_tool_with_executor_context;
-                execute_tool_with_executor_context(
-                    tool_def.as_ref(),
-                    toolcall,
-                    self.context.clone(),
-                )
-                .await
-                .map_err(|e| anyhow::anyhow!("{}", e))
-            } else {
-                // Handle regular tools with ToolContext
-                let tool_context = Arc::new(to_tool_context(&self.context));
-                tool_def.execute(toolcall, tool_context).await
-            };
-
-            match result {
-                Ok(result) => {
-                    tracing::debug!("🔧 CodeExecutor: Tool '{}' execution successful", name);
-
-                    // Convert Vec<Part> back to Value for JavaScript compatibility
-                    let value = if result.len() == 1 {
-                        match &result[0] {
-                            distri_types::Part::Data(data) => data.clone(),
-                            _ => serde_json::json!({"result": result}),
-                        }
-                    } else {
-                        serde_json::json!({"parts": result})
-                    };
-
-                    Ok(value)
-                }
-                Err(e) => {
-                    tracing::error!(
-                        "🔧 CodeExecutor: Tool '{}' execution failed, error: {}",
-                        name,
-                        e
-                    );
-                    Ok(Value::String(e.to_string()))
-                }
-            }
-        }
-    }
-}
-
-/// Execute code with tool injection
+/// Execute code using a browsr shell session.
+///
+/// Creates an ephemeral shell session, runs the code, captures stdout/stderr,
+/// and destroys the session. Returns (result_value, observations, has_external_tools).
 pub async fn execute_code_with_tools(
     code: &str,
-    context: Arc<ExecutorContext>,
-) -> Result<(Value, Vec<String>, bool), JsWorkerError> {
-    // Get ALL tools from context (including MCP tools like search)
-    let mut all_tools = context.get_tools().await;
+    _context: Arc<ExecutorContext>,
+) -> Result<(Value, Vec<String>, bool), anyhow::Error> {
+    let client = BrowsrShellClient::from_env();
 
-    let code_state = Arc::new(AgentExecutorState::default());
-    // Remove existing console_log and final_answer tools to avoid duplicates
-    all_tools.retain(|tool| {
-        let name = tool.get_name();
-        name != "console_log"
+    // Detect language from code content (default to javascript for backward compat)
+    let language = detect_language(code);
+
+    // Create an ephemeral shell session
+    let session = client
+        .create_session(&CreateShellSessionRequest {
+            language: Some(language.to_string()),
+            image: None,
+            memory_mb: None,
+            disk_mb: None,
+            cpu_cores: None,
+            timeout_secs: Some(30),
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to create shell session: {}", e))?;
+
+    let session_id = session.session_id.clone();
+
+    // Wrap code for execution based on language
+    let command = wrap_code_for_execution(code, language);
+
+    // Execute the code
+    let result = client
+        .exec(&ShellExecRequest {
+            session_id: session_id.clone(),
+            command,
+            timeout_secs: Some(20),
+            working_dir: None,
+        })
+        .await;
+
+    // Always clean up the session
+    let _ = client.destroy_session(&session_id).await;
+
+    let response = result.map_err(|e| anyhow::anyhow!("Shell execution failed: {}", e))?;
+
+    // Collect observations from stdout
+    let mut observations = Vec::new();
+    if !response.stdout.is_empty() {
+        observations.push(response.stdout.clone());
+    }
+    if !response.stderr.is_empty() {
+        observations.push(format!("[stderr] {}", response.stderr));
+    }
+
+    // Build result value
+    let result_value = serde_json::json!({
+        "stdout": response.stdout,
+        "stderr": response.stderr,
+        "exit_code": response.exit_code,
+        "duration_ms": response.duration_ms,
     });
 
-    let has_external_tools = Arc::new(AtomicBool::new(false));
-    // Add state-aware versions of console_log and final_answer tools
-    all_tools.push(Arc::new(ConsoleLogTool(code_state.clone())) as Arc<dyn Tool>);
+    if response.exit_code != 0 {
+        tracing::warn!(
+            "Code execution exited with code {}: {}",
+            response.exit_code,
+            response.stderr
+        );
+    }
 
-    let functions = all_tools.iter().map(to_function_definition).collect();
-
-    let executor = CodeExecutor::new(context, all_tools);
-
-    let append_console = "globalThis.console = {log: rustyscript.functions['console_log']}";
-    let wrapped_code = format!("{}\n {}", append_console, code);
-    let worker = JsWorker::new(JsWorkerOptions {
-        timeout: std::time::Duration::from_secs(20), // Reduced timeout
-        functions,
-        executor: Arc::new(executor),
-    })
-    .map_err(|e| {
-        tracing::error!("Failed to create JS worker: {}", e);
-        JsWorkerError::JsError(e.to_string())
-    })?;
-
-    tracing::debug!("Executing code: {}", wrapped_code);
-    let result = worker.execute(&wrapped_code).map_err(|e| {
-        tracing::error!("JS execution failed: {}", e);
-        tracing::error!("Code being executed: {}", wrapped_code);
-        JsWorkerError::Other(format!("Code execution failed: {}", e))
-    })?;
-    let has_external_tools = has_external_tools.load(std::sync::atomic::Ordering::Relaxed);
-
-    let observations = code_state.get_observations().unwrap_or_default();
-    tracing::debug!("JS execution result: {:?}", result);
-    Ok((result, observations, has_external_tools))
+    Ok((result_value, observations, false))
 }
 
-fn to_function_definition(tool: &Arc<dyn Tool>) -> FunctionDefinition {
-    // special sync functions;
+/// Detect language from code content.
+fn detect_language(code: &str) -> &'static str {
+    let trimmed = code.trim();
 
-    FunctionDefinition {
-        name: tool.get_name(),
-        description: Some(tool.get_description()),
-        parameters: serde_json::json!({}),
-        is_async: !tool.is_sync(),
+    // Python indicators
+    if trimmed.starts_with("import ")
+        || trimmed.starts_with("from ")
+        || trimmed.starts_with("def ")
+        || trimmed.starts_with("class ")
+        || trimmed.contains("print(")
+    {
+        return "python";
+    }
+
+    // Bash indicators
+    if trimmed.starts_with("#!/bin/")
+        || trimmed.starts_with("apt ")
+        || trimmed.starts_with("sudo ")
+        || trimmed.starts_with("curl ")
+        || trimmed.starts_with("wget ")
+        || trimmed.contains("| grep")
+    {
+        return "bash";
+    }
+
+    // Default to javascript (backward compat with old JS sandbox)
+    "javascript"
+}
+
+/// Wrap code for shell execution based on language.
+fn wrap_code_for_execution(code: &str, language: &str) -> String {
+    match language {
+        "python" => format!("python3 -c {}", shell_escape(code)),
+        "bash" => format!("bash -c {}", shell_escape(code)),
+        "javascript" => format!("node -e {}", shell_escape(code)),
+        _ => format!("bash -c {}", shell_escape(code)),
+    }
+}
+
+fn shell_escape(s: &str) -> String {
+    // Use single-quote wrapping with internal single-quote escaping
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── Language detection ───────────────────────────────────────
+
+    #[test]
+    fn detect_python_import() {
+        assert_eq!(detect_language("import math\nprint(math.pi)"), "python");
+    }
+
+    #[test]
+    fn detect_python_from_import() {
+        assert_eq!(detect_language("from os import path"), "python");
+    }
+
+    #[test]
+    fn detect_python_def() {
+        assert_eq!(detect_language("def foo():\n  return 42"), "python");
+    }
+
+    #[test]
+    fn detect_python_class() {
+        assert_eq!(detect_language("class Foo:\n  pass"), "python");
+    }
+
+    #[test]
+    fn detect_python_print() {
+        assert_eq!(detect_language("x = 1\nprint(x)"), "python");
+    }
+
+    #[test]
+    fn detect_bash_shebang() {
+        assert_eq!(detect_language("#!/bin/bash\necho hello"), "bash");
+    }
+
+    #[test]
+    fn detect_bash_apt() {
+        assert_eq!(detect_language("apt install -y curl"), "bash");
+    }
+
+    #[test]
+    fn detect_bash_sudo() {
+        assert_eq!(detect_language("sudo rm -rf /tmp/test"), "bash");
+    }
+
+    #[test]
+    fn detect_bash_curl() {
+        assert_eq!(detect_language("curl https://example.com"), "bash");
+    }
+
+    #[test]
+    fn detect_bash_pipe_grep() {
+        assert_eq!(detect_language("cat file.txt | grep pattern"), "bash");
+    }
+
+    #[test]
+    fn detect_javascript_default() {
+        assert_eq!(detect_language("console.log('hello')"), "javascript");
+    }
+
+    #[test]
+    fn detect_javascript_const() {
+        assert_eq!(detect_language("const x = 42;"), "javascript");
+    }
+
+    #[test]
+    fn detect_language_trims_whitespace() {
+        assert_eq!(detect_language("  \n  import os\n"), "python");
+    }
+
+    // ── Shell escaping ──────────────────────────────────────────
+
+    #[test]
+    fn shell_escape_simple() {
+        assert_eq!(shell_escape("hello"), "'hello'");
+    }
+
+    #[test]
+    fn shell_escape_with_spaces() {
+        assert_eq!(shell_escape("hello world"), "'hello world'");
+    }
+
+    #[test]
+    fn shell_escape_with_single_quotes() {
+        assert_eq!(shell_escape("it's"), "'it'\\''s'");
+    }
+
+    #[test]
+    fn shell_escape_with_double_quotes() {
+        assert_eq!(shell_escape(r#"say "hi""#), r#"'say "hi"'"#);
+    }
+
+    #[test]
+    fn shell_escape_with_newlines() {
+        assert_eq!(shell_escape("a\nb"), "'a\nb'");
+    }
+
+    #[test]
+    fn shell_escape_with_special_chars() {
+        assert_eq!(shell_escape("$HOME"), "'$HOME'");
+    }
+
+    // ── Code wrapping ───────────────────────────────────────────
+
+    #[test]
+    fn wrap_python() {
+        let cmd = wrap_code_for_execution("print(1)", "python");
+        assert!(cmd.starts_with("python3 -c "));
+        assert!(cmd.contains("print(1)"));
+    }
+
+    #[test]
+    fn wrap_bash() {
+        let cmd = wrap_code_for_execution("echo hi", "bash");
+        assert!(cmd.starts_with("bash -c "));
+        assert!(cmd.contains("echo hi"));
+    }
+
+    #[test]
+    fn wrap_javascript() {
+        let cmd = wrap_code_for_execution("console.log(1)", "javascript");
+        assert!(cmd.starts_with("node -e "));
+        assert!(cmd.contains("console.log(1)"));
+    }
+
+    #[test]
+    fn wrap_unknown_language_defaults_to_bash() {
+        let cmd = wrap_code_for_execution("echo hi", "ruby");
+        assert!(cmd.starts_with("bash -c "));
+    }
+
+    // ── Integration: detect + wrap roundtrip ────────────────────
+
+    #[test]
+    fn detect_and_wrap_python() {
+        let code = "import json\nprint(json.dumps({'a': 1}))";
+        let lang = detect_language(code);
+        let cmd = wrap_code_for_execution(code, lang);
+        assert_eq!(lang, "python");
+        assert!(cmd.starts_with("python3 -c "));
+    }
+
+    #[test]
+    fn detect_and_wrap_bash() {
+        let code = "#!/bin/bash\nls -la";
+        let lang = detect_language(code);
+        let cmd = wrap_code_for_execution(code, lang);
+        assert_eq!(lang, "bash");
+        assert!(cmd.starts_with("bash -c "));
+    }
+
+    #[test]
+    fn detect_and_wrap_javascript_default() {
+        let code = "const fs = require('fs');";
+        let lang = detect_language(code);
+        let cmd = wrap_code_for_execution(code, lang);
+        assert_eq!(lang, "javascript");
+        assert!(cmd.starts_with("node -e "));
     }
 }
