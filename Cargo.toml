@@ -55,12 +55,8 @@ actix-rt = "2.9"
 actix-files = "0.6"
 actix-multipart = "0.7"
 
-# browsr-client = { version = "0.3.4" }
-# browsr-types = { version = "0.3.4" }
-
-# Path-based for local development
-browsr-client = { path = "../../browsr/browsr-client" }
-browsr-types = { path = "../../browsr/browsr-types" }
+browsr-client = { version = "0.3.5" }
+browsr-types = { version = "0.3.5" }
 # Other shared dependencies
 rand = "0.8"
 futures-util = "0.3.31"

@@ -1263,6 +1263,11 @@ async fn get_client_with_context(
                 .with_additional_headers(additional_headers);
             Ok(Client::with_config(config))
         }
+        ModelProvider::Anthropic { .. } => {
+            Err(AgentError::InvalidConfiguration(
+                "Anthropic provider should use ClaudeLLMExecutor, not the OpenAI client path".to_string(),
+            ))
+        }
     }
 }
 
@@ -1293,5 +1298,51 @@ impl LLMExecutorTrait for LLMExecutor {
         context: Arc<ExecutorContext>,
     ) -> Result<StreamResult, AgentError> {
         self.execute_stream(messages, context).await
+    }
+}
+
+#[async_trait::async_trait]
+impl LLMExecutorTrait for crate::claude_llm::ClaudeLLMExecutor {
+    async fn execute(&self, messages: &[Message]) -> Result<LLMResponse, AgentError> {
+        self.execute(messages).await
+    }
+
+    async fn execute_stream(
+        &self,
+        messages: &[Message],
+        context: Arc<ExecutorContext>,
+    ) -> Result<StreamResult, AgentError> {
+        self.execute_stream(messages, context).await
+    }
+}
+
+/// Factory function to create the appropriate LLM executor based on provider.
+/// Returns a trait object so callers don't need to match on provider type.
+pub fn create_llm_executor(
+    llm_def: LlmDefinition,
+    tools: Vec<Arc<dyn crate::tools::Tool>>,
+    context: Arc<ExecutorContext>,
+    additional_headers: Option<HashMap<String, String>>,
+    label: Option<String>,
+) -> Box<dyn LLMExecutorTrait> {
+    match &llm_def.model_settings.provider {
+        ModelProvider::Anthropic { .. } => {
+            Box::new(crate::claude_llm::ClaudeLLMExecutor::new(
+                llm_def,
+                tools,
+                context,
+                additional_headers,
+                label,
+            ))
+        }
+        _ => {
+            Box::new(LLMExecutor::new(
+                llm_def,
+                tools,
+                context,
+                additional_headers,
+                label,
+            ))
+        }
     }
 }

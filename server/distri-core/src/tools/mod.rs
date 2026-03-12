@@ -30,10 +30,12 @@ pub use context::to_tool_context;
 pub use mcp::get_mcp_tools;
 mod builtin;
 pub mod skill_script;
+pub mod tool_search;
 mod wasm;
 #[cfg(feature = "code")]
 pub use builtin::DistriExecuteCodeTool;
 pub use builtin::{get_builtin_tools, AgentTool, ConsoleLogTool, FinalTool, TransferToAgentTool};
+pub use tool_search::ToolSearchTool;
 pub use wasm::{WasmTool, WasmToolLoader, WasmToolMetadata};
 
 /// Plugin tool loader that wraps a pre-loaded HashMap of tools.
@@ -294,6 +296,8 @@ pub fn cast_to_executor_context_tool(
         "stop_shell" => Ok(Box::new(shell::StopShellTool)),
         "load_skill" => Ok(Box::new(skill_script::LoadSkillTool)),
         "run_skill_script" => Ok(Box::new(skill_script::RunSkillScriptTool)),
+        // Tool discovery
+        "tool_search" => Ok(Box::new(tool_search::ToolSearchTool)),
         name if name.starts_with("call_") => {
             let safe_agent_name = name.strip_prefix("call_").unwrap_or(name);
             // Convert double underscores back to slashes for package/agent names

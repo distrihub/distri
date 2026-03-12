@@ -249,6 +249,17 @@ pub enum MemoryKind {
     LongTerm,
 }
 
+/// How tools are delivered to the LLM
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolDeliveryMode {
+    /// Send all tool schemas upfront in the system message / tools parameter (default)
+    #[default]
+    AllTools,
+    /// Only send tool names+descriptions; agent uses a `tool_search` tool to fetch full schemas on demand
+    ToolSearch,
+}
+
 /// Supported tool call formats
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -303,6 +314,9 @@ pub struct LlmDefinition {
     /// Tool calling configuration
     #[serde(default)]
     pub tool_format: ToolCallFormat,
+    /// How tools are delivered to the LLM (all upfront vs on-demand search)
+    #[serde(default)]
+    pub tool_delivery_mode: ToolDeliveryMode,
 }
 
 /// Agent definition - complete configuration for an agent
@@ -364,6 +378,10 @@ pub struct StandardDefinition {
     /// Tool calling configuration
     #[serde(default)]
     pub tool_format: ToolCallFormat,
+
+    /// How tools are delivered to the LLM (all upfront vs on-demand search)
+    #[serde(default)]
+    pub tool_delivery_mode: ToolDeliveryMode,
 
     /// Tools configuration for this agent
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -622,6 +640,12 @@ pub enum ModelProvider {
         api_key: Option<String>,
         project_id: Option<String>,
     },
+    #[serde(rename = "anthropic")]
+    Anthropic {
+        #[serde(default = "ModelProvider::anthropic_base_url")]
+        base_url: Option<String>,
+        api_key: Option<String>,
+    },
     #[serde(rename = "vllora")]
     Vllora {
         #[serde(default = "ModelProvider::vllora_url")]
@@ -662,6 +686,10 @@ impl ModelProvider {
         "https://api.openai.com/v1".to_string()
     }
 
+    pub fn anthropic_base_url() -> Option<String> {
+        None // Uses default https://api.anthropic.com
+    }
+
     pub fn vllora_url() -> String {
         "http://localhost:9090/v1".to_string()
     }
@@ -671,6 +699,7 @@ impl ModelProvider {
         match self {
             ModelProvider::OpenAI {} => "openai",
             ModelProvider::OpenAICompatible { .. } => "openai_compat",
+            ModelProvider::Anthropic { .. } => "anthropic",
             ModelProvider::Vllora { .. } => "vllora",
         }
     }
@@ -680,14 +709,20 @@ impl ModelProvider {
         match self {
             ModelProvider::OpenAI {} => vec!["OPENAI_API_KEY"],
             ModelProvider::OpenAICompatible { api_key, .. } => {
-                // If api_key is already provided in config, no secret needed
                 if api_key.is_some() {
                     vec![]
                 } else {
                     vec!["OPENAI_API_KEY"]
                 }
             }
-            ModelProvider::Vllora { .. } => vec![], // Local server, no API key needed
+            ModelProvider::Anthropic { api_key, .. } => {
+                if api_key.is_some() {
+                    vec![]
+                } else {
+                    vec!["ANTHROPIC_API_KEY"]
+                }
+            }
+            ModelProvider::Vllora { .. } => vec![],
         }
     }
 
@@ -737,6 +772,7 @@ impl ModelProvider {
         match self {
             ModelProvider::OpenAI {} => "OpenAI",
             ModelProvider::OpenAICompatible { .. } => "OpenAI Compatible",
+            ModelProvider::Anthropic { .. } => "Anthropic",
             ModelProvider::Vllora { .. } => "vLLORA",
         }
     }
@@ -866,6 +902,7 @@ impl From<StandardDefinition> for LlmDefinition {
             name: definition.name,
             model_settings,
             tool_format: definition.tool_format,
+            tool_delivery_mode: definition.tool_delivery_mode,
         }
     }
 }
