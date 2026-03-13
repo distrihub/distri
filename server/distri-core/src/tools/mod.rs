@@ -22,6 +22,7 @@ pub use code::execute_code_with_tools;
 pub use context::to_tool_context;
 pub use mcp::get_mcp_tools;
 mod builtin;
+pub mod platform;
 pub mod skill_script;
 pub mod tool_search;
 pub use builtin::{
@@ -153,6 +154,13 @@ pub fn cast_to_executor_context_tool(
         "distri_execute_code" => Ok(Box::new(DistriExecuteCodeTool)),
         // Tool discovery
         "tool_search" => Ok(Box::new(tool_search::ToolSearchTool)),
+        // Platform management tools
+        "list_agents" => Ok(Box::new(platform::ListAgentsTool)),
+        "list_skills" => Ok(Box::new(platform::ListSkillsTool)),
+        "create_skill" => Ok(Box::new(platform::CreateSkillTool)),
+        "delete_skill" => Ok(Box::new(platform::DeleteSkillTool)),
+        "write_to_storage" => Ok(Box::new(platform::WriteToStorageTool)),
+        "read_from_storage" => Ok(Box::new(platform::ReadFromStorageTool)),
         name if name.starts_with("call_") => {
             let safe_agent_name = name.strip_prefix("call_").unwrap_or(name);
             // Convert double underscores back to slashes for package/agent names

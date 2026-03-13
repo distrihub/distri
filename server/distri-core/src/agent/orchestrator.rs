@@ -1,8 +1,7 @@
 use crate::{
     agent::{
-        prompt_registry::PromptRegistry,
-        todos::TodosTool,
-        AgentEventType, BaseAgent, CoordinatorMessage, InvokeResult,
+        prompt_registry::PromptRegistry, todos::TodosTool, AgentEventType, BaseAgent,
+        CoordinatorMessage, InvokeResult,
     },
     servers::registry::McpServerRegistry,
     tools::{FinalTool, Tool},
@@ -16,17 +15,16 @@ use distri_auth::ProviderRegistry;
 use distri_filesystem::FileSystem;
 use distri_stores::{initialize_stores, InitializedStores};
 pub use distri_stores::{AgentStore, ThreadStore};
+use distri_types::configuration::AgentConfig;
 use distri_types::stores::{PromptTemplateStore, SecretStore};
 use distri_types::{
     auth::OAuthHandler, LlmDefinition, ModelSettings, Part, ServerMetadataWrapper, ToolCall,
     ToolsConfig,
 };
-use distri_types::configuration::AgentConfig;
 use distri_types::{
     browser::BrowsrClientConfig,
     configuration::{
-        is_namespaced_plugin_id, split_namespaced_plugin_id,
-        DistriServerConfig, StoreConfig,
+        is_namespaced_plugin_id, split_namespaced_plugin_id, DistriServerConfig, StoreConfig,
     },
     HookMutation,
 };
@@ -660,19 +658,14 @@ impl AgentOrchestrator {
                             match skill_store.list_skills().await {
                                 Ok(skills) => skills
                                     .into_iter()
-                                    .map(|s| {
-                                        distri_types::AvailableSkill {
-                                            id: s.id,
-                                            name: s.name,
-                                            description: s.description,
-                                        }
+                                    .map(|s| distri_types::AvailableSkill {
+                                        id: s.id,
+                                        name: s.name,
+                                        description: s.description,
                                     })
                                     .collect(),
                                 Err(e) => {
-                                    tracing::warn!(
-                                        "Failed to load skills for wildcard: {}",
-                                        e
-                                    );
+                                    tracing::warn!("Failed to load skills for wildcard: {}", e);
                                     vec![]
                                 }
                             }
@@ -688,8 +681,7 @@ impl AgentOrchestrator {
                         let skills_description = resolved_skills
                             .iter()
                             .map(|s| {
-                                let desc =
-                                    s.description.as_deref().unwrap_or("No description");
+                                let desc = s.description.as_deref().unwrap_or("No description");
                                 format!("- **{}** (id: `{}`): {}", s.name, s.id, desc)
                             })
                             .collect::<Vec<_>>()
@@ -1194,11 +1186,7 @@ impl AgentOrchestrator {
             .analysis_model_settings
             .clone()
             .map(|agent_analysis| {
-                Self::merge_model_settings(
-                    &default_analysis_settings,
-                    &agent_analysis,
-                    &sentinel,
-                )
+                Self::merge_model_settings(&default_analysis_settings, &agent_analysis, &sentinel)
             })
             .or(Some(default_analysis_settings));
         tracing::debug!("Applying definition overrides: {:?}", definition_overrides);
@@ -1369,7 +1357,10 @@ impl distri_types::stores::PluginToolLoader for LoaderWrapper {
     async fn list_packages(&self) -> anyhow::Result<Vec<String>> {
         self.0.list_packages().await
     }
-    async fn get_package_tools(&self, package_name: &str) -> anyhow::Result<Vec<Arc<dyn crate::tools::Tool>>> {
+    async fn get_package_tools(
+        &self,
+        package_name: &str,
+    ) -> anyhow::Result<Vec<Arc<dyn crate::tools::Tool>>> {
         self.0.get_package_tools(package_name).await
     }
     async fn has_package(&self, package_name: &str) -> anyhow::Result<bool> {
@@ -1560,11 +1551,8 @@ impl OrchestratorTrait for AgentOrchestrator {
             // Merge: use agent's model_settings as base, override with request's model_settings
             // Compare request settings against defaults to detect which fields were explicitly set
             let sentinel = ModelSettings::default();
-            let final_model_settings = Self::merge_model_settings(
-                &def.model_settings,
-                &llm_def.model_settings,
-                &sentinel
-            );
+            let final_model_settings =
+                Self::merge_model_settings(&def.model_settings, &llm_def.model_settings, &sentinel);
 
             // Update llm_def with merged settings
             llm_def.model_settings = final_model_settings;

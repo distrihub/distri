@@ -320,7 +320,6 @@ pub struct LlmDefinition {
 
 /// Agent definition - complete configuration for an agent
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
-#[serde(deny_unknown_fields)]
 pub struct StandardDefinition {
     /// The name of the agent.
     pub name: String,

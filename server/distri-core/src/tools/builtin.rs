@@ -37,6 +37,9 @@ pub fn get_builtin_tools(
         Arc::new(DistriExecuteCodeTool) as Arc<dyn Tool>,
     ];
 
+    // Platform management tools (available via tool_search or agent builtin config)
+    tools.extend(crate::tools::platform::get_platform_tools());
+
     if include_filesystem_tools {
         tools.push(Arc::new(ArtifactTool) as Arc<dyn Tool>);
         // File operations should target the workspace filesystem; artifact tools use the session filesystem.
