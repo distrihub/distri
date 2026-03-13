@@ -58,6 +58,12 @@ impl AgentConfig {
         }
     }
 
+    pub fn get_definition(&self) -> &StandardDefinition {
+        match self {
+            AgentConfig::StandardAgent(def) => &def,
+        }
+    }
+
     /// Get the description of the agent
     pub fn get_description(&self) -> &str {
         match self {
