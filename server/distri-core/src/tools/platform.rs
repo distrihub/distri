@@ -77,7 +77,7 @@ impl ExecutorContextTool for ListAgentsTool {
                 json!({
                     "name": def.name,
                     "description": def.description,
-                    "model": &def.model_settings.model,
+                    "model": def.model_settings().model.as_deref().unwrap_or("default"),
                 })
             })
             .collect();
@@ -121,11 +121,10 @@ impl ExecutorContextTool for ListSkillsTool {
         context: Arc<ExecutorContext>,
     ) -> Result<Vec<Part>, AgentError> {
         let orchestrator = context.get_orchestrator()?;
-        let skill_store = orchestrator
-            .stores
-            .skill_store
-            .as_ref()
-            .ok_or_else(|| AgentError::ToolExecution("Skill store not available".to_string()))?;
+        let skill_store =
+            orchestrator.stores.skill_store.as_ref().ok_or_else(|| {
+                AgentError::ToolExecution("Skill store not available".to_string())
+            })?;
         let skills = skill_store
             .list_skills()
             .await
@@ -188,11 +187,10 @@ impl ExecutorContextTool for CreateSkillTool {
         context: Arc<ExecutorContext>,
     ) -> Result<Vec<Part>, AgentError> {
         let orchestrator = context.get_orchestrator()?;
-        let skill_store = orchestrator
-            .stores
-            .skill_store
-            .as_ref()
-            .ok_or_else(|| AgentError::ToolExecution("Skill store not available".to_string()))?;
+        let skill_store =
+            orchestrator.stores.skill_store.as_ref().ok_or_else(|| {
+                AgentError::ToolExecution("Skill store not available".to_string())
+            })?;
 
         let input = &tool_call.input;
         let name = input["name"]
@@ -269,11 +267,10 @@ impl ExecutorContextTool for DeleteSkillTool {
         context: Arc<ExecutorContext>,
     ) -> Result<Vec<Part>, AgentError> {
         let orchestrator = context.get_orchestrator()?;
-        let skill_store = orchestrator
-            .stores
-            .skill_store
-            .as_ref()
-            .ok_or_else(|| AgentError::ToolExecution("Skill store not available".to_string()))?;
+        let skill_store =
+            orchestrator.stores.skill_store.as_ref().ok_or_else(|| {
+                AgentError::ToolExecution("Skill store not available".to_string())
+            })?;
 
         let skill_id = tool_call.input["skill_id"]
             .as_str()
@@ -283,7 +280,9 @@ impl ExecutorContextTool for DeleteSkillTool {
             .delete_skill(skill_id)
             .await
             .map_err(|e| AgentError::ToolExecution(e.to_string()))?;
-        Ok(vec![Part::Data(json!({ "deleted": true, "skill_id": skill_id }))])
+        Ok(vec![Part::Data(
+            json!({ "deleted": true, "skill_id": skill_id }),
+        )])
     }
 }
 

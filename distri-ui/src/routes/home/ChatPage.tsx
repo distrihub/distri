@@ -1,17 +1,21 @@
 import { useCallback, useEffect, useState, useMemo, useRef } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Chat, useAgent, useAgentsByUsage, useChatMessages } from '@distri/react'
-import { ChevronDown, Loader2, Search, X } from 'lucide-react'
+import { Chat, useAgent, useAgentsByUsage, useChatMessages, useModels } from '@distri/react'
+import { CheckCircle2, ChevronDown, Loader2, Search, X, XCircle } from 'lucide-react'
 import { v4 as uuidv4 } from 'uuid'
 import type { AgentUsageInfo } from '@distri/core'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectSeparator,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 
-const MODEL_OPTIONS = [
-  { value: 'auto', label: 'Auto' },
-  { value: 'claude-sonnet-4', label: 'Claude Sonnet 4' },
-  { value: 'gpt-4.1-mini', label: 'GPT-4.1 Mini' },
-  { value: 'gpt-4.1', label: 'GPT-4.1' },
-  { value: 'gpt-4o', label: 'GPT-4o' },
-]
+const MODEL_STORAGE_KEY = 'distri-selected-model'
 
 function AgentSearchDropdown({
   agents,
@@ -141,7 +145,10 @@ export default function ChatPage() {
   const threadIdParam = searchParams.get('threadId')
 
   const [selectedAgentId, setSelectedAgentId] = useState<string | undefined>(agentIdParam || undefined)
-  const [selectedModel, setSelectedModel] = useState<string>('auto')
+  const { providers, loading: modelsLoading } = useModels()
+  const [selectedModel, setSelectedModel] = useState<string>(
+    () => localStorage.getItem(MODEL_STORAGE_KEY) || 'auto'
+  )
   const { agent, loading: agentLoading } = useAgent({ agentIdOrDef: selectedAgentId || '' })
   const { messages, isLoading: messagesLoading } = useChatMessages({ agent: agent || undefined, threadId: threadIdParam || undefined })
 
@@ -179,6 +186,20 @@ export default function ChatPage() {
     setSearchParams(newParams)
   }
 
+  const handleModelChange = useCallback((model: string) => {
+    setSelectedModel(model)
+    localStorage.setItem(MODEL_STORAGE_KEY, model)
+  }, [])
+
+  const selectedModelLabel = useMemo(() => {
+    if (selectedModel === 'auto') return 'Auto'
+    for (const provider of providers) {
+      const model = provider.models.find((m) => m.id === selectedModel)
+      if (model) return model.name
+    }
+    return selectedModel
+  }, [selectedModel, providers])
+
   // Provide model override via metadata when not "auto"
   const getMetadata = useCallback(async () => {
     if (selectedModel === 'auto') return {}
@@ -208,17 +229,39 @@ export default function ChatPage() {
           <label className="text-[11px] uppercase tracking-[0.2em] text-slate-500">
             Model
           </label>
-          <select
-            value={selectedModel}
-            onChange={(e) => setSelectedModel(e.target.value)}
-            className="rounded border border-slate-700 bg-slate-900 px-2 py-1 text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-slate-500"
-          >
-            {MODEL_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
+          <Select value={selectedModel} onValueChange={handleModelChange} disabled={modelsLoading}>
+            <SelectTrigger className="min-w-[180px] h-8 border-slate-700 bg-slate-900 text-sm text-slate-100">
+              <SelectValue>{selectedModelLabel}</SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="auto">Auto</SelectItem>
+              {providers.map((provider, idx) => (
+                <SelectGroup key={provider.provider_id}>
+                  {idx > 0 && <SelectSeparator />}
+                  <SelectLabel className="flex items-center gap-2 text-xs text-slate-400">
+                    {provider.configured ? (
+                      <CheckCircle2 className="h-3 w-3 text-emerald-500" />
+                    ) : (
+                      <XCircle className="h-3 w-3 text-slate-500" />
+                    )}
+                    {provider.provider_label}
+                    {!provider.configured && (
+                      <span className="text-[10px] text-slate-500 font-normal">(not configured)</span>
+                    )}
+                  </SelectLabel>
+                  {provider.models.map((model) => (
+                    <SelectItem
+                      key={model.id}
+                      value={model.id}
+                      disabled={!provider.configured}
+                    >
+                      {model.name}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
       </header>
 

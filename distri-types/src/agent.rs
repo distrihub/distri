@@ -660,6 +660,18 @@ pub enum ModelProvider {
         api_key: Option<String>,
         project_id: Option<String>,
     },
+    #[serde(rename = "azure_openai")]
+    AzureOpenAI {
+        /// Azure resource endpoint, e.g. "https://<resource>.openai.azure.com"
+        base_url: String,
+        /// Azure API key (or fetched from AZURE_OPENAI_API_KEY secret)
+        api_key: Option<String>,
+        /// Azure deployment name
+        deployment: String,
+        /// API version, e.g. "2024-06-01"
+        #[serde(default = "ModelProvider::azure_api_version")]
+        api_version: String,
+    },
     #[serde(rename = "anthropic")]
     Anthropic {
         #[serde(default = "ModelProvider::anthropic_base_url")]
@@ -701,6 +713,39 @@ fn default_required() -> bool {
     true
 }
 
+/// A model entry within a provider
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelInfo {
+    /// Model identifier (e.g., "gpt-4o", "claude-sonnet-4")
+    pub id: String,
+    /// Human-readable name
+    pub name: String,
+}
+
+/// Models grouped by provider, with configuration status
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderModels {
+    /// Provider identifier
+    pub provider_id: String,
+    /// Human-readable provider name
+    pub provider_label: String,
+    /// Available models for this provider
+    pub models: Vec<ModelInfo>,
+}
+
+/// Provider models with configuration status (returned by API)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderModelsStatus {
+    /// Provider identifier
+    pub provider_id: String,
+    /// Human-readable provider name
+    pub provider_label: String,
+    /// Whether the provider's API key is configured
+    pub configured: bool,
+    /// Available models for this provider
+    pub models: Vec<ModelInfo>,
+}
+
 impl Default for ModelProvider {
     fn default() -> Self {
         ModelProvider::OpenAI {}
@@ -720,11 +765,16 @@ impl ModelProvider {
         "http://localhost:9090/v1".to_string()
     }
 
+    pub fn azure_api_version() -> String {
+        "2024-06-01".to_string()
+    }
+
     /// Returns the provider ID for secret lookup
     pub fn provider_id(&self) -> &'static str {
         match self {
             ModelProvider::OpenAI {} => "openai",
             ModelProvider::OpenAICompatible { .. } => "openai_compat",
+            ModelProvider::AzureOpenAI { .. } => "azure_openai",
             ModelProvider::Anthropic { .. } => "anthropic",
             ModelProvider::Vllora { .. } => "vllora",
         }
@@ -739,6 +789,13 @@ impl ModelProvider {
                     vec![]
                 } else {
                     vec!["OPENAI_API_KEY"]
+                }
+            }
+            ModelProvider::AzureOpenAI { api_key, .. } => {
+                if api_key.is_some() {
+                    vec![]
+                } else {
+                    vec!["AZURE_OPENAI_API_KEY"]
                 }
             }
             ModelProvider::Anthropic { api_key, .. } => {
@@ -776,6 +833,16 @@ impl ModelProvider {
                 }],
             },
             ProviderSecretDefinition {
+                id: "azure_openai".to_string(),
+                label: "Azure OpenAI".to_string(),
+                keys: vec![SecretKeyDefinition {
+                    key: "AZURE_OPENAI_API_KEY".to_string(),
+                    label: "API key".to_string(),
+                    placeholder: "...".to_string(),
+                    required: true,
+                }],
+            },
+            ProviderSecretDefinition {
                 id: "gemini".to_string(),
                 label: "Google Gemini".to_string(),
                 keys: vec![SecretKeyDefinition {
@@ -793,11 +860,55 @@ impl ModelProvider {
         ]
     }
 
+    /// Returns the well-known models grouped by provider, for discovery purposes.
+    pub fn well_known_models() -> Vec<ProviderModels> {
+        vec![
+            ProviderModels {
+                provider_id: "openai".to_string(),
+                provider_label: "OpenAI".to_string(),
+                models: vec![
+                    ModelInfo { id: "gpt-4.1".into(), name: "GPT-4.1".into() },
+                    ModelInfo { id: "gpt-4.1-mini".into(), name: "GPT-4.1 Mini".into() },
+                    ModelInfo { id: "gpt-4.1-nano".into(), name: "GPT-4.1 Nano".into() },
+                    ModelInfo { id: "gpt-4o".into(), name: "GPT-4o".into() },
+                    ModelInfo { id: "gpt-4o-mini".into(), name: "GPT-4o Mini".into() },
+                    ModelInfo { id: "o3-mini".into(), name: "o3-mini".into() },
+                ],
+            },
+            ProviderModels {
+                provider_id: "anthropic".to_string(),
+                provider_label: "Anthropic".to_string(),
+                models: vec![
+                    ModelInfo { id: "claude-sonnet-4".into(), name: "Claude Sonnet 4".into() },
+                    ModelInfo { id: "claude-opus-4".into(), name: "Claude Opus 4".into() },
+                    ModelInfo { id: "claude-haiku-3.5".into(), name: "Claude Haiku 3.5".into() },
+                ],
+            },
+            ProviderModels {
+                provider_id: "azure_openai".to_string(),
+                provider_label: "Azure OpenAI".to_string(),
+                models: vec![
+                    ModelInfo { id: "gpt-4o".into(), name: "GPT-4o (Azure)".into() },
+                    ModelInfo { id: "gpt-4o-mini".into(), name: "GPT-4o Mini (Azure)".into() },
+                ],
+            },
+            ProviderModels {
+                provider_id: "gemini".to_string(),
+                provider_label: "Google Gemini".to_string(),
+                models: vec![
+                    ModelInfo { id: "gemini-2.5-flash".into(), name: "Gemini 2.5 Flash".into() },
+                    ModelInfo { id: "gemini-2.5-pro".into(), name: "Gemini 2.5 Pro".into() },
+                ],
+            },
+        ]
+    }
+
     /// Get the human-readable name for a provider
     pub fn display_name(&self) -> &'static str {
         match self {
             ModelProvider::OpenAI {} => "OpenAI",
             ModelProvider::OpenAICompatible { .. } => "OpenAI Compatible",
+            ModelProvider::AzureOpenAI { .. } => "Azure OpenAI",
             ModelProvider::Anthropic { .. } => "Anthropic",
             ModelProvider::Vllora { .. } => "vLLORA",
         }

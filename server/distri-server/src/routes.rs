@@ -32,6 +32,7 @@ use crate::tts::{get_available_voices, synthesize_tts, transcribe_speech};
 mod artifacts;
 mod files;
 mod llm_helpers;
+mod models;
 mod prompt_templates;
 mod secrets;
 mod session;
@@ -125,6 +126,7 @@ pub fn distri(cfg: &mut web::ServiceConfig) {
     .configure(prompt_templates::configure_prompt_template_routes)
     .configure(secrets::configure_secret_routes)
     .configure(skills::configure_skill_routes)
+    .configure(models::configure_model_routes)
     // Voice streaming endpoints - TODO: Implement after fixing compilation issues
     // .service(web::resource("/voice/stream").route(web::get().to(voice_stream_handler)));
     // Authentication endpoints

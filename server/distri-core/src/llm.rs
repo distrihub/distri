@@ -1257,6 +1257,40 @@ async fn get_client_with_context(
             Ok(Client::with_config(config))
         }
 
+        ModelProvider::AzureOpenAI {
+            base_url,
+            api_key,
+            deployment,
+            api_version,
+        } => {
+            let additional_headers = get_headers(llm_def, additional_headers, label);
+
+            let resolved_key = if let Some(key) = api_key {
+                key.clone()
+            } else {
+                secret_resolver
+                    .resolve_or_empty("AZURE_OPENAI_API_KEY")
+                    .await
+            };
+
+            // Azure endpoint: {base_url}/openai/deployments/{deployment}
+            let azure_base = format!(
+                "{}/openai/deployments/{}",
+                base_url.trim_end_matches('/'),
+                deployment
+            );
+
+            let mut headers = additional_headers;
+            headers.insert("api-key".to_string(), resolved_key);
+
+            let config = GatewayConfig::default()
+                .with_api_base(azure_base)
+                .with_context(context)
+                .with_additional_headers(headers)
+                .with_query_param("api-version", api_version);
+
+            Ok(Client::with_config(config))
+        }
         ModelProvider::Vllora { base_url } => {
             let additional_headers = get_headers(llm_def, additional_headers, label);
 

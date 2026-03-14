@@ -19,6 +19,8 @@ pub struct GatewayConfig {
     #[serde(skip)]
     context: Option<Arc<ExecutorContext>>,
     additional_headers: Option<HashMap<String, String>>,
+    #[serde(skip)]
+    query_params: Vec<(String, String)>,
 }
 
 impl Default for GatewayConfig {
@@ -31,6 +33,7 @@ impl Default for GatewayConfig {
             project_id: std::env::var("GATEWAY_PROJECT_ID").unwrap_or_else(|_| "".to_string()),
             context: None,
             additional_headers: None,
+            query_params: vec![],
         }
     }
 }
@@ -66,6 +69,11 @@ impl GatewayConfig {
 
     pub fn with_additional_headers(mut self, additional_headers: HashMap<String, String>) -> Self {
         self.additional_headers = Some(additional_headers);
+        self
+    }
+
+    pub fn with_query_param<K: Into<String>, V: Into<String>>(mut self, key: K, value: V) -> Self {
+        self.query_params.push((key.into(), value.into()));
         self
     }
 }
@@ -116,6 +124,9 @@ impl Config for GatewayConfig {
     }
 
     fn query(&self) -> Vec<(&str, &str)> {
-        vec![]
+        self.query_params
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect()
     }
 }
