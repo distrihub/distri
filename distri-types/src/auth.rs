@@ -89,9 +89,9 @@ pub struct TokenLimits {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub daily_calls: Option<u64>,
 
-    /// Maximum API calls per month (None = unlimited)
+    /// Maximum API calls per week (None = unlimited)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub monthly_calls: Option<u64>,
+    pub weekly_calls: Option<u64>,
 }
 
 /// Response for issuing access + refresh tokens.

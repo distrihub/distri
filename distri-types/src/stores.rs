@@ -888,11 +888,13 @@ pub trait UsageService: Send + Sync {
     /// Check whether a request should be allowed based on all rate limits.
     /// Called by middleware before processing a request.
     /// `is_llm` indicates whether this is an LLM-consuming endpoint.
+    /// `auth_source` is "jwt" or "api_key" for per-source analytics.
     async fn check_request(
         &self,
         workspace_id: &str,
         user_id: &str,
         is_llm: bool,
+        auth_source: &str,
     ) -> UsageCheckResult;
 
     /// Record token usage after a completed agent run.
@@ -924,7 +926,7 @@ pub struct NoOpUsageService;
 
 #[async_trait]
 impl UsageService for NoOpUsageService {
-    async fn check_request(&self, _workspace_id: &str, _user_id: &str, _is_llm: bool) -> UsageCheckResult {
+    async fn check_request(&self, _workspace_id: &str, _user_id: &str, _is_llm: bool, _auth_source: &str) -> UsageCheckResult {
         UsageCheckResult::Allowed
     }
 
