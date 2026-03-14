@@ -123,6 +123,8 @@ pub struct ExecutorContext {
     pub identifier_id: Option<String>,
     /// Workspace ID for multi-tenant workspace-scoped tracking
     pub workspace_id: Option<String>,
+    /// Channel ID for channel-scoped usage tracking
+    pub channel_id: Option<String>,
     /// Tenant context for multi-tenant operations
     /// Stores can use this to filter data by tenant
     pub tenant_context: distri_types::TenantContext,
@@ -185,6 +187,7 @@ impl Default for ExecutorContext {
             session_id: uuid::Uuid::new_v4().to_string(),
             identifier_id: None,
             workspace_id: None,
+            channel_id: None,
             tenant_context,
             browser_session_id: None,
             tools: Arc::default(),
@@ -289,6 +292,7 @@ impl ExecutorContext {
             user_id: Some(self.user_id.clone()),
             identifier_id: self.identifier_id.clone(),
             workspace_id: self.workspace_id.clone(),
+            channel_id: self.channel_id.clone(),
         };
 
         if let Some(tx) = tx {
@@ -346,6 +350,7 @@ impl ExecutorContext {
                 user_id: Some(self.user_id.clone()),
                 identifier_id: self.identifier_id.clone(),
                 workspace_id: self.workspace_id.clone(),
+                channel_id: self.channel_id.clone(),
             };
 
             let _ = tx.send(event).await;
@@ -813,6 +818,7 @@ impl ExecutorContext {
             user_id: self.user_id.clone(),
             identifier_id: self.identifier_id.clone(),
             workspace_id: self.workspace_id.clone(),
+            channel_id: self.channel_id.clone(),
             tenant_context: self.tenant_context.clone(),
             browser_session_id: self.browser_session_id.clone(),
             tools: self.tools.clone(),               // Arc::clone

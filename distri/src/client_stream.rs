@@ -200,6 +200,7 @@ impl AgentStreamClient {
             user_id: None,
             identifier_id: None,
             workspace_id: None,
+            channel_id: None,
         }))
     }
 

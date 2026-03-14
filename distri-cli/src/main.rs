@@ -8,7 +8,7 @@ use crossterm::terminal;
 use distri::{
     AgentStreamClient, BuildHttpClient, CreateSkillRequest,
     CreateSkillScriptRequest, Distri, DistriClientApp, DistriConfig, ExternalToolRegistry,
-    print_stream,
+    print_stream_verbose,
 };
 use distri_a2a::{
     EventKind, Message as A2aMessage, MessageSendParams, Part as A2aPart, Role, TextPart,
@@ -349,7 +349,7 @@ async fn main() -> Result<()> {
         Commands::Run { agent, task, input } => {
             let agent_name = agent.unwrap_or_else(|| "distri".to_string());
             if task.is_none() && input.is_none() {
-                run_interactive_chat(&mut app, &config, &base_url, agent_name).await?;
+                run_interactive_chat(&mut app, &config, &base_url, agent_name, cli.verbose).await?;
                 return Ok(());
             }
             if let Some(agent_cfg) = app.fetch_agent(&agent_name).await? {
@@ -367,7 +367,7 @@ async fn main() -> Result<()> {
             let client = AgentStreamClient::from_config(config.clone())
                 .with_http_client(http_client)
                 .with_tool_registry(registry);
-            print_stream(&client, &agent_name, params).await?;
+            print_stream_verbose(&client, &agent_name, params, cli.verbose).await?;
         }
         Commands::Agents { command } => match command {
             AgentsCommands::List => {
@@ -577,6 +577,7 @@ async fn run_interactive_chat(
     config: &DistriConfig,
     base_url: &str,
     agent_name: String,
+    verbose: bool,
 ) -> Result<()> {
     let mut thread_id = uuid::Uuid::new_v4().to_string();
     let mut current_agent = agent_name;
@@ -659,7 +660,7 @@ async fn run_interactive_chat(
 
         let params = build_chat_message_params(input.to_string(), &thread_id, &current_model);
 
-        if let Err(err) = print_stream(&stream_client, &current_agent, params).await {
+        if let Err(err) = print_stream_verbose(&stream_client, &current_agent, params, verbose).await {
             eprintln!("Error from agent: {}", err);
         }
     }

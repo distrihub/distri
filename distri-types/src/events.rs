@@ -33,6 +33,9 @@ pub struct AgentEvent {
     /// Workspace ID for workspace-scoped usage tracking
     #[serde(default)]
     pub workspace_id: Option<String>,
+    /// Channel ID for channel-scoped usage tracking
+    #[serde(default)]
+    pub channel_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -189,6 +192,7 @@ impl AgentEvent {
             user_id: None,
             identifier_id: None,
             workspace_id: None,
+            channel_id: None,
         }
     }
 
@@ -209,6 +213,7 @@ impl AgentEvent {
             user_id: None,
             identifier_id: None,
             workspace_id: None,
+            channel_id: None,
         }
     }
 }

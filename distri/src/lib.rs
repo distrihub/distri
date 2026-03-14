@@ -4,6 +4,7 @@ mod client_stream;
 pub mod config;
 mod local_tools;
 mod printer;
+mod renderers;
 
 use thiserror::Error;
 
@@ -27,7 +28,7 @@ pub use distri_types::{
     HookContext, HookKind, HookMutation, InlineHookRequest, InlineHookResponse, TokenResponse,
 };
 pub use local_tools::register_local_filesystem_tools;
-pub use printer::{EventPrinter, print_stream};
+pub use printer::{EventPrinter, print_stream, print_stream_verbose};
 
 #[cfg(test)]
 mod tests;

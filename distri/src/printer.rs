@@ -75,32 +75,52 @@ struct ChatState {
 
 pub struct EventPrinter {
     state: ChatState,
+    verbose: bool,
 }
 
 impl EventPrinter {
     pub fn new() -> Self {
         Self {
             state: ChatState::default(),
+            verbose: false,
+        }
+    }
+
+    pub fn with_verbose(mut self, verbose: bool) -> Self {
+        self.verbose = verbose;
+        self
+    }
+
+    /// If "Planning…" is showing on the current line, clear it before printing anything else.
+    fn clear_planning_line(&mut self) {
+        if self.state.is_planning {
+            print!("\r\x1b[2K");
+            let _ = std::io::Write::flush(&mut std::io::stdout());
+            self.state.is_planning = false;
         }
     }
 
     pub async fn handle_event(&mut self, event: &AgentEvent) {
+        // Clear the transient "Planning…" line before any other event prints output
+        match &event.event {
+            AgentEventType::PlanStarted { .. } | AgentEventType::PlanFinished { .. } => {}
+            _ => self.clear_planning_line(),
+        }
+
         match &event.event {
             AgentEventType::PlanStarted { initial_plan } => {
                 self.state.is_planning = true;
-                println!(
-                    "{}🧠 Planning{}{}",
+                print!(
+                    "\r\x1b[2K{}🧠 Planning{}{}",
                     COLOR_BRIGHT_YELLOW,
                     if *initial_plan { "…" } else { " (refine)…" },
                     COLOR_RESET
                 );
+                let _ = std::io::Write::flush(&mut std::io::stdout());
             }
-            AgentEventType::PlanFinished { total_steps } => {
-                self.state.is_planning = false;
-                println!(
-                    "{}✅ Plan ready ({} steps){}",
-                    COLOR_GREEN, total_steps, COLOR_RESET
-                );
+            AgentEventType::PlanFinished { .. } => {
+                // Clear the planning line and reset flag
+                self.clear_planning_line();
             }
             AgentEventType::StepStarted {
                 step_id,
@@ -367,9 +387,7 @@ impl EventPrinter {
     }
 
     fn print_tool_result(&self, result: &ToolResponse) {
-        if let Ok(json) = serde_json::to_string_pretty(&result.parts) {
-            println!("{}Tool result{}:\n{}", COLOR_GRAY, COLOR_RESET, json);
-        }
+        crate::renderers::render_tool_output(result, self.verbose);
     }
 
     fn print_browser_image(
@@ -473,7 +491,18 @@ pub async fn print_stream(
     agent_id: &str,
     params: MessageSendParams,
 ) -> Result<(), StreamError> {
-    let printer = Arc::new(Mutex::new(EventPrinter::new()));
+    print_stream_verbose(client, agent_id, params, false).await
+}
+
+/// Convenience helper that streams an agent and prints events to stdout,
+/// with optional verbose tool output.
+pub async fn print_stream_verbose(
+    client: &AgentStreamClient,
+    agent_id: &str,
+    params: MessageSendParams,
+    verbose: bool,
+) -> Result<(), StreamError> {
+    let printer = Arc::new(Mutex::new(EventPrinter::new().with_verbose(verbose)));
     client
         .stream_agent(agent_id, params, {
             let printer = printer.clone();
