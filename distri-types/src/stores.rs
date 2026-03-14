@@ -853,3 +853,90 @@ pub trait SkillStore: Send + Sync {
     async fn list_starred_skills(&self) -> anyhow::Result<Vec<SkillRecord>>;
     async fn clone_skill(&self, skill_id: &str) -> anyhow::Result<SkillRecord>;
 }
+
+// ─── Usage Service ──────────────────────────────────────────────────────────
+
+/// Current usage snapshot for a workspace/user.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct UsageSnapshot {
+    pub day_tokens: i64,
+    pub week_tokens: i64,
+    pub month_tokens: i64,
+}
+
+/// Configured token limits for a workspace.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct UsageLimits {
+    pub daily_tokens: Option<i64>,
+    pub weekly_tokens: Option<i64>,
+    pub monthly_tokens: Option<i64>,
+}
+
+/// Result of a rate limit check.
+#[derive(Debug, Clone)]
+pub enum UsageCheckResult {
+    Allowed,
+    Denied { reason: String },
+}
+
+/// Trait for usage tracking, rate limiting, and workspace limit management.
+///
+/// OSS: can use a no-op or in-memory implementation.
+/// Cloud: backed by Redis + Postgres with caching.
+#[async_trait]
+pub trait UsageService: Send + Sync {
+    /// Check whether a request should be allowed based on all rate limits.
+    /// Called by middleware before processing a request.
+    /// `is_llm` indicates whether this is an LLM-consuming endpoint.
+    async fn check_request(
+        &self,
+        workspace_id: &str,
+        user_id: &str,
+        is_llm: bool,
+    ) -> UsageCheckResult;
+
+    /// Record token usage after a completed agent run.
+    async fn record_usage(
+        &self,
+        workspace_id: &str,
+        user_id: &str,
+        tokens_used: i64,
+    ) -> anyhow::Result<()>;
+
+    /// Get current usage snapshot for display.
+    async fn get_usage(
+        &self,
+        workspace_id: &str,
+        user_id: &str,
+    ) -> anyhow::Result<UsageSnapshot>;
+
+    /// Get the configured limits for a workspace.
+    async fn get_limits(
+        &self,
+        workspace_id: &str,
+    ) -> anyhow::Result<UsageLimits>;
+}
+
+/// No-op usage service for OSS / development.
+/// Always allows requests, never records anything.
+#[derive(Debug, Clone)]
+pub struct NoOpUsageService;
+
+#[async_trait]
+impl UsageService for NoOpUsageService {
+    async fn check_request(&self, _workspace_id: &str, _user_id: &str, _is_llm: bool) -> UsageCheckResult {
+        UsageCheckResult::Allowed
+    }
+
+    async fn record_usage(&self, _workspace_id: &str, _user_id: &str, _tokens_used: i64) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    async fn get_usage(&self, _workspace_id: &str, _user_id: &str) -> anyhow::Result<UsageSnapshot> {
+        Ok(UsageSnapshot::default())
+    }
+
+    async fn get_limits(&self, _workspace_id: &str) -> anyhow::Result<UsageLimits> {
+        Ok(UsageLimits::default())
+    }
+}

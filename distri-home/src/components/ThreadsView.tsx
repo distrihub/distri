@@ -34,6 +34,9 @@ interface Thread {
   updated_at?: string;
   message_count?: number;
   tags?: string[];
+  input_tokens?: number;
+  output_tokens?: number;
+  total_tokens?: number;
 }
 
 function AgentSearchDropdown({
@@ -342,6 +345,10 @@ export function ThreadsView({ className, initialAgentId, initialExternalId }: Th
     return threads.reduce((sum, thread) => sum + (thread.message_count || 0), 0);
   }, [threads]);
 
+  const totalTokensOnPage = useMemo(() => {
+    return threads.reduce((sum, thread) => sum + (thread.total_tokens ?? 0), 0);
+  }, [threads]);
+
   const uniqueAgents = useMemo(() => {
     const set = new Set<string>();
     threads.forEach((t) => {
@@ -379,6 +386,7 @@ export function ThreadsView({ className, initialAgentId, initialExternalId }: Th
   const threadsCountValue = loading || error ? '—' : formatNumber(total);
   const messageCountValue = loading || error ? '—' : formatNumber(totalMessages);
   const uniqueAgentsValue = loading || error ? '—' : formatNumber(uniqueAgents);
+  const tokensValue = loading || error ? '—' : formatTokens(totalTokensOnPage);
 
   return (
     <div className={`flex-1 overflow-y-auto bg-background ${className ?? ''}`}>
@@ -490,7 +498,7 @@ export function ThreadsView({ className, initialAgentId, initialExternalId }: Th
           </div>
 
           {/* Stat cards */}
-          <div className="grid gap-4 md:grid-cols-3">
+          <div className="grid gap-4 md:grid-cols-4">
             <StatCard
               title="Total threads"
               value={threadsCountValue}
@@ -498,6 +506,7 @@ export function ThreadsView({ className, initialAgentId, initialExternalId }: Th
             />
             <StatCard title="Messages on page" value={messageCountValue} helper="" />
             <StatCard title="Agents on page" value={uniqueAgentsValue} helper="" />
+            <StatCard title="Tokens on page" value={tokensValue} helper="" />
           </div>
 
           {/* Threads list */}
@@ -552,6 +561,14 @@ export function ThreadsView({ className, initialAgentId, initialExternalId }: Th
                         <span className="shrink-0 whitespace-nowrap rounded border border-border/60 bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">
                           {thread.message_count ? `${thread.message_count} msgs` : 'No messages'}
                         </span>
+                        {(thread.total_tokens ?? 0) > 0 && (
+                          <span
+                            className="shrink-0 whitespace-nowrap rounded border border-border/60 bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground"
+                            title={`Input: ${formatTokens(thread.input_tokens ?? 0)} · Output: ${formatTokens(thread.output_tokens ?? 0)} · Total: ${formatTokens(thread.total_tokens ?? 0)}`}
+                          >
+                            {formatTokens(thread.total_tokens ?? 0)} tokens
+                          </span>
+                        )}
                       </div>
                       <div className="mt-2 flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
                         <button
@@ -802,4 +819,10 @@ function formatRelativeTime(value?: string) {
 
 function formatNumber(value: number) {
   return new Intl.NumberFormat().format(value);
+}
+
+function formatTokens(tokens: number): string {
+  if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M`;
+  if (tokens >= 1_000) return `${(tokens / 1_000).toFixed(1)}k`;
+  return String(tokens);
 }

@@ -33,6 +33,9 @@ diesel::table! {
         external_id -> Nullable<Text>,
         channel_id -> Nullable<Text>,
         user_id -> Text,
+        input_tokens -> BigInt,
+        output_tokens -> BigInt,
+        total_tokens -> BigInt,
     }
 }
 

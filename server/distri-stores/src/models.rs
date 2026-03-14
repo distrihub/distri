@@ -42,6 +42,9 @@ pub struct ThreadModel {
     pub external_id: Option<String>,
     pub channel_id: Option<String>,
     pub user_id: String,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub total_tokens: i64,
 }
 
 #[derive(Debug, Clone, Insertable)]
@@ -59,6 +62,9 @@ pub struct NewThreadModel<'a> {
     pub external_id: Option<&'a str>,
     pub channel_id: Option<&'a str>,
     pub user_id: &'a str,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub total_tokens: i64,
 }
 
 #[derive(Debug, Clone, AsChangeset)]

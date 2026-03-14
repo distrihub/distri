@@ -1,4 +1,7 @@
 #![allow(dead_code)]
+
+#[cfg(test)]
+mod thread_tokens_test;
 use std::{collections::HashMap, fmt::Display, sync::Arc};
 
 use crate::models::*;
@@ -172,6 +175,9 @@ fn to_thread(model: ThreadModel) -> Thread {
         attributes: serde_json::from_str(&model.attributes).unwrap_or(serde_json::Value::Null),
         user_id,
         external_id: model.external_id,
+        input_tokens: model.input_tokens.max(0) as u64,
+        output_tokens: model.output_tokens.max(0) as u64,
+        total_tokens: model.total_tokens.max(0) as u64,
     }
 }
 
@@ -187,6 +193,9 @@ fn to_thread_summary(thread: &Thread) -> ThreadSummary {
         user_id: thread.user_id.clone(),
         external_id: thread.external_id.clone(),
         tags: None,
+        input_tokens: thread.input_tokens,
+        output_tokens: thread.output_tokens,
+        total_tokens: thread.total_tokens,
     }
 }
 
@@ -744,6 +753,9 @@ where
             external_id: thread.external_id.as_deref(),
             channel_id: None,
             user_id,
+            input_tokens: thread.input_tokens as i64,
+            output_tokens: thread.output_tokens as i64,
+            total_tokens: thread.total_tokens as i64,
         };
 
         let mut connection = self

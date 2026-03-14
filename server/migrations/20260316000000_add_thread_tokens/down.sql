@@ -1,0 +1,2 @@
+-- SQLite doesn't support DROP COLUMN easily, so we recreate the table
+-- For simplicity, this is a no-op in dev; in prod, use Postgres migration

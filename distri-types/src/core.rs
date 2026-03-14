@@ -604,6 +604,15 @@ pub struct Thread {
     pub attributes: serde_json::Value,
     pub user_id: Option<String>,
     pub external_id: Option<String>,
+    /// Input tokens used across all runs in this thread
+    #[serde(default)]
+    pub input_tokens: u64,
+    /// Output tokens used across all runs in this thread
+    #[serde(default)]
+    pub output_tokens: u64,
+    /// Total tokens used across all runs in this thread
+    #[serde(default)]
+    pub total_tokens: u64,
 }
 
 impl Thread {
@@ -627,6 +636,9 @@ impl Thread {
             attributes: serde_json::Value::Null,
             user_id,
             external_id,
+            input_tokens: 0,
+            output_tokens: 0,
+            total_tokens: 0,
         }
     }
 
@@ -664,6 +676,15 @@ pub struct ThreadSummary {
     /// Tags extracted from thread attributes
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tags: Option<Vec<String>>,
+    /// Input tokens used across all runs in this thread
+    #[serde(default)]
+    pub input_tokens: u64,
+    /// Output tokens used across all runs in this thread
+    #[serde(default)]
+    pub output_tokens: u64,
+    /// Total tokens used across all runs in this thread
+    #[serde(default)]
+    pub total_tokens: u64,
 }
 
 // CreateThreadRequest removed - threads are now auto-created from first messages

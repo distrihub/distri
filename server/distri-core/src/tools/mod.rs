@@ -239,24 +239,28 @@ pub async fn resolve_tools_config(
 ) -> Result<Vec<Arc<dyn Tool>>> {
     let mut all_tools = Vec::new();
 
-    let mut require_tool_names = vec!["final"];
-
-    // Add user-configured builtin tools (without duplicates)
-    for builtin_name in &config.builtin {
-        if !require_tool_names.contains(&builtin_name.as_str()) {
-            require_tool_names.push(builtin_name);
-        }
-    }
-
     // Add all builtin tools (both required and user-configured)
     let builtin_tools = get_builtin_tools(
         workspace_filesystem,
         session_filesystem,
         include_filesystem_tools,
     );
-    for builtin_name in require_tool_names {
-        if let Some(tool) = builtin_tools.iter().find(|t| t.get_name() == *builtin_name) {
-            all_tools.push(tool.clone());
+
+    let use_all_builtins = config.builtin.iter().any(|name| name == "*");
+    if use_all_builtins {
+        // Wildcard: include all builtin tools
+        all_tools.extend(builtin_tools.iter().cloned());
+    } else {
+        let mut require_tool_names = vec!["final"];
+        for builtin_name in &config.builtin {
+            if !require_tool_names.contains(&builtin_name.as_str()) {
+                require_tool_names.push(builtin_name);
+            }
+        }
+        for builtin_name in require_tool_names {
+            if let Some(tool) = builtin_tools.iter().find(|t| t.get_name() == *builtin_name) {
+                all_tools.push(tool.clone());
+            }
         }
     }
 
