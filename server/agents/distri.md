@@ -16,7 +16,7 @@ reasoning_depth = "deep"
 type = "tools"
 
 [tools]
-builtin = [*]
+builtin = ["*"]
 
 [[available_skills]]
 id = "*"
