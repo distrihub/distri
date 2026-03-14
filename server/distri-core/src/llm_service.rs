@@ -101,7 +101,7 @@ impl LlmExecuteService {
 
         // Step 5: Create LLM executor
         let llm_def = LlmDefinition {
-            name: format!("llm_execute_{}", model_settings.model),
+            name: format!("llm_execute_{}", model_settings.model.as_deref().unwrap_or("default")),
             model_settings: model_settings.clone(),
             tool_format: ToolCallFormat::Provider,
             tool_delivery_mode: Default::default(),

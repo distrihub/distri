@@ -1,8 +1,10 @@
 use crate::hooks_runtime::HookRegistry;
 use distri_stores::SessionStoreExt;
 use distri_types::{
-    configuration::DefinitionOverrides, AgentContextSize, AgentPlan, ContextSize, ContextUsage,
-    ExecutionHistoryEntry, ExecutionResult, Part, PlanStep, ScratchpadEntry, ScratchpadEntryType,
+    configuration::DefinitionOverrides,
+    ModelSettings,
+    AgentContextSize, AgentPlan, ContextSize, ContextUsage, ExecutionHistoryEntry,
+    ExecutionResult, Part, PlanStep, ScratchpadEntry, ScratchpadEntryType,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -156,6 +158,9 @@ pub struct ExecutorContext {
     pub dynamic_tools: Option<Arc<RwLock<Vec<Arc<dyn Tool>>>>>,
     pub hook_prompt_state: Arc<RwLock<HookPromptState>>,
     pub hook_registry: Arc<RwLock<Option<HookRegistry>>>,
+    /// Default model settings inherited from the orchestrator/workspace context.
+    /// Always present — agents without explicit model_settings use this.
+    pub default_model_settings: ModelSettings,
 }
 
 impl std::fmt::Debug for ExecutorContext {
@@ -209,6 +214,7 @@ impl Default for ExecutorContext {
             dynamic_tools: None,
             hook_prompt_state: Arc::new(RwLock::new(HookPromptState::default())),
             hook_registry: Arc::new(RwLock::new(None)),
+            default_model_settings: ModelSettings::default(),
         }
     }
 }
@@ -758,6 +764,7 @@ impl ExecutorContext {
             event_tx: self.event_tx.clone(),
             parent_task_id: Some(self.task_id.clone()),
             tool_metadata: self.tool_metadata.clone(),
+            default_model_settings: self.default_model_settings.clone(),
             ..Default::default()
         }
     }
@@ -843,6 +850,7 @@ impl ExecutorContext {
             dynamic_tools: self.dynamic_tools.clone(),
             hook_prompt_state: self.hook_prompt_state.clone(),
             hook_registry: self.hook_registry.clone(),
+            default_model_settings: self.default_model_settings.clone(),
         };
 
         (inner_context, inner_rx)

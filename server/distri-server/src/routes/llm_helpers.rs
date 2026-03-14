@@ -25,7 +25,7 @@ pub async fn load_agent_model_settings(
     let agent_config = executor.get_agent(aid).await?;
 
     let distri_types::configuration::AgentConfig::StandardAgent(def) = &agent_config;
-    Some(def.model_settings.clone())
+    Some(def.model_settings())
 }
 
 /// Merge model settings: base settings are overridden by override settings
@@ -44,11 +44,7 @@ pub fn merge_model_settings(
     };
 
     ModelSettings {
-        model: if override_settings.model != sentinel.model {
-            override_settings.model.clone()
-        } else {
-            base.model.clone()
-        },
+        model: override_settings.model.clone().or_else(|| base.model.clone()),
         temperature: override_settings.temperature.or(base.temperature),
         max_tokens: override_settings.max_tokens.or(base.max_tokens),
         context_size: if override_settings.context_size != sentinel.context_size {

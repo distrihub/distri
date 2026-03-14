@@ -180,7 +180,7 @@ impl BaseAgent for StandardAgent {
             metadata: serde_json::json!({
                 "agent_type": "standard",
                 "max_iterations": self.definition.max_iterations,
-                "model": self.definition.model_settings.model,
+                "model": self.definition.model_settings().model.as_deref().unwrap_or("default"),
                 "tools_count": self.tools.len()
             }),
         };

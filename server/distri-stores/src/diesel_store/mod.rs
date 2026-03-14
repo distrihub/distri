@@ -742,6 +742,7 @@ where
             metadata: &metadata_value,
             attributes: &thread.attributes.to_string(),
             external_id: thread.external_id.as_deref(),
+            channel_id: None,
             user_id,
         };
 
@@ -830,6 +831,7 @@ where
             metadata: Some(&metadata_value),
             attributes: Some(&attr_str),
             external_id: None,
+            channel_id: None,
         };
 
         diesel::update(threads::table.find(thread_id))
@@ -1157,6 +1159,7 @@ where
             metadata: Some(&metadata_value),
             attributes: Some(&attr_str),
             external_id: None,
+            channel_id: None,
         };
 
         diesel::update(threads::table.find(thread_id))

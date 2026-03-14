@@ -100,7 +100,7 @@ pub async fn register_coder_agent(
 
     // Allow the model to be overridden at runtime without editing the markdown file.
     if let Ok(model_override) = std::env::var("DISTRI_CODER_MODEL") {
-        definition.model_settings.model = model_override;
+        definition.model_settings_mut().model = Some(model_override);
     }
 
     let agent_name = definition.name.clone();

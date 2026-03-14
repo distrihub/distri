@@ -517,7 +517,7 @@ impl ClaudeLLMExecutor {
         tracing::info!(
             target: "claude_llm.execute",
             "Claude LLM request model={}, max_tokens={:?}, tools={}, messages={}",
-            self.llm_def.model_settings.model,
+            self.llm_def.model_settings.model.as_deref().unwrap_or("unset"),
             self.llm_def.model_settings.max_tokens,
             self.tools.len(),
             messages.len()
@@ -542,7 +542,7 @@ impl ClaudeLLMExecutor {
         };
 
         let request = CreateMessageRequest {
-            model: self.llm_def.model_settings.model.clone(),
+            model: self.llm_def.model_settings.model.clone().unwrap_or_default(),
             max_tokens: self.llm_def.model_settings.max_tokens.unwrap_or(DEFAULT_ANTHROPIC_MAX_TOKENS),
             messages: claude_messages,
             system,
@@ -682,7 +682,7 @@ impl ClaudeLLMExecutor {
         tracing::info!(
             target: "claude_llm.execute_stream",
             "Claude LLM stream request model={}, max_tokens={:?}, tools={}, messages={}",
-            self.llm_def.model_settings.model,
+            self.llm_def.model_settings.model.as_deref().unwrap_or("unset"),
             self.llm_def.model_settings.max_tokens,
             self.tools.len(),
             messages.len()
@@ -708,7 +708,7 @@ impl ClaudeLLMExecutor {
         };
 
         let request = CreateMessageRequest {
-            model: self.llm_def.model_settings.model.clone(),
+            model: self.llm_def.model_settings.model.clone().unwrap_or_default(),
             max_tokens: self.llm_def.model_settings.max_tokens.unwrap_or(DEFAULT_ANTHROPIC_MAX_TOKENS),
             messages: claude_messages,
             system,

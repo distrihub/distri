@@ -523,7 +523,7 @@ async fn validate_agent_handler(
 
     // Extract provider from agent config
     let distri_types::configuration::AgentConfig::StandardAgent(def) = &agent;
-    let provider = def.model_settings.provider.clone();
+    let provider = def.model_settings().provider.clone();
 
     // Check for missing provider secrets
     let secret_store = executor.stores.secret_store.clone();

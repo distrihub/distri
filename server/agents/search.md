@@ -6,11 +6,6 @@ max_iterations = 4
 context_size = 50000
 tool_format = "provider"
 
-[model_settings]
-model = "gpt-4.1-mini"
-temperature = 0.1
-max_tokens = 2000
-
 [strategy]
 reasoning_depth = "standard"
 

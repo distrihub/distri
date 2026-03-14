@@ -342,8 +342,9 @@ pub struct StandardDefinition {
     #[serde(default)]
     pub mcp_servers: Option<Vec<McpDefinition>>,
     /// Settings related to the model used by the agent.
-    #[serde(default)]
-    pub model_settings: ModelSettings,
+    /// When `None`, the agent inherits model settings from the orchestrator context defaults.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_settings: Option<ModelSettings>,
     /// Optional lower-level model settings for lightweight analysis helpers
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub analysis_model_settings: Option<ModelSettings>,
@@ -438,7 +439,10 @@ pub struct StandardDefinition {
     pub user_message_overrides: Option<UserMessageOverrides>,
 
     /// Whether context compaction is enabled for this agent (default: true)
-    #[serde(default = "default_compaction_enabled", skip_serializing_if = "is_true")]
+    #[serde(
+        default = "default_compaction_enabled",
+        skip_serializing_if = "is_true"
+    )]
     pub compaction_enabled: bool,
 }
 fn default_append_default_instructions() -> Option<bool> {
@@ -487,10 +491,7 @@ impl StandardDefinition {
 
     /// Check if reflection is enabled (default: false)
     pub fn is_reflection_enabled(&self) -> bool {
-        self.reflection
-            .as_ref()
-            .map(|r| r.enabled)
-            .unwrap_or(false)
+        self.reflection.as_ref().map(|r| r.enabled).unwrap_or(false)
     }
 
     /// Get the reflection configuration, if any
@@ -507,17 +508,28 @@ impl StandardDefinition {
         self.include_shell.unwrap_or(false)
     }
 
+    /// Get model settings, falling back to defaults if not specified.
+    pub fn model_settings(&self) -> ModelSettings {
+        self.model_settings.clone().unwrap_or_default()
+    }
+
+    /// Get a mutable reference to model settings, initializing with defaults if `None`.
+    pub fn model_settings_mut(&mut self) -> &mut ModelSettings {
+        self.model_settings
+            .get_or_insert_with(ModelSettings::default)
+    }
+
     /// Get the effective context size (agent-level override or model settings)
     pub fn get_effective_context_size(&self) -> u32 {
         self.context_size
-            .unwrap_or(self.model_settings.context_size)
+            .unwrap_or(self.model_settings().context_size)
     }
 
     /// Model settings to use for lightweight browser analysis helpers (e.g., observe_summary commands)
     pub fn analysis_model_settings_config(&self) -> ModelSettings {
         self.analysis_model_settings
             .clone()
-            .unwrap_or_else(|| self.model_settings.clone())
+            .unwrap_or_else(|| self.model_settings())
     }
 
     /// Whether to include the persistent scratchpad/history in prompts
@@ -529,15 +541,15 @@ impl StandardDefinition {
     pub fn apply_overrides(&mut self, overrides: DefinitionOverrides) {
         // Override model settings
         if let Some(model) = overrides.model {
-            self.model_settings.model = model;
+            self.model_settings_mut().model = Some(model);
         }
 
         if let Some(temperature) = overrides.temperature {
-            self.model_settings.temperature = Some(temperature);
+            self.model_settings_mut().temperature = Some(temperature);
         }
 
         if let Some(max_tokens) = overrides.max_tokens {
-            self.model_settings.max_tokens = Some(max_tokens);
+            self.model_settings_mut().max_tokens = Some(max_tokens);
         }
 
         // Override max_iterations
@@ -689,6 +701,12 @@ fn default_required() -> bool {
     true
 }
 
+impl Default for ModelProvider {
+    fn default() -> Self {
+        ModelProvider::OpenAI {}
+    }
+}
+
 impl ModelProvider {
     pub fn openai_base_url() -> String {
         "https://api.openai.com/v1".to_string()
@@ -786,12 +804,14 @@ impl ModelProvider {
     }
 }
 
-/// Model settings configuration
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+/// Model settings configuration.
+/// `model` is optional — when not set at the agent level, the orchestrator context
+/// must provide a default. `merge_model_settings` will error if no model is resolved.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 #[serde(deny_unknown_fields)]
 pub struct ModelSettings {
-    #[serde(default = "default_model")]
-    pub model: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -814,20 +834,12 @@ pub struct ModelSettings {
     pub response_format: Option<serde_json::Value>,
 }
 
-impl Default for ModelSettings {
-    fn default() -> Self {
-        Self {
-            model: "gpt-4.1-mini".to_string(),
-            temperature: None,
-            max_tokens: None,
-            context_size: 20000,
-            top_p: None,
-            frequency_penalty: None,
-            presence_penalty: None,
-            provider: default_model_provider(),
-            parameters: None,
-            response_format: None,
-        }
+impl ModelSettings {
+    /// Get model name or error if not set.
+    pub fn model_or_err(&self) -> Result<&str, &'static str> {
+        self.model.as_deref().ok_or(
+            "model not set — configure default_model_settings on the orchestrator or workspace",
+        )
     }
 }
 
@@ -838,10 +850,6 @@ pub fn default_agent_version() -> Option<String> {
 
 fn default_model_provider() -> ModelProvider {
     ModelProvider::OpenAI {}
-}
-
-fn default_model() -> String {
-    "gpt-4.1-mini".to_string()
 }
 
 fn default_context_size() -> u32 {
@@ -900,7 +908,7 @@ impl StandardDefinition {
 
 impl From<StandardDefinition> for LlmDefinition {
     fn from(definition: StandardDefinition) -> Self {
-        let mut model_settings = definition.model_settings.clone();
+        let mut model_settings = definition.model_settings();
         // Use agent-level context_size override if provided
         if let Some(context_size) = definition.context_size {
             model_settings.context_size = context_size;
@@ -1094,21 +1102,21 @@ mod tests {
     #[test]
     fn test_max_tokens_optional_defaults_to_none() {
         let def = StandardDefinition::default();
-        assert!(def.model_settings.max_tokens.is_none());
+        assert!(def.model_settings().max_tokens.is_none());
     }
 
     #[test]
     fn test_max_tokens_deserializes_when_present() {
         let json = r#"{"name": "test", "model_settings": {"max_tokens": 4096}}"#;
         let def: StandardDefinition = serde_json::from_str(json).unwrap();
-        assert_eq!(def.model_settings.max_tokens, Some(4096));
+        assert_eq!(def.model_settings().max_tokens, Some(4096));
     }
 
     #[test]
     fn test_max_tokens_none_when_absent() {
         let json = r#"{"name": "test", "model_settings": {"model": "gpt-4.1"}}"#;
         let def: StandardDefinition = serde_json::from_str(json).unwrap();
-        assert!(def.model_settings.max_tokens.is_none());
+        assert!(def.model_settings().max_tokens.is_none());
     }
 
     #[test]

@@ -7,11 +7,6 @@ enable_todos = true
 context_size = 120000
 tool_format = "provider"
 
-[model_settings]
-model = "gpt-4.1-mini"
-temperature = 0.2
-max_tokens = 8000
-
 [strategy]
 reasoning_depth = "deep"
 

@@ -40,6 +40,7 @@ pub struct ThreadModel {
     pub metadata: String,
     pub attributes: String,
     pub external_id: Option<String>,
+    pub channel_id: Option<String>,
     pub user_id: String,
 }
 
@@ -56,6 +57,7 @@ pub struct NewThreadModel<'a> {
     pub metadata: &'a str,
     pub attributes: &'a str,
     pub external_id: Option<&'a str>,
+    pub channel_id: Option<&'a str>,
     pub user_id: &'a str,
 }
 
@@ -69,6 +71,7 @@ pub struct ThreadChangeset<'a> {
     pub metadata: Option<&'a str>,
     pub attributes: Option<&'a str>,
     pub external_id: Option<Option<&'a str>>,
+    pub channel_id: Option<Option<&'a str>>,
 }
 
 #[derive(

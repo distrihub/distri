@@ -9,17 +9,6 @@ tool_format = "provider"
 [browser_config]
 enabled = true
 
-[model_settings]
-model = "gpt-4.1-mini"
-temperature = 0.1
-max_tokens = 2000
-
-[analysis_model_settings]
-model = "gpt-4.1-mini"
-temperature = 0.2
-max_tokens = 800
-context_size = 8000
-
 [strategy]
 reasoning_depth = "shallow"
 

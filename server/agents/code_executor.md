@@ -5,11 +5,6 @@ include_shell = true
 max_iterations = 10
 tool_format = "provider"
 
-[model_settings]
-model = "gpt-4.1-mini"
-temperature = 0.1
-max_tokens = 4000
-
 [strategy]
 reasoning_depth = "standard"
 

@@ -164,7 +164,7 @@ impl LLMExecutor {
         tracing::info!(
             target: "llm.execute",
             "LLM request (non-stream) model={}, provider={:?}, max_tokens={:?}, temperature={:?}, tool_format={:?}, tools={} messages={}",
-            self.llm_def.model_settings.model,
+            self.llm_def.model_settings.model.as_deref().unwrap_or("unset"),
             self.llm_def.model_settings.provider,
             self.llm_def.model_settings.max_tokens,
             self.llm_def.model_settings.temperature,
@@ -192,7 +192,7 @@ impl LLMExecutor {
 
         self.model_logger.log_model_execution(
             &self.llm_def.name,
-            &self.llm_def.model_settings.model,
+            &self.llm_def.model_settings.model.as_deref().unwrap_or("unset"),
             message_count,
             Some(&settings),
             None,
@@ -227,7 +227,7 @@ impl LLMExecutor {
 
         self.model_logger.log_model_execution(
             &self.llm_def.name,
-            &self.llm_def.model_settings.model,
+            &self.llm_def.model_settings.model.as_deref().unwrap_or("unset"),
             message_count,
             None,
             usage.as_ref().map(|u| u.total_tokens),
@@ -338,7 +338,7 @@ impl LLMExecutor {
         tracing::info!(
             target: "llm.execute_stream",
             "LLM request (stream) model={}, provider={:?}, max_tokens={:?}, temperature={:?}, tool_format={:?}, tools={} messages={}",
-            self.llm_def.model_settings.model,
+            self.llm_def.model_settings.model.as_deref().unwrap_or("unset"),
             self.llm_def.model_settings.provider,
             self.llm_def.model_settings.max_tokens,
             self.llm_def.model_settings.temperature,
@@ -373,7 +373,7 @@ impl LLMExecutor {
 
         self.model_logger.log_model_execution(
             &self.llm_def.name,
-            &self.llm_def.model_settings.model,
+            &self.llm_def.model_settings.model.as_deref().unwrap_or("unset"),
             message_count,
             Some(&settings),
             None,
@@ -756,9 +756,10 @@ impl LLMExecutor {
         messages: Vec<ChatCompletionRequestMessage>,
     ) -> CreateChatCompletionRequest {
         let settings = &self.llm_def.model_settings;
+        let model = settings.model.as_deref().unwrap_or("unset");
         tracing::debug!(
             "Building chat completion request with model: {}",
-            settings.model
+            model
         );
 
         let tools: Vec<async_openai::types::chat::ChatCompletionTools> = self.map_tools();
@@ -782,7 +783,7 @@ impl LLMExecutor {
         };
 
         let request = CreateChatCompletionRequest {
-            model: settings.model.clone(),
+            model: model.to_string(),
             messages,
             tools,
             temperature: settings.temperature,

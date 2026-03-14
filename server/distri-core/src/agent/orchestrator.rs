@@ -311,11 +311,11 @@ impl AgentOrchestratorBuilder {
 }
 
 impl AgentOrchestrator {
-    fn merge_model_settings(
+    pub(crate) fn merge_model_settings(
         base: &ModelSettings,
         agent: &ModelSettings,
         sentinel: &ModelSettings,
-    ) -> ModelSettings {
+    ) -> Result<ModelSettings, AgentError> {
         let provider = if std::mem::discriminant(&agent.provider)
             != std::mem::discriminant(&sentinel.provider)
         {
@@ -324,12 +324,16 @@ impl AgentOrchestrator {
             base.provider.clone()
         };
 
-        ModelSettings {
-            model: if agent.model != sentinel.model {
-                agent.model.clone()
-            } else {
-                base.model.clone()
-            },
+        let model = agent.model.clone().or_else(|| base.model.clone());
+        if model.is_none() {
+            return Err(AgentError::InvalidConfiguration(
+                "model not set — configure default_model_settings on the orchestrator or workspace"
+                    .to_string(),
+            ));
+        }
+
+        Ok(ModelSettings {
+            model,
             temperature: agent.temperature.or(base.temperature),
             max_tokens: agent.max_tokens.or(base.max_tokens),
             context_size: if agent.context_size != sentinel.context_size {
@@ -351,7 +355,7 @@ impl AgentOrchestrator {
             } else {
                 base.response_format.clone()
             },
-        }
+        })
     }
 
     pub fn cleanup(&self) {
@@ -412,6 +416,9 @@ impl AgentOrchestrator {
         context: Arc<ExecutorContext>,
     ) -> Result<Arc<ExecutorContext>, AgentError> {
         let mut ctx = Arc::try_unwrap(context).unwrap_or_else(|arc| (*arc).clone());
+
+        // Inject orchestrator-level default model settings into the context
+        ctx.default_model_settings = self.get_default_model_settings().await;
 
         if let Some(prefix) = self.session_root_prefix.clone() {
             let metadata = ctx
@@ -1177,9 +1184,23 @@ impl AgentOrchestrator {
         // Start from orchestrator defaults, then overlay agent-specific settings so agent wins.
         let default_model_settings = self.get_default_model_settings().await;
         let sentinel = ModelSettings::default();
-        let agent_model = definition.model_settings.clone();
-        definition.model_settings =
-            Self::merge_model_settings(&default_model_settings, &agent_model, &sentinel);
+        let merged = match definition.model_settings.take() {
+            Some(agent_model) => {
+                match Self::merge_model_settings(&default_model_settings, &agent_model, &sentinel) {
+                    Ok(m) => m,
+                    Err(e) => {
+                        tracing::error!(
+                            "Failed to merge model settings for agent '{}': {}",
+                            definition.name,
+                            e
+                        );
+                        default_model_settings.clone()
+                    }
+                }
+            }
+            None => default_model_settings.clone(),
+        };
+        definition.model_settings = Some(merged);
 
         let default_analysis_settings = self.get_default_analysis_model_settings().await;
         definition.analysis_model_settings = definition
@@ -1187,6 +1208,7 @@ impl AgentOrchestrator {
             .clone()
             .map(|agent_analysis| {
                 Self::merge_model_settings(&default_analysis_settings, &agent_analysis, &sentinel)
+                    .unwrap_or(default_analysis_settings.clone())
             })
             .or(Some(default_analysis_settings));
         tracing::debug!("Applying definition overrides: {:?}", definition_overrides);
@@ -1552,7 +1574,11 @@ impl OrchestratorTrait for AgentOrchestrator {
             // Compare request settings against defaults to detect which fields were explicitly set
             let sentinel = ModelSettings::default();
             let final_model_settings =
-                Self::merge_model_settings(&def.model_settings, &llm_def.model_settings, &sentinel);
+                Self::merge_model_settings(&def.model_settings(), &llm_def.model_settings, &sentinel)
+                    .unwrap_or_else(|e| {
+                        tracing::error!("Failed to merge model settings for LLM call '{}': {}", llm_def.name, e);
+                        llm_def.model_settings.clone()
+                    });
 
             // Update llm_def with merged settings
             llm_def.model_settings = final_model_settings;

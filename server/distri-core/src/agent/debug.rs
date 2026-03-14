@@ -88,7 +88,7 @@ pub async fn generate_agent_response(
 
     // Create plan config for LLM streaming
     let mut plan_config = distri_types::PlanConfig::default();
-    plan_config.model_settings = agent_def.model_settings.clone();
+    plan_config.model_settings = agent_def.model_settings();
 
     // Use the planner's streaming method to get LLM response
     planner

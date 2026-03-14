@@ -44,7 +44,7 @@ pub async fn validate_provider_secrets(
     let agent_config = executor.get_agent(agent_id).await;
 
     let provider = match agent_config {
-        Some(AgentConfig::StandardAgent(def)) => def.model_settings.provider.clone(),
+        Some(AgentConfig::StandardAgent(def)) => def.model_settings().provider.clone(),
         None => {
             // If agent not found, we'll get an error later; skip validation here
             return Ok(());

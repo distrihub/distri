@@ -1,9 +1,17 @@
-import { useEffect, useState, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useState, useMemo, useRef } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Chat, useAgent, useAgentsByUsage, useChatMessages } from '@distri/react'
 import { ChevronDown, Loader2, Search, X } from 'lucide-react'
 import { v4 as uuidv4 } from 'uuid'
 import type { AgentUsageInfo } from '@distri/core'
+
+const MODEL_OPTIONS = [
+  { value: 'auto', label: 'Auto' },
+  { value: 'claude-sonnet-4', label: 'Claude Sonnet 4' },
+  { value: 'gpt-4.1-mini', label: 'GPT-4.1 Mini' },
+  { value: 'gpt-4.1', label: 'GPT-4.1' },
+  { value: 'gpt-4o', label: 'GPT-4o' },
+]
 
 function AgentSearchDropdown({
   agents,
@@ -133,6 +141,7 @@ export default function ChatPage() {
   const threadIdParam = searchParams.get('threadId')
 
   const [selectedAgentId, setSelectedAgentId] = useState<string | undefined>(agentIdParam || undefined)
+  const [selectedModel, setSelectedModel] = useState<string>('auto')
   const { agent, loading: agentLoading } = useAgent({ agentIdOrDef: selectedAgentId || '' })
   const { messages, isLoading: messagesLoading } = useChatMessages({ agent: agent || undefined, threadId: threadIdParam || undefined })
 
@@ -170,6 +179,14 @@ export default function ChatPage() {
     setSearchParams(newParams)
   }
 
+  // Provide model override via metadata when not "auto"
+  const getMetadata = useCallback(async () => {
+    if (selectedModel === 'auto') return {}
+    return {
+      definition_overrides: { model: selectedModel },
+    }
+  }, [selectedModel])
+
   return (
     <div className="flex h-full w-full flex-col bg-slate-950 text-slate-50">
       <header className="flex items-center gap-4 border-b border-slate-800 px-4 py-3 bg-slate-950">
@@ -186,6 +203,23 @@ export default function ChatPage() {
             onSearchChange={setSearch}
           />
         </div>
+
+        <div className="flex items-center gap-2">
+          <label className="text-[11px] uppercase tracking-[0.2em] text-slate-500">
+            Model
+          </label>
+          <select
+            value={selectedModel}
+            onChange={(e) => setSelectedModel(e.target.value)}
+            className="rounded border border-slate-700 bg-slate-900 px-2 py-1 text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-slate-500"
+          >
+            {MODEL_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+        </div>
       </header>
 
       {(agentLoading == true || messagesLoading == true) && <Loader2 className="animate-spin h-5 w-5" />}
@@ -195,6 +229,7 @@ export default function ChatPage() {
           threadId={threadId}
           initialMessages={messages}
           theme="dark"
+          getMetadata={getMetadata}
         />
       </div>}
     </div>

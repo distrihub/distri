@@ -5,11 +5,6 @@ description = "Agent design specialist that creates new agents from user descrip
 append_default_instructions = false
 max_iterations = 10
 
-[model_settings]
-model = "gpt-4.1-mini"
-temperature = 0.3
-max_tokens = 4000
-
 [strategy]
 reasoning_depth = "standard"
 

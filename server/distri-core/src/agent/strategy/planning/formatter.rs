@@ -672,10 +672,10 @@ mod tests {
         crate::types::StandardDefinition {
             name: "test".to_string(),
             instructions: "Be helpful".to_string(),
-            model_settings: ModelSettings {
+            model_settings: Some(ModelSettings {
                 provider,
                 ..ModelSettings::default()
-            },
+            }),
             tool_format: format,
             ..Default::default()
         }
