@@ -48,13 +48,8 @@ pub struct ProviderRegistry {
 }
 
 impl ProviderRegistry {
-    /// Create a new provider registry
-    pub fn new() -> Self {
-        Self::new_with_callback_url(Self::get_callback_url())
-    }
-
     /// Create a new provider registry with an explicit callback URL
-    pub fn new_with_callback_url(callback_url: impl Into<String>) -> Self {
+    pub fn new(callback_url: impl Into<String>) -> Self {
         Self {
             providers: Arc::new(RwLock::new(HashMap::new())),
             default_redirect_uri: callback_url.into(),
@@ -66,32 +61,16 @@ impl ProviderRegistry {
         callback_url: impl Into<String>,
         providers_config: ProvidersConfig,
     ) -> Result<Self> {
-        let registry = Self::new_with_callback_url(callback_url);
+        let registry = Self::new(callback_url);
         registry
             .register_providers_from_config(&providers_config)
             .await?;
         Ok(registry)
     }
 
-    /// Get the appropriate callback URL from configuration or environment
-    pub fn get_callback_url() -> String {
-        // Check environment variable first
-        if let Ok(callback_url) = std::env::var("DISTRI_AUTH_CALLBACK_URL") {
-            return callback_url;
-        }
-
-        // Check for server mode environment variables
-        if let Ok(server_host) = std::env::var("DISTRI_SERVER_HOST") {
-            let port = std::env::var("DISTRI_SERVER_PORT").unwrap_or_else(|_| "8080".to_string());
-            return format!("http://{}:{}/auth/callback", server_host, port);
-        }
-
-        if let Ok(server_url) = std::env::var("DISTRI_SERVER_URL") {
-            return format!("{}/auth/callback", server_url.trim_end_matches('/'));
-        }
-
-        // Fallback to localhost for CLI mode
-        "http://localhost:5174/auth/callback".to_string()
+    /// Get the configured redirect URI
+    pub fn redirect_uri(&self) -> &str {
+        &self.default_redirect_uri
     }
 
     /// Load default providers from embedded JSON
@@ -297,14 +276,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_provider_registry_creation() {
-        let registry = ProviderRegistry::new();
+        let registry = ProviderRegistry::new("http://localhost:8080/auth/callback");
         let providers = registry.list_providers().await;
         assert!(providers.is_empty());
     }
 
     #[tokio::test]
     async fn test_load_default_providers() {
-        let registry = ProviderRegistry::new();
+        let registry = ProviderRegistry::new("http://localhost:8080/auth/callback");
 
         // Set up test environment variables
         env::set_var("GOOGLE_CLIENT_ID", "test_google_client_id");
@@ -323,7 +302,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_provider_availability() {
-        let registry = ProviderRegistry::new();
+        let registry = ProviderRegistry::new("http://localhost:8080/auth/callback");
 
         // Initially no providers available
         assert!(!registry.is_provider_available("google").await);
@@ -342,7 +321,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_provider_config() {
-        let registry = ProviderRegistry::new();
+        let registry = ProviderRegistry::new("http://localhost:8080/auth/callback");
 
         // Load providers first (requires env vars for credentials)
         env::set_var("GOOGLE_CLIENT_ID", "test_client_id");

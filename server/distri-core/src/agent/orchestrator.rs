@@ -11,7 +11,6 @@ use crate::{
 
 use super::ExecutorContext;
 use crate::agent::hooks::inline::InlineHook;
-use distri_auth::ProviderRegistry;
 use distri_filesystem::FileSystem;
 use distri_stores::{initialize_stores, InitializedStores};
 pub use distri_stores::{AgentStore, ThreadStore};
@@ -86,6 +85,7 @@ pub struct AgentOrchestratorBuilder {
     store_config: Option<StoreConfig>,
     configuration: Option<Arc<RwLock<DistriServerConfig>>>,
     hooks: Option<HashMap<String, Arc<dyn crate::agent::types::AgentHooks>>>,
+    tool_auth_handler: Option<Arc<OAuthHandler>>,
 }
 
 impl AgentOrchestratorBuilder {
@@ -164,6 +164,11 @@ impl AgentOrchestratorBuilder {
         self
     }
 
+    pub fn with_tool_auth_handler(mut self, handler: Arc<OAuthHandler>) -> Self {
+        self.tool_auth_handler = Some(handler);
+        self
+    }
+
     pub async fn build(self) -> anyhow::Result<AgentOrchestrator> {
         let (coordinator_tx, coordinator_rx) = mpsc::channel(10000);
         let browser_config = self.browser_config.unwrap_or_default();
@@ -224,15 +229,12 @@ impl AgentOrchestratorBuilder {
 
         let browser_config = Arc::new(RwLock::new(browser_config));
 
-        let provider_registry = Arc::new(ProviderRegistry::new());
-        if let Err(e) = provider_registry.load_default_providers().await {
-            tracing::warn!("Failed to load default OAuth providers: {}", e);
-        }
-        let tool_auth_handler = Arc::new(OAuthHandler::with_provider_registry(
-            stores.tool_auth_store.clone(),
-            provider_registry,
-            ProviderRegistry::get_callback_url(),
-        ));
+        let tool_auth_handler = self.tool_auth_handler.unwrap_or_else(|| {
+            Arc::new(OAuthHandler::new(
+                stores.tool_auth_store.clone(),
+                String::new(),
+            ))
+        });
 
         // Initialize prompt registry with defaults only (no auto-discovery)
         // User-specific partials are loaded at render time in formatter.rs
