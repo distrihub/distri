@@ -28,6 +28,7 @@ interface Thread {
   agent_name?: string;
   agent_id?: string;
   external_id?: string;
+  channel_id?: string;
   user_name?: string;
   user?: string;
   last_message?: string;
@@ -595,6 +596,11 @@ export function ThreadsView({ className, initialAgentId, initialExternalId }: Th
                           >
                             ext:{thread.external_id}
                           </button>
+                        )}
+                        {thread.channel_id && (
+                          <span className="font-mono text-[11px] text-muted-foreground/80">
+                            ch:{thread.channel_id.slice(0, 8)}...
+                          </span>
                         )}
                         <span className="font-mono text-[11px] text-muted-foreground/80">
                           ID: {thread.id.slice(0, 8)}...

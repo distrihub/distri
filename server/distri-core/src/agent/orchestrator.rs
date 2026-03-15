@@ -55,8 +55,6 @@ pub struct AgentOrchestrator {
     /// All stores - use this instead of individual store fields
     pub stores: InitializedStores,
     pub configuration: Arc<RwLock<DistriServerConfig>>,
-    pub default_model_settings: Arc<RwLock<Option<ModelSettings>>>,
-    pub default_analysis_model_settings: Arc<RwLock<Option<ModelSettings>>>,
     pub hooks: Arc<RwLock<HashMap<String, Arc<dyn crate::agent::types::AgentHooks>>>>,
     pub inline_hooks: Arc<dashmap::DashMap<String, tokio::sync::oneshot::Sender<HookMutation>>>,
     pub hook_registry: HookRegistry,
@@ -87,8 +85,6 @@ pub struct AgentOrchestratorBuilder {
     prompt_registry: Option<Arc<PromptRegistry>>,
     store_config: Option<StoreConfig>,
     configuration: Option<Arc<RwLock<DistriServerConfig>>>,
-    default_model_settings: Option<ModelSettings>,
-    default_analysis_model_settings: Option<ModelSettings>,
     hooks: Option<HashMap<String, Arc<dyn crate::agent::types::AgentHooks>>>,
 }
 
@@ -157,16 +153,6 @@ impl AgentOrchestratorBuilder {
 
     pub fn with_browser_config(mut self, browser_config: BrowsrClientConfig) -> Self {
         self.browser_config = Some(browser_config);
-        self
-    }
-
-    pub fn with_default_model_settings(mut self, model_settings: ModelSettings) -> Self {
-        self.default_model_settings = Some(model_settings);
-        self
-    }
-
-    pub fn with_default_analysis_model_settings(mut self, model_settings: ModelSettings) -> Self {
-        self.default_analysis_model_settings = Some(model_settings);
         self
     }
 
@@ -258,23 +244,6 @@ impl AgentOrchestratorBuilder {
             })?)
         };
 
-        let (default_model_settings, default_analysis_model_settings) = {
-            let cfg_guard = configuration.read().await;
-            let default_model_settings = self
-                .default_model_settings
-                .clone()
-                .or_else(|| cfg_guard.model_settings.clone());
-            let default_analysis_model_settings = self
-                .default_analysis_model_settings
-                .clone()
-                .or_else(|| cfg_guard.analysis_model_settings.clone())
-                .or_else(|| default_model_settings.clone());
-            (
-                Arc::new(RwLock::new(default_model_settings)),
-                Arc::new(RwLock::new(default_analysis_model_settings)),
-            )
-        };
-
         let orchestrator = AgentOrchestrator {
             tool_auth_handler,
             mcp_registry: registry,
@@ -290,8 +259,6 @@ impl AgentOrchestratorBuilder {
             store_config,
             stores,
             configuration,
-            default_model_settings,
-            default_analysis_model_settings,
             hooks: hooks.clone(),
             inline_hooks: Arc::new(dashmap::DashMap::new()),
             hook_registry: HookRegistry::new(),
@@ -322,12 +289,12 @@ impl AgentOrchestrator {
         agent: &ModelSettings,
     ) -> Result<ModelSettings, AgentError> {
         let default_provider = distri_types::ModelProvider::OpenAI {};
-        let provider = if std::mem::discriminant(&agent.provider)
+        let provider = if std::mem::discriminant(&agent.inner.provider)
             != std::mem::discriminant(&default_provider)
         {
-            agent.provider.clone()
+            agent.inner.provider.clone()
         } else {
-            base.provider.clone()
+            base.inner.provider.clone()
         };
 
         let model = if !agent.model.is_empty() {
@@ -345,26 +312,28 @@ impl AgentOrchestrator {
         let default_context_size = 20000u32;
         Ok(ModelSettings {
             model,
-            temperature: agent.temperature.or(base.temperature),
-            max_tokens: agent.max_tokens.or(base.max_tokens),
-            context_size: if agent.context_size != default_context_size {
-                agent.context_size
-            } else {
-                base.context_size
-            },
-            top_p: agent.top_p.or(base.top_p),
-            frequency_penalty: agent.frequency_penalty.or(base.frequency_penalty),
-            presence_penalty: agent.presence_penalty.or(base.presence_penalty),
-            provider,
-            parameters: if agent.parameters.is_some() {
-                agent.parameters.clone()
-            } else {
-                base.parameters.clone()
-            },
-            response_format: if agent.response_format.is_some() {
-                agent.response_format.clone()
-            } else {
-                base.response_format.clone()
+            inner: distri_types::ModelSettingsInner {
+                temperature: agent.inner.temperature.or(base.inner.temperature),
+                max_tokens: agent.inner.max_tokens.or(base.inner.max_tokens),
+                context_size: if agent.inner.context_size != default_context_size {
+                    agent.inner.context_size
+                } else {
+                    base.inner.context_size
+                },
+                top_p: agent.inner.top_p.or(base.inner.top_p),
+                frequency_penalty: agent.inner.frequency_penalty.or(base.inner.frequency_penalty),
+                presence_penalty: agent.inner.presence_penalty.or(base.inner.presence_penalty),
+                provider,
+                parameters: if agent.inner.parameters.is_some() {
+                    agent.inner.parameters.clone()
+                } else {
+                    base.inner.parameters.clone()
+                },
+                response_format: if agent.inner.response_format.is_some() {
+                    agent.inner.response_format.clone()
+                } else {
+                    base.inner.response_format.clone()
+                },
             },
         })
     }
@@ -382,30 +351,8 @@ impl AgentOrchestrator {
     }
 
     pub async fn update_configuration(&self, configuration: DistriServerConfig) {
-        {
-            let mut guard = self.configuration.write().await;
-            *guard = configuration.clone();
-        }
-        if configuration.model_settings.is_some() {
-            let mut guard = self.default_model_settings.write().await;
-            *guard = configuration.model_settings.clone();
-        }
-        let analysis = configuration
-            .analysis_model_settings
-            .clone()
-            .or(configuration.model_settings);
-        if analysis.is_some() {
-            let mut guard = self.default_analysis_model_settings.write().await;
-            *guard = analysis;
-        }
-    }
-
-    pub async fn get_default_model_settings(&self) -> Option<ModelSettings> {
-        self.default_model_settings.read().await.clone()
-    }
-
-    pub async fn get_default_analysis_model_settings(&self) -> Option<ModelSettings> {
-        self.default_analysis_model_settings.read().await.clone()
+        let mut guard = self.configuration.write().await;
+        *guard = configuration;
     }
 
     /// Create ephemeral session stores for a single thread execution

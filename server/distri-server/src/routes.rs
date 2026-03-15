@@ -525,7 +525,7 @@ async fn validate_agent_handler(
 
     // Extract provider from agent config
     let distri_types::configuration::AgentConfig::StandardAgent(def) = &agent;
-    let provider = def.model_settings().map(|ms| ms.provider.clone()).unwrap_or(distri_types::ModelProvider::OpenAI {});
+    let provider = def.model_settings().map(|ms| ms.inner.provider.clone()).unwrap_or(distri_types::ModelProvider::OpenAI {});
 
     // Check for missing provider secrets
     let secret_store = executor.stores.secret_store.clone();

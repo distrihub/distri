@@ -39,33 +39,35 @@ pub fn merge_model_settings(
     override_settings: &ModelSettings,
 ) -> ModelSettings {
     let default_provider = distri_types::ModelProvider::OpenAI {};
-    let provider = if std::mem::discriminant(&override_settings.provider)
+    let provider = if std::mem::discriminant(&override_settings.inner.provider)
         != std::mem::discriminant(&default_provider)
     {
-        override_settings.provider.clone()
+        override_settings.inner.provider.clone()
     } else {
-        base.provider.clone()
+        base.inner.provider.clone()
     };
 
     let default_context_size = 20000u32;
     ModelSettings {
         model: if !override_settings.model.is_empty() { override_settings.model.clone() } else { base.model.clone() },
-        temperature: override_settings.temperature.or(base.temperature),
-        max_tokens: override_settings.max_tokens.or(base.max_tokens),
-        context_size: if override_settings.context_size != default_context_size {
-            override_settings.context_size
-        } else {
-            base.context_size
+        inner: distri_types::ModelSettingsInner {
+            temperature: override_settings.inner.temperature.or(base.inner.temperature),
+            max_tokens: override_settings.inner.max_tokens.or(base.inner.max_tokens),
+            context_size: if override_settings.inner.context_size != default_context_size {
+                override_settings.inner.context_size
+            } else {
+                base.inner.context_size
+            },
+            top_p: override_settings.inner.top_p.or(base.inner.top_p),
+            frequency_penalty: override_settings.inner.frequency_penalty.or(base.inner.frequency_penalty),
+            presence_penalty: override_settings.inner.presence_penalty.or(base.inner.presence_penalty),
+            provider,
+            parameters: override_settings.inner.parameters.clone().or(base.inner.parameters.clone()),
+            response_format: override_settings
+                .inner.response_format
+                .clone()
+                .or(base.inner.response_format.clone()),
         },
-        top_p: override_settings.top_p.or(base.top_p),
-        frequency_penalty: override_settings.frequency_penalty.or(base.frequency_penalty),
-        presence_penalty: override_settings.presence_penalty.or(base.presence_penalty),
-        provider,
-        parameters: override_settings.parameters.clone().or(base.parameters.clone()),
-        response_format: override_settings
-            .response_format
-            .clone()
-            .or(base.response_format.clone()),
     }
 }
 

@@ -674,15 +674,10 @@ mod tests {
             instructions: "Be helpful".to_string(),
             model_settings: Some(ModelSettings {
                 model: "test-model".to_string(),
-                provider,
-                temperature: None,
-                max_tokens: None,
-                context_size: 20000,
-                top_p: None,
-                frequency_penalty: None,
-                presence_penalty: None,
-                parameters: None,
-                response_format: None,
+                inner: distri_types::ModelSettingsInner {
+                    provider,
+                    ..Default::default()
+                },
             }),
             tool_format: format,
             ..Default::default()

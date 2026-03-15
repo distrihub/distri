@@ -541,7 +541,7 @@ impl StandardDefinition {
     /// Get the effective context size (agent-level override or model settings)
     pub fn get_effective_context_size(&self) -> u32 {
         self.context_size
-            .or_else(|| self.model_settings().map(|ms| ms.context_size))
+            .or_else(|| self.model_settings().map(|ms| ms.inner.context_size))
             .unwrap_or_else(default_context_size)
     }
 
@@ -565,10 +565,10 @@ impl StandardDefinition {
                 ms.model = model;
             }
             if let Some(temperature) = overrides.temperature {
-                ms.temperature = Some(temperature);
+                ms.inner.temperature = Some(temperature);
             }
             if let Some(max_tokens) = overrides.max_tokens {
-                ms.max_tokens = Some(max_tokens);
+                ms.inner.max_tokens = Some(max_tokens);
             }
         }
 
@@ -939,9 +939,17 @@ impl ModelProvider {
 /// A `ModelSettings` always has a valid model string.
 /// Use `Option<ModelSettings>` when no model is configured yet.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
 pub struct ModelSettings {
     pub model: String,
+    #[serde(flatten)]
+    pub inner: ModelSettingsInner,
+}
+
+/// Optional/defaultable model parameters. Split from `ModelSettings` so callers
+/// can construct `ModelSettings { model: "...", ..Default::default() }` easily
+/// via the `inner` field having `Default`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
+pub struct ModelSettingsInner {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -965,21 +973,11 @@ pub struct ModelSettings {
 }
 
 impl ModelSettings {
-    /// Create ModelSettings with the given model name and default provider (OpenAI).
-    /// Only for use in tests.
-    #[cfg(test)]
-    pub fn default_with_model(model: &str) -> Self {
+    /// Create a new `ModelSettings` with the given model and default inner settings.
+    pub fn new(model: impl Into<String>) -> Self {
         Self {
-            model: model.to_string(),
-            provider: default_model_provider(),
-            temperature: None,
-            max_tokens: None,
-            context_size: default_context_size(),
-            top_p: None,
-            frequency_penalty: None,
-            presence_penalty: None,
-            parameters: None,
-            response_format: None,
+            model: model.into(),
+            inner: ModelSettingsInner::default(),
         }
     }
 
@@ -997,15 +995,10 @@ impl ModelSettings {
         };
         Some(Self {
             model: model_id.to_string(),
-            provider,
-            temperature: None,
-            max_tokens: None,
-            context_size: default_context_size(),
-            top_p: None,
-            frequency_penalty: None,
-            presence_penalty: None,
-            parameters: None,
-            response_format: None,
+            inner: ModelSettingsInner {
+                provider,
+                ..Default::default()
+            },
         })
     }
 }
@@ -1078,7 +1071,7 @@ impl From<StandardDefinition> for LlmDefinition {
     fn from(definition: StandardDefinition) -> Self {
         let model_settings = match (definition.model_settings, definition.context_size) {
             (Some(mut ms), Some(ctx)) => {
-                ms.context_size = ctx;
+                ms.inner.context_size = ctx;
                 Some(ms)
             }
             (ms, _) => ms,

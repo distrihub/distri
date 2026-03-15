@@ -45,7 +45,7 @@ pub async fn validate_provider_secrets(
 
     let provider = match agent_config {
         Some(AgentConfig::StandardAgent(def)) => match def.model_settings() {
-            Some(ms) => ms.provider.clone(),
+            Some(ms) => ms.inner.provider.clone(),
             None => return Ok(()),
         },
         None => {

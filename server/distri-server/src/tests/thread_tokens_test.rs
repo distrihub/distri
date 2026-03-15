@@ -36,6 +36,7 @@ mod tests {
             last_message: Some("hello".to_string()),
             user_id: Some("user-1".to_string()),
             external_id: None,
+            channel_id: None,
             tags: None,
             input_tokens: 1500,
             output_tokens: 3000,
