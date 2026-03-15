@@ -43,7 +43,7 @@ pub fn build_server<T: Transport>(
                             input_schema: json!({}),
                             output_schema: match t {
                                 distri_types::configuration::AgentConfig::StandardAgent(def) => {
-                                    def.model_settings().response_format.clone()
+                                    def.model_settings().and_then(|ms| ms.response_format.clone())
                                 }
                             },
                         })

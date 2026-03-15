@@ -183,15 +183,16 @@ impl A2AHandler {
         req: JsonRpcRequest,
         executor_context: Option<ExecutorContext>,
         verbose: bool,
+        workspace_model_settings: Option<distri_types::ModelSettings>,
     ) -> Either<
         impl futures_util::stream::Stream<Item = Result<SseMessage, std::convert::Infallible>>,
         JsonRpcResponse,
     > {
         let req_id = req.id.clone();
-        // Otherwise, handle as before
+
         let result = match req.method.as_str() {
             "message/stream" => {
-                let executor_context = match executor_context {
+                let mut executor_context = match executor_context {
                     Some(ctx) => Ok(ctx),
                     None => {
                         Self::get_executor_context(
@@ -205,6 +206,10 @@ impl A2AHandler {
                         .await
                     }
                 };
+                if let (Ok(ref mut ctx), Some(ms)) = (&mut executor_context, &workspace_model_settings) {
+                    ctx.default_model_settings = Some(ms.clone());
+                }
+                let executor_context = executor_context;
                 match executor_context {
                     Ok(executor_context) => {
                         let res = handle_message_send_streaming_sse(
@@ -222,7 +227,7 @@ impl A2AHandler {
                 }
             }
             "message/send" => {
-                let executor_context = match executor_context {
+                let mut executor_context = match executor_context {
                     Some(ctx) => Ok(ctx),
                     None => {
                         Self::get_executor_context(
@@ -236,6 +241,10 @@ impl A2AHandler {
                         .await
                     }
                 };
+                if let (Ok(ref mut ctx), Some(ms)) = (&mut executor_context, &workspace_model_settings) {
+                    ctx.default_model_settings = Some(ms.clone());
+                }
+                let executor_context = executor_context;
                 match executor_context {
                     Ok(executor_context) => Either::Right(
                         self.handle_message_send(

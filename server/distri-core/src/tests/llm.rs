@@ -12,8 +12,10 @@ async fn test_request_using_provider_tool_format() {
 
     let executor = LLMExecutor::new(
         LlmDefinition {
+            name: "test".to_string(),
+            model_settings: None,
             tool_format: ToolCallFormat::Provider,
-            ..Default::default()
+            tool_delivery_mode: Default::default(),
         },
         vec![Arc::new(FinalTool) as Arc<dyn Tool>],
         Arc::new(ExecutorContext::default()),

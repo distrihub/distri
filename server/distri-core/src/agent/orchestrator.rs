@@ -55,8 +55,8 @@ pub struct AgentOrchestrator {
     /// All stores - use this instead of individual store fields
     pub stores: InitializedStores,
     pub configuration: Arc<RwLock<DistriServerConfig>>,
-    pub default_model_settings: Arc<RwLock<ModelSettings>>,
-    pub default_analysis_model_settings: Arc<RwLock<ModelSettings>>,
+    pub default_model_settings: Arc<RwLock<Option<ModelSettings>>>,
+    pub default_analysis_model_settings: Arc<RwLock<Option<ModelSettings>>>,
     pub hooks: Arc<RwLock<HashMap<String, Arc<dyn crate::agent::types::AgentHooks>>>>,
     pub inline_hooks: Arc<dashmap::DashMap<String, tokio::sync::oneshot::Sender<HookMutation>>>,
     pub hook_registry: HookRegistry,
@@ -263,13 +263,12 @@ impl AgentOrchestratorBuilder {
             let default_model_settings = self
                 .default_model_settings
                 .clone()
-                .or_else(|| cfg_guard.model_settings.clone())
-                .unwrap_or_else(ModelSettings::default);
+                .or_else(|| cfg_guard.model_settings.clone());
             let default_analysis_model_settings = self
                 .default_analysis_model_settings
                 .clone()
                 .or_else(|| cfg_guard.analysis_model_settings.clone())
-                .unwrap_or_else(|| default_model_settings.clone());
+                .or_else(|| default_model_settings.clone());
             (
                 Arc::new(RwLock::new(default_model_settings)),
                 Arc::new(RwLock::new(default_analysis_model_settings)),
@@ -311,32 +310,44 @@ impl AgentOrchestratorBuilder {
 }
 
 impl AgentOrchestrator {
+    /// Merge base model settings with agent-level overrides.
+    ///
+    /// Individual fields on `agent` are considered "explicitly set" when:
+    /// - `model` is non-empty
+    /// - `provider` differs from the default (OpenAI)
+    /// - `context_size` differs from the default
+    /// - Option fields are Some
     pub(crate) fn merge_model_settings(
         base: &ModelSettings,
         agent: &ModelSettings,
-        sentinel: &ModelSettings,
     ) -> Result<ModelSettings, AgentError> {
+        let default_provider = distri_types::ModelProvider::OpenAI {};
         let provider = if std::mem::discriminant(&agent.provider)
-            != std::mem::discriminant(&sentinel.provider)
+            != std::mem::discriminant(&default_provider)
         {
             agent.provider.clone()
         } else {
             base.provider.clone()
         };
 
-        let model = agent.model.clone().or_else(|| base.model.clone());
-        if model.is_none() {
+        let model = if !agent.model.is_empty() {
+            agent.model.clone()
+        } else {
+            base.model.clone()
+        };
+        if model.is_empty() {
             return Err(AgentError::InvalidConfiguration(
                 "model not set — configure default_model_settings on the orchestrator or workspace"
                     .to_string(),
             ));
         }
 
+        let default_context_size = 20000u32;
         Ok(ModelSettings {
             model,
             temperature: agent.temperature.or(base.temperature),
             max_tokens: agent.max_tokens.or(base.max_tokens),
-            context_size: if agent.context_size != sentinel.context_size {
+            context_size: if agent.context_size != default_context_size {
                 agent.context_size
             } else {
                 base.context_size
@@ -375,25 +386,25 @@ impl AgentOrchestrator {
             let mut guard = self.configuration.write().await;
             *guard = configuration.clone();
         }
-        if let Some(model_settings) = configuration.model_settings.clone() {
+        if configuration.model_settings.is_some() {
             let mut guard = self.default_model_settings.write().await;
-            *guard = model_settings.clone();
+            *guard = configuration.model_settings.clone();
         }
-        if let Some(analysis_settings) = configuration
+        let analysis = configuration
             .analysis_model_settings
             .clone()
-            .or(configuration.model_settings)
-        {
+            .or(configuration.model_settings);
+        if analysis.is_some() {
             let mut guard = self.default_analysis_model_settings.write().await;
-            *guard = analysis_settings;
+            *guard = analysis;
         }
     }
 
-    pub async fn get_default_model_settings(&self) -> ModelSettings {
+    pub async fn get_default_model_settings(&self) -> Option<ModelSettings> {
         self.default_model_settings.read().await.clone()
     }
 
-    pub async fn get_default_analysis_model_settings(&self) -> ModelSettings {
+    pub async fn get_default_analysis_model_settings(&self) -> Option<ModelSettings> {
         self.default_analysis_model_settings.read().await.clone()
     }
 
@@ -416,9 +427,6 @@ impl AgentOrchestrator {
         context: Arc<ExecutorContext>,
     ) -> Result<Arc<ExecutorContext>, AgentError> {
         let mut ctx = Arc::try_unwrap(context).unwrap_or_else(|arc| (*arc).clone());
-
-        // Inject orchestrator-level default model settings into the context
-        ctx.default_model_settings = self.get_default_model_settings().await;
 
         if let Some(prefix) = self.session_root_prefix.clone() {
             let metadata = ctx
@@ -836,9 +844,7 @@ impl AgentOrchestrator {
             .await
             .ok_or_else(|| AgentError::NotFound(format!("Agent {} not found", agent_id)))?;
 
-        // Apply definition overrides if provided (only for StandardAgent)
-        self.apply_agent_overrides(&mut agent_config, definition_overrides)
-            .await;
+        Self::apply_agent_overrides(&mut agent_config, definition_overrides, &context.default_model_settings);
 
         let agent = self
             .create_agent_from_config(agent_config, context.clone())
@@ -867,9 +873,7 @@ impl AgentOrchestrator {
             .await
             .ok_or_else(|| AgentError::NotFound(format!("Agent {} not found", agent_id)))?;
 
-        // Apply definition overrides if provided (only for StandardAgent)
-        self.apply_agent_overrides(&mut agent_config, definition_overrides)
-            .await;
+        Self::apply_agent_overrides(&mut agent_config, definition_overrides, &context.default_model_settings);
 
         // Check if todos are enabled for this agent and initialize shared_todos if needed
         let distri_types::configuration::AgentConfig::StandardAgent(definition) = &agent_config;
@@ -1056,6 +1060,8 @@ impl AgentOrchestrator {
         context: Arc<ExecutorContext>,
         definition_overrides: Option<DefinitionOverrides>,
     ) -> Result<InvokeResult, AgentError> {
+        context.validate()?;
+
         // Prepare context with ephemeral stores if needed
         let context = self.prepare_execution_context(context).await?;
 
@@ -1100,6 +1106,8 @@ impl AgentOrchestrator {
         context: Arc<ExecutorContext>,
         definition_overrides: Option<DefinitionOverrides>,
     ) -> Result<InvokeResult, AgentError> {
+        context.validate()?;
+
         // Prepare context with ephemeral stores if needed
         let context = self.prepare_execution_context(context).await?;
 
@@ -1174,43 +1182,42 @@ impl AgentOrchestrator {
         (agents, next_cursor)
     }
 
-    pub async fn apply_agent_overrides(
-        &self,
+    pub fn apply_agent_overrides(
         agent_config: &mut distri_types::configuration::AgentConfig,
         definition_overrides: Option<DefinitionOverrides>,
+        default_model_settings: &Option<ModelSettings>,
     ) {
         let distri_types::configuration::AgentConfig::StandardAgent(ref mut definition) =
             agent_config;
-        // Start from orchestrator defaults, then overlay agent-specific settings so agent wins.
-        let default_model_settings = self.get_default_model_settings().await;
-        let sentinel = ModelSettings::default();
-        let merged = match definition.model_settings.take() {
-            Some(agent_model) => {
-                match Self::merge_model_settings(&default_model_settings, &agent_model, &sentinel) {
-                    Ok(m) => m,
+        let merged = match (definition.model_settings.take(), default_model_settings) {
+            (Some(agent_model), Some(base)) => {
+                match Self::merge_model_settings(base, &agent_model) {
+                    Ok(m) => Some(m),
                     Err(e) => {
                         tracing::error!(
                             "Failed to merge model settings for agent '{}': {}",
                             definition.name,
                             e
                         );
-                        default_model_settings.clone()
+                        Some(base.clone())
                     }
                 }
             }
-            None => default_model_settings.clone(),
+            (Some(agent_model), None) => Some(agent_model),
+            (None, Some(base)) => Some(base.clone()),
+            (None, None) => None,
         };
-        definition.model_settings = Some(merged);
+        definition.model_settings = merged;
 
-        let default_analysis_settings = self.get_default_analysis_model_settings().await;
-        definition.analysis_model_settings = definition
-            .analysis_model_settings
-            .clone()
-            .map(|agent_analysis| {
-                Self::merge_model_settings(&default_analysis_settings, &agent_analysis, &sentinel)
-                    .unwrap_or(default_analysis_settings.clone())
-            })
-            .or(Some(default_analysis_settings));
+        let default_analysis_settings = default_model_settings.clone();
+        definition.analysis_model_settings = match (definition.analysis_model_settings.take(), &default_analysis_settings) {
+            (Some(agent_analysis), Some(base)) => {
+                Some(Self::merge_model_settings(base, &agent_analysis)
+                    .unwrap_or(base.clone()))
+            }
+            (Some(agent_analysis), None) => Some(agent_analysis),
+            (None, base) => base.clone(),
+        };
         tracing::debug!("Applying definition overrides: {:?}", definition_overrides);
         if let Some(overrides) = definition_overrides {
             definition.apply_overrides(overrides);
@@ -1571,19 +1578,25 @@ impl OrchestratorTrait for AgentOrchestrator {
         if let Some(agent_config) = self.get_agent(&llm_def.name).await {
             let AgentConfig::StandardAgent(def) = &agent_config;
             // Merge: use agent's model_settings as base, override with request's model_settings
-            // Compare request settings against defaults to detect which fields were explicitly set
-            let sentinel = ModelSettings::default();
-            let final_model_settings =
-                Self::merge_model_settings(&def.model_settings(), &llm_def.model_settings, &sentinel)
-                    .unwrap_or_else(|e| {
-                        tracing::error!("Failed to merge model settings for LLM call '{}': {}", llm_def.name, e);
-                        llm_def.model_settings.clone()
-                    });
-
-            // Update llm_def with merged settings
-            llm_def.model_settings = final_model_settings;
+            if let (Some(base), Some(override_ms)) = (def.model_settings(), &llm_def.model_settings) {
+                let final_model_settings =
+                    Self::merge_model_settings(base, override_ms)
+                        .unwrap_or_else(|e| {
+                            tracing::error!("Failed to merge model settings for LLM call '{}': {}", llm_def.name, e);
+                            override_ms.clone()
+                        });
+                llm_def.model_settings = Some(final_model_settings);
+            } else if llm_def.model_settings.is_none() {
+                llm_def.model_settings = def.model_settings().cloned();
+            }
         }
         // If agent not found, use request's model_settings as-is
+
+        if llm_def.model_settings.is_none() {
+            anyhow::bail!(
+                "No model configured. Please set a default model in Agent Settings → Default Model."
+            );
+        }
 
         let executor = crate::llm::create_llm_executor(
             llm_def,
@@ -1591,7 +1604,7 @@ impl OrchestratorTrait for AgentOrchestrator {
             Arc::new(ctx),
             None,
             llm_context.label.clone(),
-        );
+        )?;
         let response = executor.execute(&messages).await?;
         Ok(parse_structured_output(&response.content))
     }

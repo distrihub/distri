@@ -161,13 +161,14 @@ impl LLMExecutor {
         tracing::debug!("Executing LLM call with {} messages", messages.len());
 
         let sanitized_messages = self.sanitize_messages(messages);
+        let ms = self.llm_def.ms().map_err(AgentError::InvalidConfiguration)?;
         tracing::info!(
             target: "llm.execute",
             "LLM request (non-stream) model={}, provider={:?}, max_tokens={:?}, temperature={:?}, tool_format={:?}, tools={} messages={}",
-            self.llm_def.model_settings.model.as_deref().unwrap_or("unset"),
-            self.llm_def.model_settings.provider,
-            self.llm_def.model_settings.max_tokens,
-            self.llm_def.model_settings.temperature,
+            if ms.model.is_empty() { "unset" } else { &ms.model },
+            ms.provider,
+            ms.max_tokens,
+            ms.temperature,
             self.llm_def.tool_format,
             self.tools.len(),
             sanitized_messages.len()
@@ -180,19 +181,19 @@ impl LLMExecutor {
         let context_manager = crate::agent::context_size_manager::ContextSizeManager::default();
         context_manager.validate_context_size(
             &sanitized_messages,
-            self.llm_def.model_settings.context_size,
+            ms.context_size,
         )?;
         tracing::debug!("✅ Context size validation passed for completion");
 
-        let llm_messages = self.map_messages(&sanitized_messages);
-        let request = self.build_request(llm_messages);
+        let llm_messages = self.map_messages(&sanitized_messages)?;
+        let request = self.build_request(llm_messages)?;
         let message_count = request.messages.len();
 
-        let settings = format!("Max Tokens: {:?}", self.llm_def.model_settings.max_tokens);
+        let settings = format!("Max Tokens: {:?}", ms.max_tokens);
 
         self.model_logger.log_model_execution(
             &self.llm_def.name,
-            &self.llm_def.model_settings.model.as_deref().unwrap_or("unset"),
+            &if ms.model.is_empty() { "unset" } else { &ms.model },
             message_count,
             Some(&settings),
             None,
@@ -227,7 +228,7 @@ impl LLMExecutor {
 
         self.model_logger.log_model_execution(
             &self.llm_def.name,
-            &self.llm_def.model_settings.model.as_deref().unwrap_or("unset"),
+            &if ms.model.is_empty() { "unset" } else { &ms.model },
             message_count,
             None,
             usage.as_ref().map(|u| u.total_tokens),
@@ -335,13 +336,14 @@ impl LLMExecutor {
         );
 
         let sanitized_messages = self.sanitize_messages(messages);
+        let ms = self.llm_def.ms().map_err(AgentError::InvalidConfiguration)?;
         tracing::info!(
             target: "llm.execute_stream",
             "LLM request (stream) model={}, provider={:?}, max_tokens={:?}, temperature={:?}, tool_format={:?}, tools={} messages={}",
-            self.llm_def.model_settings.model.as_deref().unwrap_or("unset"),
-            self.llm_def.model_settings.provider,
-            self.llm_def.model_settings.max_tokens,
-            self.llm_def.model_settings.temperature,
+            if ms.model.is_empty() { "unset" } else { &ms.model },
+            ms.provider,
+            ms.max_tokens,
+            ms.temperature,
             self.llm_def.tool_format,
             self.tools.len(),
             sanitized_messages.len()
@@ -354,13 +356,13 @@ impl LLMExecutor {
         let context_manager = crate::agent::context_size_manager::ContextSizeManager::default();
         context_manager.validate_context_size(
             &sanitized_messages,
-            self.llm_def.model_settings.context_size,
+            ms.context_size,
         )?;
         tracing::debug!("✅ Context size validation passed for streaming");
 
         let step_id = context.get_current_step_id().await.unwrap_or_default();
-        let llm_messages = self.map_messages(&sanitized_messages);
-        let mut request = self.build_request(llm_messages);
+        let llm_messages = self.map_messages(&sanitized_messages)?;
+        let mut request = self.build_request(llm_messages)?;
 
         request.stream = Some(true);
         request.stream_options = Some(async_openai::types::chat::ChatCompletionStreamOptions {
@@ -369,11 +371,11 @@ impl LLMExecutor {
         });
         let message_count = request.messages.len();
 
-        let settings = format!("Max Tokens: {:?}", self.llm_def.model_settings.max_tokens);
+        let settings = format!("Max Tokens: {:?}", ms.max_tokens);
 
         self.model_logger.log_model_execution(
             &self.llm_def.name,
-            &self.llm_def.model_settings.model.as_deref().unwrap_or("unset"),
+            &if ms.model.is_empty() { "unset" } else { &ms.model },
             message_count,
             Some(&settings),
             None,
@@ -754,9 +756,9 @@ impl LLMExecutor {
     pub fn build_request(
         &self,
         messages: Vec<ChatCompletionRequestMessage>,
-    ) -> CreateChatCompletionRequest {
-        let settings = &self.llm_def.model_settings;
-        let model = settings.model.as_deref().unwrap_or("unset");
+    ) -> Result<CreateChatCompletionRequest, AgentError> {
+        let settings = self.llm_def.ms().map_err(AgentError::InvalidConfiguration)?;
+        let model = if settings.model.is_empty() { "unset" } else { &settings.model };
         tracing::debug!(
             "Building chat completion request with model: {}",
             model
@@ -793,9 +795,7 @@ impl LLMExecutor {
             // max_completion_tokens: settings.max_tokens,
             frequency_penalty: settings.frequency_penalty,
             presence_penalty: settings.presence_penalty,
-            response_format: self
-                .llm_def
-                .model_settings
+            response_format: settings
                 .response_format
                 .clone()
                 .map(|r| {
@@ -842,7 +842,7 @@ impl LLMExecutor {
         };
 
         self.model_logger.log_openai_messages(&request);
-        request
+        Ok(request)
     }
 
     pub fn map_tool_call(
@@ -911,7 +911,8 @@ impl LLMExecutor {
             _ => None,
         }
     }
-    pub fn map_messages(&self, messages: &[Message]) -> Vec<ChatCompletionRequestMessage> {
+    pub fn map_messages(&self, messages: &[Message]) -> Result<Vec<ChatCompletionRequestMessage>, AgentError> {
+        let provider = &self.llm_def.ms().map_err(AgentError::InvalidConfiguration)?.provider;
         let messages = messages
             .iter()
             .map(|m| {
@@ -1128,7 +1129,7 @@ impl LLMExecutor {
                     MessageRole::Developer => {
                         // Developer messages are used for adding context without showing in UI.
                         // For OpenAI, use the developer role. For other providers, map to user.
-                        match &self.llm_def.model_settings.provider {
+                        match provider {
                             ModelProvider::OpenAI {} => {
                                 let mut msg =
                                     ChatCompletionRequestDeveloperMessageArgs::default();
@@ -1154,7 +1155,7 @@ impl LLMExecutor {
             })
             .flatten()
             .collect::<Vec<_>>();
-        messages
+        Ok(messages)
     }
 }
 
@@ -1218,11 +1219,12 @@ async fn get_client_with_context(
     let secret_resolver = crate::secrets::SecretResolver::new(secret_store);
 
     // Validate that required secrets are configured
+    let ms = llm_def.ms().map_err(AgentError::InvalidConfiguration)?;
     secret_resolver
-        .validate_provider(&llm_def.model_settings.provider)
+        .validate_provider(&ms.provider)
         .await?;
 
-    match &llm_def.model_settings.provider {
+    match &ms.provider {
         ModelProvider::OpenAI {} => {
             let additional_headers = get_headers(llm_def, additional_headers, label);
             let api_key = secret_resolver.resolve_or_empty("OPENAI_API_KEY").await;
@@ -1361,25 +1363,26 @@ pub fn create_llm_executor(
     context: Arc<ExecutorContext>,
     additional_headers: Option<HashMap<String, String>>,
     label: Option<String>,
-) -> Box<dyn LLMExecutorTrait> {
-    match &llm_def.model_settings.provider {
+) -> Result<Box<dyn LLMExecutorTrait>, AgentError> {
+    let provider = &llm_def.ms().map_err(AgentError::InvalidConfiguration)?.provider;
+    match provider {
         ModelProvider::Anthropic { .. } => {
-            Box::new(crate::claude_llm::ClaudeLLMExecutor::new(
+            Ok(Box::new(crate::claude_llm::ClaudeLLMExecutor::new(
                 llm_def,
                 tools,
                 context,
                 additional_headers,
                 label,
-            ))
+            )))
         }
         _ => {
-            Box::new(LLMExecutor::new(
+            Ok(Box::new(LLMExecutor::new(
                 llm_def,
                 tools,
                 context,
                 additional_headers,
                 label,
-            ))
+            )))
         }
     }
 }

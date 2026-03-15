@@ -74,10 +74,11 @@ impl ExecutorContextTool for ListAgentsTool {
             .iter()
             .map(|config| {
                 let def = config.get_definition();
+                let model_name = def.model_settings().map(|ms| ms.model.as_str()).unwrap_or("default");
                 json!({
                     "name": def.name,
                     "description": def.description,
-                    "model": def.model_settings().model.as_deref().unwrap_or("default"),
+                    "model": model_name,
                 })
             })
             .collect();

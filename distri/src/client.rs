@@ -834,7 +834,7 @@ impl Distri {
             thread_id: options.context.thread_id,
             parent_task_id: options.context.task_id,
             run_id: options.context.run_id,
-            model_settings: options.llm_def.map(|d| d.model_settings.clone()),
+            model_settings: options.llm_def.and_then(|d| d.model_settings.clone()),
             is_sub_task: options.is_sub_task,
             headers: options.headers,
             agent_id: options.agent_id,

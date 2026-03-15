@@ -231,7 +231,7 @@ impl PlanningStrategy for CodePlanner {
                 crate::AgentError::Other(format!("Template rendering error: {}", e))
             })?;
         let mut plan_config = crate::types::PlanConfig::default();
-        plan_config.model_settings = self.agent_def.model_settings();
+        plan_config.model_settings = self.agent_def.model_settings().cloned();
 
         let mut messages = vec![Message::system(prompt, None)];
         // Only include additional user message if has images

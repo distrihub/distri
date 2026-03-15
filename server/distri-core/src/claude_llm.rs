@@ -83,10 +83,10 @@ impl ClaudeLLMExecutor {
         let secret_resolver = crate::secrets::SecretResolver::new(secret_store);
 
         secret_resolver
-            .validate_provider(&self.llm_def.model_settings.provider)
+            .validate_provider(&self.llm_def.ms().map_err(AgentError::InvalidConfiguration)?.provider)
             .await?;
 
-        let (base_url, config_api_key) = match &self.llm_def.model_settings.provider {
+        let (base_url, config_api_key) = match &self.llm_def.ms().map_err(AgentError::InvalidConfiguration)?.provider {
             distri_types::ModelProvider::Anthropic { base_url, api_key } => {
                 (base_url.clone(), api_key.clone())
             }
@@ -514,18 +514,19 @@ impl ClaudeLLMExecutor {
 
     /// Non-streaming execution
     pub async fn execute(&self, messages: &[Message]) -> Result<super::llm::LLMResponse, AgentError> {
+        let ms = self.llm_def.ms().map_err(AgentError::InvalidConfiguration)?;
         tracing::info!(
             target: "claude_llm.execute",
             "Claude LLM request model={}, max_tokens={:?}, tools={}, messages={}",
-            self.llm_def.model_settings.model.as_deref().unwrap_or("unset"),
-            self.llm_def.model_settings.max_tokens,
+            if ms.model.is_empty() { "unset" } else { &ms.model },
+            ms.max_tokens,
             self.tools.len(),
             messages.len()
         );
 
         // Validate context size
         let context_manager = crate::agent::context_size_manager::ContextSizeManager::default();
-        context_manager.validate_context_size(messages, self.llm_def.model_settings.context_size)?;
+        context_manager.validate_context_size(messages, ms.context_size)?;
 
         let (system, mut claude_messages) = self.map_messages(messages);
         Self::apply_conversation_cache(&mut claude_messages);
@@ -542,13 +543,13 @@ impl ClaudeLLMExecutor {
         };
 
         let request = CreateMessageRequest {
-            model: self.llm_def.model_settings.model.clone().unwrap_or_default(),
-            max_tokens: self.llm_def.model_settings.max_tokens.unwrap_or(DEFAULT_ANTHROPIC_MAX_TOKENS),
+            model: ms.model.clone(),
+            max_tokens: ms.max_tokens.unwrap_or(DEFAULT_ANTHROPIC_MAX_TOKENS),
             messages: claude_messages,
             system,
             tools,
-            temperature: self.llm_def.model_settings.temperature,
-            top_p: self.llm_def.model_settings.top_p,
+            temperature: ms.temperature,
+            top_p: ms.top_p,
             stream: None,
             metadata: Some(MessageMetadata {
                 user_id: Some(self.context.user_id.clone()),
@@ -679,18 +680,19 @@ impl ClaudeLLMExecutor {
         messages: &[Message],
         context: Arc<ExecutorContext>,
     ) -> Result<super::llm::StreamResult, AgentError> {
+        let ms = self.llm_def.ms().map_err(AgentError::InvalidConfiguration)?;
         tracing::info!(
             target: "claude_llm.execute_stream",
             "Claude LLM stream request model={}, max_tokens={:?}, tools={}, messages={}",
-            self.llm_def.model_settings.model.as_deref().unwrap_or("unset"),
-            self.llm_def.model_settings.max_tokens,
+            if ms.model.is_empty() { "unset" } else { &ms.model },
+            ms.max_tokens,
             self.tools.len(),
             messages.len()
         );
 
         // Validate context size
         let context_manager = crate::agent::context_size_manager::ContextSizeManager::default();
-        context_manager.validate_context_size(messages, self.llm_def.model_settings.context_size)?;
+        context_manager.validate_context_size(messages, ms.context_size)?;
 
         let step_id = context.get_current_step_id().await.unwrap_or_default();
         let (system, mut claude_messages) = self.map_messages(messages);
@@ -708,13 +710,13 @@ impl ClaudeLLMExecutor {
         };
 
         let request = CreateMessageRequest {
-            model: self.llm_def.model_settings.model.clone().unwrap_or_default(),
-            max_tokens: self.llm_def.model_settings.max_tokens.unwrap_or(DEFAULT_ANTHROPIC_MAX_TOKENS),
+            model: ms.model.clone(),
+            max_tokens: ms.max_tokens.unwrap_or(DEFAULT_ANTHROPIC_MAX_TOKENS),
             messages: claude_messages,
             system,
             tools,
-            temperature: self.llm_def.model_settings.temperature,
-            top_p: self.llm_def.model_settings.top_p,
+            temperature: ms.temperature,
+            top_p: ms.top_p,
             stream: Some(true),
             metadata: Some(MessageMetadata {
                 user_id: Some(self.context.user_id.clone()),

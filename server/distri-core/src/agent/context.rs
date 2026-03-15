@@ -159,8 +159,8 @@ pub struct ExecutorContext {
     pub hook_prompt_state: Arc<RwLock<HookPromptState>>,
     pub hook_registry: Arc<RwLock<Option<HookRegistry>>>,
     /// Default model settings inherited from the orchestrator/workspace context.
-    /// Always present — agents without explicit model_settings use this.
-    pub default_model_settings: ModelSettings,
+    /// None when no default model is configured yet.
+    pub default_model_settings: Option<ModelSettings>,
 }
 
 impl std::fmt::Debug for ExecutorContext {
@@ -214,12 +214,24 @@ impl Default for ExecutorContext {
             dynamic_tools: None,
             hook_prompt_state: Arc::new(RwLock::new(HookPromptState::default())),
             hook_registry: Arc::new(RwLock::new(None)),
-            default_model_settings: ModelSettings::default(),
+            default_model_settings: None,
         }
     }
 }
 
 impl ExecutorContext {
+    /// Validate that the context has all required fields set before execution.
+    /// Call this at every entry point (execute, execute_stream, llm_invoke).
+    pub fn validate(&self) -> Result<(), crate::AgentError> {
+        if self.default_model_settings.is_none() {
+            return Err(crate::AgentError::InvalidConfiguration(
+                "No model configured. Please set a default model in Agent Settings → Default Model."
+                    .to_string(),
+            ));
+        }
+        Ok(())
+    }
+
     pub async fn get_tools(&self) -> Vec<Arc<dyn Tool>> {
         let tools: tokio::sync::RwLockReadGuard<'_, Vec<Arc<dyn Tool>>> = self.tools.read().await;
         tools.clone().into_iter().map(|t| t.clone()).collect()

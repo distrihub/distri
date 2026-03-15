@@ -525,7 +525,7 @@ async fn validate_agent_handler(
 
     // Extract provider from agent config
     let distri_types::configuration::AgentConfig::StandardAgent(def) = &agent;
-    let provider = def.model_settings().provider.clone();
+    let provider = def.model_settings().map(|ms| ms.provider.clone()).unwrap_or(distri_types::ModelProvider::OpenAI {});
 
     // Check for missing provider secrets
     let secret_store = executor.stores.secret_store.clone();
@@ -600,8 +600,15 @@ async fn a2a_handler(
         .get::<UserContext>()
         .map(|ctx| (ctx.user_id(), ctx.workspace_id()))
         .unwrap_or_else(|| ("local_dev_user".to_string(), None));
+
+    // Workspace-level default model settings, injected by cloud middleware.
+    let workspace_model_settings = http_request
+        .extensions()
+        .get::<distri_types::ModelSettings>()
+        .cloned();
+
     let result = handler
-        .handle_jsonrpc(agent_id, user_id, workspace_id, req, None, verbose)
+        .handle_jsonrpc(agent_id, user_id, workspace_id, req, None, verbose, workspace_model_settings)
         .await;
     match result {
         futures_util::future::Either::Left(stream) => {
@@ -783,21 +790,24 @@ async fn llm_execute(
     // Append the new messages from the request
     all_messages.extend(payload.messages.clone());
 
-    // Load agent model settings if agent_id is provided
-    let base_model_settings = if let Some(agent_ms) =
-        llm_helpers::load_agent_model_settings(&executor, payload.agent_id.as_deref()).await
-    {
-        agent_ms
-    } else {
-        executor.get_default_model_settings().await
-    };
+    // Load agent model settings if agent_id is provided, then workspace settings.
+    let workspace_model_settings = http_request
+        .extensions()
+        .get::<distri_types::ModelSettings>()
+        .cloned();
+
+    let base_model_settings: Option<ModelSettings> =
+        llm_helpers::load_agent_model_settings(&executor, payload.agent_id.as_deref())
+            .await
+            .or(workspace_model_settings);
 
     // Merge with request's model_settings if provided
-    let model_settings = if let Some(override_ms) = payload.model_settings.clone() {
-        let sentinel = ModelSettings::default();
-        llm_helpers::merge_model_settings(&base_model_settings, &override_ms, &sentinel)
-    } else {
-        base_model_settings
+    let model_settings: Option<ModelSettings> = match (base_model_settings, payload.model_settings.clone()) {
+        (Some(base), Some(override_ms)) => {
+            Some(llm_helpers::merge_model_settings(&base, &override_ms))
+        }
+        (Some(base), None) => Some(base),
+        (None, override_ms) => override_ms,
     };
 
     let tools = payload

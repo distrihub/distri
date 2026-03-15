@@ -673,8 +673,16 @@ mod tests {
             name: "test".to_string(),
             instructions: "Be helpful".to_string(),
             model_settings: Some(ModelSettings {
+                model: "test-model".to_string(),
                 provider,
-                ..ModelSettings::default()
+                temperature: None,
+                max_tokens: None,
+                context_size: 20000,
+                top_p: None,
+                frequency_penalty: None,
+                presence_penalty: None,
+                parameters: None,
+                response_format: None,
             }),
             tool_format: format,
             ..Default::default()

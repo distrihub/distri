@@ -81,9 +81,16 @@ max_iterations = 1
 
     // Build orchestrator with explicit default model settings
     let default_settings = ModelSettings {
-        model: Some("gpt-4o-test".to_string()),
+        model: "gpt-4o-test".to_string(),
         temperature: Some(0.5),
-        ..Default::default()
+        max_tokens: None,
+        context_size: 20000,
+        top_p: None,
+        frequency_penalty: None,
+        presence_penalty: None,
+        provider: distri_types::ModelProvider::OpenAI {},
+        parameters: None,
+        response_format: None,
     };
     let orchestrator = Arc::new(
         AgentOrchestratorBuilder::default()
@@ -102,16 +109,15 @@ max_iterations = 1
 
     // Simulate what happens during execution: apply_agent_overrides merges defaults
     let mut agent_config = AgentConfig::StandardAgent(def.clone());
-    orchestrator
-        .apply_agent_overrides(&mut agent_config, None)
-        .await;
+    let defaults = orchestrator.get_default_model_settings().await;
+    AgentOrchestrator::apply_agent_overrides(&mut agent_config, None, &defaults);
     let AgentConfig::StandardAgent(loaded_def) = &agent_config;
 
     // After apply_agent_overrides, the agent should have the orchestrator's model
-    let ms = loaded_def.model_settings();
+    let ms = loaded_def.model_settings().expect("model_settings should be set after merge");
     assert_eq!(
         ms.model,
-        Some("gpt-4o-test".to_string()),
+        "gpt-4o-test".to_string(),
         "agent should inherit model from orchestrator default_model_settings"
     );
     assert_eq!(
@@ -121,10 +127,10 @@ max_iterations = 1
     );
 
     // Also verify orchestrator stores the default_model_settings for context injection
-    let orch_defaults = orchestrator.get_default_model_settings().await;
+    let orch_defaults = orchestrator.get_default_model_settings().await.expect("defaults should be set");
     assert_eq!(
         orch_defaults.model,
-        Some("gpt-4o-test".to_string()),
+        "gpt-4o-test".to_string(),
         "Orchestrator should store default_model_settings for injection into ExecutorContext"
     );
 }
@@ -145,15 +151,21 @@ temperature = 0.9
 "#;
     let def = parse_agent_markdown_content(agent_md).await.unwrap();
     assert_eq!(
-        def.model_settings().model,
-        Some("custom-model-v1".to_string())
+        def.model_settings().unwrap().model,
+        "custom-model-v1".to_string()
     );
 
     let default_settings = ModelSettings {
-        model: Some("gpt-4o-default".to_string()),
+        model: "gpt-4o-default".to_string(),
         temperature: Some(0.5),
         max_tokens: Some(1000),
-        ..Default::default()
+        context_size: 20000,
+        top_p: None,
+        frequency_penalty: None,
+        presence_penalty: None,
+        provider: distri_types::ModelProvider::OpenAI {},
+        parameters: None,
+        response_format: None,
     };
     let orchestrator = Arc::new(
         AgentOrchestratorBuilder::default()
@@ -168,16 +180,15 @@ temperature = 0.9
         .await
         .unwrap();
 
-    // apply_agent_overrides merges orchestrator defaults with agent settings
+    // apply_agent_overrides merges defaults with agent settings
     let mut agent_config = AgentConfig::StandardAgent(def.clone());
-    orchestrator
-        .apply_agent_overrides(&mut agent_config, None)
-        .await;
+    let defaults = orchestrator.get_default_model_settings().await;
+    AgentOrchestrator::apply_agent_overrides(&mut agent_config, None, &defaults);
     let AgentConfig::StandardAgent(loaded_def) = &agent_config;
-    let ms = loaded_def.model_settings();
+    let ms = loaded_def.model_settings().expect("model_settings should be set after merge");
 
     // Agent's model should win
-    assert_eq!(ms.model, Some("custom-model-v1".to_string()));
+    assert_eq!(ms.model, "custom-model-v1".to_string());
     // Agent's temperature should win
     assert_eq!(ms.temperature, Some(0.9));
     // Default's max_tokens should be inherited (agent didn't set it)
@@ -186,12 +197,33 @@ temperature = 0.9
 
 #[tokio::test]
 async fn test_merge_model_settings_errors_when_no_model() {
-    // Both base and agent have no model — merge should error
-    let base = ModelSettings::default();
-    let agent = ModelSettings::default();
-    let sentinel = ModelSettings::default();
+    // Both base and agent have empty model — merge should error
+    let base = ModelSettings {
+        model: String::new(),
+        temperature: None,
+        max_tokens: None,
+        context_size: 20000,
+        top_p: None,
+        frequency_penalty: None,
+        presence_penalty: None,
+        provider: distri_types::ModelProvider::OpenAI {},
+        parameters: None,
+        response_format: None,
+    };
+    let agent = ModelSettings {
+        model: String::new(),
+        temperature: None,
+        max_tokens: None,
+        context_size: 20000,
+        top_p: None,
+        frequency_penalty: None,
+        presence_penalty: None,
+        provider: distri_types::ModelProvider::OpenAI {},
+        parameters: None,
+        response_format: None,
+    };
 
-    let result = AgentOrchestrator::merge_model_settings(&base, &agent, &sentinel);
+    let result = AgentOrchestrator::merge_model_settings(&base, &agent);
     assert!(
         result.is_err(),
         "merge_model_settings should error when no model is set"

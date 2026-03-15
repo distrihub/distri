@@ -160,10 +160,11 @@ impl PlanningStrategy for UnifiedPlanner {
 
                 // Get LLM response with retry logic for XML parsing failures
                 let mut plan_config = crate::types::PlanConfig::default();
-                plan_config.model_settings = self.agent_def.model_settings();
+                plan_config.model_settings = self.agent_def.model_settings().cloned();
                 // Ensure we use the agent's effective context size, not the default
-                plan_config.model_settings.context_size =
-                    self.agent_def.get_effective_context_size();
+                if let Some(ref mut ms) = plan_config.model_settings {
+                    ms.context_size = self.agent_def.get_effective_context_size();
+                }
 
                 let response = {
                     let mut attempt = 0;

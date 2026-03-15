@@ -25,29 +25,34 @@ pub async fn load_agent_model_settings(
     let agent_config = executor.get_agent(aid).await?;
 
     let distri_types::configuration::AgentConfig::StandardAgent(def) = &agent_config;
-    Some(def.model_settings())
+    def.model_settings().cloned()
 }
 
-/// Merge model settings: base settings are overridden by override settings
-/// Only fields that differ from default (sentinel) are considered overrides
+/// Merge model settings: base settings are overridden by override settings.
+/// Individual fields on `override_settings` are considered "explicitly set" when:
+/// - `model` is non-empty
+/// - `provider` differs from the default (OpenAI)
+/// - `context_size` differs from the default
+/// - Option fields are Some
 pub fn merge_model_settings(
     base: &ModelSettings,
     override_settings: &ModelSettings,
-    sentinel: &ModelSettings,
 ) -> ModelSettings {
+    let default_provider = distri_types::ModelProvider::OpenAI {};
     let provider = if std::mem::discriminant(&override_settings.provider)
-        != std::mem::discriminant(&sentinel.provider)
+        != std::mem::discriminant(&default_provider)
     {
         override_settings.provider.clone()
     } else {
         base.provider.clone()
     };
 
+    let default_context_size = 20000u32;
     ModelSettings {
-        model: override_settings.model.clone().or_else(|| base.model.clone()),
+        model: if !override_settings.model.is_empty() { override_settings.model.clone() } else { base.model.clone() },
         temperature: override_settings.temperature.or(base.temperature),
         max_tokens: override_settings.max_tokens.or(base.max_tokens),
-        context_size: if override_settings.context_size != sentinel.context_size {
+        context_size: if override_settings.context_size != default_context_size {
             override_settings.context_size
         } else {
             base.context_size

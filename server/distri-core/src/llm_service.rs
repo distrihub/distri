@@ -30,7 +30,7 @@ impl LlmExecuteService {
         parent_task_id: Option<String>,
         messages: Vec<Message>,
         tools: Vec<Arc<dyn Tool>>,
-        model_settings: ModelSettings,
+        model_settings: Option<ModelSettings>,
         headers: Option<HashMap<String, String>>,
         title: Option<String>,
         external_id: Option<String>,
@@ -100,9 +100,10 @@ impl LlmExecuteService {
         }
 
         // Step 5: Create LLM executor
+        let model_label = model_settings.as_ref().map(|ms| ms.model.as_str()).unwrap_or("default");
         let llm_def = LlmDefinition {
-            name: format!("llm_execute_{}", model_settings.model.as_deref().unwrap_or("default")),
-            model_settings: model_settings.clone(),
+            name: format!("llm_execute_{}", model_label),
+            model_settings,
             tool_format: ToolCallFormat::Provider,
             tool_delivery_mode: Default::default(),
         };
@@ -113,7 +114,7 @@ impl LlmExecuteService {
             context.clone(),
             headers,
             Some("llm_execute".to_string()),
-        );
+        )?;
 
         // Step 6: Execute LLM (messages are already saved, assistant response will be saved by executor)
         let resp = llm.execute(&messages).await?;

@@ -82,12 +82,12 @@ pub trait PlanningStrategy: Send + Sync + std::fmt::Debug {
         let agent_name = context.agent_id.clone();
         let tools = context.get_tools().await;
         let planning_executor = crate::llm::create_llm_executor(
-            get_planning_definition(agent_name, plan_config.model_settings.clone(), format),
+            get_planning_definition(agent_name, plan_config.model_settings.clone(), format.clone()),
             tools,
             context.clone(),
             None,
             None,
-        );
+        )?;
 
         planning_executor.execute(&messages).await
     }
@@ -103,12 +103,12 @@ pub trait PlanningStrategy: Send + Sync + std::fmt::Debug {
         let agent_name = context.agent_id.clone();
         let tools = context.get_tools().await;
         let planning_executor = crate::llm::create_llm_executor(
-            get_planning_definition(agent_name, plan_config.model_settings.clone(), format),
+            get_planning_definition(agent_name, plan_config.model_settings.clone(), format.clone()),
             tools,
             context.clone(),
             None,
             None,
-        );
+        )?;
 
         planning_executor
             .execute_stream(&messages, context.clone())

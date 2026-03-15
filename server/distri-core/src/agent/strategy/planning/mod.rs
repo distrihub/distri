@@ -30,12 +30,12 @@ pub fn get_planner(agent_def: crate::types::StandardDefinition) -> Arc<dyn Plann
 
 pub fn get_planning_definition(
     agent_name: String,
-    model_settings: ModelSettings,
+    model_settings: Option<ModelSettings>,
     tool_format: ToolCallFormat,
 ) -> LlmDefinition {
     LlmDefinition {
         name: agent_name,
-        model_settings: model_settings.clone(),
+        model_settings,
         tool_format,
         tool_delivery_mode: Default::default(),
     }
