@@ -855,12 +855,32 @@ impl ModelProvider {
             ProviderSecretDefinition {
                 id: "azure_openai".to_string(),
                 label: "Azure OpenAI".to_string(),
-                keys: vec![SecretKeyDefinition {
-                    key: "AZURE_OPENAI_API_KEY".to_string(),
-                    label: "API key".to_string(),
-                    placeholder: "...".to_string(),
-                    required: true,
-                }],
+                keys: vec![
+                    SecretKeyDefinition {
+                        key: "AZURE_OPENAI_API_KEY".to_string(),
+                        label: "API key".to_string(),
+                        placeholder: "...".to_string(),
+                        required: true,
+                    },
+                    SecretKeyDefinition {
+                        key: "AZURE_OPENAI_BASE_URL".to_string(),
+                        label: "Endpoint URL".to_string(),
+                        placeholder: "https://<resource>.openai.azure.com".to_string(),
+                        required: true,
+                    },
+                    SecretKeyDefinition {
+                        key: "AZURE_OPENAI_DEPLOYMENT".to_string(),
+                        label: "Deployment name".to_string(),
+                        placeholder: "gpt-4o".to_string(),
+                        required: true,
+                    },
+                    SecretKeyDefinition {
+                        key: "AZURE_OPENAI_API_VERSION".to_string(),
+                        label: "API version".to_string(),
+                        placeholder: "2024-06-01".to_string(),
+                        required: false,
+                    },
+                ],
             },
             ProviderSecretDefinition {
                 id: "gemini".to_string(),
@@ -873,9 +893,28 @@ impl ModelProvider {
                 }],
             },
             ProviderSecretDefinition {
-                id: "custom".to_string(),
-                label: "Custom".to_string(),
-                keys: vec![],
+                id: "openai_compat".to_string(),
+                label: "OpenAI Compatible".to_string(),
+                keys: vec![
+                    SecretKeyDefinition {
+                        key: "OPENAI_COMPAT_API_KEY".to_string(),
+                        label: "API key".to_string(),
+                        placeholder: "sk-...".to_string(),
+                        required: true,
+                    },
+                    SecretKeyDefinition {
+                        key: "OPENAI_COMPAT_BASE_URL".to_string(),
+                        label: "Base URL".to_string(),
+                        placeholder: "https://api.example.com/v1".to_string(),
+                        required: true,
+                    },
+                    SecretKeyDefinition {
+                        key: "OPENAI_COMPAT_PROJECT_ID".to_string(),
+                        label: "Project ID".to_string(),
+                        placeholder: "project-123".to_string(),
+                        required: false,
+                    },
+                ],
             },
         ]
     }
