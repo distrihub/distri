@@ -727,9 +727,17 @@ pub struct SecretKeyDefinition {
     /// Whether this secret is required (vs optional)
     #[serde(default = "default_required")]
     pub required: bool,
+    /// Whether this field contains sensitive data (masked in UI, stored encrypted).
+    /// Defaults to true. Set to false for non-sensitive config like URLs, project IDs.
+    #[serde(default = "default_sensitive")]
+    pub sensitive: bool,
 }
 
 fn default_required() -> bool {
+    true
+}
+
+fn default_sensitive() -> bool {
     true
 }
 
@@ -840,6 +848,7 @@ impl ModelProvider {
                     label: "API key".to_string(),
                     placeholder: "sk-...".to_string(),
                     required: true,
+                    sensitive: true,
                 }],
             },
             ProviderSecretDefinition {
@@ -850,6 +859,7 @@ impl ModelProvider {
                     label: "API key".to_string(),
                     placeholder: "sk-ant-...".to_string(),
                     required: true,
+                    sensitive: true,
                 }],
             },
             ProviderSecretDefinition {
@@ -857,28 +867,32 @@ impl ModelProvider {
                 label: "Azure OpenAI".to_string(),
                 keys: vec![
                     SecretKeyDefinition {
-                        key: "AZURE_OPENAI_API_KEY".to_string(),
-                        label: "API key".to_string(),
-                        placeholder: "...".to_string(),
-                        required: true,
-                    },
-                    SecretKeyDefinition {
                         key: "AZURE_OPENAI_BASE_URL".to_string(),
                         label: "Endpoint URL".to_string(),
                         placeholder: "https://<resource>.openai.azure.com".to_string(),
                         required: true,
+                        sensitive: false,
+                    },
+                    SecretKeyDefinition {
+                        key: "AZURE_OPENAI_API_KEY".to_string(),
+                        label: "API key".to_string(),
+                        placeholder: "...".to_string(),
+                        required: true,
+                        sensitive: true,
                     },
                     SecretKeyDefinition {
                         key: "AZURE_OPENAI_DEPLOYMENT".to_string(),
                         label: "Deployment name".to_string(),
                         placeholder: "gpt-4o".to_string(),
                         required: true,
+                        sensitive: false,
                     },
                     SecretKeyDefinition {
                         key: "AZURE_OPENAI_API_VERSION".to_string(),
                         label: "API version".to_string(),
                         placeholder: "2024-06-01".to_string(),
                         required: false,
+                        sensitive: false,
                     },
                 ],
             },
@@ -890,6 +904,7 @@ impl ModelProvider {
                     label: "API key".to_string(),
                     placeholder: "AIza...".to_string(),
                     required: true,
+                    sensitive: true,
                 }],
             },
             ProviderSecretDefinition {
@@ -897,22 +912,25 @@ impl ModelProvider {
                 label: "OpenAI Compatible".to_string(),
                 keys: vec![
                     SecretKeyDefinition {
+                        key: "OPENAI_COMPAT_BASE_URL".to_string(),
+                        label: "API URL".to_string(),
+                        placeholder: "https://api.example.com/v1".to_string(),
+                        required: true,
+                        sensitive: false,
+                    },
+                    SecretKeyDefinition {
                         key: "OPENAI_COMPAT_API_KEY".to_string(),
                         label: "API key".to_string(),
                         placeholder: "sk-...".to_string(),
                         required: true,
-                    },
-                    SecretKeyDefinition {
-                        key: "OPENAI_COMPAT_BASE_URL".to_string(),
-                        label: "Base URL".to_string(),
-                        placeholder: "https://api.example.com/v1".to_string(),
-                        required: true,
+                        sensitive: true,
                     },
                     SecretKeyDefinition {
                         key: "OPENAI_COMPAT_PROJECT_ID".to_string(),
                         label: "Project ID".to_string(),
                         placeholder: "project-123".to_string(),
                         required: false,
+                        sensitive: false,
                     },
                 ],
             },
