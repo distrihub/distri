@@ -9,7 +9,16 @@ use crate::configuration::{
     AgentConfig, DistriServerConfig, EntryPoints, PluginAgentDefinition, PluginArtifact,
     PluginToolDefinition,
 };
-use crate::stores::PluginMetadataRecord;
+
+#[derive(Debug, Clone)]
+pub struct PluginMetadataRecord {
+    pub package_name: String,
+    pub version: Option<String>,
+    pub object_prefix: String,
+    pub entrypoint: Option<String>,
+    pub artifact: PluginArtifact,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Skill {

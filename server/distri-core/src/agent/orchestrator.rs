@@ -17,7 +17,7 @@ pub use distri_stores::{AgentStore, ThreadStore};
 use distri_types::configuration::AgentConfig;
 use distri_types::stores::{PromptTemplateStore, SecretStore};
 use distri_types::{
-    auth::OAuthHandler, LlmDefinition, ModelSettings, Part, ServerMetadataWrapper, ToolCall,
+    LlmDefinition, ModelSettings, Part, ServerMetadataWrapper, ToolCall,
     ToolsConfig,
 };
 use distri_types::{
@@ -38,7 +38,6 @@ pub const SKILL_STORAGE_ROOT: &str = "storage/skills";
 
 #[derive(Clone)]
 pub struct AgentOrchestrator {
-    pub tool_auth_handler: Arc<OAuthHandler>,
     pub mcp_registry: Arc<RwLock<McpServerRegistry>>,
     pub coordinator_rx: Arc<Mutex<mpsc::Receiver<CoordinatorMessage>>>,
     pub coordinator_tx: mpsc::Sender<CoordinatorMessage>,
@@ -85,7 +84,6 @@ pub struct AgentOrchestratorBuilder {
     store_config: Option<StoreConfig>,
     configuration: Option<Arc<RwLock<DistriServerConfig>>>,
     hooks: Option<HashMap<String, Arc<dyn crate::agent::types::AgentHooks>>>,
-    tool_auth_handler: Option<Arc<OAuthHandler>>,
 }
 
 impl AgentOrchestratorBuilder {
@@ -164,11 +162,6 @@ impl AgentOrchestratorBuilder {
         self
     }
 
-    pub fn with_tool_auth_handler(mut self, handler: Arc<OAuthHandler>) -> Self {
-        self.tool_auth_handler = Some(handler);
-        self
-    }
-
     pub async fn build(self) -> anyhow::Result<AgentOrchestrator> {
         let (coordinator_tx, coordinator_rx) = mpsc::channel(10000);
         let browser_config = self.browser_config.unwrap_or_default();
@@ -229,13 +222,6 @@ impl AgentOrchestratorBuilder {
 
         let browser_config = Arc::new(RwLock::new(browser_config));
 
-        let tool_auth_handler = self.tool_auth_handler.unwrap_or_else(|| {
-            Arc::new(OAuthHandler::new(
-                stores.tool_auth_store.clone(),
-                String::new(),
-            ))
-        });
-
         // Initialize prompt registry with defaults only (no auto-discovery)
         // User-specific partials are loaded at render time in formatter.rs
         let prompt_registry = if let Some(registry) = self.prompt_registry {
@@ -247,7 +233,6 @@ impl AgentOrchestratorBuilder {
         };
 
         let orchestrator = AgentOrchestrator {
-            tool_auth_handler,
             mcp_registry: registry,
             coordinator_rx: Arc::new(Mutex::new(coordinator_rx)),
             coordinator_tx,
@@ -513,18 +498,9 @@ impl AgentOrchestrator {
         // Use new tools configuration if available, fallback to old mcp_servers
         let tools_config = definition.tools.clone().unwrap_or(ToolsConfig::default());
 
-        // Get plugin tool loader from stores if available
-        let plugin_tool_loader: Option<Box<dyn distri_types::stores::PluginToolLoader>> =
-            if let Some(ref loader) = self.stores.plugin_tool_loader {
-                Some(Box::new(LoaderWrapper(loader.clone())))
-            } else {
-                None
-            };
-
         let mut tools = crate::tools::resolve_tools_config(
             &tools_config,
             self.mcp_registry.clone(),
-            plugin_tool_loader.as_deref(),
             self.workspace_filesystem.clone(),
             self.session_filesystem.clone(),
             definition.file_system.include_server_tools(),
@@ -1253,7 +1229,7 @@ impl AgentOrchestrator {
     pub async fn get_all_available_tools(
         &self,
     ) -> Result<Vec<Arc<dyn crate::tools::Tool>>, AgentError> {
-        use crate::types::{McpToolConfig, ToolsConfig};
+        use crate::types::ToolsConfig;
         use std::collections::HashMap;
 
         let builtin_tools = crate::tools::get_builtin_tools(
@@ -1263,50 +1239,17 @@ impl AgentOrchestrator {
         );
 
         // Create a ToolsConfig that includes all available tools
-        let mut all_tools_config = ToolsConfig {
+        let all_tools_config = ToolsConfig {
             builtin: vec![], // Don't include builtin tools by default for /toolcall
             packages: HashMap::new(),
             mcp: Vec::new(),
             external: None,
         };
 
-        // Add all MCP servers with wildcard to get all their tools
-        {
-            let registry = self.mcp_registry.clone();
-            let servers = registry.read().await;
-            for server_name in servers.servers.keys() {
-                all_tools_config.mcp.push(McpToolConfig {
-                    server: server_name.clone(),
-                    include: vec!["*".to_string()], // Get all tools from this server
-                    exclude: vec![],                // Don't exclude anything
-                });
-            }
-        }
-
-        // Get plugin tool loader from stores if available
-        let plugin_tool_loader: Option<Box<dyn distri_types::stores::PluginToolLoader>> =
-            if let Some(ref loader) = self.stores.plugin_tool_loader {
-                Some(Box::new(LoaderWrapper(loader.clone())))
-            } else {
-                None
-            };
-
-        // Add all plugin packages with wildcard to get all their tools
-        if let Some(ref loader) = plugin_tool_loader {
-            let packages = loader.list_packages().await.unwrap_or_default();
-            for package_name in packages {
-                all_tools_config.packages.insert(
-                    package_name,
-                    vec!["*".to_string()], // Get all tools from this package
-                );
-            }
-        }
-
         // Use the standardized resolve_tools_config method
         let mut tools = crate::tools::resolve_tools_config(
             &all_tools_config,
             self.mcp_registry.clone(),
-            plugin_tool_loader.as_deref(),
             self.workspace_filesystem.clone(),
             self.session_filesystem.clone(),
             true,
@@ -1318,31 +1261,6 @@ impl AgentOrchestrator {
         tools.extend(builtin_tools);
 
         Ok(tools)
-    }
-}
-
-// Helper wrapper to allow using Arc<dyn PluginToolLoader> as &dyn PluginToolLoader
-struct LoaderWrapper(Arc<dyn distri_types::stores::PluginToolLoader>);
-
-impl std::fmt::Debug for LoaderWrapper {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("LoaderWrapper").finish()
-    }
-}
-
-#[async_trait::async_trait]
-impl distri_types::stores::PluginToolLoader for LoaderWrapper {
-    async fn list_packages(&self) -> anyhow::Result<Vec<String>> {
-        self.0.list_packages().await
-    }
-    async fn get_package_tools(
-        &self,
-        package_name: &str,
-    ) -> anyhow::Result<Vec<Arc<dyn crate::tools::Tool>>> {
-        self.0.get_package_tools(package_name).await
-    }
-    async fn has_package(&self, package_name: &str) -> anyhow::Result<bool> {
-        self.0.has_package(package_name).await
     }
 }
 

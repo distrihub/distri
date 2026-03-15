@@ -8,19 +8,17 @@ use crate::agent::ExecutorContext;
 use crate::servers::registry::McpServerRegistry;
 use crate::tools::browser::{BrowserStepTool, DistriBrowserSharedTool, DistriScrapeSharedTool};
 use crate::tools::builtin::ArtifactTool;
-use crate::types::{McpDefinition, McpToolConfig, ToolCall, ToolsConfig};
+use crate::types::{ToolCall, ToolsConfig};
 use crate::AgentError;
 use distri_types::Part;
 mod browser;
 pub mod code;
 // pub mod authenticated_example;
 pub mod context;
-mod mcp;
 pub mod shell;
 mod state;
 pub use code::execute_code_with_tools;
 pub use context::to_tool_context;
-pub use mcp::get_mcp_tools;
 mod builtin;
 pub mod platform;
 pub mod skill_script;
@@ -78,40 +76,12 @@ pub async fn execute_tool_with_executor_context(
     tool_call: crate::types::ToolCall,
     context: Arc<crate::agent::ExecutorContext>,
 ) -> Result<Vec<Part>, AgentError> {
-    let tool_name = tool.get_name();
-
-    // Check if it's an MCP tool first
-    if tool.is_mcp() {
-        // Handle MCP tools through the proper execution path that includes panic recovery
-        use std::any::Any;
-        if let Some(mcp_tool) = (tool as &dyn Any).downcast_ref::<mcp::McpTool>() {
-            // Use the static execute method that includes panic recovery mechanisms
-            let orchestrator = context.get_orchestrator()?;
-            let value = mcp::McpTool::execute(
-                &tool_call,
-                &mcp_tool.mcp_definition,
-                orchestrator.mcp_registry.clone(),
-                orchestrator.tool_auth_handler.clone(),
-                context.clone(),
-            )
-            .await
-            .map_err(|e| AgentError::ToolExecution(e.to_string()))?;
-            // Wrap JSON value into parts
-            Ok(vec![Part::Data(value)])
-        } else {
-            Err(AgentError::ToolExecution(format!(
-                "Failed to downcast MCP tool '{}'",
-                tool_name
-            )))
-        }
-    } else {
-        // Handle regular ExecutorContext tools via casting
-        let executor_tool = cast_to_executor_context_tool(tool)?;
-        let parts = executor_tool
-            .execute_with_executor_context(tool_call, context)
-            .await?;
-        Ok(parts)
-    }
+    // Handle regular ExecutorContext tools via casting
+    let executor_tool = cast_to_executor_context_tool(tool)?;
+    let parts = executor_tool
+        .execute_with_executor_context(tool_call, context)
+        .await?;
+    Ok(parts)
 }
 
 /// Cast a Tool to an ExecutorContextTool based on its name (for non-MCP tools)
@@ -227,11 +197,9 @@ impl ExecutorContextTool for DynExecutorTool {
 }
 
 /// Resolve tools from the new ToolsConfig format
-/// Uses PluginToolLoader for dynamic tool loading (supports both OSS and Cloud plugins)
 pub async fn resolve_tools_config(
     config: &ToolsConfig,
-    registry: Arc<RwLock<McpServerRegistry>>,
-    plugin_tool_loader: Option<&dyn distri_types::stores::PluginToolLoader>,
+    _registry: Arc<RwLock<McpServerRegistry>>,
     workspace_filesystem: Arc<distri_filesystem::FileSystem>,
     session_filesystem: Arc<distri_filesystem::FileSystem>,
     include_filesystem_tools: bool,
@@ -273,122 +241,9 @@ pub async fn resolve_tools_config(
         }
     }
 
-    // Add MCP tools with filtering
-    for mcp_config in &config.mcp {
-        let mcp_tools = get_filtered_mcp_tools(mcp_config, registry.clone()).await?;
-        all_tools.extend(mcp_tools);
-    }
-
-    // Add plugin tools from packages configuration using the loader
-    if let Some(loader) = plugin_tool_loader {
-        for (package_name, tool_names) in &config.packages {
-            // Check if package exists
-            let has_package = loader.has_package(package_name).await.unwrap_or(false);
-            if !has_package {
-                let available_packages = loader.list_packages().await.unwrap_or_default();
-                return Err(anyhow::anyhow!(
-                    "Package '{}' not found in plugin tools registry. Available packages: {:?}",
-                    package_name,
-                    available_packages
-                ));
-            }
-
-            // Get tools for this package
-            let package_tools = loader.get_package_tools(package_name).await?;
-            let mut tools_added = 0;
-
-            for tool_name in tool_names {
-                if tool_name == "*" {
-                    // Add all tools from this package
-                    for tool in &package_tools {
-                        all_tools.push(tool.clone());
-                        tracing::debug!(
-                            "Added tool {} from package {} (wildcard)",
-                            tool.get_name(),
-                            package_name
-                        );
-                    }
-                    tools_added += package_tools.len();
-                } else {
-                    // Add specific tool by name
-                    if let Some(tool) = package_tools.iter().find(|t| t.get_name() == *tool_name) {
-                        all_tools.push(tool.clone());
-                        tracing::debug!(
-                            "Added tool {} from package {}",
-                            tool_name,
-                            package_name
-                        );
-                        tools_added += 1;
-                    }
-                }
-            }
-
-            // Assert that at least one tool was found
-            if tools_added == 0 {
-                let available_tool_names: Vec<String> =
-                    package_tools.iter().map(|t| t.get_name()).collect();
-                return Err(anyhow::anyhow!(
-                    "No tools found for package '{}' with requested tools {:?}. Available tools in package: {:?}",
-                    package_name,
-                    tool_names,
-                    available_tool_names
-                ));
-            }
-        }
-    } else if !config.packages.is_empty() {
-        return Err(anyhow::anyhow!(
-            "Plugin tool loader not configured but packages requested: {:?}",
-            config.packages.keys().collect::<Vec<_>>()
-        ));
-    }
+    // MCP tools are resolved at runtime via the MCP registry; no static resolution here.
 
     Ok(all_tools)
-}
-
-/// Get MCP tools with include/exclude filtering
-async fn get_filtered_mcp_tools(
-    config: &McpToolConfig,
-    registry: Arc<RwLock<McpServerRegistry>>,
-) -> Result<Vec<Arc<dyn Tool>>> {
-    // Create a temporary McpDefinition for compatibility with existing get_mcp_tools
-    let mcp_def = McpDefinition {
-        name: config.server.clone(),
-        r#type: crate::types::McpServerType::Tool,
-        filter: None,      // We'll do our own filtering
-        auth_config: None, // No auth config for basic MCP tools
-    };
-
-    // Get all tools from the server
-    let all_tools = get_mcp_tools(&[mcp_def], registry).await?;
-
-    // Apply include/exclude filtering
-    let mut filtered_tools = Vec::new();
-
-    for tool in all_tools {
-        let tool_name = tool.get_name();
-
-        // Check include patterns
-        let included = if config.include.is_empty() {
-            true // If no include patterns, include by default
-        } else {
-            config
-                .include
-                .iter()
-                .any(|pattern| matches_pattern(&tool_name, pattern))
-        };
-
-        // Check exclude patterns
-        let excluded = config
-            .exclude
-            .iter()
-            .any(|pattern| matches_pattern(&tool_name, pattern));
-
-        if included && !excluded {
-            filtered_tools.push(tool);
-        }
-    }
-
-    Ok(filtered_tools)
 }
 
 /// Simple glob-style pattern matching
@@ -396,6 +251,7 @@ async fn get_filtered_mcp_tools(
 /// - "*" matches any sequence of characters
 /// - "?" matches any single character
 /// - Exact matches
+#[cfg(test)]
 fn matches_pattern(text: &str, pattern: &str) -> bool {
     if pattern == "*" {
         return true;

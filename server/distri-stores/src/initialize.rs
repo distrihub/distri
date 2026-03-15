@@ -27,7 +27,6 @@ pub trait StoreFactory: Send + Sync {
     fn task_store(&self) -> Arc<dyn TaskStore>;
     fn scratchpad_store(&self) -> Arc<dyn ScratchpadStore>;
     fn session_store(&self) -> Arc<dyn SessionStore>;
-    fn plugin_catalog_store(&self) -> Arc<dyn PluginCatalogStore>;
     fn prompt_template_store(&self) -> Arc<dyn PromptTemplateStore>;
     fn secret_store(&self) -> Arc<dyn SecretStore>;
     fn skill_store(&self) -> Arc<dyn SkillStore>;
@@ -69,10 +68,6 @@ where
 
     fn session_store(&self) -> Arc<dyn SessionStore> {
         Arc::new(DieselStoreBuilder::session_store(self)) as Arc<dyn SessionStore>
-    }
-
-    fn plugin_catalog_store(&self) -> Arc<dyn PluginCatalogStore> {
-        Arc::new(DieselStoreBuilder::plugin_catalog_store(self)) as Arc<dyn PluginCatalogStore>
     }
 
     fn prompt_template_store(&self) -> Arc<dyn PromptTemplateStore> {
@@ -118,7 +113,6 @@ pub struct StoreBuilder {
     pub scratchpad_store: Option<Arc<dyn ScratchpadStore>>,
     pub session_store: Option<Arc<dyn SessionStore>>,
     pub external_tool_calls_store: Option<Arc<dyn ExternalToolCallsStore>>,
-    pub plugin_store: Option<Arc<dyn PluginCatalogStore>>,
     pub prompt_template_store: Option<Arc<dyn PromptTemplateStore>>,
     pub secret_store: Option<Arc<dyn SecretStore>>,
     pub skill_store: Option<Arc<dyn SkillStore>>,
@@ -137,7 +131,6 @@ impl StoreBuilder {
             scratchpad_store: None,
             session_store: None,
             external_tool_calls_store: None,
-            plugin_store: None,
             prompt_template_store: None,
             secret_store: None,
             skill_store: None,
@@ -230,12 +223,6 @@ impl StoreBuilder {
         self
     }
 
-    /// Set a pre-initialized plugin catalog store (won't be reinitialized)
-    pub fn with_plugin_store(mut self, store: Arc<dyn PluginCatalogStore>) -> Self {
-        self.plugin_store = Some(store);
-        self
-    }
-
     /// Set a pre-initialized skill store (won't be reinitialized)
     pub fn with_skill_store(mut self, store: Arc<dyn SkillStore>) -> Self {
         self.skill_store = Some(store);
@@ -259,10 +246,6 @@ impl StoreBuilder {
             .tool_auth_store
             .clone()
             .unwrap_or_else(|| metadata_factory.tool_auth_store());
-        let plugin_store = self
-            .plugin_store
-            .clone()
-            .unwrap_or_else(|| metadata_factory.plugin_catalog_store());
         let prompt_template_store = self
             .prompt_template_store
             .clone()
@@ -356,10 +339,8 @@ impl StoreBuilder {
             memory_store,
             crawl_store: None,
             external_tool_calls_store,
-            plugin_store,
             prompt_template_store: Some(prompt_template_store),
             secret_store: Some(secret_store),
-            plugin_tool_loader: None, // Cloud deployments set this separately
             skill_store,
         })
     }
@@ -465,10 +446,8 @@ pub async fn create_ephemeral_execution_stores(
         memory_store: base_stores.memory_store.clone(),
         crawl_store: base_stores.crawl_store.clone(),
         external_tool_calls_store: base_stores.external_tool_calls_store.clone(),
-        plugin_store: base_stores.plugin_store.clone(),
         prompt_template_store: base_stores.prompt_template_store.clone(),
         secret_store: base_stores.secret_store.clone(),
-        plugin_tool_loader: base_stores.plugin_tool_loader.clone(),
         skill_store: base_stores.skill_store.clone(),
     })
 }
@@ -509,10 +488,8 @@ pub async fn prepare_stores_for_execution(
         memory_store: base_stores.memory_store.clone(),
         crawl_store: base_stores.crawl_store.clone(),
         external_tool_calls_store: base_stores.external_tool_calls_store.clone(),
-        plugin_store: base_stores.plugin_store.clone(),
         prompt_template_store: base_stores.prompt_template_store.clone(),
         secret_store: base_stores.secret_store.clone(),
-        plugin_tool_loader: base_stores.plugin_tool_loader.clone(),
         skill_store: base_stores.skill_store.clone(),
     })
 }

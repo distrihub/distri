@@ -1,5 +1,5 @@
 use crate::{
-    ScratchpadEntry, ToolAuthStore, ToolResponse, configuration::PluginArtifact,
+    ScratchpadEntry, ToolAuthStore, ToolResponse,
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -65,13 +65,8 @@ pub struct InitializedStores {
     pub memory_store: Option<Arc<dyn MemoryStore>>,
     pub crawl_store: Option<Arc<dyn CrawlStore>>,
     pub external_tool_calls_store: Arc<dyn ExternalToolCallsStore>,
-    pub plugin_store: Arc<dyn PluginCatalogStore>,
     pub prompt_template_store: Option<Arc<dyn PromptTemplateStore>>,
     pub secret_store: Option<Arc<dyn SecretStore>>,
-    /// Plugin tool loader for dynamic tool resolution
-    /// OSS: uses registry-based loader (filesystem plugins)
-    /// Cloud: uses DB-based loader (tenant plugins)
-    pub plugin_tool_loader: Option<Arc<dyn PluginToolLoader>>,
     pub skill_store: Option<Arc<dyn SkillStore>>,
 }
 impl InitializedStores {
@@ -101,10 +96,6 @@ impl InitializedStores {
 
     pub fn with_scratchpad_store(&mut self, scratchpad_store: Arc<dyn ScratchpadStore>) {
         self.scratchpad_store = scratchpad_store;
-    }
-
-    pub fn with_plugin_store(&mut self, plugin_store: Arc<dyn PluginCatalogStore>) {
-        self.plugin_store = plugin_store;
     }
 }
 
@@ -291,29 +282,6 @@ pub trait TaskStore: Send + Sync {
         task_id: &str,
         parent_task_id: Option<&str>,
     ) -> anyhow::Result<()>;
-}
-
-#[derive(Debug, Clone)]
-pub struct PluginMetadataRecord {
-    pub package_name: String,
-    pub version: Option<String>,
-    pub object_prefix: String,
-    pub entrypoint: Option<String>,
-    pub artifact: PluginArtifact,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
-}
-
-#[async_trait]
-pub trait PluginCatalogStore: Send + Sync {
-    async fn list_plugins(&self) -> anyhow::Result<Vec<PluginMetadataRecord>>;
-
-    async fn get_plugin(&self, package_name: &str) -> anyhow::Result<Option<PluginMetadataRecord>>;
-
-    async fn upsert_plugin(&self, record: &PluginMetadataRecord) -> anyhow::Result<()>;
-
-    async fn remove_plugin(&self, package_name: &str) -> anyhow::Result<()>;
-
-    async fn clear(&self) -> anyhow::Result<()>;
 }
 
 // Thread Store trait for thread management
@@ -712,26 +680,6 @@ pub trait PromptTemplateStore: Send + Sync {
     async fn delete(&self, id: &str) -> anyhow::Result<()>;
     async fn clone_template(&self, id: &str) -> anyhow::Result<PromptTemplateRecord>;
     async fn sync_system_templates(&self, templates: Vec<NewPromptTemplate>) -> anyhow::Result<()>;
-}
-
-// ========== Plugin Tool Loader ==========
-
-/// Trait for loading plugin tools dynamically.
-/// This abstraction allows different implementations for:
-/// - OSS: loads from filesystem/plugin registry
-/// - Cloud: loads from database (tenant plugins)
-///
-/// The loader is used by resolve_tools_config to get tools based on ToolsConfig.
-#[async_trait]
-pub trait PluginToolLoader: Send + Sync + std::fmt::Debug {
-    /// List all available package names (for wildcard resolution)
-    async fn list_packages(&self) -> anyhow::Result<Vec<String>>;
-
-    /// Get all tools for a specific package
-    async fn get_package_tools(&self, package_name: &str) -> anyhow::Result<Vec<Arc<dyn crate::Tool>>>;
-
-    /// Check if a package exists
-    async fn has_package(&self, package_name: &str) -> anyhow::Result<bool>;
 }
 
 // ========== Secret Store ==========

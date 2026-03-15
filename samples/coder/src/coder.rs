@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use distri::{
     AgentOrchestrator, AgentOrchestratorBuilder,
-    agent::{PluginRegistry, PromptRegistry, parse_agent_markdown_content},
+    agent::{PromptRegistry, parse_agent_markdown_content},
 };
 
 use crate::tools::ExecuteCommandTool;
@@ -43,8 +43,6 @@ pub async fn init_coder(
 
     let stores = distri::initialize_stores(&store_config).await?;
 
-    let plugin_registry = PluginRegistry::new(stores.plugin_store.clone())?;
-
     // Initialize prompt registry with defaults and auto-discovery for CLI
     let prompt_registry = Arc::new(PromptRegistry::with_defaults().await?);
 
@@ -73,7 +71,6 @@ pub async fn init_coder(
     let orchestrator = builder
         .with_stores(stores)
         .with_workspace_file_system(Arc::new(file_system))
-        .with_plugin_registry(Arc::new(plugin_registry))
         .with_prompt_registry(prompt_registry)
         .with_store_config(store_config)
         .build()

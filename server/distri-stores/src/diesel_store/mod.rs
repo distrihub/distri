@@ -7,7 +7,7 @@ use std::{collections::HashMap, fmt::Display, sync::Arc};
 use crate::models::*;
 use crate::schema::{
     agent_configs, external_tool_calls, integrations, memory_entries, message_reads, message_votes,
-    plugin_catalog, scratchpad_entries, session_entries, task_messages, tasks, threads,
+    scratchpad_entries, session_entries, task_messages, tasks, threads,
 };
 use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
@@ -29,13 +29,12 @@ use diesel_async::pooled_connection::{AsyncDieselConnectionManager, PoolableConn
 use diesel_async::sync_connection_wrapper::SyncConnectionWrapper;
 use diesel_migrations::{EmbeddedMigrations, embed_migrations};
 use distri_types::auth::{AuthError, AuthSecret, AuthSession, OAuth2State, ToolAuthStore};
-use distri_types::configuration::PluginArtifact;
 use distri_types::stores::SessionSummary;
 use distri_types::stores::{
     AgentStatsInfo, AgentStore, AgentUsageInfo, ExternalToolCallsStore, FilterMessageType,
     MemoryStore, MessageFilter, MessageReadStatus, MessageVote, MessageVoteSummary,
-    NewPromptTemplate, NewSecret, NewSkill, NewSkillScript, PluginCatalogStore,
-    PluginMetadataRecord, PromptTemplateRecord, PromptTemplateStore, ScratchpadStore, SecretRecord,
+    NewPromptTemplate, NewSecret, NewSkill, NewSkillScript,
+    PromptTemplateRecord, PromptTemplateStore, ScratchpadStore, SecretRecord,
     SecretStore, SessionMemory, SessionStore, SkillRecord, SkillScriptRecord, SkillStore, TaskStore,
     ThreadListFilter, ThreadListResponse, ThreadStore, UpdatePromptTemplate, UpdateSkill,
     UpdateSkillScript, VoteMessageRequest, VoteType,
@@ -3065,143 +3064,6 @@ where
 }
 
 #[derive(Clone)]
-pub struct DieselPluginCatalogStore<Conn>
-where
-    Conn: DieselBackendConnection,
-    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
-    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
-    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
-{
-    pool: DieselStorePool<Conn>,
-}
-
-impl<Conn> DieselPluginCatalogStore<Conn>
-where
-    Conn: DieselBackendConnection,
-    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
-    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
-    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
-{
-    pub fn new(pool: DieselStorePool<Conn>) -> Self {
-        Self { pool }
-    }
-
-    async fn conn(&self) -> Result<DieselConn<'_, Conn>> {
-        self.pool
-            .get()
-            .await
-            .context("failed to acquire diesel connection")
-    }
-
-    fn model_to_record(model: PluginCatalogModel) -> Result<PluginMetadataRecord> {
-        let artifact: PluginArtifact = serde_json::from_str(&model.artifact_json)
-            .context("failed to deserialize plugin artifact")?;
-        let updated_at = Utc.from_utc_datetime(&model.updated_at);
-
-        Ok(PluginMetadataRecord {
-            package_name: model.package_name,
-            version: model.version,
-            object_prefix: model.object_prefix,
-            entrypoint: model.entrypoint,
-            artifact,
-            updated_at,
-        })
-    }
-}
-
-#[async_trait]
-impl<Conn> PluginCatalogStore for DieselPluginCatalogStore<Conn>
-where
-    Conn: DieselBackendConnection,
-    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
-    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
-    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
-{
-    async fn list_plugins(&self) -> Result<Vec<PluginMetadataRecord>> {
-        let mut connection = self.conn().await?;
-        let rows = plugin_catalog::table
-            .order(plugin_catalog::package_name.asc())
-            .load::<PluginCatalogModel>(&mut connection)
-            .await
-            .context("failed to list plugin metadata")?;
-
-        rows.into_iter().map(Self::model_to_record).collect()
-    }
-
-    async fn get_plugin(&self, package_name: &str) -> Result<Option<PluginMetadataRecord>> {
-        let mut connection = self.conn().await?;
-        let row = plugin_catalog::table
-            .find(package_name)
-            .first::<PluginCatalogModel>(&mut connection)
-            .await
-            .optional()
-            .context("failed to load plugin metadata")?;
-
-        row.map(Self::model_to_record).transpose()
-    }
-
-    async fn upsert_plugin(&self, record: &PluginMetadataRecord) -> Result<()> {
-        let mut connection = self.conn().await?;
-        let timestamp = now_naive();
-
-        let mut artifact = record.artifact.clone();
-        if artifact.path.as_os_str().is_empty() {
-            artifact.path = std::path::PathBuf::from(&record.object_prefix);
-        }
-        let artifact_json =
-            serde_json::to_string(&artifact).context("failed to serialize plugin artifact")?;
-
-        let insert = NewPluginCatalogModel {
-            package_name: &record.package_name,
-            version: record.version.as_deref(),
-            object_prefix: &record.object_prefix,
-
-            entrypoint: record.entrypoint.as_deref(),
-            artifact_json: &artifact_json,
-            updated_at: timestamp,
-        };
-
-        let changes = PluginCatalogChangeset {
-            version: record.version.as_deref(),
-            object_prefix: &record.object_prefix,
-
-            entrypoint: record.entrypoint.as_deref(),
-            artifact_json: &artifact_json,
-            updated_at: timestamp,
-        };
-
-        diesel::insert_into(plugin_catalog::table)
-            .values(&insert)
-            .on_conflict(plugin_catalog::package_name)
-            .do_update()
-            .set(&changes)
-            .execute(&mut connection)
-            .await
-            .context("failed to upsert plugin metadata")?;
-
-        Ok(())
-    }
-
-    async fn remove_plugin(&self, package_name: &str) -> Result<()> {
-        let mut connection = self.conn().await?;
-        diesel::delete(plugin_catalog::table.find(package_name))
-            .execute(&mut connection)
-            .await
-            .context("failed to delete plugin metadata")?;
-        Ok(())
-    }
-
-    async fn clear(&self) -> Result<()> {
-        let mut connection = self.conn().await?;
-        diesel::delete(plugin_catalog::table)
-            .execute(&mut connection)
-            .await
-            .context("failed to clear plugin metadata")?;
-        Ok(())
-    }
-}
-
-#[derive(Clone)]
 pub struct DieselStoreBuilder<Conn>
 where
     Conn: DieselBackendConnection,
@@ -3252,10 +3114,6 @@ where
 
     pub fn external_tool_calls_store(&self) -> DieselExternalToolCallsStore<Conn> {
         DieselExternalToolCallsStore::new(self.pool.clone_store_pool())
-    }
-
-    pub fn plugin_catalog_store(&self) -> DieselPluginCatalogStore<Conn> {
-        DieselPluginCatalogStore::new(self.pool.clone_store_pool())
     }
 
     pub fn browser_session_store(&self) -> DieselBrowserSessionStore<Conn> {
