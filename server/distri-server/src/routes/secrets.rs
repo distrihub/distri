@@ -14,6 +14,7 @@ pub fn configure_secret_routes(cfg: &mut web::ServiceConfig) {
             .route(web::post().to(create_secret)),
     )
     .service(web::resource("/secrets/providers").route(web::get().to(list_provider_definitions)))
+    .service(web::resource("/secrets/configured").route(web::get().to(list_configured)))
     .service(
         web::resource("/secrets/{key}")
             .route(web::get().to(get_secret))
@@ -47,6 +48,50 @@ fn sensitive_keys() -> HashSet<String> {
         .filter(|k| k.sensitive)
         .map(|k| k.key)
         .collect()
+}
+
+/// Returns which provider keys are configured. For non-sensitive keys (URLs, project IDs)
+/// returns the actual value. For sensitive keys (API keys) returns only `is_set: true`.
+/// The frontend should use this instead of list_secrets for the settings page.
+#[derive(Serialize)]
+struct ConfiguredField {
+    key: String,
+    is_set: bool,
+    /// Only populated for non-sensitive fields
+    #[serde(skip_serializing_if = "Option::is_none")]
+    value: Option<String>,
+    sensitive: bool,
+}
+
+async fn list_configured(executor: web::Data<Arc<AgentOrchestrator>>) -> HttpResponse {
+    let store = match &executor.stores.secret_store {
+        Some(s) => s,
+        None => {
+            return HttpResponse::InternalServerError()
+                .json(json!({"error": "Secret store not initialized"}))
+        }
+    };
+
+    let secrets = match store.list().await {
+        Ok(s) => s,
+        Err(e) => return HttpResponse::InternalServerError().json(json!({"error": e.to_string()})),
+    };
+
+    let sensitive = sensitive_keys();
+    let fields: Vec<ConfiguredField> = secrets
+        .into_iter()
+        .map(|s| {
+            let is_sensitive = sensitive.contains(&s.key);
+            ConfiguredField {
+                key: s.key,
+                is_set: true,
+                value: if is_sensitive { None } else { Some(s.value) },
+                sensitive: is_sensitive,
+            }
+        })
+        .collect();
+
+    HttpResponse::Ok().json(fields)
 }
 
 async fn list_secrets(executor: web::Data<Arc<AgentOrchestrator>>) -> HttpResponse {
