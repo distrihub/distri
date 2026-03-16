@@ -19,6 +19,7 @@ pub const PLATFORM_TOOL_NAMES: &[&str] = &[
     "delete_skill",
     "write_to_storage",
     "read_from_storage",
+    "distri_platform",
 ];
 
 /// Returns all platform management tools as Arc<dyn Tool>.
@@ -30,6 +31,7 @@ pub fn get_platform_tools() -> Vec<Arc<dyn Tool>> {
         Arc::new(DeleteSkillTool) as Arc<dyn Tool>,
         Arc::new(WriteToStorageTool) as Arc<dyn Tool>,
         Arc::new(ReadFromStorageTool) as Arc<dyn Tool>,
+        Arc::new(crate::platform_service::DistriPlatformTool) as Arc<dyn Tool>,
     ]
 }
 
