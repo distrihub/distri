@@ -95,8 +95,8 @@ export function AgentSettingsView({ className }: AgentSettingsViewProps) {
     [customModels],
   );
 
-  // Save all unsaved fields for a provider at once
-  const handleSaveProvider = async (keys: ProviderSecretDefinition['keys']) => {
+  // Save all unsaved fields for a provider at once via POST /providers
+  const handleSaveProvider = async (providerId: string, keys: ProviderSecretDefinition['keys']) => {
     if (!homeClient) return;
     const toSave = keys.filter((k) => {
       const val = fieldValues[k.key]?.trim();
@@ -106,9 +106,11 @@ export function AgentSettingsView({ className }: AgentSettingsViewProps) {
     setSavingField('__provider__');
     setError(null);
     try {
+      const secrets: Record<string, string> = {};
       for (const k of toSave) {
-        await homeClient.createSecret(k.key, fieldValues[k.key].trim());
+        secrets[k.key] = fieldValues[k.key].trim();
       }
+      await homeClient.upsertProvider({ provider_id: providerId, secrets });
       setFieldValues((prev) => {
         const next = { ...prev };
         for (const k of toSave) delete next[k.key];
@@ -133,11 +135,16 @@ export function AgentSettingsView({ className }: AgentSettingsViewProps) {
     }
   };
 
-  const saveSettings = async (settings: Record<string, any>) => {
+  const handleSetDefaultModel = async (model: string) => {
     if (!homeClient) return;
+    const newDefault = defaultModel === model ? '' : model;
+    setDefaultModel(newDefault);
     setSaving(true);
     try {
-      await homeClient.updateWorkspaceSettings(settings);
+      await homeClient.upsertProvider({
+        provider_id: '__settings__',
+        default_model: newDefault,
+      });
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 2000);
     } catch (err) {
@@ -147,13 +154,8 @@ export function AgentSettingsView({ className }: AgentSettingsViewProps) {
     }
   };
 
-  const handleSetDefaultModel = async (model: string) => {
-    const newDefault = defaultModel === model ? '' : model;
-    setDefaultModel(newDefault);
-    await saveSettings({ default_model: newDefault || null });
-  };
-
   const handleAddModel = async (providerId: string) => {
+    if (!homeClient) return;
     const modelName = newModelInputs[providerId]?.trim();
     if (!modelName) return;
 
@@ -164,10 +166,18 @@ export function AgentSettingsView({ className }: AgentSettingsViewProps) {
     const updated = [...customModels, { provider: providerId, model: modelName }];
     setCustomModels(updated);
     setNewModelInputs((prev) => ({ ...prev, [providerId]: '' }));
-    await saveSettings({ custom_models: updated });
+    try {
+      await homeClient.upsertProvider({
+        provider_id: '__settings__',
+        custom_models: updated,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save');
+    }
   };
 
   const handleRemoveCustomModel = async (providerId: string, modelName: string) => {
+    if (!homeClient) return;
     const fullId = `${providerId}/${modelName}`;
     const updated = customModels.filter((m) => !(m.provider === providerId && m.model === modelName));
     setCustomModels(updated);
@@ -177,7 +187,15 @@ export function AgentSettingsView({ className }: AgentSettingsViewProps) {
       newDefault = '';
       setDefaultModel('');
     }
-    await saveSettings({ custom_models: updated, default_model: newDefault || null });
+    try {
+      await homeClient.upsertProvider({
+        provider_id: '__settings__',
+        custom_models: updated,
+        default_model: newDefault,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save');
+    }
   };
 
   const handleAddCustomProvider = async () => {
@@ -188,22 +206,25 @@ export function AgentSettingsView({ className }: AgentSettingsViewProps) {
 
     const id = `custom_${name.toLowerCase().replace(/[^a-z0-9]/g, '_')}`;
 
-    // Save API key as secret
     setSaving(true);
     try {
-      await homeClient.createSecret(`${id.toUpperCase()}_API_KEY`, key);
+      const secrets: Record<string, string> = {
+        [`${id.toUpperCase()}_API_KEY`]: key,
+      };
       if (newProviderProjectId.trim()) {
-        await homeClient.createSecret(`${id.toUpperCase()}_PROJECT_ID`, newProviderProjectId.trim());
+        secrets[`${id.toUpperCase()}_PROJECT_ID`] = newProviderProjectId.trim();
       }
 
-      const updated = [...customProviders, {
-        id,
-        name,
-        base_url: url,
-        ...(newProviderProjectId.trim() ? { project_id: newProviderProjectId.trim() } : {}),
-      }];
-      setCustomProviders(updated);
-      await saveSettings({ custom_providers: updated });
+      await homeClient.upsertProvider({
+        provider_id: id,
+        secrets,
+        config: {
+          id,
+          name,
+          base_url: url,
+          ...(newProviderProjectId.trim() ? { project_id: newProviderProjectId.trim() } : {}),
+        },
+      });
 
       setNewProviderName('');
       setNewProviderUrl('');
@@ -220,31 +241,13 @@ export function AgentSettingsView({ className }: AgentSettingsViewProps) {
 
   const handleRemoveCustomProvider = async (providerId: string) => {
     if (!homeClient) return;
-    const updated = customProviders.filter((p) => p.id !== providerId);
-    setCustomProviders(updated);
-
-    // Remove associated secrets
+    setError(null);
     try {
-      await homeClient.deleteSecret(`${providerId.toUpperCase()}_API_KEY`);
-      await homeClient.deleteSecret(`${providerId.toUpperCase()}_PROJECT_ID`).catch(() => {});
-    } catch { /* ignore */ }
-
-    // Remove custom models for this provider
-    const updatedModels = customModels.filter((m) => m.provider !== providerId);
-    setCustomModels(updatedModels);
-
-    let newDefault = defaultModel;
-    if (defaultModel.startsWith(`${providerId}/`)) {
-      newDefault = '';
-      setDefaultModel('');
+      await homeClient.deleteProvider(providerId);
+      await loadData();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete provider');
     }
-
-    await saveSettings({
-      custom_providers: updated,
-      custom_models: updatedModels,
-      default_model: newDefault || null,
-    });
-    await loadData();
   };
 
   const providerMeta = (id: string) => {
@@ -405,7 +408,7 @@ export function AgentSettingsView({ className }: AgentSettingsViewProps) {
               <div className="flex justify-end pt-1">
                 <button
                   type="button"
-                  onClick={() => handleSaveProvider(keys)}
+                  onClick={() => handleSaveProvider(providerId, keys)}
                   disabled={savingField === '__provider__'}
                   className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition hover:bg-primary/90 disabled:opacity-50"
                 >

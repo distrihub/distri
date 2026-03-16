@@ -34,6 +34,7 @@ mod files;
 mod llm_helpers;
 mod models;
 mod prompt_templates;
+pub mod providers;
 mod secrets;
 mod session;
 mod skills;
@@ -125,6 +126,7 @@ pub fn distri(cfg: &mut web::ServiceConfig) {
     .service(web::resource("/home/stats").route(web::get().to(get_home_stats)))
     .configure(prompt_templates::configure_prompt_template_routes)
     .configure(secrets::configure_secret_routes)
+    .configure(providers::configure_provider_routes)
     .configure(skills::configure_skill_routes)
     .configure(models::configure_model_routes)
     // Voice streaming endpoints - TODO: Implement after fixing compilation issues

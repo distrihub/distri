@@ -220,18 +220,6 @@ impl Default for ExecutorContext {
 }
 
 impl ExecutorContext {
-    /// Validate that the context has all required fields set before execution.
-    /// Call this at every entry point (execute, execute_stream, llm_invoke).
-    pub fn validate(&self) -> Result<(), crate::AgentError> {
-        if self.default_model_settings.is_none() {
-            return Err(crate::AgentError::InvalidConfiguration(
-                "No model configured. Please set a default model in Agent Settings → Default Model."
-                    .to_string(),
-            ));
-        }
-        Ok(())
-    }
-
     pub async fn get_tools(&self) -> Vec<Arc<dyn Tool>> {
         let tools: tokio::sync::RwLockReadGuard<'_, Vec<Arc<dyn Tool>>> = self.tools.read().await;
         tools.clone().into_iter().map(|t| t.clone()).collect()

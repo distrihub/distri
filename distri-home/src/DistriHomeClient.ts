@@ -501,6 +501,49 @@ export class DistriHomeClient {
     return await response.json();
   }
 
+  // ---- Providers ----
+
+  /**
+   * Upsert a provider: saves secrets and optional custom config in a single call.
+   * For built-in providers (openai, anthropic, etc.), pass just secrets.
+   * For custom providers, also pass config with id, name, base_url.
+   */
+  async upsertProvider(request: UpsertProviderRequest): Promise<UpsertProviderResponse> {
+    const response = await this.client.fetch('/providers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request),
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      let msg = response.statusText;
+      try { msg = JSON.parse(text)?.error || msg; } catch {}
+      throw new Error(`Failed to save provider: ${msg}`);
+    }
+    return await response.json();
+  }
+
+  /**
+   * Delete a provider and all its associated secrets and config.
+   */
+  async deleteProvider(providerId: string): Promise<void> {
+    const response = await this.client.fetch(`/providers/${encodeURIComponent(providerId)}`, {
+      method: 'DELETE',
+    });
+    if (!response.ok) {
+      throw new Error(`Failed to delete provider: ${response.statusText}`);
+    }
+  }
+
+  /**
+   * Get the workspace's default model settings.
+   */
+  async getDefaultModelSettings(): Promise<any> {
+    const response = await this.client.fetch('/providers/default-model');
+    if (!response.ok) throw new Error(`Failed: ${response.statusText}`);
+    return await response.json();
+  }
+
   /**
    * Get workspace settings for the current workspace
    */
@@ -519,15 +562,15 @@ export class DistriHomeClient {
   }
 
   /**
-   * Update workspace settings
+   * Update workspace settings for the current workspace.
+   * Uses /workspaces/current to resolve the workspace from the X-Workspace-Id header.
    */
   async updateWorkspaceSettings(settings: Record<string, any>): Promise<void> {
-    // We need the workspace ID - get it from the list
-    const listResp = await this.client.fetch('/workspaces');
-    if (!listResp.ok) throw new Error(`Failed to get workspaces`);
-    const workspaces = await listResp.json();
-    const ws = Array.isArray(workspaces) ? workspaces[0] : workspaces?.data?.[0];
-    if (!ws) throw new Error('No workspace found');
+    // Get current workspace from header-based endpoint
+    const currentResp = await this.client.fetch('/workspaces/current');
+    if (!currentResp.ok) throw new Error(`Failed to get current workspace`);
+    const ws = await currentResp.json();
+    if (!ws?.id) throw new Error('No workspace found');
 
     const response = await this.client.fetch(`/workspaces/${ws.id}`, {
       method: 'PUT',
@@ -683,4 +726,25 @@ export interface CustomProviderConfig {
 export interface CustomModelEntry {
   provider: string;
   model: string;
+}
+
+/**
+ * Request to upsert a provider — saves secrets, config, models, and default in one call.
+ */
+export interface UpsertProviderRequest {
+  provider_id: string;
+  secrets?: Record<string, string>;
+  config?: CustomProviderConfig;
+  custom_models?: CustomModelEntry[];
+  /** Set to a "provider/model" string, or empty string to clear */
+  default_model?: string;
+}
+
+/**
+ * Response from upserting a provider.
+ */
+export interface UpsertProviderResponse {
+  provider_id: string;
+  secrets_saved: number;
+  config_saved: boolean;
 }

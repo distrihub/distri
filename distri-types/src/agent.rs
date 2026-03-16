@@ -750,6 +750,32 @@ pub struct ModelInfo {
     pub name: String,
 }
 
+/// Combined provider definition used in default_models.json.
+/// Merges secret key definitions and well-known models into one entry per provider.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DefaultProviderEntry {
+    id: String,
+    label: String,
+    keys: Vec<SecretKeyDefinition>,
+    models: Vec<ModelInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DefaultModelsFile {
+    providers: Vec<DefaultProviderEntry>,
+}
+
+fn load_default_providers() -> &'static [DefaultProviderEntry] {
+    use std::sync::OnceLock;
+    static PROVIDERS: OnceLock<Vec<DefaultProviderEntry>> = OnceLock::new();
+    PROVIDERS.get_or_init(|| {
+        let json = include_str!("default_models.json");
+        let file: DefaultModelsFile =
+            serde_json::from_str(json).expect("Failed to parse default_models.json");
+        file.providers
+    })
+}
+
 /// Models grouped by provider, with configuration status
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderModels {
@@ -837,147 +863,29 @@ impl ModelProvider {
         }
     }
 
-    /// Returns all provider secret definitions (static registry)
+    /// Returns all provider secret definitions, loaded from default_models.json.
     pub fn all_provider_definitions() -> Vec<ProviderSecretDefinition> {
-        vec![
-            ProviderSecretDefinition {
-                id: "openai".to_string(),
-                label: "OpenAI".to_string(),
-                keys: vec![SecretKeyDefinition {
-                    key: "OPENAI_API_KEY".to_string(),
-                    label: "API key".to_string(),
-                    placeholder: "sk-...".to_string(),
-                    required: true,
-                    sensitive: true,
-                }],
-            },
-            ProviderSecretDefinition {
-                id: "anthropic".to_string(),
-                label: "Anthropic".to_string(),
-                keys: vec![SecretKeyDefinition {
-                    key: "ANTHROPIC_API_KEY".to_string(),
-                    label: "API key".to_string(),
-                    placeholder: "sk-ant-...".to_string(),
-                    required: true,
-                    sensitive: true,
-                }],
-            },
-            ProviderSecretDefinition {
-                id: "azure_openai".to_string(),
-                label: "Azure OpenAI".to_string(),
-                keys: vec![
-                    SecretKeyDefinition {
-                        key: "AZURE_OPENAI_BASE_URL".to_string(),
-                        label: "Endpoint URL".to_string(),
-                        placeholder: "https://<resource>.openai.azure.com".to_string(),
-                        required: true,
-                        sensitive: false,
-                    },
-                    SecretKeyDefinition {
-                        key: "AZURE_OPENAI_API_KEY".to_string(),
-                        label: "API key".to_string(),
-                        placeholder: "...".to_string(),
-                        required: true,
-                        sensitive: true,
-                    },
-                    SecretKeyDefinition {
-                        key: "AZURE_OPENAI_DEPLOYMENT".to_string(),
-                        label: "Deployment name".to_string(),
-                        placeholder: "gpt-4o".to_string(),
-                        required: true,
-                        sensitive: false,
-                    },
-                    SecretKeyDefinition {
-                        key: "AZURE_OPENAI_API_VERSION".to_string(),
-                        label: "API version".to_string(),
-                        placeholder: "2024-06-01".to_string(),
-                        required: false,
-                        sensitive: false,
-                    },
-                ],
-            },
-            ProviderSecretDefinition {
-                id: "gemini".to_string(),
-                label: "Google Gemini".to_string(),
-                keys: vec![SecretKeyDefinition {
-                    key: "GEMINI_API_KEY".to_string(),
-                    label: "API key".to_string(),
-                    placeholder: "AIza...".to_string(),
-                    required: true,
-                    sensitive: true,
-                }],
-            },
-            ProviderSecretDefinition {
-                id: "openai_compat".to_string(),
-                label: "OpenAI Compatible".to_string(),
-                keys: vec![
-                    SecretKeyDefinition {
-                        key: "OPENAI_COMPAT_BASE_URL".to_string(),
-                        label: "API URL".to_string(),
-                        placeholder: "https://api.example.com/v1".to_string(),
-                        required: true,
-                        sensitive: false,
-                    },
-                    SecretKeyDefinition {
-                        key: "OPENAI_COMPAT_API_KEY".to_string(),
-                        label: "API key".to_string(),
-                        placeholder: "sk-...".to_string(),
-                        required: true,
-                        sensitive: true,
-                    },
-                    SecretKeyDefinition {
-                        key: "OPENAI_COMPAT_PROJECT_ID".to_string(),
-                        label: "Project ID".to_string(),
-                        placeholder: "project-123".to_string(),
-                        required: false,
-                        sensitive: false,
-                    },
-                ],
-            },
-        ]
+        load_default_providers()
+            .iter()
+            .map(|p| ProviderSecretDefinition {
+                id: p.id.clone(),
+                label: p.label.clone(),
+                keys: p.keys.clone(),
+            })
+            .collect()
     }
 
-    /// Returns the well-known models grouped by provider, for discovery purposes.
+    /// Returns the well-known models grouped by provider, loaded from default_models.json.
     pub fn well_known_models() -> Vec<ProviderModels> {
-        vec![
-            ProviderModels {
-                provider_id: "openai".to_string(),
-                provider_label: "OpenAI".to_string(),
-                models: vec![
-                    ModelInfo { id: "gpt-4.1".into(), name: "GPT-4.1".into() },
-                    ModelInfo { id: "gpt-4.1-mini".into(), name: "GPT-4.1 Mini".into() },
-                    ModelInfo { id: "gpt-4.1-nano".into(), name: "GPT-4.1 Nano".into() },
-                    ModelInfo { id: "gpt-4o".into(), name: "GPT-4o".into() },
-                    ModelInfo { id: "gpt-4o-mini".into(), name: "GPT-4o Mini".into() },
-                    ModelInfo { id: "o3-mini".into(), name: "o3-mini".into() },
-                ],
-            },
-            ProviderModels {
-                provider_id: "anthropic".to_string(),
-                provider_label: "Anthropic".to_string(),
-                models: vec![
-                    ModelInfo { id: "claude-sonnet-4".into(), name: "Claude Sonnet 4".into() },
-                    ModelInfo { id: "claude-opus-4".into(), name: "Claude Opus 4".into() },
-                    ModelInfo { id: "claude-haiku-3.5".into(), name: "Claude Haiku 3.5".into() },
-                ],
-            },
-            ProviderModels {
-                provider_id: "azure_openai".to_string(),
-                provider_label: "Azure OpenAI".to_string(),
-                models: vec![
-                    ModelInfo { id: "gpt-4o".into(), name: "GPT-4o (Azure)".into() },
-                    ModelInfo { id: "gpt-4o-mini".into(), name: "GPT-4o Mini (Azure)".into() },
-                ],
-            },
-            ProviderModels {
-                provider_id: "gemini".to_string(),
-                provider_label: "Google Gemini".to_string(),
-                models: vec![
-                    ModelInfo { id: "gemini-2.5-flash".into(), name: "Gemini 2.5 Flash".into() },
-                    ModelInfo { id: "gemini-2.5-pro".into(), name: "Gemini 2.5 Pro".into() },
-                ],
-            },
-        ]
+        load_default_providers()
+            .iter()
+            .filter(|p| !p.models.is_empty())
+            .map(|p| ProviderModels {
+                provider_id: p.id.clone(),
+                provider_label: p.label.clone(),
+                models: p.models.clone(),
+            })
+            .collect()
     }
 
     /// Get the human-readable name for a provider
@@ -1039,15 +947,36 @@ impl ModelSettings {
     }
 
     /// Parse a "provider/model" string (e.g. "anthropic/claude-sonnet-4") into ModelSettings.
-    /// Returns None if the format is invalid or the provider is unrecognized.
+    /// Returns None if the format is invalid.
+    /// For custom providers (prefixed with "custom_"), returns an OpenAICompatible provider
+    /// with empty base_url/api_key — the caller must fill these from secrets/config.
     pub fn from_provider_model_str(s: &str) -> Option<Self> {
         let (provider_str, model_id) = s.split_once('/')?;
+        if model_id.is_empty() {
+            return None;
+        }
         let provider = match provider_str {
             "openai" => ModelProvider::OpenAI {},
             "anthropic" => ModelProvider::Anthropic {
                 base_url: None,
                 api_key: None,
             },
+            "gemini" => {
+                // Gemini uses OpenAI-compatible endpoint
+                ModelProvider::OpenAICompatible {
+                    base_url: "https://generativelanguage.googleapis.com/v1beta/openai".to_string(),
+                    api_key: None,
+                    project_id: None,
+                }
+            }
+            _ if provider_str.starts_with("custom_") => {
+                // Custom providers use OpenAICompatible — base_url/api_key resolved from secrets
+                ModelProvider::OpenAICompatible {
+                    base_url: String::new(),
+                    api_key: None,
+                    project_id: None,
+                }
+            }
             _ => return None,
         };
         Some(Self {
@@ -1059,7 +988,6 @@ impl ModelSettings {
         })
     }
 }
-
 
 // Default functions
 pub fn default_agent_version() -> Option<String> {
@@ -1327,7 +1255,8 @@ mod tests {
 
     #[test]
     fn test_max_tokens_deserializes_when_present() {
-        let json = r#"{"name": "test", "model_settings": {"model": "gpt-4.1", "max_tokens": 4096}}"#;
+        let json =
+            r#"{"name": "test", "model_settings": {"model": "gpt-4.1", "max_tokens": 4096}}"#;
         let def: StandardDefinition = serde_json::from_str(json).unwrap();
         assert_eq!(def.model_settings().unwrap().max_tokens, Some(4096));
     }

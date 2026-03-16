@@ -708,6 +708,58 @@ pub trait SecretStore: Send + Sync {
     async fn delete(&self, key: &str) -> anyhow::Result<()>;
 }
 
+// ========== Provider Store ==========
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CustomProviderConfig {
+    pub id: String,
+    pub name: String,
+    pub base_url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CustomModelEntry {
+    pub provider: String,
+    pub model: String,
+}
+
+/// Request payload for upserting a provider configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpsertProviderRequest {
+    pub provider_id: String,
+    #[serde(default)]
+    pub secrets: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    pub config: Option<CustomProviderConfig>,
+    #[serde(default)]
+    pub custom_models: Option<Vec<CustomModelEntry>>,
+    /// Default model in "provider/model" format. Empty string or null to clear.
+    #[serde(default)]
+    pub default_model: Option<String>,
+}
+
+/// Response after upserting a provider.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpsertProviderResponse {
+    pub provider_id: String,
+    pub secrets_saved: usize,
+    pub config_saved: bool,
+}
+
+#[async_trait]
+pub trait ProviderStore: Send + Sync {
+    async fn upsert_provider(
+        &self,
+        req: UpsertProviderRequest,
+    ) -> anyhow::Result<UpsertProviderResponse>;
+
+    async fn delete_provider(&self, provider_id: &str) -> anyhow::Result<()>;
+
+    async fn get_default_model(&self) -> anyhow::Result<Option<String>>;
+}
+
 // ========== Skill Store ==========
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

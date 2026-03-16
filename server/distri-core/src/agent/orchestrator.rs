@@ -770,6 +770,7 @@ impl AgentOrchestrator {
             .ok_or_else(|| AgentError::NotFound(format!("Agent {} not found", agent_id)))?;
 
         Self::apply_agent_overrides(&mut agent_config, definition_overrides, &context.default_model_settings);
+        Self::validate_agent_model(&agent_config)?;
 
         let agent = self
             .create_agent_from_config(agent_config, context.clone())
@@ -799,6 +800,7 @@ impl AgentOrchestrator {
             .ok_or_else(|| AgentError::NotFound(format!("Agent {} not found", agent_id)))?;
 
         Self::apply_agent_overrides(&mut agent_config, definition_overrides, &context.default_model_settings);
+        Self::validate_agent_model(&agent_config)?;
 
         // Check if todos are enabled for this agent and initialize shared_todos if needed
         let distri_types::configuration::AgentConfig::StandardAgent(definition) = &agent_config;
@@ -985,8 +987,6 @@ impl AgentOrchestrator {
         context: Arc<ExecutorContext>,
         definition_overrides: Option<DefinitionOverrides>,
     ) -> Result<InvokeResult, AgentError> {
-        context.validate()?;
-
         // Prepare context with ephemeral stores if needed
         let context = self.prepare_execution_context(context).await?;
 
@@ -1031,8 +1031,6 @@ impl AgentOrchestrator {
         context: Arc<ExecutorContext>,
         definition_overrides: Option<DefinitionOverrides>,
     ) -> Result<InvokeResult, AgentError> {
-        context.validate()?;
-
         // Prepare context with ephemeral stores if needed
         let context = self.prepare_execution_context(context).await?;
 
@@ -1105,6 +1103,20 @@ impl AgentOrchestrator {
         let (agents, next_cursor) = self.stores.agent_store.list(cursor, limit).await;
         // Default agents are now loaded via DapRegistry
         (agents, next_cursor)
+    }
+
+    /// Validate that the agent has a model provider configured after merging
+    /// workspace defaults with agent-level settings. At least one must provide
+    /// model settings.
+    fn validate_agent_model(agent_config: &AgentConfig) -> Result<(), AgentError> {
+        let AgentConfig::StandardAgent(definition) = agent_config;
+        if definition.model_settings.is_none() {
+            return Err(AgentError::InvalidConfiguration(
+                "No model configured. Please set a default model in Agent Settings → Default Model, or configure a model provider on the agent."
+                    .to_string(),
+            ));
+        }
+        Ok(())
     }
 
     pub fn apply_agent_overrides(

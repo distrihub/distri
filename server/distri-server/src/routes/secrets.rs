@@ -30,13 +30,12 @@ async fn list_provider_definitions() -> HttpResponse {
     HttpResponse::Ok().json(definitions)
 }
 
-/// A secret as returned to the frontend — sensitive values are masked.
+/// A secret as returned to the frontend — values are always masked.
 #[derive(Serialize)]
 struct SecretResponse {
     id: String,
     key: String,
-    value: String,
-    is_masked: bool,
+    masked_value: String,
     updated_at: chrono::DateTime<chrono::Utc>,
 }
 
@@ -113,12 +112,11 @@ async fn list_secrets(executor: web::Data<Arc<AgentOrchestrator>>) -> HttpRespon
                     SecretResponse {
                         id: s.id,
                         key: s.key,
-                        value: if is_sensitive {
+                        masked_value: if is_sensitive {
                             "••••••••".to_string()
                         } else {
                             s.value
                         },
-                        is_masked: is_sensitive,
                         updated_at: s.updated_at,
                     }
                 })
