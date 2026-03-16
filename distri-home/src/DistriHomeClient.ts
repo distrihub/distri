@@ -219,10 +219,10 @@ export class DistriHomeClient {
   }
 
   /**
-   * Delete a secret
+   * Delete a secret by key name
    */
-  async deleteSecret(id: string): Promise<void> {
-    const response = await this.client.fetch(`/secrets/${id}`, {
+  async deleteSecret(key: string): Promise<void> {
+    const response = await this.client.fetch(`/secrets/${encodeURIComponent(key)}`, {
       method: 'DELETE',
     });
 

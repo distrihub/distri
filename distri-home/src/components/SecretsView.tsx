@@ -193,7 +193,7 @@ export function SecretsView({ className }: SecretsViewProps) {
                       <span className="text-sm font-mono text-muted-foreground">{secret.masked_value}</span>
                       <button
                         type="button"
-                        onClick={() => handleDelete(secret.id)}
+                        onClick={() => handleDelete(secret.key)}
                         className="inline-flex justify-end text-muted-foreground transition hover:text-destructive"
                       >
                         <Trash2 className="h-4 w-4" />
