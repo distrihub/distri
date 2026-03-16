@@ -491,6 +491,51 @@ export class DistriHomeClient {
     const data = await response.json();
     return data.values;
   }
+
+  /**
+   * List configured secrets with their set/unset status
+   */
+  async listConfiguredSecrets(): Promise<ConfiguredField[]> {
+    const response = await this.client.fetch('/secrets/configured');
+    if (!response.ok) throw new Error(`Failed: ${response.statusText}`);
+    return await response.json();
+  }
+
+  /**
+   * Get workspace settings for the current workspace
+   */
+  async getWorkspaceSettings(): Promise<Record<string, any>> {
+    const response = await this.client.fetch('/workspaces/current');
+    if (!response.ok) {
+      // Fallback: try to get settings from workspace list
+      const listResp = await this.client.fetch('/workspaces');
+      if (!listResp.ok) throw new Error(`Failed: ${listResp.statusText}`);
+      const workspaces = await listResp.json();
+      const ws = Array.isArray(workspaces) ? workspaces[0] : workspaces?.data?.[0];
+      return ws?.settings ?? {};
+    }
+    const ws = await response.json();
+    return ws?.settings ?? {};
+  }
+
+  /**
+   * Update workspace settings
+   */
+  async updateWorkspaceSettings(settings: Record<string, any>): Promise<void> {
+    // We need the workspace ID - get it from the list
+    const listResp = await this.client.fetch('/workspaces');
+    if (!listResp.ok) throw new Error(`Failed to get workspaces`);
+    const workspaces = await listResp.json();
+    const ws = Array.isArray(workspaces) ? workspaces[0] : workspaces?.data?.[0];
+    if (!ws) throw new Error('No workspace found');
+
+    const response = await this.client.fetch(`/workspaces/${ws.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ settings }),
+    });
+    if (!response.ok) throw new Error(`Failed: ${response.statusText}`);
+  }
 }
 
 // Types for secrets and prompt templates
@@ -510,6 +555,7 @@ export interface SecretKeyDefinition {
   label: string;
   placeholder: string;
   required?: boolean;
+  sensitive?: boolean;
 }
 
 /**
@@ -618,4 +664,23 @@ export interface UpdateSkillScript {
   description?: string;
   code?: string;
   language?: string;
+}
+
+export interface ConfiguredField {
+  key: string;
+  is_set: boolean;
+  value?: string | null;
+  sensitive: boolean;
+}
+
+export interface CustomProviderConfig {
+  id: string;
+  name: string;
+  base_url: string;
+  project_id?: string | null;
+}
+
+export interface CustomModelEntry {
+  provider: string;
+  model: string;
 }

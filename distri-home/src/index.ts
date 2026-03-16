@@ -1,6 +1,6 @@
 // Client exports
 export { DistriHomeClient } from './DistriHomeClient';
-export type { HomeStats, HomeStatsThread, RecentlyUsedAgent, AgentUsageInfo, ApiKey, Secret, PromptTemplate, AgentValidationResult, ValidationWarning, ValidationWarningSeverity, SkillRecord, SkillScriptRecord, NewSkill, UpdateSkill, NewSkillScript, UpdateSkillScript } from './DistriHomeClient';
+export type { HomeStats, HomeStatsThread, RecentlyUsedAgent, AgentUsageInfo, ApiKey, Secret, PromptTemplate, AgentValidationResult, ValidationWarning, ValidationWarningSeverity, SkillRecord, SkillScriptRecord, NewSkill, UpdateSkill, NewSkillScript, UpdateSkillScript, ConfiguredField, CustomProviderConfig, CustomModelEntry, SecretKeyDefinition } from './DistriHomeClient';
 
 // Provider exports
 export { DistriHomeProvider, useDistriHome, useDistriHomeConfig, useDistriHomeNavigate, useDistriHomeClient } from './DistriHomeProvider';
@@ -19,6 +19,8 @@ export { AgentDetails } from './components/AgentDetails';
 export { ThreadsView } from './components/ThreadsView';
 export { SettingsView } from './components/SettingsView';
 export { SecretsView } from './components/SecretsView';
+export { AgentSettingsView } from './components/AgentSettingsView';
+export type { AgentSettingsViewProps } from './components/AgentSettingsView';
 export { PromptTemplatesView } from './components/PromptTemplatesView';
 export { SessionsView } from './components/SessionsView';
 export { CodePanel } from './components/CodePanel';

@@ -1,7 +1,7 @@
 import { ComponentType } from 'react';
-import { ConfigurationPanel } from '@distri/react';
 import { useDistriHomeNavigate } from '../DistriHomeProvider';
 import { SecretsView } from './SecretsView';
+import { AgentSettingsView } from './AgentSettingsView';
 import { Settings as SettingsIcon, LockIcon, LucideIcon } from 'lucide-react';
 
 // Section type definition - exported for consumers to create custom sections
@@ -33,20 +33,14 @@ export interface SettingsViewProps {
   onSectionChange?: (section: string) => void;
 }
 
-// Wrapper for ConfigurationPanel to match section component signature
-function ConfigurationSection({ className }: { className?: string }) {
-  return (
-    <div className={`space-y-6 ${className ?? ''}`}>
-      <div className="rounded-2xl border border-border/70 bg-card p-6 shadow-sm">
-        <ConfigurationPanel title="Agent settings" />
-      </div>
-    </div>
-  );
+// Wrapper for AgentSettingsView to match section component signature
+function AgentSettingsSection({ className }: { className?: string }) {
+  return <AgentSettingsView className={className} />;
 }
 
 // Default sections - core distri-home sections only (no cloud-specific Account/API Keys)
 export const defaultSections: SettingsSection[] = [
-  { id: 'configuration', label: 'Configuration', icon: SettingsIcon, href: 'settings', section: ConfigurationSection },
+  { id: 'agent-settings', label: 'Agent Settings', icon: SettingsIcon, href: 'settings', section: AgentSettingsSection },
   { id: 'secrets', label: 'Secrets', icon: LockIcon, href: 'settings/secrets', section: SecretsView },
 ];
 
