@@ -133,7 +133,7 @@ impl RealtimeVoiceClient {
             // Create and send conversation item create event
             let event: RealtimeClientEventConversationItemCreate = item.into();
             let event_json = serde_json::to_string(&RealtimeClientEvent::from(event))?;
-            let _message = Message::Text(event_json);
+            let _message = Message::Text(event_json.into());
 
             // Note: This would need to be connected to the WebSocket sender
             // For now, we'll emit a text event
@@ -146,7 +146,7 @@ impl RealtimeVoiceClient {
             // Send response create event
             let response_event = RealtimeClientEventResponseCreate::default();
             let response_json = serde_json::to_string(&RealtimeClientEvent::from(response_event))?;
-            let _response_message = Message::Text(response_json);
+            let _response_message = Message::Text(response_json.into());
             // This would also need to be sent through the WebSocket
         }
         Ok(())

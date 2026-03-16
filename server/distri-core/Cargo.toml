@@ -8,8 +8,12 @@ default = ["sqlite"]
 inmemory = []
 sqlite = ["distri-stores/sqlite"]
 postgres = ["distri-stores/postgres"]
-sqlite_vendored = ["sqlite", "distri-stores/sqlite_vendored"]
-postgres_vendored = ["postgres", "distri-stores/postgres_vendored"]
+sqlite_vendored = ["sqlite", "distri-stores/sqlite_vendored", "dep:openssl"]
+postgres_vendored = [
+  "postgres",
+  "distri-stores/postgres_vendored",
+  "dep:openssl",
+]
 otel = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp"]
 
 [dependencies]
@@ -52,12 +56,11 @@ roxmltree = "0.20"
 crossbeam-channel = "0.5"
 base64 = "0.22.1"
 handlebars = "6.0"
-object_store = { version = "0.9", default-features = false, features = ["aws"] }
 dashmap = "5.5.3"
 once_cell = "1.19.0"
 
 # Voice streaming dependencies
-tokio-tungstenite = "0.24"
+tokio-tungstenite = "0.28"
 futures-channel = "0.3"
 bytes = "1.0"
 
@@ -83,3 +86,4 @@ tracing-subscriber = { workspace = true }
 [dependencies.openssl]
 version = "0.10"
 features = ["vendored"]
+optional = true
