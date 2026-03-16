@@ -383,8 +383,8 @@ export function AgentSettingsView({ className }: AgentSettingsViewProps) {
                     )}
                   </div>
                   {existing ? (
-                    <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-sm font-mono text-foreground">
-                      {existing.masked_value}
+                    <div className="rounded-lg border border-border/50 bg-muted/30 px-3 py-2 text-sm font-mono text-foreground">
+                      {isSensitive ? '••••••••' : existing.masked_value}
                     </div>
                   ) : (
                     <input
