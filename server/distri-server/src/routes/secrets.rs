@@ -2,8 +2,9 @@ use actix_web::{web, HttpResponse};
 use distri_core::agent::AgentOrchestrator;
 use distri_types::stores::NewSecret;
 use distri_types::ModelProvider;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::collections::HashSet;
 use std::sync::Arc;
 
 pub fn configure_secret_routes(cfg: &mut web::ServiceConfig) {
@@ -28,6 +29,26 @@ async fn list_provider_definitions() -> HttpResponse {
     HttpResponse::Ok().json(definitions)
 }
 
+/// A secret as returned to the frontend — sensitive values are masked.
+#[derive(Serialize)]
+struct SecretResponse {
+    id: String,
+    key: String,
+    value: String,
+    is_masked: bool,
+    updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Build the set of sensitive key names from provider definitions.
+fn sensitive_keys() -> HashSet<String> {
+    ModelProvider::all_provider_definitions()
+        .into_iter()
+        .flat_map(|p| p.keys)
+        .filter(|k| k.sensitive)
+        .map(|k| k.key)
+        .collect()
+}
+
 async fn list_secrets(executor: web::Data<Arc<AgentOrchestrator>>) -> HttpResponse {
     let store = match &executor.stores.secret_store {
         Some(s) => s,
@@ -38,7 +59,27 @@ async fn list_secrets(executor: web::Data<Arc<AgentOrchestrator>>) -> HttpRespon
     };
 
     match store.list().await {
-        Ok(secrets) => HttpResponse::Ok().json(secrets),
+        Ok(secrets) => {
+            let sensitive = sensitive_keys();
+            let response: Vec<SecretResponse> = secrets
+                .into_iter()
+                .map(|s| {
+                    let is_sensitive = sensitive.contains(&s.key);
+                    SecretResponse {
+                        id: s.id,
+                        key: s.key,
+                        value: if is_sensitive {
+                            "••••••••".to_string()
+                        } else {
+                            s.value
+                        },
+                        is_masked: is_sensitive,
+                        updated_at: s.updated_at,
+                    }
+                })
+                .collect();
+            HttpResponse::Ok().json(response)
+        }
         Err(e) => HttpResponse::InternalServerError().json(json!({"error": e.to_string()})),
     }
 }
