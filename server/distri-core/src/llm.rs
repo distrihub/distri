@@ -847,13 +847,7 @@ impl LLMExecutor {
                         },
                     }
                 }),
-            tool_choice: if tools.is_some() {
-                Some(async_openai::types::chat::ChatCompletionToolChoiceOption::Mode(
-                    async_openai::types::chat::ToolChoiceOptions::Required,
-                ))
-            } else {
-                None
-            },
+            tool_choice,
             ..Default::default()
         };
 
