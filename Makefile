@@ -63,12 +63,12 @@ build-linux-arm: frontend-dist ${TMPDIR} FORCE
 	cargo zigbuild --profile ${PROFILE} --target ${LINUX_ARM_TARGET}.${CONTAINER_GLIBC} -p distri-server-cli --bin distri-server --features "ui sqlite_vendored"
 
 build-mac: frontend-dist ${TMPDIR} FORCE
-	cargo build --profile ${PROFILE} -p distri-cli --bin distri 
-	cargo build --profile ${PROFILE} -p distri-server-cli --bin distri-server --features "ui sqlite"
+	cargo zigbuild --profile ${PROFILE} --target ${MAC_ARM_TARGET} -p distri-cli --bin distri
+	cargo zigbuild --profile ${PROFILE} --target ${MAC_ARM_TARGET} -p distri-server-cli --bin distri-server --features "ui sqlite"
 
 build-mac-intel: frontend-dist ${TMPDIR} FORCE
-	cargo build --profile ${PROFILE} --target ${MAC_INTEL_TARGET} -p distri-cli --bin distri 
-	cargo build --profile ${PROFILE} --target ${MAC_INTEL_TARGET} -p distri-server-cli --bin distri-server --features "ui sqlite"
+	cargo zigbuild --profile ${PROFILE} --target ${MAC_INTEL_TARGET} -p distri-cli --bin distri
+	cargo zigbuild --profile ${PROFILE} --target ${MAC_INTEL_TARGET} -p distri-server-cli --bin distri-server --features "ui sqlite"
 
 build-ui: frontend-dist
 
@@ -88,8 +88,8 @@ release-tarballs: release-dir
 	mkdir -p ${RELEASE_TMP}/${MAC_ARM_SLUG}/server ${RELEASE_TMP}/${MAC_INTEL_SLUG}/server ${RELEASE_TMP}/${LINUX_X86_SLUG}/server ${RELEASE_TMP}/${LINUX_ARM_SLUG}/server
 	cp -p ${ROOT_DIR}/LICENSE ${RELEASE_TMP}/${MAC_ARM_SLUG}/LICENSE
 	cp -p ${ROOT_DIR}/server/LICENSE ${RELEASE_TMP}/${MAC_ARM_SLUG}/server/LICENSE
-	cp -p ${ROOT_DIR}/target/release/distri ${RELEASE_TMP}/${MAC_ARM_SLUG}/distri
-	cp -p ${ROOT_DIR}/target/release/distri-server ${RELEASE_TMP}/${MAC_ARM_SLUG}/server/distri-server
+	cp -p ${ROOT_DIR}/target/${MAC_ARM_TARGET}/release/distri ${RELEASE_TMP}/${MAC_ARM_SLUG}/distri
+	cp -p ${ROOT_DIR}/target/${MAC_ARM_TARGET}/release/distri-server ${RELEASE_TMP}/${MAC_ARM_SLUG}/server/distri-server
 	tar -czf ${RELEASES_DIR}/distri-${MAC_ARM_SLUG}.tar.gz -C ${RELEASE_TMP} ${MAC_ARM_SLUG}
 	cp -p ${ROOT_DIR}/LICENSE ${RELEASE_TMP}/${MAC_INTEL_SLUG}/LICENSE
 	cp -p ${ROOT_DIR}/server/LICENSE ${RELEASE_TMP}/${MAC_INTEL_SLUG}/server/LICENSE
