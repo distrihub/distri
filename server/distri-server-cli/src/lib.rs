@@ -204,16 +204,9 @@ pub async fn init_orchestrator_with_configuration(
 
     let merged_config = resolved_config_owned.as_ref().or(workspace_config);
 
-    let mut builder = AgentOrchestratorBuilder::default().with_configuration(configuration_handle);
-    if let Some(config) = merged_config {
-        if let Some(model_settings) = config.model_settings.clone() {
-            builder = builder.with_default_model_settings(model_settings);
-        }
-        if let Some(analysis_settings) = config.analysis_model_settings.clone() {
-            builder = builder.with_default_analysis_model_settings(analysis_settings);
-        }
-    }
-    builder = builder.with_browser_config(BrowsrClientConfig::default());
+    let mut builder = AgentOrchestratorBuilder::default()
+        .with_configuration(configuration_handle)
+        .with_browser_config(BrowsrClientConfig::default());
     let orchestrator = builder
         .with_stores(stores)
         .with_prompt_registry(prompt_registry)
