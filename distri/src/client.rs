@@ -1965,25 +1965,25 @@ impl Distri {
     }
 
     /// Create or update a skill by name (upsert).
-    /// If a skill with the given name exists, it will be updated; otherwise, a new one is created.
+    /// Tries create first; if list_skills is available and skill already exists, updates instead.
     pub async fn upsert_skill(
         &self,
         request: &CreateSkillRequest,
     ) -> Result<SkillResponse, ClientError> {
-        let skills = self.list_skills().await?;
-        let existing = skills.iter().find(|s| s.name == request.name);
-
-        if let Some(skill) = existing {
-            let update = UpdateSkillRequest {
-                name: Some(request.name.clone()),
-                description: request.description.clone(),
-                content: Some(request.content.clone()),
-                tags: Some(request.tags.clone()),
-                is_public: Some(request.is_public),
-            };
-            self.update_skill(&skill.id, &update).await
-        } else {
-            self.create_skill(request).await
+        // Try to find existing skill to update, but don't fail if list_skills is broken
+        if let Ok(skills) = self.list_skills().await {
+            if let Some(skill) = skills.iter().find(|s| s.name == request.name) {
+                let update = UpdateSkillRequest {
+                    name: Some(request.name.clone()),
+                    description: request.description.clone(),
+                    content: Some(request.content.clone()),
+                    tags: Some(request.tags.clone()),
+                    is_public: Some(request.is_public),
+                };
+                return self.update_skill(&skill.id, &update).await;
+            }
         }
+        // Create new skill (also used as fallback when list_skills fails)
+        self.create_skill(request).await
     }
 }

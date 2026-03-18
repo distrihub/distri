@@ -115,17 +115,85 @@ No way to remove a config key or reset to defaults via the CLI.
 
 ---
 
+## Server-Side Bugs
+
+### 11. Cloud middleware only injects secrets for system `distri` agent
+
+**Severity:** High
+
+Only the pre-provisioned `distri` agent (UUID `89903564-6da2-4627-a6c4-b2c7d17f94c6`) gets workspace secrets injected by the cloud middleware. All other agents — including `browsr`, `data_analysis_agent`, and any user-pushed agents — fail with "OPENAI_API_KEY not configured" even though the secret is stored in the DB and the provider is configured.
+
+Tested: `browsr`, `data_analysis_agent`, `test_cli_agent` (user-created via `agents push`) — all fail. Same UUID+API key curl request works for `distri` but not for other agent UUIDs.
+
+---
+
+### 12. `search` tool — null deserialization in Browsr search response
+
+**Severity:** Medium
+
+`tools invoke search --input '{"query":"distri.dev"}'` returns:
+```
+Search failed: Json deserialize error: invalid type: null, expected usize at line 1 column 34
+```
+
+The Browsr search API returns a null value where the server expects an integer (likely a `count` or `total_results` field).
+
+---
+
+### 13. `distri_execute_code` / shell tools — container runtime unavailable
+
+**Severity:** Medium
+
+Code execution tools (`distri_execute_code`, `start_shell`, `execute_shell`, `stop_shell`) all fail with:
+```
+Failed to create container: Connection refused (os error 111)
+```
+
+The cloud server doesn't have Docker/container runtime available for sandboxed code execution.
+
+---
+
+### 14. `browsr_scrape` tool schema mismatch
+
+**Severity:** Low
+
+The agent sends `"formats":["markdown","summary","links"]` to `browsr_scrape`, but the Browsr API only accepts: `markdown`, `html`, `screenshot`, `structured`, `agent`. The tool's schema/description needs updating to match the actual API.
+
+---
+
+### 15. Agent-internal tools listed in `tools list` but not callable via `tools invoke`
+
+**Severity:** Low
+
+These tools appear in `tools list` but fail when called via `tools invoke`:
+- `distri_platform` — "cannot be cast to ExecutorContextTool"
+- `artifact_tool` — "Task parameter must be a string"
+- `reflect` — "cannot be cast to ExecutorContextTool"
+
+These require an agent session context. Either filter them from the public tools list, or make `tools invoke` set up a minimal executor context.
+
+---
+
 ## API Issues
 
-### 11. Workspace-scoped routes return 404
+### 16. Workspace-scoped routes return 404
 
 Routes like `/workspaces/{id}/skills` and `/workspaces/{id}/secrets` return 404. The API expects workspace context via the `x-workspace-id` header on non-scoped routes (`/skills`, `/secrets`) instead. This is undocumented and inconsistent with the workspace ID being part of the config.
 
 ---
 
+## CLI Fixes Applied in This Session
+
+1. **Agent name → UUID resolution** — CLI now resolves agent name to cloud UUID before streaming (fixes run for `distri` agent)
+2. **Skills push fallback** — `upsert_skill` no longer hard-fails when `list_skills` is broken; tries create directly
+
+---
+
 ## Testing Notes
 
-Integration test results (v0.3.6, macOS arm64, after bug #2 fix):
+See `integration_summary.md` for full results including manual tool and agent tests.
+
+Integration test results (v0.3.6, macOS arm64):
 - **14/14 passed**, 1 skipped
 - Skipped: `skills list` (bug #1)
 - Test file: `integration_tests.sh`
