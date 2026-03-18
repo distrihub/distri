@@ -847,14 +847,19 @@ impl LLMExecutor {
                         },
                     }
                 }),
-            tool_choice: if tool_choice.is_some() {
-                tool_choice
+            tool_choice: if tools.is_some() {
+                Some(async_openai::types::chat::ChatCompletionToolChoiceOption::Required)
             } else {
                 None
             },
             ..Default::default()
         };
 
+        tracing::info!(
+            target: "llm.build_request",
+            "tool_choice={:?}, tools_present={}",
+            request.tool_choice, request.tools.is_some()
+        );
         self.model_logger.log_openai_messages(&request);
         Ok(request)
     }
