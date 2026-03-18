@@ -542,6 +542,13 @@ impl ClaudeLLMExecutor {
             None
         };
 
+        // When tools are provided, force the model to use a tool
+        let tool_choice = if tools.is_some() {
+            Some(serde_json::json!({"type": "any"}))
+        } else {
+            None
+        };
+
         let request = CreateMessageRequest {
             model: ms.model.clone(),
             max_tokens: ms.inner.max_tokens.unwrap_or(DEFAULT_ANTHROPIC_MAX_TOKENS),
@@ -554,6 +561,7 @@ impl ClaudeLLMExecutor {
             metadata: Some(MessageMetadata {
                 user_id: Some(self.context.user_id.clone()),
             }),
+            tool_choice,
         };
 
         let client = self.build_client().await?;
@@ -709,6 +717,13 @@ impl ClaudeLLMExecutor {
             None
         };
 
+        // When tools are provided, force the model to use a tool
+        let tool_choice = if tools.is_some() {
+            Some(serde_json::json!({"type": "any"}))
+        } else {
+            None
+        };
+
         let request = CreateMessageRequest {
             model: ms.model.clone(),
             max_tokens: ms.inner.max_tokens.unwrap_or(DEFAULT_ANTHROPIC_MAX_TOKENS),
@@ -721,6 +736,7 @@ impl ClaudeLLMExecutor {
             metadata: Some(MessageMetadata {
                 user_id: Some(self.context.user_id.clone()),
             }),
+            tool_choice,
         };
 
         let client = self.build_client().await?;

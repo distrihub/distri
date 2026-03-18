@@ -784,6 +784,15 @@ impl LLMExecutor {
             None
         };
 
+        // Force tool use when tools are provided
+        let tool_choice = if tools.is_some() {
+            Some(async_openai::types::chat::ChatCompletionToolChoiceOption::Mode(
+                async_openai::types::chat::ToolChoiceOptions::Required,
+            ))
+        } else {
+            None
+        };
+
         let request = CreateChatCompletionRequest {
             model: model.to_string(),
             messages,
@@ -838,6 +847,11 @@ impl LLMExecutor {
                         },
                     }
                 }),
+            tool_choice: if tool_choice.is_some() {
+                tool_choice
+            } else {
+                None
+            },
             ..Default::default()
         };
 
