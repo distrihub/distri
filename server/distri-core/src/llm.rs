@@ -848,7 +848,9 @@ impl LLMExecutor {
                     }
                 }),
             tool_choice: if tools.is_some() {
-                Some(async_openai::types::chat::ChatCompletionToolChoiceOption::Required)
+                Some(async_openai::types::chat::ChatCompletionToolChoiceOption::Mode(
+                    async_openai::types::chat::ToolChoiceOptions::Required,
+                ))
             } else {
                 None
             },
