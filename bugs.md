@@ -26,24 +26,36 @@ invalid type: map, expected a sequence at line 1 column 0
 
 ---
 
-### 2. `run` — agent doesn't pick up workspace secrets
+### 2. `run` — cloud middleware doesn't inject model settings when agent ID is a name
 
-**Severity:** High
+**Severity:** High — **FIXED in CLI (v0.3.6)**
 
-After setting `OPENAI_API_KEY` via `POST /secrets` (confirmed stored and visible via `GET /secrets/configured`), running `distri run --task "..."` still fails with:
-```
-Invalid configuration: Required secret 'OPENAI_API_KEY' is not configured.
-```
+The cloud middleware injects `workspace_model_settings` (default model, provider config) into `http_request.extensions()` based on the agent ID in the URL. When the CLI passes the **agent name** (`/agents/distri`), the middleware does NOT inject model settings. When using the **agent UUID** (`/agents/89903564-6da2-4627-a6c4-b2c7d17f94c6`), it works correctly.
 
-The secret is in the DB (`is_set: true`) but the agent executor doesn't read from the secret store at runtime. The agent orchestrator likely resolves secrets at startup or from env vars only, not from the workspace secret store.
+Without model settings, the agent defaults to OpenAI provider, which requires `OPENAI_API_KEY` — but the secret store lookup also fails because the middleware didn't set up the workspace context properly.
 
-**Files:** `server/distri-core/src/secrets.rs`, `server/distri-core/src/agent/orchestrator.rs`
+**CLI fix:** Resolve agent name to UUID via `GET /agents/{name}` (which returns `cloud.id`), then use the UUID for streaming. Fixed in `distri-cli/src/main.rs` — both `run --task` and interactive chat paths.
+
+**Remaining server-side issue:** The cloud middleware should handle agent name lookups the same as UUID lookups. This is in the cloud-specific middleware (not open-source distri-server).
 
 ---
 
 ## Missing CLI Features
 
-### 3. No `secrets` CLI command
+### 3. No `providers` CLI command (configure default model)
+
+The server has provider management endpoints:
+- `POST /providers` — upsert provider config + secrets + default model
+- `GET /providers/default-model` — get current default model
+- `DELETE /providers/{provider_id}` — remove a provider
+
+But the CLI has no `providers` or `models` command. The only way to set a default model or configure a provider is via raw curl with proper headers. This is critical for initial workspace setup — without a default model configured, `distri run` fails.
+
+**Expected:** `distri providers set-default-model openai/gpt-4.1`, `distri providers configure openai --api-key <key>`
+
+---
+
+### 4. No `secrets` CLI command
 
 The server has a full secrets CRUD API:
 - `GET /secrets` — list (masked values)
@@ -61,7 +73,7 @@ Currently the only way to manage secrets is via raw curl with `x-api-key` and `x
 
 ---
 
-### 4. No `config get` / `config show` command
+### 5. No `config get` / `config show` command
 
 `distri config` only supports `set`. There's no way to read back config values or show the current config. Users must manually `cat ~/.distri/config`.
 
@@ -69,13 +81,13 @@ Currently the only way to manage secrets is via raw curl with `x-api-key` and `x
 
 ---
 
-### 5. No `config delete` / `config reset` command
+### 6. No `config delete` / `config reset` command
 
 No way to remove a config key or reset to defaults via the CLI.
 
 ---
 
-### 6. No agent `get` / `describe` command
+### 7. No agent `get` / `describe` command
 
 `distri agents` has `list` and `push` but no way to get details about a specific agent (description, tools, model, etc).
 
@@ -83,7 +95,7 @@ No way to remove a config key or reset to defaults via the CLI.
 
 ---
 
-### 7. No tool `get` / `describe` command
+### 8. No tool `get` / `describe` command
 
 `distri tools` has `list` and `invoke` but no way to inspect a specific tool's schema/parameters.
 
@@ -91,13 +103,13 @@ No way to remove a config key or reset to defaults via the CLI.
 
 ---
 
-### 8. No skill `get` / `push` / `delete` commands on cloud
+### 9. No skill `get` / `push` / `delete` commands on cloud
 
 `distri skills` has `list` and `push` but list is broken (bug #1). No `get` or `delete`.
 
 ---
 
-### 9. No `prompts get` command
+### 10. No `prompts get` command
 
 `distri prompts` has `list` and `push` but no `get` to view a specific template's content.
 
@@ -105,7 +117,7 @@ No way to remove a config key or reset to defaults via the CLI.
 
 ## API Issues
 
-### 10. Workspace-scoped routes return 404
+### 11. Workspace-scoped routes return 404
 
 Routes like `/workspaces/{id}/skills` and `/workspaces/{id}/secrets` return 404. The API expects workspace context via the `x-workspace-id` header on non-scoped routes (`/skills`, `/secrets`) instead. This is undocumented and inconsistent with the workspace ID being part of the config.
 
@@ -113,9 +125,10 @@ Routes like `/workspaces/{id}/skills` and `/workspaces/{id}/secrets` return 404.
 
 ## Testing Notes
 
-Integration test results (v0.3.6, macOS arm64):
-- **13/13 passed**, 2 skipped
-- Skipped: `skills list` (bug #1), `run` (bug #2)
+Integration test results (v0.3.6, macOS arm64, after bug #2 fix):
+- **14/14 passed**, 1 skipped
+- Skipped: `skills list` (bug #1)
 - Test file: `integration_tests.sh`
 - Env: `DISTRI_API_KEY`, `DISTRI_BASE_URL`, `DISTRI_WORKSPACE_ID` required
 - Set `SKIP_RUN_TESTS=1` to skip agent run tests
+- Workspace must have default model and provider secrets configured via API
