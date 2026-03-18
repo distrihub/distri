@@ -561,6 +561,30 @@ export class DistriHomeClient {
     return ws?.settings ?? {};
   }
 
+  // ---- TTS Models ----
+
+  /**
+   * List available TTS models and voices from the server.
+   */
+  async listTtsModels(): Promise<TtsModelsResponse> {
+    const response = await this.client.fetch('/audio/models');
+    if (!response.ok) {
+      throw new Error(`Failed to fetch TTS models: ${response.statusText}`);
+    }
+    return await response.json();
+  }
+
+  /**
+   * List TTS provider definitions (keys + models), same pattern as listProviderDefinitions.
+   */
+  async listTtsProviders(): Promise<TtsProviderDefinition[]> {
+    const response = await this.client.fetch('/audio/providers');
+    if (!response.ok) {
+      throw new Error(`Failed to fetch TTS providers: ${response.statusText}`);
+    }
+    return await response.json();
+  }
+
   /**
    * Update workspace settings for the current workspace.
    * Uses /workspaces/current to resolve the workspace from the X-Workspace-Id header.
@@ -747,4 +771,39 @@ export interface UpsertProviderResponse {
   provider_id: string;
   secrets_saved: number;
   config_saved: boolean;
+}
+
+// TTS types
+
+export interface TtsVoiceInfo {
+  id: string;
+  name: string;
+  description?: string | null;
+}
+
+export interface TtsModelInfo {
+  id: string;
+  provider: string;
+  name: string;
+  voices: TtsVoiceInfo[];
+  formats: string[];
+}
+
+export interface TtsModelsResponse {
+  models: TtsModelInfo[];
+}
+
+export interface TtsSecretKeyDefinition {
+  key: string;
+  label: string;
+  placeholder: string;
+  required: boolean;
+  sensitive: boolean;
+}
+
+export interface TtsProviderDefinition {
+  id: string;
+  label: string;
+  keys: TtsSecretKeyDefinition[];
+  models: TtsModelInfo[];
 }
