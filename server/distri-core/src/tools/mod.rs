@@ -124,13 +124,17 @@ pub fn cast_to_executor_context_tool(
         "distri_execute_code" => Ok(Box::new(DistriExecuteCodeTool)),
         // Tool discovery
         "tool_search" => Ok(Box::new(tool_search::ToolSearchTool)),
-        // Platform management tools
-        "list_agents" => Ok(Box::new(platform::ListAgentsTool)),
-        "list_skills" => Ok(Box::new(platform::ListSkillsTool)),
-        "create_skill" => Ok(Box::new(platform::CreateSkillTool)),
-        "delete_skill" => Ok(Box::new(platform::DeleteSkillTool)),
-        "write_to_storage" => Ok(Box::new(platform::WriteToStorageTool)),
-        "read_from_storage" => Ok(Box::new(platform::ReadFromStorageTool)),
+        // Platform management tools — all route to unified DistriPlatformTool.
+        // Legacy individual tool names are aliases.
+        "distri_platform"
+        | "list_agents"
+        | "list_skills"
+        | "create_skill"
+        | "delete_skill"
+        | "write_to_storage"
+        | "read_from_storage" => {
+            Ok(Box::new(crate::platform_service::DistriPlatformTool))
+        }
         name if name.starts_with("call_") => {
             let safe_agent_name = name.strip_prefix("call_").unwrap_or(name);
             // Convert double underscores back to slashes for package/agent names
