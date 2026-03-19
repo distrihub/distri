@@ -762,6 +762,42 @@ pub trait ProviderStore: Send + Sync {
 
 // ========== Skill Store ==========
 
+/// API response wrapper for skill list endpoints.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillsListResponse {
+    pub skills: Vec<SkillListItem>,
+}
+
+/// Lighter skill record for list endpoints — no content or scripts.
+/// Used by both distri-server (OSS) and distri-cloud.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillListItem {
+    pub id: String,
+    #[serde(default)]
+    pub workspace_slug: String,
+    pub name: String,
+    #[serde(default)]
+    pub full_name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub is_public: bool,
+    #[serde(default)]
+    pub is_system: bool,
+    #[serde(default)]
+    pub is_owner: bool,
+    #[serde(default)]
+    pub star_count: i32,
+    #[serde(default)]
+    pub clone_count: i32,
+    #[serde(default)]
+    pub is_starred: bool,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillRecord {
     pub id: String,

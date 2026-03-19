@@ -1805,30 +1805,9 @@ pub struct SkillScriptResponse {
     pub updated_at: String,
 }
 
-/// Lighter skill information without content - returned from list endpoints.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SkillListItemResponse {
-    pub id: String,
-    pub name: String,
-    #[serde(default)]
-    pub description: Option<String>,
-    #[serde(default)]
-    pub tags: Vec<String>,
-    #[serde(default)]
-    pub is_public: bool,
-    #[serde(default)]
-    pub is_system: bool,
-    #[serde(default)]
-    pub is_owner: bool,
-    #[serde(default)]
-    pub star_count: i32,
-    #[serde(default)]
-    pub clone_count: i32,
-    #[serde(default)]
-    pub is_starred: bool,
-    pub created_at: String,
-    pub updated_at: String,
-}
+// Re-export from distri-types for backward compat
+pub type SkillListItemResponse = distri_types::stores::SkillListItem;
+pub type SkillsListResponse = distri_types::stores::SkillsListResponse;
 
 /// Request to create a new skill.
 #[derive(Debug, Clone, Serialize)]
@@ -1879,14 +1858,8 @@ impl Distri {
         let resp = self.http.get(&url).send().await?;
 
         if resp.status().is_success() {
-            // Cloud wraps in {"skills": [...]}, open-source returns bare array
-            let body: serde_json::Value = resp.json().await?;
-            let list: Vec<SkillListItemResponse> = if let Some(skills) = body.get("skills") {
-                serde_json::from_value(skills.clone())?
-            } else {
-                serde_json::from_value(body)?
-            };
-            Ok(list)
+            let wrapper: SkillsListResponse = resp.json().await?;
+            Ok(wrapper.skills)
         } else {
             let text = resp.text().await.unwrap_or_default();
             Err(ClientError::InvalidResponse(format!(
