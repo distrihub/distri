@@ -25,7 +25,7 @@ mod logging;
 mod login;
 
 #[derive(Parser, Debug, Clone)]
-#[clap(author, version, about, arg_required_else_help = true)]
+#[clap(author, version, about)]
 struct Cli {
     /// Optional base URL (defaults to DISTRI_BASE_URL)
     #[clap(long)]
@@ -45,18 +45,18 @@ struct Cli {
 
 #[derive(Subcommand, Debug, Clone)]
 enum Commands {
-    /// Stream an agent via the server
+    /// Open interactive chat with an agent (default)
+    Tui {
+        #[clap(help = "Agent name (defaults to 'distri')")]
+        agent: Option<String>,
+    },
+
+    /// Run a single task against an agent
     Run {
         #[clap(help = "Agent name (defaults to 'distri')")]
         agent: Option<String>,
-        #[clap(long, help = "Single task text to send")]
-        task: Option<String>,
-        #[clap(
-            long,
-            help = "Input data as JSON string (conflicts with --task)",
-            conflicts_with = "task"
-        )]
-        input: Option<String>,
+        #[clap(long, help = "Task text to send", required = true)]
+        task: String,
     },
 
     /// Agent-related commands
@@ -317,7 +317,7 @@ async fn main() -> Result<()> {
 
     let cli = parse_cli_with_default_serve();
 
-    let command = Cli::parse().command.clone().expect("command is expected");
+    let command = cli.command.clone().unwrap_or(Commands::Tui { agent: None });
 
     if let Commands::Serve {
         host,
@@ -346,12 +346,12 @@ async fn main() -> Result<()> {
         DistriClientApp::from_config(config.clone()).with_workspace_path(workspace.clone());
 
     match command {
-        Commands::Run { agent, task, input } => {
+        Commands::Tui { agent } => {
             let agent_name = agent.unwrap_or_else(|| "distri".to_string());
-            if task.is_none() && input.is_none() {
-                run_interactive_chat(&mut app, &config, &base_url, agent_name, cli.verbose).await?;
-                return Ok(());
-            }
+            run_interactive_chat(&mut app, &config, &base_url, agent_name, cli.verbose).await?;
+        }
+        Commands::Run { agent, task } => {
+            let agent_name = agent.unwrap_or_else(|| "distri".to_string());
             // Resolve agent name to UUID for cloud compatibility.
             // Cloud middleware requires UUID for proper workspace context (model settings, secrets).
             let mut stream_agent_id = agent_name.clone();
@@ -362,8 +362,7 @@ async fn main() -> Result<()> {
                     stream_agent_id = uuid.to_string();
                 }
             }
-            let payload = input.or(task).unwrap_or_else(|| "Hello".to_string());
-            let params = build_message_params(payload);
+            let params = build_message_params(task);
 
             println!("Streaming agent '{}' via {}", agent_name, base_url);
             let registry = app.registry();

@@ -12,6 +12,12 @@ use distri_types::stores::{NewSecret, NewSkill, ThreadListFilter};
 
 /// All supported platform actions
 pub const ACTIONS: &[ActionDef] = &[
+    // Meta
+    ActionDef {
+        name: "list_actions",
+        description: "List all available platform actions",
+        category: "meta",
+    },
     // Agents
     ActionDef {
         name: "list_agents",
@@ -82,6 +88,17 @@ pub const ACTIONS: &[ActionDef] = &[
         description: "List conversation threads",
         category: "threads",
     },
+    // Connections
+    ActionDef {
+        name: "list_connections",
+        description: "List connected integrations (OAuth providers)",
+        category: "connections",
+    },
+    ActionDef {
+        name: "get_connection_token",
+        description: "Get a valid access token for a connected provider",
+        category: "connections",
+    },
 ];
 
 pub struct ActionDef {
@@ -90,20 +107,45 @@ pub struct ActionDef {
     pub category: &'static str,
 }
 
+/// Abstraction for connection operations.
+/// Cloud layer injects an implementation; OSS deployments pass None.
+#[async_trait::async_trait]
+pub trait PlatformConnectionStore: Send + Sync {
+    /// List all connections for a workspace. Returns JSON array of connection summaries.
+    async fn list_connections(&self, workspace_id: &str) -> Result<Value>;
+    /// Get a valid access token for a connected provider. Auto-refreshes if expired.
+    async fn get_connection_token(&self, workspace_id: &str, provider: &str) -> Result<Value>;
+}
+
 pub struct DistriPlatformService {
     stores: InitializedStores,
     user_id: String,
+    workspace_id: Option<String>,
+    connection_store: Option<Arc<dyn PlatformConnectionStore>>,
 }
 
 impl DistriPlatformService {
-    pub fn new(stores: InitializedStores, user_id: String) -> Self {
-        Self { stores, user_id }
+    pub fn new(
+        stores: InitializedStores,
+        user_id: String,
+        workspace_id: Option<String>,
+        connection_store: Option<Arc<dyn PlatformConnectionStore>>,
+    ) -> Self {
+        Self {
+            stores,
+            user_id,
+            workspace_id,
+            connection_store,
+        }
     }
 
     /// Execute a platform action by name with JSON params.
     /// Returns a JSON result.
     pub async fn execute(&self, action: &str, params: &Value) -> Result<Value> {
         match action {
+            // Meta
+            "list_actions" => Ok(Self::list_actions()),
+
             // Agents
             "list_agents" => self.list_agents().await,
             "get_agent" => {
@@ -171,6 +213,15 @@ impl DistriPlatformService {
 
             // Threads
             "list_threads" => self.list_threads().await,
+
+            // Connections
+            "list_connections" => self.list_connections().await,
+            "get_connection_token" => {
+                let provider = params["provider"]
+                    .as_str()
+                    .ok_or_else(|| anyhow!("Missing 'provider' parameter"))?;
+                self.get_connection_token(provider).await
+            }
 
             _ => Err(anyhow!(
                 "Unknown action: '{}'. Use list_actions to see available actions.",
@@ -415,6 +466,32 @@ impl DistriPlatformService {
         Ok(json!({ "key": key, "stored": true }))
     }
 
+    // ── Connection operations ──────────────────────────────
+
+    async fn list_connections(&self) -> Result<Value> {
+        let store = self
+            .connection_store
+            .as_ref()
+            .ok_or_else(|| anyhow!("Connections not available in this deployment"))?;
+        let workspace_id = self
+            .workspace_id
+            .as_deref()
+            .ok_or_else(|| anyhow!("No workspace context available"))?;
+        store.list_connections(workspace_id).await
+    }
+
+    async fn get_connection_token(&self, provider: &str) -> Result<Value> {
+        let store = self
+            .connection_store
+            .as_ref()
+            .ok_or_else(|| anyhow!("Connections not available in this deployment"))?;
+        let workspace_id = self
+            .workspace_id
+            .as_deref()
+            .ok_or_else(|| anyhow!("No workspace context available"))?;
+        store.get_connection_token(workspace_id, provider).await
+    }
+
     // ── Thread operations ─────────────────────────────────
 
     async fn list_threads(&self) -> Result<Value> {
@@ -509,8 +586,12 @@ impl ExecutorContextTool for DistriPlatformTool {
             .ok_or_else(|| AgentError::ToolExecution("Missing 'action' parameter".to_string()))?;
         let params = tool_call.input.get("params").cloned().unwrap_or(json!({}));
 
-        let service =
-            DistriPlatformService::new(orchestrator.stores.clone(), context.user_id.clone());
+        let service = DistriPlatformService::new(
+            orchestrator.stores.clone(),
+            context.user_id.clone(),
+            context.workspace_id.clone(),
+            context.connection_store.clone(),
+        );
 
         match service.execute(action, &params).await {
             Ok(result) => Ok(vec![Part::Data(result)]),
@@ -522,62 +603,611 @@ impl ExecutorContextTool for DistriPlatformTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use distri_stores::initialize_stores;
+    use distri_types::configuration::{DbConnectionConfig, MetadataStoreConfig, StoreConfig};
+
+    // ── Helpers ─────────────────────────────────────────────
+
+    fn test_store_config() -> StoreConfig {
+        let db_name = uuid::Uuid::new_v4();
+        let db_url = format!("file:{}?mode=memory&cache=shared", db_name);
+        StoreConfig {
+            metadata: MetadataStoreConfig {
+                db_config: Some(DbConnectionConfig {
+                    database_url: db_url,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    async fn make_service() -> DistriPlatformService {
+        let stores = initialize_stores(&test_store_config()).await.unwrap();
+        DistriPlatformService::new(stores, "test-user".to_string(), None, None)
+    }
+
+    /// In-memory PlatformConnectionStore for testing
+    struct MockConnectionStore {
+        connections: Vec<Value>,
+        tokens: std::collections::HashMap<String, Value>,
+    }
+
+    impl MockConnectionStore {
+        fn new() -> Self {
+            Self {
+                connections: vec![],
+                tokens: std::collections::HashMap::new(),
+            }
+        }
+
+        fn with_connection(mut self, name: &str, status: &str) -> Self {
+            self.connections.push(json!({
+                "id": uuid::Uuid::new_v4().to_string(),
+                "name": name,
+                "status": status,
+                "config": {},
+                "created_at": chrono::Utc::now().to_rfc3339(),
+            }));
+            self
+        }
+
+        fn with_token(mut self, provider: &str, access_token: &str) -> Self {
+            self.tokens.insert(
+                provider.to_string(),
+                json!({
+                    "provider": provider,
+                    "access_token": access_token,
+                    "token_type": "Bearer",
+                }),
+            );
+            self
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl PlatformConnectionStore for MockConnectionStore {
+        async fn list_connections(&self, _workspace_id: &str) -> Result<Value> {
+            Ok(json!({ "connections": self.connections }))
+        }
+        async fn get_connection_token(&self, _workspace_id: &str, provider: &str) -> Result<Value> {
+            self.tokens
+                .get(provider)
+                .cloned()
+                .ok_or_else(|| anyhow!("No token for provider '{}'", provider))
+        }
+    }
+
+    // ── Static / list_actions tests ─────────────────────────
 
     #[test]
-    fn test_list_actions() {
+    fn test_list_actions_returns_all_actions() {
         let actions = DistriPlatformService::list_actions();
-        assert!(actions["actions"].is_array());
         let arr = actions["actions"].as_array().unwrap();
-        assert!(arr.len() > 10);
+        // Must have all ACTIONS entries
+        assert_eq!(arr.len(), ACTIONS.len());
         // Check known actions exist
-        assert!(arr.iter().any(|a| a["name"] == "list_agents"));
-        assert!(arr.iter().any(|a| a["name"] == "create_skill"));
-        assert!(arr.iter().any(|a| a["name"] == "set_secret"));
-        assert!(arr.iter().any(|a| a["name"] == "list_threads"));
+        let names: Vec<&str> = arr.iter().filter_map(|a| a["name"].as_str()).collect();
+        assert!(names.contains(&"list_actions"));
+        assert!(names.contains(&"list_agents"));
+        assert!(names.contains(&"get_agent"));
+        assert!(names.contains(&"list_skills"));
+        assert!(names.contains(&"get_skill"));
+        assert!(names.contains(&"create_skill"));
+        assert!(names.contains(&"delete_skill"));
+        assert!(names.contains(&"list_secrets"));
+        assert!(names.contains(&"get_secret"));
+        assert!(names.contains(&"set_secret"));
+        assert!(names.contains(&"delete_secret"));
+        assert!(names.contains(&"read_storage"));
+        assert!(names.contains(&"write_storage"));
+        assert!(names.contains(&"list_threads"));
+        assert!(names.contains(&"list_connections"));
+        assert!(names.contains(&"get_connection_token"));
     }
 
     #[test]
     fn test_list_actions_categories() {
         let actions = DistriPlatformService::list_actions();
         let arr = actions["actions"].as_array().unwrap();
-        let categories: Vec<&str> = arr
+        let categories: std::collections::HashSet<&str> = arr
             .iter()
             .filter_map(|a| a["category"].as_str())
             .collect();
-        assert!(categories.contains(&"agents"));
-        assert!(categories.contains(&"skills"));
-        assert!(categories.contains(&"secrets"));
-        assert!(categories.contains(&"storage"));
-        assert!(categories.contains(&"threads"));
+        assert!(categories.contains("meta"));
+        assert!(categories.contains("agents"));
+        assert!(categories.contains("skills"));
+        assert!(categories.contains("secrets"));
+        assert!(categories.contains("storage"));
+        assert!(categories.contains("threads"));
+        assert!(categories.contains("connections"));
     }
 
     #[test]
     fn test_actions_have_descriptions() {
-        let actions = DistriPlatformService::list_actions();
-        let arr = actions["actions"].as_array().unwrap();
-        for action in arr {
+        for action in ACTIONS {
             assert!(
-                action["description"].as_str().is_some(),
-                "Action {:?} missing description",
-                action["name"]
-            );
-            assert!(
-                !action["description"].as_str().unwrap().is_empty(),
-                "Action {:?} has empty description",
-                action["name"]
+                !action.description.is_empty(),
+                "Action '{}' has empty description",
+                action.name
             );
         }
     }
 
-    #[test]
-    fn test_unknown_action_not_in_registry() {
-        let actions = DistriPlatformService::list_actions();
-        let names: Vec<&str> = actions["actions"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter_map(|a| a["name"].as_str())
-            .collect();
-        assert!(!names.contains(&"nonexistent_action"));
+    // ── list_actions as routable action ─────────────────────
+
+    #[tokio::test]
+    async fn test_execute_list_actions() {
+        let svc = make_service().await;
+        let result = svc.execute("list_actions", &json!({})).await.unwrap();
+        assert!(result["actions"].is_array());
+        let arr = result["actions"].as_array().unwrap();
+        assert!(arr.iter().any(|a| a["name"] == "list_agents"));
+    }
+
+    // ── Unknown action ──────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_execute_unknown_action() {
+        let svc = make_service().await;
+        let err = svc.execute("nonexistent", &json!({})).await.unwrap_err();
+        assert!(err.to_string().contains("Unknown action"));
+        assert!(err.to_string().contains("nonexistent"));
+    }
+
+    // ── Agent operations ────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_list_agents_empty() {
+        let svc = make_service().await;
+        let result = svc.execute("list_agents", &json!({})).await.unwrap();
+        assert!(result["agents"].is_array());
+    }
+
+    #[tokio::test]
+    async fn test_get_agent_not_found() {
+        let svc = make_service().await;
+        let err = svc
+            .execute("get_agent", &json!({"name": "nonexistent"}))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("not found"));
+    }
+
+    #[tokio::test]
+    async fn test_get_agent_missing_param() {
+        let svc = make_service().await;
+        let err = svc.execute("get_agent", &json!({})).await.unwrap_err();
+        assert!(err.to_string().contains("Missing"));
+    }
+
+    // ── Skill operations ────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_list_skills_empty() {
+        let svc = make_service().await;
+        let result = svc.execute("list_skills", &json!({})).await.unwrap();
+        assert!(result["skills"].is_array());
+        assert_eq!(result["skills"].as_array().unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_create_and_get_skill() {
+        let svc = make_service().await;
+        let result = svc
+            .execute(
+                "create_skill",
+                &json!({
+                    "name": "test-skill",
+                    "content": "# Test Skill\nDo something",
+                    "description": "A test skill",
+                    "tags": ["test", "example"]
+                }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result["created"], true);
+        let id = result["id"].as_str().unwrap();
+
+        // Get it back
+        let skill = svc
+            .execute("get_skill", &json!({"id": id}))
+            .await
+            .unwrap();
+        assert_eq!(skill["name"], "test-skill");
+        assert_eq!(skill["content"], "# Test Skill\nDo something");
+    }
+
+    #[tokio::test]
+    async fn test_create_skill_missing_name() {
+        let svc = make_service().await;
+        let err = svc
+            .execute("create_skill", &json!({"content": "hello"}))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("Missing"));
+    }
+
+    #[tokio::test]
+    async fn test_create_skill_missing_content() {
+        let svc = make_service().await;
+        let err = svc
+            .execute("create_skill", &json!({"name": "test"}))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("Missing"));
+    }
+
+    #[tokio::test]
+    async fn test_delete_skill() {
+        let svc = make_service().await;
+        let created = svc
+            .execute(
+                "create_skill",
+                &json!({"name": "to-delete", "content": "bye"}),
+            )
+            .await
+            .unwrap();
+        let id = created["id"].as_str().unwrap();
+
+        let result = svc
+            .execute("delete_skill", &json!({"id": id}))
+            .await
+            .unwrap();
+        assert_eq!(result["deleted"], true);
+
+        // Verify it's gone
+        let err = svc
+            .execute("get_skill", &json!({"id": id}))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("not found"));
+    }
+
+    #[tokio::test]
+    async fn test_list_skills_after_create() {
+        let svc = make_service().await;
+        svc.execute(
+            "create_skill",
+            &json!({"name": "skill-1", "content": "content"}),
+        )
+        .await
+        .unwrap();
+        svc.execute(
+            "create_skill",
+            &json!({"name": "skill-2", "content": "content"}),
+        )
+        .await
+        .unwrap();
+
+        let result = svc.execute("list_skills", &json!({})).await.unwrap();
+        assert_eq!(result["skills"].as_array().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_get_skill_not_found() {
+        let svc = make_service().await;
+        let err = svc
+            .execute("get_skill", &json!({"id": "nonexistent"}))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("not found"));
+    }
+
+    // ── Secret operations ───────────────────────────────────
+
+    #[tokio::test]
+    async fn test_list_secrets_empty() {
+        let svc = make_service().await;
+        let result = svc.execute("list_secrets", &json!({})).await.unwrap();
+        assert!(result["secrets"].is_array());
+        assert_eq!(result["secrets"].as_array().unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_set_and_get_secret() {
+        let svc = make_service().await;
+        let result = svc
+            .execute("set_secret", &json!({"key": "API_KEY", "value": "sk-123"}))
+            .await
+            .unwrap();
+        assert_eq!(result["saved"], true);
+
+        let secret = svc
+            .execute("get_secret", &json!({"key": "API_KEY"}))
+            .await
+            .unwrap();
+        assert_eq!(secret["key"], "API_KEY");
+        assert_eq!(secret["value"], "sk-123");
+    }
+
+    #[tokio::test]
+    async fn test_set_secret_update_existing() {
+        let svc = make_service().await;
+        svc.execute("set_secret", &json!({"key": "KEY", "value": "v1"}))
+            .await
+            .unwrap();
+        svc.execute("set_secret", &json!({"key": "KEY", "value": "v2"}))
+            .await
+            .unwrap();
+
+        let secret = svc
+            .execute("get_secret", &json!({"key": "KEY"}))
+            .await
+            .unwrap();
+        assert_eq!(secret["value"], "v2");
+    }
+
+    #[tokio::test]
+    async fn test_delete_secret() {
+        let svc = make_service().await;
+        svc.execute("set_secret", &json!({"key": "TEMP", "value": "val"}))
+            .await
+            .unwrap();
+        let result = svc
+            .execute("delete_secret", &json!({"key": "TEMP"}))
+            .await
+            .unwrap();
+        assert_eq!(result["deleted"], true);
+
+        let err = svc
+            .execute("get_secret", &json!({"key": "TEMP"}))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("not found"));
+    }
+
+    #[tokio::test]
+    async fn test_get_secret_not_found() {
+        let svc = make_service().await;
+        let err = svc
+            .execute("get_secret", &json!({"key": "NOPE"}))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("not found"));
+    }
+
+    #[tokio::test]
+    async fn test_set_secret_missing_key() {
+        let svc = make_service().await;
+        let err = svc
+            .execute("set_secret", &json!({"value": "val"}))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("Missing"));
+    }
+
+    #[tokio::test]
+    async fn test_set_secret_missing_value() {
+        let svc = make_service().await;
+        let err = svc
+            .execute("set_secret", &json!({"key": "k"}))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("Missing"));
+    }
+
+    #[tokio::test]
+    async fn test_list_secrets_after_set() {
+        let svc = make_service().await;
+        svc.execute("set_secret", &json!({"key": "K1", "value": "V1"}))
+            .await
+            .unwrap();
+        svc.execute("set_secret", &json!({"key": "K2", "value": "V2"}))
+            .await
+            .unwrap();
+
+        let result = svc.execute("list_secrets", &json!({})).await.unwrap();
+        assert_eq!(result["secrets"].as_array().unwrap().len(), 2);
+    }
+
+    // ── Storage operations ──────────────────────────────────
+
+    #[tokio::test]
+    async fn test_write_and_read_storage() {
+        let svc = make_service().await;
+        let result = svc
+            .execute(
+                "write_storage",
+                &json!({"key": "greeting", "value": "hello"}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result["stored"], true);
+
+        let read = svc
+            .execute("read_storage", &json!({"key": "greeting"}))
+            .await
+            .unwrap();
+        assert_eq!(read["key"], "greeting");
+        assert_eq!(read["value"], "hello");
+    }
+
+    #[tokio::test]
+    async fn test_read_storage_all() {
+        let svc = make_service().await;
+        svc.execute("write_storage", &json!({"key": "a", "value": 1}))
+            .await
+            .unwrap();
+        svc.execute("write_storage", &json!({"key": "b", "value": 2}))
+            .await
+            .unwrap();
+
+        let result = svc.execute("read_storage", &json!({})).await.unwrap();
+        assert!(result["storage"].is_object());
+    }
+
+    #[tokio::test]
+    async fn test_write_storage_missing_key() {
+        let svc = make_service().await;
+        let err = svc
+            .execute("write_storage", &json!({"value": "val"}))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("Missing"));
+    }
+
+    #[tokio::test]
+    async fn test_write_storage_missing_value() {
+        let svc = make_service().await;
+        let err = svc
+            .execute("write_storage", &json!({"key": "k"}))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("Missing"));
+    }
+
+    #[tokio::test]
+    async fn test_write_storage_json_value() {
+        let svc = make_service().await;
+        svc.execute(
+            "write_storage",
+            &json!({"key": "obj", "value": {"nested": true}}),
+        )
+        .await
+        .unwrap();
+
+        let read = svc
+            .execute("read_storage", &json!({"key": "obj"}))
+            .await
+            .unwrap();
+        assert_eq!(read["value"]["nested"], true);
+    }
+
+    // ── Thread operations ───────────────────────────────────
+
+    #[tokio::test]
+    async fn test_list_threads_empty() {
+        let svc = make_service().await;
+        let result = svc.execute("list_threads", &json!({})).await.unwrap();
+        assert!(result["threads"].is_array());
+    }
+
+    // ── Connection operations ───────────────────────────────
+
+    #[tokio::test]
+    async fn test_list_connections_no_store() {
+        let svc = make_service().await;
+        let err = svc
+            .execute("list_connections", &json!({}))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("not available"));
+    }
+
+    #[tokio::test]
+    async fn test_get_connection_token_no_store() {
+        let svc = make_service().await;
+        let err = svc
+            .execute("get_connection_token", &json!({"provider": "google"}))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("not available"));
+    }
+
+    #[tokio::test]
+    async fn test_get_connection_token_missing_provider() {
+        let svc = make_service().await;
+        let err = svc
+            .execute("get_connection_token", &json!({}))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("Missing"));
+    }
+
+    #[tokio::test]
+    async fn test_list_connections_with_store() {
+        let stores = initialize_stores(&test_store_config()).await.unwrap();
+        let mock = MockConnectionStore::new()
+            .with_connection("google", "connected")
+            .with_connection("github", "disconnected");
+        let svc = DistriPlatformService::new(
+            stores,
+            "user".to_string(),
+            Some("ws-123".to_string()),
+            Some(Arc::new(mock)),
+        );
+        let result = svc.execute("list_connections", &json!({})).await.unwrap();
+        let conns = result["connections"].as_array().unwrap();
+        assert_eq!(conns.len(), 2);
+        assert_eq!(conns[0]["name"], "google");
+        assert_eq!(conns[1]["name"], "github");
+    }
+
+    #[tokio::test]
+    async fn test_get_connection_token_with_store() {
+        let stores = initialize_stores(&test_store_config()).await.unwrap();
+        let mock = MockConnectionStore::new().with_token("google", "ya29.test-token");
+        let svc = DistriPlatformService::new(
+            stores,
+            "user".to_string(),
+            Some("ws-123".to_string()),
+            Some(Arc::new(mock)),
+        );
+        let result = svc
+            .execute("get_connection_token", &json!({"provider": "google"}))
+            .await
+            .unwrap();
+        assert_eq!(result["access_token"], "ya29.test-token");
+        assert_eq!(result["provider"], "google");
+    }
+
+    #[tokio::test]
+    async fn test_get_connection_token_not_found() {
+        let stores = initialize_stores(&test_store_config()).await.unwrap();
+        let mock = MockConnectionStore::new();
+        let svc = DistriPlatformService::new(
+            stores,
+            "user".to_string(),
+            Some("ws-123".to_string()),
+            Some(Arc::new(mock)),
+        );
+        let err = svc
+            .execute("get_connection_token", &json!({"provider": "slack"}))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("slack"));
+    }
+
+    #[tokio::test]
+    async fn test_connections_require_workspace_id() {
+        let stores = initialize_stores(&test_store_config()).await.unwrap();
+        let mock = MockConnectionStore::new();
+        // No workspace_id
+        let svc = DistriPlatformService::new(
+            stores,
+            "user".to_string(),
+            None,
+            Some(Arc::new(mock)),
+        );
+        let err = svc
+            .execute("list_connections", &json!({}))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("workspace"));
+    }
+
+    // ── ACTIONS constant consistency ────────────────────────
+
+    #[tokio::test]
+    async fn test_every_action_in_registry_is_executable() {
+        // Every action in ACTIONS should be handled in execute() (not return "Unknown action")
+        let svc = make_service().await;
+        for action_def in ACTIONS {
+            let result = svc.execute(action_def.name, &json!({})).await;
+            match result {
+                Ok(_) => {} // Action succeeded (e.g. list_agents returns empty)
+                Err(e) => {
+                    let msg = e.to_string();
+                    assert!(
+                        !msg.contains("Unknown action"),
+                        "Action '{}' is in ACTIONS but not handled in execute()",
+                        action_def.name
+                    );
+                    // Other errors are fine (missing params, no store, etc.)
+                }
+            }
+        }
     }
 }
