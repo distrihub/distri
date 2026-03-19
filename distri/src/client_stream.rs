@@ -250,10 +250,14 @@ impl AgentStreamClient {
             tool_response,
         };
 
-        let resp = self.http.post(url).json(&payload).send().await?;
-        resp.error_for_status()
-            .map_err(StreamError::Http)
-            .map(|_| ())
+        let resp = self.http.post(&url).json(&payload).send().await?;
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            tracing::error!("complete_tool failed ({}): {}", status, body);
+            return Err(StreamError::InvalidResponse(format!("complete_tool failed ({}): {}", status, body)));
+        }
+        Ok(())
     }
 }
 

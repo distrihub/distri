@@ -25,7 +25,7 @@ mod logging;
 mod login;
 
 #[derive(Parser, Debug, Clone)]
-#[clap(author, version, about, arg_required_else_help = true)]
+#[clap(author, version, about)]
 struct Cli {
     /// Optional base URL (defaults to DISTRI_BASE_URL)
     #[clap(long)]
@@ -45,18 +45,18 @@ struct Cli {
 
 #[derive(Subcommand, Debug, Clone)]
 enum Commands {
-    /// Stream an agent via the server
-    Run {
+    /// Open interactive chat with an agent (default)
+    Tui {
         #[clap(help = "Agent name (defaults to 'distri')")]
         agent: Option<String>,
-        #[clap(long, help = "Single task text to send")]
-        task: Option<String>,
-        #[clap(
-            long,
-            help = "Input data as JSON string (conflicts with --task)",
-            conflicts_with = "task"
-        )]
-        input: Option<String>,
+    },
+
+    /// Run a single task against an agent
+    Run {
+        #[clap(long, help = "Agent name (defaults to 'distri')")]
+        agent: Option<String>,
+        #[clap(long, help = "Task text to send", required = true)]
+        task: String,
     },
 
     /// Agent-related commands
@@ -81,6 +81,22 @@ enum Commands {
     Skills {
         #[clap(subcommand)]
         command: SkillsCommands,
+    },
+
+    /// Connection management commands
+    Connections {
+        #[clap(subcommand)]
+        command: ConnectionsCommands,
+    },
+    /// Secret management commands
+    Secrets {
+        #[clap(subcommand)]
+        command: SecretsCommands,
+    },
+    /// Thread management commands
+    Threads {
+        #[clap(subcommand)]
+        command: ThreadsCommands,
     },
 
     /// Manage local client configuration
@@ -177,6 +193,41 @@ enum SkillsCommands {
         #[clap(long, help = "Push all skill markdown files in the directory")]
         all: bool,
     },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum ConnectionsCommands {
+    /// List all connections
+    List,
+    /// Get a valid access token for a connection
+    Token {
+        #[clap(help = "Connection ID")]
+        connection_id: String,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum SecretsCommands {
+    /// List all secrets (values are masked)
+    List,
+    /// Set a secret value
+    Set {
+        #[clap(help = "Secret key")]
+        key: String,
+        #[clap(help = "Secret value")]
+        value: String,
+    },
+    /// Delete a secret
+    Delete {
+        #[clap(help = "Secret key")]
+        key: String,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum ThreadsCommands {
+    /// List all threads
+    List,
 }
 
 const COLOR_RESET: &str = "\x1b[0m";
@@ -317,7 +368,7 @@ async fn main() -> Result<()> {
 
     let cli = parse_cli_with_default_serve();
 
-    let command = Cli::parse().command.clone().expect("command is expected");
+    let command = cli.command.clone().unwrap_or(Commands::Tui { agent: None });
 
     if let Commands::Serve {
         host,
@@ -346,12 +397,12 @@ async fn main() -> Result<()> {
         DistriClientApp::from_config(config.clone()).with_workspace_path(workspace.clone());
 
     match command {
-        Commands::Run { agent, task, input } => {
+        Commands::Tui { agent } => {
             let agent_name = agent.unwrap_or_else(|| "distri".to_string());
-            if task.is_none() && input.is_none() {
-                run_interactive_chat(&mut app, &config, &base_url, agent_name, cli.verbose).await?;
-                return Ok(());
-            }
+            run_interactive_chat(&mut app, &config, &base_url, agent_name, cli.verbose).await?;
+        }
+        Commands::Run { agent, task } => {
+            let agent_name = agent.unwrap_or_else(|| "distri".to_string());
             // Resolve agent name to UUID for cloud compatibility.
             // Cloud middleware requires UUID for proper workspace context (model settings, secrets).
             let mut stream_agent_id = agent_name.clone();
@@ -362,12 +413,13 @@ async fn main() -> Result<()> {
                     stream_agent_id = uuid.to_string();
                 }
             }
-            let payload = input.or(task).unwrap_or_else(|| "Hello".to_string());
-            let params = build_message_params(payload);
+            let params = build_message_params(task);
 
             println!("Streaming agent '{}' via {}", agent_name, base_url);
             let registry = app.registry();
             register_approval_handler(&registry);
+            let platform_tool = distri::PlatformTool::from_arc(std::sync::Arc::new(Distri::from_config(config.clone())));
+            platform_tool.register(&registry);
             let stream_config = config.clone().with_timeout(60);
             let http_client = stream_config.build_http_client()?;
             let client = AgentStreamClient::from_config(config.clone())
@@ -467,6 +519,15 @@ async fn main() -> Result<()> {
         Commands::Skills { command } => {
             handle_skills_command(&client, command).await?;
         }
+        Commands::Connections { command } => {
+            handle_connections_command(&client, command).await?;
+        }
+        Commands::Secrets { command } => {
+            handle_secrets_command(&client, command).await?;
+        }
+        Commands::Threads { command } => {
+            handle_threads_command(&client, command).await?;
+        }
         Commands::Serve { .. } => unreachable!("serve handled earlier"),
     }
 
@@ -532,6 +593,28 @@ fn resolve_distri_server_binary() -> PathBuf {
     PathBuf::from(format!("distri-server{}", std::env::consts::EXE_SUFFIX))
 }
 
+fn platform_tool_definition() -> serde_json::Value {
+    serde_json::json!({
+        "name": "distri_platform",
+        "description": "Manage platform resources. Actions: list_agents, get_agent({agent_id}), list_skills, get_skill({skill_id}), create_skill({name,content}), delete_skill({skill_id}), list_providers (available OAuth providers), connect({provider,scopes?}) returns auth_url for OAuth, list_connections, get_connection_token({connection_id}), list_secrets, get_secret({key}), set_secret({key,value}), delete_secret({key}), list_threads. Use 'connect' to initiate OAuth and get an auth_url for the user.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["list_actions", "list_agents", "get_agent", "list_skills", "get_skill", "create_skill", "delete_skill", "list_providers", "connect", "list_connections", "get_connection_token", "list_secrets", "get_secret", "set_secret", "delete_secret", "list_threads"],
+                    "description": "The action to perform"
+                },
+                "params": {
+                    "type": "object",
+                    "description": "Parameters for the action (e.g. {provider: 'google'} for connect)"
+                }
+            },
+            "required": ["action"]
+        }
+    })
+}
+
 fn build_message_params(content: String) -> MessageSendParams {
     MessageSendParams {
         message: A2aMessage {
@@ -546,20 +629,19 @@ fn build_message_params(content: String) -> MessageSendParams {
             metadata: None,
         },
         configuration: None,
-        metadata: None,
+        metadata: Some(serde_json::json!({
+            "external_tools": [platform_tool_definition()]
+        })),
     }
 }
 
 fn build_chat_message_params(content: String, thread_id: &str, model: &str) -> MessageSendParams {
-    let metadata = if model.trim().is_empty() {
-        None
-    } else {
-        Some(serde_json::json!({
-            "definition_overrides": {
-                "model": model,
-            }
-        }))
-    };
+    let mut meta = serde_json::json!({
+        "external_tools": [platform_tool_definition()]
+    });
+    if !model.trim().is_empty() {
+        meta["definition_overrides"] = serde_json::json!({ "model": model });
+    }
 
     MessageSendParams {
         message: A2aMessage {
@@ -574,7 +656,7 @@ fn build_chat_message_params(content: String, thread_id: &str, model: &str) -> M
             metadata: None,
         },
         configuration: None,
-        metadata,
+        metadata: Some(meta),
     }
 }
 
@@ -597,6 +679,8 @@ async fn run_interactive_chat(
 
     let registry = app.registry();
     register_approval_handler(&registry);
+    let platform_tool = distri::PlatformTool::from_arc(std::sync::Arc::new(Distri::from_config(config.clone())));
+    platform_tool.register(&registry);
 
     let stream_config = config.clone().with_timeout(60);
     let http_client = stream_config.build_http_client()?;
@@ -1483,4 +1567,67 @@ fn extract_scripts_from_markdown(body: &str) -> Vec<CreateSkillScriptRequest> {
     }
 
     scripts
+}
+
+async fn handle_connections_command(client: &Distri, command: ConnectionsCommands) -> Result<()> {
+    match command {
+        ConnectionsCommands::List => {
+            let connections = client.list_connections().await?;
+            if connections.is_empty() {
+                println!("No connections found.");
+            } else {
+                for conn in connections {
+                    let status = conn.status.as_deref().unwrap_or("unknown");
+                    println!("{} - {} ({})", conn.id, conn.name, status);
+                }
+            }
+        }
+        ConnectionsCommands::Token { connection_id } => {
+            let token = client.get_connection_token(&connection_id).await?;
+            println!("{}", token.access_token);
+        }
+    }
+    Ok(())
+}
+
+async fn handle_secrets_command(client: &Distri, command: SecretsCommands) -> Result<()> {
+    match command {
+        SecretsCommands::List => {
+            let secrets = client.list_secrets().await?;
+            if secrets.is_empty() {
+                println!("No secrets found.");
+            } else {
+                for secret in secrets {
+                    println!("{} = {}", secret.key, secret.masked_value);
+                }
+            }
+        }
+        SecretsCommands::Set { key, value } => {
+            client.set_secret(&distri::NewSecretRequest { key: key.clone(), value }).await?;
+            println!("Secret '{}' set.", key);
+        }
+        SecretsCommands::Delete { key } => {
+            client.delete_secret(&key).await?;
+            println!("Secret '{}' deleted.", key);
+        }
+    }
+    Ok(())
+}
+
+async fn handle_threads_command(client: &Distri, command: ThreadsCommands) -> Result<()> {
+    match command {
+        ThreadsCommands::List => {
+            let threads = client.list_threads().await?;
+            if threads.is_empty() {
+                println!("No threads found.");
+            } else {
+                for thread in threads {
+                    let agent = thread.agent_name.as_deref().unwrap_or("unknown");
+                    let title = thread.title.as_deref().unwrap_or("(no title)");
+                    println!("{} - {} [{}]", thread.id, title, agent);
+                }
+            }
+        }
+    }
+    Ok(())
 }

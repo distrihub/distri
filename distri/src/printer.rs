@@ -513,6 +513,16 @@ pub async fn print_stream_verbose(
                         let mut guard = printer.lock().await;
                         guard.handle_event(&event).await;
                     }
+                    // Print the final assistant message text
+                    if let Some(ref msg) = item.message {
+                        if msg.role == distri_types::MessageRole::Assistant {
+                            if let Some(text) = msg.as_text() {
+                                if !text.is_empty() {
+                                    println!("\n{}", text);
+                                }
+                            }
+                        }
+                    }
                 }
             }
         })

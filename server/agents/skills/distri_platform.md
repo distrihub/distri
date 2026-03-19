@@ -4,6 +4,11 @@ Use the `distri_platform` tool to manage platform resources. Pass an `action` na
 
 ## Actions
 
+### Meta
+| Action | Params | Description |
+|--------|--------|-------------|
+| `list_actions` | — | List all available platform actions |
+
 ### Agents
 | Action | Params | Description |
 |--------|--------|-------------|
@@ -37,7 +42,22 @@ Use the `distri_platform` tool to manage platform resources. Pass an `action` na
 |--------|--------|-------------|
 | `list_threads` | — | List conversation threads |
 
-## Example
+### Connections
+| Action | Params | Description |
+|--------|--------|-------------|
+| `list_connections` | — | List connected integrations (OAuth providers) |
+| `get_connection_token` | `{ provider }` | Get a valid access token for a connected provider |
+
+## Examples
+
+```json
+{
+  "tool": "distri_platform",
+  "arguments": {
+    "action": "list_actions"
+  }
+}
+```
 
 ```json
 {
@@ -59,6 +79,25 @@ Use the `distri_platform` tool to manage platform resources. Pass an `action` na
       "content": "# My Helper\nThis skill does...",
       "tags": ["utility"]
     }
+  }
+}
+```
+
+```json
+{
+  "tool": "distri_platform",
+  "arguments": {
+    "action": "list_connections"
+  }
+}
+```
+
+```json
+{
+  "tool": "distri_platform",
+  "arguments": {
+    "action": "get_connection_token",
+    "params": { "provider": "google" }
   }
 }
 ```

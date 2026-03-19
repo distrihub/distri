@@ -17,6 +17,7 @@ type = "tools"
 
 [tools]
 builtin = ["*"]
+external = ["distri_platform"]
 
 [[available_skills]]
 id = "*"

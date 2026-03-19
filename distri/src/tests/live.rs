@@ -105,11 +105,12 @@ async fn live_llm_execute() -> anyhow::Result<()> {
     let client = ctx.client();
     let llm_def = LlmDefinition {
         name: "live_llm".into(),
-        model_settings: ModelSettings {
+        model_settings: Some(ModelSettings {
             model: "gpt-4.1-mini".into(),
-            ..Default::default()
-        },
-        ..Default::default()
+            inner: Default::default(),
+        }),
+        tool_format: Default::default(),
+        tool_delivery_mode: Default::default(),
     };
     let llm_ctx = LLmContext {
         messages: vec![Message::user("say hi".into(), None)],

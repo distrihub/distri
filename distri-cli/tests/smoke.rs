@@ -1,8 +1,15 @@
+// Platform integration tests must run sequentially (--test-threads=1) because
+// concurrent SSE streams exhaust actix-web worker threads. See backlog.md.
 use anyhow::{Context, Result};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Mutex;
+
+/// Global lock to serialize platform tests that stream SSE from the server.
+/// Without this, concurrent streams exhaust server worker threads.
+static STREAM_LOCK: Mutex<()> = Mutex::new(());
 
 fn smoke_base_url() -> Option<String> {
     env::var("DISTRI_SMOKE_BASE_URL").ok()
@@ -137,9 +144,139 @@ fn smoke_run_browser_agent_task() -> Result<()> {
         &base_url,
         &[
             "run",
-            "distri",
             "--task",
             "Find all open job positions in google singapore",
         ],
     )
+}
+
+// ============================================================
+// CLI subcommand smoke tests
+// ============================================================
+
+#[test]
+fn smoke_connections_list() -> Result<()> {
+    let Some(base_url) = ensure_smoke_base_url()? else {
+        return Ok(());
+    };
+    run_cli(&base_url, &["connections", "list"])
+}
+
+#[test]
+fn smoke_secrets_list() -> Result<()> {
+    let Some(base_url) = ensure_smoke_base_url()? else {
+        return Ok(());
+    };
+    run_cli(&base_url, &["secrets", "list"])
+}
+
+#[test]
+fn smoke_threads_list() -> Result<()> {
+    let Some(base_url) = ensure_smoke_base_url()? else {
+        return Ok(());
+    };
+    run_cli(&base_url, &["threads", "list"])
+}
+
+// ============================================================
+// Platform tool integration tests (run agent with --task)
+// ============================================================
+
+fn run_cli_capture(base_url: &str, args: &[&str]) -> Result<String> {
+    let output = Command::new("distri")
+        .arg("--base-url")
+        .arg(base_url)
+        .args(args)
+        .output()
+        .with_context(|| format!("running distri with args {:?}", args))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+    if !output.status.success() {
+        anyhow::bail!(
+            "distri command {:?} failed (status={})\nstdout:\n{}\nstderr:\n{}",
+            args,
+            output.status,
+            stdout,
+            stderr
+        );
+    }
+
+    Ok(format!("{}{}", stdout, stderr))
+}
+
+#[test]
+fn smoke_platform_list_connections() -> Result<()> {
+    let _lock = STREAM_LOCK.lock().unwrap();
+    let Some(base_url) = ensure_smoke_base_url()? else {
+        return Ok(());
+    };
+    let output = run_cli_capture(
+        &base_url,
+        &["run", "--task", "how many connections do i have? just give me the count"],
+    )?;
+    // Agent should use distri_platform list_connections and respond
+    assert!(
+        output.contains("distri_platform") || output.contains("connection") || output.contains("Connection"),
+        "expected platform tool usage or connection mention in output: {}",
+        &output[..output.len().min(500)]
+    );
+    Ok(())
+}
+
+#[test]
+fn smoke_platform_list_agents() -> Result<()> {
+    let _lock = STREAM_LOCK.lock().unwrap();
+    let Some(base_url) = ensure_smoke_base_url()? else {
+        return Ok(());
+    };
+    let output = run_cli_capture(
+        &base_url,
+        &["run", "--task", "list all my agents, just the names"],
+    )?;
+    // The distri agent should always exist
+    assert!(
+        output.contains("distri"),
+        "expected 'distri' agent in output: {}",
+        &output[..output.len().min(500)]
+    );
+    Ok(())
+}
+
+#[test]
+fn smoke_platform_list_secrets() -> Result<()> {
+    let _lock = STREAM_LOCK.lock().unwrap();
+    let Some(base_url) = ensure_smoke_base_url()? else {
+        return Ok(());
+    };
+    let output = run_cli_capture(
+        &base_url,
+        &["run", "--task", "list my secrets, just key names"],
+    )?;
+    // Should use distri_platform list_secrets
+    assert!(
+        output.contains("distri_platform") || output.contains("secret") || output.contains("Secret") || output.contains("No secrets"),
+        "expected secrets-related output: {}",
+        &output[..output.len().min(500)]
+    );
+    Ok(())
+}
+
+#[test]
+fn smoke_platform_list_skills() -> Result<()> {
+    let _lock = STREAM_LOCK.lock().unwrap();
+    let Some(base_url) = ensure_smoke_base_url()? else {
+        return Ok(());
+    };
+    let output = run_cli_capture(
+        &base_url,
+        &["run", "--task", "how many skills do i have? just the count"],
+    )?;
+    assert!(
+        output.contains("distri_platform") || output.contains("skill") || output.contains("Skill"),
+        "expected skills-related output: {}",
+        &output[..output.len().min(500)]
+    );
+    Ok(())
 }

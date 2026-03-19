@@ -99,8 +99,9 @@ pub async fn handle_login_command(_email: Option<String>, _skip_workspace: bool)
 
     // Start the server in the background
     let credentials_shutdown = credentials.clone();
-    let (addr, server) =
-        warp::serve(callback_route).bind_with_graceful_shutdown(([127, 0, 0, 1], port), async move {
+    let (addr, server) = warp::serve(callback_route).bind_with_graceful_shutdown(
+        ([127, 0, 0, 1], port),
+        async move {
             // Wait until we receive credentials
             loop {
                 tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
@@ -109,7 +110,8 @@ pub async fn handle_login_command(_email: Option<String>, _skip_workspace: bool)
                     break;
                 }
             }
-        });
+        },
+    );
 
     println!("Opening browser for authentication...");
     println!("Waiting for callback on {}...", addr);
@@ -135,9 +137,13 @@ pub async fn handle_login_command(_email: Option<String>, _skip_workspace: bool)
     save_config(&creds.api_key, &creds.workspace_id)?;
 
     println!("\n✓ Successfully authenticated!");
-    println!("  API Key: {}...{}", &creds.api_key[..10], &creds.api_key[creds.api_key.len() - 4..]);
+    println!(
+        "  API Key: {}...{}",
+        &creds.api_key[..10],
+        &creds.api_key[creds.api_key.len() - 4..]
+    );
     println!("  Workspace ID: {}", creds.workspace_id);
-    println!("\nYou can now use 'distri run' and other commands.");
+    println!("\nYou can now use 'distri'. Run 'distri -h' for help");
 
     Ok(())
 }
@@ -189,8 +195,14 @@ fn save_config(api_key: &str, workspace_id: &str) -> Result<()> {
 
     // Update values
     if let toml::Value::Table(ref mut table) = config {
-        table.insert("api_key".to_string(), toml::Value::String(api_key.to_string()));
-        table.insert("workspace_id".to_string(), toml::Value::String(workspace_id.to_string()));
+        table.insert(
+            "api_key".to_string(),
+            toml::Value::String(api_key.to_string()),
+        );
+        table.insert(
+            "workspace_id".to_string(),
+            toml::Value::String(workspace_id.to_string()),
+        );
     }
 
     // Write to file
