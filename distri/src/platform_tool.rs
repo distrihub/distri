@@ -134,6 +134,25 @@ impl PlatformTool {
                     .get("scopes")
                     .and_then(|v| serde_json::from_value(v.clone()).ok())
                     .unwrap_or_default();
+
+                // Check if connection already exists for this provider
+                if let Ok(connections) = self.client.list_connections().await {
+                    if let Some(existing) = connections.iter().find(|c| c.name == provider) {
+                        let status = existing.status.as_deref().unwrap_or("unknown");
+                        if status == "connected" {
+                            return Ok(json!({
+                                "already_connected": true,
+                                "connection_id": existing.id,
+                                "provider": provider,
+                                "status": status,
+                                "message": format!("{} is already connected. Use get_connection_token with connection_id to get an access token.", provider)
+                            }));
+                        }
+                        // Pending — delete and re-create to get a fresh auth URL
+                        let _ = self.client.delete_connection(&existing.id).await;
+                    }
+                }
+
                 let result = self.client.connect(&provider, &scopes).await?;
                 Ok(serde_json::to_value(result)?)
             }

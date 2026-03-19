@@ -2098,6 +2098,18 @@ impl Distri {
         }
     }
 
+    /// Delete a connection.
+    pub async fn delete_connection(&self, connection_id: &str) -> Result<(), ClientError> {
+        let url = format!("{}/connections/{}", self.base_url, connection_id);
+        let resp = self.http.delete(&url).send().await?;
+        if resp.status().is_success() || resp.status() == reqwest::StatusCode::NO_CONTENT {
+            Ok(())
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!("failed to delete connection {}: {}", connection_id, text)))
+        }
+    }
+
     /// List available OAuth providers and their configuration.
     pub async fn list_providers(&self) -> Result<Vec<ProviderInfo>, ClientError> {
         let url = format!("{}/connections/providers", self.base_url);

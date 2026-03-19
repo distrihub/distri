@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "predev": "pnpm --filter @distri/react --filter @distri/home build",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
