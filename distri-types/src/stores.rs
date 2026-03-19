@@ -762,6 +762,42 @@ pub trait ProviderStore: Send + Sync {
 
 // ========== Skill Store ==========
 
+/// API response wrapper for skill list endpoints.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillsListResponse {
+    pub skills: Vec<SkillListItem>,
+}
+
+/// Lighter skill record for list endpoints — no content or scripts.
+/// Used by both distri-server (OSS) and distri-cloud.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillListItem {
+    pub id: String,
+    #[serde(default)]
+    pub workspace_slug: String,
+    pub name: String,
+    #[serde(default)]
+    pub full_name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub is_public: bool,
+    #[serde(default)]
+    pub is_system: bool,
+    #[serde(default)]
+    pub is_owner: bool,
+    #[serde(default)]
+    pub star_count: i32,
+    #[serde(default)]
+    pub clone_count: i32,
+    #[serde(default)]
+    pub is_starred: bool,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillRecord {
     pub id: String,
@@ -940,5 +976,57 @@ impl UsageService for NoOpUsageService {
 
     async fn get_limits(&self, _workspace_id: &str) -> anyhow::Result<UsageLimits> {
         Ok(UsageLimits::default())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_skills_list_response_deserialize_cloud_format() {
+        let json = r#"{"skills":[{"id":"abc","workspace_slug":"ws","name":"test","full_name":"ws/test","description":"desc","tags":["t"],"is_public":true,"is_system":false,"is_owner":true,"star_count":0,"clone_count":0,"is_starred":false,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}]}"#;
+        let resp: SkillsListResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.skills.len(), 1);
+        assert_eq!(resp.skills[0].name, "test");
+        assert_eq!(resp.skills[0].workspace_slug, "ws");
+        assert_eq!(resp.skills[0].full_name, "ws/test");
+        assert!(resp.skills[0].is_public);
+    }
+
+    #[test]
+    fn test_skills_list_response_deserialize_defaults() {
+        let json = r#"{"skills":[{"id":"abc","name":"test","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}]}"#;
+        let resp: SkillsListResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.skills[0].workspace_slug, "");
+        assert_eq!(resp.skills[0].full_name, "");
+        assert!(!resp.skills[0].is_public);
+        assert!(!resp.skills[0].is_owner);
+    }
+
+    #[test]
+    fn test_skills_list_response_roundtrip() {
+        let resp = SkillsListResponse {
+            skills: vec![SkillListItem {
+                id: "id1".into(),
+                workspace_slug: "local".into(),
+                name: "my_skill".into(),
+                full_name: "local/my_skill".into(),
+                description: Some("A skill".into()),
+                tags: vec!["tag1".into()],
+                is_public: false,
+                is_system: false,
+                is_owner: true,
+                star_count: 5,
+                clone_count: 2,
+                is_starred: true,
+                created_at: chrono::Utc::now(),
+                updated_at: chrono::Utc::now(),
+            }],
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        let decoded: SkillsListResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.skills[0].name, "my_skill");
+        assert_eq!(decoded.skills[0].star_count, 5);
     }
 }

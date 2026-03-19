@@ -15,6 +15,7 @@ const SHELL_SESSION_KEY: &str = "shell_session_id";
 // Browsr Shell HTTP Client
 // ============================================================
 
+#[derive(Clone)]
 pub(crate) struct BrowsrShellClient {
     client: reqwest::Client,
     base_url: String,
@@ -28,12 +29,17 @@ impl BrowsrShellClient {
 
         let mut headers = reqwest::header::HeaderMap::new();
         if let Ok(api_key) = std::env::var("BROWSR_API_KEY") {
-            if let Ok(val) =
-                reqwest::header::HeaderValue::from_str(&format!("Bearer {}", api_key))
-            {
-                headers.insert(reqwest::header::AUTHORIZATION, val);
+            if let Ok(val) = reqwest::header::HeaderValue::from_str(&api_key) {
+                headers.insert("x-api-key", val);
             }
         }
+
+        let has_key = headers.contains_key("x-api-key");
+        tracing::info!(
+            "[BrowsrShellClient::from_env] base_url={}, has_api_key={}",
+            base_url,
+            has_key
+        );
 
         let client = reqwest::Client::builder()
             .default_headers(headers)
@@ -60,10 +66,8 @@ impl BrowsrShellClient {
             .cloned()
             .or_else(|| std::env::var("BROWSR_API_KEY").ok());
         if let Some(api_key) = api_key {
-            if let Ok(val) =
-                reqwest::header::HeaderValue::from_str(&format!("Bearer {}", api_key))
-            {
-                headers.insert(reqwest::header::AUTHORIZATION, val);
+            if let Ok(val) = reqwest::header::HeaderValue::from_str(&api_key) {
+                headers.insert("x-api-key", val);
             }
         }
 
@@ -81,6 +85,7 @@ impl BrowsrShellClient {
         request: &CreateShellSessionRequest,
     ) -> Result<CreateShellSessionResponse, AgentError> {
         let url = format!("{}/shell/sessions", self.base_url);
+        tracing::info!("[BrowsrShellClient::create_session] POST {}", url);
         let resp = self
             .client
             .post(&url)
@@ -91,8 +96,17 @@ impl BrowsrShellClient {
                 AgentError::ToolExecution(format!("Shell session creation failed: {}", e))
             })?;
 
+        tracing::info!(
+            "[BrowsrShellClient::create_session] response status={}",
+            resp.status()
+        );
+
         if !resp.status().is_success() {
             let text = resp.text().await.unwrap_or_default();
+            tracing::error!(
+                "[BrowsrShellClient::create_session] failed: {}",
+                text
+            );
             return Err(AgentError::ToolExecution(format!(
                 "Shell session creation failed: {}",
                 text

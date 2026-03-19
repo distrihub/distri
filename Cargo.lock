@@ -757,9 +757,9 @@ dependencies = [
 
 [[package]]
 name = "browsr-client"
-version = "0.3.7"
+version = "0.3.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bb398179cbf1aafc8b739986c01553b300e6b6f9254eedda9d490f3922639cb0"
+checksum = "b50b3da02b96d9c4c5c4247948cfe0ab1d9f02ef2938ac053d51aaa1e1379763"
 dependencies = [
  "anyhow",
  "browsr-types",
@@ -773,9 +773,9 @@ dependencies = [
 
 [[package]]
 name = "browsr-types"
-version = "0.3.7"
+version = "0.3.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1c3af5fa1f0855e2e6994d499b1786bbea396e69c3f7a6637e7b9efdf50f0b6c"
+checksum = "0dae0d40c53259ecf533d1effb9f79c07e862001c871d13ea30a6f4bbd9b0098"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1544,7 +1544,7 @@ dependencies = [
 
 [[package]]
 name = "distri"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "actix-web",
  "anyhow",
@@ -1575,7 +1575,7 @@ dependencies = [
 
 [[package]]
 name = "distri-a2a"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "schemars",
  "serde",
@@ -1585,7 +1585,7 @@ dependencies = [
 
 [[package]]
 name = "distri-auth"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "actix-cors",
  "actix-web",
@@ -1611,7 +1611,7 @@ dependencies = [
 
 [[package]]
 name = "distri-cli"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "anyhow",
  "clap",
@@ -1638,7 +1638,7 @@ dependencies = [
 
 [[package]]
 name = "distri-coder"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1673,7 +1673,7 @@ dependencies = [
 
 [[package]]
 name = "distri-core"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "anyhow",
  "async-mcp",
@@ -1729,7 +1729,7 @@ dependencies = [
 
 [[package]]
 name = "distri-filesystem"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1755,7 +1755,7 @@ dependencies = [
 
 [[package]]
 name = "distri-parsers"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -1780,7 +1780,7 @@ dependencies = [
 
 [[package]]
 name = "distri-scraper"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "actix-cors",
  "actix-web",
@@ -1803,7 +1803,7 @@ dependencies = [
 
 [[package]]
 name = "distri-server"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "actix-cors",
  "actix-files",
@@ -1852,7 +1852,7 @@ dependencies = [
 
 [[package]]
 name = "distri-server-cli"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1888,7 +1888,7 @@ dependencies = [
 
 [[package]]
 name = "distri-stores"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1916,7 +1916,7 @@ dependencies = [
 
 [[package]]
 name = "distri-types"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "anyhow",
  "async-mcp",

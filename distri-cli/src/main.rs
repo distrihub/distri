@@ -352,9 +352,15 @@ async fn main() -> Result<()> {
                 run_interactive_chat(&mut app, &config, &base_url, agent_name, cli.verbose).await?;
                 return Ok(());
             }
+            // Resolve agent name to UUID for cloud compatibility.
+            // Cloud middleware requires UUID for proper workspace context (model settings, secrets).
+            let mut stream_agent_id = agent_name.clone();
             if let Some(agent_cfg) = app.fetch_agent(&agent_name).await? {
                 app.ensure_local_tools(&agent_name, &agent_cfg.agent)
                     .await?;
+                if let Some(uuid) = agent_cfg.cloud.id {
+                    stream_agent_id = uuid.to_string();
+                }
             }
             let payload = input.or(task).unwrap_or_else(|| "Hello".to_string());
             let params = build_message_params(payload);
@@ -367,7 +373,7 @@ async fn main() -> Result<()> {
             let client = AgentStreamClient::from_config(config.clone())
                 .with_http_client(http_client)
                 .with_tool_registry(registry);
-            print_stream_verbose(&client, &agent_name, params, cli.verbose).await?;
+            print_stream_verbose(&client, &stream_agent_id, params, cli.verbose).await?;
         }
         Commands::Agents { command } => match command {
             AgentsCommands::List => {
@@ -647,20 +653,22 @@ async fn run_interactive_chat(
             }
         }
 
-        match app.fetch_agent(&current_agent).await? {
+        // Resolve agent name to UUID for cloud compatibility
+        let stream_agent_id = match app.fetch_agent(&current_agent).await? {
             Some(agent_cfg) => {
                 app.ensure_local_tools(&current_agent, &agent_cfg.agent)
                     .await?;
+                agent_cfg.cloud.id.map(|u| u.to_string()).unwrap_or_else(|| current_agent.clone())
             }
             None => {
                 eprintln!("Agent '{}' not found on {}", current_agent, base_url);
                 continue;
             }
-        }
+        };
 
         let params = build_chat_message_params(input.to_string(), &thread_id, &current_model);
 
-        if let Err(err) = print_stream_verbose(&stream_client, &current_agent, params, verbose).await {
+        if let Err(err) = print_stream_verbose(&stream_client, &stream_agent_id, params, verbose).await {
             eprintln!("Error from agent: {}", err);
         }
     }

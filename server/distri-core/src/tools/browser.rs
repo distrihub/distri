@@ -45,7 +45,7 @@ impl Tool for DistriScrapeSharedTool {
                     "type": "array",
                     "items": {
                         "type": "string",
-                        "enum": ["markdown", "summary", "html", "rawHtml", "screenshot", "links", "json", "images", "branding"]
+                        "enum": ["markdown", "html", "screenshot", "structured", "agent"]
                     },
                     "description": "Output formats to request (default: [\"markdown\"])"
                 },
@@ -88,10 +88,10 @@ Scrape a page as markdown:
 {"url": "https://example.com"}
 
 Scrape with multiple formats:
-{"url": "https://example.com", "formats": ["markdown", "links", "screenshot"]}
+{"url": "https://example.com", "formats": ["markdown", "screenshot"]}
 
-Extract structured data:
-{"url": "https://example.com/products", "formats": ["json"], "json_options": {"prompt": "Extract all product names and prices"}}
+Scrape with structured extraction:
+{"url": "https://example.com/products", "formats": ["structured"], "json_options": {"prompt": "Extract all product names and prices"}}
 
 Scrape a JavaScript-heavy page:
 {"url": "https://example.com/spa", "formats": ["markdown", "screenshot"], "wait_for": 3000}
@@ -339,36 +339,13 @@ Search with result limit:
         let options: SearchOptions = serde_json::from_value(tool_call.input)
             .map_err(|e| anyhow::anyhow!("Invalid search options: {}", e))?;
 
-        // Use raw HTTP call to avoid SearchResponse type mismatch between
-        // browsr-types (stdout transport format) and the HTTP API format.
-        let base_url = std::env::var("BROWSR_BASE_URL")
-            .or_else(|_| std::env::var("BROWSR_API_URL"))
-            .unwrap_or_else(|_| "https://api.browsr.dev".to_string());
-
-        let mut req = reqwest::Client::new()
-            .post(format!("{}/search", base_url))
-            .json(&options);
-
-        if let Ok(api_key) = std::env::var("BROWSR_API_KEY") {
-            req = req.header("Authorization", format!("Bearer {}", api_key));
-        }
-
-        let resp = req
-            .send()
+        let client = BrowsrClient::from_env();
+        let response = client
+            .search(options)
             .await
             .map_err(|e| anyhow::anyhow!("Search failed: {}", e))?;
 
-        if !resp.status().is_success() {
-            let text = resp.text().await.unwrap_or_default();
-            return Err(anyhow::anyhow!("Search failed: {}", text));
-        }
-
-        let response: Value = resp
-            .json()
-            .await
-            .map_err(|e| anyhow::anyhow!("Search response parse failed: {}", e))?;
-
-        let parts = vec![Part::Data(response)];
+        let parts = vec![Part::Data(serde_json::to_value(response)?)];
         Ok(parts)
     }
 }
