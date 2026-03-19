@@ -606,7 +606,13 @@ impl ExecutorContextTool for DistriExecuteCodeTool {
             .and_then(|v| v.as_str())
             .ok_or_else(|| AgentError::ToolExecution("Missing 'code' parameter".to_string()))?;
 
-        match crate::tools::code::execute_code_with_tools(code, context).await {
+        let language = tool_call
+            .input
+            .get("language")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
+        match crate::tools::code::execute_code_with_tools(code, language, context).await {
             Ok((result, _observations, _)) => Ok(vec![Part::Data(result)]),
             Err(e) => Err(AgentError::ToolExecution(format!(
                 "Code execution failed: {}",

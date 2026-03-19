@@ -23,12 +23,15 @@ impl CodeExecutor {
 /// and destroys the session. Returns (result_value, observations, has_external_tools).
 pub async fn execute_code_with_tools(
     code: &str,
+    language_override: Option<String>,
     _context: Arc<ExecutorContext>,
 ) -> Result<(Value, Vec<String>, bool), anyhow::Error> {
     let client = BrowsrShellClient::from_env();
 
-    // Detect language from code content (default to javascript for backward compat)
-    let language = detect_language(code);
+    // Use explicit language if provided, otherwise detect from code content
+    let language = language_override
+        .as_deref()
+        .unwrap_or_else(|| detect_language(code));
 
     // Create an ephemeral shell session
     let session = client

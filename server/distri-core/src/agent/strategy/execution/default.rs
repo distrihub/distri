@@ -252,7 +252,7 @@ impl ExecutionStrategy for AgentExecutor {
                 .await
             }
             Action::Code { code, .. } => {
-                match crate::tools::execute_code_with_tools(code, context.clone()).await {
+                match crate::tools::execute_code_with_tools(code, None, context.clone()).await {
                     Ok((_, observations, _)) => Ok(ExecutionResult {
                         step_id: step.id.clone(),
                         status: ExecutionStatus::Success,
