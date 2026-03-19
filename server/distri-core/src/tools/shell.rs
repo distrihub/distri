@@ -15,6 +15,7 @@ const SHELL_SESSION_KEY: &str = "shell_session_id";
 // Browsr Shell HTTP Client
 // ============================================================
 
+#[derive(Clone)]
 pub(crate) struct BrowsrShellClient {
     client: reqwest::Client,
     base_url: String,
@@ -28,10 +29,8 @@ impl BrowsrShellClient {
 
         let mut headers = reqwest::header::HeaderMap::new();
         if let Ok(api_key) = std::env::var("BROWSR_API_KEY") {
-            if let Ok(val) =
-                reqwest::header::HeaderValue::from_str(&format!("Bearer {}", api_key))
-            {
-                headers.insert(reqwest::header::AUTHORIZATION, val);
+            if let Ok(val) = reqwest::header::HeaderValue::from_str(&api_key) {
+                headers.insert("x-api-key", val);
             }
         }
 
@@ -60,10 +59,8 @@ impl BrowsrShellClient {
             .cloned()
             .or_else(|| std::env::var("BROWSR_API_KEY").ok());
         if let Some(api_key) = api_key {
-            if let Ok(val) =
-                reqwest::header::HeaderValue::from_str(&format!("Bearer {}", api_key))
-            {
-                headers.insert(reqwest::header::AUTHORIZATION, val);
+            if let Ok(val) = reqwest::header::HeaderValue::from_str(&api_key) {
+                headers.insert("x-api-key", val);
             }
         }
 

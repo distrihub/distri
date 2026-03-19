@@ -58,8 +58,12 @@ pub async fn execute_code_with_tools(
         })
         .await;
 
-    // Always clean up the session
-    let _ = client.destroy_session(&session_id).await;
+    // Destroy session in background — don't block the tool response
+    let destroy_client = client.clone();
+    let destroy_id = session_id.clone();
+    tokio::spawn(async move {
+        let _ = destroy_client.destroy_session(&destroy_id).await;
+    });
 
     let response = result.map_err(|e| anyhow::anyhow!("Shell execution failed: {}", e))?;
 
