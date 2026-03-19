@@ -83,6 +83,22 @@ enum Commands {
         command: SkillsCommands,
     },
 
+    /// Connection management commands
+    Connections {
+        #[clap(subcommand)]
+        command: ConnectionsCommands,
+    },
+    /// Secret management commands
+    Secrets {
+        #[clap(subcommand)]
+        command: SecretsCommands,
+    },
+    /// Thread management commands
+    Threads {
+        #[clap(subcommand)]
+        command: ThreadsCommands,
+    },
+
     /// Manage local client configuration
     Config {
         #[clap(subcommand)]
@@ -177,6 +193,41 @@ enum SkillsCommands {
         #[clap(long, help = "Push all skill markdown files in the directory")]
         all: bool,
     },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum ConnectionsCommands {
+    /// List all connections
+    List,
+    /// Get a valid access token for a connection
+    Token {
+        #[clap(help = "Connection ID")]
+        connection_id: String,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum SecretsCommands {
+    /// List all secrets (values are masked)
+    List,
+    /// Set a secret value
+    Set {
+        #[clap(help = "Secret key")]
+        key: String,
+        #[clap(help = "Secret value")]
+        value: String,
+    },
+    /// Delete a secret
+    Delete {
+        #[clap(help = "Secret key")]
+        key: String,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum ThreadsCommands {
+    /// List all threads
+    List,
 }
 
 const COLOR_RESET: &str = "\x1b[0m";
@@ -465,6 +516,15 @@ async fn main() -> Result<()> {
         }
         Commands::Skills { command } => {
             handle_skills_command(&client, command).await?;
+        }
+        Commands::Connections { command } => {
+            handle_connections_command(&client, command).await?;
+        }
+        Commands::Secrets { command } => {
+            handle_secrets_command(&client, command).await?;
+        }
+        Commands::Threads { command } => {
+            handle_threads_command(&client, command).await?;
         }
         Commands::Serve { .. } => unreachable!("serve handled earlier"),
     }
@@ -1482,4 +1542,67 @@ fn extract_scripts_from_markdown(body: &str) -> Vec<CreateSkillScriptRequest> {
     }
 
     scripts
+}
+
+async fn handle_connections_command(client: &Distri, command: ConnectionsCommands) -> Result<()> {
+    match command {
+        ConnectionsCommands::List => {
+            let connections = client.list_connections().await?;
+            if connections.is_empty() {
+                println!("No connections found.");
+            } else {
+                for conn in connections {
+                    let status = conn.status.as_deref().unwrap_or("unknown");
+                    println!("{} - {} [{}] ({})", conn.id, conn.name, conn.provider, status);
+                }
+            }
+        }
+        ConnectionsCommands::Token { connection_id } => {
+            let token = client.get_connection_token(&connection_id).await?;
+            println!("{}", token.access_token);
+        }
+    }
+    Ok(())
+}
+
+async fn handle_secrets_command(client: &Distri, command: SecretsCommands) -> Result<()> {
+    match command {
+        SecretsCommands::List => {
+            let secrets = client.list_secrets().await?;
+            if secrets.is_empty() {
+                println!("No secrets found.");
+            } else {
+                for secret in secrets {
+                    println!("{} = {}", secret.key, secret.masked_value);
+                }
+            }
+        }
+        SecretsCommands::Set { key, value } => {
+            client.set_secret(&distri::NewSecretRequest { key: key.clone(), value }).await?;
+            println!("Secret '{}' set.", key);
+        }
+        SecretsCommands::Delete { key } => {
+            client.delete_secret(&key).await?;
+            println!("Secret '{}' deleted.", key);
+        }
+    }
+    Ok(())
+}
+
+async fn handle_threads_command(client: &Distri, command: ThreadsCommands) -> Result<()> {
+    match command {
+        ThreadsCommands::List => {
+            let threads = client.list_threads().await?;
+            if threads.is_empty() {
+                println!("No threads found.");
+            } else {
+                for thread in threads {
+                    let agent = thread.agent_name.as_deref().unwrap_or("unknown");
+                    let title = thread.title.as_deref().unwrap_or("(no title)");
+                    println!("{} - {} [{}]", thread.id, title, agent);
+                }
+            }
+        }
+    }
+    Ok(())
 }
