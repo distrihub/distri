@@ -1258,29 +1258,25 @@ mod tests {
         let json =
             r#"{"name": "test", "model_settings": {"model": "gpt-4.1", "max_tokens": 4096}}"#;
         let def: StandardDefinition = serde_json::from_str(json).unwrap();
-        assert_eq!(def.model_settings().unwrap().max_tokens, Some(4096));
+        assert_eq!(def.model_settings().unwrap().inner.max_tokens, Some(4096));
     }
 
     #[test]
     fn test_max_tokens_none_when_absent() {
         let json = r#"{"name": "test", "model_settings": {"model": "gpt-4.1"}}"#;
         let def: StandardDefinition = serde_json::from_str(json).unwrap();
-        assert!(def.model_settings().unwrap().max_tokens.is_none());
+        assert!(def.model_settings().unwrap().inner.max_tokens.is_none());
     }
 
     #[test]
     fn test_max_tokens_none_skipped_in_serialization() {
         let settings = ModelSettings {
             model: "test-model".to_string(),
-            temperature: None,
-            max_tokens: None,
-            context_size: 20000,
-            top_p: None,
-            frequency_penalty: None,
-            presence_penalty: None,
-            provider: ModelProvider::OpenAI {},
-            parameters: None,
-            response_format: None,
+            inner: ModelSettingsInner {
+                max_tokens: None,
+                provider: ModelProvider::OpenAI {},
+                ..Default::default()
+            },
         };
         let json = serde_json::to_string(&settings).unwrap();
         assert!(!json.contains("max_tokens"));
@@ -1290,15 +1286,11 @@ mod tests {
     fn test_max_tokens_some_serialized() {
         let settings = ModelSettings {
             model: "test-model".to_string(),
-            max_tokens: Some(2048),
-            temperature: None,
-            context_size: 20000,
-            top_p: None,
-            frequency_penalty: None,
-            presence_penalty: None,
-            provider: ModelProvider::OpenAI {},
-            parameters: None,
-            response_format: None,
+            inner: ModelSettingsInner {
+                max_tokens: Some(2048),
+                provider: ModelProvider::OpenAI {},
+                ..Default::default()
+            },
         };
         let json = serde_json::to_string(&settings).unwrap();
         assert!(json.contains("\"max_tokens\":2048"));
