@@ -339,41 +339,13 @@ Search with result limit:
         let options: SearchOptions = serde_json::from_value(tool_call.input)
             .map_err(|e| anyhow::anyhow!("Invalid search options: {}", e))?;
 
-        let base_url = std::env::var("BROWSR_BASE_URL")
-            .or_else(|_| std::env::var("BROWSR_API_URL"))
-            .unwrap_or_else(|_| "https://api.browsr.dev".to_string());
-
-        // Build payload matching browsr-cloud /v1/search SearchRequest:
-        // limit must be a plain integer (not null) to avoid deserialization errors.
-        let mut payload = json!({ "query": options.query });
-        if let Some(limit) = options.limit {
-            payload["limit"] = json!(limit);
-        }
-
-        let mut req = reqwest::Client::new()
-            .post(format!("{}/v1/search", base_url))
-            .json(&payload);
-
-        if let Ok(api_key) = std::env::var("BROWSR_API_KEY") {
-            req = req.header("x-api-key", &api_key);
-        }
-
-        let resp = req
-            .send()
+        let client = BrowsrClient::from_env();
+        let response = client
+            .search(options)
             .await
             .map_err(|e| anyhow::anyhow!("Search failed: {}", e))?;
 
-        if !resp.status().is_success() {
-            let text = resp.text().await.unwrap_or_default();
-            return Err(anyhow::anyhow!("Search failed: {}", text));
-        }
-
-        let response: Value = resp
-            .json()
-            .await
-            .map_err(|e| anyhow::anyhow!("Search response parse failed: {}", e))?;
-
-        let parts = vec![Part::Data(response)];
+        let parts = vec![Part::Data(serde_json::to_value(response)?)];
         Ok(parts)
     }
 }
