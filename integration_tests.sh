@@ -129,10 +129,7 @@ echo ""
 
 # -- Skills --------------------------------------------------------------------
 echo "[6] Skills"
-# Known issue: /skills API returns 500 with error object instead of array.
-# The CLI deserializes as Vec<> which fails on the error map response.
-# TODO: fix server-side /skills endpoint, then re-enable this test.
-skip_test "skills list" "server-side /skills endpoint returns 500"
+run_test "skills list" "${DISTRI}" skills list
 echo ""
 
 # -- Run agent -----------------------------------------------------------------
