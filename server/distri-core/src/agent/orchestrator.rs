@@ -23,7 +23,7 @@ use distri_types::{
 use distri_types::{
     browser::BrowsrClientConfig,
     configuration::{
-        is_namespaced_plugin_id, split_namespaced_plugin_id, DistriServerConfig, StoreConfig,
+        DistriServerConfig, StoreConfig,
     },
     HookMutation,
 };
@@ -35,6 +35,14 @@ use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{mpsc, Mutex, RwLock};
 
 pub const SKILL_STORAGE_ROOT: &str = "storage/skills";
+
+fn is_namespaced_plugin_id(id: &str) -> bool {
+    id.contains('/')
+}
+
+fn split_namespaced_plugin_id(id: &str) -> Option<(&str, &str)> {
+    id.split_once('/')
+}
 
 #[derive(Clone)]
 pub struct AgentOrchestrator {
