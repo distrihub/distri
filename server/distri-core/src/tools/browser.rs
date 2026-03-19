@@ -45,7 +45,7 @@ impl Tool for DistriScrapeSharedTool {
                     "type": "array",
                     "items": {
                         "type": "string",
-                        "enum": ["markdown", "summary", "html", "rawHtml", "screenshot", "links", "json", "images", "branding"]
+                        "enum": ["markdown", "html", "screenshot", "structured", "agent"]
                     },
                     "description": "Output formats to request (default: [\"markdown\"])"
                 },
@@ -88,10 +88,10 @@ Scrape a page as markdown:
 {"url": "https://example.com"}
 
 Scrape with multiple formats:
-{"url": "https://example.com", "formats": ["markdown", "links", "screenshot"]}
+{"url": "https://example.com", "formats": ["markdown", "screenshot"]}
 
-Extract structured data:
-{"url": "https://example.com/products", "formats": ["json"], "json_options": {"prompt": "Extract all product names and prices"}}
+Scrape with structured extraction:
+{"url": "https://example.com/products", "formats": ["structured"], "json_options": {"prompt": "Extract all product names and prices"}}
 
 Scrape a JavaScript-heavy page:
 {"url": "https://example.com/spa", "formats": ["markdown", "screenshot"], "wait_for": 3000}
