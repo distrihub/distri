@@ -45,8 +45,8 @@ pub async fn execute_code_with_tools(
 
     let session_id = session.session_id.clone();
 
-    // Wrap code for execution based on language
-    let command = wrap_code_for_execution(code, language);
+    // Send raw code — browsr-shell wraps with the appropriate interpreter
+    let command = code.to_string();
 
     // Execute the code
     let result = client
@@ -124,21 +124,6 @@ fn detect_language(code: &str) -> &'static str {
     "javascript"
 }
 
-/// Wrap code for shell execution based on language.
-fn wrap_code_for_execution(code: &str, language: &str) -> String {
-    match language {
-        "python" => format!("python3 -c {}", shell_escape(code)),
-        "bash" => format!("bash -c {}", shell_escape(code)),
-        "javascript" => format!("node -e {}", shell_escape(code)),
-        _ => format!("bash -c {}", shell_escape(code)),
-    }
-}
-
-fn shell_escape(s: &str) -> String {
-    // Use single-quote wrapping with internal single-quote escaping
-    format!("'{}'", s.replace('\'', "'\\''"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -210,93 +195,4 @@ mod tests {
         assert_eq!(detect_language("  \n  import os\n"), "python");
     }
 
-    // ── Shell escaping ──────────────────────────────────────────
-
-    #[test]
-    fn shell_escape_simple() {
-        assert_eq!(shell_escape("hello"), "'hello'");
-    }
-
-    #[test]
-    fn shell_escape_with_spaces() {
-        assert_eq!(shell_escape("hello world"), "'hello world'");
-    }
-
-    #[test]
-    fn shell_escape_with_single_quotes() {
-        assert_eq!(shell_escape("it's"), "'it'\\''s'");
-    }
-
-    #[test]
-    fn shell_escape_with_double_quotes() {
-        assert_eq!(shell_escape(r#"say "hi""#), r#"'say "hi"'"#);
-    }
-
-    #[test]
-    fn shell_escape_with_newlines() {
-        assert_eq!(shell_escape("a\nb"), "'a\nb'");
-    }
-
-    #[test]
-    fn shell_escape_with_special_chars() {
-        assert_eq!(shell_escape("$HOME"), "'$HOME'");
-    }
-
-    // ── Code wrapping ───────────────────────────────────────────
-
-    #[test]
-    fn wrap_python() {
-        let cmd = wrap_code_for_execution("print(1)", "python");
-        assert!(cmd.starts_with("python3 -c "));
-        assert!(cmd.contains("print(1)"));
-    }
-
-    #[test]
-    fn wrap_bash() {
-        let cmd = wrap_code_for_execution("echo hi", "bash");
-        assert!(cmd.starts_with("bash -c "));
-        assert!(cmd.contains("echo hi"));
-    }
-
-    #[test]
-    fn wrap_javascript() {
-        let cmd = wrap_code_for_execution("console.log(1)", "javascript");
-        assert!(cmd.starts_with("node -e "));
-        assert!(cmd.contains("console.log(1)"));
-    }
-
-    #[test]
-    fn wrap_unknown_language_defaults_to_bash() {
-        let cmd = wrap_code_for_execution("echo hi", "ruby");
-        assert!(cmd.starts_with("bash -c "));
-    }
-
-    // ── Integration: detect + wrap roundtrip ────────────────────
-
-    #[test]
-    fn detect_and_wrap_python() {
-        let code = "import json\nprint(json.dumps({'a': 1}))";
-        let lang = detect_language(code);
-        let cmd = wrap_code_for_execution(code, lang);
-        assert_eq!(lang, "python");
-        assert!(cmd.starts_with("python3 -c "));
-    }
-
-    #[test]
-    fn detect_and_wrap_bash() {
-        let code = "#!/bin/bash\nls -la";
-        let lang = detect_language(code);
-        let cmd = wrap_code_for_execution(code, lang);
-        assert_eq!(lang, "bash");
-        assert!(cmd.starts_with("bash -c "));
-    }
-
-    #[test]
-    fn detect_and_wrap_javascript_default() {
-        let code = "const fs = require('fs');";
-        let lang = detect_language(code);
-        let cmd = wrap_code_for_execution(code, lang);
-        assert_eq!(lang, "javascript");
-        assert!(cmd.starts_with("node -e "));
-    }
 }
