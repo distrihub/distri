@@ -36,14 +36,6 @@ use tokio::sync::{mpsc, Mutex, RwLock};
 
 pub const SKILL_STORAGE_ROOT: &str = "storage/skills";
 
-fn is_namespaced_plugin_id(id: &str) -> bool {
-    id.contains('/')
-}
-
-fn split_namespaced_plugin_id(id: &str) -> Option<(&str, &str)> {
-    id.split_once('/')
-}
-
 #[derive(Clone)]
 pub struct AgentOrchestrator {
     pub mcp_registry: Arc<RwLock<McpServerRegistry>>,
@@ -1178,10 +1170,6 @@ impl AgentOrchestrator {
             return Some(agent);
         }
 
-        if is_namespaced_plugin_id(name) {
-            return None;
-        }
-
         let mut cursor = None;
         loop {
             let (agents, next_cursor) = self.stores.agent_store.list(cursor.clone(), None).await;
@@ -1209,24 +1197,6 @@ impl AgentOrchestrator {
         let full_name = agent.get_name();
         if full_name == target {
             return true;
-        }
-
-        if let Some((_, simple)) = split_namespaced_plugin_id(&full_name) {
-            if simple == target {
-                return true;
-            }
-        }
-
-        if let Some((target_package, target_simple)) = split_namespaced_plugin_id(target) {
-            return match agent {
-                distri_types::configuration::AgentConfig::StandardAgent(def) => {
-                    def.package_name
-                        .as_deref()
-                        .map(|pkg| pkg == target_package)
-                        .unwrap_or(false)
-                        && def.name == target_simple
-                }
-            };
         }
 
         false
