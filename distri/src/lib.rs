@@ -11,12 +11,13 @@ use thiserror::Error;
 pub use crate::external_tools_runtime::ExternalToolRegistry;
 pub use crate::hooks_runtime::HookRegistry;
 pub use client::{
-    AgentRegistrationResponse, ApiKeyResponse, ArtifactEntry, ArtifactListResponse,
+    AgentListItem, AgentRegistrationResponse, ApiKeyResponse, ArtifactEntry, ArtifactListResponse,
     ArtifactNamespace, ArtifactNamespaceList, ArtifactReadResponse, ArtifactSaveResponse,
-    CreatePluginRequest, CreateSkillRequest, CreateSkillScriptRequest, Distri, InvokeOptions,
-    LlmExecuteOptions, LlmExecuteResponse, LoginUrlResponse, NewPromptTemplateRequest,
-    PluginResponse, PluginsListResponse, PromptTemplateResponse, SkillListItemResponse,
-    SkillResponse, SyncPromptTemplatesResponse, TaskNamespaceResponse, UpdatePluginRequest,
+    ConnectionSummary, ConnectionToken, CreatePluginRequest, CreateSkillRequest,
+    CreateSkillScriptRequest, Distri, InvokeOptions, LlmExecuteOptions, LlmExecuteResponse,
+    LoginUrlResponse, NewPromptTemplateRequest, NewSecretRequest, PluginResponse, PluginsListResponse,
+    PromptTemplateResponse, SecretEntry, SkillListItemResponse, SkillResponse,
+    SyncPromptTemplatesResponse, TaskNamespaceResponse, ThreadSummary, UpdatePluginRequest,
     UpdateSkillRequest, ValidatePluginResponse, WorkspaceResponse,
 };
 pub use client_app::{AppError, DistriClientApp, ToolListItem};

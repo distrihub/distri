@@ -1966,3 +1966,173 @@ impl Distri {
         self.create_skill(request).await
     }
 }
+
+// ============================================================
+// Agents / Connections / Secrets / Threads API Types
+// ============================================================
+
+// ========== Agents API ==========
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct AgentListItem {
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub id: Option<String>,
+}
+
+// ========== Connections API ==========
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ConnectionSummary {
+    pub id: String,
+    pub name: String,
+    pub provider: String,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ConnectionToken {
+    pub access_token: String,
+    #[serde(default)]
+    pub token_type: Option<String>,
+    #[serde(default)]
+    pub expires_at: Option<String>,
+}
+
+// ========== Secrets API ==========
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SecretEntry {
+    pub id: String,
+    pub key: String,
+    pub masked_value: String,
+    #[serde(default)]
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct NewSecretRequest {
+    pub key: String,
+    pub value: String,
+}
+
+// ========== Threads API ==========
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ThreadSummary {
+    pub id: String,
+    #[serde(default)]
+    pub agent_name: Option<String>,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub created_at: Option<String>,
+    #[serde(default)]
+    pub updated_at: Option<String>,
+}
+
+impl Distri {
+    // ========== Agents API ==========
+
+    pub async fn list_agents(&self) -> Result<Vec<AgentListItem>, ClientError> {
+        let url = format!("{}/agents", self.base_url);
+        let resp = self.http.get(&url).send().await?;
+        if resp.status().is_success() {
+            Ok(resp.json().await?)
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!("failed to list agents: {}", text)))
+        }
+    }
+
+    // ========== Connections API ==========
+
+    pub async fn list_connections(&self) -> Result<Vec<ConnectionSummary>, ClientError> {
+        let url = format!("{}/connections", self.base_url);
+        let resp = self.http.get(&url).send().await?;
+        if resp.status().is_success() {
+            Ok(resp.json().await?)
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!("failed to list connections: {}", text)))
+        }
+    }
+
+    pub async fn get_connection_token(&self, connection_id: &str) -> Result<ConnectionToken, ClientError> {
+        let url = format!("{}/connections/{}/token", self.base_url, connection_id);
+        let resp = self.http.post(&url).send().await?;
+        if resp.status().is_success() {
+            Ok(resp.json().await?)
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!("failed to get connection token for {}: {}", connection_id, text)))
+        }
+    }
+
+    // ========== Secrets API ==========
+
+    pub async fn list_secrets(&self) -> Result<Vec<SecretEntry>, ClientError> {
+        let url = format!("{}/secrets", self.base_url);
+        let resp = self.http.get(&url).send().await?;
+        if resp.status().is_success() {
+            Ok(resp.json().await?)
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!("failed to list secrets: {}", text)))
+        }
+    }
+
+    pub async fn get_secret(&self, key: &str) -> Result<Option<SecretEntry>, ClientError> {
+        let url = format!("{}/secrets/{}", self.base_url, key);
+        let resp = self.http.get(&url).send().await?;
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if resp.status().is_success() {
+            Ok(Some(resp.json().await?))
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!("failed to get secret {}: {}", key, text)))
+        }
+    }
+
+    pub async fn set_secret(&self, request: &NewSecretRequest) -> Result<SecretEntry, ClientError> {
+        let url = format!("{}/secrets", self.base_url);
+        let resp = self.http.post(&url).json(request).send().await?;
+        if resp.status().is_success() {
+            Ok(resp.json().await?)
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!("failed to set secret: {}", text)))
+        }
+    }
+
+    pub async fn delete_secret(&self, key: &str) -> Result<(), ClientError> {
+        let url = format!("{}/secrets/{}", self.base_url, key);
+        let resp = self.http.delete(&url).send().await?;
+        if resp.status().is_success() || resp.status() == reqwest::StatusCode::NO_CONTENT {
+            Ok(())
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!("failed to delete secret {}: {}", key, text)))
+        }
+    }
+
+    // ========== Threads API ==========
+
+    pub async fn list_threads(&self) -> Result<Vec<ThreadSummary>, ClientError> {
+        let url = format!("{}/threads", self.base_url);
+        let resp = self.http.get(&url).send().await?;
+        if resp.status().is_success() {
+            Ok(resp.json().await?)
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!("failed to list threads: {}", text)))
+        }
+    }
+}
