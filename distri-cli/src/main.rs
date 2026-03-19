@@ -418,6 +418,8 @@ async fn main() -> Result<()> {
             println!("Streaming agent '{}' via {}", agent_name, base_url);
             let registry = app.registry();
             register_approval_handler(&registry);
+            let platform_tool = distri::PlatformTool::from_arc(std::sync::Arc::new(Distri::from_config(config.clone())));
+            platform_tool.register(&registry);
             let stream_config = config.clone().with_timeout(60);
             let http_client = stream_config.build_http_client()?;
             let client = AgentStreamClient::from_config(config.clone())
@@ -656,6 +658,8 @@ async fn run_interactive_chat(
 
     let registry = app.registry();
     register_approval_handler(&registry);
+    let platform_tool = distri::PlatformTool::from_arc(std::sync::Arc::new(Distri::from_config(config.clone())));
+    platform_tool.register(&registry);
 
     let stream_config = config.clone().with_timeout(60);
     let http_client = stream_config.build_http_client()?;
