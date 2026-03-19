@@ -131,6 +131,8 @@ pub fn cast_to_executor_context_tool(
         "delete_skill" => Ok(Box::new(platform::DeleteSkillTool)),
         "write_to_storage" => Ok(Box::new(platform::WriteToStorageTool)),
         "read_from_storage" => Ok(Box::new(platform::ReadFromStorageTool)),
+        // Unified platform tool
+        "distri_platform" => Ok(Box::new(crate::platform_service::DistriPlatformTool)),
         name if name.starts_with("call_") => {
             let safe_agent_name = name.strip_prefix("call_").unwrap_or(name);
             // Convert double underscores back to slashes for package/agent names
