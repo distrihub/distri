@@ -156,9 +156,6 @@ pub struct ExecutorContext {
     pub parent_task_id: Option<String>,
 
     pub dynamic_tools: Option<Arc<RwLock<Vec<Arc<dyn Tool>>>>>,
-    /// Optional connection store for platform tool connection operations.
-    /// Injected by the cloud layer; None in OSS deployments.
-    pub connection_store: Option<Arc<dyn crate::platform_service::PlatformConnectionStore>>,
     pub hook_prompt_state: Arc<RwLock<HookPromptState>>,
     pub hook_registry: Arc<RwLock<Option<HookRegistry>>>,
     /// Default model settings inherited from the orchestrator/workspace context.
@@ -215,7 +212,6 @@ impl Default for ExecutorContext {
             parent_tx: None,
             parent_task_id: None,
             dynamic_tools: None,
-            connection_store: None,
             hook_prompt_state: Arc::new(RwLock::new(HookPromptState::default())),
             hook_registry: Arc::new(RwLock::new(None)),
             default_model_settings: None,
@@ -765,7 +761,6 @@ impl ExecutorContext {
                 .clone()
                 .or_else(|| self.orchestrator.as_ref().map(|o| o.stores.clone())),
             dynamic_tools: self.dynamic_tools.clone(),
-            connection_store: self.connection_store.clone(),
             event_tx: self.event_tx.clone(),
             parent_task_id: Some(self.task_id.clone()),
             tool_metadata: self.tool_metadata.clone(),
@@ -853,7 +848,6 @@ impl ExecutorContext {
             parent_tx: self.parent_tx.clone(),
             parent_task_id: self.parent_task_id.clone(),
             dynamic_tools: self.dynamic_tools.clone(),
-            connection_store: self.connection_store.clone(),
             hook_prompt_state: self.hook_prompt_state.clone(),
             hook_registry: self.hook_registry.clone(),
             default_model_settings: self.default_model_settings.clone(),
