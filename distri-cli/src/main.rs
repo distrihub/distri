@@ -53,7 +53,7 @@ enum Commands {
 
     /// Run a single task against an agent
     Run {
-        #[clap(help = "Agent name (defaults to 'distri')")]
+        #[clap(long, help = "Agent name (defaults to 'distri')")]
         agent: Option<String>,
         #[clap(long, help = "Task text to send", required = true)]
         task: String,
@@ -593,6 +593,28 @@ fn resolve_distri_server_binary() -> PathBuf {
     PathBuf::from(format!("distri-server{}", std::env::consts::EXE_SUFFIX))
 }
 
+fn platform_tool_definition() -> serde_json::Value {
+    serde_json::json!({
+        "name": "distri_platform",
+        "description": "Manage platform resources. Actions: list_agents, get_agent({agent_id}), list_skills, get_skill({skill_id}), create_skill({name,content}), delete_skill({skill_id}), list_providers (available OAuth providers), connect({provider,scopes?}) returns auth_url for OAuth, list_connections, get_connection_token({connection_id}), list_secrets, get_secret({key}), set_secret({key,value}), delete_secret({key}), list_threads. Use 'connect' to initiate OAuth and get an auth_url for the user.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["list_actions", "list_agents", "get_agent", "list_skills", "get_skill", "create_skill", "delete_skill", "list_providers", "connect", "list_connections", "get_connection_token", "list_secrets", "get_secret", "set_secret", "delete_secret", "list_threads"],
+                    "description": "The action to perform"
+                },
+                "params": {
+                    "type": "object",
+                    "description": "Parameters for the action (e.g. {provider: 'google'} for connect)"
+                }
+            },
+            "required": ["action"]
+        }
+    })
+}
+
 fn build_message_params(content: String) -> MessageSendParams {
     MessageSendParams {
         message: A2aMessage {
@@ -607,20 +629,19 @@ fn build_message_params(content: String) -> MessageSendParams {
             metadata: None,
         },
         configuration: None,
-        metadata: None,
+        metadata: Some(serde_json::json!({
+            "external_tools": [platform_tool_definition()]
+        })),
     }
 }
 
 fn build_chat_message_params(content: String, thread_id: &str, model: &str) -> MessageSendParams {
-    let metadata = if model.trim().is_empty() {
-        None
-    } else {
-        Some(serde_json::json!({
-            "definition_overrides": {
-                "model": model,
-            }
-        }))
-    };
+    let mut meta = serde_json::json!({
+        "external_tools": [platform_tool_definition()]
+    });
+    if !model.trim().is_empty() {
+        meta["definition_overrides"] = serde_json::json!({ "model": model });
+    }
 
     MessageSendParams {
         message: A2aMessage {
@@ -635,7 +656,7 @@ fn build_chat_message_params(content: String, thread_id: &str, model: &str) -> M
             metadata: None,
         },
         configuration: None,
-        metadata,
+        metadata: Some(meta),
     }
 }
 
@@ -1557,7 +1578,7 @@ async fn handle_connections_command(client: &Distri, command: ConnectionsCommand
             } else {
                 for conn in connections {
                     let status = conn.status.as_deref().unwrap_or("unknown");
-                    println!("{} - {} [{}] ({})", conn.id, conn.name, conn.provider, status);
+                    println!("{} - {} ({})", conn.id, conn.name, status);
                 }
             }
         }

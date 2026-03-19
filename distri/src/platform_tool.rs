@@ -39,7 +39,7 @@ impl PlatformTool {
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
-                let params = call.input.clone();
+                let params = call.input.get("params").cloned().unwrap_or(json!({}));
 
                 let result = match tool.execute(&action, params).await {
                     Ok(v) => v,
@@ -66,6 +66,8 @@ impl PlatformTool {
                 "get_skill",
                 "create_skill",
                 "delete_skill",
+                "list_providers",
+                "connect",
                 "list_connections",
                 "get_connection_token",
                 "list_secrets",
@@ -119,6 +121,21 @@ impl PlatformTool {
                 let id = required_param(&params, "skill_id")?;
                 self.client.delete_skill(&id).await?;
                 Ok(json!({ "deleted": true, "skill_id": id }))
+            }
+
+            "list_providers" => {
+                let providers = self.client.list_providers().await?;
+                Ok(serde_json::to_value(providers)?)
+            }
+
+            "connect" => {
+                let provider = required_param(&params, "provider")?;
+                let scopes: Vec<String> = params
+                    .get("scopes")
+                    .and_then(|v| serde_json::from_value(v.clone()).ok())
+                    .unwrap_or_default();
+                let result = self.client.connect(&provider, &scopes).await?;
+                Ok(serde_json::to_value(result)?)
             }
 
             "list_connections" => {

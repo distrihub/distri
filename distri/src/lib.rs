@@ -13,9 +13,9 @@ pub use crate::hooks_runtime::HookRegistry;
 pub use client::{
     AgentListItem, AgentRegistrationResponse, ApiKeyResponse, ArtifactEntry, ArtifactListResponse,
     ArtifactNamespace, ArtifactNamespaceList, ArtifactReadResponse, ArtifactSaveResponse,
-    ConnectionSummary, ConnectionToken, CreatePluginRequest, CreateSkillRequest,
+    ConnectResponse, ConnectionSummary, ConnectionToken, CreatePluginRequest, CreateSkillRequest,
     CreateSkillScriptRequest, Distri, InvokeOptions, LlmExecuteOptions, LlmExecuteResponse,
-    LoginUrlResponse, NewPromptTemplateRequest, NewSecretRequest, PluginResponse, PluginsListResponse,
+    LoginUrlResponse, NewPromptTemplateRequest, NewSecretRequest, PluginResponse, PluginsListResponse, ProviderInfo,
     PromptTemplateResponse, SecretEntry, SkillListItemResponse, SkillResponse,
     SyncPromptTemplatesResponse, TaskNamespaceResponse, ThreadSummary, UpdatePluginRequest,
     UpdateSkillRequest, ValidatePluginResponse, WorkspaceResponse,

@@ -1988,11 +1988,14 @@ pub struct AgentListItem {
 pub struct ConnectionSummary {
     pub id: String,
     pub name: String,
-    pub provider: String,
     #[serde(default)]
     pub status: Option<String>,
     #[serde(default)]
+    pub config: Option<serde_json::Value>,
+    #[serde(default)]
     pub created_at: Option<String>,
+    #[serde(default)]
+    pub updated_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -2002,6 +2005,27 @@ pub struct ConnectionToken {
     pub token_type: Option<String>,
     #[serde(default)]
     pub expires_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ProviderInfo {
+    pub name: String,
+    #[serde(default)]
+    pub available: bool,
+    #[serde(default)]
+    pub scopes_supported: Vec<String>,
+    #[serde(default)]
+    pub default_scopes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ConnectResponse {
+    #[serde(default)]
+    pub connection_id: Option<String>,
+    #[serde(default)]
+    pub auth_url: Option<String>,
+    #[serde(rename = "type", default)]
+    pub response_type: Option<String>,
 }
 
 // ========== Secrets API ==========
@@ -2071,6 +2095,37 @@ impl Distri {
         } else {
             let text = resp.text().await.unwrap_or_default();
             Err(ClientError::InvalidResponse(format!("failed to get connection token for {}: {}", connection_id, text)))
+        }
+    }
+
+    /// List available OAuth providers and their configuration.
+    pub async fn list_providers(&self) -> Result<Vec<ProviderInfo>, ClientError> {
+        let url = format!("{}/connections/providers", self.base_url);
+        let resp = self.http.get(&url).send().await?;
+        if resp.status().is_success() {
+            Ok(resp.json().await?)
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!("failed to list providers: {}", text)))
+        }
+    }
+
+    /// Initiate an OAuth connection. Returns the auth URL the user must visit.
+    pub async fn connect(&self, provider: &str, scopes: &[String]) -> Result<ConnectResponse, ClientError> {
+        let url = format!("{}/connections", self.base_url);
+        let payload = serde_json::json!({
+            "auth_type": "oauth",
+            "auth": {
+                "provider": provider,
+                "scopes": scopes,
+            }
+        });
+        let resp = self.http.post(&url).json(&payload).send().await?;
+        if resp.status().is_success() {
+            Ok(resp.json().await?)
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!("failed to initiate connection for {}: {}", provider, text)))
         }
     }
 
