@@ -50,5 +50,7 @@ pub enum ClientError {
 
 mod external_tools_runtime;
 mod hooks_runtime;
+pub mod platform_tool;
 
+pub use platform_tool::PlatformTool;
 pub use distri_types as types;

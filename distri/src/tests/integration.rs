@@ -66,11 +66,12 @@ async fn llm_execute_returns_payload() {
     let client = Distri::from_config(DistriConfig::new(&server.base_url));
     let llm_def = LlmDefinition {
         name: "unit-llm".into(),
-        model_settings: ModelSettings {
+        model_settings: Some(ModelSettings {
             model: "test".into(),
-            ..Default::default()
-        },
-        ..Default::default()
+            inner: Default::default(),
+        }),
+        tool_format: Default::default(),
+        tool_delivery_mode: Default::default(),
     };
     let ctx = LLmContext {
         messages: vec![Message::user("hi".into(), None)],
