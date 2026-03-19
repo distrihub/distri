@@ -1879,7 +1879,13 @@ impl Distri {
         let resp = self.http.get(&url).send().await?;
 
         if resp.status().is_success() {
-            let list: Vec<SkillListItemResponse> = resp.json().await?;
+            // Cloud wraps in {"skills": [...]}, open-source returns bare array
+            let body: serde_json::Value = resp.json().await?;
+            let list: Vec<SkillListItemResponse> = if let Some(skills) = body.get("skills") {
+                serde_json::from_value(skills.clone())?
+            } else {
+                serde_json::from_value(body)?
+            };
             Ok(list)
         } else {
             let text = resp.text().await.unwrap_or_default();

@@ -197,6 +197,11 @@ pub async fn handle_message_send_streaming_sse(
     let stream_workspace_id = workspace_id;
     let id_field_clone = executor_context.session_id.clone();
 
+    // Validate provider secrets BEFORE entering the stream! macro,
+    // because stream! doesn't inherit task-local storage (user/workspace context)
+    // needed by TenantSecretStore.
+    let secret_validation = validate_provider_secrets(&executor, &agent_id).await;
+
     let stream = async_stream::stream! {
         let user_id = stream_user_id.clone();
         let params: MessageSendParams = match serde_json::from_value(params) {
@@ -220,8 +225,8 @@ pub async fn handle_message_send_streaming_sse(
             }
         };
 
-        // Validate provider secrets early to fail fast with a clear error message
-        if let Err(e) = validate_provider_secrets(&executor, &agent_id).await {
+        // Check the pre-computed secret validation result
+        if let Err(e) = secret_validation {
             let error = JsonRpcResponse {
                 jsonrpc: "2.0".to_string(),
                 result: None,
