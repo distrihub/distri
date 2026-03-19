@@ -34,6 +34,13 @@ impl BrowsrShellClient {
             }
         }
 
+        let has_key = headers.contains_key("x-api-key");
+        tracing::info!(
+            "[BrowsrShellClient::from_env] base_url={}, has_api_key={}",
+            base_url,
+            has_key
+        );
+
         let client = reqwest::Client::builder()
             .default_headers(headers)
             .timeout(std::time::Duration::from_secs(300))
@@ -78,6 +85,7 @@ impl BrowsrShellClient {
         request: &CreateShellSessionRequest,
     ) -> Result<CreateShellSessionResponse, AgentError> {
         let url = format!("{}/shell/sessions", self.base_url);
+        tracing::info!("[BrowsrShellClient::create_session] POST {}", url);
         let resp = self
             .client
             .post(&url)
@@ -88,8 +96,17 @@ impl BrowsrShellClient {
                 AgentError::ToolExecution(format!("Shell session creation failed: {}", e))
             })?;
 
+        tracing::info!(
+            "[BrowsrShellClient::create_session] response status={}",
+            resp.status()
+        );
+
         if !resp.status().is_success() {
             let text = resp.text().await.unwrap_or_default();
+            tracing::error!(
+                "[BrowsrShellClient::create_session] failed: {}",
+                text
+            );
             return Err(AgentError::ToolExecution(format!(
                 "Shell session creation failed: {}",
                 text

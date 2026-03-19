@@ -18,9 +18,9 @@ warp = "0.3"
 serde = { workspace = true }
 urlencoding = "2.1"
 
-distri = { path = "../distri", version = "0.3.5" }
-distri-a2a = { path = "../distri-a2a", version = "0.3.5" }
-distri-types = { path = "../distri-types", version = "0.3.5" }
+distri = { path = "../distri", version = "0.3.6" }
+distri-a2a = { path = "../distri-a2a", version = "0.3.6" }
+distri-types = { path = "../distri-types", version = "0.3.6" }
 uuid = { version = "1.13.1", features = ["v4"] }
 tracing-subscriber = { workspace = true }
 tracing = { workspace = true }
