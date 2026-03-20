@@ -30,7 +30,7 @@ Look for:
 
 ### 3. Test Connection Token
 ```
-distri_platform({ action: "get_connection_token", params: { connection_id: "<id>" } })
+distri_platform({ action: "connection_request", params: { connection_id: "<id>" } })
 ```
 Check: Does it return an `access_token`? Is `expires_at` in the future?
 
@@ -63,7 +63,7 @@ distri_platform({
 | Symptom | Cause | Fix |
 |---------|-------|-----|
 | `connection_request` returns 403 | Insufficient scopes | Use `connect` with `additional_scopes` |
-| `get_connection_token` returns "No token" | OAuth not completed | Complete the auth URL |
+| `connection_request` returns "No token" | OAuth not completed | Complete the auth URL |
 | Connection status "error" | Token refresh failed | Delete and reconnect |
 | Agent uses browser instead of API | Connection context not injected | Check `distri.md` has `{{> connections}}` |
 

@@ -2,8 +2,9 @@
 name = "distri"
 version = "1.0.0"
 description = "Master orchestrator agent for Distri - manages workspaces, agents, skills, and provides full platform control through conversational interface"
-append_default_instructions = true
-sub_agents = ["search", "web", "code", "deepresearch"]
+# append_default_instructions = true
+sub_agents = ["search", "code"]
+# sub_agents = ["search", "web", "code", "deepresearch"]
 max_iterations = 50
 tool_format = "provider"
 tool_delivery_mode = "tool_search"
@@ -19,7 +20,7 @@ reasoning_depth = "deep"
 type = "tools"
 
 [tools]
-builtin = ["*"]
+builtin = ["tool_search", "transfer_to_agent"]
 external = ["distri_platform"]
 
 [[available_skills]]
@@ -50,13 +51,15 @@ You store and retrieve information across conversations using session storage. P
 
 # TASK ROUTING
 
-**IMPORTANT: Check CONNECTIONS section first.** If the user mentions sheets, docs, emails, files, channels, repos, or any service that has an active connection, ALWAYS use `connection_request`. Never use filesystem search, browser automation, or web search for data the user has a connection for.
+**IMPORTANT: Check CONNECTIONS section first.** If the user mentions sheets, docs, emails, files, channels, repos, or any service that has an active connection:
+1. First try `connection_request` (fastest, token auto-injected)
+2. If `connection_request` fails (403, API disabled, etc.), fall back to `call_code` — write Python/JS code that calls the API using the connection token
+3. Never use filesystem search or web search for data the user has a connection for
 
-- **User's data (sheets/docs/email/drive/repos/channels)** → `connection_request` via connected service
-- **Web search** → delegate to search sub-agent
-- **Code execution** → delegate to code sub-agent
-- **Complex research** → delegate to deepresearch sub-agent
-- **Web browsing/scraping** → delegate to web sub-agent
+- **User's data (sheets/docs/email/drive/repos/channels)** → `connection_request`, fallback to `call_code`
+- **Fetch data from APIs (stocks, weather, crypto, etc.)** → `call_code` with Python (install packages like yfinance, requests via subprocess)
+- **Data processing, charts, calculations** → `call_code` with Python
+- **Web search for information** → delegate to search sub-agent
 - **Platform operations** (workspaces, agents, skills, keys) → use distri_platform directly
 
 # BEHAVIOR
@@ -87,21 +90,4 @@ Adapt to the channel:
 {{#if max_steps}}
 # PROGRESS
 Steps remaining: {{remaining_steps}}/{{max_steps}}
-{{/if}}
-
-# AVAILABLE TOOLS
-{{available_tools}}
-
-{{#if (eq tool_format "json")}}
-{{> tools_json}}
-{{/if}}
-{{#if (eq tool_format "xml")}}
-{{> tools_xml}}
-{{/if}}
-
-{{> reasoning}}
-
-{{#if scratchpad}}
-# Previous Steps
-{{scratchpad}}
 {{/if}}
