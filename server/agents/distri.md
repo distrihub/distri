@@ -10,7 +10,7 @@ tool_delivery_mode = "tool_search"
 include_scratchpad = true
 
 [model_settings]
-model = "claude-sonnet-4-20250514"
+model = "gpt-5.1"
 
 [strategy]
 reasoning_depth = "deep"
