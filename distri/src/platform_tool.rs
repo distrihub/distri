@@ -70,6 +70,7 @@ impl PlatformTool {
                 "connect",
                 "list_connections",
                 "get_connection_token",
+                "get_connection_usage",
                 "connection_request",
                 "register_provider",
                 "list_provider_templates",
@@ -150,12 +151,22 @@ impl PlatformTool {
                         let status = existing.status.as_deref().unwrap_or("unknown");
                         if status == "connected" {
                             if additional_scopes.is_empty() {
+                                let existing_scopes: Vec<String> = existing
+                                    .config
+                                    .as_ref()
+                                    .and_then(|c| c.get("scopes"))
+                                    .and_then(|v| serde_json::from_value(v.clone()).ok())
+                                    .unwrap_or_default();
+                                let hint = capability_hint(&provider, &existing_scopes);
+
                                 return Ok(json!({
                                     "already_connected": true,
                                     "connection_id": existing.id,
                                     "provider": provider,
                                     "status": status,
-                                    "message": format!("{} is already connected. Use get_connection_token with connection_id to get an access token, or use connection_request to make authenticated API calls.", provider)
+                                    "current_scopes": existing_scopes,
+                                    "capabilities": hint,
+                                    "next_steps": format!("Use 'get_connection_usage' with connection_id '{}' for API docs and examples, then 'connection_request' to make calls. If you need more scopes, use connect({{provider: \"{}\", additional_scopes: [\"scope\"]}}).", existing.id, provider)
                                 }));
                             }
                             // Re-trigger OAuth with expanded scopes: merge existing + additional
@@ -194,14 +205,71 @@ impl PlatformTool {
             }
 
             "list_connections" => {
+                // Lightweight: return connections with scopes + short capability hints
                 let connections = self.client.list_connections().await?;
-                Ok(serde_json::to_value(connections)?)
+                let enriched: Vec<Value> = connections
+                    .iter()
+                    .map(|c| {
+                        let scopes: Vec<String> = c
+                            .config
+                            .as_ref()
+                            .and_then(|cfg| cfg.get("scopes"))
+                            .and_then(|v| serde_json::from_value(v.clone()).ok())
+                            .unwrap_or_default();
+                        let hint = capability_hint(&c.name, &scopes);
+                        json!({
+                            "connection_id": c.id,
+                            "provider": c.name,
+                            "status": c.status.as_deref().unwrap_or("unknown"),
+                            "scopes": scopes,
+                            "capabilities": hint,
+                        })
+                    })
+                    .collect();
+                Ok(json!({
+                    "connections": enriched,
+                    "tip": "Use 'connection_request' with {connection_id, method, url, headers?, body?} to make authenticated API calls. Use 'get_connection_usage' with {connection_id} for full API docs and examples before your first call. If scopes are insufficient, use 'connect' with 'additional_scopes' to expand permissions."
+                }))
             }
 
             "get_connection_token" => {
                 let id = required_param(&params, "connection_id")?;
                 let token = self.client.get_connection_token(&id).await?;
-                Ok(serde_json::to_value(token)?)
+                let mut result = serde_json::to_value(token)?;
+                result["tip"] = json!("Prefer 'connection_request' over raw tokens — it auto-injects auth and handles refresh. Use 'get_connection_usage' for API endpoint examples.");
+                Ok(result)
+            }
+
+            "get_connection_usage" => {
+                let id = required_param(&params, "connection_id")?;
+                let detail = self.client.get_connection_detail(&id).await?;
+                let skill_content = detail
+                    .get("skill")
+                    .and_then(|s| s.get("content"))
+                    .and_then(|c| c.as_str());
+                let scopes: Vec<String> = detail
+                    .get("config")
+                    .and_then(|c| c.get("scopes"))
+                    .and_then(|v| serde_json::from_value(v.clone()).ok())
+                    .unwrap_or_default();
+                let provider = detail
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown");
+
+                match skill_content {
+                    Some(content) => Ok(json!({
+                        "provider": provider,
+                        "current_scopes": scopes,
+                        "api_usage": content,
+                        "tip": format!("Use 'connection_request' with connection_id '{}' to call these APIs. If you need more scopes, use connect({{provider: \"{}\", additional_scopes: [\"scope_name\"]}}).", id, provider)
+                    })),
+                    None => Ok(json!({
+                        "provider": provider,
+                        "current_scopes": scopes,
+                        "api_usage": format!("No detailed API docs available for {}. Use connection_request with standard REST API endpoints for this provider.", provider),
+                    })),
+                }
             }
 
             "connection_request" => {
@@ -315,6 +383,62 @@ fn required_param(params: &Value, key: &str) -> Result<String> {
         .ok_or_else(|| anyhow!("Missing required parameter: {key}"))
 }
 
+/// Return a short, token-efficient capability summary for a provider given its scopes.
+fn capability_hint(provider: &str, scopes: &[String]) -> String {
+    match provider {
+        "google" => {
+            let mut caps = Vec::new();
+            let joined = scopes.join(" ");
+            if joined.contains("calendar") {
+                caps.push("Calendar");
+            }
+            if joined.contains("gmail") {
+                caps.push("Gmail");
+            }
+            if joined.contains("drive") {
+                caps.push("Drive");
+            }
+            if joined.contains("spreadsheet") || joined.contains("sheets") {
+                caps.push("Sheets");
+            }
+            if caps.is_empty() {
+                caps.push("Profile only — use additional_scopes to add APIs");
+            }
+            format!("Google APIs: {}", caps.join(", "))
+        }
+        "github" => {
+            let joined = scopes.join(" ");
+            if joined.contains("repo") {
+                "GitHub: repos, issues, PRs".to_string()
+            } else {
+                "GitHub: user profile — use additional_scopes=[\"repo\"] for repos".to_string()
+            }
+        }
+        "slack" => {
+            let mut caps = Vec::new();
+            let joined = scopes.join(" ");
+            if joined.contains("users") {
+                caps.push("users");
+            }
+            if joined.contains("channels") {
+                caps.push("channels");
+            }
+            if joined.contains("chat") {
+                caps.push("messaging");
+            }
+            if caps.is_empty() {
+                "Slack: basic access".to_string()
+            } else {
+                format!("Slack: {}", caps.join(", "))
+            }
+        }
+        "notion" => "Notion: pages, databases, search".to_string(),
+        "microsoft" => "Microsoft Graph: mail, calendar, files".to_string(),
+        "twitter" => "Twitter/X: tweets, users, search".to_string(),
+        _ => format!("{}: connected", provider),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -334,6 +458,7 @@ mod tests {
         assert!(actions.contains(&"list_agents".to_string()));
         assert!(actions.contains(&"list_skills".to_string()));
         assert!(actions.contains(&"list_connections".to_string()));
+        assert!(actions.contains(&"get_connection_usage".to_string()));
         assert!(actions.contains(&"connection_request".to_string()));
         assert!(actions.contains(&"register_provider".to_string()));
         assert!(actions.contains(&"list_provider_templates".to_string()));
@@ -341,7 +466,7 @@ mod tests {
         assert!(actions.contains(&"import_skill".to_string()));
         assert!(actions.contains(&"list_secrets".to_string()));
         assert!(actions.contains(&"list_threads".to_string()));
-        assert_eq!(actions.len(), 21);
+        assert_eq!(actions.len(), 22);
     }
 
     #[tokio::test]
@@ -469,6 +594,19 @@ mod tests {
         assert!(
             err.to_string().contains("key"),
             "Expected 'key' in error, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_connection_usage_missing_param() {
+        let tool = make_tool();
+        let err = tool
+            .execute("get_connection_usage", json!({}))
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("connection_id"),
+            "Expected 'connection_id' in error, got: {err}"
         );
     }
 

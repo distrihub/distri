@@ -413,7 +413,10 @@ async fn main() -> Result<()> {
                     stream_agent_id = uuid.to_string();
                 }
             }
-            let params = build_message_params(task);
+            // Fetch connections to inject into agent context
+            let distri_client = Distri::from_config(config.clone());
+            let connections_context = build_connections_context(&distri_client).await;
+            let params = build_message_params(task, connections_context);
 
             println!("Streaming agent '{}' via {}", agent_name, base_url);
             let registry = app.registry();
@@ -596,13 +599,13 @@ fn resolve_distri_server_binary() -> PathBuf {
 fn platform_tool_definition() -> serde_json::Value {
     serde_json::json!({
         "name": "distri_platform",
-        "description": "Manage platform resources. Actions: list_agents, get_agent({agent_id}), list_skills, get_skill({skill_id}), create_skill({name,content}), delete_skill({skill_id}), list_providers, connect({provider,scopes?,additional_scopes?}), list_connections, get_connection_token({connection_id}), connection_request({connection_id,method,url,headers?,body?}), register_provider({name|template,client_id,client_secret,...}), list_provider_templates, discover_skill({query}), import_skill({url,name?}), list_secrets, get_secret({key}), set_secret({key,value}), delete_secret({key}), list_threads. Use 'connection_request' for authenticated API calls. Use 'discover_skill' to find skills from curated repos, then 'import_skill' to import them.",
+        "description": "Manage platform resources. Actions: list_agents, get_agent({agent_id}), list_skills, get_skill({skill_id}), create_skill({name,content}), delete_skill({skill_id}), list_providers, connect({provider,scopes?,additional_scopes?}), list_connections, get_connection_token({connection_id}), get_connection_usage({connection_id}) returns API docs/examples for a connection, connection_request({connection_id,method,url,headers?,body?}) makes authenticated API calls, register_provider({name|template,client_id,client_secret,...}), list_provider_templates, discover_skill({query}), import_skill({url,name?}), list_secrets, get_secret({key}), set_secret({key,value}), delete_secret({key}), list_threads. Workflow for API calls: list_connections → get_connection_usage → connection_request.",
         "parameters": {
             "type": "object",
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["list_actions", "list_agents", "get_agent", "list_skills", "get_skill", "create_skill", "delete_skill", "list_providers", "connect", "list_connections", "get_connection_token", "connection_request", "register_provider", "list_provider_templates", "discover_skill", "import_skill", "list_secrets", "get_secret", "set_secret", "delete_secret", "list_threads"],
+                    "enum": ["list_actions", "list_agents", "get_agent", "list_skills", "get_skill", "create_skill", "delete_skill", "list_providers", "connect", "list_connections", "get_connection_token", "get_connection_usage", "connection_request", "register_provider", "list_provider_templates", "discover_skill", "import_skill", "list_secrets", "get_secret", "set_secret", "delete_secret", "list_threads"],
                     "description": "The action to perform"
                 },
                 "params": {
@@ -615,7 +618,45 @@ fn platform_tool_definition() -> serde_json::Value {
     })
 }
 
-fn build_message_params(content: String) -> MessageSendParams {
+/// Build a lightweight connections summary to inject into the agent's prompt context.
+async fn build_connections_context(client: &Distri) -> Option<String> {
+    let connections = client.list_connections().await.ok()?;
+    if connections.is_empty() {
+        return None;
+    }
+    let lines: Vec<String> = connections
+        .iter()
+        .filter(|c| c.status.as_deref() == Some("connected"))
+        .map(|c| {
+            let scopes: Vec<String> = c
+                .config
+                .as_ref()
+                .and_then(|cfg| cfg.get("scopes"))
+                .and_then(|v| serde_json::from_value(v.clone()).ok())
+                .unwrap_or_default();
+            format!(
+                "- **{}** (connection_id: `{}`): scopes=[{}]",
+                c.name,
+                c.id,
+                scopes.join(", ")
+            )
+        })
+        .collect();
+    if lines.is_empty() {
+        return None;
+    }
+    Some(lines.join("\n"))
+}
+
+fn build_message_params(content: String, connections_context: Option<String>) -> MessageSendParams {
+    let mut meta = serde_json::json!({
+        "external_tools": [platform_tool_definition()]
+    });
+    if let Some(conn_ctx) = connections_context {
+        meta["dynamic_values"] = serde_json::json!({
+            "available_connections": conn_ctx
+        });
+    }
     MessageSendParams {
         message: A2aMessage {
             kind: EventKind::Message,
@@ -629,18 +670,22 @@ fn build_message_params(content: String) -> MessageSendParams {
             metadata: None,
         },
         configuration: None,
-        metadata: Some(serde_json::json!({
-            "external_tools": [platform_tool_definition()]
-        })),
+        metadata: Some(meta),
     }
 }
 
-fn build_chat_message_params(content: String, thread_id: &str, model: &str) -> MessageSendParams {
+fn build_chat_message_params(content: String, thread_id: &str, model: &str, connections_context: Option<String>) -> MessageSendParams {
     let mut meta = serde_json::json!({
         "external_tools": [platform_tool_definition()]
     });
     if !model.trim().is_empty() {
         meta["definition_overrides"] = serde_json::json!({ "model": model });
+    }
+    if let Some(conn_ctx) = connections_context {
+        let dv = meta.get("dynamic_values").and_then(|v| v.as_object().cloned()).unwrap_or_default();
+        let mut dv = dv;
+        dv.insert("available_connections".to_string(), serde_json::Value::String(conn_ctx));
+        meta["dynamic_values"] = serde_json::Value::Object(dv);
     }
 
     MessageSendParams {
@@ -750,7 +795,10 @@ async fn run_interactive_chat(
             }
         };
 
-        let params = build_chat_message_params(input.to_string(), &thread_id, &current_model);
+        // Fetch connections context for agent prompt (lightweight, only connected providers)
+        let distri_client = Distri::from_config(config.clone());
+        let connections_context = build_connections_context(&distri_client).await;
+        let params = build_chat_message_params(input.to_string(), &thread_id, &current_model, connections_context);
 
         if let Err(err) = print_stream_verbose(&stream_client, &stream_agent_id, params, verbose).await {
             eprintln!("Error from agent: {}", err);

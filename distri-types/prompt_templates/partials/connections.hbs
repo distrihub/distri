@@ -1,0 +1,13 @@
+{{#if available_connections}}
+# CONNECTIONS
+You have OAuth connections to external services. Use them to access user data via APIs.
+
+## How to use connections
+1. Check the connection list below — each shows provider, scopes, and capabilities
+2. Call `distri_platform` with action `get_connection_usage` and `{connection_id}` to get API endpoint examples
+3. Call `distri_platform` with action `connection_request` and `{connection_id, method, url, headers?, body?}` to make authenticated API calls (token is auto-injected)
+4. If a connection exists but lacks the scopes you need, call `connect` with `additional_scopes` to re-trigger OAuth
+
+## Connected Services
+{{{available_connections}}}
+{{/if}}

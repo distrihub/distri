@@ -2095,6 +2095,30 @@ impl Distri {
         }
     }
 
+    /// List connections with skill content included inline.
+    pub async fn list_connections_with_skills(&self) -> Result<serde_json::Value, ClientError> {
+        let url = format!("{}/connections?include_skills=true", self.base_url);
+        let resp = self.http.get(&url).send().await?;
+        if resp.status().is_success() {
+            Ok(resp.json().await?)
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!("failed to list connections: {}", text)))
+        }
+    }
+
+    /// Get connection detail with skill content.
+    pub async fn get_connection_detail(&self, connection_id: &str) -> Result<serde_json::Value, ClientError> {
+        let url = format!("{}/connections/{}/detail", self.base_url, connection_id);
+        let resp = self.http.get(&url).send().await?;
+        if resp.status().is_success() {
+            Ok(resp.json().await?)
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!("failed to get connection detail: {}", text)))
+        }
+    }
+
     pub async fn get_connection_token(&self, connection_id: &str) -> Result<ConnectionToken, ClientError> {
         let url = format!("{}/connections/{}/token", self.base_url, connection_id);
         let resp = self.http.post(&url).send().await?;

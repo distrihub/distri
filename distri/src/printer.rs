@@ -71,6 +71,7 @@ struct ChatState {
     tool_calls: HashMap<String, ToolCallState>,
     current_message_id: Option<String>,
     is_planning: bool,
+    printed_header: bool,
 }
 
 pub struct EventPrinter {
@@ -101,6 +102,15 @@ impl EventPrinter {
     }
 
     pub async fn handle_event(&mut self, event: &AgentEvent) {
+        // Print thread/task IDs once on the first event
+        if !self.state.printed_header {
+            self.state.printed_header = true;
+            println!(
+                "{}thread: {}  task: {}{}",
+                COLOR_GRAY, event.thread_id, event.task_id, COLOR_RESET
+            );
+        }
+
         // Clear the transient "Planning…" line before any other event prints output
         match &event.event {
             AgentEventType::PlanStarted { .. } | AgentEventType::PlanFinished { .. } => {}
