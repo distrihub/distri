@@ -70,6 +70,11 @@ impl PlatformTool {
                 "connect",
                 "list_connections",
                 "get_connection_token",
+                "connection_request",
+                "register_provider",
+                "list_provider_templates",
+                "discover_skill",
+                "import_skill",
                 "list_secrets",
                 "get_secret",
                 "set_secret",
@@ -134,26 +139,57 @@ impl PlatformTool {
                     .get("scopes")
                     .and_then(|v| serde_json::from_value(v.clone()).ok())
                     .unwrap_or_default();
+                let additional_scopes: Vec<String> = params
+                    .get("additional_scopes")
+                    .and_then(|v| serde_json::from_value(v.clone()).ok())
+                    .unwrap_or_default();
 
                 // Check if connection already exists for this provider
                 if let Ok(connections) = self.client.list_connections().await {
                     if let Some(existing) = connections.iter().find(|c| c.name == provider) {
                         let status = existing.status.as_deref().unwrap_or("unknown");
                         if status == "connected" {
-                            return Ok(json!({
-                                "already_connected": true,
-                                "connection_id": existing.id,
-                                "provider": provider,
-                                "status": status,
-                                "message": format!("{} is already connected. Use get_connection_token with connection_id to get an access token.", provider)
-                            }));
+                            if additional_scopes.is_empty() {
+                                return Ok(json!({
+                                    "already_connected": true,
+                                    "connection_id": existing.id,
+                                    "provider": provider,
+                                    "status": status,
+                                    "message": format!("{} is already connected. Use get_connection_token with connection_id to get an access token, or use connection_request to make authenticated API calls.", provider)
+                                }));
+                            }
+                            // Re-trigger OAuth with expanded scopes: merge existing + additional
+                            let existing_scopes: Vec<String> = existing
+                                .config
+                                .as_ref()
+                                .and_then(|c| c.get("scopes"))
+                                .and_then(|v| serde_json::from_value(v.clone()).ok())
+                                .unwrap_or_default();
+                            let mut merged: Vec<String> = existing_scopes;
+                            for s in &additional_scopes {
+                                if !merged.contains(s) {
+                                    merged.push(s.clone());
+                                }
+                            }
+                            // Delete the existing connection and recreate with expanded scopes
+                            let _ = self.client.delete_connection(&existing.id).await;
+                            let result = self.client.connect(&provider, &merged).await?;
+                            return Ok(serde_json::to_value(result)?);
                         }
                         // Pending — delete and re-create to get a fresh auth URL
                         let _ = self.client.delete_connection(&existing.id).await;
                     }
                 }
 
-                let result = self.client.connect(&provider, &scopes).await?;
+                // Combine scopes and additional_scopes for fresh connections
+                let mut all_scopes = scopes;
+                for s in additional_scopes {
+                    if !all_scopes.contains(&s) {
+                        all_scopes.push(s);
+                    }
+                }
+
+                let result = self.client.connect(&provider, &all_scopes).await?;
                 Ok(serde_json::to_value(result)?)
             }
 
@@ -166,6 +202,73 @@ impl PlatformTool {
                 let id = required_param(&params, "connection_id")?;
                 let token = self.client.get_connection_token(&id).await?;
                 Ok(serde_json::to_value(token)?)
+            }
+
+            "connection_request" => {
+                let connection_id = required_param(&params, "connection_id")?;
+                let method = required_param(&params, "method")?;
+                let url = required_param(&params, "url")?;
+                let headers: Option<std::collections::HashMap<String, String>> = params
+                    .get("headers")
+                    .and_then(|v| serde_json::from_value(v.clone()).ok());
+                let body = params.get("body").cloned();
+
+                let result = self
+                    .client
+                    .connection_request(&connection_id, &method, &url, headers, body)
+                    .await?;
+                Ok(serde_json::to_value(result)?)
+            }
+
+            "register_provider" => {
+                let name = required_param(&params, "name").ok();
+                let template = params.get("template").and_then(|v| v.as_str()).map(|s| s.to_string());
+                let client_id = required_param(&params, "client_id")?;
+                let client_secret = required_param(&params, "client_secret")?;
+
+                let mut payload = serde_json::json!({
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                });
+                if let Some(t) = template {
+                    payload["template"] = serde_json::Value::String(t);
+                }
+                if let Some(n) = name {
+                    payload["name"] = serde_json::Value::String(n);
+                }
+                if let Some(auth_url) = params.get("authorization_url").and_then(|v| v.as_str()) {
+                    payload["authorization_url"] = serde_json::Value::String(auth_url.to_string());
+                }
+                if let Some(token_url) = params.get("token_url").and_then(|v| v.as_str()) {
+                    payload["token_url"] = serde_json::Value::String(token_url.to_string());
+                }
+                if let Some(scopes) = params.get("scopes_supported") {
+                    payload["scopes_supported"] = scopes.clone();
+                }
+                if let Some(defaults) = params.get("default_scopes") {
+                    payload["default_scopes"] = defaults.clone();
+                }
+
+                let result = self.client.register_provider(payload).await?;
+                Ok(result)
+            }
+
+            "list_provider_templates" => {
+                let templates = self.client.list_provider_templates().await?;
+                Ok(templates)
+            }
+
+            "discover_skill" => {
+                let query = required_param(&params, "query")?;
+                let results = self.client.discover_skills(&query).await?;
+                Ok(results)
+            }
+
+            "import_skill" => {
+                let url = required_param(&params, "url")?;
+                let name = params.get("name").and_then(|v| v.as_str());
+                let result = self.client.import_skill(&url, name).await?;
+                Ok(result)
             }
 
             "list_secrets" => {
@@ -231,9 +334,14 @@ mod tests {
         assert!(actions.contains(&"list_agents".to_string()));
         assert!(actions.contains(&"list_skills".to_string()));
         assert!(actions.contains(&"list_connections".to_string()));
+        assert!(actions.contains(&"connection_request".to_string()));
+        assert!(actions.contains(&"register_provider".to_string()));
+        assert!(actions.contains(&"list_provider_templates".to_string()));
+        assert!(actions.contains(&"discover_skill".to_string()));
+        assert!(actions.contains(&"import_skill".to_string()));
         assert!(actions.contains(&"list_secrets".to_string()));
         assert!(actions.contains(&"list_threads".to_string()));
-        assert_eq!(actions.len(), 14);
+        assert_eq!(actions.len(), 21);
     }
 
     #[tokio::test]
@@ -361,6 +469,86 @@ mod tests {
         assert!(
             err.to_string().contains("key"),
             "Expected 'key' in error, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_connection_request_missing_params() {
+        let tool = make_tool();
+        // Missing connection_id
+        let err = tool
+            .execute("connection_request", json!({}))
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("connection_id"),
+            "Expected 'connection_id' in error, got: {err}"
+        );
+
+        // Missing method
+        let err = tool
+            .execute(
+                "connection_request",
+                json!({ "connection_id": "abc" }),
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("method"),
+            "Expected 'method' in error, got: {err}"
+        );
+
+        // Missing url
+        let err = tool
+            .execute(
+                "connection_request",
+                json!({ "connection_id": "abc", "method": "GET" }),
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("url"),
+            "Expected 'url' in error, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_register_provider_missing_params() {
+        let tool = make_tool();
+        // Missing client_id
+        let err = tool
+            .execute("register_provider", json!({ "name": "test" }))
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("client_id"),
+            "Expected 'client_id' in error, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_discover_skill_missing_param() {
+        let tool = make_tool();
+        let err = tool
+            .execute("discover_skill", json!({}))
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("query"),
+            "Expected 'query' in error, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_import_skill_missing_param() {
+        let tool = make_tool();
+        let err = tool
+            .execute("import_skill", json!({}))
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("url"),
+            "Expected 'url' in error, got: {err}"
         );
     }
 }

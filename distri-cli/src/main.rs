@@ -596,13 +596,13 @@ fn resolve_distri_server_binary() -> PathBuf {
 fn platform_tool_definition() -> serde_json::Value {
     serde_json::json!({
         "name": "distri_platform",
-        "description": "Manage platform resources. Actions: list_agents, get_agent({agent_id}), list_skills, get_skill({skill_id}), create_skill({name,content}), delete_skill({skill_id}), list_providers (available OAuth providers), connect({provider,scopes?}) returns auth_url for OAuth, list_connections, get_connection_token({connection_id}), list_secrets, get_secret({key}), set_secret({key,value}), delete_secret({key}), list_threads. Use 'connect' to initiate OAuth and get an auth_url for the user.",
+        "description": "Manage platform resources. Actions: list_agents, get_agent({agent_id}), list_skills, get_skill({skill_id}), create_skill({name,content}), delete_skill({skill_id}), list_providers, connect({provider,scopes?,additional_scopes?}), list_connections, get_connection_token({connection_id}), connection_request({connection_id,method,url,headers?,body?}), register_provider({name|template,client_id,client_secret,...}), list_provider_templates, discover_skill({query}), import_skill({url,name?}), list_secrets, get_secret({key}), set_secret({key,value}), delete_secret({key}), list_threads. Use 'connection_request' for authenticated API calls. Use 'discover_skill' to find skills from curated repos, then 'import_skill' to import them.",
         "parameters": {
             "type": "object",
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["list_actions", "list_agents", "get_agent", "list_skills", "get_skill", "create_skill", "delete_skill", "list_providers", "connect", "list_connections", "get_connection_token", "list_secrets", "get_secret", "set_secret", "delete_secret", "list_threads"],
+                    "enum": ["list_actions", "list_agents", "get_agent", "list_skills", "get_skill", "create_skill", "delete_skill", "list_providers", "connect", "list_connections", "get_connection_token", "connection_request", "register_provider", "list_provider_templates", "discover_skill", "import_skill", "list_secrets", "get_secret", "set_secret", "delete_secret", "list_threads"],
                     "description": "The action to perform"
                 },
                 "params": {

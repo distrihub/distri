@@ -2019,6 +2019,14 @@ pub struct ProviderInfo {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ConnectionProxyResponse {
+    pub status: u16,
+    #[serde(default)]
+    pub headers: HashMap<String, String>,
+    pub body: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ConnectResponse {
     #[serde(default)]
     pub connection_id: Option<String>,
@@ -2119,6 +2127,105 @@ impl Distri {
         } else {
             let text = resp.text().await.unwrap_or_default();
             Err(ClientError::InvalidResponse(format!("failed to list providers: {}", text)))
+        }
+    }
+
+    /// Discover skills from curated registries.
+    pub async fn discover_skills(&self, query: &str) -> Result<serde_json::Value, ClientError> {
+        let url = format!("{}/skills/discover?query={}", self.base_url, urlencoding::encode(query));
+        let resp = self.http.get(&url).send().await?;
+        if resp.status().is_success() {
+            Ok(resp.json().await?)
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!(
+                "failed to discover skills: {}",
+                text
+            )))
+        }
+    }
+
+    /// Import a skill from a URL.
+    pub async fn import_skill(
+        &self,
+        url: &str,
+        name: Option<&str>,
+    ) -> Result<serde_json::Value, ClientError> {
+        let api_url = format!("{}/skills/import", self.base_url);
+        let mut payload = serde_json::json!({ "url": url });
+        if let Some(n) = name {
+            payload["name"] = serde_json::Value::String(n.to_string());
+        }
+        let resp = self.http.post(&api_url).json(&payload).send().await?;
+        if resp.status().is_success() {
+            Ok(resp.json().await?)
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!(
+                "failed to import skill: {}",
+                text
+            )))
+        }
+    }
+
+    /// Register a workspace-level OAuth provider.
+    pub async fn register_provider(
+        &self,
+        payload: serde_json::Value,
+    ) -> Result<serde_json::Value, ClientError> {
+        let url = format!("{}/connections/providers/register", self.base_url);
+        let resp = self.http.post(&url).json(&payload).send().await?;
+        if resp.status().is_success() {
+            Ok(resp.json().await?)
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!(
+                "failed to register provider: {}",
+                text
+            )))
+        }
+    }
+
+    /// List provider templates available for registration.
+    pub async fn list_provider_templates(&self) -> Result<serde_json::Value, ClientError> {
+        let url = format!("{}/connections/providers/templates", self.base_url);
+        let resp = self.http.get(&url).send().await?;
+        if resp.status().is_success() {
+            Ok(resp.json().await?)
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!(
+                "failed to list provider templates: {}",
+                text
+            )))
+        }
+    }
+
+    /// Make an authenticated HTTP request through a connection (proxy).
+    pub async fn connection_request(
+        &self,
+        connection_id: &str,
+        method: &str,
+        url: &str,
+        headers: Option<HashMap<String, String>>,
+        body: Option<serde_json::Value>,
+    ) -> Result<ConnectionProxyResponse, ClientError> {
+        let api_url = format!("{}/connections/{}/request", self.base_url, connection_id);
+        let payload = serde_json::json!({
+            "method": method,
+            "url": url,
+            "headers": headers.unwrap_or_default(),
+            "body": body,
+        });
+        let resp = self.http.post(&api_url).json(&payload).send().await?;
+        if resp.status().is_success() {
+            Ok(resp.json().await?)
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!(
+                "connection request failed for {}: {}",
+                connection_id, text
+            )))
         }
     }
 
