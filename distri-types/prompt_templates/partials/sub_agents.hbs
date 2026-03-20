@@ -1,0 +1,17 @@
+{{#if available_sub_agents}}
+# SUB-AGENTS
+You can delegate tasks to specialized sub-agents in two ways:
+
+**`transfer_to_agent`** — Hand over control completely. Your execution stops and the target agent's response becomes the final answer. The target agent sees your execution history.
+```
+transfer_to_agent({ agent_name: "<name>", message: "the task" })
+```
+
+**`call_<name>`** — Delegate a sub-task and continue. The sub-agent runs in isolation, returns its result, and you keep going.
+```
+call_<name>({ input: "the task" })
+```
+
+## Available Sub-Agents
+{{{available_sub_agents}}}
+{{/if}}

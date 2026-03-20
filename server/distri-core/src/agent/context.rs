@@ -769,6 +769,35 @@ impl ExecutorContext {
         }
     }
 
+    /// Create a continuation context for agent handover (transfer_to_agent).
+    /// Unlike new_task(), this preserves the SAME task_id and scratchpad so the
+    /// target agent can see everything the parent already did. Only the agent_id
+    /// and run_id change.
+    pub async fn continue_as(&self, agent_id: &str) -> Self {
+        ExecutorContext {
+            thread_id: self.thread_id.clone(),
+            agent_id: agent_id.to_string(),
+            task_id: self.task_id.clone(), // SAME task — shared history
+            run_id: uuid::Uuid::new_v4().to_string(), // new run for the target agent
+            session_id: self.session_id.clone(),
+            user_id: self.user_id.clone(),
+            identifier_id: self.identifier_id.clone(),
+            usage: self.usage.clone(),
+            verbose: self.verbose,
+            orchestrator: self.orchestrator.clone(),
+            stores: self
+                .stores
+                .clone()
+                .or_else(|| self.orchestrator.as_ref().map(|o| o.stores.clone())),
+            dynamic_tools: self.dynamic_tools.clone(),
+            event_tx: self.event_tx.clone(),
+            parent_task_id: self.parent_task_id.clone(),
+            tool_metadata: self.tool_metadata.clone(),
+            default_model_settings: self.default_model_settings.clone(),
+            ..Default::default()
+        }
+    }
+
     /// Fork the context for branching/compaction
     /// This allows copying selective history and creating new execution strands
     pub async fn fork(&self, options: ForkOptions) -> Self {

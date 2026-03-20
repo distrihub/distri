@@ -39,7 +39,17 @@ impl PlatformTool {
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
-                let params = call.input.get("params").cloned().unwrap_or(json!({}));
+                // Accept params either nested under "params" key or flat at root level
+                let params = if let Some(p) = call.input.get("params") {
+                    p.clone()
+                } else {
+                    // Fallback: use entire input minus "action" as params
+                    let mut flat = call.input.clone();
+                    if let Some(obj) = flat.as_object_mut() {
+                        obj.remove("action");
+                    }
+                    flat
+                };
 
                 let result = match tool.execute(&action, params).await {
                     Ok(v) => v,
@@ -69,11 +79,10 @@ impl PlatformTool {
                 "list_providers",
                 "connect",
                 "list_connections",
-                "get_connection_token",
                 "get_connection_usage",
                 "connection_request",
-                "register_provider",
-                "list_provider_templates",
+                "register_connection_provider",
+                "list_connection_providers",
                 "discover_skill",
                 "import_skill",
                 "list_secrets",
@@ -135,7 +144,11 @@ impl PlatformTool {
             }
 
             "connect" => {
-                let provider = required_param(&params, "provider")?;
+                let provider = params
+                    .get("provider")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .ok_or_else(|| anyhow!("Missing 'provider'. Call like: distri_platform with action='connect', provider='google', additional_scopes=['drive','spreadsheets']"))?;
                 let scopes: Vec<String> = params
                     .get("scopes")
                     .and_then(|v| serde_json::from_value(v.clone()).ok())
@@ -166,7 +179,7 @@ impl PlatformTool {
                                     "status": status,
                                     "current_scopes": existing_scopes,
                                     "capabilities": hint,
-                                    "next_steps": format!("Use 'get_connection_usage' with connection_id '{}' for API docs and examples, then 'connection_request' to make calls. If you need more scopes, use connect({{provider: \"{}\", additional_scopes: [\"scope\"]}}).", existing.id, provider)
+                                    "action_required": format!("Use connection_request to make API calls NOW. Do NOT transfer to another agent or use code execution. Example: distri_platform({{action: 'connection_request', params: {{connection_id: '{}', method: 'POST', url: 'https://sheets.googleapis.com/v4/spreadsheets', body: {{properties: {{title: 'My Sheet'}}}}}}}})", existing.id)
                                 }));
                             }
                             // Re-trigger OAuth with expanded scopes: merge existing + additional
@@ -217,27 +230,24 @@ impl PlatformTool {
                             .and_then(|v| serde_json::from_value(v.clone()).ok())
                             .unwrap_or_default();
                         let hint = capability_hint(&c.name, &scopes);
-                        json!({
+                        let needs_scopes = needs_scope_upgrade(&c.name, &scopes);
+                        let mut entry = json!({
                             "connection_id": c.id,
                             "provider": c.name,
                             "status": c.status.as_deref().unwrap_or("unknown"),
                             "scopes": scopes,
                             "capabilities": hint,
-                        })
+                        });
+                        if let Some(upgrade) = needs_scopes {
+                            entry["needs_scope_upgrade"] = json!(upgrade);
+                        }
+                        entry
                     })
                     .collect();
                 Ok(json!({
                     "connections": enriched,
-                    "tip": "Use 'connection_request' with {connection_id, method, url, headers?, body?} to make authenticated API calls. Use 'get_connection_usage' with {connection_id} for full API docs and examples before your first call. If scopes are insufficient, use 'connect' with 'additional_scopes' to expand permissions."
+                    "important": "Use 'connection_request' to make API calls directly. Do NOT use transfer_to_agent, call_code, or browser for connected services. Example: distri_platform({action: 'connection_request', params: {connection_id: '<id>', method: 'GET', url: 'https://api.example.com/endpoint'}}). Use 'get_connection_usage' for API docs if needed."
                 }))
-            }
-
-            "get_connection_token" => {
-                let id = required_param(&params, "connection_id")?;
-                let token = self.client.get_connection_token(&id).await?;
-                let mut result = serde_json::to_value(token)?;
-                result["tip"] = json!("Prefer 'connection_request' over raw tokens — it auto-injects auth and handles refresh. Use 'get_connection_usage' for API endpoint examples.");
-                Ok(result)
             }
 
             "get_connection_usage" => {
@@ -273,7 +283,8 @@ impl PlatformTool {
             }
 
             "connection_request" => {
-                let connection_id = required_param(&params, "connection_id")?;
+                let connection_id = params.get("connection_id").and_then(|v| v.as_str()).map(|s| s.to_string())
+                    .ok_or_else(|| anyhow!("Missing 'connection_id'. Call like: distri_platform with action='connection_request', connection_id='<id>', method='POST', url='https://sheets.googleapis.com/v4/spreadsheets'"))?;
                 let method = required_param(&params, "method")?;
                 let url = required_param(&params, "url")?;
                 let headers: Option<std::collections::HashMap<String, String>> = params
@@ -288,42 +299,38 @@ impl PlatformTool {
                 Ok(serde_json::to_value(result)?)
             }
 
-            "register_provider" => {
-                let name = required_param(&params, "name").ok();
-                let template = params.get("template").and_then(|v| v.as_str()).map(|s| s.to_string());
+            "register_connection_provider" => {
+                let id = required_param(&params, "id")?;
+                let name = params.get("name").and_then(|v| v.as_str()).unwrap_or(&id).to_string();
+                let auth_url = required_param(&params, "authorization_url")?;
+                let token_url = required_param(&params, "token_url")?;
                 let client_id = required_param(&params, "client_id")?;
                 let client_secret = required_param(&params, "client_secret")?;
 
-                let mut payload = serde_json::json!({
-                    "client_id": client_id,
-                    "client_secret": client_secret,
+                let provider_config = json!({
+                    "id": id,
+                    "name": name,
+                    "authorization_url": auth_url,
+                    "token_url": token_url,
+                    "scopes_supported": params.get("scopes_supported").cloned().unwrap_or(json!([])),
+                    "default_scopes": params.get("default_scopes").cloned().unwrap_or(json!([])),
+                    "scope_mappings": params.get("scope_mappings").cloned().unwrap_or(json!({})),
                 });
-                if let Some(t) = template {
-                    payload["template"] = serde_json::Value::String(t);
-                }
-                if let Some(n) = name {
-                    payload["name"] = serde_json::Value::String(n);
-                }
-                if let Some(auth_url) = params.get("authorization_url").and_then(|v| v.as_str()) {
-                    payload["authorization_url"] = serde_json::Value::String(auth_url.to_string());
-                }
-                if let Some(token_url) = params.get("token_url").and_then(|v| v.as_str()) {
-                    payload["token_url"] = serde_json::Value::String(token_url.to_string());
-                }
-                if let Some(scopes) = params.get("scopes_supported") {
-                    payload["scopes_supported"] = scopes.clone();
-                }
-                if let Some(defaults) = params.get("default_scopes") {
-                    payload["default_scopes"] = defaults.clone();
-                }
 
-                let result = self.client.register_provider(payload).await?;
+                let result = self.client.register_connection_provider(
+                    provider_config,
+                    &client_id,
+                    &client_secret,
+                ).await?;
                 Ok(result)
             }
 
-            "list_provider_templates" => {
-                let templates = self.client.list_provider_templates().await?;
-                Ok(templates)
+            "list_connection_providers" => {
+                let providers = self.client.list_connection_providers().await?;
+                Ok(json!({
+                    "connection_providers": providers,
+                    "tip": "These are custom connection providers. Built-in providers (google, github, slack, etc.) are always available via 'list_providers'."
+                }))
             }
 
             "discover_skill" => {
@@ -381,6 +388,32 @@ fn required_param(params: &Value, key: &str) -> Result<String> {
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
         .ok_or_else(|| anyhow!("Missing required parameter: {key}"))
+}
+
+/// If a provider has only basic scopes, return an upgrade suggestion with the exact action to call.
+fn needs_scope_upgrade(provider: &str, scopes: &[String]) -> Option<String> {
+    let joined = scopes.join(" ");
+    match provider {
+        "google" => {
+            let has_drive = joined.contains("drive") && !joined.contains("drive.readonly");
+            let has_sheets = joined.contains("spreadsheet");
+            if !has_drive || !has_sheets {
+                Some(format!(
+                    "To use Google Sheets/Drive, call: distri_platform({{action: 'connect', params: {{provider: 'google', additional_scopes: ['drive', 'spreadsheets']}}}})"
+                ))
+            } else {
+                None
+            }
+        }
+        "slack" => {
+            if !joined.contains("chat") {
+                Some("To send Slack messages, call: distri_platform({action: 'connect', params: {provider: 'slack', additional_scopes: ['chat:write']}})".to_string())
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
 }
 
 /// Return a short, token-efficient capability summary for a provider given its scopes.
@@ -460,13 +493,13 @@ mod tests {
         assert!(actions.contains(&"list_connections".to_string()));
         assert!(actions.contains(&"get_connection_usage".to_string()));
         assert!(actions.contains(&"connection_request".to_string()));
-        assert!(actions.contains(&"register_provider".to_string()));
-        assert!(actions.contains(&"list_provider_templates".to_string()));
+        assert!(actions.contains(&"register_connection_provider".to_string()));
+        assert!(actions.contains(&"list_connection_providers".to_string()));
         assert!(actions.contains(&"discover_skill".to_string()));
         assert!(actions.contains(&"import_skill".to_string()));
         assert!(actions.contains(&"list_secrets".to_string()));
         assert!(actions.contains(&"list_threads".to_string()));
-        assert_eq!(actions.len(), 22);
+        assert_eq!(actions.len(), 21);
     }
 
     #[tokio::test]
@@ -539,19 +572,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_get_connection_token_missing_param() {
-        let tool = make_tool();
-        let err = tool
-            .execute("get_connection_token", json!({}))
-            .await
-            .unwrap_err();
-        assert!(
-            err.to_string().contains("connection_id"),
-            "Expected 'connection_id' in error, got: {err}"
-        );
-    }
-
-    #[tokio::test]
     async fn test_get_secret_missing_param() {
         let tool = make_tool();
         let err = tool.execute("get_secret", json!({})).await.unwrap_err();
@@ -613,7 +633,6 @@ mod tests {
     #[tokio::test]
     async fn test_connection_request_missing_params() {
         let tool = make_tool();
-        // Missing connection_id
         let err = tool
             .execute("connection_request", json!({}))
             .await
@@ -623,7 +642,6 @@ mod tests {
             "Expected 'connection_id' in error, got: {err}"
         );
 
-        // Missing method
         let err = tool
             .execute(
                 "connection_request",
@@ -636,7 +654,6 @@ mod tests {
             "Expected 'method' in error, got: {err}"
         );
 
-        // Missing url
         let err = tool
             .execute(
                 "connection_request",
@@ -651,16 +668,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_register_provider_missing_params() {
+    async fn test_register_connection_provider_missing_params() {
         let tool = make_tool();
-        // Missing client_id
         let err = tool
-            .execute("register_provider", json!({ "name": "test" }))
+            .execute("register_connection_provider", json!({}))
             .await
             .unwrap_err();
         assert!(
-            err.to_string().contains("client_id"),
-            "Expected 'client_id' in error, got: {err}"
+            err.to_string().contains("id"),
+            "Expected 'id' in error, got: {err}"
         );
     }
 

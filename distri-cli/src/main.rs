@@ -423,7 +423,7 @@ async fn main() -> Result<()> {
             register_approval_handler(&registry);
             let platform_tool = distri::PlatformTool::from_arc(std::sync::Arc::new(Distri::from_config(config.clone())));
             platform_tool.register(&registry);
-            let stream_config = config.clone().with_timeout(60);
+            let stream_config = config.clone().with_timeout(600);
             let http_client = stream_config.build_http_client()?;
             let client = AgentStreamClient::from_config(config.clone())
                 .with_http_client(http_client)
@@ -599,19 +599,30 @@ fn resolve_distri_server_binary() -> PathBuf {
 fn platform_tool_definition() -> serde_json::Value {
     serde_json::json!({
         "name": "distri_platform",
-        "description": "Manage platform resources. Actions: list_agents, get_agent({agent_id}), list_skills, get_skill({skill_id}), create_skill({name,content}), delete_skill({skill_id}), list_providers, connect({provider,scopes?,additional_scopes?}), list_connections, get_connection_token({connection_id}), get_connection_usage({connection_id}) returns API docs/examples for a connection, connection_request({connection_id,method,url,headers?,body?}) makes authenticated API calls, register_provider({name|template,client_id,client_secret,...}), list_provider_templates, discover_skill({query}), import_skill({url,name?}), list_secrets, get_secret({key}), set_secret({key,value}), delete_secret({key}), list_threads. Workflow for API calls: list_connections → get_connection_usage → connection_request.",
+        "description": "Manage platform resources. Actions: list_agents, get_agent({agent_id}), list_skills, get_skill({skill_id}), create_skill({name,content}), delete_skill({skill_id}), list_providers, connect({provider,scopes?,additional_scopes?}), list_connections, get_connection_usage({connection_id}) returns API docs for a connection, connection_request({connection_id,method,url,headers?,body?}) makes authenticated API calls (token auto-injected), register_connection_provider({id,name,authorization_url,token_url,client_id,client_secret,...}), list_connection_providers, discover_skill({query}), import_skill({url,name?}), list_secrets, get_secret({key}), set_secret({key,value}), delete_secret({key}), list_threads. Workflow: list_connections → get_connection_usage → connection_request.",
         "parameters": {
             "type": "object",
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["list_actions", "list_agents", "get_agent", "list_skills", "get_skill", "create_skill", "delete_skill", "list_providers", "connect", "list_connections", "get_connection_token", "get_connection_usage", "connection_request", "register_provider", "list_provider_templates", "discover_skill", "import_skill", "list_secrets", "get_secret", "set_secret", "delete_secret", "list_threads"],
+                    "enum": ["list_actions", "list_agents", "get_agent", "list_skills", "get_skill", "create_skill", "delete_skill", "list_providers", "connect", "list_connections", "get_connection_usage", "connection_request", "register_connection_provider", "list_connection_providers", "discover_skill", "import_skill", "list_secrets", "get_secret", "set_secret", "delete_secret", "list_threads"],
                     "description": "The action to perform"
                 },
-                "params": {
-                    "type": "object",
-                    "description": "Parameters for the action (e.g. {provider: 'google'} for connect)"
-                }
+                "provider": { "type": "string", "description": "Provider name for connect (e.g. 'google', 'slack')" },
+                "scopes": { "type": "array", "items": { "type": "string" }, "description": "OAuth scopes for connect" },
+                "additional_scopes": { "type": "array", "items": { "type": "string" }, "description": "Extra scopes to add when re-connecting" },
+                "connection_id": { "type": "string", "description": "Connection ID for connection_request/get_connection_usage" },
+                "method": { "type": "string", "description": "HTTP method for connection_request (GET, POST, PUT, DELETE)" },
+                "url": { "type": "string", "description": "API URL for connection_request" },
+                "headers": { "type": "object", "description": "Extra headers for connection_request" },
+                "body": { "description": "Request body for connection_request (JSON)" },
+                "agent_id": { "type": "string", "description": "Agent ID for get_agent" },
+                "skill_id": { "type": "string", "description": "Skill ID for get_skill/delete_skill" },
+                "name": { "type": "string", "description": "Name for create_skill" },
+                "content": { "type": "string", "description": "Content for create_skill" },
+                "key": { "type": "string", "description": "Key for get_secret/set_secret/delete_secret" },
+                "value": { "type": "string", "description": "Value for set_secret" },
+                "query": { "type": "string", "description": "Search query for discover_skill" }
             },
             "required": ["action"]
         }

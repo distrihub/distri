@@ -2154,6 +2154,60 @@ impl Distri {
         }
     }
 
+    /// Register a custom connection provider in workspace settings.
+    /// Stores the provider config and secrets (client_id/client_secret) via the upsert flow.
+    pub async fn register_connection_provider(
+        &self,
+        provider: serde_json::Value,
+        client_id: &str,
+        client_secret: &str,
+    ) -> Result<serde_json::Value, ClientError> {
+        let provider_id = provider
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("custom");
+        let payload = serde_json::json!({
+            "provider_id": provider_id,
+            "secrets": {
+                format!("{}_CLIENT_ID", provider_id.to_uppercase()): client_id,
+                format!("{}_CLIENT_SECRET", provider_id.to_uppercase()): client_secret,
+            },
+            "connection_provider": provider,
+        });
+        let url = format!("{}/providers", self.base_url);
+        let resp = self.http.post(&url).json(&payload).send().await?;
+        if resp.status().is_success() {
+            Ok(resp.json().await?)
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!(
+                "failed to register connection provider: {}",
+                text
+            )))
+        }
+    }
+
+    /// List custom connection providers from workspace settings.
+    pub async fn list_connection_providers(&self) -> Result<serde_json::Value, ClientError> {
+        let url = format!("{}/workspaces/current", self.base_url);
+        let resp = self.http.get(&url).send().await?;
+        if resp.status().is_success() {
+            let body: serde_json::Value = resp.json().await?;
+            let providers = body
+                .get("settings")
+                .and_then(|s| s.get("connection_providers"))
+                .cloned()
+                .unwrap_or(serde_json::json!([]));
+            Ok(providers)
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!(
+                "failed to get workspace settings: {}",
+                text
+            )))
+        }
+    }
+
     /// Discover skills from curated registries.
     pub async fn discover_skills(&self, query: &str) -> Result<serde_json::Value, ClientError> {
         let url = format!("{}/skills/discover?query={}", self.base_url, urlencoding::encode(query));
@@ -2187,39 +2241,6 @@ impl Distri {
             let text = resp.text().await.unwrap_or_default();
             Err(ClientError::InvalidResponse(format!(
                 "failed to import skill: {}",
-                text
-            )))
-        }
-    }
-
-    /// Register a workspace-level OAuth provider.
-    pub async fn register_provider(
-        &self,
-        payload: serde_json::Value,
-    ) -> Result<serde_json::Value, ClientError> {
-        let url = format!("{}/connections/providers/register", self.base_url);
-        let resp = self.http.post(&url).json(&payload).send().await?;
-        if resp.status().is_success() {
-            Ok(resp.json().await?)
-        } else {
-            let text = resp.text().await.unwrap_or_default();
-            Err(ClientError::InvalidResponse(format!(
-                "failed to register provider: {}",
-                text
-            )))
-        }
-    }
-
-    /// List provider templates available for registration.
-    pub async fn list_provider_templates(&self) -> Result<serde_json::Value, ClientError> {
-        let url = format!("{}/connections/providers/templates", self.base_url);
-        let resp = self.http.get(&url).send().await?;
-        if resp.status().is_success() {
-            Ok(resp.json().await?)
-        } else {
-            let text = resp.text().await.unwrap_or_default();
-            Err(ClientError::InvalidResponse(format!(
-                "failed to list provider templates: {}",
                 text
             )))
         }

@@ -72,6 +72,7 @@ struct ChatState {
     current_message_id: Option<String>,
     is_planning: bool,
     printed_header: bool,
+    current_agent: Option<String>,
 }
 
 pub struct EventPrinter {
@@ -109,6 +110,25 @@ impl EventPrinter {
                 "{}thread: {}  task: {}{}",
                 COLOR_GRAY, event.thread_id, event.task_id, COLOR_RESET
             );
+        }
+
+        // Track agent changes and display them
+        let agent_changed = self
+            .state
+            .current_agent
+            .as_ref()
+            .map(|a| a != &event.agent_id)
+            .unwrap_or(true);
+        if agent_changed && !event.agent_id.is_empty() {
+            // Only print if it's not the first agent (header already shows it)
+            if self.state.current_agent.is_some() {
+                self.clear_planning_line();
+                println!(
+                    "{}⇢ Agent: {}{}",
+                    COLOR_BRIGHT_CYAN, event.agent_id, COLOR_RESET
+                );
+            }
+            self.state.current_agent = Some(event.agent_id.clone());
         }
 
         // Clear the transient "Planning…" line before any other event prints output
@@ -281,6 +301,20 @@ impl EventPrinter {
                         );
                     }
                 }
+            }
+            AgentEventType::AgentHandover {
+                from_agent,
+                to_agent,
+                reason,
+            } => {
+                let reason_str = reason
+                    .as_deref()
+                    .map(|r| format!(" ({})", r))
+                    .unwrap_or_default();
+                println!(
+                    "{}⇢ Transferring: {} → {}{}{}",
+                    COLOR_BRIGHT_CYAN, from_agent, to_agent, reason_str, COLOR_RESET
+                );
             }
             _ => {}
         }

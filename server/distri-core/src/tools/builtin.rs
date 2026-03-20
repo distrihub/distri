@@ -191,7 +191,7 @@ impl Tool for TransferToAgentTool {
         "transfer_to_agent".to_string()
     }
     fn get_description(&self) -> String {
-        "Transfer control to another agent to continue the workflow".to_string()
+        "Transfer control to another agent. The target agent takes over completely — your execution stops and their result becomes the final response.".to_string()
     }
     fn needs_executor_context(&self) -> bool {
         true // This tool needs ExecutorContext
@@ -204,9 +204,13 @@ impl Tool for TransferToAgentTool {
                             "type": "string",
                             "description": "The name of the agent to transfer control to"
                         },
+                        "message": {
+                            "type": "string",
+                            "description": "The task/message to pass to the target agent. If omitted, the original user message is forwarded."
+                        },
                         "reason": {
                             "type": "string",
-                            "description": "Optional reason for the transfer"
+                            "description": "Optional reason for the transfer (for logging/UI)"
                         }
                     },
                     "required": ["agent_name"]
@@ -245,48 +249,96 @@ impl ExecutorContextTool for TransferToAgentTool {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
-        // Check if target agent exists
-        let orchestrator = context.get_orchestrator()?;
-        if let Some(_target_agent) = orchestrator.get_agent(target_agent).await {
-            // Send handover message through coordinator
-            if let Err(e) = orchestrator
-                .coordinator_tx
-                .send(crate::agent::CoordinatorMessage::HandoverAgent {
-                    from_agent: context.agent_id.clone(),
-                    to_agent: target_agent.to_string(),
-                    reason: reason.clone(),
-                    context: context.clone(),
-                })
-                .await
-            {
-                tracing::error!("Failed to send handover message: {}", e);
-                return Err(AgentError::ToolExecution(format!(
-                    "Failed to send handover message: {}",
-                    e
-                )));
-            }
+        // Extract task/message to pass to target agent
+        let task_text = args
+            .get("message")
+            .or_else(|| args.get("task"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
 
-            tracing::info!(
-                "Agent handover requested from {} to {}",
-                context.agent_id,
+        let orchestrator = context.get_orchestrator()?;
+
+        // Verify target agent exists
+        if orchestrator.get_agent(target_agent).await.is_none() {
+            return Err(AgentError::ToolExecution(format!(
+                "Target agent '{}' not found",
                 target_agent
-            );
-            let result = json!({
-                "status": "success",
-                "message": format!(
-                    "Transfer initiated to agent '{}'. Reason: {}",
-                    target_agent,
-                    reason.unwrap_or_else(|| "No reason provided".to_string())
-                )
-            });
-            // Return as data part
-            return Ok(vec![Part::Data(result)]);
+            )));
         }
-        // Agent not found
-        Err(AgentError::ToolExecution(format!(
-            "Target agent '{}' not found",
-            target_agent
-        )))
+
+        // Emit handover event for UI display
+        context
+            .emit(crate::agent::types::AgentEventType::AgentHandover {
+                from_agent: context.agent_id.clone(),
+                to_agent: target_agent.to_string(),
+                reason: reason.clone(),
+            })
+            .await;
+
+        tracing::info!(
+            "Agent handover: {} → {} (reason: {:?})",
+            context.agent_id,
+            target_agent,
+            reason
+        );
+
+        // Build the task for the target agent.
+        // Use the explicit message/task param, or try to get the last user message from history.
+        let child_task = if let Some(task) = task_text {
+            task
+        } else {
+            // Try to extract the original user message from message history
+            let history = context.get_current_task_message_history().await.unwrap_or_default();
+            history
+                .iter()
+                .rev()
+                .find(|m| m.role == distri_types::MessageRole::User)
+                .and_then(|m| m.as_text().map(|t| t.to_string()))
+                .unwrap_or_else(|| "Continue the task".to_string())
+        };
+
+        // Use continue_as (not new_task) — the target agent continues in the SAME
+        // task context so it can see the parent's scratchpad/history. This is what
+        // makes transfer different from call_: the target agent has full context.
+        let child_context = context.continue_as(target_agent).await;
+
+        let message = distri_types::Message {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: None,
+            parts: vec![Part::Text(child_task)],
+            role: distri_types::MessageRole::User,
+            created_at: chrono::Utc::now().timestamp_millis(),
+            agent_id: None,
+            parts_metadata: None,
+        };
+
+        let child_context_arc = Arc::new(child_context);
+        let child_context_clone = child_context_arc.clone();
+
+        // Execute target agent synchronously and wait for result
+        let result = orchestrator
+            .execute_stream(target_agent, message, child_context_arc, None)
+            .await;
+
+        let final_result = match result {
+            Ok(invoke_result) => {
+                let child_final = child_context_clone.get_final_result().await;
+                child_final
+                    .or(invoke_result.content.map(|c| Value::String(c)))
+                    .unwrap_or_else(|| Value::String("Agent completed without response".into()))
+            }
+            Err(e) => {
+                tracing::error!("Transfer to {} failed: {}", target_agent, e);
+                Value::String(format!("Transfer failed: {}", e))
+            }
+        };
+
+        // Set the target agent's result as OUR final result.
+        // This causes the parent agent loop to see get_final_result().is_some()
+        // and stop iterating — achieving a true handover.
+        context.set_final_result(Some(final_result.clone())).await;
+
+        Ok(vec![Part::Data(final_result)])
     }
 }
 

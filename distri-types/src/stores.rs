@@ -725,6 +725,31 @@ pub struct CustomModelEntry {
     pub model: String,
 }
 
+/// A custom connection provider (OAuth integration) stored in workspace settings.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectionProviderConfig {
+    /// Unique identifier (e.g., "linear", "figma", "custom_crm")
+    pub id: String,
+    /// Display name
+    pub name: String,
+    /// OAuth2 authorization URL
+    pub authorization_url: String,
+    /// OAuth2 token URL
+    pub token_url: String,
+    /// Optional refresh URL (defaults to token_url)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refresh_url: Option<String>,
+    /// Scopes the provider supports
+    #[serde(default)]
+    pub scopes_supported: Vec<String>,
+    /// Default scopes to request
+    #[serde(default)]
+    pub default_scopes: Vec<String>,
+    /// Friendly scope name → full scope string mappings
+    #[serde(default)]
+    pub scope_mappings: std::collections::HashMap<String, String>,
+}
+
 /// Request payload for upserting a provider configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpsertProviderRequest {
@@ -738,6 +763,9 @@ pub struct UpsertProviderRequest {
     /// Default model in "provider/model" format. Empty string or null to clear.
     #[serde(default)]
     pub default_model: Option<String>,
+    /// Connection provider config (OAuth integration) to add/update.
+    #[serde(default)]
+    pub connection_provider: Option<ConnectionProviderConfig>,
 }
 
 /// Response after upserting a provider.

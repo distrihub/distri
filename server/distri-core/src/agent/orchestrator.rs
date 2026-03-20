@@ -616,6 +616,12 @@ impl AgentOrchestrator {
                         definition.available_skills.clone()
                     };
 
+                    // Filter out connection:* skills — they're surfaced via {{> connections}} partial
+                    let resolved_skills: Vec<_> = resolved_skills
+                        .into_iter()
+                        .filter(|s| !s.name.starts_with("connection:"))
+                        .collect();
+
                     if !resolved_skills.is_empty() {
                         // Build the available skills description for the prompt template
                         let skills_description = resolved_skills
@@ -648,6 +654,36 @@ impl AgentOrchestrator {
                             ])
                             .await;
                     }
+                }
+
+                // Inject available sub-agents into prompt context if any are configured
+                if !definition.sub_agents.is_empty() {
+                    let mut sub_agent_lines = Vec::new();
+                    for name in &definition.sub_agents {
+                        let desc = if let Some(agent_cfg) = self.get_agent(name).await {
+                            match agent_cfg {
+                                distri_types::configuration::AgentConfig::StandardAgent(def) => {
+                                    def.description.clone()
+                                }
+                            }
+                        } else {
+                            "Sub-agent".to_string()
+                        };
+                        let safe_name = name.replace('/', "__");
+                        sub_agent_lines.push(format!(
+                            "- **{}** (`call_{}` / `transfer_to_agent(\"{}\")`) — {}",
+                            name, safe_name, name, desc
+                        ));
+                    }
+                    context
+                        .merge_hook_prompt_state(crate::agent::context::HookPromptState {
+                            dynamic_values: std::collections::HashMap::from([(
+                                "available_sub_agents".to_string(),
+                                serde_json::Value::String(sub_agent_lines.join("\n")),
+                            )]),
+                            ..Default::default()
+                        })
+                        .await;
                 }
 
                 let tools = context.get_tools().await;
