@@ -127,7 +127,7 @@ impl A2AHandler {
             .unwrap_or_else(|| Uuid::new_v4().to_string());
 
         let browser_session_id = metadata.browser_session_id.clone();
-        let env_vars = metadata.env_vars.clone();
+        let env_vars = Arc::new(RwLock::new(metadata.env_vars.clone().unwrap_or_default()));
 
         let session_id = thread_id.clone();
 

@@ -219,11 +219,14 @@ impl LLMExecutor {
             total_tokens: u.total_tokens,
         });
 
-        // Track usage in context
+        // Track usage and model in context
         if let Some(u) = &usage {
             self.context
                 .increment_usage(u.input_tokens, u.output_tokens)
                 .await;
+        }
+        if !ms.model.is_empty() {
+            self.context.set_usage_model(ms.model.clone()).await;
         }
 
         self.model_logger.log_model_execution(

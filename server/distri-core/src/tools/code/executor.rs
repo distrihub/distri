@@ -37,11 +37,8 @@ pub async fn execute_code_with_tools(
     let session = client
         .create_session(&CreateShellSessionRequest {
             language: Some(language.to_string()),
-            image: None,
-            memory_mb: None,
-            disk_mb: None,
-            cpu_cores: None,
             timeout_secs: Some(30),
+            ..Default::default()
         })
         .await
         .map_err(|e| anyhow::anyhow!("Failed to create shell session: {}", e))?;

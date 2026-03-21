@@ -236,11 +236,12 @@ const COLOR_BRIGHT_MAGENTA: &str = "\x1b[95m";
 const COLOR_BRIGHT_YELLOW: &str = "\x1b[93m";
 const COLOR_GRAY: &str = "\x1b[90m";
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 enum SlashCommandResult {
     Continue,
     Exit,
     ClearContext,
+    Resume(String),
 }
 
 #[derive(Clone)]
@@ -292,6 +293,7 @@ impl DistriAutocomplete {
             "/models".to_string(),
             "/model".to_string(),
             "/available-tools".to_string(),
+            "/resume".to_string(),
             "/clear".to_string(),
             "/exit".to_string(),
             "/quit".to_string(),
@@ -599,13 +601,13 @@ fn resolve_distri_server_binary() -> PathBuf {
 fn platform_tool_definition() -> serde_json::Value {
     serde_json::json!({
         "name": "distri_platform",
-        "description": "Manage platform resources. Actions: list_agents, get_agent({agent_id}), list_skills, get_skill({skill_id}), create_skill({name,content}), delete_skill({skill_id}), list_providers, connect({provider,scopes?,additional_scopes?}), list_connections, get_connection_usage({connection_id}) returns API docs for a connection, connection_request({connection_id,method,url,headers?,body?}) makes authenticated API calls (token auto-injected), register_connection_provider({id,name,authorization_url,token_url,client_id,client_secret,...}), list_connection_providers, discover_skill({query}), import_skill({url,name?}), list_secrets, get_secret({key}), set_secret({key,value}), delete_secret({key}), list_threads. Workflow: list_connections → get_connection_usage → connection_request.",
+        "description": "Manage platform resources. Actions: list_agents, get_agent({agent_id}), list_skills, get_skill({skill_id}), create_skill({name,content}), delete_skill({skill_id}), list_providers, connect({provider,scopes?,additional_scopes?}), list_connections, get_connection_usage({connection_id}) returns API docs for a connection, connection_request({connection_id,method,url,headers?,body?}) makes authenticated API calls (token auto-injected), register_connection_provider({id,name,authorization_url,token_url,client_id,client_secret,...}), list_connection_providers, discover_skill({query}), import_skill({url,name?}), list_secrets, get_secret({key}), set_secret({key,value}), delete_secret({key}), list_notes({tag?,search?}), create_note({title,content,tags?}), get_note({note_id}), update_note({note_id,title?,content?,tags?}), delete_note({note_id}), list_threads. Workflow: list_connections → get_connection_usage → connection_request.",
         "parameters": {
             "type": "object",
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["list_actions", "list_agents", "get_agent", "list_skills", "get_skill", "create_skill", "delete_skill", "list_providers", "connect", "list_connections", "get_connection_usage", "connection_request", "register_connection_provider", "list_connection_providers", "discover_skill", "import_skill", "list_secrets", "get_secret", "set_secret", "delete_secret", "list_threads"],
+                    "enum": ["list_actions", "list_agents", "get_agent", "list_skills", "get_skill", "create_skill", "delete_skill", "list_providers", "connect", "list_connections", "get_connection_usage", "connection_request", "register_connection_provider", "list_connection_providers", "discover_skill", "import_skill", "list_secrets", "get_secret", "set_secret", "delete_secret", "list_notes", "create_note", "get_note", "update_note", "delete_note", "list_threads"],
                     "description": "The action to perform"
                 },
                 "provider": { "type": "string", "description": "Provider name for connect (e.g. 'google', 'slack')" },
@@ -622,7 +624,12 @@ fn platform_tool_definition() -> serde_json::Value {
                 "content": { "type": "string", "description": "Content for create_skill" },
                 "key": { "type": "string", "description": "Key for get_secret/set_secret/delete_secret" },
                 "value": { "type": "string", "description": "Value for set_secret" },
-                "query": { "type": "string", "description": "Search query for discover_skill" }
+                "query": { "type": "string", "description": "Search query for discover_skill" },
+                "title": { "type": "string", "description": "Title for create_note/update_note" },
+                "note_id": { "type": "string", "description": "Note ID for get_note/update_note/delete_note" },
+                "tags": { "type": "array", "items": { "type": "string" }, "description": "Tags for notes" },
+                "tag": { "type": "string", "description": "Tag filter for list_notes" },
+                "search": { "type": "string", "description": "Search query for list_notes" }
             },
             "required": ["action"]
         }
@@ -782,12 +789,17 @@ async fn run_interactive_chat(
         }
 
         if input.starts_with('/') {
-            match handle_slash_command(input, app, &mut current_agent, &mut current_model).await? {
+            match handle_slash_command(input, app, config, &mut current_agent, &mut current_model).await? {
                 SlashCommandResult::Continue => continue,
                 SlashCommandResult::Exit => break,
                 SlashCommandResult::ClearContext => {
                     thread_id = uuid::Uuid::new_v4().to_string();
                     println!("Context cleared - new conversation started");
+                    continue;
+                }
+                SlashCommandResult::Resume(tid) => {
+                    thread_id = tid;
+                    println!("Resumed thread: {}", thread_id);
                     continue;
                 }
             }
@@ -816,12 +828,16 @@ async fn run_interactive_chat(
         }
     }
 
+    // Save last thread_id for /resume last
+    let _ = save_last_thread(&thread_id);
+
     Ok(())
 }
 
 async fn handle_slash_command(
     input: &str,
     app: &mut DistriClientApp,
+    config: &DistriConfig,
     current_agent: &mut String,
     current_model: &mut String,
 ) -> Result<SlashCommandResult> {
@@ -888,6 +904,58 @@ async fn handle_slash_command(
         "/available-tools" => {
             print_available_tools(app, current_agent).await?;
             Ok(SlashCommandResult::Continue)
+        }
+        "/resume" => {
+            if let Some(resume_arg) = arg {
+                if resume_arg == "last" {
+                    match load_last_thread() {
+                        Some(tid) => {
+                            return Ok(SlashCommandResult::Resume(tid));
+                        }
+                        None => {
+                            println!("No previous thread saved.");
+                            return Ok(SlashCommandResult::Continue);
+                        }
+                    }
+                } else {
+                    // Treat as direct thread ID
+                    return Ok(SlashCommandResult::Resume(resume_arg.to_string()));
+                }
+            }
+            // No arg: list recent threads and let user pick
+            let client = Distri::from_config(config.clone());
+            match client.list_threads().await {
+                Ok(threads) => {
+                    if threads.is_empty() {
+                        println!("No threads found.");
+                        return Ok(SlashCommandResult::Continue);
+                    }
+                    let display: Vec<String> = threads
+                        .iter()
+                        .take(10)
+                        .map(|t| {
+                            let title = t.title.as_deref().unwrap_or("(no title)");
+                            let agent = t.agent_name.as_deref().unwrap_or("unknown");
+                            format!("{} - {} [{}]", t.id, title, agent)
+                        })
+                        .collect();
+                    match Select::new("Select thread to resume", display).prompt() {
+                        Ok(selected) => {
+                            let tid = selected.split(" - ").next().unwrap_or("").to_string();
+                            Ok(SlashCommandResult::Resume(tid))
+                        }
+                        Err(inquire::InquireError::OperationCanceled)
+                        | Err(inquire::InquireError::OperationInterrupted) => {
+                            Ok(SlashCommandResult::Continue)
+                        }
+                        Err(err) => Err(anyhow::anyhow!("Error selecting thread: {}", err)),
+                    }
+                }
+                Err(err) => {
+                    eprintln!("Failed to list threads: {}", err);
+                    Ok(SlashCommandResult::Continue)
+                }
+            }
         }
         _ => {
             println!("Unknown command. Type /help for commands.");
@@ -1051,6 +1119,31 @@ fn get_history_file() -> PathBuf {
     PathBuf::from(".distri").join("history.txt")
 }
 
+fn get_last_thread_file() -> PathBuf {
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .unwrap_or_else(|_| ".".to_string());
+    PathBuf::from(home)
+        .join(".distri")
+        .join("last_thread")
+}
+
+fn save_last_thread(thread_id: &str) -> Result<(), std::io::Error> {
+    let path = get_last_thread_file();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&path, thread_id)
+}
+
+fn load_last_thread() -> Option<String> {
+    let path = get_last_thread_file();
+    std::fs::read_to_string(path)
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
 fn print_welcome_header(agent_name: &str, model_name: &str) {
     println!();
     println!(
@@ -1108,6 +1201,9 @@ fn print_help_message() {
     println!("  /models             - Set model override (prompts for name)");
     println!("  /model <name>       - Set model override directly");
     println!("  /available-tools    - List tools available to the client");
+    println!("  /resume             - Pick from recent threads to resume");
+    println!("  /resume last        - Resume the last thread from previous session");
+    println!("  /resume <id>        - Resume a specific thread by ID");
     println!("  /clear              - Clear the current session context");
     println!("  /help               - Show this help message");
     println!("  /exit               - Exit the chat");

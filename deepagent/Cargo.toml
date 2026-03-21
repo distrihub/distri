@@ -1,5 +1,5 @@
 [package]
-name = "distri-coder"
+name = "deepagent"
 version = "0.3.6"
 edition = "2024"
 

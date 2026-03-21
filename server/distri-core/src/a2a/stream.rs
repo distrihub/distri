@@ -296,8 +296,9 @@ pub async fn handle_message_send_streaming_sse(
         } else {
             tracing::debug!("[stream] No browser_session_id in metadata");
         }
-        if metadata_struct.env_vars.is_some() {
-            exec_ctx.env_vars = metadata_struct.env_vars.clone();
+        if let Some(ref vars) = metadata_struct.env_vars {
+            let mut env = exec_ctx.env_vars.write().await;
+            env.extend(vars.clone());
         }
         if let Some(tool_meta) = metadata_struct.tool_metadata.clone() {
             exec_ctx.tool_metadata = Some(tool_meta);

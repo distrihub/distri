@@ -149,7 +149,9 @@ pub struct ExecutorContext {
     pub current_step_id: Arc<RwLock<Option<String>>>,
     pub current_message_id: Arc<RwLock<Option<String>>>,
     /// Environment variables passed from the client, forwarded to skill scripts and plugin contexts.
-    pub env_vars: Option<HashMap<String, String>>,
+    /// Wrapped in Arc<RwLock> so tools (e.g., inject_connection_env) can mutate env vars
+    /// and child contexts inherit the same mutable map.
+    pub env_vars: Arc<RwLock<HashMap<String, String>>>,
     /// Channel for emitting events to parent agent (for subagent communication)
     pub parent_tx: Option<Arc<mpsc::Sender<AgentEvent>>>,
     /// Parent task_id for subagents to share session data with parent
@@ -208,7 +210,7 @@ impl Default for ExecutorContext {
             current_step_id: Arc::new(RwLock::new(None)),
             current_message_id: Arc::new(RwLock::new(None)),
             additional_attributes: None,
-            env_vars: None,
+            env_vars: Arc::new(RwLock::new(HashMap::new())),
             parent_tx: None,
             parent_task_id: None,
             dynamic_tools: None,
@@ -363,10 +365,21 @@ impl ExecutorContext {
         }
     }
     pub async fn increment_usage(&self, input_tokens: u32, output_tokens: u32) {
+        self.increment_usage_with_cache(input_tokens, output_tokens, 0).await;
+    }
+
+    pub async fn increment_usage_with_cache(&self, input_tokens: u32, output_tokens: u32, cached_tokens: u32) {
         let mut usage = self.usage.write().await;
         usage.tokens += input_tokens + output_tokens;
         usage.input_tokens += input_tokens;
         usage.output_tokens += output_tokens;
+        usage.cached_tokens += cached_tokens;
+    }
+
+    /// Set the model name on the usage context for cost tracking
+    pub async fn set_usage_model(&self, model: String) {
+        let mut usage = self.usage.write().await;
+        usage.model = Some(model);
     }
 
     /// Increment the current iteration count
@@ -745,7 +758,9 @@ impl ExecutorContext {
         Ok(Vec::new())
     }
 
-    /// Create a new task context within the same conversation thread
+    /// Create a new task context within the same conversation thread.
+    /// Child gets its own usage counter to avoid double-counting tokens
+    /// when both parent and child emit RunFinished events.
     pub async fn new_task(&self, agent_id: &str) -> Self {
         ExecutorContext {
             thread_id: self.thread_id.clone(),
@@ -753,7 +768,9 @@ impl ExecutorContext {
             session_id: self.session_id.clone(),
             user_id: self.user_id.clone(),
             identifier_id: self.identifier_id.clone(),
-            usage: self.usage.clone(),
+            // Child gets its own usage counter — NOT shared with parent.
+            // This prevents double-counting: child records its own tokens via RunFinished,
+            // and parent records only its own LLM calls.
             verbose: self.verbose,
             orchestrator: self.orchestrator.clone(),
             stores: self
@@ -765,6 +782,7 @@ impl ExecutorContext {
             parent_task_id: Some(self.task_id.clone()),
             tool_metadata: self.tool_metadata.clone(),
             default_model_settings: self.default_model_settings.clone(),
+            env_vars: self.env_vars.clone(), // Propagate env vars to child agents
             ..Default::default()
         }
     }
@@ -794,6 +812,7 @@ impl ExecutorContext {
             parent_task_id: self.parent_task_id.clone(),
             tool_metadata: self.tool_metadata.clone(),
             default_model_settings: self.default_model_settings.clone(),
+            env_vars: self.env_vars.clone(), // Propagate env vars
             ..Default::default()
         }
     }

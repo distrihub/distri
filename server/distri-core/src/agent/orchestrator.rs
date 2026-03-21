@@ -644,12 +644,10 @@ impl AgentOrchestrator {
                             })
                             .await;
 
-                        // Add skill tools: load_skill and run_skill_script
+                        // Add skill tool: load_skill
                         context
                             .extend_tools(vec![
                                 Arc::new(crate::tools::skill_script::LoadSkillTool)
-                                    as Arc<dyn Tool>,
-                                Arc::new(crate::tools::skill_script::RunSkillScriptTool)
                                     as Arc<dyn Tool>,
                             ])
                             .await;

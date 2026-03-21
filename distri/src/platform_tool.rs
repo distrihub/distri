@@ -89,6 +89,11 @@ impl PlatformTool {
                 "get_secret",
                 "set_secret",
                 "delete_secret",
+                "list_notes",
+                "create_note",
+                "get_note",
+                "update_note",
+                "delete_note",
                 "list_threads",
             ])),
 
@@ -371,6 +376,49 @@ impl PlatformTool {
                 Ok(json!({ "deleted": true, "key": key }))
             }
 
+            "list_notes" => {
+                let tag = params.get("tag").and_then(|v| v.as_str());
+                let search = params.get("search").and_then(|v| v.as_str());
+                let notes = self.client.list_notes(tag, search).await?;
+                Ok(notes)
+            }
+
+            "create_note" => {
+                let title = required_param(&params, "title")?;
+                let content = required_param(&params, "content")?;
+                let tags: Vec<String> = params
+                    .get("tags")
+                    .and_then(|v| serde_json::from_value(v.clone()).ok())
+                    .unwrap_or_default();
+                let note = self.client.create_note(&title, &content, &tags).await?;
+                Ok(note)
+            }
+
+            "get_note" => {
+                let id = required_param(&params, "note_id")?;
+                match self.client.get_note(&id).await? {
+                    Some(note) => Ok(note),
+                    None => Ok(json!({"error": "Note not found"})),
+                }
+            }
+
+            "update_note" => {
+                let id = required_param(&params, "note_id")?;
+                let title = params.get("title").and_then(|v| v.as_str());
+                let content = params.get("content").and_then(|v| v.as_str());
+                let tags: Option<Vec<String>> = params
+                    .get("tags")
+                    .and_then(|v| serde_json::from_value(v.clone()).ok());
+                let note = self.client.update_note(&id, title, content, tags.as_deref()).await?;
+                Ok(note)
+            }
+
+            "delete_note" => {
+                let id = required_param(&params, "note_id")?;
+                self.client.delete_note(&id).await?;
+                Ok(json!({"deleted": true, "note_id": id}))
+            }
+
             "list_threads" => {
                 let threads = self.client.list_threads().await?;
                 Ok(serde_json::to_value(threads)?)
@@ -499,7 +547,7 @@ mod tests {
         assert!(actions.contains(&"import_skill".to_string()));
         assert!(actions.contains(&"list_secrets".to_string()));
         assert!(actions.contains(&"list_threads".to_string()));
-        assert_eq!(actions.len(), 21);
+        assert_eq!(actions.len(), 26);
     }
 
     #[tokio::test]

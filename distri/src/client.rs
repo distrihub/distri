@@ -2342,6 +2342,81 @@ impl Distri {
         }
     }
 
+    // ========== Notes API ==========
+
+    pub async fn list_notes(&self, tag: Option<&str>, search: Option<&str>) -> Result<Value, ClientError> {
+        let mut url = format!("{}/notes", self.base_url);
+        let mut params = vec![];
+        if let Some(t) = tag {
+            params.push(format!("tag={}", t));
+        }
+        if let Some(s) = search {
+            params.push(format!("search={}", s));
+        }
+        if !params.is_empty() {
+            url = format!("{}?{}", url, params.join("&"));
+        }
+        let resp = self.http.get(&url).send().await?;
+        if resp.status().is_success() {
+            Ok(resp.json().await?)
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!("failed to list notes: {}", text)))
+        }
+    }
+
+    pub async fn create_note(&self, title: &str, content: &str, tags: &[String]) -> Result<Value, ClientError> {
+        let url = format!("{}/notes", self.base_url);
+        let body = serde_json::json!({ "title": title, "content": content, "tags": tags });
+        let resp = self.http.post(&url).json(&body).send().await?;
+        if resp.status().is_success() {
+            Ok(resp.json().await?)
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!("failed to create note: {}", text)))
+        }
+    }
+
+    pub async fn get_note(&self, id: &str) -> Result<Option<Value>, ClientError> {
+        let url = format!("{}/notes/{}", self.base_url, id);
+        let resp = self.http.get(&url).send().await?;
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if resp.status().is_success() {
+            Ok(Some(resp.json().await?))
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!("failed to get note: {}", text)))
+        }
+    }
+
+    pub async fn update_note(&self, id: &str, title: Option<&str>, content: Option<&str>, tags: Option<&[String]>) -> Result<Value, ClientError> {
+        let url = format!("{}/notes/{}", self.base_url, id);
+        let mut body = serde_json::Map::new();
+        if let Some(t) = title { body.insert("title".to_string(), serde_json::json!(t)); }
+        if let Some(c) = content { body.insert("content".to_string(), serde_json::json!(c)); }
+        if let Some(tg) = tags { body.insert("tags".to_string(), serde_json::json!(tg)); }
+        let resp = self.http.put(&url).json(&Value::Object(body)).send().await?;
+        if resp.status().is_success() {
+            Ok(resp.json().await?)
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!("failed to update note: {}", text)))
+        }
+    }
+
+    pub async fn delete_note(&self, id: &str) -> Result<(), ClientError> {
+        let url = format!("{}/notes/{}", self.base_url, id);
+        let resp = self.http.delete(&url).send().await?;
+        if resp.status().is_success() || resp.status() == reqwest::StatusCode::NO_CONTENT {
+            Ok(())
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!("failed to delete note: {}", text)))
+        }
+    }
+
     // ========== Threads API ==========
 
     pub async fn list_threads(&self) -> Result<Vec<ThreadSummary>, ClientError> {

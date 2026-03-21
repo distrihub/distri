@@ -10,8 +10,16 @@ distri/
 ├── distri-cli/            # CLI binary (distri command)
 ├── distri/                # Client library
 ├── distri-filesystem/     # Filesystem abstraction
+├── deepagent/             # Primary executor CLI (renamed from samples/coder/)
+│   ├── agents/coder.md    # Standalone coder agent definition
+│   ├── src/main.rs        # CLI binary (codela)
+│   ├── src/coder.rs       # Orchestrator setup
+│   └── src/tools.rs       # ExecuteCommandTool (local shell)
 ├── server/
 │   ├── agents/            # Agent definition files (.md with TOML frontmatter)
+│   │   ├── coder.md       # Unified executor (shell + web + files)
+│   │   ├── deepresearch.md# Deep research (sub_agents=["coder"])
+│   │   └── ...            # Other agents
 │   ├── distri-core/       # Core engine (orchestrator, agent loop, tools, LLM)
 │   ├── distri-server/     # HTTP server (actix-web routes)
 │   ├── distri-server-cli/ # Server CLI (run, serve, slash commands)
@@ -23,22 +31,12 @@ distri/
     └── code-agent.md      # Code execution agent docs
 ```
 
-## Build & test commands
-
-```bash
-cargo build                          # Build entire workspace
-cargo check                          # Fast type check (use this during development)
-cargo test                           # Run all tests
-cargo test -p distri-core            # Test a specific crate
-cargo test -p distri-core code_executor  # Run tests matching a pattern
-cargo test --ignored                 # Run integration tests (require API keys)
-```
-
 ## Architecture
 
-### Agent types
-
-Only `StandardAgent` exists. The `AgentConfig` enum has a single variant.
+See `cloud/docs/architecture.md` for the full two-tier architecture:
+- **distri** (cloud-only orchestrator, gpt-5.1) — lives in `cloud/agents/distri.md`
+- **coder** (general-purpose executor, claude-sonnet-4) — lives in `server/agents/coder.md`
+- **deepagent/** — standalone coder CLI, replaces `samples/coder/`
 
 ### Agent execution lifecycle
 
@@ -54,23 +52,33 @@ User message → AgentOrchestrator.execute()
   → Return InvokeResult
 ```
 
-### Code execution
+### Connection token passthrough
 
-Code runs in browsr shell sessions (sandboxed containers). No inline JS sandbox.
-See `docs/code-agent.md` for details.
+`inject_connection_env` tool fetches a connection token and injects it as env var on `ExecutorContext.env_vars`. Shell sessions auto-inject these env vars on `start_shell`. Child agents inherit env vars via `new_task()`.
 
-Key env vars: `BROWSR_API_KEY`, `BROWSR_BASE_URL`
+## Build & test commands
 
-### Test infrastructure
+```bash
+cargo build                          # Build entire workspace
+cargo check                          # Fast type check (use this during development)
+cargo test                           # Run all tests
+cargo test -p distri-core            # Test a specific crate
+cargo test -p distri-core code_executor  # Run tests matching a pattern
+cargo test --ignored                 # Run integration tests (require API keys)
+```
 
-- `server/distri-core/src/tests/mock_llm.rs` — MockLLM with scenarios (ToolCallThenFinish, MultipleToolCalls, etc.)
-- `server/distri-core/src/tests/orchestrator.rs` — Orchestrator integration test (needs OPENAI_API_KEY)
-- Tests use in-memory SQLite via `test_store_config()`
-- Agent definitions for tests: `server/distri-core/src/tests/test_agent.md`
-
-### Key conventions
+## Key conventions
 
 - Agent definitions are markdown files with TOML frontmatter in `server/agents/`
 - Tools implement the `Tool` trait; tools needing agent context also implement `ExecutorContextTool`
 - All stores are trait-based with in-memory and diesel implementations
 - LLM calls go through `LLMExecutor` which handles provider abstraction
+- Code runs in browsr shell sessions (sandboxed containers)
+- Key env vars: `BROWSR_API_KEY`, `BROWSR_BASE_URL`
+
+## Test infrastructure
+
+- `server/distri-core/src/tests/mock_llm.rs` — MockLLM with scenarios
+- `server/distri-core/src/tests/orchestrator.rs` — Orchestrator integration test
+- Tests use in-memory SQLite via `test_store_config()`
+- Agent definitions for tests: `server/distri-core/src/tests/test_agent.md`

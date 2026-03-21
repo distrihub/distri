@@ -577,11 +577,12 @@ impl ClaudeLLMExecutor {
             );
         }
 
-        // Track usage
+        // Track usage (including cached tokens)
         let input_tokens = response.usage.input_tokens;
         let output_tokens = response.usage.output_tokens;
+        let cached_tokens = response.usage.cache_read_input_tokens.unwrap_or(0);
         self.context
-            .increment_usage(input_tokens, output_tokens)
+            .increment_usage_with_cache(input_tokens, output_tokens, cached_tokens)
             .await;
 
         let usage = Some(distri_types::TokenUsage {
