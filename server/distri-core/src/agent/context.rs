@@ -768,6 +768,9 @@ impl ExecutorContext {
             session_id: self.session_id.clone(),
             user_id: self.user_id.clone(),
             identifier_id: self.identifier_id.clone(),
+            workspace_id: self.workspace_id.clone(),
+            channel_id: self.channel_id.clone(),
+            tenant_context: self.tenant_context.clone(),
             // Child gets its own usage counter — NOT shared with parent.
             // This prevents double-counting: child records its own tokens via RunFinished,
             // and parent records only its own LLM calls.
@@ -782,7 +785,7 @@ impl ExecutorContext {
             parent_task_id: Some(self.task_id.clone()),
             tool_metadata: self.tool_metadata.clone(),
             default_model_settings: self.default_model_settings.clone(),
-            env_vars: self.env_vars.clone(), // Propagate env vars to child agents
+            env_vars: self.env_vars.clone(),
             ..Default::default()
         }
     }
@@ -800,6 +803,9 @@ impl ExecutorContext {
             session_id: self.session_id.clone(),
             user_id: self.user_id.clone(),
             identifier_id: self.identifier_id.clone(),
+            workspace_id: self.workspace_id.clone(),
+            channel_id: self.channel_id.clone(),
+            tenant_context: self.tenant_context.clone(),
             usage: self.usage.clone(),
             verbose: self.verbose,
             orchestrator: self.orchestrator.clone(),
@@ -812,7 +818,7 @@ impl ExecutorContext {
             parent_task_id: self.parent_task_id.clone(),
             tool_metadata: self.tool_metadata.clone(),
             default_model_settings: self.default_model_settings.clone(),
-            env_vars: self.env_vars.clone(), // Propagate env vars
+            env_vars: self.env_vars.clone(),
             ..Default::default()
         }
     }

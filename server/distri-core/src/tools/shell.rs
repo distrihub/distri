@@ -3,11 +3,14 @@ use crate::tools::ExecutorContextTool;
 use crate::types::ToolCall;
 use crate::AgentError;
 use anyhow::Result;
+use browsr_types::{
+    ShellCreateSessionRequest, ShellCreateSessionResponse,
+    ShellExecRequest, ShellExecResponse,
+};
 use distri_stores::SessionStoreExt;
 use distri_types::{Part, Tool, ToolContext};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{json, Value};
-use std::collections::HashMap;
 use std::sync::Arc;
 
 const SHELL_SESSION_KEY: &str = "shell_session_id";
@@ -53,8 +56,8 @@ impl BrowsrShellClient {
 
     pub(crate) async fn create_session(
         &self,
-        request: &CreateShellSessionRequest,
-    ) -> Result<CreateShellSessionResponse, AgentError> {
+        request: &ShellCreateSessionRequest,
+    ) -> Result<ShellCreateSessionResponse, AgentError> {
         let url = format!("{}/shell/sessions", self.base_url);
         tracing::info!("[BrowsrShellClient::create_session] POST {}", url);
         let resp = self
@@ -130,110 +133,17 @@ impl BrowsrShellClient {
     }
 }
 
-// ============================================================
-// Shell API Types — matches browsr-cloud CreateSessionRequest
-// ============================================================
-
-/// Environment selection for shell sessions.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum EnvironmentSelection {
-    Existing { environment_id: String },
-    Dynamic {
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        image: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        memory_mb: Option<u32>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        disk_mb: Option<u32>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        cpu_cores: Option<f32>,
-    },
-}
-
-/// Tool definition for in-container stub generation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolDefinition {
-    pub name: String,
-    pub description: String,
-    pub parameters: Value,
-}
-
-/// Network access policy for shells.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "level", rename_all = "snake_case")]
-pub enum NetworkAccess {
-    None,
-    Trusted,
-    AllowedDomains { domains: Vec<String> },
-    Full,
-}
-
-/// Full session creation request matching browsr-cloud API.
-#[derive(Debug, Serialize, Default)]
-pub(crate) struct CreateShellSessionRequest {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub environment: Option<EnvironmentSelection>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub timeout_secs: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub language: Option<String>,
-    /// Tool definitions for stub generation inside the container.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tools: Option<Vec<ToolDefinition>>,
-    /// Consumer-owned URL that receives tool callbacks.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tools_endpoint: Option<String>,
-    /// Per-call timeout for tool callbacks (seconds).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool_timeout_secs: Option<u32>,
-    /// Setup script to run after environment restore.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub setup_script: Option<String>,
-    /// Paths to cache separately from the main snapshot.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cache_paths: Option<Vec<String>>,
-    /// Network access policy.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub network_access: Option<NetworkAccess>,
-    /// Custom environment variables injected into the container.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub env_vars: Option<HashMap<String, String>>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct CreateShellSessionResponse {
-    pub session_id: String,
-    #[serde(default)]
-    pub status: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub(crate) struct ShellExecRequest {
-    pub session_id: String,
-    pub command: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub timeout_secs: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub working_dir: Option<String>,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-pub(crate) struct ShellExecResponse {
-    pub session_id: String,
-    pub stdout: String,
-    pub stderr: String,
-    pub exit_code: i32,
-    pub duration_ms: u64,
-    pub timed_out: bool,
-}
+// Shell API types are imported from browsr_types:
+// ShellCreateSessionRequest, ShellCreateSessionResponse,
+// ShellExecRequest, ShellExecResponse,
+// NetworkAccess, ToolDefinition
 
 // ============================================================
 // Shell property overrides from context.tool_metadata["shell"]
 // ============================================================
 
-/// Shell overrides that can be set via tool_metadata["shell"] on the ExecutorContext.
-/// These let the orchestrator or cloud layer control shell creation properties.
+/// Shell overrides from tool_metadata["shell"]. Flat struct that merges
+/// into `ShellCreateSessionRequest` — any field set here wins over defaults.
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct ShellOverrides {
     #[serde(default)]
@@ -253,13 +163,13 @@ pub struct ShellOverrides {
     #[serde(default)]
     pub cache_paths: Option<Vec<String>>,
     #[serde(default)]
-    pub network_access: Option<NetworkAccess>,
+    pub network_access: Option<browsr_types::NetworkAccess>,
     #[serde(default)]
     pub tools_endpoint: Option<String>,
     #[serde(default)]
     pub tool_timeout_secs: Option<u32>,
     #[serde(default)]
-    pub tools: Option<Vec<ToolDefinition>>,
+    pub tools: Option<Vec<browsr_types::ToolDefinition>>,
 }
 
 fn get_shell_overrides(context: &ExecutorContext) -> ShellOverrides {
@@ -420,23 +330,11 @@ impl ExecutorContextTool for StartShellTool {
                 }
             });
 
-        // Build environment selection
-        let environment = if let Some(env_id) = &overrides.environment_id {
-            Some(EnvironmentSelection::Existing {
-                environment_id: env_id.clone(),
-            })
-        } else {
-            Some(EnvironmentSelection::Dynamic {
-                image,
-                memory_mb: input
-                    .get("memory_mb")
-                    .and_then(|v| v.as_u64())
-                    .map(|v| v as u32)
-                    .or(overrides.memory_mb),
-                disk_mb: overrides.disk_mb,
-                cpu_cores: overrides.cpu_cores,
-            })
-        };
+        let memory_mb = input
+            .get("memory_mb")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as u32)
+            .or(overrides.memory_mb);
 
         // Collect env vars from context (injected by inject_connection_env, etc.)
         let env_vars = {
@@ -444,8 +342,12 @@ impl ExecutorContextTool for StartShellTool {
             if vars.is_empty() { None } else { Some(vars.clone()) }
         };
 
-        let request = CreateShellSessionRequest {
-            environment,
+        let request = ShellCreateSessionRequest {
+            environment_id: overrides.environment_id.clone(),
+            image,
+            memory_mb,
+            disk_mb: overrides.disk_mb,
+            cpu_cores: overrides.cpu_cores,
             language,
             timeout_secs: input
                 .get("timeout_secs")
@@ -459,6 +361,7 @@ impl ExecutorContextTool for StartShellTool {
             cache_paths: overrides.cache_paths,
             network_access: overrides.network_access,
             env_vars,
+            ..Default::default()
         };
 
         let client = BrowsrShellClient::from_env();
@@ -467,13 +370,11 @@ impl ExecutorContextTool for StartShellTool {
         // Store session ID in session store
         set_shell_session_id(&context, &response.session_id).await?;
 
-        let env_count = request.env_vars.as_ref().map(|v| v.len()).unwrap_or(0);
         tracing::info!(
-            "[start_shell] Created shell session: {} (env_vars={}, tools={}, network={:?})",
+            "[start_shell] Created session: {} (env_vars={}, tools={:?})",
             response.session_id,
-            env_count,
-            request.tools.as_ref().map(|t| t.len()).unwrap_or(0),
-            request.network_access.is_some(),
+            request.env_vars.as_ref().map(|v| v.len()).unwrap_or(0),
+            response.tools_injected,
         );
 
         Ok(vec![Part::Data(json!({
@@ -600,11 +501,12 @@ impl ExecutorContextTool for ExecuteShellTool {
         let client = BrowsrShellClient::from_env();
         let response = client.exec(&request).await?;
 
+        let result = &response.result;
         tracing::debug!(
-            "[execute_shell] session={} exit_code={} duration={}ms",
+            "[execute_shell] session={} exit_code={:?} duration={:?}ms",
             response.session_id,
-            response.exit_code,
-            response.duration_ms
+            result.exit_code,
+            result.duration_ms,
         );
 
         Ok(vec![Part::Data(
