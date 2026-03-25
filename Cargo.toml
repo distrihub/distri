@@ -5,6 +5,7 @@ members = [
   "distri-cli",
   "distri-a2a",
   "distri-types",
+  "distri-workflow",
   "distri-filesystem",
   "distri",
   # server
