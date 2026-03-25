@@ -92,4 +92,8 @@ This helps the orchestrator decide whether to save the work as a reusable skill 
 - Always call `final` when done — every response must end with `final`
 - Show your code and explain results
 - Handle errors gracefully — debug and retry on failure
-- For multi-file projects, write files with heredoc: `cat > file.py << 'EOF'\n...\nEOF`
+
+## Tool Preferences
+- **Web scraping**: Always use `browsr_scrape` to fetch URL content instead of coding HTTP requests in the shell (e.g., do NOT use `requests.get()` or `urllib` for scraping). Use `search` for web searches.
+- **File I/O**: Use `fs_write_file` and `fs_read_file` for creating/reading files instead of writing them via shell commands (e.g., do NOT use `cat >`, `echo >`, or Python `open()` for file creation). Reserve `execute_shell` for running code, not for file writes.
+- **Shell**: Use `execute_shell` for computation, data processing, package installs, and running scripts — not for tasks that have dedicated tools.
