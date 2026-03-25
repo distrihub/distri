@@ -62,12 +62,31 @@ impl WorkflowDefinition {
     }
 
     /// Merge external input into the workflow context.
+    /// Initialize workflow with validated input. Input is validated against
+    /// `input_schema` if present, then merged into context.
     pub fn with_input(mut self, input: serde_json::Value) -> Result<Self, String> {
+        // Validate input against schema if present
+        if let Some(ref schema_value) = self.input_schema {
+            let validator = jsonschema::validator_for(schema_value)
+                .map_err(|e| format!("Invalid input_schema: {e}"))?;
+
+            if !validator.is_valid(&input) {
+                let errors: Vec<String> = validator.iter_errors(&input)
+                    .map(|e| format!("{}", e))
+                    .collect();
+                return Err(format!("Input validation failed: {}", errors.join("; ")));
+            }
+        }
+
+        // Merge input into context
         if let (Some(ctx), Some(inp)) = (self.context.as_object_mut(), input.as_object()) {
             for (k, v) in inp {
                 ctx.insert(k.clone(), v.clone());
             }
         }
+
+        self.status = WorkflowStatus::Running;
+        self.updated_at = Utc::now();
         Ok(self)
     }
 
@@ -641,4 +660,47 @@ pub struct WorkflowNote {
     pub step_id: String,
     pub message: String,
     pub at: DateTime<Utc>,
+}
+
+// ============================================================================
+// Workflow Events (for streaming to clients)
+// ============================================================================
+
+/// Events emitted during workflow execution.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "event", rename_all = "snake_case")]
+pub enum WorkflowEvent {
+    /// Workflow started
+    WorkflowStarted {
+        workflow_id: String,
+        workflow_type: String,
+        total_steps: usize,
+    },
+    /// A step started executing
+    StepStarted {
+        workflow_id: String,
+        step_id: String,
+        step_label: String,
+    },
+    /// A step completed successfully
+    StepCompleted {
+        workflow_id: String,
+        step_id: String,
+        step_label: String,
+        result: Option<serde_json::Value>,
+    },
+    /// A step failed
+    StepFailed {
+        workflow_id: String,
+        step_id: String,
+        step_label: String,
+        error: String,
+    },
+    /// Workflow completed (all steps done or failed)
+    WorkflowCompleted {
+        workflow_id: String,
+        status: WorkflowStatus,
+        steps_done: usize,
+        steps_failed: usize,
+    },
 }

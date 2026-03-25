@@ -40,7 +40,7 @@ pub mod executor;
 
 pub use types::*;
 pub use store::{WorkflowStateStore, InMemoryStore};
-pub use executor::{StepExecutor, WorkflowRunner};
+pub use executor::{StepExecutor, WorkflowRunner, EventSink, TracingEventSink, NoopEventSink};
 
 #[cfg(test)]
 mod tests;

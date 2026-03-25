@@ -856,4 +856,105 @@ mod tests {
         assert_eq!(skills.len(), 2);
         assert_eq!(skills[0].skill, "native:shell");
     }
+
+    // ========================================================================
+    // Input validation tests
+    // ========================================================================
+
+    #[tokio::test]
+    async fn input_validation_rejects_missing_required_field() {
+        let mut workflow = WorkflowDefinition::new("test", vec![]);
+        workflow.input_schema = Some(serde_json::json!({
+            "type": "object",
+            "required": ["file_id", "class_id"],
+            "properties": {
+                "file_id": { "type": "string" },
+                "class_id": { "type": "string" }
+            }
+        }));
+
+        // Missing class_id
+        let result = workflow.with_input(serde_json::json!({ "file_id": "abc" }));
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("validation failed"));
+    }
+
+    #[tokio::test]
+    async fn input_validation_rejects_wrong_type() {
+        let mut workflow = WorkflowDefinition::new("test", vec![]);
+        workflow.input_schema = Some(serde_json::json!({
+            "type": "object",
+            "properties": { "count": { "type": "integer" } }
+        }));
+
+        let result = workflow.with_input(serde_json::json!({ "count": "not a number" }));
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn input_validation_accepts_valid_input() {
+        let mut workflow = WorkflowDefinition::new("test", vec![]);
+        workflow.input_schema = Some(serde_json::json!({
+            "type": "object",
+            "required": ["file_id"],
+            "properties": { "file_id": { "type": "string" } }
+        }));
+
+        let result = workflow.with_input(serde_json::json!({ "file_id": "abc123" }));
+        assert!(result.is_ok());
+        let w = result.unwrap();
+        assert_eq!(w.context["file_id"], "abc123");
+        assert_eq!(w.status, WorkflowStatus::Running);
+    }
+
+    #[tokio::test]
+    async fn input_without_schema_accepts_anything() {
+        let workflow = WorkflowDefinition::new("test", vec![]);
+        // No input_schema set
+        let result = workflow.with_input(serde_json::json!({ "anything": "goes" }));
+        assert!(result.is_ok());
+    }
+
+    // ========================================================================
+    // Event emission tests
+    // ========================================================================
+
+    #[tokio::test]
+    async fn run_all_emits_events() {
+        use std::sync::Mutex;
+
+        struct CollectingSink {
+            events: Mutex<Vec<WorkflowEvent>>,
+        }
+
+        #[async_trait::async_trait]
+        impl EventSink for CollectingSink {
+            async fn emit(&self, event: WorkflowEvent) {
+                self.events.lock().unwrap().push(event);
+            }
+        }
+
+        let steps = vec![
+            WorkflowStep::api_call("s1", "Step 1", "GET", "/1"),
+            WorkflowStep::api_call("s2", "Step 2", "POST", "/2"),
+        ];
+        let workflow = WorkflowDefinition::new("test", steps);
+        let store = InMemoryStore::new();
+        store.save(&workflow).await.unwrap();
+
+        let sink = CollectingSink { events: Mutex::new(vec![]) };
+        let executor = MockExecutor::new();
+        let runner = WorkflowRunner::with_events(store, executor, sink);
+
+        runner.run_all(&workflow.id).await.unwrap();
+
+        let events = runner.events.events.lock().unwrap();
+        // Should have: started, step1_started, step1_completed, step2_started, step2_completed, workflow_completed
+        assert!(events.len() >= 5, "Expected at least 5 events, got {}", events.len());
+
+        // First event should be WorkflowStarted
+        matches!(&events[0], WorkflowEvent::WorkflowStarted { .. });
+        // Last should be WorkflowCompleted
+        matches!(events.last().unwrap(), WorkflowEvent::WorkflowCompleted { .. });
+    }
 }
