@@ -49,6 +49,13 @@ impl A2AHandler {
                 def.icon_url.clone(),
                 def.skills_description.clone(),
             ),
+            distri_types::configuration::AgentConfig::WorkflowAgent(def) => (
+                def.name.clone(),
+                def.description.clone(),
+                Some(def.version.clone()),
+                None,
+                Vec::new(),
+            ),
         };
 
         let server_config = server_config.unwrap_or_default();

@@ -48,6 +48,10 @@ pub async fn validate_provider_secrets(
             Some(ms) => ms.inner.provider.clone(),
             None => return Ok(()),
         },
+        Some(AgentConfig::WorkflowAgent(_)) => {
+            // Workflow agents don't have a single LLM provider; skip validation
+            return Ok(());
+        }
         None => {
             // If agent not found, we'll get an error later; skip validation here
             return Ok(());

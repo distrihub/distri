@@ -26,6 +26,7 @@ distri-types = { path = "../../distri-types", version = "0.3.6" }
 distri-stores = { path = "../distri-stores", version = "0.3.6", default-features = false }
 distri-filesystem = { path = "../../distri-filesystem", version = "0.3.6" }
 distri-auth = { path = "../distri-auth", version = "0.3.6" }
+distri-workflow = { path = "../../distri-workflow", version = "0.1.0" }
 
 async-trait = { workspace = true }
 serde = { workspace = true }

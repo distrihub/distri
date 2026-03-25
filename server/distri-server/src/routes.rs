@@ -456,7 +456,14 @@ async fn get_agent_definition(
     let context = Arc::default();
     match agent {
         Some(agent) => {
-            let distri_types::configuration::AgentConfig::StandardAgent(def) = &agent;
+            let def = match &agent {
+                distri_types::configuration::AgentConfig::StandardAgent(d) => d,
+                _ => {
+                    return HttpResponse::BadRequest().json(json!({
+                        "error": "WorkflowAgent does not support this endpoint"
+                    }));
+                }
+            };
             let markdown = build_markdown_from_definition(def);
             let tools = executor
                 .get_agent_tools(def, &context)
@@ -528,7 +535,14 @@ async fn validate_agent_handler(
     };
 
     // Extract provider from agent config
-    let distri_types::configuration::AgentConfig::StandardAgent(def) = &agent;
+    let def = match &agent {
+        distri_types::configuration::AgentConfig::StandardAgent(d) => d,
+        _ => {
+            return HttpResponse::BadRequest().json(json!({
+                "error": "WorkflowAgent does not support this endpoint"
+            }));
+        }
+    };
     let provider = def.model_settings().map(|ms| ms.inner.provider.clone()).unwrap_or(distri_types::ModelProvider::OpenAI {});
 
     // Check for missing provider secrets

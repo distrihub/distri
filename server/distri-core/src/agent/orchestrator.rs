@@ -663,6 +663,9 @@ impl AgentOrchestrator {
                                 distri_types::configuration::AgentConfig::StandardAgent(def) => {
                                     def.description.clone()
                                 }
+                                distri_types::configuration::AgentConfig::WorkflowAgent(def) => {
+                                    def.description.clone()
+                                }
                             }
                         } else {
                             "Sub-agent".to_string()
@@ -715,6 +718,10 @@ impl AgentOrchestrator {
                     hook_impl,
                 )
                 .await?;
+                Ok(Box::new(agent))
+            }
+            distri_types::configuration::AgentConfig::WorkflowAgent(definition) => {
+                let agent = crate::agent::WorkflowAgent::new(definition);
                 Ok(Box::new(agent))
             }
         }
@@ -837,10 +844,11 @@ impl AgentOrchestrator {
         Self::validate_agent_model(&agent_config)?;
 
         // Check if todos are enabled for this agent and initialize shared_todos if needed
-        let distri_types::configuration::AgentConfig::StandardAgent(definition) = &agent_config;
-        if definition.should_use_browser() {
-            tracing::debug!("🌐 Browser enabled for agent: {}", agent_id);
-            // No in-process browser initialization; sessions are handled via browsr-client.
+        if let distri_types::configuration::AgentConfig::StandardAgent(definition) = &agent_config {
+            if definition.should_use_browser() {
+                tracing::debug!("🌐 Browser enabled for agent: {}", agent_id);
+                // No in-process browser initialization; sessions are handled via browsr-client.
+            }
         }
 
         tracing::debug!(
@@ -1143,12 +1151,18 @@ impl AgentOrchestrator {
     /// workspace defaults with agent-level settings. At least one must provide
     /// model settings.
     fn validate_agent_model(agent_config: &AgentConfig) -> Result<(), AgentError> {
-        let AgentConfig::StandardAgent(definition) = agent_config;
-        if definition.model_settings.is_none() {
-            return Err(AgentError::InvalidConfiguration(
-                "No model configured. Please set a default model in Agent Settings → Default Model, or configure a model provider on the agent."
-                    .to_string(),
-            ));
+        match agent_config {
+            AgentConfig::StandardAgent(definition) => {
+                if definition.model_settings.is_none() {
+                    return Err(AgentError::InvalidConfiguration(
+                        "No model configured. Please set a default model in Agent Settings → Default Model, or configure a model provider on the agent."
+                            .to_string(),
+                    ));
+                }
+            }
+            AgentConfig::WorkflowAgent(_) => {
+                // Workflow agents don't require model settings
+            }
         }
         Ok(())
     }
@@ -1158,8 +1172,13 @@ impl AgentOrchestrator {
         definition_overrides: Option<DefinitionOverrides>,
         default_model_settings: &Option<ModelSettings>,
     ) {
-        let distri_types::configuration::AgentConfig::StandardAgent(ref mut definition) =
-            agent_config;
+        let definition = match agent_config {
+            distri_types::configuration::AgentConfig::StandardAgent(ref mut def) => def,
+            distri_types::configuration::AgentConfig::WorkflowAgent(_) => {
+                // Workflow agents don't support overrides or model merging
+                return;
+            }
+        };
         let merged = match (definition.model_settings.take(), default_model_settings) {
             (Some(agent_model), Some(base)) => {
                 match Self::merge_model_settings(base, &agent_model) {
@@ -1466,8 +1485,7 @@ impl OrchestratorTrait for AgentOrchestrator {
 
         // Load agent definition to get base model_settings if available
         // Only StandardAgent has model_settings; workflow agents don't
-        if let Some(agent_config) = self.get_agent(&llm_def.name).await {
-            let AgentConfig::StandardAgent(def) = &agent_config;
+        if let Some(AgentConfig::StandardAgent(def)) = self.get_agent(&llm_def.name).await.as_ref() {
             // Merge: use agent's model_settings as base, override with request's model_settings
             if let (Some(base), Some(override_ms)) = (def.model_settings(), &llm_def.model_settings) {
                 let final_model_settings =

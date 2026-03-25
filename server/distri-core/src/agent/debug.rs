@@ -45,6 +45,9 @@ pub async fn get_debug_context_def(
     // Convert agent config to StandardDefinition
     let agent_def = match agent_config {
         distri_types::configuration::AgentConfig::StandardAgent(def) => def,
+        distri_types::configuration::AgentConfig::WorkflowAgent(_) => {
+            return Err(anyhow::anyhow!("Debug mode is not supported for workflow agents"));
+        }
     };
 
     // Create a basic ExecutorContext for response generation
