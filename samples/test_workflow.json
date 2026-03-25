@@ -1,73 +1,37 @@
 {
-  "id": "test-workflow-001",
+  "id": "api-test",
   "workflow_type": "api_test",
   "status": "pending",
-  "current_step": 0,
-  "context": {
-    "api_base": "http://localhost:8086/v1"
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "api_base": { "type": "string", "description": "Base URL for the API" }
+    },
+    "required": ["api_base"]
   },
   "steps": [
     {
       "id": "list_agents",
       "label": "List available agents",
-      "kind": {
-        "type": "api_call",
-        "method": "GET",
-        "url": "{context.api_base}/agents"
-      },
-      "status": "pending",
+      "kind": { "type": "api_call", "method": "GET", "url": "{context.api_base}/agents" },
       "depends_on": [],
       "execution": "sequential",
-      "requires": [
-        { "skill": "native:network" }
-      ]
-    },
-    {
-      "id": "list_skills",
-      "label": "List available skills",
-      "kind": {
-        "type": "api_call",
-        "method": "GET",
-        "url": "{context.api_base}/skills"
-      },
-      "status": "pending",
-      "depends_on": [],
-      "execution": "parallel",
-      "requires": [
-        { "skill": "native:network" }
-      ]
+      "requires": [{ "skill": "native:network" }]
     },
     {
       "id": "check_connections",
       "label": "Check workspace connections",
-      "kind": {
-        "type": "tool_call",
-        "tool_name": "api_request",
-        "input": {
-          "method": "GET",
-          "path": "/v1/connections"
-        }
-      },
-      "status": "pending",
+      "kind": { "type": "tool_call", "tool_name": "api_request", "input": { "method": "GET", "path": "/v1/connections" } },
       "depends_on": [],
       "execution": "parallel",
-      "requires": [
-        { "skill": "native:network" }
-      ]
+      "requires": [{ "skill": "native:network" }]
     },
     {
       "id": "summarize",
       "label": "Summarize workspace state",
-      "kind": {
-        "type": "checkpoint",
-        "message": "Workspace scan complete. Review agents, skills, and connections above."
-      },
-      "status": "pending",
-      "depends_on": ["list_agents", "list_skills", "check_connections"],
+      "kind": { "type": "checkpoint", "message": "Workspace scan complete." },
+      "depends_on": ["list_agents", "check_connections"],
       "execution": "sequential"
     }
-  ],
-  "notes": [],
-  "created_at": "2026-03-25T00:00:00Z",
-  "updated_at": "2026-03-25T00:00:00Z"
+  ]
 }

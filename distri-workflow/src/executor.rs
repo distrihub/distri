@@ -1,5 +1,6 @@
 //! Workflow executor — runs steps sequentially or in parallel.
 
+use crate::resolve;
 use crate::store::WorkflowStateStore;
 use crate::types::*;
 
@@ -187,7 +188,8 @@ impl<S: WorkflowStateStore, E: StepExecutor, K: EventSink> WorkflowRunner<S, E, 
                     step_label: step.label.clone(),
                 }).await;
 
-                let result = self.executor.execute(step, &workflow.context).await;
+                let step_context = resolve::resolve_step_input(step.input.as_ref(), &workflow.context);
+                let result = self.executor.execute(step, &step_context).await;
                 match result {
                     Ok(r) => {
                         self.events.emit(WorkflowEvent::StepCompleted {
@@ -230,7 +232,8 @@ impl<S: WorkflowStateStore, E: StepExecutor, K: EventSink> WorkflowRunner<S, E, 
                 step_label: step.label.clone(),
             }).await;
 
-            let result = self.executor.execute(step, &workflow.context).await;
+            let step_context = resolve::resolve_step_input(step.input.as_ref(), &workflow.context);
+                let result = self.executor.execute(step, &step_context).await;
             match result {
                 Ok(r) => {
                     self.events.emit(WorkflowEvent::StepCompleted {
@@ -273,8 +276,11 @@ impl<S: WorkflowStateStore, E: StepExecutor, K: EventSink> WorkflowRunner<S, E, 
 
     /// Run all steps until completion, failure, blocked, or pause.
     pub async fn run_all(&self, workflow_id: &str) -> Result<WorkflowStatus, String> {
-        // Emit workflow started
+        // Validate DAG before executing
         let workflow = self.store.load(workflow_id).await?.ok_or("Workflow not found")?;
+        workflow.detect_cycles()?;
+
+        // Emit workflow started
         self.events.emit(WorkflowEvent::WorkflowStarted {
             workflow_id: workflow_id.to_string(),
             workflow_type: workflow.workflow_type.clone(),

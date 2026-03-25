@@ -239,15 +239,18 @@ enum ThreadsCommands {
 
 #[derive(Subcommand, Debug, Clone)]
 enum WorkflowCommands {
-    /// Run a workflow from a JSON file
+    /// Run a workflow (by name from server, or local JSON file)
     Run {
-        #[clap(help = "Path to workflow JSON file")]
-        path: PathBuf,
+        #[clap(help = "Workflow name (from server) or path to JSON file")]
+        workflow: String,
         /// Run one step at a time (interactive)
         #[clap(long, help = "Run one step at a time")]
         step: bool,
+        /// JSON input to pass to the workflow context
+        #[clap(long, help = "JSON input for workflow context")]
+        input: Option<String>,
     },
-    /// Show workflow status
+    /// Show workflow status (from local file)
     Status {
         #[clap(help = "Path to workflow JSON file")]
         path: PathBuf,
@@ -1070,6 +1073,7 @@ fn required_external_tools(agent: &AgentConfig) -> Vec<String> {
             .as_ref()
             .and_then(|tools| tools.external.clone())
             .unwrap_or_default(),
+        AgentConfig::WorkflowAgent(_) => vec![],
     }
 }
 
@@ -1830,62 +1834,98 @@ async fn handle_workflow_command(client: &distri::Distri, command: WorkflowComma
     use distri::workflow::*;
 
     match command {
-        WorkflowCommands::Run { path, step } => {
-            let content = fs::read_to_string(&path).await
-                .with_context(|| format!("Failed to read workflow file: {}", path.display()))?;
-            let workflow: WorkflowDefinition = serde_json::from_str(&content)
-                .with_context(|| "Failed to parse workflow JSON")?;
+        WorkflowCommands::Run { workflow: workflow_ref, step, input } => {
+            // Resolve workflow: local file or server name/id
+            let mut workflow = if std::path::Path::new(&workflow_ref).exists() {
+                let content = fs::read_to_string(&workflow_ref).await
+                    .with_context(|| format!("Failed to read workflow file: {}", workflow_ref))?;
+                serde_json::from_str::<WorkflowDefinition>(&content)
+                    .with_context(|| "Failed to parse workflow JSON")?
+            } else {
+                println!("  Fetching workflow '{}' from server...", workflow_ref);
+                let list = client.list_workflows().await
+                    .with_context(|| "Failed to list workflows from server")?;
+                let record = list.workflows.iter()
+                    .find(|w| w.name == workflow_ref || w.id == workflow_ref)
+                    .ok_or_else(|| anyhow::anyhow!("Workflow '{}' not found on server", workflow_ref))?;
+                let full = client.get_workflow(&record.id).await
+                    .with_context(|| "Failed to fetch workflow")?;
+                serde_json::from_value::<WorkflowDefinition>(full.definition)
+                    .with_context(|| "Failed to parse workflow definition from server")?
+            };
+
+            // Apply input if provided
+            if let Some(ref input_json) = input {
+                let input_val: serde_json::Value = serde_json::from_str(input_json)
+                    .with_context(|| "Failed to parse --input JSON")?;
+                workflow = workflow.with_input(input_val)
+                    .map_err(|e| anyhow::anyhow!(e))?;
+            }
 
             println!("{}→ Workflow:{} {} ({})", COLOR_BRIGHT_GREEN, COLOR_RESET, workflow.workflow_type, workflow.id);
             println!("  {} steps, status: {:?}", workflow.steps.len(), workflow.status);
             println!();
 
-            let store = InMemoryStore::new();
-            store.save(&workflow).await.map_err(|e| anyhow::anyhow!(e))?;
-
-            let executor = distri::DistriStepExecutor::new(Arc::new(client.clone()));
-            let runner = WorkflowRunner::new(store, executor);
+            // Run with event streaming
+            let arc_client = Arc::new(client.clone());
+            let mut session = distri::WorkflowSession::new(arc_client, workflow);
+            let mut rx = session.take_events().unwrap();
 
             if step {
-                loop {
-                    let state = runner.get_state(&workflow.id).await.map_err(|e| anyhow::anyhow!(e))?;
-                    let state = match state { Some(s) => s, None => break };
-                    if state.is_complete() || state.has_failed() {
-                        println!("  Workflow {:?}", state.status);
-                        break;
+                // Step mode: print events as they come, pause between steps
+                let handle = tokio::spawn(async move { session.run().await });
+                let mut last_step = String::new();
+                while let Some(event) = rx.recv().await {
+                    match &event {
+                        WorkflowEvent::StepStarted { step_id, step_label, .. } => {
+                            if !last_step.is_empty() {
+                                print!("  Press Enter for next step (q to quit): ");
+                                io::stdout().flush()?;
+                                let mut buf = String::new();
+                                io::stdin().read_line(&mut buf)?;
+                                if buf.trim() == "q" { break; }
+                            }
+                            println!("  ⏳ {} — {}", step_id, step_label);
+                            last_step = step_id.clone();
+                        }
+                        WorkflowEvent::StepCompleted { step_id, .. } => {
+                            println!("  ✅ {}", step_id);
+                        }
+                        WorkflowEvent::StepFailed { step_id, error, .. } => {
+                            println!("  ❌ {} — {}", step_id, error);
+                        }
+                        WorkflowEvent::WorkflowCompleted { status, steps_done, steps_failed, .. } => {
+                            println!("\n  Status: {:?} ({} done, {} failed)", status, steps_done, steps_failed);
+                        }
+                        _ => {}
                     }
-                    let results = runner.run_next(&workflow.id).await.map_err(|e| anyhow::anyhow!(e))?;
-                    if results.is_empty() {
-                        let s = runner.get_state(&workflow.id).await.map_err(|e| anyhow::anyhow!(e))?.unwrap();
-                        println!("  Workflow {:?}", s.status);
-                        break;
-                    }
-                    for (step_id, result) in &results {
-                        let icon = match result.status { StepStatus::Done => "✅", StepStatus::Failed => "❌", _ => "⏳" };
-                        println!("  {} {} — {:?}", icon, step_id, result.status);
-                    }
-                    print!("  Press Enter for next step (q to quit): ");
-                    io::stdout().flush()?;
-                    let mut input = String::new();
-                    io::stdin().read_line(&mut input)?;
-                    if input.trim() == "q" { break; }
                 }
+                let _ = handle.await;
             } else {
-                let status = runner.run_all(&workflow.id).await.map_err(|e| anyhow::anyhow!(e))?;
-                let final_state = runner.get_state(&workflow.id).await.map_err(|e| anyhow::anyhow!(e))?.unwrap();
-                for s in &final_state.steps {
-                    let icon = match s.status { StepStatus::Done => "✅", StepStatus::Failed => "❌", StepStatus::Blocked => "🚫", _ => "⬜" };
-                    println!("  {} {} — {:?}", icon, s.label, s.status);
+                // Run all, print events as they stream
+                let handle = tokio::spawn(async move { session.run().await });
+                while let Some(event) = rx.recv().await {
+                    match &event {
+                        WorkflowEvent::WorkflowStarted { workflow_type, total_steps, .. } => {
+                            println!("  Starting {} ({} steps)", workflow_type, total_steps);
+                        }
+                        WorkflowEvent::StepStarted { step_id, step_label, .. } => {
+                            print!("  ⏳ {} — {}...", step_id, step_label);
+                            io::stdout().flush()?;
+                        }
+                        WorkflowEvent::StepCompleted { step_id, .. } => {
+                            println!(" ✅");
+                        }
+                        WorkflowEvent::StepFailed { step_id, error, .. } => {
+                            println!(" ❌ {}", error);
+                        }
+                        WorkflowEvent::WorkflowCompleted { status, steps_done, steps_failed, .. } => {
+                            println!("\n  Status: {:?} ({} done, {} failed)", status, steps_done, steps_failed);
+                        }
+                    }
                 }
-                println!("\n  Status: {:?}", status);
+                let _ = handle.await;
             }
-
-            // Save final state back to file
-            let final_state = runner.get_state(&workflow.id).await.map_err(|e| anyhow::anyhow!(e))?.unwrap();
-            let output = serde_json::to_string_pretty(&final_state)?;
-            fs::write(&path, output).await
-                .with_context(|| format!("Failed to write state: {}", path.display()))?;
-            println!("  State saved to {}", path.display());
         }
 
         WorkflowCommands::Status { path } => {

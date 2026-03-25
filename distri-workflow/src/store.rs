@@ -83,12 +83,25 @@ impl WorkflowStateStore for InMemoryStore {
         let workflow = map.get_mut(workflow_id).ok_or("Workflow not found")?;
 
         if let Some(step) = workflow.steps.get_mut(step_index) {
+            let step_id = step.id.clone();
             step.status = result.status;
-            step.result = result.result;
+            step.result = result.result.clone();
             step.error = result.error;
             step.completed_at = Some(chrono::Utc::now());
 
-            // Merge context updates
+            // Auto-store step result at steps.<step_id> in structured context
+            if let Some(ref result_val) = result.result {
+                let ctx = workflow.context.as_object_mut()
+                    .expect("workflow context must be an object");
+                let steps = ctx
+                    .entry("steps")
+                    .or_insert(serde_json::json!({}))
+                    .as_object_mut()
+                    .expect("steps must be an object");
+                steps.insert(step_id, result_val.clone());
+            }
+
+            // Also merge context_updates for backward compat
             if let Some(updates) = result.context_updates {
                 if let (Some(ctx), Some(upd)) =
                     (workflow.context.as_object_mut(), updates.as_object())

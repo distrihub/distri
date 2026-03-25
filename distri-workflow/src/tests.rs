@@ -957,4 +957,332 @@ mod tests {
         // Last should be WorkflowCompleted
         matches!(events.last().unwrap(), WorkflowEvent::WorkflowCompleted { .. });
     }
+
+    // ========================================================================
+    // Data Flow: Namespace Resolution & Interdependent Steps
+    // ========================================================================
+
+    /// Executor that captures the context each step receives and returns configurable results.
+    struct ContextCapturingExecutor {
+        captured: Arc<tokio::sync::Mutex<Vec<(String, serde_json::Value)>>>,
+        results: std::collections::HashMap<String, serde_json::Value>,
+    }
+
+    impl ContextCapturingExecutor {
+        fn new(results: Vec<(&str, serde_json::Value)>) -> Self {
+            Self {
+                captured: Arc::new(tokio::sync::Mutex::new(vec![])),
+                results: results.into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
+            }
+        }
+
+        fn captured(&self) -> Arc<tokio::sync::Mutex<Vec<(String, serde_json::Value)>>> {
+            self.captured.clone()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl StepExecutor for ContextCapturingExecutor {
+        async fn execute(
+            &self,
+            step: &WorkflowStep,
+            context: &serde_json::Value,
+        ) -> Result<StepResult, String> {
+            self.captured.lock().await.push((step.id.clone(), context.clone()));
+
+            let result = self.results.get(&step.id)
+                .cloned()
+                .unwrap_or(serde_json::json!({"step_id": step.id}));
+
+            Ok(StepResult::done(result))
+        }
+    }
+
+    #[tokio::test]
+    async fn interdependent_steps_receive_resolved_input() {
+        // Step 1: fetch_doc — receives input.doc_id, produces {content, title}
+        // Step 2: process — depends on fetch_doc, receives {steps.fetch_doc.content, input.class_id}
+        // Step 3: save — depends on process, receives {steps.process.summary, steps.fetch_doc.title}
+
+        let steps = vec![
+            WorkflowStep::tool_call("fetch_doc", "Fetch", "read_doc", serde_json::json!({}))
+                .with_input_mapping(serde_json::json!({
+                    "doc_id": "{input.doc_id}"
+                })),
+            WorkflowStep::tool_call("process", "Process", "analyze", serde_json::json!({}))
+                .with_depends_on(vec!["fetch_doc"])
+                .with_input_mapping(serde_json::json!({
+                    "text": "{steps.fetch_doc.content}",
+                    "class": "{input.class_id}"
+                })),
+            WorkflowStep::tool_call("save", "Save", "persist", serde_json::json!({}))
+                .with_depends_on(vec!["process"])
+                .with_input_mapping(serde_json::json!({
+                    "summary": "{steps.process.summary}",
+                    "title": "{steps.fetch_doc.title}"
+                })),
+        ];
+
+        let mut workflow = WorkflowDefinition::new("test", steps);
+        // Initialize structured context with input
+        workflow.context = serde_json::json!({
+            "input": {"doc_id": "doc-123", "class_id": "class-abc"},
+            "steps": {},
+            "env": {}
+        });
+
+        let executor = ContextCapturingExecutor::new(vec![
+            ("fetch_doc", serde_json::json!({"content": "Hello world", "title": "My Essay"})),
+            ("process", serde_json::json!({"summary": "Essay about greeting"})),
+            ("save", serde_json::json!({"saved": true})),
+        ]);
+        let captured = executor.captured();
+
+        let store = InMemoryStore::new();
+        store.save(&workflow).await.unwrap();
+        let runner = WorkflowRunner::new(store, executor);
+        let status = runner.run_all(&workflow.id).await.unwrap();
+        assert_eq!(status, WorkflowStatus::Completed);
+
+        let caps = captured.lock().await;
+        assert_eq!(caps.len(), 3);
+
+        // Step 1 receives resolved {input.doc_id}
+        assert_eq!(caps[0].0, "fetch_doc");
+        assert_eq!(caps[0].1["doc_id"], "doc-123");
+
+        // Step 2 receives resolved {steps.fetch_doc.content} and {input.class_id}
+        assert_eq!(caps[1].0, "process");
+        assert_eq!(caps[1].1["text"], "Hello world");
+        assert_eq!(caps[1].1["class"], "class-abc");
+
+        // Step 3 receives resolved {steps.process.summary} and {steps.fetch_doc.title}
+        assert_eq!(caps[2].0, "save");
+        assert_eq!(caps[2].1["summary"], "Essay about greeting");
+        assert_eq!(caps[2].1["title"], "My Essay");
+    }
+
+    #[tokio::test]
+    async fn step_without_input_mapping_receives_full_context() {
+        let steps = vec![
+            WorkflowStep::tool_call("s1", "Step 1", "tool_a", serde_json::json!({})),
+        ];
+
+        let mut workflow = WorkflowDefinition::new("test", steps);
+        workflow.context = serde_json::json!({
+            "input": {"key": "value"},
+            "steps": {},
+            "env": {"base": "http://localhost"}
+        });
+
+        let executor = ContextCapturingExecutor::new(vec![
+            ("s1", serde_json::json!({"done": true})),
+        ]);
+        let captured = executor.captured();
+
+        let store = InMemoryStore::new();
+        store.save(&workflow).await.unwrap();
+        let runner = WorkflowRunner::new(store, executor);
+        runner.run_all(&workflow.id).await.unwrap();
+
+        let caps = captured.lock().await;
+        // No input mapping → receives full context with all namespaces
+        assert!(caps[0].1.get("input").is_some());
+        assert!(caps[0].1.get("steps").is_some());
+        assert!(caps[0].1.get("env").is_some());
+    }
+
+    #[tokio::test]
+    async fn full_value_reference_preserves_array_type() {
+        let steps = vec![
+            WorkflowStep::tool_call("fetch", "Fetch", "tool_a", serde_json::json!({})),
+            WorkflowStep::tool_call("use_array", "Use array", "tool_b", serde_json::json!({}))
+                .with_depends_on(vec!["fetch"])
+                .with_input_mapping(serde_json::json!({
+                    "items": "{steps.fetch.items}",
+                    "count": "{steps.fetch.count}"
+                })),
+        ];
+
+        let mut workflow = WorkflowDefinition::new("test", steps);
+        workflow.context = serde_json::json!({"input": {}, "steps": {}, "env": {}});
+
+        let executor = ContextCapturingExecutor::new(vec![
+            ("fetch", serde_json::json!({"items": [1, 2, 3], "count": 3})),
+            ("use_array", serde_json::json!({"processed": true})),
+        ]);
+        let captured = executor.captured();
+
+        let store = InMemoryStore::new();
+        store.save(&workflow).await.unwrap();
+        let runner = WorkflowRunner::new(store, executor);
+        runner.run_all(&workflow.id).await.unwrap();
+
+        let caps = captured.lock().await;
+        assert_eq!(caps[1].0, "use_array");
+        // Array should be preserved, not stringified
+        assert!(caps[1].1["items"].is_array());
+        assert_eq!(caps[1].1["items"].as_array().unwrap().len(), 3);
+        // Number should be preserved
+        assert_eq!(caps[1].1["count"], 3);
+    }
+
+    // ========================================================================
+    // Cycle Detection
+    // ========================================================================
+
+    #[tokio::test]
+    async fn detect_cycle_simple() {
+        let steps = vec![
+            WorkflowStep::tool_call("a", "A", "t", serde_json::json!({}))
+                .with_depends_on(vec!["c"]),
+            WorkflowStep::tool_call("b", "B", "t", serde_json::json!({}))
+                .with_depends_on(vec!["a"]),
+            WorkflowStep::tool_call("c", "C", "t", serde_json::json!({}))
+                .with_depends_on(vec!["b"]),
+        ];
+        let workflow = WorkflowDefinition::new("test", steps);
+        let result = workflow.detect_cycles();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Circular dependency"));
+    }
+
+    #[tokio::test]
+    async fn detect_cycle_self_reference() {
+        let steps = vec![
+            WorkflowStep::tool_call("a", "A", "t", serde_json::json!({}))
+                .with_depends_on(vec!["a"]),
+        ];
+        let workflow = WorkflowDefinition::new("test", steps);
+        let result = workflow.detect_cycles();
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn detect_nonexistent_dependency() {
+        let steps = vec![
+            WorkflowStep::tool_call("a", "A", "t", serde_json::json!({}))
+                .with_depends_on(vec!["missing_step"]),
+        ];
+        let workflow = WorkflowDefinition::new("test", steps);
+        let result = workflow.detect_cycles();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("does not exist"));
+    }
+
+    #[tokio::test]
+    async fn no_cycle_in_valid_dag() {
+        let steps = vec![
+            WorkflowStep::tool_call("a", "A", "t", serde_json::json!({})),
+            WorkflowStep::tool_call("b", "B", "t", serde_json::json!({}))
+                .with_depends_on(vec!["a"]),
+            WorkflowStep::tool_call("c", "C", "t", serde_json::json!({}))
+                .with_depends_on(vec!["a", "b"]),
+        ];
+        let workflow = WorkflowDefinition::new("test", steps);
+        assert!(workflow.detect_cycles().is_ok());
+    }
+
+    #[tokio::test]
+    async fn run_all_rejects_cyclic_workflow() {
+        let steps = vec![
+            WorkflowStep::tool_call("a", "A", "t", serde_json::json!({}))
+                .with_depends_on(vec!["b"]),
+            WorkflowStep::tool_call("b", "B", "t", serde_json::json!({}))
+                .with_depends_on(vec!["a"]),
+        ];
+        let workflow = WorkflowDefinition::new("test", steps);
+        let store = InMemoryStore::new();
+        store.save(&workflow).await.unwrap();
+
+        let executor = MockExecutor::new();
+        let runner = WorkflowRunner::new(store, executor);
+        let result = runner.run_all(&workflow.id).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Circular dependency"));
+    }
+
+    // ========================================================================
+    // Parallel fan-out + join with data flow
+    // ========================================================================
+
+    #[tokio::test]
+    async fn parallel_fan_out_join_with_data_flow() {
+        // Three parallel fetches → join step uses all three results
+        let steps = vec![
+            WorkflowStep::tool_call("fetch_users", "Users", "api", serde_json::json!({})).parallel(),
+            WorkflowStep::tool_call("fetch_orders", "Orders", "api", serde_json::json!({})).parallel(),
+            WorkflowStep::tool_call("fetch_products", "Products", "api", serde_json::json!({})).parallel(),
+            WorkflowStep::tool_call("merge", "Merge", "merge_tool", serde_json::json!({}))
+                .with_depends_on(vec!["fetch_users", "fetch_orders", "fetch_products"])
+                .with_input_mapping(serde_json::json!({
+                    "users": "{steps.fetch_users.data}",
+                    "orders": "{steps.fetch_orders.data}",
+                    "products": "{steps.fetch_products.data}"
+                })),
+        ];
+
+        let mut workflow = WorkflowDefinition::new("pipeline", steps);
+        workflow.context = serde_json::json!({"input": {}, "steps": {}, "env": {}});
+
+        let executor = ContextCapturingExecutor::new(vec![
+            ("fetch_users", serde_json::json!({"data": [{"id": 1, "name": "Alice"}]})),
+            ("fetch_orders", serde_json::json!({"data": [{"id": 100, "total": 50}]})),
+            ("fetch_products", serde_json::json!({"data": [{"id": "p1", "name": "Widget"}]})),
+            ("merge", serde_json::json!({"merged": true, "total_records": 3})),
+        ]);
+        let captured = executor.captured();
+
+        let store = InMemoryStore::new();
+        store.save(&workflow).await.unwrap();
+        let runner = WorkflowRunner::new(store, executor);
+        let status = runner.run_all(&workflow.id).await.unwrap();
+        assert_eq!(status, WorkflowStatus::Completed);
+
+        let caps = captured.lock().await;
+        assert_eq!(caps.len(), 4);
+
+        // Merge step should receive all three data arrays
+        let merge_ctx = &caps[3].1;
+        assert!(merge_ctx["users"].is_array());
+        assert!(merge_ctx["orders"].is_array());
+        assert!(merge_ctx["products"].is_array());
+        assert_eq!(merge_ctx["users"][0]["name"], "Alice");
+        assert_eq!(merge_ctx["orders"][0]["total"], 50);
+    }
+
+    // ========================================================================
+    // Definition serialization: no runtime state in template
+    // ========================================================================
+
+    #[tokio::test]
+    async fn definition_without_runtime_fields_deserializes() {
+        // A minimal definition — no status, context, current_step, notes, timestamps
+        let json = serde_json::json!({
+            "id": "minimal",
+            "workflow_type": "test",
+            "input_schema": {
+                "type": "object",
+                "properties": { "name": { "type": "string" } },
+                "required": ["name"]
+            },
+            "steps": [
+                {
+                    "id": "greet",
+                    "label": "Greet user",
+                    "kind": { "type": "tool_call", "tool_name": "greeter", "input": {} },
+                    "input": { "name": "{input.name}" }
+                }
+            ]
+        });
+
+        let workflow: WorkflowDefinition = serde_json::from_value(json).unwrap();
+        assert_eq!(workflow.id, "minimal");
+        assert_eq!(workflow.status, WorkflowStatus::Pending);
+        assert_eq!(workflow.current_step, 0);
+        assert!(workflow.notes.is_empty());
+        assert_eq!(workflow.steps[0].status, StepStatus::Pending);
+        assert!(workflow.steps[0].result.is_none());
+        assert!(workflow.steps[0].input.is_some());
+    }
 }

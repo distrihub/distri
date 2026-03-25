@@ -37,10 +37,12 @@
 pub mod types;
 pub mod store;
 pub mod executor;
+pub mod resolve;
 
 pub use types::*;
 pub use store::{WorkflowStateStore, InMemoryStore};
 pub use executor::{StepExecutor, WorkflowRunner, EventSink, TracingEventSink, NoopEventSink};
+pub use resolve::{resolve_template, resolve_value, resolve_step_input, build_execution_context};
 
 #[cfg(test)]
 mod tests;

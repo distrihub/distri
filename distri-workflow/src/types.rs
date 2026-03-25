@@ -13,11 +13,18 @@ use std::collections::HashMap;
 pub struct WorkflowDefinition {
     pub id: String,
     pub workflow_type: String,
+    /// Runtime state — defaults to Pending. Not part of the definition template.
+    #[serde(default)]
     pub status: WorkflowStatus,
+    /// Runtime state — current step index.
+    #[serde(default)]
     pub current_step: usize,
-    /// Shared data between steps — each step can read and write to this.
+    /// Runtime state — shared data between steps. Populated from input at execution time.
+    #[serde(default = "default_empty_object")]
     pub context: serde_json::Value,
     pub steps: Vec<WorkflowStep>,
+    /// Runtime state — execution log.
+    #[serde(default)]
     pub notes: Vec<WorkflowNote>,
     /// JSON Schema describing required inputs for this workflow.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -25,8 +32,18 @@ pub struct WorkflowDefinition {
     /// How workflow state is checkpointed. Defaults to Internal.
     #[serde(default)]
     pub checkpoint: CheckpointStrategy,
+    #[serde(default = "default_now")]
     pub created_at: DateTime<Utc>,
+    #[serde(default = "default_now")]
     pub updated_at: DateTime<Utc>,
+}
+
+fn default_empty_object() -> serde_json::Value {
+    serde_json::json!({})
+}
+
+fn default_now() -> DateTime<Utc> {
+    Utc::now()
 }
 
 impl WorkflowDefinition {
@@ -177,6 +194,74 @@ impl WorkflowDefinition {
         });
         self.updated_at = Utc::now();
     }
+
+    /// Detect circular dependencies in the workflow DAG.
+    /// Returns `Err` with the cycle description if found.
+    pub fn detect_cycles(&self) -> Result<(), String> {
+        use std::collections::{HashMap, HashSet};
+
+        let step_ids: HashSet<&str> = self.steps.iter().map(|s| s.id.as_str()).collect();
+        let mut adj: HashMap<&str, Vec<&str>> = HashMap::new();
+        for step in &self.steps {
+            adj.insert(step.id.as_str(), step.depends_on.iter().map(|s| s.as_str()).collect());
+        }
+
+        let mut visited = HashSet::new();
+        let mut in_stack = HashSet::new();
+
+        fn dfs<'a>(
+            node: &'a str,
+            adj: &HashMap<&'a str, Vec<&'a str>>,
+            visited: &mut HashSet<&'a str>,
+            in_stack: &mut HashSet<&'a str>,
+            path: &mut Vec<&'a str>,
+        ) -> Result<(), String> {
+            visited.insert(node);
+            in_stack.insert(node);
+            path.push(node);
+
+            if let Some(deps) = adj.get(node) {
+                for &dep in deps {
+                    if !visited.contains(dep) {
+                        dfs(dep, adj, visited, in_stack, path)?;
+                    } else if in_stack.contains(dep) {
+                        let cycle_start = path.iter().position(|&n| n == dep).unwrap();
+                        let cycle: Vec<&str> = path[cycle_start..].to_vec();
+                        return Err(format!(
+                            "Circular dependency detected: {} → {}",
+                            cycle.join(" → "),
+                            dep
+                        ));
+                    }
+                }
+            }
+
+            in_stack.remove(node);
+            path.pop();
+            Ok(())
+        }
+
+        let mut path = Vec::new();
+        for step in &self.steps {
+            if !visited.contains(step.id.as_str()) {
+                dfs(step.id.as_str(), &adj, &mut visited, &mut in_stack, &mut path)?;
+            }
+        }
+
+        // Also check for references to non-existent steps
+        for step in &self.steps {
+            for dep in &step.depends_on {
+                if !step_ids.contains(dep.as_str()) {
+                    return Err(format!(
+                        "Step '{}' depends on '{}' which does not exist",
+                        step.id, dep
+                    ));
+                }
+            }
+        }
+
+        Ok(())
+    }
 }
 
 // ============================================================================
@@ -189,10 +274,20 @@ pub struct WorkflowStep {
     pub id: String,
     pub label: String,
     pub kind: StepKind,
+    /// Runtime state — defaults to Pending.
+    #[serde(default)]
     pub status: StepStatus,
+    /// Runtime state.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result: Option<serde_json::Value>,
+    /// Runtime state.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Runtime state.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub started_at: Option<DateTime<Utc>>,
+    /// Runtime state.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub completed_at: Option<DateTime<Utc>>,
     /// IDs of steps that must complete before this one can run.
     #[serde(default)]
@@ -203,6 +298,11 @@ pub struct WorkflowStep {
     /// Capabilities required to run this step.
     #[serde(default)]
     pub requires: Vec<StepRequirement>,
+    /// Optional explicit input mapping for this step.
+    /// Values can reference `{input.X}`, `{steps.step_id.X}`, `{env.X}`.
+    /// If omitted, the step receives the full execution context.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input: Option<serde_json::Value>,
 }
 
 impl WorkflowStep {
@@ -219,6 +319,7 @@ impl WorkflowStep {
             depends_on: vec![],
             execution: StepExecution::Sequential,
             requires: vec![],
+            input: None,
         }
     }
 
@@ -350,6 +451,11 @@ impl WorkflowStep {
         if let StepKind::Script { env: ref mut e, .. } = self.kind {
             *e = Some(env);
         }
+        self
+    }
+
+    pub fn with_input_mapping(mut self, input: serde_json::Value) -> Self {
+        self.input = Some(input);
         self
     }
 }
@@ -549,9 +655,10 @@ pub struct CheckpointMeta {
 // Enums
 // ============================================================================
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkflowStatus {
+    #[default]
     Pending,
     Running,
     Paused,
@@ -561,9 +668,10 @@ pub enum WorkflowStatus {
     Blocked,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum StepStatus {
+    #[default]
     Pending,
     /// Requirements not met — cannot execute.
     Blocked,

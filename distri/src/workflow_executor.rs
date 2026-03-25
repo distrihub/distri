@@ -256,76 +256,50 @@ async fn execute_tool_call(
     }
 }
 
-// ── Template resolution ────────────────────────────────────────────────────
-
-/// Resolve `{context.key}` placeholders in a string.
-pub fn resolve_template(template: &str, context: &Value) -> String {
-    let mut result = template.to_string();
-    if let Some(obj) = context.as_object() {
-        for (key, value) in obj {
-            let placeholder = format!("{{context.{}}}", key);
-            if let Some(s) = value.as_str() {
-                result = result.replace(&placeholder, s);
-            } else {
-                result = result.replace(&placeholder, &value.to_string());
-            }
-        }
-    }
-    result
-}
-
-/// Resolve context references in JSON values.
-pub fn resolve_value(value: &Value, context: &Value) -> Value {
-    match value {
-        Value::String(s) => {
-            if s.starts_with("{context.") && s.ends_with('}') {
-                let key = &s[9..s.len() - 1];
-                if let Some(v) = context.get(key) {
-                    return v.clone();
-                }
-            }
-            Value::String(resolve_template(s, context))
-        }
-        Value::Object(map) => Value::Object(
-            map.iter()
-                .map(|(k, v)| (k.clone(), resolve_value(v, context)))
-                .collect(),
-        ),
-        Value::Array(arr) => {
-            Value::Array(arr.iter().map(|v| resolve_value(v, context)).collect())
-        }
-        other => other.clone(),
-    }
-}
+// Template resolution: uses distri_workflow::resolve (imported via `use distri_workflow::*`)
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use distri_workflow::resolve;
 
     #[test]
-    fn test_resolve_template() {
+    fn test_resolve_with_namespaces() {
         let ctx = json!({
-            "api_base": "http://localhost:8086/v1",
-            "file_id": "abc123"
+            "input": { "doc_id": "abc123" },
+            "steps": {},
+            "env": { "api_base": "http://localhost:8086/v1" }
         });
         assert_eq!(
-            resolve_template("{context.api_base}/files/{context.file_id}", &ctx),
+            resolve::resolve_template("{env.api_base}/files/{input.doc_id}", &ctx),
             "http://localhost:8086/v1/files/abc123"
         );
     }
 
     #[test]
-    fn test_resolve_value_string() {
-        let ctx = json!({ "class_id": "xyz" });
-        assert_eq!(resolve_value(&json!("{context.class_id}"), &ctx), json!("xyz"));
+    fn test_resolve_step_output_preserves_type() {
+        let ctx = json!({
+            "input": {},
+            "steps": { "fetch": { "items": [1, 2, 3], "count": 3 } },
+            "env": {}
+        });
+        let resolved = resolve::resolve_value(&json!("{steps.fetch.items}"), &ctx);
+        assert!(resolved.is_array());
+        assert_eq!(resolved.as_array().unwrap().len(), 3);
     }
 
     #[test]
-    fn test_resolve_value_nested_object() {
-        let ctx = json!({ "title": "My Activity" });
-        let resolved = resolve_value(&json!({ "name": "{context.title}", "count": 5 }), &ctx);
-        assert_eq!(resolved["name"], "My Activity");
-        assert_eq!(resolved["count"], 5);
+    fn test_backward_compat_context_namespace() {
+        let ctx = json!({
+            "input": { "class_id": "xyz" },
+            "steps": {},
+            "env": {}
+        });
+        // {context.X} still works — checks input first
+        assert_eq!(
+            resolve::resolve_value(&json!("{context.class_id}"), &ctx),
+            json!("xyz")
+        );
     }
 
     #[tokio::test]
@@ -348,7 +322,6 @@ mod tests {
 
     #[test]
     fn test_workflow_event_serializes_as_sse_compatible() {
-        // Verify events serialize with the "event" tag for SSE data field
         let event = WorkflowEvent::StepCompleted {
             workflow_id: "wf-1".to_string(),
             step_id: "step-1".to_string(),

@@ -282,10 +282,26 @@ impl BaseAgent for WorkflowAgent {
             })
             .unwrap_or(serde_json::json!({}));
 
+        // Save user message to thread (like StandardAgent does)
+        context.save_message(&message).await;
+
         // Validate and merge input
         workflow = workflow
-            .with_input(input)
+            .with_input(input.clone())
             .map_err(|e| AgentError::Validation(e))?;
+
+        // Populate env namespace from executor context env vars
+        if let Some(ctx_obj) = workflow.context.as_object_mut() {
+            let env = ctx_obj
+                .entry("env")
+                .or_insert(serde_json::json!({}))
+                .as_object_mut()
+                .unwrap();
+            let env_vars = context.env_vars.read().await;
+            for (k, v) in env_vars.iter() {
+                env.insert(k.clone(), serde_json::Value::String(v.clone()));
+            }
+        }
 
         // Set up execution
         let store = InMemoryStore::new();
@@ -329,8 +345,18 @@ impl BaseAgent for WorkflowAgent {
             }).collect::<Vec<_>>(),
         });
 
+        let summary_text = serde_json::to_string_pretty(&summary).unwrap_or_default();
+
+        // Save summary as agent message to thread
+        let summary_message = crate::types::Message {
+            role: distri_types::MessageRole::Assistant,
+            parts: vec![distri_types::Part::Text(summary_text.clone())],
+            ..Default::default()
+        };
+        context.save_message(&summary_message).await;
+
         Ok(InvokeResult {
-            content: Some(serde_json::to_string_pretty(&summary).unwrap_or_default()),
+            content: Some(summary_text),
             tool_calls: vec![],
         })
     }
@@ -393,42 +419,4 @@ impl BaseAgent for WorkflowAgent {
     }
 }
 
-// ── Template resolution ────────────────────────────────────────────────────
-
-fn resolve_template(template: &str, context: &serde_json::Value) -> String {
-    let mut result = template.to_string();
-    if let Some(obj) = context.as_object() {
-        for (key, value) in obj {
-            let placeholder = format!("{{context.{}}}", key);
-            if let Some(s) = value.as_str() {
-                result = result.replace(&placeholder, s);
-            } else {
-                result = result.replace(&placeholder, &value.to_string());
-            }
-        }
-    }
-    result
-}
-
-fn resolve_value(value: &serde_json::Value, context: &serde_json::Value) -> serde_json::Value {
-    match value {
-        serde_json::Value::String(s) => {
-            if s.starts_with("{context.") && s.ends_with('}') {
-                let key = &s[9..s.len() - 1];
-                if let Some(v) = context.get(key) {
-                    return v.clone();
-                }
-            }
-            serde_json::Value::String(resolve_template(s, context))
-        }
-        serde_json::Value::Object(map) => serde_json::Value::Object(
-            map.iter()
-                .map(|(k, v)| (k.clone(), resolve_value(v, context)))
-                .collect(),
-        ),
-        serde_json::Value::Array(arr) => {
-            serde_json::Value::Array(arr.iter().map(|v| resolve_value(v, context)).collect())
-        }
-        other => other.clone(),
-    }
-}
+// Template resolution: uses distri_workflow::resolve (imported via `use distri_workflow::*`)
