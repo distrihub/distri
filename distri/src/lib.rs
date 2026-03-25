@@ -12,7 +12,7 @@ pub mod workflow {
 }
 
 mod workflow_executor;
-pub use workflow_executor::DistriStepExecutor;
+pub use workflow_executor::{DistriStepExecutor, WorkflowSession, ChannelEventSink};
 
 use thiserror::Error;
 

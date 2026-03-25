@@ -1,15 +1,111 @@
-//! DistriStepExecutor — executes workflow steps using the Distri client.
+//! Client-side workflow executor and runner.
 //!
-//! Handles ApiCall (HTTP), ToolCall (client.call_tool), and passes through
-//! Checkpoint steps. Script and AgentRun are deferred (return mock results).
+//! The `DistriStepExecutor` makes real HTTP calls and tool invocations via the Distri client.
+//! The `WorkflowSession` wraps the runner with an event channel — client apps can:
+//!
+//! 1. Consume events via `tokio::sync::mpsc` channel
+//! 2. Forward them as SSE to their own clients
+//! 3. distrijs React components render these same events in the Chat UI
+//!
+//! ```ignore
+//! let session = WorkflowSession::new(client, workflow_def);
+//! let mut rx = session.events();
+//! tokio::spawn(async move { session.run().await });
+//! while let Some(event) = rx.recv().await {
+//!     // Forward to SSE, print to CLI, etc.
+//!     println!("{}", serde_json::to_string(&event).unwrap());
+//! }
+//! ```
 
 use crate::Distri;
 use distri_workflow::*;
 use serde_json::{json, Value};
 use std::sync::Arc;
+use tokio::sync::mpsc;
 
-/// A workflow step executor that uses the Distri HTTP client
-/// to make real API calls and tool invocations.
+// ── Event sink that sends to a channel ─────────────────────────────────────
+
+/// Sends `WorkflowEvent`s to an mpsc channel.
+/// Client apps receive from the other end and can forward as SSE.
+pub struct ChannelEventSink {
+    tx: mpsc::Sender<WorkflowEvent>,
+}
+
+#[async_trait::async_trait]
+impl EventSink for ChannelEventSink {
+    async fn emit(&self, event: WorkflowEvent) {
+        let _ = self.tx.send(event).await;
+    }
+}
+
+// ── WorkflowSession — the public API for running workflows ─────────────────
+
+/// A workflow execution session with event streaming.
+///
+/// Create a session, take the event receiver, then run the workflow.
+/// Events are emitted in the same format as the server-side WorkflowAgent,
+/// making them compatible with distrijs SSE rendering.
+pub struct WorkflowSession {
+    client: Arc<Distri>,
+    workflow: WorkflowDefinition,
+    event_tx: mpsc::Sender<WorkflowEvent>,
+    event_rx: Option<mpsc::Receiver<WorkflowEvent>>,
+}
+
+impl WorkflowSession {
+    /// Create a new workflow session.
+    pub fn new(client: Arc<Distri>, workflow: WorkflowDefinition) -> Self {
+        let (tx, rx) = mpsc::channel(100);
+        Self {
+            client,
+            workflow,
+            event_tx: tx,
+            event_rx: Some(rx),
+        }
+    }
+
+    /// Take the event receiver. Call this before `run()`.
+    /// Returns `None` if already taken.
+    pub fn take_events(&mut self) -> Option<mpsc::Receiver<WorkflowEvent>> {
+        self.event_rx.take()
+    }
+
+    /// Run the workflow to completion. Emits events to the channel.
+    /// Returns the final workflow status.
+    pub async fn run(self) -> Result<WorkflowStatus, String> {
+        let store = InMemoryStore::new();
+        store.save(&self.workflow).await?;
+
+        let event_sink = ChannelEventSink {
+            tx: self.event_tx.clone(),
+        };
+        let executor = DistriStepExecutor::new(self.client.clone());
+        let runner = WorkflowRunner::with_events(store, executor, event_sink);
+
+        runner.run_all(&self.workflow.id).await
+    }
+
+    /// Run the workflow with input. Validates against input_schema, merges into context.
+    pub async fn run_with_input(mut self, input: Value) -> Result<WorkflowStatus, String> {
+        self.workflow = self.workflow.with_input(input)?;
+
+        let store = InMemoryStore::new();
+        store.save(&self.workflow).await?;
+
+        let event_sink = ChannelEventSink {
+            tx: self.event_tx.clone(),
+        };
+        let executor = DistriStepExecutor::new(self.client.clone());
+        let runner = WorkflowRunner::with_events(store, executor, event_sink);
+
+        runner.run_all(&self.workflow.id).await
+    }
+}
+
+// ── DistriStepExecutor ─────────────────────────────────────────────────────
+
+/// Executes workflow steps using the Distri HTTP client.
+/// Handles ApiCall (HTTP), ToolCall (client.call_tool), Checkpoint (pass-through).
 pub struct DistriStepExecutor {
     client: Arc<Distri>,
 }
@@ -17,93 +113,6 @@ pub struct DistriStepExecutor {
 impl DistriStepExecutor {
     pub fn new(client: Arc<Distri>) -> Self {
         Self { client }
-    }
-
-    async fn execute_api_call(
-        &self,
-        method: &str,
-        url: &str,
-        body: &Option<Value>,
-        headers: &Option<std::collections::HashMap<String, String>>,
-        context: &Value,
-    ) -> Result<StepResult, String> {
-        // Resolve context variables in URL (e.g., {context.api_base})
-        let resolved_url = resolve_template(url, context);
-
-        let mut request = match method.to_uppercase().as_str() {
-            "GET" => self.client.http.get(&resolved_url),
-            "POST" => self.client.http.post(&resolved_url),
-            "PUT" => self.client.http.put(&resolved_url),
-            "DELETE" => self.client.http.delete(&resolved_url),
-            "PATCH" => self.client.http.patch(&resolved_url),
-            _ => return Err(format!("Unsupported HTTP method: {}", method)),
-        };
-
-        if let Some(hdrs) = headers {
-            for (k, v) in hdrs {
-                request = request.header(k, v);
-            }
-        }
-
-        if let Some(b) = body {
-            let resolved = resolve_value(b, context);
-            request = request.json(&resolved);
-        }
-
-        match request.send().await {
-            Ok(resp) => {
-                let status_code = resp.status().as_u16();
-                let response_body: Value = resp.json().await.unwrap_or(json!(null));
-
-                if status_code >= 200 && status_code < 300 {
-                    Ok(StepResult::done_with_context(
-                        json!({
-                            "status": status_code,
-                            "body": response_body,
-                        }),
-                        json!({
-                            "last_response": response_body,
-                        }),
-                    ))
-                } else {
-                    Ok(StepResult::failed(&format!(
-                        "HTTP {} — {}",
-                        status_code,
-                        serde_json::to_string(&response_body).unwrap_or_default()
-                    )))
-                }
-            }
-            Err(e) => Ok(StepResult::failed(&format!("Request failed: {}", e))),
-        }
-    }
-
-    async fn execute_tool_call(
-        &self,
-        tool_name: &str,
-        input: &Value,
-        context: &Value,
-    ) -> Result<StepResult, String> {
-        let resolved_input = resolve_value(input, context);
-
-        let tool_call = distri_types::ToolCall {
-            tool_call_id: uuid::Uuid::new_v4().to_string(),
-            tool_name: tool_name.to_string(),
-            input: resolved_input,
-        };
-
-        match self.client.call_tool(&tool_call, None, None).await {
-            Ok(response) => {
-                let result_value = json!({
-                    "tool_name": tool_name,
-                    "response": response,
-                });
-                Ok(StepResult::done(result_value))
-            }
-            Err(e) => Ok(StepResult::failed(&format!(
-                "Tool call '{}' failed: {}",
-                tool_name, e
-            ))),
-        }
     }
 }
 
@@ -120,56 +129,44 @@ impl StepExecutor for DistriStepExecutor {
                 url,
                 body,
                 headers,
-            } => self.execute_api_call(method, url, body, headers, context).await,
+            } => execute_api_call(&self.client.http, method, url, body, headers, context).await,
 
             StepKind::ToolCall {
                 tool_name, input, ..
-            } => self.execute_tool_call(tool_name, input, context).await,
+            } => execute_tool_call(&self.client, tool_name, input, context).await,
 
             StepKind::Checkpoint { message } => {
-                tracing::info!("Checkpoint: {}", message);
                 Ok(StepResult::done(json!({ "message": message })))
             }
 
-            StepKind::Script { command, .. } => {
-                // Deferred — return info about what would execute
-                Ok(StepResult::done(json!({
-                    "deferred": true,
-                    "command": command,
-                    "message": "Script execution not yet implemented in client executor"
-                })))
-            }
+            StepKind::Script { command, .. } => Ok(StepResult::done(json!({
+                "deferred": true,
+                "command": command,
+                "message": "Script execution not yet implemented in client executor"
+            }))),
 
             StepKind::AgentRun {
                 agent_id, prompt, ..
-            } => {
-                // Deferred — return info about what would execute
-                Ok(StepResult::done(json!({
-                    "deferred": true,
-                    "agent_id": agent_id,
-                    "prompt": prompt,
-                    "message": "Agent execution not yet implemented in client executor"
-                })))
-            }
+            } => Ok(StepResult::done(json!({
+                "deferred": true,
+                "agent_id": agent_id,
+                "prompt": prompt,
+                "message": "Agent execution not yet implemented in client executor"
+            }))),
 
-            StepKind::Condition { expression, .. } => {
-                // Simple condition evaluation — for now just log it
-                Ok(StepResult::done(json!({
-                    "expression": expression,
-                    "evaluated": true,
-                    "message": "Condition evaluation is placeholder"
-                })))
-            }
+            StepKind::Condition { expression, .. } => Ok(StepResult::done(json!({
+                "expression": expression,
+                "evaluated": true,
+                "message": "Condition evaluation is placeholder"
+            }))),
         }
     }
 
     fn supports(&self, requirement: &StepRequirement) -> bool {
-        // The Distri client supports network calls and tool calls
-        match requirement.skill.as_str() {
-            "native:network" => true,
-            "native:tool" => true,
-            _ => false,
-        }
+        matches!(
+            requirement.skill.as_str(),
+            "native:network" | "native:tool"
+        )
     }
 
     fn available_skills(&self) -> Vec<StepRequirement> {
@@ -180,8 +177,89 @@ impl StepExecutor for DistriStepExecutor {
     }
 }
 
+// ── Step execution helpers ─────────────────────────────────────────────────
+
+async fn execute_api_call(
+    http: &reqwest::Client,
+    method: &str,
+    url: &str,
+    body: &Option<Value>,
+    headers: &Option<std::collections::HashMap<String, String>>,
+    context: &Value,
+) -> Result<StepResult, String> {
+    let resolved_url = resolve_template(url, context);
+
+    let mut request = match method.to_uppercase().as_str() {
+        "GET" => http.get(&resolved_url),
+        "POST" => http.post(&resolved_url),
+        "PUT" => http.put(&resolved_url),
+        "DELETE" => http.delete(&resolved_url),
+        "PATCH" => http.patch(&resolved_url),
+        _ => return Err(format!("Unsupported HTTP method: {}", method)),
+    };
+
+    if let Some(hdrs) = headers {
+        for (k, v) in hdrs {
+            request = request.header(k, v);
+        }
+    }
+
+    if let Some(b) = body {
+        request = request.json(&resolve_value(b, context));
+    }
+
+    match request.send().await {
+        Ok(resp) => {
+            let status_code = resp.status().as_u16();
+            let response_body: Value = resp.json().await.unwrap_or(json!(null));
+
+            if (200..300).contains(&status_code) {
+                Ok(StepResult::done_with_context(
+                    json!({"status": status_code, "body": response_body}),
+                    json!({"last_response": response_body}),
+                ))
+            } else {
+                Ok(StepResult::failed(&format!(
+                    "HTTP {} — {}",
+                    status_code,
+                    serde_json::to_string(&response_body).unwrap_or_default()
+                )))
+            }
+        }
+        Err(e) => Ok(StepResult::failed(&format!("Request failed: {}", e))),
+    }
+}
+
+async fn execute_tool_call(
+    client: &Distri,
+    tool_name: &str,
+    input: &Value,
+    context: &Value,
+) -> Result<StepResult, String> {
+    let resolved_input = resolve_value(input, context);
+
+    let tool_call = distri_types::ToolCall {
+        tool_call_id: uuid::Uuid::new_v4().to_string(),
+        tool_name: tool_name.to_string(),
+        input: resolved_input,
+    };
+
+    match client.call_tool(&tool_call, None, None).await {
+        Ok(response) => Ok(StepResult::done(json!({
+            "tool_name": tool_name,
+            "response": response,
+        }))),
+        Err(e) => Ok(StepResult::failed(&format!(
+            "Tool call '{}' failed: {}",
+            tool_name, e
+        ))),
+    }
+}
+
+// ── Template resolution ────────────────────────────────────────────────────
+
 /// Resolve `{context.key}` placeholders in a string.
-fn resolve_template(template: &str, context: &Value) -> String {
+pub fn resolve_template(template: &str, context: &Value) -> String {
     let mut result = template.to_string();
     if let Some(obj) = context.as_object() {
         for (key, value) in obj {
@@ -197,7 +275,7 @@ fn resolve_template(template: &str, context: &Value) -> String {
 }
 
 /// Resolve context references in JSON values.
-fn resolve_value(value: &Value, context: &Value) -> Value {
+pub fn resolve_value(value: &Value, context: &Value) -> Value {
     match value {
         Value::String(s) => {
             if s.starts_with("{context.") && s.ends_with('}') {
@@ -208,13 +286,11 @@ fn resolve_value(value: &Value, context: &Value) -> Value {
             }
             Value::String(resolve_template(s, context))
         }
-        Value::Object(map) => {
-            let resolved: serde_json::Map<String, Value> = map
-                .iter()
+        Value::Object(map) => Value::Object(
+            map.iter()
                 .map(|(k, v)| (k.clone(), resolve_value(v, context)))
-                .collect();
-            Value::Object(resolved)
-        }
+                .collect(),
+        ),
         Value::Array(arr) => {
             Value::Array(arr.iter().map(|v| resolve_value(v, context)).collect())
         }
@@ -232,7 +308,6 @@ mod tests {
             "api_base": "http://localhost:8086/v1",
             "file_id": "abc123"
         });
-
         assert_eq!(
             resolve_template("{context.api_base}/files/{context.file_id}", &ctx),
             "http://localhost:8086/v1/files/abc123"
@@ -242,16 +317,46 @@ mod tests {
     #[test]
     fn test_resolve_value_string() {
         let ctx = json!({ "class_id": "xyz" });
-        let v = json!("{context.class_id}");
-        assert_eq!(resolve_value(&v, &ctx), json!("xyz"));
+        assert_eq!(resolve_value(&json!("{context.class_id}"), &ctx), json!("xyz"));
     }
 
     #[test]
     fn test_resolve_value_nested_object() {
         let ctx = json!({ "title": "My Activity" });
-        let v = json!({ "name": "{context.title}", "count": 5 });
-        let resolved = resolve_value(&v, &ctx);
+        let resolved = resolve_value(&json!({ "name": "{context.title}", "count": 5 }), &ctx);
         assert_eq!(resolved["name"], "My Activity");
         assert_eq!(resolved["count"], 5);
+    }
+
+    #[tokio::test]
+    async fn test_channel_event_sink() {
+        let (tx, mut rx) = mpsc::channel(10);
+        let sink = ChannelEventSink { tx };
+
+        sink.emit(WorkflowEvent::WorkflowStarted {
+            workflow_id: "test".to_string(),
+            workflow_type: "test".to_string(),
+            total_steps: 3,
+        })
+        .await;
+
+        let event = rx.recv().await.unwrap();
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("workflow_started"));
+        assert!(json.contains("\"total_steps\":3"));
+    }
+
+    #[test]
+    fn test_workflow_event_serializes_as_sse_compatible() {
+        // Verify events serialize with the "event" tag for SSE data field
+        let event = WorkflowEvent::StepCompleted {
+            workflow_id: "wf-1".to_string(),
+            step_id: "step-1".to_string(),
+            step_label: "Fetch data".to_string(),
+            result: Some(json!({"count": 42})),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains(r#""event":"step_completed""#));
+        assert!(json.contains(r#""step_id":"step-1""#));
     }
 }
