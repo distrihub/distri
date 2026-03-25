@@ -1556,6 +1556,7 @@ dependencies = [
  "distri-a2a",
  "distri-filesystem",
  "distri-types",
+ "distri-workflow",
  "flate2",
  "futures-util",
  "image 0.24.9",
@@ -1611,9 +1612,10 @@ dependencies = [
 
 [[package]]
 name = "distri-cli"
-version = "0.3.7"
+version = "0.3.8"
 dependencies = [
  "anyhow",
+ "async-trait",
  "clap",
  "crossterm 0.27.0",
  "distri",
@@ -1947,6 +1949,19 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
+ "uuid",
+]
+
+[[package]]
+name = "distri-workflow"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
  "uuid",
 ]
 
