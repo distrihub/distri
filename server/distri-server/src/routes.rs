@@ -39,6 +39,7 @@ mod secrets;
 mod session;
 mod skills;
 mod tools;
+mod workflows;
 
 pub fn all(cfg: &mut web::ServiceConfig) {
     cfg.configure(distri);
@@ -128,6 +129,7 @@ pub fn distri(cfg: &mut web::ServiceConfig) {
     .configure(secrets::configure_secret_routes)
     .configure(providers::configure_provider_routes)
     .configure(skills::configure_skill_routes)
+    .configure(workflows::configure_workflow_routes)
     .configure(models::configure_model_routes)
     // Voice streaming endpoints - TODO: Implement after fixing compilation issues
     // .service(web::resource("/voice/stream").route(web::get().to(voice_stream_handler)));

@@ -68,6 +68,7 @@ pub struct InitializedStores {
     pub prompt_template_store: Option<Arc<dyn PromptTemplateStore>>,
     pub secret_store: Option<Arc<dyn SecretStore>>,
     pub skill_store: Option<Arc<dyn SkillStore>>,
+    pub workflow_store: Option<Arc<dyn WorkflowStore>>,
 }
 impl InitializedStores {
     pub fn set_tool_auth_store(&mut self, tool_auth_store: Arc<dyn ToolAuthStore>) {
@@ -916,6 +917,116 @@ pub trait SkillStore: Send + Sync {
     async fn unstar_skill(&self, skill_id: &str) -> anyhow::Result<()>;
     async fn list_starred_skills(&self) -> anyhow::Result<Vec<SkillRecord>>;
     async fn clone_skill(&self, skill_id: &str) -> anyhow::Result<SkillRecord>;
+}
+
+// ========== Workflow Store ==========
+
+/// API response wrapper for workflow list endpoints.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowsListResponse {
+    pub workflows: Vec<WorkflowListItem>,
+    pub total: i64,
+}
+
+/// Lightweight workflow record for list endpoints — no definition payload.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowListItem {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    pub workflow_type: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub is_public: bool,
+    #[serde(default)]
+    pub is_template: bool,
+    #[serde(default)]
+    pub is_owner: bool,
+    #[serde(default)]
+    pub star_count: i32,
+    #[serde(default)]
+    pub clone_count: i32,
+    #[serde(default)]
+    pub is_starred: bool,
+    pub status: String,
+    pub step_count: usize,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Full workflow record with definition payload.
+/// `definition` is `serde_json::Value` to avoid crate dependency on distri-workflow.
+/// Deserialize to `WorkflowDefinition` on demand.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowRecord {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub workflow_type: String,
+    /// The workflow definition as JSON. Deserialize to distri_workflow::WorkflowDefinition.
+    pub definition: serde_json::Value,
+    pub tags: Vec<String>,
+    pub is_public: bool,
+    pub is_template: bool,
+    pub star_count: i32,
+    pub clone_count: i32,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Request to create a new workflow.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NewWorkflow {
+    pub name: String,
+    pub description: Option<String>,
+    pub workflow_type: String,
+    pub definition: serde_json::Value,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub is_public: bool,
+    #[serde(default)]
+    pub is_template: bool,
+}
+
+/// Partial update for a workflow.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateWorkflow {
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub definition: Option<serde_json::Value>,
+    pub tags: Option<Vec<String>>,
+    pub is_public: Option<bool>,
+}
+
+/// Filter for listing workflows.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct WorkflowFilter {
+    pub workflow_type: Option<String>,
+    pub is_public: Option<bool>,
+    pub is_template: Option<bool>,
+    pub tags: Option<Vec<String>>,
+    pub search: Option<String>,
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
+}
+
+#[async_trait]
+pub trait WorkflowStore: Send + Sync {
+    async fn list_workflows(&self, filter: WorkflowFilter) -> anyhow::Result<Vec<WorkflowRecord>>;
+    async fn get_workflow(&self, id: &str) -> anyhow::Result<Option<WorkflowRecord>>;
+    async fn create_workflow(&self, workflow: NewWorkflow) -> anyhow::Result<WorkflowRecord>;
+    async fn update_workflow(&self, id: &str, update: UpdateWorkflow) -> anyhow::Result<WorkflowRecord>;
+    async fn delete_workflow(&self, id: &str) -> anyhow::Result<()>;
+
+    // Discovery
+    async fn list_public_workflows(&self) -> anyhow::Result<Vec<WorkflowRecord>>;
+    async fn star_workflow(&self, workflow_id: &str) -> anyhow::Result<()>;
+    async fn unstar_workflow(&self, workflow_id: &str) -> anyhow::Result<()>;
+    async fn list_starred_workflows(&self) -> anyhow::Result<Vec<WorkflowRecord>>;
+    async fn clone_workflow(&self, workflow_id: &str) -> anyhow::Result<WorkflowRecord>;
 }
 
 // ─── Usage Service ──────────────────────────────────────────────────────────
