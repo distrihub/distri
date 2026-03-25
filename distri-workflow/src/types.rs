@@ -19,6 +19,9 @@ pub struct WorkflowDefinition {
     pub context: serde_json::Value,
     pub steps: Vec<WorkflowStep>,
     pub notes: Vec<WorkflowNote>,
+    /// JSON Schema describing required inputs for this workflow.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_schema: Option<serde_json::Value>,
     /// How workflow state is checkpointed. Defaults to Internal.
     #[serde(default)]
     pub checkpoint: CheckpointStrategy,
@@ -36,6 +39,7 @@ impl WorkflowDefinition {
             context: serde_json::json!({}),
             steps,
             notes: vec![],
+            input_schema: None,
             checkpoint: CheckpointStrategy::default(),
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -55,6 +59,16 @@ impl WorkflowDefinition {
     pub fn with_checkpoint(mut self, strategy: CheckpointStrategy) -> Self {
         self.checkpoint = strategy;
         self
+    }
+
+    /// Merge external input into the workflow context.
+    pub fn with_input(mut self, input: serde_json::Value) -> Result<Self, String> {
+        if let (Some(ctx), Some(inp)) = (self.context.as_object_mut(), input.as_object()) {
+            for (k, v) in inp {
+                ctx.insert(k.clone(), v.clone());
+            }
+        }
+        Ok(self)
     }
 
     /// Get the next pending step, if any.

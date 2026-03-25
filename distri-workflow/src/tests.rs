@@ -819,6 +819,36 @@ mod tests {
         }
     }
 
+    // ========================================================================
+    // New Tests: input_schema + with_input
+    // ========================================================================
+
+    #[tokio::test]
+    async fn workflow_with_input_merges_context() {
+        let workflow = WorkflowDefinition::new("test", vec![])
+            .with_context(serde_json::json!({"existing": true}))
+            .with_input(serde_json::json!({"file_id": "abc", "class_id": "xyz"}))
+            .unwrap();
+
+        assert_eq!(workflow.context["existing"], true);
+        assert_eq!(workflow.context["file_id"], "abc");
+        assert_eq!(workflow.context["class_id"], "xyz");
+    }
+
+    #[tokio::test]
+    async fn workflow_serializes_with_input_schema() {
+        let mut workflow = WorkflowDefinition::new("import", vec![]);
+        workflow.input_schema = Some(serde_json::json!({
+            "type": "object",
+            "required": ["file_id"],
+            "properties": { "file_id": { "type": "string" } }
+        }));
+
+        let json = serde_json::to_string(&workflow).unwrap();
+        let parsed: WorkflowDefinition = serde_json::from_str(&json).unwrap();
+        assert!(parsed.input_schema.is_some());
+    }
+
     #[tokio::test]
     async fn executor_available_skills() {
         let executor = SkillAwareExecutor::with_skills(vec!["native:shell", "native:network"]);
