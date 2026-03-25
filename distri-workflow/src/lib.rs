@@ -2,15 +2,16 @@
 //!
 //! Define multi-step workflows as data, execute them step by step,
 //! with support for sequential/parallel execution, conditions, agent runs,
-//! and persistent state tracking.
+//! tool calls, and persistent state tracking.
 //!
 //! # Architecture
 //!
 //! - `WorkflowDefinition` — the workflow as a DAG of steps
-//! - `WorkflowStep` — a single step (API call, script, agent run, condition)
+//! - `WorkflowStep` — a single step (API call, script, agent run, tool call, condition)
+//! - `StepRequirement` — what a step needs to run (native skills, connections)
 //! - `StepExecutor` trait — executes a step (implement for your runtime)
 //! - `WorkflowStateStore` trait — persists workflow state (Redis, DB, in-memory)
-//! - `WorkflowRunner` — orchestrates execution
+//! - `WorkflowRunner` — orchestrates execution with requirement checking
 //!
 //! # Example
 //!
@@ -18,10 +19,15 @@
 //! use distri_workflow::*;
 //!
 //! let steps = vec![
-//!     WorkflowStep::api_call("read", "Read document", "GET", "/api/docs/{id}"),
-//!     WorkflowStep::agent_run("detect", "Detect content", "detector_agent", "Analyze this document"),
-//!     WorkflowStep::api_call("save", "Save results", "POST", "/api/results")
-//!         .with_depends_on(vec!["read", "detect"]),
+//!     WorkflowStep::api_call("read", "Read document", "GET", "/api/docs/{id}")
+//!         .with_requires(vec![
+//!             StepRequirement::native("network"),
+//!             StepRequirement::connection("google", "drive").with_permissions(vec!["drive.readonly"]),
+//!         ]),
+//!     WorkflowStep::tool_call("process", "Process data", "analyze_doc", serde_json::json!({"format": "markdown"})),
+//!     WorkflowStep::script("test", "Run tests", "cargo test")
+//!         .with_cwd("/project")
+//!         .with_timeout(300),
 //! ];
 //!
 //! let workflow = WorkflowDefinition::new("import", steps)

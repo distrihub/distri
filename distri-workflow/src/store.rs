@@ -1,6 +1,6 @@
 //! Workflow state storage trait.
 
-use crate::types::{StepResult, WorkflowDefinition};
+use crate::types::{CheckpointMeta, StepResult, WorkflowDefinition};
 
 /// Persist and load workflow state.
 /// Implementations: Redis (transient), DB column (permanent), in-memory (testing).
@@ -19,6 +19,32 @@ pub trait WorkflowStateStore: Send + Sync {
         step_index: usize,
         result: StepResult,
     ) -> Result<(), String>;
+
+    /// Save a named checkpoint snapshot. Default: not supported.
+    async fn save_checkpoint(
+        &self,
+        _workflow_id: &str,
+        _step_id: &str,
+    ) -> Result<CheckpointMeta, String> {
+        Err("Checkpoints not supported by this store".into())
+    }
+
+    /// Load a checkpoint by ID. Default: not supported.
+    async fn load_checkpoint(
+        &self,
+        _workflow_id: &str,
+        _checkpoint_id: &str,
+    ) -> Result<Option<WorkflowDefinition>, String> {
+        Ok(None)
+    }
+
+    /// List available checkpoints. Default: empty.
+    async fn list_checkpoints(
+        &self,
+        _workflow_id: &str,
+    ) -> Result<Vec<CheckpointMeta>, String> {
+        Ok(vec![])
+    }
 }
 
 /// In-memory store for testing.
@@ -28,7 +54,9 @@ pub struct InMemoryStore {
 
 impl InMemoryStore {
     pub fn new() -> Self {
-        Self { workflows: std::sync::Mutex::new(std::collections::HashMap::new()) }
+        Self {
+            workflows: std::sync::Mutex::new(std::collections::HashMap::new()),
+        }
     }
 }
 
@@ -62,7 +90,9 @@ impl WorkflowStateStore for InMemoryStore {
 
             // Merge context updates
             if let Some(updates) = result.context_updates {
-                if let (Some(ctx), Some(upd)) = (workflow.context.as_object_mut(), updates.as_object()) {
+                if let (Some(ctx), Some(upd)) =
+                    (workflow.context.as_object_mut(), updates.as_object())
+                {
                     for (k, v) in upd {
                         ctx.insert(k.clone(), v.clone());
                     }
