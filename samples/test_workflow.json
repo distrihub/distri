@@ -1,123 +1,73 @@
 {
-  "id": "test-import-001",
-  "workflow_type": "bulk_import",
-  "status": "completed",
-  "current_step": 4,
+  "id": "test-workflow-001",
+  "workflow_type": "api_test",
+  "status": "pending",
+  "current_step": 0,
   "context": {
-    "api_base": "http://localhost:8086",
-    "class_id": "177c47d0-e261-4a86-ba7e-4ceceb9b5322",
-    "file_id": "1JxO60nX1fTw2oZZfHWpB-eW2N-HsoUMA5I6wHVNRhBU"
+    "api_base": "http://localhost:8086/v1"
   },
   "steps": [
     {
-      "id": "read_doc",
-      "label": "Read Google Doc",
+      "id": "list_agents",
+      "label": "List available agents",
       "kind": {
         "type": "api_call",
         "method": "GET",
-        "url": "/admin/google-drive/files/{file_id}/content"
+        "url": "{context.api_base}/agents"
       },
-      "status": "done",
-      "result": {
-        "mock": true
-      },
-      "error": null,
-      "started_at": "2026-03-25T04:16:41.939234Z",
-      "completed_at": "2026-03-25T04:16:41.939266Z",
+      "status": "pending",
       "depends_on": [],
-      "execution": "sequential"
+      "execution": "sequential",
+      "requires": [
+        { "skill": "native:network" }
+      ]
     },
     {
-      "id": "detect",
-      "label": "Detect lesson structure + submissions",
-      "kind": {
-        "type": "agent_run",
-        "agent_id": "activity_importer",
-        "prompt": "Analyze this document and detect the lesson structure (questions) and student submissions with names and full essay text.",
-        "tools": [
-          "analyze_document"
-        ]
-      },
-      "status": "done",
-      "result": {
-        "mock": true
-      },
-      "error": null,
-      "started_at": "2026-03-25T04:16:41.939287Z",
-      "completed_at": "2026-03-25T04:16:41.939317Z",
-      "depends_on": [
-        "read_doc"
-      ],
-      "execution": "sequential"
-    },
-    {
-      "id": "create_activity",
-      "label": "Create activity with detected questions",
+      "id": "list_skills",
+      "label": "List available skills",
       "kind": {
         "type": "api_call",
-        "method": "POST",
-        "url": "/admin/activities",
-        "body": {
-          "activity_source": "import",
-          "class_id": "{context.class_id}",
-          "questions": "{context.detected_questions}",
-          "title": "{context.detected_title}"
-        }
+        "method": "GET",
+        "url": "{context.api_base}/skills"
       },
-      "status": "done",
-      "result": {
-        "mock": true
-      },
-      "error": null,
-      "started_at": "2026-03-25T04:16:41.939337Z",
-      "completed_at": "2026-03-25T04:16:41.939349Z",
-      "depends_on": [
-        "detect"
-      ],
-      "execution": "sequential"
+      "status": "pending",
+      "depends_on": [],
+      "execution": "parallel",
+      "requires": [
+        { "skill": "native:network" }
+      ]
     },
     {
-      "id": "add_submissions",
-      "label": "Add bulk submissions",
+      "id": "check_connections",
+      "label": "Check workspace connections",
       "kind": {
-        "type": "api_call",
-        "method": "POST",
-        "url": "/admin/activities/{context.activity_id}/bulk-submissions",
-        "body": {
-          "submissions": "{context.detected_submissions}"
+        "type": "tool_call",
+        "tool_name": "api_request",
+        "input": {
+          "method": "GET",
+          "path": "/v1/connections"
         }
       },
-      "status": "done",
-      "result": {
-        "mock": true
-      },
-      "error": null,
-      "started_at": "2026-03-25T04:16:41.939370Z",
-      "completed_at": "2026-03-25T04:16:41.939381Z",
-      "depends_on": [
-        "create_activity"
-      ],
-      "execution": "sequential"
+      "status": "pending",
+      "depends_on": [],
+      "execution": "parallel",
+      "requires": [
+        { "skill": "native:network" }
+      ]
     },
     {
-      "id": "verify",
-      "label": "Verify import results",
+      "id": "summarize",
+      "label": "Summarize workspace state",
       "kind": {
         "type": "checkpoint",
-        "message": "Import complete. Review submissions at the activity page."
+        "message": "Workspace scan complete. Review agents, skills, and connections above."
       },
-      "status": "done",
-      "result": {},
-      "error": null,
-      "started_at": "2026-03-25T04:16:41.939401Z",
-      "completed_at": "2026-03-25T04:16:41.939412Z",
-      "depends_on": [
-        "add_submissions"
-      ],
+      "status": "pending",
+      "depends_on": ["list_agents", "list_skills", "check_connections"],
       "execution": "sequential"
     }
   ],
   "notes": [],
   "created_at": "2026-03-25T00:00:00Z",
-  "updated_at": "2026-03-25T04:16:41.939412Z"
+  "updated_at": "2026-03-25T00:00:00Z"
 }

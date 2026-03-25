@@ -1,6 +1,7 @@
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -242,7 +243,7 @@ enum WorkflowCommands {
     Run {
         #[clap(help = "Path to workflow JSON file")]
         path: PathBuf,
-        /// Run all steps (default). Use --step to run one step at a time.
+        /// Run one step at a time (interactive)
         #[clap(long, help = "Run one step at a time")]
         step: bool,
     },
@@ -251,6 +252,16 @@ enum WorkflowCommands {
         #[clap(help = "Path to workflow JSON file")]
         path: PathBuf,
     },
+    /// Push a workflow to the server
+    Push {
+        #[clap(help = "Path to workflow JSON file")]
+        path: PathBuf,
+        /// Name for the workflow (defaults to filename)
+        #[clap(long)]
+        name: Option<String>,
+    },
+    /// List workflows on the server
+    List,
 }
 
 const COLOR_RESET: &str = "\x1b[0m";
@@ -557,7 +568,7 @@ async fn main() -> Result<()> {
             handle_threads_command(&client, command).await?;
         }
         Commands::Workflow { command } => {
-            handle_workflow_command(command).await?;
+            handle_workflow_command(&client, command).await?;
         }
         Commands::Serve { .. } => unreachable!("serve handled earlier"),
     }
@@ -1815,7 +1826,7 @@ async fn handle_threads_command(client: &Distri, command: ThreadsCommands) -> Re
 
 // ── Workflow commands ────────────────────────────────────────────────────────
 
-async fn handle_workflow_command(command: WorkflowCommands) -> Result<()> {
+async fn handle_workflow_command(client: &distri::Distri, command: WorkflowCommands) -> Result<()> {
     use distri::workflow::*;
 
     match command {
@@ -1832,7 +1843,7 @@ async fn handle_workflow_command(command: WorkflowCommands) -> Result<()> {
             let store = InMemoryStore::new();
             store.save(&workflow).await.map_err(|e| anyhow::anyhow!(e))?;
 
-            let executor = PrintExecutor;
+            let executor = distri::DistriStepExecutor::new(Arc::new(client.clone()));
             let runner = WorkflowRunner::new(store, executor);
 
             if step {
@@ -1844,7 +1855,11 @@ async fn handle_workflow_command(command: WorkflowCommands) -> Result<()> {
                         break;
                     }
                     let results = runner.run_next(&workflow.id).await.map_err(|e| anyhow::anyhow!(e))?;
-                    if results.is_empty() { break; }
+                    if results.is_empty() {
+                        let s = runner.get_state(&workflow.id).await.map_err(|e| anyhow::anyhow!(e))?.unwrap();
+                        println!("  Workflow {:?}", s.status);
+                        break;
+                    }
                     for (step_id, result) in &results {
                         let icon = match result.status { StepStatus::Done => "✅", StepStatus::Failed => "❌", _ => "⏳" };
                         println!("  {} {} — {:?}", icon, step_id, result.status);
@@ -1859,12 +1874,13 @@ async fn handle_workflow_command(command: WorkflowCommands) -> Result<()> {
                 let status = runner.run_all(&workflow.id).await.map_err(|e| anyhow::anyhow!(e))?;
                 let final_state = runner.get_state(&workflow.id).await.map_err(|e| anyhow::anyhow!(e))?.unwrap();
                 for s in &final_state.steps {
-                    let icon = match s.status { StepStatus::Done => "✅", StepStatus::Failed => "❌", _ => "⬜" };
+                    let icon = match s.status { StepStatus::Done => "✅", StepStatus::Failed => "❌", StepStatus::Blocked => "🚫", _ => "⬜" };
                     println!("  {} {} — {:?}", icon, s.label, s.status);
                 }
                 println!("\n  Status: {:?}", status);
             }
 
+            // Save final state back to file
             let final_state = runner.get_state(&workflow.id).await.map_err(|e| anyhow::anyhow!(e))?.unwrap();
             let output = serde_json::to_string_pretty(&final_state)?;
             fs::write(&path, output).await
@@ -1882,41 +1898,47 @@ async fn handle_workflow_command(command: WorkflowCommands) -> Result<()> {
             println!("  Status: {:?}", workflow.status);
             println!("  Steps: {}/{}", workflow.steps.iter().filter(|s| s.status == StepStatus::Done).count(), workflow.steps.len());
             for (i, s) in workflow.steps.iter().enumerate() {
-                let icon = match s.status { StepStatus::Done => "✅", StepStatus::Failed => "❌", StepStatus::Running => "⏳", _ => "⬜" };
+                let icon = match s.status { StepStatus::Done => "✅", StepStatus::Failed => "❌", StepStatus::Running => "⏳", StepStatus::Blocked => "🚫", _ => "⬜" };
                 println!("  {} {}. {}", icon, i + 1, s.label);
+            }
+        }
+
+        WorkflowCommands::Push { path, name } => {
+            let content = fs::read_to_string(&path).await
+                .with_context(|| format!("Failed to read workflow file: {}", path.display()))?;
+            let definition: serde_json::Value = serde_json::from_str(&content)
+                .with_context(|| "Failed to parse workflow JSON")?;
+
+            let wf_name = name.unwrap_or_else(|| {
+                path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or("workflow".to_string())
+            });
+
+            match client.push_workflow(&wf_name, definition).await {
+                Ok(record) => {
+                    println!("{}→ Pushed:{} {} ({})", COLOR_BRIGHT_GREEN, COLOR_RESET, record.name, record.id);
+                }
+                Err(e) => {
+                    println!("Failed to push workflow: {}", e);
+                }
+            }
+        }
+
+        WorkflowCommands::List => {
+            match client.list_workflows().await {
+                Ok(response) => {
+                    if response.workflows.is_empty() {
+                        println!("No workflows found.");
+                    } else {
+                        for w in &response.workflows {
+                            let tpl = if w.is_template { " [template]" } else { "" };
+                            println!("  {} — {} ({} steps){}", w.name, w.workflow_type, w.step_count, tpl);
+                        }
+                        println!("\n  {} total", response.total);
+                    }
+                }
+                Err(e) => println!("Failed to list workflows: {}", e),
             }
         }
     }
     Ok(())
-}
-
-/// Print-only executor for CLI testing.
-struct PrintExecutor;
-
-#[async_trait::async_trait]
-impl distri::workflow::StepExecutor for PrintExecutor {
-    async fn execute(&self, step: &distri::workflow::WorkflowStep, _ctx: &serde_json::Value) -> Result<distri::workflow::StepResult, String> {
-        match &step.kind {
-            distri::workflow::StepKind::ApiCall { method, url, .. } => {
-                println!("    → {} {}", method, url);
-                Ok(distri::workflow::StepResult::done(serde_json::json!({"mock": true})))
-            }
-            distri::workflow::StepKind::AgentRun { agent_id, prompt, .. } => {
-                println!("    → Agent: {} | {}", agent_id, &prompt[..prompt.len().min(80)]);
-                Ok(distri::workflow::StepResult::done(serde_json::json!({"mock": true})))
-            }
-            distri::workflow::StepKind::Script { command, .. } => {
-                println!("    → Script: {}", command);
-                Ok(distri::workflow::StepResult::done(serde_json::json!({"mock": true})))
-            }
-            distri::workflow::StepKind::Condition { expression, .. } => {
-                println!("    → Condition: {}", expression);
-                Ok(distri::workflow::StepResult::done(serde_json::json!({"condition": true})))
-            }
-            distri::workflow::StepKind::Checkpoint { message } => {
-                println!("    → Checkpoint: {}", message);
-                Ok(distri::workflow::StepResult::done(serde_json::json!({})))
-            }
-        }
-    }
 }

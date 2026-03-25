@@ -758,8 +758,6 @@ dependencies = [
 [[package]]
 name = "browsr-client"
 version = "0.3.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b50b3da02b96d9c4c5c4247948cfe0ab1d9f02ef2938ac053d51aaa1e1379763"
 dependencies = [
  "anyhow",
  "browsr-types",
@@ -774,8 +772,6 @@ dependencies = [
 [[package]]
 name = "browsr-types"
 version = "0.3.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0dae0d40c53259ecf533d1effb9f79c07e862001c871d13ea30a6f4bbd9b0098"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1314,6 +1310,41 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "092966b41edc516079bdf31ec78a2e0588d1d0c08f78b91d8307215928642b2b"
 
 [[package]]
+name = "deepagent"
+version = "0.3.6"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "clap",
+ "comfy-table",
+ "crossterm 0.27.0",
+ "dirs 5.0.1",
+ "distri",
+ "distri-cli",
+ "distri-filesystem",
+ "distri-server",
+ "distri-types",
+ "dotenv",
+ "futures",
+ "futures-util",
+ "fuzzy-matcher",
+ "inquire",
+ "open",
+ "regex",
+ "reqwest 0.12.8",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "syntect",
+ "tokio",
+ "toml 0.9.5",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
 name = "deranged"
 version = "0.5.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1636,41 +1667,6 @@ dependencies = [
  "urlencoding",
  "uuid",
  "warp",
-]
-
-[[package]]
-name = "distri-coder"
-version = "0.3.6"
-dependencies = [
- "anyhow",
- "async-trait",
- "chrono",
- "clap",
- "comfy-table",
- "crossterm 0.27.0",
- "dirs 5.0.1",
- "distri",
- "distri-cli",
- "distri-filesystem",
- "distri-server",
- "distri-types",
- "dotenv",
- "futures",
- "futures-util",
- "fuzzy-matcher",
- "inquire",
- "open",
- "regex",
- "reqwest 0.12.8",
- "serde",
- "serde_json",
- "serde_yaml",
- "syntect",
- "tokio",
- "toml 0.9.5",
- "tracing",
- "tracing-subscriber",
- "uuid",
 ]
 
 [[package]]
