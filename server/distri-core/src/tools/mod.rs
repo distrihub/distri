@@ -21,6 +21,7 @@ pub use code::execute_code_with_tools;
 pub use context::to_tool_context;
 mod builtin;
 pub mod inject_env;
+pub mod request;
 pub mod skill_script;
 pub mod tool_search;
 pub use builtin::{
@@ -124,6 +125,8 @@ pub fn cast_to_executor_context_tool(
         "distri_execute_code" => Ok(Box::new(DistriExecuteCodeTool)),
         // Tool discovery
         "tool_search" => Ok(Box::new(tool_search::ToolSearchTool)),
+        // HTTP request tool
+        "request" => Ok(Box::new(request::RequestTool)),
         name if name.starts_with("call_") => {
             let safe_agent_name = name.strip_prefix("call_").unwrap_or(name);
             // Convert double underscores back to slashes for package/agent names

@@ -58,6 +58,10 @@ enum Commands {
         agent: Option<String>,
         #[clap(long, help = "Task text to send", required = true)]
         task: String,
+        /// JSON context: {"envs": {"KEY": "value"}, "secrets": {"KEY": "value"}}
+        /// Envs are available to tools via REQUEST_BASE_URL, REQUEST_AUTH_TOKEN etc.
+        #[clap(long, help = "JSON context with envs and secrets")]
+        context: Option<String>,
     },
 
     /// Agent-related commands
@@ -440,7 +444,7 @@ async fn main() -> Result<()> {
             let agent_name = agent.unwrap_or_else(|| "distri".to_string());
             run_interactive_chat(&mut app, &config, &base_url, agent_name, cli.verbose).await?;
         }
-        Commands::Run { agent, task } => {
+        Commands::Run { agent, task, context } => {
             let agent_name = agent.unwrap_or_else(|| "distri".to_string());
             // Resolve agent name to UUID for cloud compatibility.
             // Cloud middleware requires UUID for proper workspace context (model settings, secrets).
@@ -455,7 +459,44 @@ async fn main() -> Result<()> {
             // Fetch connections to inject into agent context
             let distri_client = Distri::from_config(config.clone());
             let connections_context = build_connections_context(&distri_client).await;
-            let params = build_message_params(task, connections_context);
+            let mut params = build_message_params(task, connections_context);
+
+            // Merge --context envs/secrets into metadata.env_vars
+            if let Some(ctx_json) = context {
+                if let Ok(ctx) = serde_json::from_str::<serde_json::Value>(&ctx_json) {
+                    let meta = params.metadata.get_or_insert(serde_json::json!({}));
+                    // envs → env_vars in metadata
+                    if let Some(envs) = ctx.get("envs").and_then(|v| v.as_object()) {
+                        let env_vars = meta
+                            .as_object_mut()
+                            .unwrap()
+                            .entry("env_vars")
+                            .or_insert(serde_json::json!({}));
+                        if let Some(ev) = env_vars.as_object_mut() {
+                            for (k, v) in envs {
+                                if let Some(s) = v.as_str() {
+                                    ev.insert(k.clone(), serde_json::Value::String(s.to_string()));
+                                }
+                            }
+                        }
+                    }
+                    // secrets → also env_vars (secrets are just env_vars that shouldn't be logged)
+                    if let Some(secrets) = ctx.get("secrets").and_then(|v| v.as_object()) {
+                        let env_vars = meta
+                            .as_object_mut()
+                            .unwrap()
+                            .entry("env_vars")
+                            .or_insert(serde_json::json!({}));
+                        if let Some(ev) = env_vars.as_object_mut() {
+                            for (k, v) in secrets {
+                                if let Some(s) = v.as_str() {
+                                    ev.insert(k.clone(), serde_json::Value::String(s.to_string()));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
 
             println!("Streaming agent '{}' via {}", agent_name, base_url);
             let registry = app.registry();
