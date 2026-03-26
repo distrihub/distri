@@ -2216,6 +2216,21 @@ impl Distri {
         }
     }
 
+    /// Get the workspace default model name (if configured).
+    pub async fn get_default_model(&self) -> Result<Option<String>, ClientError> {
+        let url = format!("{}/providers/default-model", self.base_url);
+        let resp = self.http.get(&url).send().await?;
+        if resp.status().is_success() {
+            let body: serde_json::Value = resp.json().await?;
+            Ok(body
+                .get("default_model")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()))
+        } else {
+            Ok(None)
+        }
+    }
+
     /// List custom connection providers from workspace settings.
     pub async fn list_connection_providers(&self) -> Result<serde_json::Value, ClientError> {
         let url = format!("{}/workspaces/current", self.base_url);

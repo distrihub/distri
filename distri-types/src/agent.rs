@@ -562,7 +562,11 @@ impl StandardDefinition {
         // Override model settings (only if model_settings already exists)
         if let Some(ref mut ms) = self.model_settings {
             if let Some(model) = overrides.model {
-                ms.model = model;
+                // Strip provider prefix if present (e.g. "custom_microsoft_foundry/gpt-5.4" → "gpt-5.4")
+                ms.model = model
+                    .split_once('/')
+                    .map(|(_, m)| m.to_string())
+                    .unwrap_or(model);
             }
             if let Some(temperature) = overrides.temperature {
                 ms.inner.temperature = Some(temperature);

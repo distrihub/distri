@@ -40,11 +40,11 @@ struct SecretResponse {
 }
 
 /// Build the set of sensitive key names from provider definitions.
+/// All provider secret keys are treated as sensitive.
 fn sensitive_keys() -> HashSet<String> {
     ModelProvider::all_provider_definitions()
         .into_iter()
         .flat_map(|p| p.keys)
-        .filter(|k| k.sensitive)
         .map(|k| k.key)
         .collect()
 }
@@ -108,7 +108,11 @@ async fn list_secrets(executor: web::Data<Arc<AgentOrchestrator>>) -> HttpRespon
             let response: Vec<SecretResponse> = secrets
                 .into_iter()
                 .map(|s| {
-                    let is_sensitive = sensitive.contains(&s.key);
+                    let is_sensitive = sensitive.contains(&s.key)
+                        || s.key.contains("KEY")
+                        || s.key.contains("SECRET")
+                        || s.key.contains("TOKEN")
+                        || s.key.contains("PASSWORD");
                     SecretResponse {
                         id: s.id,
                         key: s.key,

@@ -828,10 +828,31 @@ async fn run_interactive_chat(
 ) -> Result<()> {
     let mut thread_id = uuid::Uuid::new_v4().to_string();
     let mut current_agent = agent_name;
-    let mut current_model = "gpt-4.1-mini".to_string();
+    // Model priority: last used (~/.distri/last_model) → workspace default → None (auto)
+    let mut current_model: Option<String> = load_last_model();
+    if current_model.is_none() {
+        let distri_client = Distri::from_config(config.clone());
+        if let Ok(Some(dm)) = distri_client.get_default_model().await {
+            current_model = Some(dm);
+        }
+    }
 
-    print_welcome_header(&current_agent, &current_model);
-    println!("{}Connected:{} {}", COLOR_GRAY, COLOR_RESET, base_url);
+    print_welcome_header(&current_agent, current_model.as_deref().unwrap_or("Auto"));
+
+    // Show connected line with workspace name if available
+    let distri_for_ws = Distri::from_config(config.clone());
+    let workspace_label = if let Some(ws_id) = distri_for_ws.workspace_id() {
+        match distri_for_ws.get_workspace(ws_id).await {
+            Ok(ws) => format!(" ({})", ws.name),
+            Err(_) => String::new(),
+        }
+    } else {
+        String::new()
+    };
+    println!(
+        "{}Connected:{} {}{}",
+        COLOR_GRAY, COLOR_RESET, base_url, workspace_label
+    );
 
     let mut history = load_history().unwrap_or_default();
     let mut autocomplete = DistriAutocomplete::new(history.clone());
@@ -927,7 +948,7 @@ async fn run_interactive_chat(
         let params = build_chat_message_params(
             input.to_string(),
             &thread_id,
-            &current_model,
+            current_model.as_deref().unwrap_or(""),
             connections_context,
         );
 
@@ -949,7 +970,7 @@ async fn handle_slash_command(
     app: &mut DistriClientApp,
     config: &DistriConfig,
     current_agent: &mut String,
-    current_model: &mut String,
+    current_model: &mut Option<String>,
 ) -> Result<SlashCommandResult> {
     let mut parts = input.splitn(2, ' ');
     let command = parts.next().unwrap_or("");
@@ -985,14 +1006,17 @@ async fn handle_slash_command(
         "/model" | "/models" => {
             let mut updated = false;
             if let Some(model) = arg {
-                *current_model = model.to_string();
+                *current_model = Some(model.to_string());
                 updated = true;
             } else {
-                match Text::new("Model name: ").prompt() {
+                match Text::new("Model name (empty to reset to Auto): ").prompt() {
                     Ok(model) => {
                         let model = model.trim();
-                        if !model.is_empty() {
-                            *current_model = model.to_string();
+                        if model.is_empty() {
+                            *current_model = None;
+                            updated = true;
+                        } else {
+                            *current_model = Some(model.to_string());
                             updated = true;
                         }
                     }
@@ -1004,9 +1028,11 @@ async fn handle_slash_command(
                 }
             }
             if updated {
+                let display = current_model.as_deref().unwrap_or("Auto");
+                save_last_model(current_model.as_deref());
                 println!(
                     "{}Model set to:{} {}",
-                    COLOR_BRIGHT_GREEN, COLOR_RESET, current_model
+                    COLOR_BRIGHT_GREEN, COLOR_RESET, display
                 );
             }
             Ok(SlashCommandResult::Continue)
@@ -1242,6 +1268,36 @@ fn save_last_thread(thread_id: &str) -> Result<(), std::io::Error> {
 
 fn load_last_thread() -> Option<String> {
     let path = get_last_thread_file();
+    std::fs::read_to_string(path)
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+fn get_last_model_file() -> PathBuf {
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .unwrap_or_else(|_| ".".to_string());
+    PathBuf::from(home).join(".distri").join("last_model")
+}
+
+fn save_last_model(model: Option<&str>) {
+    let path = get_last_model_file();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    match model {
+        Some(m) => {
+            let _ = std::fs::write(&path, m);
+        }
+        None => {
+            let _ = std::fs::remove_file(&path);
+        }
+    }
+}
+
+fn load_last_model() -> Option<String> {
+    let path = get_last_model_file();
     std::fs::read_to_string(path)
         .ok()
         .map(|s| s.trim().to_string())
