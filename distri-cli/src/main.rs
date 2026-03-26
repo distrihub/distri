@@ -1862,7 +1862,7 @@ async fn handle_workflow_command(client: &distri::Distri, command: WorkflowComma
                     .map_err(|e| anyhow::anyhow!(e))?;
             }
 
-            println!("{}→ Workflow:{} {} ({})", COLOR_BRIGHT_GREEN, COLOR_RESET, workflow.workflow_type, workflow.id);
+            println!("{}→ Workflow:{} {} ({})", COLOR_BRIGHT_GREEN, COLOR_RESET, workflow.id, workflow.steps.len());
             println!("  {} steps, status: {:?}", workflow.steps.len(), workflow.status);
             println!();
 
@@ -1906,8 +1906,8 @@ async fn handle_workflow_command(client: &distri::Distri, command: WorkflowComma
                 let handle = tokio::spawn(async move { session.run().await });
                 while let Some(event) = rx.recv().await {
                     match &event {
-                        WorkflowEvent::WorkflowStarted { workflow_type, total_steps, .. } => {
-                            println!("  Starting {} ({} steps)", workflow_type, total_steps);
+                        WorkflowEvent::WorkflowStarted { total_steps, .. } => {
+                            println!("  Starting workflow ({} steps)", total_steps);
                         }
                         WorkflowEvent::StepStarted { step_id, step_label, .. } => {
                             print!("  ⏳ {} — {}...", step_id, step_label);
@@ -1934,7 +1934,7 @@ async fn handle_workflow_command(client: &distri::Distri, command: WorkflowComma
             let workflow: WorkflowDefinition = serde_json::from_str(&content)
                 .with_context(|| "Failed to parse workflow JSON")?;
 
-            println!("{}Workflow:{} {} ({})", COLOR_BRIGHT_GREEN, COLOR_RESET, workflow.workflow_type, workflow.id);
+            println!("{}Workflow:{} {}", COLOR_BRIGHT_GREEN, COLOR_RESET, workflow.id);
             println!("  Status: {:?}", workflow.status);
             println!("  Steps: {}/{}", workflow.steps.iter().filter(|s| s.status == StepStatus::Done).count(), workflow.steps.len());
             for (i, s) in workflow.steps.iter().enumerate() {
@@ -1971,7 +1971,7 @@ async fn handle_workflow_command(client: &distri::Distri, command: WorkflowComma
                     } else {
                         for w in &response.workflows {
                             let tpl = if w.is_template { " [template]" } else { "" };
-                            println!("  {} — {} ({} steps){}", w.name, w.workflow_type, w.step_count, tpl);
+                            println!("  {} ({} steps){}", w.name, w.step_count, tpl);
                         }
                         println!("\n  {} total", response.total);
                     }

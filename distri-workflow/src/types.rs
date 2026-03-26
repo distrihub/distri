@@ -12,7 +12,6 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowDefinition {
     pub id: String,
-    pub workflow_type: String,
     /// Runtime state — defaults to Pending. Not part of the definition template.
     #[serde(default)]
     pub status: WorkflowStatus,
@@ -47,10 +46,9 @@ fn default_now() -> DateTime<Utc> {
 }
 
 impl WorkflowDefinition {
-    pub fn new(workflow_type: &str, steps: Vec<WorkflowStep>) -> Self {
+    pub fn new(steps: Vec<WorkflowStep>) -> Self {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
-            workflow_type: workflow_type.to_string(),
             status: WorkflowStatus::Pending,
             current_step: 0,
             context: serde_json::json!({}),
@@ -781,7 +779,6 @@ pub enum WorkflowEvent {
     /// Workflow started
     WorkflowStarted {
         workflow_id: String,
-        workflow_type: String,
         total_steps: usize,
     },
     /// A step started executing

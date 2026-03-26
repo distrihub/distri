@@ -935,7 +935,6 @@ pub struct WorkflowListItem {
     pub name: String,
     #[serde(default)]
     pub description: Option<String>,
-    pub workflow_type: String,
     #[serde(default)]
     pub tags: Vec<String>,
     #[serde(default)]
@@ -964,7 +963,7 @@ pub struct WorkflowRecord {
     pub id: String,
     pub name: String,
     pub description: Option<String>,
-    pub workflow_type: String,
+    #[serde(default)]
     /// The workflow definition as JSON. Deserialize to distri_workflow::WorkflowDefinition.
     pub definition: serde_json::Value,
     pub tags: Vec<String>,
@@ -981,7 +980,7 @@ pub struct WorkflowRecord {
 pub struct NewWorkflow {
     pub name: String,
     pub description: Option<String>,
-    pub workflow_type: String,
+    #[serde(default)]
     pub definition: serde_json::Value,
     #[serde(default)]
     pub tags: Vec<String>,
@@ -1004,7 +1003,6 @@ pub struct UpdateWorkflow {
 /// Filter for listing workflows.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct WorkflowFilter {
-    pub workflow_type: Option<String>,
     pub is_public: Option<bool>,
     pub is_template: Option<bool>,
     pub tags: Option<Vec<String>>,

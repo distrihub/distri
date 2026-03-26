@@ -2489,15 +2489,9 @@ impl Distri {
 
     /// Push a workflow definition to the server. Creates or updates.
     pub async fn push_workflow(&self, name: &str, definition: serde_json::Value) -> Result<distri_types::stores::WorkflowRecord, ClientError> {
-        let workflow_type = definition.get("workflow_type")
-            .and_then(|v| v.as_str())
-            .unwrap_or("custom")
-            .to_string();
-
         let new = distri_types::stores::NewWorkflow {
             name: name.to_string(),
             description: None,
-            workflow_type,
             definition,
             tags: vec![],
             is_public: false,

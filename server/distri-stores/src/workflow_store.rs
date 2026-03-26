@@ -29,11 +29,6 @@ impl WorkflowStore for InMemoryWorkflowStore {
         let mut results: Vec<WorkflowRecord> = map
             .values()
             .filter(|w| {
-                if let Some(ref wt) = filter.workflow_type {
-                    if &w.workflow_type != wt {
-                        return false;
-                    }
-                }
                 if let Some(is_pub) = filter.is_public {
                     if w.is_public != is_pub {
                         return false;
@@ -86,7 +81,6 @@ impl WorkflowStore for InMemoryWorkflowStore {
             id: uuid::Uuid::new_v4().to_string(),
             name: workflow.name,
             description: workflow.description,
-            workflow_type: workflow.workflow_type,
             definition: workflow.definition,
             tags: workflow.tags,
             is_public: workflow.is_public,
@@ -174,7 +168,6 @@ impl WorkflowStore for InMemoryWorkflowStore {
             id: uuid::Uuid::new_v4().to_string(),
             name: format!("{} (copy)", source.name),
             description: source.description,
-            workflow_type: source.workflow_type,
             definition: source.definition,
             tags: source.tags,
             is_public: false,

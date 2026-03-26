@@ -17,8 +17,8 @@ pub struct TracingEventSink;
 impl EventSink for TracingEventSink {
     async fn emit(&self, event: WorkflowEvent) {
         match &event {
-            WorkflowEvent::WorkflowStarted { workflow_id, workflow_type, total_steps } => {
-                tracing::info!(%workflow_id, %workflow_type, total_steps, "workflow started");
+            WorkflowEvent::WorkflowStarted { workflow_id, total_steps } => {
+                tracing::info!(%workflow_id, total_steps, "workflow started");
             }
             WorkflowEvent::StepStarted { step_id, step_label, .. } => {
                 tracing::info!(%step_id, %step_label, "step started");
@@ -283,7 +283,6 @@ impl<S: WorkflowStateStore, E: StepExecutor, K: EventSink> WorkflowRunner<S, E, 
         // Emit workflow started
         self.events.emit(WorkflowEvent::WorkflowStarted {
             workflow_id: workflow_id.to_string(),
-            workflow_type: workflow.workflow_type.clone(),
             total_steps: workflow.steps.len(),
         }).await;
 

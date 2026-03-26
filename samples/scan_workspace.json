@@ -1,7 +1,5 @@
 {
   "id": "scan-workspace",
-  "workflow_type": "workspace_scan",
-  "status": "pending",
   "input_schema": {
     "type": "object",
     "properties": {
@@ -13,33 +11,26 @@
     {
       "id": "list_agents",
       "label": "List all agents",
-      "kind": { "type": "api_call", "method": "GET", "url": "{context.api_base}/agents" },
-      "depends_on": [],
-      "execution": "parallel",
-      "requires": [{ "skill": "native:network" }]
+      "kind": { "type": "tool_call", "tool_name": "list_agents" },
+      "execution": "parallel"
     },
     {
       "id": "list_skills",
       "label": "List all skills",
-      "kind": { "type": "api_call", "method": "GET", "url": "{context.api_base}/skills" },
-      "depends_on": [],
-      "execution": "parallel",
-      "requires": [{ "skill": "native:network" }]
+      "kind": { "type": "tool_call", "tool_name": "list_skills" },
+      "execution": "parallel"
     },
     {
       "id": "list_workflows",
       "label": "List workflows",
-      "kind": { "type": "api_call", "method": "GET", "url": "{context.api_base}/workflows" },
-      "depends_on": [],
-      "execution": "parallel",
-      "requires": [{ "skill": "native:network" }]
+      "kind": { "type": "tool_call", "tool_name": "list_workflows" },
+      "execution": "parallel"
     },
     {
       "id": "done",
       "label": "Workspace scan complete",
       "kind": { "type": "checkpoint", "message": "Scanned agents, skills, and workflows." },
-      "depends_on": ["list_agents", "list_skills", "list_workflows"],
-      "execution": "sequential"
+      "depends_on": ["list_agents", "list_skills", "list_workflows"]
     }
   ]
 }

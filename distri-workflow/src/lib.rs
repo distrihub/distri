@@ -30,8 +30,7 @@
 //!         .with_timeout(300),
 //! ];
 //!
-//! let workflow = WorkflowDefinition::new("import", steps)
-//!     .with_context(serde_json::json!({ "doc_id": "123" }));
+//! let workflow = WorkflowDefinition::new(steps);
 //! ```
 
 pub mod types;

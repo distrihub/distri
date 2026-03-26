@@ -47,12 +47,11 @@ impl EventSink for ContextEventSink {
     async fn emit(&self, event: WorkflowEvent) {
         let text = match &event {
             WorkflowEvent::WorkflowStarted {
-                workflow_type,
                 total_steps,
                 ..
             } => format!(
-                "\n**Workflow `{}`** — {} steps\n",
-                workflow_type, total_steps
+                "\n**Workflow started** — {} steps\n",
+                total_steps
             ),
             WorkflowEvent::StepStarted {
                 step_id,

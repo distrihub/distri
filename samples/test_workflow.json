@@ -1,7 +1,5 @@
 {
   "id": "api-test",
-  "workflow_type": "api_test",
-  "status": "pending",
   "input_schema": {
     "type": "object",
     "properties": {
@@ -13,25 +11,20 @@
     {
       "id": "list_agents",
       "label": "List available agents",
-      "kind": { "type": "api_call", "method": "GET", "url": "{context.api_base}/agents" },
-      "depends_on": [],
-      "execution": "sequential",
-      "requires": [{ "skill": "native:network" }]
+      "kind": { "type": "tool_call", "tool_name": "list_agents" },
+      "execution": "parallel"
     },
     {
-      "id": "check_connections",
-      "label": "Check workspace connections",
-      "kind": { "type": "tool_call", "tool_name": "api_request", "input": { "method": "GET", "path": "/v1/connections" } },
-      "depends_on": [],
-      "execution": "parallel",
-      "requires": [{ "skill": "native:network" }]
+      "id": "list_skills",
+      "label": "List available skills",
+      "kind": { "type": "tool_call", "tool_name": "list_skills" },
+      "execution": "parallel"
     },
     {
       "id": "summarize",
       "label": "Summarize workspace state",
       "kind": { "type": "checkpoint", "message": "Workspace scan complete." },
-      "depends_on": ["list_agents", "check_connections"],
-      "execution": "sequential"
+      "depends_on": ["list_agents", "list_skills"]
     }
   ]
 }

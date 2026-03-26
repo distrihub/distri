@@ -102,7 +102,7 @@ mod tests {
             WorkflowStep::api_call("step2", "Second", "POST", "/api/2"),
             WorkflowStep::api_call("step3", "Third", "PUT", "/api/3"),
         ];
-        let workflow = WorkflowDefinition::new("test", steps);
+        let workflow = WorkflowDefinition::new(steps);
         let store = InMemoryStore::new();
         store.save(&workflow).await.unwrap();
 
@@ -124,7 +124,7 @@ mod tests {
             WorkflowStep::api_call("b", "Step B", "GET", "/b").parallel(),
             WorkflowStep::api_call("c", "Step C", "GET", "/c").parallel(),
         ];
-        let workflow = WorkflowDefinition::new("test", steps);
+        let workflow = WorkflowDefinition::new(steps);
         let store = InMemoryStore::new();
         store.save(&workflow).await.unwrap();
 
@@ -146,7 +146,7 @@ mod tests {
             WorkflowStep::api_call("save", "Save results", "PUT", "/save")
                 .with_depends_on(vec!["process"]),
         ];
-        let workflow = WorkflowDefinition::new("test", steps);
+        let workflow = WorkflowDefinition::new(steps);
         let store = InMemoryStore::new();
         store.save(&workflow).await.unwrap();
 
@@ -174,7 +174,7 @@ mod tests {
             WorkflowStep::api_call("c", "Join step", "POST", "/c")
                 .with_depends_on(vec!["a", "b"]),
         ];
-        let workflow = WorkflowDefinition::new("test", steps);
+        let workflow = WorkflowDefinition::new(steps);
         let store = InMemoryStore::new();
         store.save(&workflow).await.unwrap();
 
@@ -196,7 +196,7 @@ mod tests {
             WorkflowStep::api_call("fail", "Failing step", "POST", "/fail"),
             WorkflowStep::api_call("after", "After fail", "GET", "/after"),
         ];
-        let workflow = WorkflowDefinition::new("test", steps);
+        let workflow = WorkflowDefinition::new(steps);
         let store = InMemoryStore::new();
         store.save(&workflow).await.unwrap();
 
@@ -218,7 +218,7 @@ mod tests {
             WorkflowStep::api_call("step1", "First", "GET", "/1"),
             WorkflowStep::api_call("step2", "Second", "GET", "/2"),
         ];
-        let workflow = WorkflowDefinition::new("test", steps)
+        let workflow = WorkflowDefinition::new(steps)
             .with_context(serde_json::json!({ "initial": true }));
         let store = InMemoryStore::new();
         store.save(&workflow).await.unwrap();
@@ -237,7 +237,7 @@ mod tests {
     #[tokio::test]
     async fn run_next_on_completed_returns_empty() {
         let steps = vec![WorkflowStep::api_call("only", "Only step", "GET", "/")];
-        let workflow = WorkflowDefinition::new("test", steps);
+        let workflow = WorkflowDefinition::new(steps);
         let store = InMemoryStore::new();
         store.save(&workflow).await.unwrap();
 
@@ -258,13 +258,12 @@ mod tests {
                 .with_depends_on(vec!["read"])
                 .parallel(),
         ];
-        let workflow = WorkflowDefinition::new("import", steps)
+        let workflow = WorkflowDefinition::new(steps)
             .with_context(serde_json::json!({"doc_id": "abc123"}));
 
         let json = serde_json::to_string_pretty(&workflow).unwrap();
         let parsed: WorkflowDefinition = serde_json::from_str(&json).unwrap();
 
-        assert_eq!(parsed.workflow_type, "import");
         assert_eq!(parsed.steps.len(), 2);
         assert_eq!(parsed.steps[1].depends_on, vec!["read"]);
         assert_eq!(parsed.steps[1].execution, StepExecution::Parallel);
@@ -272,7 +271,7 @@ mod tests {
 
     #[tokio::test]
     async fn notes_are_recorded() {
-        let mut workflow = WorkflowDefinition::new("test", vec![]);
+        let mut workflow = WorkflowDefinition::new(vec![]);
         workflow.add_note("step1", "Detected 10 essays");
         workflow.add_note("step2", "Created 10 submissions");
 
@@ -282,7 +281,7 @@ mod tests {
 
     #[tokio::test]
     async fn empty_workflow_is_immediately_complete() {
-        let workflow = WorkflowDefinition::new("empty", vec![]);
+        let workflow = WorkflowDefinition::new(vec![]);
         assert!(workflow.is_complete());
     }
 
@@ -334,7 +333,7 @@ mod tests {
                 StepRequirement::native("shell"),
             ]),
         ];
-        let workflow = WorkflowDefinition::new("test", steps);
+        let workflow = WorkflowDefinition::new(steps);
         let store = InMemoryStore::new();
         store.save(&workflow).await.unwrap();
 
@@ -357,7 +356,7 @@ mod tests {
                 StepRequirement::native("network"),
             ]),
         ];
-        let workflow = WorkflowDefinition::new("test", steps);
+        let workflow = WorkflowDefinition::new(steps);
         let store = InMemoryStore::new();
         store.save(&workflow).await.unwrap();
 
@@ -379,7 +378,7 @@ mod tests {
                 .with_requires(vec![StepRequirement::native("shell")])
                 .parallel(),
         ];
-        let workflow = WorkflowDefinition::new("test", steps);
+        let workflow = WorkflowDefinition::new(steps);
         let store = InMemoryStore::new();
         store.save(&workflow).await.unwrap();
 
@@ -402,7 +401,7 @@ mod tests {
                 StepRequirement::native("browser"),
             ]),
         ];
-        let workflow = WorkflowDefinition::new("test", steps);
+        let workflow = WorkflowDefinition::new(steps);
         let store = InMemoryStore::new();
         store.save(&workflow).await.unwrap();
 
@@ -421,7 +420,7 @@ mod tests {
             WorkflowStep::api_call("waits", "Waits on blocked", "POST", "/2")
                 .with_depends_on(vec!["blocked"]),
         ];
-        let workflow = WorkflowDefinition::new("test", steps);
+        let workflow = WorkflowDefinition::new(steps);
         let store = InMemoryStore::new();
         store.save(&workflow).await.unwrap();
 
@@ -444,7 +443,7 @@ mod tests {
         let steps = vec![
             WorkflowStep::api_call("step1", "No reqs", "GET", "/1"),
         ];
-        let workflow = WorkflowDefinition::new("test", steps);
+        let workflow = WorkflowDefinition::new(steps);
         let store = InMemoryStore::new();
         store.save(&workflow).await.unwrap();
 
@@ -469,7 +468,7 @@ mod tests {
                 serde_json::json!({"method": "GET", "path": "/v1/skills"}),
             ),
         ];
-        let workflow = WorkflowDefinition::new("test", steps);
+        let workflow = WorkflowDefinition::new(steps);
         let store = InMemoryStore::new();
         store.save(&workflow).await.unwrap();
 
@@ -601,7 +600,7 @@ mod tests {
 
     #[tokio::test]
     async fn checkpoint_strategy_defaults_to_internal() {
-        let workflow = WorkflowDefinition::new("test", vec![]);
+        let workflow = WorkflowDefinition::new(vec![]);
         match workflow.checkpoint {
             CheckpointStrategy::Internal { ttl_secs } => {
                 assert_eq!(ttl_secs, None);
@@ -612,7 +611,7 @@ mod tests {
 
     #[tokio::test]
     async fn checkpoint_strategy_serializes() {
-        let workflow = WorkflowDefinition::new("test", vec![])
+        let workflow = WorkflowDefinition::new(vec![])
             .with_checkpoint(CheckpointStrategy::External {
                 tool_name: "my_checkpoint_tool".to_string(),
             });
@@ -632,7 +631,7 @@ mod tests {
 
     #[tokio::test]
     async fn internal_checkpoint_serializes_with_ttl() {
-        let workflow = WorkflowDefinition::new("test", vec![])
+        let workflow = WorkflowDefinition::new(vec![])
             .with_checkpoint(CheckpointStrategy::Internal {
                 ttl_secs: Some(3600),
             });
@@ -691,7 +690,6 @@ mod tests {
     #[tokio::test]
     async fn not_stuck_when_steps_are_pending() {
         let workflow = WorkflowDefinition::new(
-            "test",
             vec![WorkflowStep::api_call("s", "Step", "GET", "/")],
         );
         assert!(!workflow.is_stuck());
@@ -700,7 +698,6 @@ mod tests {
     #[tokio::test]
     async fn not_stuck_when_all_done() {
         let mut workflow = WorkflowDefinition::new(
-            "test",
             vec![WorkflowStep::api_call("s", "Step", "GET", "/")],
         );
         workflow.steps[0].status = StepStatus::Done;
@@ -710,7 +707,6 @@ mod tests {
     #[tokio::test]
     async fn stuck_when_only_blocked_steps_remain() {
         let mut workflow = WorkflowDefinition::new(
-            "test",
             vec![
                 WorkflowStep::api_call("s1", "Step 1", "GET", "/1"),
                 WorkflowStep::api_call("s2", "Step 2", "GET", "/2"),
@@ -741,7 +737,7 @@ mod tests {
                 .with_depends_on(vec!["process"]),
         ];
 
-        let workflow = WorkflowDefinition::new("pipeline", steps)
+        let workflow = WorkflowDefinition::new(steps)
             .with_context(serde_json::json!({"source": "api"}));
 
         let store = InMemoryStore::new();
@@ -777,7 +773,6 @@ mod tests {
         // (backward compatibility — no requires field in old JSON)
         let json = serde_json::json!({
             "id": "test-001",
-            "workflow_type": "bulk_import",
             "status": "pending",
             "current_step": 0,
             "context": {"file_id": "abc"},
@@ -825,7 +820,7 @@ mod tests {
 
     #[tokio::test]
     async fn workflow_with_input_merges_context() {
-        let workflow = WorkflowDefinition::new("test", vec![])
+        let workflow = WorkflowDefinition::new(vec![])
             .with_context(serde_json::json!({"existing": true}))
             .with_input(serde_json::json!({"file_id": "abc", "class_id": "xyz"}))
             .unwrap();
@@ -837,7 +832,7 @@ mod tests {
 
     #[tokio::test]
     async fn workflow_serializes_with_input_schema() {
-        let mut workflow = WorkflowDefinition::new("import", vec![]);
+        let mut workflow = WorkflowDefinition::new(vec![]);
         workflow.input_schema = Some(serde_json::json!({
             "type": "object",
             "required": ["file_id"],
@@ -863,7 +858,7 @@ mod tests {
 
     #[tokio::test]
     async fn input_validation_rejects_missing_required_field() {
-        let mut workflow = WorkflowDefinition::new("test", vec![]);
+        let mut workflow = WorkflowDefinition::new(vec![]);
         workflow.input_schema = Some(serde_json::json!({
             "type": "object",
             "required": ["file_id", "class_id"],
@@ -881,7 +876,7 @@ mod tests {
 
     #[tokio::test]
     async fn input_validation_rejects_wrong_type() {
-        let mut workflow = WorkflowDefinition::new("test", vec![]);
+        let mut workflow = WorkflowDefinition::new(vec![]);
         workflow.input_schema = Some(serde_json::json!({
             "type": "object",
             "properties": { "count": { "type": "integer" } }
@@ -893,7 +888,7 @@ mod tests {
 
     #[tokio::test]
     async fn input_validation_accepts_valid_input() {
-        let mut workflow = WorkflowDefinition::new("test", vec![]);
+        let mut workflow = WorkflowDefinition::new(vec![]);
         workflow.input_schema = Some(serde_json::json!({
             "type": "object",
             "required": ["file_id"],
@@ -909,7 +904,7 @@ mod tests {
 
     #[tokio::test]
     async fn input_without_schema_accepts_anything() {
-        let workflow = WorkflowDefinition::new("test", vec![]);
+        let workflow = WorkflowDefinition::new(vec![]);
         // No input_schema set
         let result = workflow.with_input(serde_json::json!({ "anything": "goes" }));
         assert!(result.is_ok());
@@ -938,7 +933,7 @@ mod tests {
             WorkflowStep::api_call("s1", "Step 1", "GET", "/1"),
             WorkflowStep::api_call("s2", "Step 2", "POST", "/2"),
         ];
-        let workflow = WorkflowDefinition::new("test", steps);
+        let workflow = WorkflowDefinition::new(steps);
         let store = InMemoryStore::new();
         store.save(&workflow).await.unwrap();
 
@@ -1023,7 +1018,7 @@ mod tests {
                 })),
         ];
 
-        let mut workflow = WorkflowDefinition::new("test", steps);
+        let mut workflow = WorkflowDefinition::new(steps);
         // Initialize structured context with input
         workflow.context = serde_json::json!({
             "input": {"doc_id": "doc-123", "class_id": "class-abc"},
@@ -1068,7 +1063,7 @@ mod tests {
             WorkflowStep::tool_call("s1", "Step 1", "tool_a", serde_json::json!({})),
         ];
 
-        let mut workflow = WorkflowDefinition::new("test", steps);
+        let mut workflow = WorkflowDefinition::new(steps);
         workflow.context = serde_json::json!({
             "input": {"key": "value"},
             "steps": {},
@@ -1104,7 +1099,7 @@ mod tests {
                 })),
         ];
 
-        let mut workflow = WorkflowDefinition::new("test", steps);
+        let mut workflow = WorkflowDefinition::new(steps);
         workflow.context = serde_json::json!({"input": {}, "steps": {}, "env": {}});
 
         let executor = ContextCapturingExecutor::new(vec![
@@ -1141,7 +1136,7 @@ mod tests {
             WorkflowStep::tool_call("c", "C", "t", serde_json::json!({}))
                 .with_depends_on(vec!["b"]),
         ];
-        let workflow = WorkflowDefinition::new("test", steps);
+        let workflow = WorkflowDefinition::new(steps);
         let result = workflow.detect_cycles();
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Circular dependency"));
@@ -1153,7 +1148,7 @@ mod tests {
             WorkflowStep::tool_call("a", "A", "t", serde_json::json!({}))
                 .with_depends_on(vec!["a"]),
         ];
-        let workflow = WorkflowDefinition::new("test", steps);
+        let workflow = WorkflowDefinition::new(steps);
         let result = workflow.detect_cycles();
         assert!(result.is_err());
     }
@@ -1164,7 +1159,7 @@ mod tests {
             WorkflowStep::tool_call("a", "A", "t", serde_json::json!({}))
                 .with_depends_on(vec!["missing_step"]),
         ];
-        let workflow = WorkflowDefinition::new("test", steps);
+        let workflow = WorkflowDefinition::new(steps);
         let result = workflow.detect_cycles();
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("does not exist"));
@@ -1179,7 +1174,7 @@ mod tests {
             WorkflowStep::tool_call("c", "C", "t", serde_json::json!({}))
                 .with_depends_on(vec!["a", "b"]),
         ];
-        let workflow = WorkflowDefinition::new("test", steps);
+        let workflow = WorkflowDefinition::new(steps);
         assert!(workflow.detect_cycles().is_ok());
     }
 
@@ -1191,7 +1186,7 @@ mod tests {
             WorkflowStep::tool_call("b", "B", "t", serde_json::json!({}))
                 .with_depends_on(vec!["a"]),
         ];
-        let workflow = WorkflowDefinition::new("test", steps);
+        let workflow = WorkflowDefinition::new(steps);
         let store = InMemoryStore::new();
         store.save(&workflow).await.unwrap();
 
@@ -1222,7 +1217,7 @@ mod tests {
                 })),
         ];
 
-        let mut workflow = WorkflowDefinition::new("pipeline", steps);
+        let mut workflow = WorkflowDefinition::new(steps);
         workflow.context = serde_json::json!({"input": {}, "steps": {}, "env": {}});
 
         let executor = ContextCapturingExecutor::new(vec![
@@ -1260,7 +1255,6 @@ mod tests {
         // A minimal definition — no status, context, current_step, notes, timestamps
         let json = serde_json::json!({
             "id": "minimal",
-            "workflow_type": "test",
             "input_schema": {
                 "type": "object",
                 "properties": { "name": { "type": "string" } },

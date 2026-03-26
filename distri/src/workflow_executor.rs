@@ -309,7 +309,6 @@ mod tests {
 
         sink.emit(WorkflowEvent::WorkflowStarted {
             workflow_id: "test".to_string(),
-            workflow_type: "test".to_string(),
             total_steps: 3,
         })
         .await;

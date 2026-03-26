@@ -21,7 +21,6 @@ pub fn configure_workflow_routes(cfg: &mut web::ServiceConfig) {
 
 #[derive(Debug, Deserialize)]
 struct ListWorkflowsQuery {
-    workflow_type: Option<String>,
     is_template: Option<bool>,
     search: Option<String>,
     limit: Option<i64>,
@@ -41,7 +40,6 @@ async fn list_workflows(
     };
 
     let filter = WorkflowFilter {
-        workflow_type: query.workflow_type.clone(),
         is_template: query.is_template,
         search: query.search.clone(),
         limit: query.limit,
@@ -71,7 +69,6 @@ async fn list_workflows(
                         id: w.id,
                         name: w.name,
                         description: w.description,
-                        workflow_type: w.workflow_type,
                         tags: w.tags,
                         is_public: w.is_public,
                         is_template: w.is_template,

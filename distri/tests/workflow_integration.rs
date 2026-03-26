@@ -113,7 +113,6 @@ async fn test_workflow_event_serialization() {
     let events = vec![
         WorkflowEvent::WorkflowStarted {
             workflow_id: "wf-1".into(),
-            workflow_type: "test".into(),
             total_steps: 2,
         },
         WorkflowEvent::StepStarted {
