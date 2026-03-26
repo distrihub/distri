@@ -70,9 +70,7 @@ mod tests {
             step: &WorkflowStep,
             _context: &serde_json::Value,
         ) -> Result<StepResult, String> {
-            Ok(StepResult::done(
-                serde_json::json!({ "step_id": step.id }),
-            ))
+            Ok(StepResult::done(serde_json::json!({ "step_id": step.id })))
         }
 
         fn supports(&self, requirement: &StepRequirement) -> bool {
@@ -114,7 +112,10 @@ mod tests {
 
         let final_state = runner.get_state(&workflow.id).await.unwrap().unwrap();
         assert_eq!(final_state.status, WorkflowStatus::Completed);
-        assert!(final_state.steps.iter().all(|s| s.status == StepStatus::Done));
+        assert!(final_state
+            .steps
+            .iter()
+            .all(|s| s.status == StepStatus::Done));
     }
 
     #[tokio::test]
@@ -171,8 +172,7 @@ mod tests {
         let steps = vec![
             WorkflowStep::api_call("a", "Step A", "GET", "/a").parallel(),
             WorkflowStep::api_call("b", "Step B", "GET", "/b").parallel(),
-            WorkflowStep::api_call("c", "Join step", "POST", "/c")
-                .with_depends_on(vec!["a", "b"]),
+            WorkflowStep::api_call("c", "Join step", "POST", "/c").with_depends_on(vec!["a", "b"]),
         ];
         let workflow = WorkflowDefinition::new(steps);
         let store = InMemoryStore::new();
@@ -218,8 +218,8 @@ mod tests {
             WorkflowStep::api_call("step1", "First", "GET", "/1"),
             WorkflowStep::api_call("step2", "Second", "GET", "/2"),
         ];
-        let workflow = WorkflowDefinition::new(steps)
-            .with_context(serde_json::json!({ "initial": true }));
+        let workflow =
+            WorkflowDefinition::new(steps).with_context(serde_json::json!({ "initial": true }));
         let store = InMemoryStore::new();
         store.save(&workflow).await.unwrap();
 
@@ -258,8 +258,8 @@ mod tests {
                 .with_depends_on(vec!["read"])
                 .parallel(),
         ];
-        let workflow = WorkflowDefinition::new(steps)
-            .with_context(serde_json::json!({"doc_id": "abc123"}));
+        let workflow =
+            WorkflowDefinition::new(steps).with_context(serde_json::json!({"doc_id": "abc123"}));
 
         let json = serde_json::to_string_pretty(&workflow).unwrap();
         let parsed: WorkflowDefinition = serde_json::from_str(&json).unwrap();
@@ -328,11 +328,8 @@ mod tests {
 
     #[tokio::test]
     async fn requirements_block_step_execution() {
-        let steps = vec![
-            WorkflowStep::api_call("step1", "Needs shell", "GET", "/1").with_requires(vec![
-                StepRequirement::native("shell"),
-            ]),
-        ];
+        let steps = vec![WorkflowStep::api_call("step1", "Needs shell", "GET", "/1")
+            .with_requires(vec![StepRequirement::native("shell")])];
         let workflow = WorkflowDefinition::new(steps);
         let store = InMemoryStore::new();
         store.save(&workflow).await.unwrap();
@@ -346,15 +343,18 @@ mod tests {
 
         let state = runner.get_state(&workflow.id).await.unwrap().unwrap();
         assert_eq!(state.steps[0].status, StepStatus::Blocked);
-        assert!(state.steps[0].error.as_ref().unwrap().contains("native:shell"));
+        assert!(state.steps[0]
+            .error
+            .as_ref()
+            .unwrap()
+            .contains("native:shell"));
     }
 
     #[tokio::test]
     async fn requirements_met_allows_execution() {
         let steps = vec![
-            WorkflowStep::api_call("step1", "Needs network", "GET", "/1").with_requires(vec![
-                StepRequirement::native("network"),
-            ]),
+            WorkflowStep::api_call("step1", "Needs network", "GET", "/1")
+                .with_requires(vec![StepRequirement::native("network")]),
         ];
         let workflow = WorkflowDefinition::new(steps);
         let store = InMemoryStore::new();
@@ -397,9 +397,8 @@ mod tests {
     #[tokio::test]
     async fn blocked_workflow_status() {
         let steps = vec![
-            WorkflowStep::api_call("step1", "Needs browser", "GET", "/1").with_requires(vec![
-                StepRequirement::native("browser"),
-            ]),
+            WorkflowStep::api_call("step1", "Needs browser", "GET", "/1")
+                .with_requires(vec![StepRequirement::native("browser")]),
         ];
         let workflow = WorkflowDefinition::new(steps);
         let store = InMemoryStore::new();
@@ -440,9 +439,7 @@ mod tests {
     #[tokio::test]
     async fn no_requirements_uses_default_executor() {
         // Steps without requires should work with any executor (backward compat)
-        let steps = vec![
-            WorkflowStep::api_call("step1", "No reqs", "GET", "/1"),
-        ];
+        let steps = vec![WorkflowStep::api_call("step1", "No reqs", "GET", "/1")];
         let workflow = WorkflowDefinition::new(steps);
         let store = InMemoryStore::new();
         store.save(&workflow).await.unwrap();
@@ -460,14 +457,12 @@ mod tests {
 
     #[tokio::test]
     async fn tool_call_step_executes() {
-        let steps = vec![
-            WorkflowStep::tool_call(
-                "call_api",
-                "Call API request tool",
-                "api_request",
-                serde_json::json!({"method": "GET", "path": "/v1/skills"}),
-            ),
-        ];
+        let steps = vec![WorkflowStep::tool_call(
+            "call_api",
+            "Call API request tool",
+            "api_request",
+            serde_json::json!({"method": "GET", "path": "/v1/skills"}),
+        )];
         let workflow = WorkflowDefinition::new(steps);
         let store = InMemoryStore::new();
         store.save(&workflow).await.unwrap();
@@ -611,8 +606,8 @@ mod tests {
 
     #[tokio::test]
     async fn checkpoint_strategy_serializes() {
-        let workflow = WorkflowDefinition::new(vec![])
-            .with_checkpoint(CheckpointStrategy::External {
+        let workflow =
+            WorkflowDefinition::new(vec![]).with_checkpoint(CheckpointStrategy::External {
                 tool_name: "my_checkpoint_tool".to_string(),
             });
 
@@ -631,8 +626,8 @@ mod tests {
 
     #[tokio::test]
     async fn internal_checkpoint_serializes_with_ttl() {
-        let workflow = WorkflowDefinition::new(vec![])
-            .with_checkpoint(CheckpointStrategy::Internal {
+        let workflow =
+            WorkflowDefinition::new(vec![]).with_checkpoint(CheckpointStrategy::Internal {
                 ttl_secs: Some(3600),
             });
 
@@ -689,29 +684,25 @@ mod tests {
 
     #[tokio::test]
     async fn not_stuck_when_steps_are_pending() {
-        let workflow = WorkflowDefinition::new(
-            vec![WorkflowStep::api_call("s", "Step", "GET", "/")],
-        );
+        let workflow =
+            WorkflowDefinition::new(vec![WorkflowStep::api_call("s", "Step", "GET", "/")]);
         assert!(!workflow.is_stuck());
     }
 
     #[tokio::test]
     async fn not_stuck_when_all_done() {
-        let mut workflow = WorkflowDefinition::new(
-            vec![WorkflowStep::api_call("s", "Step", "GET", "/")],
-        );
+        let mut workflow =
+            WorkflowDefinition::new(vec![WorkflowStep::api_call("s", "Step", "GET", "/")]);
         workflow.steps[0].status = StepStatus::Done;
         assert!(!workflow.is_stuck());
     }
 
     #[tokio::test]
     async fn stuck_when_only_blocked_steps_remain() {
-        let mut workflow = WorkflowDefinition::new(
-            vec![
-                WorkflowStep::api_call("s1", "Step 1", "GET", "/1"),
-                WorkflowStep::api_call("s2", "Step 2", "GET", "/2"),
-            ],
-        );
+        let mut workflow = WorkflowDefinition::new(vec![
+            WorkflowStep::api_call("s1", "Step 1", "GET", "/1"),
+            WorkflowStep::api_call("s2", "Step 2", "GET", "/2"),
+        ]);
         workflow.steps[0].status = StepStatus::Done;
         workflow.steps[1].status = StepStatus::Blocked;
         assert!(workflow.is_stuck());
@@ -737,8 +728,8 @@ mod tests {
                 .with_depends_on(vec!["process"]),
         ];
 
-        let workflow = WorkflowDefinition::new(steps)
-            .with_context(serde_json::json!({"source": "api"}));
+        let workflow =
+            WorkflowDefinition::new(steps).with_context(serde_json::json!({"source": "api"}));
 
         let store = InMemoryStore::new();
         store.save(&workflow).await.unwrap();
@@ -755,8 +746,8 @@ mod tests {
 
     #[tokio::test]
     async fn requirement_serialization_roundtrip() {
-        let req = StepRequirement::connection("google", "drive")
-            .with_permissions(vec!["drive.readonly"]);
+        let req =
+            StepRequirement::connection("google", "drive").with_permissions(vec!["drive.readonly"]);
 
         let json = serde_json::to_value(&req).unwrap();
         assert_eq!(json["skill"], "google:drive");
@@ -937,7 +928,9 @@ mod tests {
         let store = InMemoryStore::new();
         store.save(&workflow).await.unwrap();
 
-        let sink = CollectingSink { events: Mutex::new(vec![]) };
+        let sink = CollectingSink {
+            events: Mutex::new(vec![]),
+        };
         let executor = MockExecutor::new();
         let runner = WorkflowRunner::with_events(store, executor, sink);
 
@@ -945,12 +938,19 @@ mod tests {
 
         let events = runner.events.events.lock().unwrap();
         // Should have: started, step1_started, step1_completed, step2_started, step2_completed, workflow_completed
-        assert!(events.len() >= 5, "Expected at least 5 events, got {}", events.len());
+        assert!(
+            events.len() >= 5,
+            "Expected at least 5 events, got {}",
+            events.len()
+        );
 
         // First event should be WorkflowStarted
         matches!(&events[0], WorkflowEvent::WorkflowStarted { .. });
         // Last should be WorkflowCompleted
-        matches!(events.last().unwrap(), WorkflowEvent::WorkflowCompleted { .. });
+        matches!(
+            events.last().unwrap(),
+            WorkflowEvent::WorkflowCompleted { .. }
+        );
     }
 
     // ========================================================================
@@ -967,7 +967,10 @@ mod tests {
         fn new(results: Vec<(&str, serde_json::Value)>) -> Self {
             Self {
                 captured: Arc::new(tokio::sync::Mutex::new(vec![])),
-                results: results.into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
+                results: results
+                    .into_iter()
+                    .map(|(k, v)| (k.to_string(), v))
+                    .collect(),
             }
         }
 
@@ -983,9 +986,14 @@ mod tests {
             step: &WorkflowStep,
             context: &serde_json::Value,
         ) -> Result<StepResult, String> {
-            self.captured.lock().await.push((step.id.clone(), context.clone()));
+            self.captured
+                .lock()
+                .await
+                .push((step.id.clone(), context.clone()));
 
-            let result = self.results.get(&step.id)
+            let result = self
+                .results
+                .get(&step.id)
                 .cloned()
                 .unwrap_or(serde_json::json!({"step_id": step.id}));
 
@@ -1027,8 +1035,14 @@ mod tests {
         });
 
         let executor = ContextCapturingExecutor::new(vec![
-            ("fetch_doc", serde_json::json!({"content": "Hello world", "title": "My Essay"})),
-            ("process", serde_json::json!({"summary": "Essay about greeting"})),
+            (
+                "fetch_doc",
+                serde_json::json!({"content": "Hello world", "title": "My Essay"}),
+            ),
+            (
+                "process",
+                serde_json::json!({"summary": "Essay about greeting"}),
+            ),
             ("save", serde_json::json!({"saved": true})),
         ]);
         let captured = executor.captured();
@@ -1059,9 +1073,12 @@ mod tests {
 
     #[tokio::test]
     async fn step_without_input_mapping_receives_full_context() {
-        let steps = vec![
-            WorkflowStep::tool_call("s1", "Step 1", "tool_a", serde_json::json!({})),
-        ];
+        let steps = vec![WorkflowStep::tool_call(
+            "s1",
+            "Step 1",
+            "tool_a",
+            serde_json::json!({}),
+        )];
 
         let mut workflow = WorkflowDefinition::new(steps);
         workflow.context = serde_json::json!({
@@ -1070,9 +1087,8 @@ mod tests {
             "env": {"base": "http://localhost"}
         });
 
-        let executor = ContextCapturingExecutor::new(vec![
-            ("s1", serde_json::json!({"done": true})),
-        ]);
+        let executor =
+            ContextCapturingExecutor::new(vec![("s1", serde_json::json!({"done": true}))]);
         let captured = executor.captured();
 
         let store = InMemoryStore::new();
@@ -1205,9 +1221,12 @@ mod tests {
     async fn parallel_fan_out_join_with_data_flow() {
         // Three parallel fetches → join step uses all three results
         let steps = vec![
-            WorkflowStep::tool_call("fetch_users", "Users", "api", serde_json::json!({})).parallel(),
-            WorkflowStep::tool_call("fetch_orders", "Orders", "api", serde_json::json!({})).parallel(),
-            WorkflowStep::tool_call("fetch_products", "Products", "api", serde_json::json!({})).parallel(),
+            WorkflowStep::tool_call("fetch_users", "Users", "api", serde_json::json!({}))
+                .parallel(),
+            WorkflowStep::tool_call("fetch_orders", "Orders", "api", serde_json::json!({}))
+                .parallel(),
+            WorkflowStep::tool_call("fetch_products", "Products", "api", serde_json::json!({}))
+                .parallel(),
             WorkflowStep::tool_call("merge", "Merge", "merge_tool", serde_json::json!({}))
                 .with_depends_on(vec!["fetch_users", "fetch_orders", "fetch_products"])
                 .with_input_mapping(serde_json::json!({
@@ -1221,10 +1240,22 @@ mod tests {
         workflow.context = serde_json::json!({"input": {}, "steps": {}, "env": {}});
 
         let executor = ContextCapturingExecutor::new(vec![
-            ("fetch_users", serde_json::json!({"data": [{"id": 1, "name": "Alice"}]})),
-            ("fetch_orders", serde_json::json!({"data": [{"id": 100, "total": 50}]})),
-            ("fetch_products", serde_json::json!({"data": [{"id": "p1", "name": "Widget"}]})),
-            ("merge", serde_json::json!({"merged": true, "total_records": 3})),
+            (
+                "fetch_users",
+                serde_json::json!({"data": [{"id": 1, "name": "Alice"}]}),
+            ),
+            (
+                "fetch_orders",
+                serde_json::json!({"data": [{"id": 100, "total": 50}]}),
+            ),
+            (
+                "fetch_products",
+                serde_json::json!({"data": [{"id": "p1", "name": "Widget"}]}),
+            ),
+            (
+                "merge",
+                serde_json::json!({"merged": true, "total_records": 3}),
+            ),
         ]);
         let captured = executor.captured();
 

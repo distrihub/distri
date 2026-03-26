@@ -476,7 +476,12 @@ impl AgentLoop {
         // Get usage info from context
         let usage_info = context.get_usage().await;
         let cost_usd = usage_info.model.as_ref().and_then(|m| {
-            estimate_cost(m, usage_info.input_tokens, usage_info.output_tokens, usage_info.cached_tokens)
+            estimate_cost(
+                m,
+                usage_info.input_tokens,
+                usage_info.output_tokens,
+                usage_info.cached_tokens,
+            )
         });
         let run_usage = distri_types::RunUsage {
             total_tokens: usage_info.tokens,
@@ -649,7 +654,8 @@ fn get_model_pricing() -> &'static std::collections::HashMap<String, ModelPricin
     static PRICING: OnceLock<std::collections::HashMap<String, ModelPricing>> = OnceLock::new();
     PRICING.get_or_init(|| {
         let json = include_str!("../../model_pricing.json");
-        let file: PricingFile = serde_json::from_str(json).expect("Failed to parse model_pricing.json");
+        let file: PricingFile =
+            serde_json::from_str(json).expect("Failed to parse model_pricing.json");
         file.models
     })
 }
@@ -657,23 +663,34 @@ fn get_model_pricing() -> &'static std::collections::HashMap<String, ModelPricin
 /// Estimate cost in USD based on model name, token counts, and cached tokens.
 /// Prices loaded from model_pricing.json (per 1M tokens).
 /// Cached tokens are charged at the discounted cached_input rate instead of full input rate.
-fn estimate_cost(model: &str, input_tokens: u32, output_tokens: u32, cached_tokens: u32) -> Option<f64> {
+fn estimate_cost(
+    model: &str,
+    input_tokens: u32,
+    output_tokens: u32,
+    cached_tokens: u32,
+) -> Option<f64> {
     let pricing = get_model_pricing();
 
     // Try exact match first, then longest substring match
     let entry = pricing.get(model).or_else(|| {
-        pricing.iter()
+        pricing
+            .iter()
             .filter(|(key, _)| model.contains(key.as_str()))
             .max_by_key(|(key, _)| key.len())
             .map(|(_, v)| v)
     })?;
 
     // Non-cached input tokens = total input - cached
-    let non_cached_input = if cached_tokens > input_tokens { 0 } else { input_tokens - cached_tokens };
+    let non_cached_input = if cached_tokens > input_tokens {
+        0
+    } else {
+        input_tokens - cached_tokens
+    };
 
     let cost = (non_cached_input as f64 * entry.input
         + cached_tokens as f64 * entry.cached_input
-        + output_tokens as f64 * entry.output) / 1_000_000.0;
+        + output_tokens as f64 * entry.output)
+        / 1_000_000.0;
 
     Some((cost * 10000.0).round() / 10000.0) // Round to 4 decimal places
 }
@@ -685,7 +702,10 @@ mod cost_tests {
     #[test]
     fn pricing_json_loads() {
         let pricing = get_model_pricing();
-        assert!(pricing.len() >= 10, "Expected at least 10 models in pricing");
+        assert!(
+            pricing.len() >= 10,
+            "Expected at least 10 models in pricing"
+        );
         assert!(pricing.contains_key("gpt-5.1"));
         assert!(pricing.contains_key("claude-sonnet-4"));
     }

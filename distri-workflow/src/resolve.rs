@@ -126,19 +126,14 @@ pub fn resolve_value(value: &Value, context: &Value) -> Value {
                 .map(|(k, v)| (k.clone(), resolve_value(v, context)))
                 .collect(),
         ),
-        Value::Array(arr) => {
-            Value::Array(arr.iter().map(|v| resolve_value(v, context)).collect())
-        }
+        Value::Array(arr) => Value::Array(arr.iter().map(|v| resolve_value(v, context)).collect()),
         other => other.clone(),
     }
 }
 
 /// Resolve a step's input. If the step has explicit `input`, resolve it.
 /// Otherwise return the full execution context.
-pub fn resolve_step_input(
-    step_input: Option<&Value>,
-    context: &Value,
-) -> Value {
+pub fn resolve_step_input(step_input: Option<&Value>, context: &Value) -> Value {
     match step_input {
         Some(mapping) => resolve_value(mapping, context),
         None => context.clone(),
@@ -178,10 +173,7 @@ mod tests {
     #[test]
     fn resolve_input_namespace() {
         let ctx = test_context();
-        assert_eq!(
-            resolve_template("{input.doc_id}", &ctx),
-            "abc123"
-        );
+        assert_eq!(resolve_template("{input.doc_id}", &ctx), "abc123");
     }
 
     #[test]
@@ -215,7 +207,10 @@ mod tests {
     fn resolve_multiple_references_in_one_string() {
         let ctx = test_context();
         assert_eq!(
-            resolve_template("{env.api_base}/classes/{input.class_id}/docs/{input.doc_id}", &ctx),
+            resolve_template(
+                "{env.api_base}/classes/{input.class_id}/docs/{input.doc_id}",
+                &ctx
+            ),
             "http://localhost:8086/classes/xyz/docs/abc123"
         );
     }
@@ -224,10 +219,7 @@ mod tests {
     fn resolve_backward_compat_context_namespace() {
         let ctx = test_context();
         // {context.X} checks input first
-        assert_eq!(
-            resolve_template("{context.doc_id}", &ctx),
-            "abc123"
-        );
+        assert_eq!(resolve_template("{context.doc_id}", &ctx), "abc123");
         // Then steps
         assert_eq!(
             resolve_template("{context.fetch_doc.content}", &ctx),

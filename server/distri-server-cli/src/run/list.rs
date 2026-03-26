@@ -13,7 +13,9 @@ pub async fn list(executor: Arc<AgentOrchestrator>) -> anyhow::Result<()> {
 
     table.add_row(vec!["Agent", "Description", "Tools"]);
     for agent_config in agents.iter() {
-        let distri_types::configuration::AgentConfig::StandardAgent(def) = agent_config;
+        let distri_types::configuration::AgentConfig::StandardAgent(def) = agent_config else {
+            continue;
+        };
         let tools = executor.get_agent_tools(def, &Arc::default()).await?;
         let inner = tools_table(&tools);
 

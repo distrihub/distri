@@ -4,8 +4,7 @@ use crate::types::ToolCall;
 use crate::AgentError;
 use anyhow::Result;
 use browsr_types::{
-    ShellCreateSessionRequest, ShellCreateSessionResponse,
-    ShellExecRequest, ShellExecResponse,
+    ShellCreateSessionRequest, ShellCreateSessionResponse, ShellExecRequest, ShellExecResponse,
 };
 use distri_stores::SessionStoreExt;
 use distri_types::{Part, Tool, ToolContext};
@@ -77,10 +76,7 @@ impl BrowsrShellClient {
 
         if !resp.status().is_success() {
             let text = resp.text().await.unwrap_or_default();
-            tracing::error!(
-                "[BrowsrShellClient::create_session] failed: {}",
-                text
-            );
+            tracing::error!("[BrowsrShellClient::create_session] failed: {}", text);
             return Err(AgentError::ToolExecution(format!(
                 "Shell session creation failed: {}",
                 text
@@ -92,7 +88,10 @@ impl BrowsrShellClient {
         })
     }
 
-    pub(crate) async fn exec(&self, request: &ShellExecRequest) -> Result<ShellExecResponse, AgentError> {
+    pub(crate) async fn exec(
+        &self,
+        request: &ShellExecRequest,
+    ) -> Result<ShellExecResponse, AgentError> {
         let url = format!("{}/shell/exec", self.base_url);
         let resp = self
             .client
@@ -287,9 +286,7 @@ Start a JavaScript/Node.js session:
         _tool_call: distri_types::ToolCall,
         _context: Arc<ToolContext>,
     ) -> Result<Vec<Part>, anyhow::Error> {
-        Err(anyhow::anyhow!(
-            "StartShellTool requires ExecutorContext"
-        ))
+        Err(anyhow::anyhow!("StartShellTool requires ExecutorContext"))
     }
 }
 
@@ -322,12 +319,10 @@ impl ExecutorContextTool for StartShellTool {
             .and_then(|v| v.as_str())
             .map(String::from)
             .or(overrides.image.clone())
-            .or_else(|| {
-                match language.as_deref() {
-                    Some("python") => std::env::var("BROWSR_PYTHON_IMAGE").ok(),
-                    Some("javascript") => std::env::var("BROWSR_NODE_IMAGE").ok(),
-                    _ => None,
-                }
+            .or_else(|| match language.as_deref() {
+                Some("python") => std::env::var("BROWSR_PYTHON_IMAGE").ok(),
+                Some("javascript") => std::env::var("BROWSR_NODE_IMAGE").ok(),
+                _ => None,
             });
 
         let memory_mb = input
@@ -339,7 +334,11 @@ impl ExecutorContextTool for StartShellTool {
         // Collect env vars from context (injected by inject_connection_env, etc.)
         let env_vars = {
             let vars = context.env_vars.read().await;
-            if vars.is_empty() { None } else { Some(vars.clone()) }
+            if vars.is_empty() {
+                None
+            } else {
+                Some(vars.clone())
+            }
         };
 
         let request = ShellCreateSessionRequest {
@@ -457,9 +456,7 @@ Write and execute a script file:
         _tool_call: distri_types::ToolCall,
         _context: Arc<ToolContext>,
     ) -> Result<Vec<Part>, anyhow::Error> {
-        Err(anyhow::anyhow!(
-            "ExecuteShellTool requires ExecutorContext"
-        ))
+        Err(anyhow::anyhow!("ExecuteShellTool requires ExecutorContext"))
     }
 }
 
@@ -481,9 +478,7 @@ impl ExecutorContextTool for ExecuteShellTool {
         let command = input
             .get("command")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| {
-                AgentError::ToolExecution("Missing 'command' parameter".to_string())
-            })?;
+            .ok_or_else(|| AgentError::ToolExecution("Missing 'command' parameter".to_string()))?;
 
         let request = ShellExecRequest {
             session_id: session_id.clone(),
@@ -509,10 +504,9 @@ impl ExecutorContextTool for ExecuteShellTool {
             result.duration_ms,
         );
 
-        Ok(vec![Part::Data(
-            serde_json::to_value(&response)
-                .map_err(|e| AgentError::ToolExecution(format!("Failed to serialize: {}", e)))?,
-        )])
+        Ok(vec![Part::Data(serde_json::to_value(&response).map_err(
+            |e| AgentError::ToolExecution(format!("Failed to serialize: {}", e)),
+        )?)])
     }
 }
 

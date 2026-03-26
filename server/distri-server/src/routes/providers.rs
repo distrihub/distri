@@ -4,18 +4,11 @@ use serde_json::json;
 use std::sync::Arc;
 
 pub fn configure_provider_routes(cfg: &mut web::ServiceConfig) {
-    cfg.service(
-        web::resource("/providers")
-            .route(web::post().to(upsert_provider)),
-    )
-    .service(
-        web::resource("/providers/default-model")
-            .route(web::get().to(get_default_model)),
-    )
-    .service(
-        web::resource("/providers/{provider_id}")
-            .route(web::delete().to(delete_provider)),
-    );
+    cfg.service(web::resource("/providers").route(web::post().to(upsert_provider)))
+        .service(web::resource("/providers/default-model").route(web::get().to(get_default_model)))
+        .service(
+            web::resource("/providers/{provider_id}").route(web::delete().to(delete_provider)),
+        );
 }
 
 async fn upsert_provider(
@@ -34,8 +27,7 @@ async fn upsert_provider(
         Ok(result) => HttpResponse::Ok().json(result),
         Err(err) => {
             tracing::error!(error = ?err, "Failed to upsert provider");
-            HttpResponse::InternalServerError()
-                .json(json!({"error": "Failed to save provider"}))
+            HttpResponse::InternalServerError().json(json!({"error": "Failed to save provider"}))
         }
     }
 }
@@ -49,15 +41,12 @@ async fn delete_provider(
         Ok(_) => HttpResponse::Ok().json(json!({"deleted": true})),
         Err(err) => {
             tracing::error!(error = ?err, "Failed to delete provider");
-            HttpResponse::InternalServerError()
-                .json(json!({"error": "Failed to delete provider"}))
+            HttpResponse::InternalServerError().json(json!({"error": "Failed to delete provider"}))
         }
     }
 }
 
-async fn get_default_model(
-    store: web::Data<Arc<dyn ProviderStore>>,
-) -> HttpResponse {
+async fn get_default_model(store: web::Data<Arc<dyn ProviderStore>>) -> HttpResponse {
     match store.get_default_model().await {
         Ok(dm) => HttpResponse::Ok().json(json!({"default_model": dm})),
         Err(err) => {

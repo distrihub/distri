@@ -376,12 +376,22 @@ mod tests {
         struct UnknownTool;
         #[async_trait::async_trait]
         impl Tool for UnknownTool {
-            fn get_name(&self) -> String { "totally_unknown_tool".to_string() }
-            fn get_description(&self) -> String { String::new() }
-            fn get_parameters(&self) -> serde_json::Value { serde_json::json!({}) }
+            fn get_name(&self) -> String {
+                "totally_unknown_tool".to_string()
+            }
+            fn get_description(&self) -> String {
+                String::new()
+            }
+            fn get_parameters(&self) -> serde_json::Value {
+                serde_json::json!({})
+            }
             async fn execute(
-                &self, _: ToolCall, _: Arc<distri_types::ToolContext>,
-            ) -> Result<Vec<Part>, anyhow::Error> { Ok(vec![]) }
+                &self,
+                _: ToolCall,
+                _: Arc<distri_types::ToolContext>,
+            ) -> Result<Vec<Part>, anyhow::Error> {
+                Ok(vec![])
+            }
         }
         let tool = UnknownTool;
         let result = cast_to_executor_context_tool(&tool);

@@ -35,9 +35,9 @@ fn init_logging(level: &str) {
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenv::dotenv().ok();
-    
+
     let cli = Cli::parse();
-    
+
     let log_level = if cli.verbose { "debug" } else { "info" };
     init_logging(log_level);
 
@@ -49,12 +49,15 @@ async fn main() -> Result<()> {
     };
 
     let executor = init_agent_executor(&config).await?;
-    
+
     if let Some(task) = cli.task {
         tracing::info!("Running task: {}", task);
         // TODO: Implement task execution using the executor
         // For now, just print what would be done
-        tracing::info!("Executor initialized with {} agents", config.agents.as_ref().map_or(0, |a| a.len()));
+        tracing::info!(
+            "Executor initialized with {} agents",
+            config.agents.as_ref().map_or(0, |a| a.len())
+        );
         tracing::info!("Task: {} with agent: {}", task, cli.agent);
     } else {
         tracing::info!("Distri Scraper initialized successfully");

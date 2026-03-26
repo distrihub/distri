@@ -359,7 +359,9 @@ impl ClaudeClient {
             .json(request)
             .send()
             .await
-            .map_err(|e| crate::AgentError::LLMError(format!("Claude API request failed: {}", e)))?;
+            .map_err(|e| {
+                crate::AgentError::LLMError(format!("Claude API request failed: {}", e))
+            })?;
 
         let status = response.status();
         if !status.is_success() {
@@ -376,7 +378,11 @@ impl ClaudeClient {
         })?;
 
         serde_json::from_str(&body).map_err(|e| {
-            tracing::error!("Failed to parse Claude response: {} body={}", e, &body[..body.len().min(500)]);
+            tracing::error!(
+                "Failed to parse Claude response: {} body={}",
+                e,
+                &body[..body.len().min(500)]
+            );
             crate::AgentError::LLMError(format!("Failed to parse Claude response: {}", e))
         })
     }
@@ -403,7 +409,9 @@ impl ClaudeClient {
             .json(&req)
             .send()
             .await
-            .map_err(|e| crate::AgentError::LLMError(format!("Claude stream request failed: {}", e)))?;
+            .map_err(|e| {
+                crate::AgentError::LLMError(format!("Claude stream request failed: {}", e))
+            })?;
 
         let status = response.status();
         if !status.is_success() {

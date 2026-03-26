@@ -95,10 +95,9 @@ impl ExecutorContextTool for InjectConnectionEnvTool {
             })?;
 
         // Fetch token via callback
-        let (provider, access_token) =
-            (self.fetch_token)(connection_id.to_string())
-                .await
-                .map_err(|e| AgentError::ToolExecution(e))?;
+        let (provider, access_token) = (self.fetch_token)(connection_id.to_string())
+            .await
+            .map_err(|e| AgentError::ToolExecution(e))?;
 
         // Determine env var name
         let env_var_name = input

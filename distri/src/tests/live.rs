@@ -116,11 +116,8 @@ async fn live_llm_execute() -> anyhow::Result<()> {
         messages: vec![Message::user("say hi".into(), None)],
         ..Default::default()
     };
-    let options = crate::LlmExecuteOptions::new(llm_ctx)
-        .with_llm_def(llm_def);
-    let resp = client
-        .llm_execute(options)
-        .await?;
+    let options = crate::LlmExecuteOptions::new(llm_ctx).with_llm_def(llm_def);
+    let resp = client.llm_execute(options).await?;
     assert!(
         !resp.content.is_empty(),
         "llm_execute returned empty content"

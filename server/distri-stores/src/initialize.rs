@@ -254,9 +254,10 @@ impl StoreBuilder {
             .secret_store
             .clone()
             .unwrap_or_else(|| metadata_factory.secret_store());
-        let skill_store = self.skill_store.clone().or_else(|| {
-            Some(metadata_factory.skill_store())
-        });
+        let skill_store = self
+            .skill_store
+            .clone()
+            .or_else(|| Some(metadata_factory.skill_store()));
 
         // Initialize memory store if configured and not provided
         let memory_store = if let Some(store) = self.memory_store.clone() {

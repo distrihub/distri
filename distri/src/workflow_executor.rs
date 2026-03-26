@@ -19,7 +19,7 @@
 
 use crate::Distri;
 use distri_workflow::*;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
@@ -118,11 +118,7 @@ impl DistriStepExecutor {
 
 #[async_trait::async_trait]
 impl StepExecutor for DistriStepExecutor {
-    async fn execute(
-        &self,
-        step: &WorkflowStep,
-        context: &Value,
-    ) -> Result<StepResult, String> {
+    async fn execute(&self, step: &WorkflowStep, context: &Value) -> Result<StepResult, String> {
         match &step.kind {
             StepKind::ApiCall {
                 method,
@@ -135,9 +131,7 @@ impl StepExecutor for DistriStepExecutor {
                 tool_name, input, ..
             } => execute_tool_call(&self.client, tool_name, input, context).await,
 
-            StepKind::Checkpoint { message } => {
-                Ok(StepResult::done(json!({ "message": message })))
-            }
+            StepKind::Checkpoint { message } => Ok(StepResult::done(json!({ "message": message }))),
 
             StepKind::Script { command, .. } => Ok(StepResult::done(json!({
                 "deferred": true,
@@ -163,10 +157,7 @@ impl StepExecutor for DistriStepExecutor {
     }
 
     fn supports(&self, requirement: &StepRequirement) -> bool {
-        matches!(
-            requirement.skill.as_str(),
-            "native:network" | "native:tool"
-        )
+        matches!(requirement.skill.as_str(), "native:network" | "native:tool")
     }
 
     fn available_skills(&self) -> Vec<StepRequirement> {

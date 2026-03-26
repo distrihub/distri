@@ -52,9 +52,16 @@ pub fn merge_model_settings(
 
     let default_context_size = 20000u32;
     ModelSettings {
-        model: if !override_settings.model.is_empty() { override_settings.model.clone() } else { base.model.clone() },
+        model: if !override_settings.model.is_empty() {
+            override_settings.model.clone()
+        } else {
+            base.model.clone()
+        },
         inner: distri_types::ModelSettingsInner {
-            temperature: override_settings.inner.temperature.or(base.inner.temperature),
+            temperature: override_settings
+                .inner
+                .temperature
+                .or(base.inner.temperature),
             max_tokens: override_settings.inner.max_tokens.or(base.inner.max_tokens),
             context_size: if override_settings.inner.context_size != default_context_size {
                 override_settings.inner.context_size
@@ -62,12 +69,23 @@ pub fn merge_model_settings(
                 base.inner.context_size
             },
             top_p: override_settings.inner.top_p.or(base.inner.top_p),
-            frequency_penalty: override_settings.inner.frequency_penalty.or(base.inner.frequency_penalty),
-            presence_penalty: override_settings.inner.presence_penalty.or(base.inner.presence_penalty),
+            frequency_penalty: override_settings
+                .inner
+                .frequency_penalty
+                .or(base.inner.frequency_penalty),
+            presence_penalty: override_settings
+                .inner
+                .presence_penalty
+                .or(base.inner.presence_penalty),
             provider,
-            parameters: override_settings.inner.parameters.clone().or(base.inner.parameters.clone()),
+            parameters: override_settings
+                .inner
+                .parameters
+                .clone()
+                .or(base.inner.parameters.clone()),
             response_format: override_settings
-                .inner.response_format
+                .inner
+                .response_format
                 .clone()
                 .or(base.inner.response_format.clone()),
         },
@@ -108,7 +126,11 @@ pub async fn load_agent_system_message(
         _ => return None,
     };
     let instructions = {
-        tracing::info!("Agent '{}' is StandardAgent, instructions length: {}", aid, def.instructions.len());
+        tracing::info!(
+            "Agent '{}' is StandardAgent, instructions length: {}",
+            aid,
+            def.instructions.len()
+        );
         if !def.instructions.is_empty() {
             Some(def.instructions.clone())
         } else {

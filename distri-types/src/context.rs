@@ -14,11 +14,17 @@ pub struct UserContext {
 
 impl UserContext {
     pub fn new(user_id: String) -> Self {
-        Self { user_id, workspace_id: None }
+        Self {
+            user_id,
+            workspace_id: None,
+        }
     }
 
     pub fn with_workspace(user_id: String, workspace_id: Option<String>) -> Self {
-        Self { user_id, workspace_id }
+        Self {
+            user_id,
+            workspace_id,
+        }
     }
 
     pub fn user_id(&self) -> String {

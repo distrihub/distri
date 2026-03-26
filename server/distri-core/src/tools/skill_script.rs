@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use distri_types::{Part, ToolCall, tool::ToolContext};
+use distri_types::{tool::ToolContext, Part, ToolCall};
 use serde_json::json;
 
 use crate::agent::ExecutorContext;
@@ -68,11 +68,8 @@ impl ExecutorContextTool for LoadSkillTool {
             })?;
 
         let orchestrator = context.get_orchestrator()?;
-        let skill_store = orchestrator
-            .stores
-            .skill_store
-            .as_ref()
-            .ok_or_else(|| {
+        let skill_store =
+            orchestrator.stores.skill_store.as_ref().ok_or_else(|| {
                 AgentError::ToolExecution("Skill store not configured".to_string())
             })?;
 
@@ -80,11 +77,8 @@ impl ExecutorContextTool for LoadSkillTool {
             .get_skill(skill_id)
             .await
             .map_err(|e| AgentError::ToolExecution(format!("Failed to load skill: {}", e)))?
-            .ok_or_else(|| {
-                AgentError::ToolExecution(format!("Skill '{}' not found", skill_id))
-            })?;
+            .ok_or_else(|| AgentError::ToolExecution(format!("Skill '{}' not found", skill_id)))?;
 
         Ok(vec![Part::Text(skill.content.clone())])
     }
 }
-

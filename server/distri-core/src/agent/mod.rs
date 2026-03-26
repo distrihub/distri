@@ -17,11 +17,11 @@ pub mod reflection;
 pub mod server;
 pub mod standard;
 pub mod strategy;
-pub mod workflow_agent;
 pub mod todos;
 pub mod token_estimator;
 pub mod tool_lookup;
 pub mod types;
+pub mod workflow_agent;
 // Export specific items to avoid conflicts
 pub use agent_loop::*;
 pub use distri_types::parse_agent_markdown_content;

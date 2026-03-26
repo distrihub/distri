@@ -9,7 +9,12 @@ pub fn render_shell(result: &ToolResponse) {
         "start_shell" => {
             for part in &result.parts {
                 if let Part::Text(text) = part {
-                    println!("{}  shell started: {}{}", COLOR_GREEN, text.trim(), COLOR_RESET);
+                    println!(
+                        "{}  shell started: {}{}",
+                        COLOR_GREEN,
+                        text.trim(),
+                        COLOR_RESET
+                    );
                 }
             }
         }

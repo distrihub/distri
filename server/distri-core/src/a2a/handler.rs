@@ -213,7 +213,9 @@ impl A2AHandler {
                         .await
                     }
                 };
-                if let (Ok(ref mut ctx), Some(ms)) = (&mut executor_context, &workspace_model_settings) {
+                if let (Ok(ref mut ctx), Some(ms)) =
+                    (&mut executor_context, &workspace_model_settings)
+                {
                     ctx.default_model_settings = Some(ms.clone());
                 }
                 let executor_context = executor_context;
@@ -248,7 +250,9 @@ impl A2AHandler {
                         .await
                     }
                 };
-                if let (Ok(ref mut ctx), Some(ms)) = (&mut executor_context, &workspace_model_settings) {
+                if let (Ok(ref mut ctx), Some(ms)) =
+                    (&mut executor_context, &workspace_model_settings)
+                {
                     ctx.default_model_settings = Some(ms.clone());
                 }
                 let executor_context = executor_context;

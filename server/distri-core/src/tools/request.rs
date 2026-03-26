@@ -13,12 +13,7 @@ use std::sync::Arc;
 use distri_types::{Part, Tool, ToolContext};
 use serde_json::{json, Value};
 
-use crate::{
-    agent::ExecutorContext,
-    tools::ExecutorContextTool,
-    types::ToolCall,
-    AgentError,
-};
+use crate::{agent::ExecutorContext, tools::ExecutorContextTool, types::ToolCall, AgentError};
 
 #[derive(Debug)]
 pub struct RequestTool;
@@ -113,7 +108,10 @@ impl ExecutorContextTool for RequestTool {
 
         // Read env vars from context
         let env_vars = context.env_vars.read().await;
-        let base_url = env_vars.get("REQUEST_BASE_URL").cloned().unwrap_or_default();
+        let base_url = env_vars
+            .get("REQUEST_BASE_URL")
+            .cloned()
+            .unwrap_or_default();
         let auth_token = env_vars.get("REQUEST_AUTH_TOKEN").cloned();
         let org_id = env_vars.get("REQUEST_ORG_ID").cloned();
         drop(env_vars);
@@ -179,10 +177,7 @@ impl ExecutorContextTool for RequestTool {
             .map_err(|e| AgentError::ToolExecution(format!("HTTP request failed: {e}")))?;
 
         let status = response.status().as_u16();
-        let response_body: Value = response
-            .json()
-            .await
-            .unwrap_or_else(|_| json!(null));
+        let response_body: Value = response.json().await.unwrap_or_else(|_| json!(null));
 
         // Return structured result
         let result = if (200..300).contains(&status) {

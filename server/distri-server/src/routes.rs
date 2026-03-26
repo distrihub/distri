@@ -12,8 +12,8 @@ use distri_core::types::UpdateThreadRequest;
 use distri_core::{AgentError, MessageFilter};
 use distri_types::configuration::ServerConfig;
 use distri_types::configuration::{AgentConfigWithTools, DistriServerConfig};
-use distri_types::StandardDefinition;
 use distri_types::stores::{VoteMessageRequest, VoteType};
+use distri_types::StandardDefinition;
 use distri_types::{ExternalTool, InlineHookResponse, Message, ModelSettings};
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -543,7 +543,10 @@ async fn validate_agent_handler(
             }));
         }
     };
-    let provider = def.model_settings().map(|ms| ms.inner.provider.clone()).unwrap_or(distri_types::ModelProvider::OpenAI {});
+    let provider = def
+        .model_settings()
+        .map(|ms| ms.inner.provider.clone())
+        .unwrap_or(distri_types::ModelProvider::OpenAI {});
 
     // Check for missing provider secrets
     let secret_store = executor.stores.secret_store.clone();
@@ -626,7 +629,15 @@ async fn a2a_handler(
         .cloned();
 
     let result = handler
-        .handle_jsonrpc(agent_id, user_id, workspace_id, req, None, verbose, workspace_model_settings)
+        .handle_jsonrpc(
+            agent_id,
+            user_id,
+            workspace_id,
+            req,
+            None,
+            verbose,
+            workspace_model_settings,
+        )
         .await;
     match result {
         futures_util::future::Either::Left(stream) => {
@@ -820,13 +831,14 @@ async fn llm_execute(
             .or(workspace_model_settings);
 
     // Merge with request's model_settings if provided
-    let model_settings: Option<ModelSettings> = match (base_model_settings, payload.model_settings.clone()) {
-        (Some(base), Some(override_ms)) => {
-            Some(llm_helpers::merge_model_settings(&base, &override_ms))
-        }
-        (Some(base), None) => Some(base),
-        (None, override_ms) => override_ms,
-    };
+    let model_settings: Option<ModelSettings> =
+        match (base_model_settings, payload.model_settings.clone()) {
+            (Some(base), Some(override_ms)) => {
+                Some(llm_helpers::merge_model_settings(&base, &override_ms))
+            }
+            (Some(base), None) => Some(base),
+            (None, override_ms) => override_ms,
+        };
 
     let tools = payload
         .tools
@@ -1128,7 +1140,12 @@ async fn vote_message_handler(
         comment: request.comment.clone(),
     };
 
-    match executor.stores.thread_store.vote_message(vote_request).await {
+    match executor
+        .stores
+        .thread_store
+        .vote_message(vote_request)
+        .await
+    {
         Ok(vote) => HttpResponse::Ok().json(vote),
         Err(e) => {
             let error_msg = e.to_string();

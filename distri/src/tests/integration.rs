@@ -78,13 +78,9 @@ async fn llm_execute_returns_payload() {
         ..Default::default()
     };
 
-    let options = crate::LlmExecuteOptions::new(ctx)
-        .with_llm_def(llm_def);
+    let options = crate::LlmExecuteOptions::new(ctx).with_llm_def(llm_def);
 
-    let resp: LlmExecuteResponse = client
-        .llm_execute(options)
-        .await
-        .unwrap();
+    let resp: LlmExecuteResponse = client.llm_execute(options).await.unwrap();
 
     assert_eq!(resp.finish_reason, "stop");
     assert_eq!(resp.content, "ok");

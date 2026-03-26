@@ -161,7 +161,10 @@ impl LLMExecutor {
         tracing::debug!("Executing LLM call with {} messages", messages.len());
 
         let sanitized_messages = self.sanitize_messages(messages);
-        let ms = self.llm_def.ms().map_err(AgentError::InvalidConfiguration)?;
+        let ms = self
+            .llm_def
+            .ms()
+            .map_err(AgentError::InvalidConfiguration)?;
         tracing::info!(
             target: "llm.execute",
             "LLM request (non-stream) model={}, provider={:?}, max_tokens={:?}, temperature={:?}, tool_format={:?}, tools={} messages={}",
@@ -179,10 +182,7 @@ impl LLMExecutor {
         // Validate context size using the context manager
         tracing::debug!("📏 Validating context size for completion...");
         let context_manager = crate::agent::context_size_manager::ContextSizeManager::default();
-        context_manager.validate_context_size(
-            &sanitized_messages,
-            ms.inner.context_size,
-        )?;
+        context_manager.validate_context_size(&sanitized_messages, ms.inner.context_size)?;
         tracing::debug!("✅ Context size validation passed for completion");
 
         let llm_messages = self.map_messages(&sanitized_messages)?;
@@ -193,7 +193,11 @@ impl LLMExecutor {
 
         self.model_logger.log_model_execution(
             &self.llm_def.name,
-            &if ms.model.is_empty() { "unset" } else { &ms.model },
+            &if ms.model.is_empty() {
+                "unset"
+            } else {
+                &ms.model
+            },
             message_count,
             Some(&settings),
             None,
@@ -231,7 +235,11 @@ impl LLMExecutor {
 
         self.model_logger.log_model_execution(
             &self.llm_def.name,
-            &if ms.model.is_empty() { "unset" } else { &ms.model },
+            &if ms.model.is_empty() {
+                "unset"
+            } else {
+                &ms.model
+            },
             message_count,
             None,
             usage.as_ref().map(|u| u.total_tokens),
@@ -339,7 +347,10 @@ impl LLMExecutor {
         );
 
         let sanitized_messages = self.sanitize_messages(messages);
-        let ms = self.llm_def.ms().map_err(AgentError::InvalidConfiguration)?;
+        let ms = self
+            .llm_def
+            .ms()
+            .map_err(AgentError::InvalidConfiguration)?;
         tracing::info!(
             target: "llm.execute_stream",
             "LLM request (stream) model={}, provider={:?}, max_tokens={:?}, temperature={:?}, tool_format={:?}, tools={} messages={}",
@@ -357,10 +368,7 @@ impl LLMExecutor {
         // Validate context size using the context manager
         tracing::debug!("📏 Validating context size for streaming...");
         let context_manager = crate::agent::context_size_manager::ContextSizeManager::default();
-        context_manager.validate_context_size(
-            &sanitized_messages,
-            ms.inner.context_size,
-        )?;
+        context_manager.validate_context_size(&sanitized_messages, ms.inner.context_size)?;
         tracing::debug!("✅ Context size validation passed for streaming");
 
         let step_id = context.get_current_step_id().await.unwrap_or_default();
@@ -378,7 +386,11 @@ impl LLMExecutor {
 
         self.model_logger.log_model_execution(
             &self.llm_def.name,
-            &if ms.model.is_empty() { "unset" } else { &ms.model },
+            &if ms.model.is_empty() {
+                "unset"
+            } else {
+                &ms.model
+            },
             message_count,
             Some(&settings),
             None,
@@ -760,12 +772,16 @@ impl LLMExecutor {
         &self,
         messages: Vec<ChatCompletionRequestMessage>,
     ) -> Result<CreateChatCompletionRequest, AgentError> {
-        let settings = self.llm_def.ms().map_err(AgentError::InvalidConfiguration)?;
-        let model = if settings.model.is_empty() { "unset" } else { &settings.model };
-        tracing::debug!(
-            "Building chat completion request with model: {}",
-            model
-        );
+        let settings = self
+            .llm_def
+            .ms()
+            .map_err(AgentError::InvalidConfiguration)?;
+        let model = if settings.model.is_empty() {
+            "unset"
+        } else {
+            &settings.model
+        };
+        tracing::debug!("Building chat completion request with model: {}", model);
 
         let tools: Vec<async_openai::types::chat::ChatCompletionTools> = self.map_tools();
 
@@ -789,9 +805,11 @@ impl LLMExecutor {
 
         // Force tool use when tools are provided
         let tool_choice = if tools.is_some() {
-            Some(async_openai::types::chat::ChatCompletionToolChoiceOption::Mode(
-                async_openai::types::chat::ToolChoiceOptions::Required,
-            ))
+            Some(
+                async_openai::types::chat::ChatCompletionToolChoiceOption::Mode(
+                    async_openai::types::chat::ToolChoiceOptions::Required,
+                ),
+            )
         } else {
             None
         };
@@ -807,49 +825,46 @@ impl LLMExecutor {
             // max_completion_tokens: settings.inner.max_tokens,
             frequency_penalty: settings.inner.frequency_penalty,
             presence_penalty: settings.inner.presence_penalty,
-            response_format: settings
-                .inner.response_format
-                .clone()
-                .map(|r| {
-                    // Unwrap user-provided response_format: expect { type: "json_schema", json_schema: { name, schema, strict } }
-                    // Use the inner schema; sanitize name to match OpenAI requirements.
-                    let (schema_value, provided_name) =
-                        if let Some(json_schema) = r.get("json_schema") {
-                            (
-                                json_schema
-                                    .get("schema")
-                                    .cloned()
-                                    .unwrap_or(json_schema.clone()),
-                                json_schema
-                                    .get("name")
-                                    .and_then(|v| v.as_str())
-                                    .map(|s| s.to_string()),
-                            )
+            response_format: settings.inner.response_format.clone().map(|r| {
+                // Unwrap user-provided response_format: expect { type: "json_schema", json_schema: { name, schema, strict } }
+                // Use the inner schema; sanitize name to match OpenAI requirements.
+                let (schema_value, provided_name) = if let Some(json_schema) = r.get("json_schema")
+                {
+                    (
+                        json_schema
+                            .get("schema")
+                            .cloned()
+                            .unwrap_or(json_schema.clone()),
+                        json_schema
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string()),
+                    )
+                } else {
+                    (r.clone(), None)
+                };
+
+                let final_name_raw = provided_name.unwrap_or_else(|| raw_name.clone());
+                let final_name: String = final_name_raw
+                    .chars()
+                    .map(|c| {
+                        if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                            c
                         } else {
-                            (r.clone(), None)
-                        };
+                            '_'
+                        }
+                    })
+                    .collect();
 
-                    let final_name_raw = provided_name.unwrap_or_else(|| raw_name.clone());
-                    let final_name: String = final_name_raw
-                        .chars()
-                        .map(|c| {
-                            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
-                                c
-                            } else {
-                                '_'
-                            }
-                        })
-                        .collect();
-
-                    async_openai::types::chat::ResponseFormat::JsonSchema {
-                        json_schema: ResponseFormatJsonSchema {
-                            description: None,
-                            name: final_name,
-                            schema: Some(schema_value),
-                            strict: Some(true),
-                        },
-                    }
-                }),
+                async_openai::types::chat::ResponseFormat::JsonSchema {
+                    json_schema: ResponseFormatJsonSchema {
+                        description: None,
+                        name: final_name,
+                        schema: Some(schema_value),
+                        strict: Some(true),
+                    },
+                }
+            }),
             tool_choice,
             ..Default::default()
         };
@@ -929,8 +944,16 @@ impl LLMExecutor {
             _ => None,
         }
     }
-    pub fn map_messages(&self, messages: &[Message]) -> Result<Vec<ChatCompletionRequestMessage>, AgentError> {
-        let provider = &self.llm_def.ms().map_err(AgentError::InvalidConfiguration)?.inner.provider;
+    pub fn map_messages(
+        &self,
+        messages: &[Message],
+    ) -> Result<Vec<ChatCompletionRequestMessage>, AgentError> {
+        let provider = &self
+            .llm_def
+            .ms()
+            .map_err(AgentError::InvalidConfiguration)?
+            .inner
+            .provider;
         let messages = messages
             .iter()
             .map(|m| {
@@ -1323,11 +1346,10 @@ async fn get_client_with_context(
                 .with_additional_headers(additional_headers);
             Ok(Client::with_config(config))
         }
-        ModelProvider::Anthropic { .. } => {
-            Err(AgentError::InvalidConfiguration(
-                "Anthropic provider should use ClaudeLLMExecutor, not the OpenAI client path".to_string(),
-            ))
-        }
+        ModelProvider::Anthropic { .. } => Err(AgentError::InvalidConfiguration(
+            "Anthropic provider should use ClaudeLLMExecutor, not the OpenAI client path"
+                .to_string(),
+        )),
     }
 }
 
@@ -1385,25 +1407,25 @@ pub fn create_llm_executor(
     additional_headers: Option<HashMap<String, String>>,
     label: Option<String>,
 ) -> Result<Box<dyn LLMExecutorTrait>, AgentError> {
-    let provider = &llm_def.ms().map_err(AgentError::InvalidConfiguration)?.inner.provider;
+    let provider = &llm_def
+        .ms()
+        .map_err(AgentError::InvalidConfiguration)?
+        .inner
+        .provider;
     match provider {
-        ModelProvider::Anthropic { .. } => {
-            Ok(Box::new(crate::claude_llm::ClaudeLLMExecutor::new(
-                llm_def,
-                tools,
-                context,
-                additional_headers,
-                label,
-            )))
-        }
-        _ => {
-            Ok(Box::new(LLMExecutor::new(
-                llm_def,
-                tools,
-                context,
-                additional_headers,
-                label,
-            )))
-        }
+        ModelProvider::Anthropic { .. } => Ok(Box::new(crate::claude_llm::ClaudeLLMExecutor::new(
+            llm_def,
+            tools,
+            context,
+            additional_headers,
+            label,
+        ))),
+        _ => Ok(Box::new(LLMExecutor::new(
+            llm_def,
+            tools,
+            context,
+            additional_headers,
+            label,
+        ))),
     }
 }

@@ -60,10 +60,7 @@ pub enum SlashCommandResult {
     /// Show interactive menu
     ShowMenu(InteractiveMenu),
     /// Execute agent call
-    AgentCall {
-        agent: String,
-        message: String,
-    },
+    AgentCall { agent: String, message: String },
     /// Execute tool call
     ToolCall {
         tool: String,
@@ -76,9 +73,7 @@ pub enum SlashCommandResult {
     /// List tools from orchestrator
     ListTools,
     /// Set model
-    SetModel {
-        model: String,
-    },
+    SetModel { model: String },
     /// Execute auth command
     AuthCommand {
         subcommand: String,

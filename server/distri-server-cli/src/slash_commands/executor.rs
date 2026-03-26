@@ -15,9 +15,7 @@ impl SlashCommandExecutor {
         let mut registry = SlashCommandRegistry::new();
         registry.load_custom_commands()?;
 
-        Ok(Self {
-            registry,
-        })
+        Ok(Self { registry })
     }
 
     pub fn with_tool_auth_store(_tool_auth_store: Arc<dyn ToolAuthStore>) -> Result<Self> {
@@ -80,5 +78,4 @@ impl SlashCommandExecutor {
     pub fn get_registry(&self) -> &SlashCommandRegistry {
         &self.registry
     }
-
 }

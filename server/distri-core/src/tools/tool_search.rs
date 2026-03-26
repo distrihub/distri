@@ -68,10 +68,7 @@ impl ExecutorContextTool for ToolSearchTool {
     ) -> Result<Vec<Part>, AgentError> {
         let input = &tool_call.input;
 
-        let query = input
-            .get("query")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let query = input.get("query").and_then(|v| v.as_str()).unwrap_or("");
 
         let names: Vec<String> = input
             .get("names")

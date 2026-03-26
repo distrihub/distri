@@ -20,15 +20,20 @@ pub fn render_tool_result(result: &ToolResponse) {
             }
             Part::Artifact(meta) => {
                 println!(
-                    "{}  artifact: {} ({}){}", COLOR_GRAY,
-                    meta.original_filename.as_deref().unwrap_or(&meta.relative_path),
+                    "{}  artifact: {} ({}){}",
+                    COLOR_GRAY,
+                    meta.original_filename
+                        .as_deref()
+                        .unwrap_or(&meta.relative_path),
                     meta.content_type.as_deref().unwrap_or("unknown"),
                     COLOR_RESET,
                 );
             }
             Part::Image(file) => {
                 let label = match file {
-                    distri_types::FileType::Bytes { name, mime_type, .. } => {
+                    distri_types::FileType::Bytes {
+                        name, mime_type, ..
+                    } => {
                         format!("{} ({})", name.as_deref().unwrap_or("image"), mime_type)
                     }
                     distri_types::FileType::Url { url, .. } => url.clone(),

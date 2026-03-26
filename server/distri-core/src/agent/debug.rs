@@ -46,7 +46,9 @@ pub async fn get_debug_context_def(
     let agent_def = match agent_config {
         distri_types::configuration::AgentConfig::StandardAgent(def) => def,
         distri_types::configuration::AgentConfig::WorkflowAgent(_) => {
-            return Err(anyhow::anyhow!("Debug mode is not supported for workflow agents"));
+            return Err(anyhow::anyhow!(
+                "Debug mode is not supported for workflow agents"
+            ));
         }
     };
 

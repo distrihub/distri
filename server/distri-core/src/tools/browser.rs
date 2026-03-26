@@ -5,10 +5,10 @@ use crate::types::ToolCall;
 use crate::AgentError;
 use anyhow::Result;
 
-use browsr_client::{BrowserStepRequest, BrowsrClient, CrawlApiRequest, ScrapeApiRequest, ScrapeFormat};
-use browsr_types::{
-    BrowserContext, BrowserStepInput, BrowserToolOptions, Commands, SearchOptions,
+use browsr_client::{
+    BrowserStepRequest, BrowsrClient, CrawlApiRequest, ScrapeApiRequest, ScrapeFormat,
 };
+use browsr_types::{BrowserContext, BrowserStepInput, BrowserToolOptions, Commands, SearchOptions};
 use distri_types::{Part, Tool, ToolContext};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -157,10 +157,9 @@ impl ExecutorContextTool for DistriScrapeSharedTool {
             .await
             .map_err(|e| AgentError::ToolExecution(format!("Scrape failed: {}", e)))?;
 
-        Ok(vec![Part::Data(
-            serde_json::to_value(response)
-                .map_err(|e| AgentError::ToolExecution(format!("Failed to serialize: {}", e)))?,
-        )])
+        Ok(vec![Part::Data(serde_json::to_value(response).map_err(
+            |e| AgentError::ToolExecution(format!("Failed to serialize: {}", e)),
+        )?)])
     }
 }
 

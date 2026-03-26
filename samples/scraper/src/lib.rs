@@ -1,8 +1,8 @@
 use anyhow::Result;
 use distri_core::{AgentOrchestrator, AgentOrchestratorBuilder};
 use distri_types::{
-    configuration::DistriServerConfig,
-    McpServerMetadata, ServerMetadataWrapper, ServerTrait, TransportType,
+    configuration::DistriServerConfig, McpServerMetadata, ServerMetadataWrapper, ServerTrait,
+    TransportType,
 };
 use std::sync::Arc;
 

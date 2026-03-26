@@ -1,10 +1,9 @@
 use crate::hooks_runtime::HookRegistry;
 use distri_stores::SessionStoreExt;
 use distri_types::{
-    configuration::DefinitionOverrides,
-    ModelSettings,
-    AgentContextSize, AgentPlan, ContextSize, ContextUsage, ExecutionHistoryEntry,
-    ExecutionResult, Part, PlanStep, ScratchpadEntry, ScratchpadEntryType,
+    configuration::DefinitionOverrides, AgentContextSize, AgentPlan, ContextSize, ContextUsage,
+    ExecutionHistoryEntry, ExecutionResult, ModelSettings, Part, PlanStep, ScratchpadEntry,
+    ScratchpadEntryType,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -365,10 +364,16 @@ impl ExecutorContext {
         }
     }
     pub async fn increment_usage(&self, input_tokens: u32, output_tokens: u32) {
-        self.increment_usage_with_cache(input_tokens, output_tokens, 0).await;
+        self.increment_usage_with_cache(input_tokens, output_tokens, 0)
+            .await;
     }
 
-    pub async fn increment_usage_with_cache(&self, input_tokens: u32, output_tokens: u32, cached_tokens: u32) {
+    pub async fn increment_usage_with_cache(
+        &self,
+        input_tokens: u32,
+        output_tokens: u32,
+        cached_tokens: u32,
+    ) {
         let mut usage = self.usage.write().await;
         usage.tokens += input_tokens + output_tokens;
         usage.input_tokens += input_tokens;
@@ -1058,10 +1063,7 @@ impl ExecutorContext {
     /// Returns the compaction result for the caller to act on (e.g., perform LLM summarization).
     pub async fn evaluate_compaction(
         &self,
-    ) -> Result<
-        Option<crate::agent::context_size_manager::CompactionResult>,
-        AgentError,
-    > {
+    ) -> Result<Option<crate::agent::context_size_manager::CompactionResult>, AgentError> {
         let orchestrator = self.orchestrator.as_ref().ok_or(AgentError::Execution(
             "Orchestrator not initialized".to_string(),
         ))?;
@@ -1128,9 +1130,7 @@ impl ExecutorContext {
         };
 
         let scratchpad_store = orchestrator.stores.scratchpad_store.clone();
-        scratchpad_store
-            .add_entry(&self.thread_id, entry)
-            .await?;
+        scratchpad_store.add_entry(&self.thread_id, entry).await?;
         Ok(())
     }
 

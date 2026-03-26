@@ -21,11 +21,11 @@ impl InMemoryWorkflowStore {
 
 #[async_trait]
 impl WorkflowStore for InMemoryWorkflowStore {
-    async fn list_workflows(
-        &self,
-        filter: WorkflowFilter,
-    ) -> anyhow::Result<Vec<WorkflowRecord>> {
-        let map = self.workflows.lock().map_err(|e| anyhow::anyhow!("{}", e))?;
+    async fn list_workflows(&self, filter: WorkflowFilter) -> anyhow::Result<Vec<WorkflowRecord>> {
+        let map = self
+            .workflows
+            .lock()
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
         let mut results: Vec<WorkflowRecord> = map
             .values()
             .filter(|w| {
@@ -71,7 +71,10 @@ impl WorkflowStore for InMemoryWorkflowStore {
     }
 
     async fn get_workflow(&self, id: &str) -> anyhow::Result<Option<WorkflowRecord>> {
-        let map = self.workflows.lock().map_err(|e| anyhow::anyhow!("{}", e))?;
+        let map = self
+            .workflows
+            .lock()
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
         Ok(map.get(id).cloned())
     }
 
@@ -91,7 +94,10 @@ impl WorkflowStore for InMemoryWorkflowStore {
             updated_at: now,
         };
 
-        let mut map = self.workflows.lock().map_err(|e| anyhow::anyhow!("{}", e))?;
+        let mut map = self
+            .workflows
+            .lock()
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
         map.insert(record.id.clone(), record.clone());
         Ok(record)
     }
@@ -101,7 +107,10 @@ impl WorkflowStore for InMemoryWorkflowStore {
         id: &str,
         update: UpdateWorkflow,
     ) -> anyhow::Result<WorkflowRecord> {
-        let mut map = self.workflows.lock().map_err(|e| anyhow::anyhow!("{}", e))?;
+        let mut map = self
+            .workflows
+            .lock()
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
         let record = map
             .get_mut(id)
             .ok_or_else(|| anyhow::anyhow!("Workflow not found"))?;
@@ -127,14 +136,20 @@ impl WorkflowStore for InMemoryWorkflowStore {
     }
 
     async fn delete_workflow(&self, id: &str) -> anyhow::Result<()> {
-        let mut map = self.workflows.lock().map_err(|e| anyhow::anyhow!("{}", e))?;
+        let mut map = self
+            .workflows
+            .lock()
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
         map.remove(id)
             .ok_or_else(|| anyhow::anyhow!("Workflow not found"))?;
         Ok(())
     }
 
     async fn list_public_workflows(&self) -> anyhow::Result<Vec<WorkflowRecord>> {
-        let map = self.workflows.lock().map_err(|e| anyhow::anyhow!("{}", e))?;
+        let map = self
+            .workflows
+            .lock()
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
         Ok(map
             .values()
             .filter(|w| w.is_public && w.is_template)
@@ -157,7 +172,10 @@ impl WorkflowStore for InMemoryWorkflowStore {
 
     async fn clone_workflow(&self, workflow_id: &str) -> anyhow::Result<WorkflowRecord> {
         let source = {
-            let map = self.workflows.lock().map_err(|e| anyhow::anyhow!("{}", e))?;
+            let map = self
+                .workflows
+                .lock()
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
             map.get(workflow_id)
                 .cloned()
                 .ok_or_else(|| anyhow::anyhow!("Workflow not found"))?
@@ -180,7 +198,10 @@ impl WorkflowStore for InMemoryWorkflowStore {
 
         // Increment source clone count
         {
-            let mut map = self.workflows.lock().map_err(|e| anyhow::anyhow!("{}", e))?;
+            let mut map = self
+                .workflows
+                .lock()
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
             if let Some(src) = map.get_mut(workflow_id) {
                 src.clone_count += 1;
             }

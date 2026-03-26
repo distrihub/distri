@@ -972,20 +972,16 @@ impl ModelSettings {
                 deployment: model_id.to_string(),
                 api_version: ModelProvider::azure_api_version(),
             },
-            "gemini" => {
-                ModelProvider::OpenAICompatible {
-                    base_url: "https://generativelanguage.googleapis.com/v1beta/openai".to_string(),
-                    api_key: None,
-                    project_id: None,
-                }
-            }
-            _ if provider_str.starts_with("custom_") => {
-                ModelProvider::OpenAICompatible {
-                    base_url: String::new(),
-                    api_key: None,
-                    project_id: None,
-                }
-            }
+            "gemini" => ModelProvider::OpenAICompatible {
+                base_url: "https://generativelanguage.googleapis.com/v1beta/openai".to_string(),
+                api_key: None,
+                project_id: None,
+            },
+            _ if provider_str.starts_with("custom_") => ModelProvider::OpenAICompatible {
+                base_url: String::new(),
+                api_key: None,
+                project_id: None,
+            },
             unknown => {
                 return Err(format!(
                     "Provider '{}' is not recognized. Supported providers: openai, anthropic, azure_openai, gemini, or custom_* prefixed providers.",

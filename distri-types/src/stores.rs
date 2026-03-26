@@ -1,6 +1,4 @@
-use crate::{
-    ScratchpadEntry, ToolAuthStore, ToolResponse,
-};
+use crate::{ScratchpadEntry, ToolAuthStore, ToolResponse};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -319,7 +317,10 @@ pub trait ThreadStore: Send + Sync {
     /// Get agents sorted by thread count (most active first)
     /// Includes all registered agents (even those with 0 threads).
     /// Optionally filters by name using a search string.
-    async fn get_agents_by_usage(&self, search: Option<&str>) -> anyhow::Result<Vec<AgentUsageInfo>>;
+    async fn get_agents_by_usage(
+        &self,
+        search: Option<&str>,
+    ) -> anyhow::Result<Vec<AgentUsageInfo>>;
 
     /// Get a map of agent name -> stats for all agents with activity
     async fn get_agent_stats_map(
@@ -907,8 +908,16 @@ pub trait SkillStore: Send + Sync {
     async fn delete_skill(&self, id: &str) -> anyhow::Result<()>;
 
     // Script management
-    async fn add_script(&self, skill_id: &str, script: NewSkillScript) -> anyhow::Result<SkillScriptRecord>;
-    async fn update_script(&self, script_id: &str, update: UpdateSkillScript) -> anyhow::Result<SkillScriptRecord>;
+    async fn add_script(
+        &self,
+        skill_id: &str,
+        script: NewSkillScript,
+    ) -> anyhow::Result<SkillScriptRecord>;
+    async fn update_script(
+        &self,
+        script_id: &str,
+        update: UpdateSkillScript,
+    ) -> anyhow::Result<SkillScriptRecord>;
     async fn delete_script(&self, script_id: &str) -> anyhow::Result<()>;
 
     // Discovery
@@ -1016,7 +1025,11 @@ pub trait WorkflowStore: Send + Sync {
     async fn list_workflows(&self, filter: WorkflowFilter) -> anyhow::Result<Vec<WorkflowRecord>>;
     async fn get_workflow(&self, id: &str) -> anyhow::Result<Option<WorkflowRecord>>;
     async fn create_workflow(&self, workflow: NewWorkflow) -> anyhow::Result<WorkflowRecord>;
-    async fn update_workflow(&self, id: &str, update: UpdateWorkflow) -> anyhow::Result<WorkflowRecord>;
+    async fn update_workflow(
+        &self,
+        id: &str,
+        update: UpdateWorkflow,
+    ) -> anyhow::Result<WorkflowRecord>;
     async fn delete_workflow(&self, id: &str) -> anyhow::Result<()>;
 
     // Discovery
@@ -1079,17 +1092,10 @@ pub trait UsageService: Send + Sync {
     ) -> anyhow::Result<()>;
 
     /// Get current usage snapshot for display.
-    async fn get_usage(
-        &self,
-        workspace_id: &str,
-        user_id: &str,
-    ) -> anyhow::Result<UsageSnapshot>;
+    async fn get_usage(&self, workspace_id: &str, user_id: &str) -> anyhow::Result<UsageSnapshot>;
 
     /// Get the configured limits for a workspace.
-    async fn get_limits(
-        &self,
-        workspace_id: &str,
-    ) -> anyhow::Result<UsageLimits>;
+    async fn get_limits(&self, workspace_id: &str) -> anyhow::Result<UsageLimits>;
 }
 
 /// No-op usage service for OSS / development.
@@ -1099,15 +1105,30 @@ pub struct NoOpUsageService;
 
 #[async_trait]
 impl UsageService for NoOpUsageService {
-    async fn check_request(&self, _workspace_id: &str, _user_id: &str, _is_llm: bool, _auth_source: &str) -> UsageCheckResult {
+    async fn check_request(
+        &self,
+        _workspace_id: &str,
+        _user_id: &str,
+        _is_llm: bool,
+        _auth_source: &str,
+    ) -> UsageCheckResult {
         UsageCheckResult::Allowed
     }
 
-    async fn record_usage(&self, _workspace_id: &str, _user_id: &str, _tokens_used: i64) -> anyhow::Result<()> {
+    async fn record_usage(
+        &self,
+        _workspace_id: &str,
+        _user_id: &str,
+        _tokens_used: i64,
+    ) -> anyhow::Result<()> {
         Ok(())
     }
 
-    async fn get_usage(&self, _workspace_id: &str, _user_id: &str) -> anyhow::Result<UsageSnapshot> {
+    async fn get_usage(
+        &self,
+        _workspace_id: &str,
+        _user_id: &str,
+    ) -> anyhow::Result<UsageSnapshot> {
         Ok(UsageSnapshot::default())
     }
 

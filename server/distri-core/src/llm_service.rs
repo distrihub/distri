@@ -100,7 +100,10 @@ impl LlmExecuteService {
         }
 
         // Step 5: Create LLM executor
-        let model_label = model_settings.as_ref().map(|ms| ms.model.as_str()).unwrap_or("default");
+        let model_label = model_settings
+            .as_ref()
+            .map(|ms| ms.model.as_str())
+            .unwrap_or("default");
         let llm_def = LlmDefinition {
             name: format!("llm_execute_{}", model_label),
             model_settings,

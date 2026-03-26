@@ -101,7 +101,7 @@ pub struct MultiAgentCliBuilder {
 impl Default for MultiAgentCliBuilder {
     fn default() -> Self {
         Self {
-            cli_parser: Arc::new(|| Cli::parse()),
+            cli_parser: Arc::new(Cli::parse),
             default_agent: "distri".to_string(),
             shared_state_initializer: None,
             config_loader: Arc::new(|ctx: CliContext<'_>| load_distri_config(&ctx.cli.config)),
@@ -110,12 +110,7 @@ impl Default for MultiAgentCliBuilder {
             }),
             executor_factory: Arc::new(|ctx| {
                 Box::pin(async move {
-                    init_orchestrator(
-                        ctx.home_dir,
-                        ctx.workspace_path,
-                        ctx.config,
-                    )
-                    .await
+                    init_orchestrator(ctx.home_dir, ctx.workspace_path, ctx.config).await
                 })
             }),
             tool_initializer: None,
@@ -493,7 +488,9 @@ impl MultiAgentHarness {
         let executor = (self.executor_factory.as_ref())(context).await?;
         // Register statically provided agents (if any)
         for agent in &self.agents {
-            let AgentConfig::StandardAgent(def) = agent.clone();
+            let AgentConfig::StandardAgent(def) = agent.clone() else {
+                continue;
+            };
             executor.register_agent_definition(def).await?;
         }
 

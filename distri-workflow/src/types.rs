@@ -86,7 +86,8 @@ impl WorkflowDefinition {
                 .map_err(|e| format!("Invalid input_schema: {e}"))?;
 
             if !validator.is_valid(&input) {
-                let errors: Vec<String> = validator.iter_errors(&input)
+                let errors: Vec<String> = validator
+                    .iter_errors(&input)
                     .map(|e| format!("{}", e))
                     .collect();
                 return Err(format!("Input validation failed: {}", errors.join("; ")));
@@ -201,7 +202,10 @@ impl WorkflowDefinition {
         let step_ids: HashSet<&str> = self.steps.iter().map(|s| s.id.as_str()).collect();
         let mut adj: HashMap<&str, Vec<&str>> = HashMap::new();
         for step in &self.steps {
-            adj.insert(step.id.as_str(), step.depends_on.iter().map(|s| s.as_str()).collect());
+            adj.insert(
+                step.id.as_str(),
+                step.depends_on.iter().map(|s| s.as_str()).collect(),
+            );
         }
 
         let mut visited = HashSet::new();
@@ -242,7 +246,13 @@ impl WorkflowDefinition {
         let mut path = Vec::new();
         for step in &self.steps {
             if !visited.contains(step.id.as_str()) {
-                dfs(step.id.as_str(), &adj, &mut visited, &mut in_stack, &mut path)?;
+                dfs(
+                    step.id.as_str(),
+                    &adj,
+                    &mut visited,
+                    &mut in_stack,
+                    &mut path,
+                )?;
             }
         }
 
@@ -406,7 +416,10 @@ impl WorkflowStep {
     }
 
     pub fn with_body(mut self, body: serde_json::Value) -> Self {
-        if let StepKind::ApiCall { body: ref mut b, .. } = self.kind {
+        if let StepKind::ApiCall {
+            body: ref mut b, ..
+        } = self.kind
+        {
             *b = Some(body);
         }
         self

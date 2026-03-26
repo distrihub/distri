@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use serde_json::{Value, json};
 
 use crate::{CreateSkillRequest, Distri, ExternalToolRegistry, NewSecretRequest};
@@ -30,39 +30,43 @@ impl PlatformTool {
     /// Errors from `execute` are caught and returned as `{"error": "..."}` values.
     pub fn register(self, registry: &ExternalToolRegistry) {
         let tool = Arc::new(self);
-        registry.register("*", "distri_platform", move |call: ToolCall, _event: AgentEvent| {
-            let tool = tool.clone();
-            async move {
-                let action = call
-                    .input
-                    .get("action")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                // Accept params either nested under "params" key or flat at root level
-                let params = if let Some(p) = call.input.get("params") {
-                    p.clone()
-                } else {
-                    // Fallback: use entire input minus "action" as params
-                    let mut flat = call.input.clone();
-                    if let Some(obj) = flat.as_object_mut() {
-                        obj.remove("action");
-                    }
-                    flat
-                };
+        registry.register(
+            "*",
+            "distri_platform",
+            move |call: ToolCall, _event: AgentEvent| {
+                let tool = tool.clone();
+                async move {
+                    let action = call
+                        .input
+                        .get("action")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    // Accept params either nested under "params" key or flat at root level
+                    let params = if let Some(p) = call.input.get("params") {
+                        p.clone()
+                    } else {
+                        // Fallback: use entire input minus "action" as params
+                        let mut flat = call.input.clone();
+                        if let Some(obj) = flat.as_object_mut() {
+                            obj.remove("action");
+                        }
+                        flat
+                    };
 
-                let result = match tool.execute(&action, params).await {
-                    Ok(v) => v,
-                    Err(e) => json!({ "error": e.to_string() }),
-                };
+                    let result = match tool.execute(&action, params).await {
+                        Ok(v) => v,
+                        Err(e) => json!({ "error": e.to_string() }),
+                    };
 
-                Ok(ToolResponse::direct(
-                    call.tool_call_id.clone(),
-                    call.tool_name.clone(),
-                    result,
-                ))
-            }
-        });
+                    Ok(ToolResponse::direct(
+                        call.tool_call_id.clone(),
+                        call.tool_name.clone(),
+                        result,
+                    ))
+                }
+            },
+        );
     }
 
     /// Route an action name to the appropriate Distri API call.
@@ -306,7 +310,11 @@ impl PlatformTool {
 
             "register_connection_provider" => {
                 let id = required_param(&params, "id")?;
-                let name = params.get("name").and_then(|v| v.as_str()).unwrap_or(&id).to_string();
+                let name = params
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(&id)
+                    .to_string();
                 let auth_url = required_param(&params, "authorization_url")?;
                 let token_url = required_param(&params, "token_url")?;
                 let client_id = required_param(&params, "client_id")?;
@@ -322,11 +330,10 @@ impl PlatformTool {
                     "scope_mappings": params.get("scope_mappings").cloned().unwrap_or(json!({})),
                 });
 
-                let result = self.client.register_connection_provider(
-                    provider_config,
-                    &client_id,
-                    &client_secret,
-                ).await?;
+                let result = self
+                    .client
+                    .register_connection_provider(provider_config, &client_id, &client_secret)
+                    .await?;
                 Ok(result)
             }
 
@@ -409,7 +416,10 @@ impl PlatformTool {
                 let tags: Option<Vec<String>> = params
                     .get("tags")
                     .and_then(|v| serde_json::from_value(v.clone()).ok());
-                let note = self.client.update_note(&id, title, content, tags.as_deref()).await?;
+                let note = self
+                    .client
+                    .update_note(&id, title, content, tags.as_deref())
+                    .await?;
                 Ok(note)
             }
 
@@ -691,10 +701,7 @@ mod tests {
         );
 
         let err = tool
-            .execute(
-                "connection_request",
-                json!({ "connection_id": "abc" }),
-            )
+            .execute("connection_request", json!({ "connection_id": "abc" }))
             .await
             .unwrap_err();
         assert!(
@@ -731,10 +738,7 @@ mod tests {
     #[tokio::test]
     async fn test_discover_skill_missing_param() {
         let tool = make_tool();
-        let err = tool
-            .execute("discover_skill", json!({}))
-            .await
-            .unwrap_err();
+        let err = tool.execute("discover_skill", json!({})).await.unwrap_err();
         assert!(
             err.to_string().contains("query"),
             "Expected 'query' in error, got: {err}"
@@ -744,10 +748,7 @@ mod tests {
     #[tokio::test]
     async fn test_import_skill_missing_param() {
         let tool = make_tool();
-        let err = tool
-            .execute("import_skill", json!({}))
-            .await
-            .unwrap_err();
+        let err = tool.execute("import_skill", json!({})).await.unwrap_err();
         assert!(
             err.to_string().contains("url"),
             "Expected 'url' in error, got: {err}"

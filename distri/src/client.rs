@@ -7,8 +7,7 @@ use distri_a2a::{
 };
 use distri_types::{
     ExternalTool, LLmContext, LlmDefinition, Message, MessageRole, TokenResponse, ToolCall,
-    a2a_converters::MessageMetadata,
-    prompt::PromptSection,
+    a2a_converters::MessageMetadata, prompt::PromptSection,
 };
 use distri_types::{StandardDefinition, ToolResponse, configuration::AgentConfigWithTools};
 use serde::{Deserialize, Serialize};
@@ -617,7 +616,10 @@ impl Distri {
 
     /// Get details about a specific workspace (using API key authentication).
     /// Returns None if the workspace is not found or user doesn't have access.
-    pub async fn get_workspace(&self, workspace_id: &str) -> Result<WorkspaceResponse, ClientError> {
+    pub async fn get_workspace(
+        &self,
+        workspace_id: &str,
+    ) -> Result<WorkspaceResponse, ClientError> {
         let url = format!("{}/workspaces/{}", self.base_url, workspace_id);
 
         let resp = self.http.get(&url).send().await?;
@@ -2078,7 +2080,10 @@ impl Distri {
             Ok(resp.json().await?)
         } else {
             let text = resp.text().await.unwrap_or_default();
-            Err(ClientError::InvalidResponse(format!("failed to list agents: {}", text)))
+            Err(ClientError::InvalidResponse(format!(
+                "failed to list agents: {}",
+                text
+            )))
         }
     }
 
@@ -2091,7 +2096,10 @@ impl Distri {
             Ok(resp.json().await?)
         } else {
             let text = resp.text().await.unwrap_or_default();
-            Err(ClientError::InvalidResponse(format!("failed to list connections: {}", text)))
+            Err(ClientError::InvalidResponse(format!(
+                "failed to list connections: {}",
+                text
+            )))
         }
     }
 
@@ -2103,30 +2111,45 @@ impl Distri {
             Ok(resp.json().await?)
         } else {
             let text = resp.text().await.unwrap_or_default();
-            Err(ClientError::InvalidResponse(format!("failed to list connections: {}", text)))
+            Err(ClientError::InvalidResponse(format!(
+                "failed to list connections: {}",
+                text
+            )))
         }
     }
 
     /// Get connection detail with skill content.
-    pub async fn get_connection_detail(&self, connection_id: &str) -> Result<serde_json::Value, ClientError> {
+    pub async fn get_connection_detail(
+        &self,
+        connection_id: &str,
+    ) -> Result<serde_json::Value, ClientError> {
         let url = format!("{}/connections/{}/detail", self.base_url, connection_id);
         let resp = self.http.get(&url).send().await?;
         if resp.status().is_success() {
             Ok(resp.json().await?)
         } else {
             let text = resp.text().await.unwrap_or_default();
-            Err(ClientError::InvalidResponse(format!("failed to get connection detail: {}", text)))
+            Err(ClientError::InvalidResponse(format!(
+                "failed to get connection detail: {}",
+                text
+            )))
         }
     }
 
-    pub async fn get_connection_token(&self, connection_id: &str) -> Result<ConnectionToken, ClientError> {
+    pub async fn get_connection_token(
+        &self,
+        connection_id: &str,
+    ) -> Result<ConnectionToken, ClientError> {
         let url = format!("{}/connections/{}/token", self.base_url, connection_id);
         let resp = self.http.post(&url).send().await?;
         if resp.status().is_success() {
             Ok(resp.json().await?)
         } else {
             let text = resp.text().await.unwrap_or_default();
-            Err(ClientError::InvalidResponse(format!("failed to get connection token for {}: {}", connection_id, text)))
+            Err(ClientError::InvalidResponse(format!(
+                "failed to get connection token for {}: {}",
+                connection_id, text
+            )))
         }
     }
 
@@ -2138,7 +2161,10 @@ impl Distri {
             Ok(())
         } else {
             let text = resp.text().await.unwrap_or_default();
-            Err(ClientError::InvalidResponse(format!("failed to delete connection {}: {}", connection_id, text)))
+            Err(ClientError::InvalidResponse(format!(
+                "failed to delete connection {}: {}",
+                connection_id, text
+            )))
         }
     }
 
@@ -2150,7 +2176,10 @@ impl Distri {
             Ok(resp.json().await?)
         } else {
             let text = resp.text().await.unwrap_or_default();
-            Err(ClientError::InvalidResponse(format!("failed to list providers: {}", text)))
+            Err(ClientError::InvalidResponse(format!(
+                "failed to list providers: {}",
+                text
+            )))
         }
     }
 
@@ -2210,7 +2239,11 @@ impl Distri {
 
     /// Discover skills from curated registries.
     pub async fn discover_skills(&self, query: &str) -> Result<serde_json::Value, ClientError> {
-        let url = format!("{}/skills/discover?query={}", self.base_url, urlencoding::encode(query));
+        let url = format!(
+            "{}/skills/discover?query={}",
+            self.base_url,
+            urlencoding::encode(query)
+        );
         let resp = self.http.get(&url).send().await?;
         if resp.status().is_success() {
             Ok(resp.json().await?)
@@ -2275,7 +2308,11 @@ impl Distri {
     }
 
     /// Initiate an OAuth connection. Returns the auth URL the user must visit.
-    pub async fn connect(&self, provider: &str, scopes: &[String]) -> Result<ConnectResponse, ClientError> {
+    pub async fn connect(
+        &self,
+        provider: &str,
+        scopes: &[String],
+    ) -> Result<ConnectResponse, ClientError> {
         let url = format!("{}/connections", self.base_url);
         let payload = serde_json::json!({
             "auth_type": "oauth",
@@ -2289,7 +2326,10 @@ impl Distri {
             Ok(resp.json().await?)
         } else {
             let text = resp.text().await.unwrap_or_default();
-            Err(ClientError::InvalidResponse(format!("failed to initiate connection for {}: {}", provider, text)))
+            Err(ClientError::InvalidResponse(format!(
+                "failed to initiate connection for {}: {}",
+                provider, text
+            )))
         }
     }
 
@@ -2302,7 +2342,10 @@ impl Distri {
             Ok(resp.json().await?)
         } else {
             let text = resp.text().await.unwrap_or_default();
-            Err(ClientError::InvalidResponse(format!("failed to list secrets: {}", text)))
+            Err(ClientError::InvalidResponse(format!(
+                "failed to list secrets: {}",
+                text
+            )))
         }
     }
 
@@ -2316,7 +2359,10 @@ impl Distri {
             Ok(Some(resp.json().await?))
         } else {
             let text = resp.text().await.unwrap_or_default();
-            Err(ClientError::InvalidResponse(format!("failed to get secret {}: {}", key, text)))
+            Err(ClientError::InvalidResponse(format!(
+                "failed to get secret {}: {}",
+                key, text
+            )))
         }
     }
 
@@ -2327,7 +2373,10 @@ impl Distri {
             Ok(resp.json().await?)
         } else {
             let text = resp.text().await.unwrap_or_default();
-            Err(ClientError::InvalidResponse(format!("failed to set secret: {}", text)))
+            Err(ClientError::InvalidResponse(format!(
+                "failed to set secret: {}",
+                text
+            )))
         }
     }
 
@@ -2338,13 +2387,20 @@ impl Distri {
             Ok(())
         } else {
             let text = resp.text().await.unwrap_or_default();
-            Err(ClientError::InvalidResponse(format!("failed to delete secret {}: {}", key, text)))
+            Err(ClientError::InvalidResponse(format!(
+                "failed to delete secret {}: {}",
+                key, text
+            )))
         }
     }
 
     // ========== Notes API ==========
 
-    pub async fn list_notes(&self, tag: Option<&str>, search: Option<&str>) -> Result<Value, ClientError> {
+    pub async fn list_notes(
+        &self,
+        tag: Option<&str>,
+        search: Option<&str>,
+    ) -> Result<Value, ClientError> {
         let mut url = format!("{}/notes", self.base_url);
         let mut params = vec![];
         if let Some(t) = tag {
@@ -2361,11 +2417,19 @@ impl Distri {
             Ok(resp.json().await?)
         } else {
             let text = resp.text().await.unwrap_or_default();
-            Err(ClientError::InvalidResponse(format!("failed to list notes: {}", text)))
+            Err(ClientError::InvalidResponse(format!(
+                "failed to list notes: {}",
+                text
+            )))
         }
     }
 
-    pub async fn create_note(&self, title: &str, content: &str, tags: &[String]) -> Result<Value, ClientError> {
+    pub async fn create_note(
+        &self,
+        title: &str,
+        content: &str,
+        tags: &[String],
+    ) -> Result<Value, ClientError> {
         let url = format!("{}/notes", self.base_url);
         let body = serde_json::json!({ "title": title, "content": content, "tags": tags });
         let resp = self.http.post(&url).json(&body).send().await?;
@@ -2373,7 +2437,10 @@ impl Distri {
             Ok(resp.json().await?)
         } else {
             let text = resp.text().await.unwrap_or_default();
-            Err(ClientError::InvalidResponse(format!("failed to create note: {}", text)))
+            Err(ClientError::InvalidResponse(format!(
+                "failed to create note: {}",
+                text
+            )))
         }
     }
 
@@ -2387,22 +2454,45 @@ impl Distri {
             Ok(Some(resp.json().await?))
         } else {
             let text = resp.text().await.unwrap_or_default();
-            Err(ClientError::InvalidResponse(format!("failed to get note: {}", text)))
+            Err(ClientError::InvalidResponse(format!(
+                "failed to get note: {}",
+                text
+            )))
         }
     }
 
-    pub async fn update_note(&self, id: &str, title: Option<&str>, content: Option<&str>, tags: Option<&[String]>) -> Result<Value, ClientError> {
+    pub async fn update_note(
+        &self,
+        id: &str,
+        title: Option<&str>,
+        content: Option<&str>,
+        tags: Option<&[String]>,
+    ) -> Result<Value, ClientError> {
         let url = format!("{}/notes/{}", self.base_url, id);
         let mut body = serde_json::Map::new();
-        if let Some(t) = title { body.insert("title".to_string(), serde_json::json!(t)); }
-        if let Some(c) = content { body.insert("content".to_string(), serde_json::json!(c)); }
-        if let Some(tg) = tags { body.insert("tags".to_string(), serde_json::json!(tg)); }
-        let resp = self.http.put(&url).json(&Value::Object(body)).send().await?;
+        if let Some(t) = title {
+            body.insert("title".to_string(), serde_json::json!(t));
+        }
+        if let Some(c) = content {
+            body.insert("content".to_string(), serde_json::json!(c));
+        }
+        if let Some(tg) = tags {
+            body.insert("tags".to_string(), serde_json::json!(tg));
+        }
+        let resp = self
+            .http
+            .put(&url)
+            .json(&Value::Object(body))
+            .send()
+            .await?;
         if resp.status().is_success() {
             Ok(resp.json().await?)
         } else {
             let text = resp.text().await.unwrap_or_default();
-            Err(ClientError::InvalidResponse(format!("failed to update note: {}", text)))
+            Err(ClientError::InvalidResponse(format!(
+                "failed to update note: {}",
+                text
+            )))
         }
     }
 
@@ -2413,7 +2503,10 @@ impl Distri {
             Ok(())
         } else {
             let text = resp.text().await.unwrap_or_default();
-            Err(ClientError::InvalidResponse(format!("failed to delete note: {}", text)))
+            Err(ClientError::InvalidResponse(format!(
+                "failed to delete note: {}",
+                text
+            )))
         }
     }
 
@@ -2426,53 +2519,80 @@ impl Distri {
             Ok(resp.json().await?)
         } else {
             let text = resp.text().await.unwrap_or_default();
-            Err(ClientError::InvalidResponse(format!("failed to list threads: {}", text)))
+            Err(ClientError::InvalidResponse(format!(
+                "failed to list threads: {}",
+                text
+            )))
         }
     }
 
     // ========== Workflows API ==========
 
-    pub async fn list_workflows(&self) -> Result<distri_types::stores::WorkflowsListResponse, ClientError> {
+    pub async fn list_workflows(
+        &self,
+    ) -> Result<distri_types::stores::WorkflowsListResponse, ClientError> {
         let url = format!("{}/workflows", self.base_url);
         let resp = self.http.get(&url).send().await?;
         if resp.status().is_success() {
             Ok(resp.json().await?)
         } else {
             let text = resp.text().await.unwrap_or_default();
-            Err(ClientError::InvalidResponse(format!("failed to list workflows: {}", text)))
+            Err(ClientError::InvalidResponse(format!(
+                "failed to list workflows: {}",
+                text
+            )))
         }
     }
 
-    pub async fn get_workflow(&self, id: &str) -> Result<distri_types::stores::WorkflowRecord, ClientError> {
+    pub async fn get_workflow(
+        &self,
+        id: &str,
+    ) -> Result<distri_types::stores::WorkflowRecord, ClientError> {
         let url = format!("{}/workflows/{}", self.base_url, id);
         let resp = self.http.get(&url).send().await?;
         if resp.status().is_success() {
             Ok(resp.json().await?)
         } else {
             let text = resp.text().await.unwrap_or_default();
-            Err(ClientError::InvalidResponse(format!("failed to get workflow: {}", text)))
+            Err(ClientError::InvalidResponse(format!(
+                "failed to get workflow: {}",
+                text
+            )))
         }
     }
 
-    pub async fn create_workflow(&self, workflow: distri_types::stores::NewWorkflow) -> Result<distri_types::stores::WorkflowRecord, ClientError> {
+    pub async fn create_workflow(
+        &self,
+        workflow: distri_types::stores::NewWorkflow,
+    ) -> Result<distri_types::stores::WorkflowRecord, ClientError> {
         let url = format!("{}/workflows", self.base_url);
         let resp = self.http.post(&url).json(&workflow).send().await?;
         if resp.status().is_success() {
             Ok(resp.json().await?)
         } else {
             let text = resp.text().await.unwrap_or_default();
-            Err(ClientError::InvalidResponse(format!("failed to create workflow: {}", text)))
+            Err(ClientError::InvalidResponse(format!(
+                "failed to create workflow: {}",
+                text
+            )))
         }
     }
 
-    pub async fn update_workflow(&self, id: &str, update: distri_types::stores::UpdateWorkflow) -> Result<distri_types::stores::WorkflowRecord, ClientError> {
+    pub async fn update_workflow(
+        &self,
+        id: &str,
+        update: distri_types::stores::UpdateWorkflow,
+    ) -> Result<distri_types::stores::WorkflowRecord, ClientError> {
         let url = format!("{}/workflows/{}", self.base_url, id);
         let resp = self.http.put(&url).json(&update).send().await?;
         if resp.status().is_success() {
             Ok(resp.json().await?)
         } else {
             let text = resp.text().await.unwrap_or_default();
-            Err(ClientError::InvalidResponse(format!("failed to update workflow: {}", text)))
+            Err(ClientError::InvalidResponse(format!(
+                "failed to update workflow: {}",
+                text
+            )))
         }
     }
 
@@ -2483,12 +2603,19 @@ impl Distri {
             Ok(())
         } else {
             let text = resp.text().await.unwrap_or_default();
-            Err(ClientError::InvalidResponse(format!("failed to delete workflow: {}", text)))
+            Err(ClientError::InvalidResponse(format!(
+                "failed to delete workflow: {}",
+                text
+            )))
         }
     }
 
     /// Push a workflow definition to the server. Creates or updates.
-    pub async fn push_workflow(&self, name: &str, definition: serde_json::Value) -> Result<distri_types::stores::WorkflowRecord, ClientError> {
+    pub async fn push_workflow(
+        &self,
+        name: &str,
+        definition: serde_json::Value,
+    ) -> Result<distri_types::stores::WorkflowRecord, ClientError> {
         let new = distri_types::stores::NewWorkflow {
             name: name.to_string(),
             description: None,

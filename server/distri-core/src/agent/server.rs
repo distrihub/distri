@@ -42,9 +42,9 @@ pub fn build_server<T: Transport>(
                             description: Some(t.get_description().to_string()),
                             input_schema: json!({}),
                             output_schema: match t {
-                                distri_types::configuration::AgentConfig::StandardAgent(def) => {
-                                    def.model_settings().and_then(|ms| ms.inner.response_format.clone())
-                                }
+                                distri_types::configuration::AgentConfig::StandardAgent(def) => def
+                                    .model_settings()
+                                    .and_then(|ms| ms.inner.response_format.clone()),
                                 distri_types::configuration::AgentConfig::WorkflowAgent(_) => None,
                             },
                         })

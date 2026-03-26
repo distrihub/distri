@@ -22,8 +22,9 @@ use crate::{
     agent::{log::ModelLogger, AgentEventType, ExecutorContext},
     claude_client::{
         CacheControl, ClaudeClient, ClaudeContent, ClaudeMessage, ClaudeTool, ContentBlock,
-        CreateMessageRequest, ImageSource, MessageMetadata, ResponseContentBlock, StreamContentBlock,
-        StreamDelta, StreamEvent, SystemBlock, SystemPrompt, ToolResultBlock, ToolResultContent,
+        CreateMessageRequest, ImageSource, MessageMetadata, ResponseContentBlock,
+        StreamContentBlock, StreamDelta, StreamEvent, SystemBlock, SystemPrompt, ToolResultBlock,
+        ToolResultContent,
     },
     tools::Tool,
     types::{Message, MessageRole, Part, ToolCall},
@@ -83,10 +84,23 @@ impl ClaudeLLMExecutor {
         let secret_resolver = crate::secrets::SecretResolver::new(secret_store);
 
         secret_resolver
-            .validate_provider(&self.llm_def.ms().map_err(AgentError::InvalidConfiguration)?.inner.provider)
+            .validate_provider(
+                &self
+                    .llm_def
+                    .ms()
+                    .map_err(AgentError::InvalidConfiguration)?
+                    .inner
+                    .provider,
+            )
             .await?;
 
-        let (base_url, config_api_key) = match &self.llm_def.ms().map_err(AgentError::InvalidConfiguration)?.inner.provider {
+        let (base_url, config_api_key) = match &self
+            .llm_def
+            .ms()
+            .map_err(AgentError::InvalidConfiguration)?
+            .inner
+            .provider
+        {
             distri_types::ModelProvider::Anthropic { base_url, api_key } => {
                 (base_url.clone(), api_key.clone())
             }
@@ -101,9 +115,7 @@ impl ClaudeLLMExecutor {
         let api_key = if let Some(key) = config_api_key {
             key
         } else {
-            secret_resolver
-                .resolve_or_empty("ANTHROPIC_API_KEY")
-                .await
+            secret_resolver.resolve_or_empty("ANTHROPIC_API_KEY").await
         };
 
         let mut headers = self.additional_headers.clone().unwrap_or_default();
@@ -113,10 +125,7 @@ impl ClaudeLLMExecutor {
             headers.insert("X-Label".to_string(), self.llm_def.name.clone());
         }
         // Add context headers
-        headers.insert(
-            "X-Thread-Id".to_string(),
-            self.context.thread_id.clone(),
-        );
+        headers.insert("X-Thread-Id".to_string(), self.context.thread_id.clone());
         headers.insert("X-Run-Id".to_string(), self.context.run_id.clone());
 
         Ok(ClaudeClient::new(api_key, base_url, headers))
@@ -133,10 +142,7 @@ impl ClaudeLLMExecutor {
     // ─── Message Mapping ─────────────────────────────────────────────────
 
     /// Convert internal messages to Claude API format, extracting system messages
-    fn map_messages(
-        &self,
-        messages: &[Message],
-    ) -> (Option<SystemPrompt>, Vec<ClaudeMessage>) {
+    fn map_messages(&self, messages: &[Message]) -> (Option<SystemPrompt>, Vec<ClaudeMessage>) {
         let mut system_parts: Vec<String> = Vec::new();
         let mut claude_messages: Vec<ClaudeMessage> = Vec::new();
 
@@ -368,12 +374,7 @@ impl ClaudeLLMExecutor {
                 let content = if result_blocks.is_empty() {
                     Some(ToolResultContent::Text(text_content))
                 } else {
-                    result_blocks.insert(
-                        0,
-                        ToolResultBlock::Text {
-                            text: text_content,
-                        },
-                    );
+                    result_blocks.insert(0, ToolResultBlock::Text { text: text_content });
                     Some(ToolResultContent::Blocks(result_blocks))
                 };
 
@@ -479,7 +480,9 @@ impl ClaudeLLMExecutor {
 
         // Place cache breakpoint a few messages from the end
         // This caches the conversation prefix while keeping recent messages fresh
-        let cache_idx = messages.len().saturating_sub(CACHE_CONVERSATION_BREAKPOINT_OFFSET);
+        let cache_idx = messages
+            .len()
+            .saturating_sub(CACHE_CONVERSATION_BREAKPOINT_OFFSET);
         let msg = &mut messages[cache_idx];
 
         // Add cache_control to the last content block of this message
@@ -513,8 +516,14 @@ impl ClaudeLLMExecutor {
     // ─── Execution ───────────────────────────────────────────────────────
 
     /// Non-streaming execution
-    pub async fn execute(&self, messages: &[Message]) -> Result<super::llm::LLMResponse, AgentError> {
-        let ms = self.llm_def.ms().map_err(AgentError::InvalidConfiguration)?;
+    pub async fn execute(
+        &self,
+        messages: &[Message],
+    ) -> Result<super::llm::LLMResponse, AgentError> {
+        let ms = self
+            .llm_def
+            .ms()
+            .map_err(AgentError::InvalidConfiguration)?;
         tracing::info!(
             target: "claude_llm.execute",
             "Claude LLM request model={}, max_tokens={:?}, tools={}, messages={}",
@@ -689,7 +698,10 @@ impl ClaudeLLMExecutor {
         messages: &[Message],
         context: Arc<ExecutorContext>,
     ) -> Result<super::llm::StreamResult, AgentError> {
-        let ms = self.llm_def.ms().map_err(AgentError::InvalidConfiguration)?;
+        let ms = self
+            .llm_def
+            .ms()
+            .map_err(AgentError::InvalidConfiguration)?;
         tracing::info!(
             target: "claude_llm.execute_stream",
             "Claude LLM stream request model={}, max_tokens={:?}, tools={}, messages={}",
@@ -811,33 +823,34 @@ impl ClaudeLLMExecutor {
                                         tool_calls.extend(parse_result.new_tool_calls.clone());
                                     }
 
-                                    let clean_content =
-                                        if let Some(ref blocks) = parse_result.stripped_content_blocks {
-                                            let clean: String = blocks
-                                                .iter()
-                                                .filter_map(|(_, content)| {
-                                                    if content.trim_start().starts_with('<')
-                                                        && content.contains('>')
-                                                    {
-                                                        None
-                                                    } else {
-                                                        Some(content.as_str())
-                                                    }
-                                                })
-                                                .collect();
+                                    let clean_content = if let Some(ref blocks) =
+                                        parse_result.stripped_content_blocks
+                                    {
+                                        let clean: String = blocks
+                                            .iter()
+                                            .filter_map(|(_, content)| {
+                                                if content.trim_start().starts_with('<')
+                                                    && content.contains('>')
+                                                {
+                                                    None
+                                                } else {
+                                                    Some(content.as_str())
+                                                }
+                                            })
+                                            .collect();
 
-                                            if !clean.trim().is_empty() {
-                                                clean
-                                            } else if parse_result.has_partial_tool_call {
-                                                String::new()
-                                            } else {
-                                                text.clone()
-                                            }
+                                        if !clean.trim().is_empty() {
+                                            clean
                                         } else if parse_result.has_partial_tool_call {
                                             String::new()
                                         } else {
                                             text.clone()
-                                        };
+                                        }
+                                    } else if parse_result.has_partial_tool_call {
+                                        String::new()
+                                    } else {
+                                        text.clone()
+                                    };
 
                                     let verbose = if context.verbose {
                                         parse_result.stripped_content_blocks
@@ -877,10 +890,8 @@ impl ClaudeLLMExecutor {
                     StreamEvent::ContentBlockStop { .. } => {
                         // Finalize any in-progress tool use
                         if let Some(tool) = current_tool.take() {
-                            let input: Value =
-                                serde_json::from_str(&tool.json_accum).unwrap_or_else(|_| {
-                                    Value::String(tool.json_accum.clone())
-                                });
+                            let input: Value = serde_json::from_str(&tool.json_accum)
+                                .unwrap_or_else(|_| Value::String(tool.json_accum.clone()));
                             tool_calls.push(ToolCall {
                                 tool_call_id: tool.id,
                                 tool_name: tool.name,

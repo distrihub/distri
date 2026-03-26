@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
-use distri_types::configuration::{AgentConfig, DbConnectionConfig, MetadataStoreConfig, StoreConfig};
+use distri_types::configuration::{
+    AgentConfig, DbConnectionConfig, MetadataStoreConfig, StoreConfig,
+};
 use distri_types::{Message, ModelSettings};
 
 use crate::{
@@ -72,7 +74,9 @@ max_iterations = 1
     AgentOrchestrator::apply_agent_overrides(&mut agent_config, None, &defaults);
     let AgentConfig::StandardAgent(loaded_def) = &agent_config;
 
-    let ms = loaded_def.model_settings().expect("model_settings should be set after merge");
+    let ms = loaded_def
+        .model_settings()
+        .expect("model_settings should be set after merge");
     assert_eq!(ms.model, "gpt-4o-test");
     assert_eq!(ms.inner.temperature, Some(0.5));
 }
@@ -118,7 +122,9 @@ temperature = 0.9
     let defaults = Some(default_settings);
     AgentOrchestrator::apply_agent_overrides(&mut agent_config, None, &defaults);
     let AgentConfig::StandardAgent(loaded_def) = &agent_config;
-    let ms = loaded_def.model_settings().expect("model_settings should be set after merge");
+    let ms = loaded_def
+        .model_settings()
+        .expect("model_settings should be set after merge");
 
     // Agent's model should win
     assert_eq!(ms.model, "custom-model-v1");

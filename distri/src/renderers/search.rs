@@ -28,12 +28,7 @@ pub fn render_search(result: &ToolResponse) {
                             }
                         }
                         if count > 5 {
-                            println!(
-                                "{}  … and {} more{}",
-                                COLOR_GRAY,
-                                count - 5,
-                                COLOR_RESET
-                            );
+                            println!("{}  … and {} more{}", COLOR_GRAY, count - 5, COLOR_RESET);
                         }
                         continue;
                     }

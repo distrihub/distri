@@ -175,9 +175,7 @@ impl ExecutorContextTool for ReflectTool {
     ) -> Result<Vec<Part>, AgentError> {
         // Store the reflection result as the final result so the agent loop can read it
         let result = tool_call.input.clone();
-        context
-            .set_final_result(Some(result.clone()))
-            .await;
+        context.set_final_result(Some(result.clone())).await;
         Ok(vec![Part::Data(result)])
     }
 }
@@ -289,7 +287,10 @@ impl ExecutorContextTool for TransferToAgentTool {
             task
         } else {
             // Try to extract the original user message from message history
-            let history = context.get_current_task_message_history().await.unwrap_or_default();
+            let history = context
+                .get_current_task_message_history()
+                .await
+                .unwrap_or_default();
             history
                 .iter()
                 .rev()

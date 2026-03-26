@@ -795,9 +795,7 @@ impl EventPrinter {
                 );
                 if let Some(summary_text) = summary {
                     let preview: String = summary_text.chars().take(120).collect();
-                    eprintln!(
-                        "  {COLOR_GRAY}Summary: {preview}...{COLOR_RESET}",
-                    );
+                    eprintln!("  {COLOR_GRAY}Summary: {preview}...{COLOR_RESET}",);
                 }
             }
         };
@@ -919,7 +917,7 @@ impl EventPrinter {
         }
 
         if let Some(bytes) = size {
-            parts.push(format!("{}", Self::format_size(bytes)));
+            parts.push(Self::format_size(bytes).to_string());
         }
 
         if let Some(timestamp) = Self::format_browser_timestamp(timestamp_ms) {
@@ -964,7 +962,7 @@ impl EventPrinter {
         })
     }
 }
-
+#[allow(clippy::too_many_arguments)]
 pub async fn run_stream_with_printer(
     agent_name: &str,
     executor: Arc<AgentOrchestrator>,

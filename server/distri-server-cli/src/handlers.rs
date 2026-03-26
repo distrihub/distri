@@ -74,7 +74,12 @@ pub async fn handle_validate_prompt_command(
     };
 
     // Convert agent config to StandardDefinition
-    let distri_types::configuration::AgentConfig::StandardAgent(agent_def) = agent_config;
+    let distri_types::configuration::AgentConfig::StandardAgent(agent_def) = agent_config else {
+        return Err(anyhow::anyhow!(
+            "Agent '{}' is not a standard agent",
+            agent_name
+        ));
+    };
 
     // Get registered partials from the prompt registry
     let registered_partials: HashSet<String> = executor

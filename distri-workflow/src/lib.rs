@@ -33,15 +33,15 @@
 //! let workflow = WorkflowDefinition::new(steps);
 //! ```
 
-pub mod types;
-pub mod store;
 pub mod executor;
 pub mod resolve;
+pub mod store;
+pub mod types;
 
+pub use executor::{EventSink, NoopEventSink, StepExecutor, TracingEventSink, WorkflowRunner};
+pub use resolve::{build_execution_context, resolve_step_input, resolve_template, resolve_value};
+pub use store::{InMemoryStore, WorkflowStateStore};
 pub use types::*;
-pub use store::{WorkflowStateStore, InMemoryStore};
-pub use executor::{StepExecutor, WorkflowRunner, EventSink, TracingEventSink, NoopEventSink};
-pub use resolve::{resolve_template, resolve_value, resolve_step_input, build_execution_context};
 
 #[cfg(test)]
 mod tests;

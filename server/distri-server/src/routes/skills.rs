@@ -16,10 +16,7 @@ pub fn configure_skill_routes(cfg: &mut web::ServiceConfig) {
             .route(web::put().to(update_skill))
             .route(web::delete().to(delete_skill)),
     )
-    .service(
-        web::resource("/skills/{id}/scripts")
-            .route(web::post().to(add_script)),
-    )
+    .service(web::resource("/skills/{id}/scripts").route(web::post().to(add_script)))
     .service(
         web::resource("/skills/scripts/{script_id}")
             .route(web::put().to(update_script))
@@ -38,25 +35,28 @@ async fn list_skills(executor: web::Data<Arc<AgentOrchestrator>>) -> HttpRespons
 
     match store.list_skills().await {
         Ok(skills) => {
-            let items: Vec<distri_types::stores::SkillListItem> = skills.into_iter().map(|s| {
-                let full_name = format!("local/{}", s.name);
-                distri_types::stores::SkillListItem {
-                    id: s.id,
-                    workspace_slug: "local".to_string(),
-                    name: s.name,
-                    full_name,
-                    description: s.description,
-                    tags: s.tags,
-                    is_public: s.is_public,
-                    is_system: s.is_system,
-                    is_owner: true,
-                    star_count: s.star_count,
-                    clone_count: s.clone_count,
-                    is_starred: false,
-                    created_at: s.created_at,
-                    updated_at: s.updated_at,
-                }
-            }).collect();
+            let items: Vec<distri_types::stores::SkillListItem> = skills
+                .into_iter()
+                .map(|s| {
+                    let full_name = format!("local/{}", s.name);
+                    distri_types::stores::SkillListItem {
+                        id: s.id,
+                        workspace_slug: "local".to_string(),
+                        name: s.name,
+                        full_name,
+                        description: s.description,
+                        tags: s.tags,
+                        is_public: s.is_public,
+                        is_system: s.is_system,
+                        is_owner: true,
+                        star_count: s.star_count,
+                        clone_count: s.clone_count,
+                        is_starred: false,
+                        created_at: s.created_at,
+                        updated_at: s.updated_at,
+                    }
+                })
+                .collect();
             HttpResponse::Ok().json(distri_types::stores::SkillsListResponse { skills: items })
         }
         Err(e) => HttpResponse::InternalServerError().json(json!({"error": e.to_string()})),

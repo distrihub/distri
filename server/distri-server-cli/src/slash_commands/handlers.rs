@@ -108,9 +108,7 @@ pub async fn handle_slash_command(
                     COLOR_BRIGHT_CYAN, tool, parameters, COLOR_RESET
                 );
 
-                match call_tool_via_orchestrator(executor, user_id, &tool, &parameters)
-                    .await
-                {
+                match call_tool_via_orchestrator(executor, user_id, &tool, &parameters).await {
                     Ok(result) => {
                         println!(
                             "{}✅ Tool result: {}{}",
@@ -215,4 +213,3 @@ async fn call_tool_via_orchestrator(
     // Convert result to string for display
     Ok(serde_json::to_string_pretty(&result)?)
 }
-

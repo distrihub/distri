@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use crate::agent::ExecutorContext;
-use browsr_types::{ShellCreateSessionRequest, ShellExecRequest};
 use crate::tools::shell::BrowsrShellClient;
+use browsr_types::{ShellCreateSessionRequest, ShellExecRequest};
 use serde_json::Value;
 
 #[derive(Clone)]
@@ -194,5 +194,4 @@ mod tests {
     fn detect_language_trims_whitespace() {
         assert_eq!(detect_language("  \n  import os\n"), "python");
     }
-
 }

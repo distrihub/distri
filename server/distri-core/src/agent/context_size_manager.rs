@@ -696,10 +696,7 @@ mod tests {
 
         // Should have task + 2 most recent
         assert_eq!(result.len(), 3);
-        assert!(matches!(
-            result[0].entry_type,
-            ScratchpadEntryType::Task(_)
-        ));
+        assert!(matches!(result[0].entry_type, ScratchpadEntryType::Task(_)));
         // Last two entries should be the most recent (timestamps 7, 8)
         assert_eq!(result[1].timestamp, 7);
         assert_eq!(result[2].timestamp, 8);

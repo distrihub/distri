@@ -255,7 +255,10 @@ impl AgentStreamClient {
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
             tracing::error!("complete_tool failed ({}): {}", status, body);
-            return Err(StreamError::InvalidResponse(format!("complete_tool failed ({}): {}", status, body)));
+            return Err(StreamError::InvalidResponse(format!(
+                "complete_tool failed ({}): {}",
+                status, body
+            )));
         }
         Ok(())
     }

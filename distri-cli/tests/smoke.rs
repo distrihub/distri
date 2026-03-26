@@ -214,11 +214,17 @@ fn smoke_platform_list_connections() -> Result<()> {
     };
     let output = run_cli_capture(
         &base_url,
-        &["run", "--task", "how many connections do i have? just give me the count"],
+        &[
+            "run",
+            "--task",
+            "how many connections do i have? just give me the count",
+        ],
     )?;
     // Agent should use distri_platform list_connections and respond
     assert!(
-        output.contains("distri_platform") || output.contains("connection") || output.contains("Connection"),
+        output.contains("distri_platform")
+            || output.contains("connection")
+            || output.contains("Connection"),
         "expected platform tool usage or connection mention in output: {}",
         &output[..output.len().min(500)]
     );
@@ -256,7 +262,10 @@ fn smoke_platform_list_secrets() -> Result<()> {
     )?;
     // Should use distri_platform list_secrets
     assert!(
-        output.contains("distri_platform") || output.contains("secret") || output.contains("Secret") || output.contains("No secrets"),
+        output.contains("distri_platform")
+            || output.contains("secret")
+            || output.contains("Secret")
+            || output.contains("No secrets"),
         "expected secrets-related output: {}",
         &output[..output.len().min(500)]
     );

@@ -109,13 +109,7 @@ pub async fn init_orchestrator(
     workspace_path: &Path,
     workspace_config: Option<&DistriServerConfig>,
 ) -> Result<std::sync::Arc<distri_core::agent::AgentOrchestrator>> {
-    init_orchestrator_with_configuration(
-        home_dir,
-        workspace_path,
-        workspace_config,
-        None,
-    )
-    .await
+    init_orchestrator_with_configuration(home_dir, workspace_path, workspace_config, None).await
 }
 
 /// Initialize orchestrator with a shared configuration handle that can be updated at runtime.
@@ -204,7 +198,7 @@ pub async fn init_orchestrator_with_configuration(
 
     let merged_config = resolved_config_owned.as_ref().or(workspace_config);
 
-    let mut builder = AgentOrchestratorBuilder::default()
+    let builder = AgentOrchestratorBuilder::default()
         .with_configuration(configuration_handle)
         .with_browser_config(BrowsrClientConfig::default());
     let orchestrator = builder
@@ -255,10 +249,7 @@ pub async fn build_workspace(
     _orchestrator: &Arc<AgentOrchestrator>,
     workspace_path: &Path,
 ) -> Result<()> {
-    tracing::info!(
-        "Workspace build complete ({})",
-        workspace_path.display()
-    );
+    tracing::info!("Workspace build complete ({})", workspace_path.display());
     Ok(())
 }
 
@@ -290,4 +281,3 @@ pub async fn run_agent_cli(
     }
     Ok(())
 }
-

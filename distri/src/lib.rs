@@ -12,7 +12,7 @@ pub mod workflow {
 }
 
 mod workflow_executor;
-pub use workflow_executor::{DistriStepExecutor, WorkflowSession, ChannelEventSink};
+pub use workflow_executor::{ChannelEventSink, DistriStepExecutor, WorkflowSession};
 
 use thiserror::Error;
 
@@ -23,10 +23,10 @@ pub use client::{
     ArtifactNamespace, ArtifactNamespaceList, ArtifactReadResponse, ArtifactSaveResponse,
     ConnectResponse, ConnectionSummary, ConnectionToken, CreatePluginRequest, CreateSkillRequest,
     CreateSkillScriptRequest, Distri, InvokeOptions, LlmExecuteOptions, LlmExecuteResponse,
-    LoginUrlResponse, NewPromptTemplateRequest, NewSecretRequest, PluginResponse, PluginsListResponse, ProviderInfo,
-    PromptTemplateResponse, SecretEntry, SkillListItemResponse, SkillResponse,
-    SyncPromptTemplatesResponse, TaskNamespaceResponse, ThreadSummary, UpdatePluginRequest,
-    UpdateSkillRequest, ValidatePluginResponse, WorkspaceResponse,
+    LoginUrlResponse, NewPromptTemplateRequest, NewSecretRequest, PluginResponse,
+    PluginsListResponse, PromptTemplateResponse, ProviderInfo, SecretEntry, SkillListItemResponse,
+    SkillResponse, SyncPromptTemplatesResponse, TaskNamespaceResponse, ThreadSummary,
+    UpdatePluginRequest, UpdateSkillRequest, ValidatePluginResponse, WorkspaceResponse,
 };
 pub use client_app::{AppError, DistriClientApp, ToolListItem};
 pub use client_stream::{AgentStreamClient, StreamError, StreamItem};
@@ -60,5 +60,5 @@ mod external_tools_runtime;
 mod hooks_runtime;
 pub mod platform_tool;
 
-pub use platform_tool::PlatformTool;
 pub use distri_types as types;
+pub use platform_tool::PlatformTool;

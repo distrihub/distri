@@ -441,7 +441,7 @@ fn parse_structured_apply_diff(diff: &str) -> Option<Vec<DiffBlock>> {
                 search_lines.push(content.trim_start().to_string());
             }
         } else {
-            while let Some(next) = lines.next() {
+            for next in lines.by_ref() {
                 if next.trim() == "=======" {
                     break;
                 }
@@ -451,14 +451,14 @@ fn parse_structured_apply_diff(diff: &str) -> Option<Vec<DiffBlock>> {
 
         let mut replace_lines = Vec::new();
         if expect_dash_separator {
-            while let Some(next) = lines.next() {
+            for next in lines.by_ref() {
                 if next.trim() == ">>>>>>> REPLACE" {
                     break;
                 }
                 replace_lines.push(next.to_string());
             }
         } else {
-            while let Some(next) = lines.next() {
+            for next in lines.by_ref() {
                 if let Some(content) = next.trim().strip_prefix("REPLACE:") {
                     replace_lines.push(content.trim_start().to_string());
                     break;

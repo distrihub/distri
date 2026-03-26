@@ -39,10 +39,7 @@ pub trait WorkflowStateStore: Send + Sync {
     }
 
     /// List available checkpoints. Default: empty.
-    async fn list_checkpoints(
-        &self,
-        _workflow_id: &str,
-    ) -> Result<Vec<CheckpointMeta>, String> {
+    async fn list_checkpoints(&self, _workflow_id: &str) -> Result<Vec<CheckpointMeta>, String> {
         Ok(vec![])
     }
 }
@@ -91,7 +88,9 @@ impl WorkflowStateStore for InMemoryStore {
 
             // Auto-store step result at steps.<step_id> in structured context
             if let Some(ref result_val) = result.result {
-                let ctx = workflow.context.as_object_mut()
+                let ctx = workflow
+                    .context
+                    .as_object_mut()
                     .expect("workflow context must be an object");
                 let steps = ctx
                     .entry("steps")

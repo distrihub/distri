@@ -44,8 +44,11 @@ pub fn render_code_execution(result: &ToolResponse) {
             }
             Part::Artifact(meta) => {
                 println!(
-                    "{}  output file: {} ({}){}", COLOR_GRAY,
-                    meta.original_filename.as_deref().unwrap_or(&meta.relative_path),
+                    "{}  output file: {} ({}){}",
+                    COLOR_GRAY,
+                    meta.original_filename
+                        .as_deref()
+                        .unwrap_or(&meta.relative_path),
                     meta.content_type.as_deref().unwrap_or("unknown"),
                     COLOR_RESET,
                 );

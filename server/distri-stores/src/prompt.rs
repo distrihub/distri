@@ -118,7 +118,10 @@ mod tests {
             "plan/initial".to_string(),
             "Plan with {{tools}} and {{examples}}".to_string(),
         );
-        prompts.insert("scratchpad/notes".to_string(), "Notes: {{content}}".to_string());
+        prompts.insert(
+            "scratchpad/notes".to_string(),
+            "Notes: {{content}}".to_string(),
+        );
         HashMapPromptStore::new(prompts)
     }
 

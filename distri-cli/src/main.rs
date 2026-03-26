@@ -7,19 +7,18 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use crossterm::terminal;
 use distri::{
-    AgentStreamClient, BuildHttpClient, CreateSkillRequest,
+    print_stream_verbose, AgentStreamClient, BuildHttpClient, CreateSkillRequest,
     CreateSkillScriptRequest, Distri, DistriClientApp, DistriConfig, ExternalToolRegistry,
-    print_stream_verbose,
 };
 use distri_a2a::{
     EventKind, Message as A2aMessage, MessageSendParams, Part as A2aPart, Role, TextPart,
 };
-use distri_types::ToolResponse;
 use distri_types::configuration::AgentConfig;
-use fuzzy_matcher::{FuzzyMatcher, skim::SkimMatcherV2};
+use distri_types::ToolResponse;
+use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher};
 use inquire::{
-    CustomUserError, Select, Text,
     autocompletion::{Autocomplete, Replacement},
+    CustomUserError, Select, Text,
 };
 use tokio::fs;
 mod logging;
@@ -444,7 +443,11 @@ async fn main() -> Result<()> {
             let agent_name = agent.unwrap_or_else(|| "distri".to_string());
             run_interactive_chat(&mut app, &config, &base_url, agent_name, cli.verbose).await?;
         }
-        Commands::Run { agent, task, context } => {
+        Commands::Run {
+            agent,
+            task,
+            context,
+        } => {
             let agent_name = agent.unwrap_or_else(|| "distri".to_string());
             // Resolve agent name to UUID for cloud compatibility.
             // Cloud middleware requires UUID for proper workspace context (model settings, secrets).
@@ -501,7 +504,9 @@ async fn main() -> Result<()> {
             println!("Streaming agent '{}' via {}", agent_name, base_url);
             let registry = app.registry();
             register_approval_handler(&registry);
-            let platform_tool = distri::PlatformTool::from_arc(std::sync::Arc::new(Distri::from_config(config.clone())));
+            let platform_tool = distri::PlatformTool::from_arc(std::sync::Arc::new(
+                Distri::from_config(config.clone()),
+            ));
             platform_tool.register(&registry);
             let stream_config = config.clone().with_timeout(600);
             let http_client = stream_config.build_http_client()?;
@@ -579,8 +584,9 @@ async fn main() -> Result<()> {
                 session,
             } => {
                 let payload = match input {
-                    Some(raw) => serde_json::from_str(&raw)
-                        .unwrap_or_else(|_| serde_json::Value::String(raw)),
+                    Some(raw) => {
+                        serde_json::from_str(&raw).unwrap_or(serde_json::Value::String(raw))
+                    }
                     None => serde_json::json!({}),
                 };
                 let result = app.call_tool(&name, payload, session).await?;
@@ -621,9 +627,7 @@ async fn main() -> Result<()> {
 }
 
 fn parse_cli_with_default_serve() -> Cli {
-    let cli = Cli::parse();
-
-    cli
+    Cli::parse()
 }
 
 fn resolve_workspace(config_path: &Option<PathBuf>) -> PathBuf {
@@ -773,7 +777,12 @@ fn build_message_params(content: String, connections_context: Option<String>) ->
     }
 }
 
-fn build_chat_message_params(content: String, thread_id: &str, model: &str, connections_context: Option<String>) -> MessageSendParams {
+fn build_chat_message_params(
+    content: String,
+    thread_id: &str,
+    model: &str,
+    connections_context: Option<String>,
+) -> MessageSendParams {
     let mut meta = serde_json::json!({
         "external_tools": [platform_tool_definition()]
     });
@@ -781,9 +790,15 @@ fn build_chat_message_params(content: String, thread_id: &str, model: &str, conn
         meta["definition_overrides"] = serde_json::json!({ "model": model });
     }
     if let Some(conn_ctx) = connections_context {
-        let dv = meta.get("dynamic_values").and_then(|v| v.as_object().cloned()).unwrap_or_default();
+        let dv = meta
+            .get("dynamic_values")
+            .and_then(|v| v.as_object().cloned())
+            .unwrap_or_default();
         let mut dv = dv;
-        dv.insert("available_connections".to_string(), serde_json::Value::String(conn_ctx));
+        dv.insert(
+            "available_connections".to_string(),
+            serde_json::Value::String(conn_ctx),
+        );
         meta["dynamic_values"] = serde_json::Value::Object(dv);
     }
 
@@ -823,7 +838,8 @@ async fn run_interactive_chat(
 
     let registry = app.registry();
     register_approval_handler(&registry);
-    let platform_tool = distri::PlatformTool::from_arc(std::sync::Arc::new(Distri::from_config(config.clone())));
+    let platform_tool =
+        distri::PlatformTool::from_arc(std::sync::Arc::new(Distri::from_config(config.clone())));
     platform_tool.register(&registry);
 
     let stream_config = config.clone().with_timeout(60);
@@ -870,7 +886,9 @@ async fn run_interactive_chat(
         }
 
         if input.starts_with('/') {
-            match handle_slash_command(input, app, config, &mut current_agent, &mut current_model).await? {
+            match handle_slash_command(input, app, config, &mut current_agent, &mut current_model)
+                .await?
+            {
                 SlashCommandResult::Continue => continue,
                 SlashCommandResult::Exit => break,
                 SlashCommandResult::ClearContext => {
@@ -891,7 +909,11 @@ async fn run_interactive_chat(
             Some(agent_cfg) => {
                 app.ensure_local_tools(&current_agent, &agent_cfg.agent)
                     .await?;
-                agent_cfg.cloud.id.map(|u| u.to_string()).unwrap_or_else(|| current_agent.clone())
+                agent_cfg
+                    .cloud
+                    .id
+                    .map(|u| u.to_string())
+                    .unwrap_or_else(|| current_agent.clone())
             }
             None => {
                 eprintln!("Agent '{}' not found on {}", current_agent, base_url);
@@ -902,9 +924,16 @@ async fn run_interactive_chat(
         // Fetch connections context for agent prompt (lightweight, only connected providers)
         let distri_client = Distri::from_config(config.clone());
         let connections_context = build_connections_context(&distri_client).await;
-        let params = build_chat_message_params(input.to_string(), &thread_id, &current_model, connections_context);
+        let params = build_chat_message_params(
+            input.to_string(),
+            &thread_id,
+            &current_model,
+            connections_context,
+        );
 
-        if let Err(err) = print_stream_verbose(&stream_client, &stream_agent_id, params, verbose).await {
+        if let Err(err) =
+            print_stream_verbose(&stream_client, &stream_agent_id, params, verbose).await
+        {
             eprintln!("Error from agent: {}", err);
         }
     }
@@ -1085,12 +1114,7 @@ async fn select_agent_menu(app: &mut DistriClientApp) -> Result<Option<String>> 
                     println!(
                         "Agent requires external tools not available in this client: {}",
                         if choice.missing_tools.is_empty() {
-                            choice
-                                .required_tools
-                                .iter()
-                                .cloned()
-                                .collect::<Vec<_>>()
-                                .join(", ")
+                            choice.required_tools.to_vec().join(", ")
                         } else {
                             choice.missing_tools.join(", ")
                         }
@@ -1205,9 +1229,7 @@ fn get_last_thread_file() -> PathBuf {
     let home = std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
         .unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(home)
-        .join(".distri")
-        .join("last_thread")
+    PathBuf::from(home).join(".distri").join("last_thread")
 }
 
 fn save_last_thread(thread_id: &str) -> Result<(), std::io::Error> {
@@ -1698,8 +1720,7 @@ async fn parse_skill_file(path: &Path) -> Result<CreateSkillRequest> {
         .with_context(|| format!("reading {}", path.display()))?;
 
     // Split frontmatter and body
-    let (frontmatter_str, body) = if raw.starts_with("---") {
-        let rest = &raw[3..];
+    let (frontmatter_str, body) = if let Some(rest) = raw.strip_prefix("---") {
         if let Some(end) = rest.find("---") {
             let fm = &rest[..end];
             let body = &rest[end + 3..];
@@ -1840,7 +1861,12 @@ async fn handle_secrets_command(client: &Distri, command: SecretsCommands) -> Re
             }
         }
         SecretsCommands::Set { key, value } => {
-            client.set_secret(&distri::NewSecretRequest { key: key.clone(), value }).await?;
+            client
+                .set_secret(&distri::NewSecretRequest {
+                    key: key.clone(),
+                    value,
+                })
+                .await?;
             println!("Secret '{}' set.", key);
         }
         SecretsCommands::Delete { key } => {
@@ -1875,21 +1901,34 @@ async fn handle_workflow_command(client: &distri::Distri, command: WorkflowComma
     use distri::workflow::*;
 
     match command {
-        WorkflowCommands::Run { workflow: workflow_ref, step, input } => {
+        WorkflowCommands::Run {
+            workflow: workflow_ref,
+            step,
+            input,
+        } => {
             // Resolve workflow: local file or server name/id
             let mut workflow = if std::path::Path::new(&workflow_ref).exists() {
-                let content = fs::read_to_string(&workflow_ref).await
+                let content = fs::read_to_string(&workflow_ref)
+                    .await
                     .with_context(|| format!("Failed to read workflow file: {}", workflow_ref))?;
                 serde_json::from_str::<WorkflowDefinition>(&content)
                     .with_context(|| "Failed to parse workflow JSON")?
             } else {
                 println!("  Fetching workflow '{}' from server...", workflow_ref);
-                let list = client.list_workflows().await
+                let list = client
+                    .list_workflows()
+                    .await
                     .with_context(|| "Failed to list workflows from server")?;
-                let record = list.workflows.iter()
+                let record = list
+                    .workflows
+                    .iter()
                     .find(|w| w.name == workflow_ref || w.id == workflow_ref)
-                    .ok_or_else(|| anyhow::anyhow!("Workflow '{}' not found on server", workflow_ref))?;
-                let full = client.get_workflow(&record.id).await
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("Workflow '{}' not found on server", workflow_ref)
+                    })?;
+                let full = client
+                    .get_workflow(&record.id)
+                    .await
                     .with_context(|| "Failed to fetch workflow")?;
                 serde_json::from_value::<WorkflowDefinition>(full.definition)
                     .with_context(|| "Failed to parse workflow definition from server")?
@@ -1899,12 +1938,23 @@ async fn handle_workflow_command(client: &distri::Distri, command: WorkflowComma
             if let Some(ref input_json) = input {
                 let input_val: serde_json::Value = serde_json::from_str(input_json)
                     .with_context(|| "Failed to parse --input JSON")?;
-                workflow = workflow.with_input(input_val)
+                workflow = workflow
+                    .with_input(input_val)
                     .map_err(|e| anyhow::anyhow!(e))?;
             }
 
-            println!("{}→ Workflow:{} {} ({})", COLOR_BRIGHT_GREEN, COLOR_RESET, workflow.id, workflow.steps.len());
-            println!("  {} steps, status: {:?}", workflow.steps.len(), workflow.status);
+            println!(
+                "{}→ Workflow:{} {} ({})",
+                COLOR_BRIGHT_GREEN,
+                COLOR_RESET,
+                workflow.id,
+                workflow.steps.len()
+            );
+            println!(
+                "  {} steps, status: {:?}",
+                workflow.steps.len(),
+                workflow.status
+            );
             println!();
 
             // Run with event streaming
@@ -1918,13 +1968,19 @@ async fn handle_workflow_command(client: &distri::Distri, command: WorkflowComma
                 let mut last_step = String::new();
                 while let Some(event) = rx.recv().await {
                     match &event {
-                        WorkflowEvent::StepStarted { step_id, step_label, .. } => {
+                        WorkflowEvent::StepStarted {
+                            step_id,
+                            step_label,
+                            ..
+                        } => {
                             if !last_step.is_empty() {
                                 print!("  Press Enter for next step (q to quit): ");
                                 io::stdout().flush()?;
                                 let mut buf = String::new();
                                 io::stdin().read_line(&mut buf)?;
-                                if buf.trim() == "q" { break; }
+                                if buf.trim() == "q" {
+                                    break;
+                                }
                             }
                             println!("  ⏳ {} — {}", step_id, step_label);
                             last_step = step_id.clone();
@@ -1935,8 +1991,16 @@ async fn handle_workflow_command(client: &distri::Distri, command: WorkflowComma
                         WorkflowEvent::StepFailed { step_id, error, .. } => {
                             println!("  ❌ {} — {}", step_id, error);
                         }
-                        WorkflowEvent::WorkflowCompleted { status, steps_done, steps_failed, .. } => {
-                            println!("\n  Status: {:?} ({} done, {} failed)", status, steps_done, steps_failed);
+                        WorkflowEvent::WorkflowCompleted {
+                            status,
+                            steps_done,
+                            steps_failed,
+                            ..
+                        } => {
+                            println!(
+                                "\n  Status: {:?} ({} done, {} failed)",
+                                status, steps_done, steps_failed
+                            );
                         }
                         _ => {}
                     }
@@ -1950,18 +2014,32 @@ async fn handle_workflow_command(client: &distri::Distri, command: WorkflowComma
                         WorkflowEvent::WorkflowStarted { total_steps, .. } => {
                             println!("  Starting workflow ({} steps)", total_steps);
                         }
-                        WorkflowEvent::StepStarted { step_id, step_label, .. } => {
+                        WorkflowEvent::StepStarted {
+                            step_id,
+                            step_label,
+                            ..
+                        } => {
                             print!("  ⏳ {} — {}...", step_id, step_label);
                             io::stdout().flush()?;
                         }
-                        WorkflowEvent::StepCompleted { step_id, .. } => {
+                        WorkflowEvent::StepCompleted { step_id: _, .. } => {
                             println!(" ✅");
                         }
-                        WorkflowEvent::StepFailed { step_id, error, .. } => {
+                        WorkflowEvent::StepFailed {
+                            step_id: _, error, ..
+                        } => {
                             println!(" ❌ {}", error);
                         }
-                        WorkflowEvent::WorkflowCompleted { status, steps_done, steps_failed, .. } => {
-                            println!("\n  Status: {:?} ({} done, {} failed)", status, steps_done, steps_failed);
+                        WorkflowEvent::WorkflowCompleted {
+                            status,
+                            steps_done,
+                            steps_failed,
+                            ..
+                        } => {
+                            println!(
+                                "\n  Status: {:?} ({} done, {} failed)",
+                                status, steps_done, steps_failed
+                            );
                         }
                     }
                 }
@@ -1970,33 +2048,57 @@ async fn handle_workflow_command(client: &distri::Distri, command: WorkflowComma
         }
 
         WorkflowCommands::Status { path } => {
-            let content = fs::read_to_string(&path).await
+            let content = fs::read_to_string(&path)
+                .await
                 .with_context(|| format!("Failed to read: {}", path.display()))?;
-            let workflow: WorkflowDefinition = serde_json::from_str(&content)
-                .with_context(|| "Failed to parse workflow JSON")?;
+            let workflow: WorkflowDefinition =
+                serde_json::from_str(&content).with_context(|| "Failed to parse workflow JSON")?;
 
-            println!("{}Workflow:{} {}", COLOR_BRIGHT_GREEN, COLOR_RESET, workflow.id);
+            println!(
+                "{}Workflow:{} {}",
+                COLOR_BRIGHT_GREEN, COLOR_RESET, workflow.id
+            );
             println!("  Status: {:?}", workflow.status);
-            println!("  Steps: {}/{}", workflow.steps.iter().filter(|s| s.status == StepStatus::Done).count(), workflow.steps.len());
+            println!(
+                "  Steps: {}/{}",
+                workflow
+                    .steps
+                    .iter()
+                    .filter(|s| s.status == StepStatus::Done)
+                    .count(),
+                workflow.steps.len()
+            );
             for (i, s) in workflow.steps.iter().enumerate() {
-                let icon = match s.status { StepStatus::Done => "✅", StepStatus::Failed => "❌", StepStatus::Running => "⏳", StepStatus::Blocked => "🚫", _ => "⬜" };
+                let icon = match s.status {
+                    StepStatus::Done => "✅",
+                    StepStatus::Failed => "❌",
+                    StepStatus::Running => "⏳",
+                    StepStatus::Blocked => "🚫",
+                    _ => "⬜",
+                };
                 println!("  {} {}. {}", icon, i + 1, s.label);
             }
         }
 
         WorkflowCommands::Push { path, name } => {
-            let content = fs::read_to_string(&path).await
+            let content = fs::read_to_string(&path)
+                .await
                 .with_context(|| format!("Failed to read workflow file: {}", path.display()))?;
-            let definition: serde_json::Value = serde_json::from_str(&content)
-                .with_context(|| "Failed to parse workflow JSON")?;
+            let definition: serde_json::Value =
+                serde_json::from_str(&content).with_context(|| "Failed to parse workflow JSON")?;
 
             let wf_name = name.unwrap_or_else(|| {
-                path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or("workflow".to_string())
+                path.file_stem()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or("workflow".to_string())
             });
 
             match client.push_workflow(&wf_name, definition).await {
                 Ok(record) => {
-                    println!("{}→ Pushed:{} {} ({})", COLOR_BRIGHT_GREEN, COLOR_RESET, record.name, record.id);
+                    println!(
+                        "{}→ Pushed:{} {} ({})",
+                        COLOR_BRIGHT_GREEN, COLOR_RESET, record.name, record.id
+                    );
                 }
                 Err(e) => {
                     println!("Failed to push workflow: {}", e);
@@ -2004,22 +2106,20 @@ async fn handle_workflow_command(client: &distri::Distri, command: WorkflowComma
             }
         }
 
-        WorkflowCommands::List => {
-            match client.list_workflows().await {
-                Ok(response) => {
-                    if response.workflows.is_empty() {
-                        println!("No workflows found.");
-                    } else {
-                        for w in &response.workflows {
-                            let tpl = if w.is_template { " [template]" } else { "" };
-                            println!("  {} ({} steps){}", w.name, w.step_count, tpl);
-                        }
-                        println!("\n  {} total", response.total);
+        WorkflowCommands::List => match client.list_workflows().await {
+            Ok(response) => {
+                if response.workflows.is_empty() {
+                    println!("No workflows found.");
+                } else {
+                    for w in &response.workflows {
+                        let tpl = if w.is_template { " [template]" } else { "" };
+                        println!("  {} ({} steps){}", w.name, w.step_count, tpl);
                     }
+                    println!("\n  {} total", response.total);
                 }
-                Err(e) => println!("Failed to list workflows: {}", e),
             }
-        }
+            Err(e) => println!("Failed to list workflows: {}", e),
+        },
     }
     Ok(())
 }

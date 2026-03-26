@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use distri_types::configuration::{DbConnectionConfig, MetadataStoreConfig, StoreConfig};
 use crate::agent::{parse_agent_markdown_content, ExecutorContext};
 use crate::AgentOrchestratorBuilder;
+use distri_types::configuration::{DbConnectionConfig, MetadataStoreConfig, StoreConfig};
 
 /// Creates a StoreConfig that uses a temporary in-memory SQLite database.
 fn test_store_config() -> StoreConfig {
@@ -28,7 +28,10 @@ async fn parse_code_executor_agent() {
     let def = parse_agent_markdown_content(content).await.unwrap();
     assert_eq!(def.name, "code");
     assert_eq!(def.max_iterations, Some(10));
-    let tools = def.tools.as_ref().expect("code agent should have tools config");
+    let tools = def
+        .tools
+        .as_ref()
+        .expect("code agent should have tools config");
     assert!(tools.builtin.contains(&"start_shell".to_string()));
     assert!(tools.builtin.contains(&"execute_shell".to_string()));
     assert!(tools.builtin.contains(&"stop_shell".to_string()));
@@ -40,7 +43,10 @@ async fn parse_coder_agent() {
     let def = parse_agent_markdown_content(content).await.unwrap();
     assert_eq!(def.name, "coder");
     assert!(def.max_iterations.unwrap() >= 10);
-    let tools = def.tools.as_ref().expect("coder agent should have tools config");
+    let tools = def
+        .tools
+        .as_ref()
+        .expect("coder agent should have tools config");
     assert!(tools.builtin.contains(&"final".to_string()));
     assert!(tools.builtin.contains(&"start_shell".to_string()));
 }
@@ -95,10 +101,7 @@ async fn orchestrator_registers_agent() {
             .unwrap(),
     );
 
-    orchestrator
-        .register_agent_definition(def)
-        .await
-        .unwrap();
+    orchestrator.register_agent_definition(def).await.unwrap();
 
     let agent = orchestrator.get_agent(&name).await;
     assert!(agent.is_some());

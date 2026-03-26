@@ -2,7 +2,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::{core::FileType, Part, PlanStep, TaskStatus, ToolResponse};
+use crate::{Part, PlanStep, TaskStatus, ToolResponse, core::FileType};
 
 /// Execution strategy types
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

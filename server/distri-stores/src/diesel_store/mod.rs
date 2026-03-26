@@ -33,11 +33,11 @@ use distri_types::stores::SessionSummary;
 use distri_types::stores::{
     AgentStatsInfo, AgentStore, AgentUsageInfo, ExternalToolCallsStore, FilterMessageType,
     MemoryStore, MessageFilter, MessageReadStatus, MessageVote, MessageVoteSummary,
-    NewPromptTemplate, NewSecret, NewSkill, NewSkillScript,
-    PromptTemplateRecord, PromptTemplateStore, ScratchpadStore, SecretRecord,
-    SecretStore, SessionMemory, SessionStore, SkillRecord, SkillScriptRecord, SkillStore, TaskStore,
-    ThreadListFilter, ThreadListResponse, ThreadStore, UpdatePromptTemplate, UpdateSkill,
-    UpdateSkillScript, VoteMessageRequest, VoteType,
+    NewPromptTemplate, NewSecret, NewSkill, NewSkillScript, PromptTemplateRecord,
+    PromptTemplateStore, ScratchpadStore, SecretRecord, SecretStore, SessionMemory, SessionStore,
+    SkillRecord, SkillScriptRecord, SkillStore, TaskStore, ThreadListFilter, ThreadListResponse,
+    ThreadStore, UpdatePromptTemplate, UpdateSkill, UpdateSkillScript, VoteMessageRequest,
+    VoteType,
 };
 use distri_types::{
     AgentError, AgentEvent, AgentEventType, CreateThreadRequest, Message, ScratchpadEntry, Task,
@@ -1047,8 +1047,8 @@ where
                 ORDER BY thread_count DESC, agent_name ASC"
             };
 
-            let query = diesel::sql_query(sql)
-                .bind::<diesel::sql_types::Text, _>(user_id.to_string());
+            let query =
+                diesel::sql_query(sql).bind::<diesel::sql_types::Text, _>(user_id.to_string());
 
             if let Some(ref pattern) = search_pattern {
                 query
@@ -1354,8 +1354,8 @@ where
         thread_id: &str,
         message_id: &str,
     ) -> Result<MessageReadStatus> {
-        let user_id = distri_types::context::current_user_id()
-            .unwrap_or_else(|| "anonymous".to_string());
+        let user_id =
+            distri_types::context::current_user_id().unwrap_or_else(|| "anonymous".to_string());
         let now = Utc::now();
 
         let mut connection = self.conn().await?;
@@ -1410,8 +1410,8 @@ where
         thread_id: &str,
         message_id: &str,
     ) -> Result<Option<MessageReadStatus>> {
-        let user_id = distri_types::context::current_user_id()
-            .unwrap_or_else(|| "anonymous".to_string());
+        let user_id =
+            distri_types::context::current_user_id().unwrap_or_else(|| "anonymous".to_string());
         let mut connection = self.conn().await?;
 
         let row = message_reads::table
@@ -1433,8 +1433,8 @@ where
     }
 
     async fn get_thread_read_status(&self, thread_id: &str) -> Result<Vec<MessageReadStatus>> {
-        let user_id = distri_types::context::current_user_id()
-            .unwrap_or_else(|| "anonymous".to_string());
+        let user_id =
+            distri_types::context::current_user_id().unwrap_or_else(|| "anonymous".to_string());
         let mut connection = self.conn().await?;
 
         let rows = message_reads::table
@@ -1459,8 +1459,8 @@ where
     // ========== Message Voting Methods ==========
 
     async fn vote_message(&self, request: VoteMessageRequest) -> Result<MessageVote> {
-        let user_id = distri_types::context::current_user_id()
-            .unwrap_or_else(|| "anonymous".to_string());
+        let user_id =
+            distri_types::context::current_user_id().unwrap_or_else(|| "anonymous".to_string());
         let now = Utc::now();
 
         // Validate: downvotes require a comment
@@ -1544,8 +1544,8 @@ where
     }
 
     async fn remove_vote(&self, thread_id: &str, message_id: &str) -> Result<()> {
-        let user_id = distri_types::context::current_user_id()
-            .unwrap_or_else(|| "anonymous".to_string());
+        let user_id =
+            distri_types::context::current_user_id().unwrap_or_else(|| "anonymous".to_string());
         let mut connection = self.conn().await?;
 
         diesel::delete(
@@ -1566,8 +1566,8 @@ where
         thread_id: &str,
         message_id: &str,
     ) -> Result<Option<MessageVote>> {
-        let user_id = distri_types::context::current_user_id()
-            .unwrap_or_else(|| "anonymous".to_string());
+        let user_id =
+            distri_types::context::current_user_id().unwrap_or_else(|| "anonymous".to_string());
         let mut connection = self.conn().await?;
 
         let row = message_votes::table
@@ -1600,8 +1600,8 @@ where
         thread_id: &str,
         message_id: &str,
     ) -> Result<MessageVoteSummary> {
-        let user_id = distri_types::context::current_user_id()
-            .unwrap_or_else(|| "anonymous".to_string());
+        let user_id =
+            distri_types::context::current_user_id().unwrap_or_else(|| "anonymous".to_string());
         let mut connection = self.conn().await?;
 
         // Count upvotes
@@ -3010,8 +3010,8 @@ where
         let mut connection = self.conn().await?;
         // Filter out non-saveable parts (e.g., images) when storing to DB to prevent storage bloat
         let filtered_response = tool_response.filter_for_save();
-        let response_json =
-            serde_json::to_string(&filtered_response).context("failed to serialize tool response")?;
+        let response_json = serde_json::to_string(&filtered_response)
+            .context("failed to serialize tool response")?;
 
         let changes = ExternalToolCallChangeset {
             status: Some("completed"),
@@ -3641,8 +3641,7 @@ where
 
         match result {
             Some(model) => {
-                let script_models =
-                    self.load_scripts_for_skill(&mut conn, &model.id).await?;
+                let script_models = self.load_scripts_for_skill(&mut conn, &model.id).await?;
                 Ok(Some(to_skill_record(model, script_models)))
             }
             None => Ok(None),

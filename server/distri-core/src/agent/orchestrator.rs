@@ -17,19 +17,16 @@ pub use distri_stores::{AgentStore, ThreadStore};
 use distri_types::configuration::AgentConfig;
 use distri_types::stores::{PromptTemplateStore, SecretStore};
 use distri_types::{
-    LlmDefinition, ModelSettings, Part, ServerMetadataWrapper, ToolCall,
-    ToolsConfig,
-};
-use distri_types::{
     browser::BrowsrClientConfig,
-    configuration::{
-        DistriServerConfig, StoreConfig,
-    },
+    configuration::{DistriServerConfig, StoreConfig},
     HookMutation,
 };
 use distri_types::{
     configuration::{DefinitionOverrides, ObjectStorageConfig},
     LLmContext, OrchestratorTrait,
+};
+use distri_types::{
+    LlmDefinition, ModelSettings, Part, ServerMetadataWrapper, ToolCall, ToolsConfig,
 };
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{mpsc, Mutex, RwLock};
@@ -308,7 +305,10 @@ impl AgentOrchestrator {
                     base.inner.context_size
                 },
                 top_p: agent.inner.top_p.or(base.inner.top_p),
-                frequency_penalty: agent.inner.frequency_penalty.or(base.inner.frequency_penalty),
+                frequency_penalty: agent
+                    .inner
+                    .frequency_penalty
+                    .or(base.inner.frequency_penalty),
                 presence_penalty: agent.inner.presence_penalty.or(base.inner.presence_penalty),
                 provider,
                 parameters: if agent.inner.parameters.is_some() {
@@ -646,10 +646,8 @@ impl AgentOrchestrator {
 
                         // Add skill tool: load_skill
                         context
-                            .extend_tools(vec![
-                                Arc::new(crate::tools::skill_script::LoadSkillTool)
-                                    as Arc<dyn Tool>,
-                            ])
+                            .extend_tools(vec![Arc::new(crate::tools::skill_script::LoadSkillTool)
+                                as Arc<dyn Tool>])
                             .await;
                     }
                 }
@@ -810,7 +808,11 @@ impl AgentOrchestrator {
             .await
             .ok_or_else(|| AgentError::NotFound(format!("Agent {} not found", agent_id)))?;
 
-        Self::apply_agent_overrides(&mut agent_config, definition_overrides, &context.default_model_settings);
+        Self::apply_agent_overrides(
+            &mut agent_config,
+            definition_overrides,
+            &context.default_model_settings,
+        );
         Self::validate_agent_model(&agent_config)?;
 
         let agent = self
@@ -840,7 +842,11 @@ impl AgentOrchestrator {
             .await
             .ok_or_else(|| AgentError::NotFound(format!("Agent {} not found", agent_id)))?;
 
-        Self::apply_agent_overrides(&mut agent_config, definition_overrides, &context.default_model_settings);
+        Self::apply_agent_overrides(
+            &mut agent_config,
+            definition_overrides,
+            &context.default_model_settings,
+        );
         Self::validate_agent_model(&agent_config)?;
 
         // Check if todos are enabled for this agent and initialize shared_todos if needed
@@ -1200,10 +1206,12 @@ impl AgentOrchestrator {
         definition.model_settings = merged;
 
         let default_analysis_settings = default_model_settings.clone();
-        definition.analysis_model_settings = match (definition.analysis_model_settings.take(), &default_analysis_settings) {
+        definition.analysis_model_settings = match (
+            definition.analysis_model_settings.take(),
+            &default_analysis_settings,
+        ) {
             (Some(agent_analysis), Some(base)) => {
-                Some(Self::merge_model_settings(base, &agent_analysis)
-                    .unwrap_or(base.clone()))
+                Some(Self::merge_model_settings(base, &agent_analysis).unwrap_or(base.clone()))
             }
             (Some(agent_analysis), None) => Some(agent_analysis),
             (None, base) => base.clone(),
@@ -1485,15 +1493,20 @@ impl OrchestratorTrait for AgentOrchestrator {
 
         // Load agent definition to get base model_settings if available
         // Only StandardAgent has model_settings; workflow agents don't
-        if let Some(AgentConfig::StandardAgent(def)) = self.get_agent(&llm_def.name).await.as_ref() {
+        if let Some(AgentConfig::StandardAgent(def)) = self.get_agent(&llm_def.name).await.as_ref()
+        {
             // Merge: use agent's model_settings as base, override with request's model_settings
-            if let (Some(base), Some(override_ms)) = (def.model_settings(), &llm_def.model_settings) {
-                let final_model_settings =
-                    Self::merge_model_settings(base, override_ms)
-                        .unwrap_or_else(|e| {
-                            tracing::error!("Failed to merge model settings for LLM call '{}': {}", llm_def.name, e);
-                            override_ms.clone()
-                        });
+            if let (Some(base), Some(override_ms)) = (def.model_settings(), &llm_def.model_settings)
+            {
+                let final_model_settings = Self::merge_model_settings(base, override_ms)
+                    .unwrap_or_else(|e| {
+                        tracing::error!(
+                            "Failed to merge model settings for LLM call '{}': {}",
+                            llm_def.name,
+                            e
+                        );
+                        override_ms.clone()
+                    });
                 llm_def.model_settings = Some(final_model_settings);
             } else if llm_def.model_settings.is_none() {
                 llm_def.model_settings = def.model_settings().cloned();

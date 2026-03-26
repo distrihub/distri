@@ -46,13 +46,9 @@ struct ContextEventSink {
 impl EventSink for ContextEventSink {
     async fn emit(&self, event: WorkflowEvent) {
         let text = match &event {
-            WorkflowEvent::WorkflowStarted {
-                total_steps,
-                ..
-            } => format!(
-                "\n**Workflow started** — {} steps\n",
-                total_steps
-            ),
+            WorkflowEvent::WorkflowStarted { total_steps, .. } => {
+                format!("\n**Workflow started** — {} steps\n", total_steps)
+            }
             WorkflowEvent::StepStarted {
                 step_id,
                 step_label,
@@ -68,10 +64,7 @@ impl EventSink for ContextEventSink {
                 step_label,
                 error,
                 ..
-            } => format!(
-                "  Failed: `{}` — {} — {}\n",
-                step_id, step_label, error
-            ),
+            } => format!("  Failed: `{}` — {} — {}\n", step_id, step_label, error),
             WorkflowEvent::WorkflowCompleted {
                 status,
                 steps_done,
@@ -83,9 +76,7 @@ impl EventSink for ContextEventSink {
             ),
         };
 
-        self.context
-            .emit(WorkflowAgent::emit_text(&text))
-            .await;
+        self.context.emit(WorkflowAgent::emit_text(&text)).await;
     }
 }
 
@@ -184,7 +175,10 @@ impl StepExecutor for ContextStepExecutor {
                             run_id: self.context.run_id.clone(),
                             thread_id: self.context.thread_id.clone(),
                             user_id: self.context.user_id.clone(),
-                            session_store: self.context.orchestrator.as_ref()
+                            session_store: self
+                                .context
+                                .orchestrator
+                                .as_ref()
                                 .map(|orch| orch.stores.session_store.clone())
                                 .expect("Orchestrator should have a session store"),
                             event_tx: None,
@@ -218,9 +212,10 @@ impl StepExecutor for ContextStepExecutor {
 
             StepKind::Checkpoint { message } => {
                 self.context
-                    .emit(WorkflowAgent::emit_text(
-                        &format!("\n**Checkpoint:** {}\n", message),
-                    ))
+                    .emit(WorkflowAgent::emit_text(&format!(
+                        "\n**Checkpoint:** {}\n",
+                        message
+                    )))
                     .await;
                 Ok(StepResult::done(serde_json::json!({"message": message})))
             }
@@ -248,10 +243,7 @@ impl StepExecutor for ContextStepExecutor {
     }
 
     fn supports(&self, requirement: &StepRequirement) -> bool {
-        matches!(
-            requirement.skill.as_str(),
-            "native:network" | "native:tool"
-        )
+        matches!(requirement.skill.as_str(), "native:network" | "native:tool")
     }
 }
 
@@ -394,10 +386,17 @@ impl BaseAgent for WorkflowAgent {
             .map(|step| {
                 let id = step["id"].as_str().unwrap_or("unknown").to_string();
                 let label = step["label"].as_str().unwrap_or(&id).to_string();
-                let kind = step["kind"]["type"].as_str().unwrap_or("unknown").to_string();
+                let kind = step["kind"]["type"]
+                    .as_str()
+                    .unwrap_or("unknown")
+                    .to_string();
                 let deps: Vec<String> = step["depends_on"]
                     .as_array()
-                    .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect()
+                    })
                     .unwrap_or_default();
 
                 DagNode {
