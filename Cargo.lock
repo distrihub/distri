@@ -758,8 +758,6 @@ dependencies = [
 [[package]]
 name = "browsr-client"
 version = "0.3.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b50b3da02b96d9c4c5c4247948cfe0ab1d9f02ef2938ac053d51aaa1e1379763"
 dependencies = [
  "anyhow",
  "browsr-types",
@@ -774,8 +772,6 @@ dependencies = [
 [[package]]
 name = "browsr-types"
 version = "0.3.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0dae0d40c53259ecf533d1effb9f79c07e862001c871d13ea30a6f4bbd9b0098"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1314,6 +1310,41 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "092966b41edc516079bdf31ec78a2e0588d1d0c08f78b91d8307215928642b2b"
 
 [[package]]
+name = "deepagent"
+version = "0.3.6"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "clap",
+ "comfy-table",
+ "crossterm 0.27.0",
+ "dirs 5.0.1",
+ "distri",
+ "distri-cli",
+ "distri-filesystem",
+ "distri-server",
+ "distri-types",
+ "dotenv",
+ "futures",
+ "futures-util",
+ "fuzzy-matcher",
+ "inquire",
+ "open",
+ "regex",
+ "reqwest 0.12.8",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "syntect",
+ "tokio",
+ "toml 0.9.5",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
 name = "deranged"
 version = "0.5.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1556,6 +1587,7 @@ dependencies = [
  "distri-a2a",
  "distri-filesystem",
  "distri-types",
+ "distri-workflow",
  "flate2",
  "futures-util",
  "image 0.24.9",
@@ -1611,9 +1643,10 @@ dependencies = [
 
 [[package]]
 name = "distri-cli"
-version = "0.3.7"
+version = "0.3.8"
 dependencies = [
  "anyhow",
+ "async-trait",
  "clap",
  "crossterm 0.27.0",
  "distri",
@@ -1634,41 +1667,6 @@ dependencies = [
  "urlencoding",
  "uuid",
  "warp",
-]
-
-[[package]]
-name = "distri-coder"
-version = "0.3.6"
-dependencies = [
- "anyhow",
- "async-trait",
- "chrono",
- "clap",
- "comfy-table",
- "crossterm 0.27.0",
- "dirs 5.0.1",
- "distri",
- "distri-cli",
- "distri-filesystem",
- "distri-server",
- "distri-types",
- "dotenv",
- "futures",
- "futures-util",
- "fuzzy-matcher",
- "inquire",
- "open",
- "regex",
- "reqwest 0.12.8",
- "serde",
- "serde_json",
- "serde_yaml",
- "syntect",
- "tokio",
- "toml 0.9.5",
- "tracing",
- "tracing-subscriber",
- "uuid",
 ]
 
 [[package]]
@@ -1695,13 +1693,14 @@ dependencies = [
  "distri-parsers",
  "distri-stores",
  "distri-types",
+ "distri-workflow",
  "dotenv",
  "futures",
  "futures-channel",
  "futures-util",
  "handlebars",
  "html-escape",
- "jsonschema",
+ "jsonschema 0.33.0",
  "once_cell",
  "openssl",
  "opentelemetry",
@@ -1764,7 +1763,7 @@ dependencies = [
  "distri-types",
  "futures",
  "handlebars",
- "jsonschema",
+ "jsonschema 0.33.0",
  "quick-xml 0.31.0",
  "regex",
  "roxmltree",
@@ -1932,7 +1931,7 @@ dependencies = [
  "futures",
  "futures-util",
  "handlebars",
- "jsonschema",
+ "jsonschema 0.33.0",
  "rand 0.8.5",
  "regex",
  "schemars",
@@ -1947,6 +1946,20 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
+ "uuid",
+]
+
+[[package]]
+name = "distri-workflow"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "jsonschema 0.28.3",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
  "uuid",
 ]
 
@@ -2112,6 +2125,17 @@ name = "fallible-iterator"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4443176a9f2c162692bd3d352d745ef9413eec5782a80d8fd6f8a1ac692a07f7"
+
+[[package]]
+name = "fancy-regex"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6e24cb5a94bcae1e5408b0effca5cd7172ea3c5755049c5f3af4cd283a165298"
+dependencies = [
+ "bit-set",
+ "regex-automata",
+ "regex-syntax",
+]
 
 [[package]]
 name = "fancy-regex"
@@ -3178,6 +3202,31 @@ dependencies = [
 
 [[package]]
 name = "jsonschema"
+version = "0.28.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4b8f66fe41fa46a5c83ed1c717b7e0b4635988f427083108c8cf0a882cc13441"
+dependencies = [
+ "ahash",
+ "base64 0.22.1",
+ "bytecount",
+ "email_address",
+ "fancy-regex 0.14.0",
+ "fraction",
+ "idna",
+ "itoa",
+ "num-cmp",
+ "once_cell",
+ "percent-encoding",
+ "referencing 0.28.3",
+ "regex-syntax",
+ "reqwest 0.12.8",
+ "serde",
+ "serde_json",
+ "uuid-simd",
+]
+
+[[package]]
+name = "jsonschema"
 version = "0.33.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d46662859bc5f60a145b75f4632fbadc84e829e45df6c5de74cfc8e05acb96b5"
@@ -3186,7 +3235,7 @@ dependencies = [
  "base64 0.22.1",
  "bytecount",
  "email_address",
- "fancy-regex",
+ "fancy-regex 0.16.2",
  "fraction",
  "idna",
  "itoa",
@@ -3194,7 +3243,7 @@ dependencies = [
  "num-traits",
  "once_cell",
  "percent-encoding",
- "referencing",
+ "referencing 0.33.0",
  "regex",
  "regex-syntax",
  "reqwest 0.12.8",
@@ -4434,6 +4483,19 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.111",
+]
+
+[[package]]
+name = "referencing"
+version = "0.28.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d0dcb5ab28989ad7c91eb1b9531a37a1a137cc69a0499aee4117cae4a107c464"
+dependencies = [
+ "ahash",
+ "fluent-uri",
+ "once_cell",
+ "percent-encoding",
+ "serde_json",
 ]
 
 [[package]]

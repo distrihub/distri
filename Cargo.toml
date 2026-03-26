@@ -5,6 +5,7 @@ members = [
   "distri-cli",
   "distri-a2a",
   "distri-types",
+  "distri-workflow",
   "distri-filesystem",
   "distri",
   # server
@@ -15,7 +16,7 @@ members = [
   "server/distri-auth",
   "server/distri-parsers",
   # samples
-  "samples/coder",
+  "deepagent",
   "samples/scraper",
 ]
 default-members = ["distri-cli", "server/distri-server-cli"]
@@ -54,8 +55,8 @@ actix-rt = "2.9"
 actix-files = "0.6"
 actix-multipart = "0.7"
 
-browsr-client = { version = "0.3.8" }
-browsr-types = { version = "0.3.8" }
+browsr-client = { path = "../../browsr-cloud/browsr/browsr-client" }
+browsr-types = { path = "../../browsr-cloud/browsr/browsr-types" }
 # Other shared dependencies
 rand = "0.8"
 futures-util = "0.3.31"

@@ -6,6 +6,14 @@ mod local_tools;
 mod printer;
 mod renderers;
 
+/// Workflow engine — define, execute, and track multi-step workflows.
+pub mod workflow {
+    pub use distri_workflow::*;
+}
+
+mod workflow_executor;
+pub use workflow_executor::{DistriStepExecutor, WorkflowSession, ChannelEventSink};
+
 use thiserror::Error;
 
 pub use crate::external_tools_runtime::ExternalToolRegistry;

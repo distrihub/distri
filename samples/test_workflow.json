@@ -1,0 +1,30 @@
+{
+  "id": "api-test",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "api_base": { "type": "string", "description": "Base URL for the API" }
+    },
+    "required": ["api_base"]
+  },
+  "steps": [
+    {
+      "id": "list_agents",
+      "label": "List available agents",
+      "kind": { "type": "tool_call", "tool_name": "list_agents" },
+      "execution": "parallel"
+    },
+    {
+      "id": "list_skills",
+      "label": "List available skills",
+      "kind": { "type": "tool_call", "tool_name": "list_skills" },
+      "execution": "parallel"
+    },
+    {
+      "id": "summarize",
+      "label": "Summarize workspace state",
+      "kind": { "type": "checkpoint", "message": "Workspace scan complete." },
+      "depends_on": ["list_agents", "list_skills"]
+    }
+  ]
+}

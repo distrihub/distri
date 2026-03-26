@@ -259,8 +259,14 @@ pub struct ContextUsage {
     pub tokens: u32,
     pub input_tokens: u32,
     pub output_tokens: u32,
+    /// Tokens read from provider cache (e.g., Anthropic prompt caching)
+    #[serde(default)]
+    pub cached_tokens: u32,
     pub current_iteration: usize,
     pub context_size: ContextSize,
+    /// Model used for LLM calls in this context
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

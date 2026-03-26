@@ -48,6 +48,28 @@ pub struct AgentConfigWithTools {
 pub enum AgentConfig {
     /// Standard markdown-based agent
     StandardAgent(StandardDefinition),
+    /// Workflow-based agent — executes a workflow DAG instead of an LLM loop
+    WorkflowAgent(WorkflowAgentDefinition),
+}
+
+/// Definition for a workflow-based agent.
+/// The workflow definition is stored as JSON to avoid crate dependency on distri-workflow.
+/// Deserialize to `distri_workflow::WorkflowDefinition` at execution time.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowAgentDefinition {
+    pub name: String,
+    pub description: String,
+    #[serde(default = "default_version")]
+    pub version: String,
+    /// The workflow definition as JSON.
+    pub definition: serde_json::Value,
+    /// JSON Schema for required inputs (validated before execution).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_schema: Option<serde_json::Value>,
+}
+
+fn default_version() -> String {
+    "0.1.0".to_string()
 }
 
 impl AgentConfig {
@@ -55,12 +77,16 @@ impl AgentConfig {
     pub fn get_name(&self) -> &str {
         match self {
             AgentConfig::StandardAgent(def) => &def.name,
+            AgentConfig::WorkflowAgent(def) => &def.name,
         }
     }
 
     pub fn get_definition(&self) -> &StandardDefinition {
         match self {
-            AgentConfig::StandardAgent(def) => &def,
+            AgentConfig::StandardAgent(def) => def,
+            AgentConfig::WorkflowAgent(_) => {
+                panic!("WorkflowAgent does not have a StandardDefinition")
+            }
         }
     }
 
@@ -68,6 +94,7 @@ impl AgentConfig {
     pub fn get_description(&self) -> &str {
         match self {
             AgentConfig::StandardAgent(def) => &def.description,
+            AgentConfig::WorkflowAgent(def) => &def.description,
         }
     }
 
@@ -75,6 +102,7 @@ impl AgentConfig {
     pub fn validate(&self) -> anyhow::Result<()> {
         match self {
             AgentConfig::StandardAgent(def) => def.validate(),
+            AgentConfig::WorkflowAgent(_def) => Ok(()), // Workflow validation happens at execution
         }
     }
 

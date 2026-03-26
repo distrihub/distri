@@ -12,7 +12,10 @@
         "openid",
         "https://www.googleapis.com/auth/calendar",
         "https://www.googleapis.com/auth/gmail.readonly",
-        "https://www.googleapis.com/auth/drive.readonly"
+        "https://www.googleapis.com/auth/drive.readonly",
+        "https://www.googleapis.com/auth/drive",
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/spreadsheets.readonly"
       ],
       "default_scopes": [
         "email",
@@ -26,10 +29,14 @@
         "gmail": "https://www.googleapis.com/auth/gmail.readonly",
         "gmail.readonly": "https://www.googleapis.com/auth/gmail.readonly",
         "gmail.modify": "https://www.googleapis.com/auth/gmail.modify",
-        "drive": "https://www.googleapis.com/auth/drive.readonly",
+        "drive": "https://www.googleapis.com/auth/drive",
         "drive.readonly": "https://www.googleapis.com/auth/drive.readonly",
         "drive.file": "https://www.googleapis.com/auth/drive.file",
-        "userinfo": "https://www.googleapis.com/auth/userinfo.profile"
+        "userinfo": "https://www.googleapis.com/auth/userinfo.profile",
+        "spreadsheets": "https://www.googleapis.com/auth/spreadsheets",
+        "spreadsheets.readonly": "https://www.googleapis.com/auth/spreadsheets.readonly",
+        "sheets": "https://www.googleapis.com/auth/spreadsheets",
+        "sheets.readonly": "https://www.googleapis.com/auth/spreadsheets.readonly"
       },
       "env_vars": {
         "client_id": "GOOGLE_CLIENT_ID",

@@ -219,11 +219,14 @@ impl LLMExecutor {
             total_tokens: u.total_tokens,
         });
 
-        // Track usage in context
+        // Track usage and model in context
         if let Some(u) = &usage {
             self.context
                 .increment_usage(u.input_tokens, u.output_tokens)
                 .await;
+        }
+        if !ms.model.is_empty() {
+            self.context.set_usage_model(ms.model.clone()).await;
         }
 
         self.model_logger.log_model_execution(
@@ -1257,16 +1260,19 @@ async fn get_client_with_context(
             api_key,
             project_id,
         } => {
-            let additional_headers = get_headers(llm_def, additional_headers, label);
+            let mut additional_headers = get_headers(llm_def, additional_headers, label);
 
             let mut config = GatewayConfig::default()
                 .with_api_base(base_url)
-                .with_context(context)
-                .with_additional_headers(additional_headers);
+                .with_context(context);
 
             if let Some(api_key) = api_key {
-                config = config.with_api_key(api_key);
+                config = config.with_api_key(api_key.clone());
+                // Also send as api-key header for Azure-hosted OpenAI compatible endpoints
+                additional_headers.insert("api-key".to_string(), api_key.clone());
             }
+            config = config.with_additional_headers(additional_headers);
+
             if let Some(project_id) = project_id {
                 config = config.with_project_id(project_id);
             }

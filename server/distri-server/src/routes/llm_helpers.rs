@@ -24,7 +24,10 @@ pub async fn load_agent_model_settings(
 
     let agent_config = executor.get_agent(aid).await?;
 
-    let distri_types::configuration::AgentConfig::StandardAgent(def) = &agent_config;
+    let def = match &agent_config {
+        distri_types::configuration::AgentConfig::StandardAgent(d) => d,
+        _ => return None,
+    };
     def.model_settings().cloned()
 }
 
@@ -100,7 +103,10 @@ pub async fn load_agent_system_message(
     tracing::info!("Successfully loaded agent config for: {}", aid);
 
     // Extract instructions based on agent type
-    let distri_types::configuration::AgentConfig::StandardAgent(def) = &agent_config;
+    let def = match &agent_config {
+        distri_types::configuration::AgentConfig::StandardAgent(d) => d,
+        _ => return None,
+    };
     let instructions = {
         tracing::info!("Agent '{}' is StandardAgent, instructions length: {}", aid, def.instructions.len());
         if !def.instructions.is_empty() {

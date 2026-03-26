@@ -17,6 +17,7 @@ pub mod reflection;
 pub mod server;
 pub mod standard;
 pub mod strategy;
+pub mod workflow_agent;
 pub mod todos;
 pub mod token_estimator;
 pub mod tool_lookup;
@@ -30,6 +31,7 @@ pub use prompt_validation::{
     validate_agent_prompt_with_partials, validate_partial_references, Criticality, ValidationIssue,
 };
 pub use standard::*;
+pub use workflow_agent::WorkflowAgent;
 // Don't export AgentHooks from types to avoid conflict
 pub use types::{AgentEvent, AgentEventType, BaseAgent, ExecutorContext, InvokeResult};
 

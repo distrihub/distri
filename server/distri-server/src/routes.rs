@@ -39,6 +39,7 @@ mod secrets;
 mod session;
 mod skills;
 mod tools;
+mod workflows;
 
 pub fn all(cfg: &mut web::ServiceConfig) {
     cfg.configure(distri);
@@ -128,6 +129,7 @@ pub fn distri(cfg: &mut web::ServiceConfig) {
     .configure(secrets::configure_secret_routes)
     .configure(providers::configure_provider_routes)
     .configure(skills::configure_skill_routes)
+    .configure(workflows::configure_workflow_routes)
     .configure(models::configure_model_routes)
     // Voice streaming endpoints - TODO: Implement after fixing compilation issues
     // .service(web::resource("/voice/stream").route(web::get().to(voice_stream_handler)));
@@ -454,7 +456,14 @@ async fn get_agent_definition(
     let context = Arc::default();
     match agent {
         Some(agent) => {
-            let distri_types::configuration::AgentConfig::StandardAgent(def) = &agent;
+            let def = match &agent {
+                distri_types::configuration::AgentConfig::StandardAgent(d) => d,
+                _ => {
+                    return HttpResponse::BadRequest().json(json!({
+                        "error": "WorkflowAgent does not support this endpoint"
+                    }));
+                }
+            };
             let markdown = build_markdown_from_definition(def);
             let tools = executor
                 .get_agent_tools(def, &context)
@@ -526,7 +535,14 @@ async fn validate_agent_handler(
     };
 
     // Extract provider from agent config
-    let distri_types::configuration::AgentConfig::StandardAgent(def) = &agent;
+    let def = match &agent {
+        distri_types::configuration::AgentConfig::StandardAgent(d) => d,
+        _ => {
+            return HttpResponse::BadRequest().json(json!({
+                "error": "WorkflowAgent does not support this endpoint"
+            }));
+        }
+    };
     let provider = def.model_settings().map(|ms| ms.inner.provider.clone()).unwrap_or(distri_types::ModelProvider::OpenAI {});
 
     // Check for missing provider secrets
