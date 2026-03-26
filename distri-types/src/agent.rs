@@ -950,10 +950,15 @@ impl ModelSettings {
     /// Returns None if the format is invalid.
     /// For custom providers (prefixed with "custom_"), returns an OpenAICompatible provider
     /// with empty base_url/api_key — the caller must fill these from secrets/config.
-    pub fn from_provider_model_str(s: &str) -> Option<Self> {
-        let (provider_str, model_id) = s.split_once('/')?;
+    /// Parse "provider/model" string into ModelSettings.
+    /// Returns Err with a descriptive message if the provider is not recognized.
+    /// Returns Ok(None) if the input is empty or has no slash.
+    pub fn from_provider_model_str(s: &str) -> Result<Option<Self>, String> {
+        let Some((provider_str, model_id)) = s.split_once('/') else {
+            return Ok(None);
+        };
         if model_id.is_empty() {
-            return None;
+            return Ok(None);
         }
         let provider = match provider_str {
             "openai" => ModelProvider::OpenAI {},
@@ -961,8 +966,13 @@ impl ModelSettings {
                 base_url: None,
                 api_key: None,
             },
+            "azure_openai" => ModelProvider::AzureOpenAI {
+                base_url: String::new(),
+                api_key: None,
+                deployment: model_id.to_string(),
+                api_version: ModelProvider::azure_api_version(),
+            },
             "gemini" => {
-                // Gemini uses OpenAI-compatible endpoint
                 ModelProvider::OpenAICompatible {
                     base_url: "https://generativelanguage.googleapis.com/v1beta/openai".to_string(),
                     api_key: None,
@@ -970,22 +980,26 @@ impl ModelSettings {
                 }
             }
             _ if provider_str.starts_with("custom_") => {
-                // Custom providers use OpenAICompatible — base_url/api_key resolved from secrets
                 ModelProvider::OpenAICompatible {
                     base_url: String::new(),
                     api_key: None,
                     project_id: None,
                 }
             }
-            _ => return None,
+            unknown => {
+                return Err(format!(
+                    "Provider '{}' is not recognized. Supported providers: openai, anthropic, azure_openai, gemini, or custom_* prefixed providers.",
+                    unknown
+                ));
+            }
         };
-        Some(Self {
+        Ok(Some(Self {
             model: model_id.to_string(),
             inner: ModelSettingsInner {
                 provider,
                 ..Default::default()
             },
-        })
+        }))
     }
 }
 

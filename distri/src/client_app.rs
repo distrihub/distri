@@ -185,7 +185,10 @@ impl DistriClientApp {
             return Ok(());
         };
 
-        let AgentConfig::StandardAgent(def) = config;
+        let def = match config {
+            AgentConfig::StandardAgent(def) => def,
+            _ => return Ok(()), // Workflow agents don't need local filesystem tools
+        };
         if def.file_system.include_server_tools() {
             return Ok(());
         }

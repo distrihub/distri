@@ -342,6 +342,7 @@ impl StoreBuilder {
             prompt_template_store: Some(prompt_template_store),
             secret_store: Some(secret_store),
             skill_store,
+            workflow_store: None,
         })
     }
 }
@@ -449,6 +450,7 @@ pub async fn create_ephemeral_execution_stores(
         prompt_template_store: base_stores.prompt_template_store.clone(),
         secret_store: base_stores.secret_store.clone(),
         skill_store: base_stores.skill_store.clone(),
+        workflow_store: base_stores.workflow_store.clone(),
     })
 }
 
@@ -491,5 +493,6 @@ pub async fn prepare_stores_for_execution(
         prompt_template_store: base_stores.prompt_template_store.clone(),
         secret_store: base_stores.secret_store.clone(),
         skill_store: base_stores.skill_store.clone(),
+        workflow_store: base_stores.workflow_store.clone(),
     })
 }

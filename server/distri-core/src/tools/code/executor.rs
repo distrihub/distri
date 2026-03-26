@@ -1,9 +1,8 @@
 use std::sync::Arc;
 
 use crate::agent::ExecutorContext;
-use crate::tools::shell::{
-    BrowsrShellClient, CreateShellSessionRequest, ShellExecRequest,
-};
+use browsr_types::{ShellCreateSessionRequest, ShellExecRequest};
+use crate::tools::shell::BrowsrShellClient;
 use serde_json::Value;
 
 #[derive(Clone)]
@@ -35,13 +34,10 @@ pub async fn execute_code_with_tools(
 
     // Create an ephemeral shell session
     let session = client
-        .create_session(&CreateShellSessionRequest {
+        .create_session(&ShellCreateSessionRequest {
             language: Some(language.to_string()),
-            image: None,
-            memory_mb: None,
-            disk_mb: None,
-            cpu_cores: None,
             timeout_secs: Some(30),
+            ..Default::default()
         })
         .await
         .map_err(|e| anyhow::anyhow!("Failed to create shell session: {}", e))?;
@@ -69,29 +65,30 @@ pub async fn execute_code_with_tools(
     });
 
     let response = result.map_err(|e| anyhow::anyhow!("Shell execution failed: {}", e))?;
+    let r = &response.result;
 
     // Collect observations from stdout
     let mut observations = Vec::new();
-    if !response.stdout.is_empty() {
-        observations.push(response.stdout.clone());
+    if !r.stdout.is_empty() {
+        observations.push(r.stdout.clone());
     }
-    if !response.stderr.is_empty() {
-        observations.push(format!("[stderr] {}", response.stderr));
+    if !r.stderr.is_empty() {
+        observations.push(format!("[stderr] {}", r.stderr));
     }
 
     // Build result value
     let result_value = serde_json::json!({
-        "stdout": response.stdout,
-        "stderr": response.stderr,
-        "exit_code": response.exit_code,
-        "duration_ms": response.duration_ms,
+        "stdout": r.stdout,
+        "stderr": r.stderr,
+        "exit_code": r.exit_code,
+        "duration_ms": r.duration_ms,
     });
 
-    if response.exit_code != 0 {
+    if r.exit_code.unwrap_or(0) != 0 {
         tracing::warn!(
-            "Code execution exited with code {}: {}",
-            response.exit_code,
-            response.stderr
+            "Code execution exited with code {:?}: {}",
+            r.exit_code,
+            r.stderr
         );
     }
 

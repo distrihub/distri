@@ -1,0 +1,12 @@
+{{#if available_connections}}
+# CONNECTIONS
+OAuth connections to external services. **ALWAYS use `connection_request` to make API calls** — it auto-injects the auth token.
+
+**NEVER pass raw tokens to sub-agents or code execution.** The `connection_request` action handles authentication automatically.
+
+**Workflow:** `get_connection_usage({connection_id})` for API docs → `connection_request({connection_id, method, url, headers?, body?})` to call APIs.
+If scopes are insufficient, use `connect({provider, additional_scopes: [...]})` to expand permissions.
+
+## Connected Services
+{{{available_connections}}}
+{{/if}}

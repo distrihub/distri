@@ -1,6 +1,7 @@
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -57,6 +58,10 @@ enum Commands {
         agent: Option<String>,
         #[clap(long, help = "Task text to send", required = true)]
         task: String,
+        /// JSON context: {"envs": {"KEY": "value"}, "secrets": {"KEY": "value"}}
+        /// Envs are available to tools via REQUEST_BASE_URL, REQUEST_AUTH_TOKEN etc.
+        #[clap(long, help = "JSON context with envs and secrets")]
+        context: Option<String>,
     },
 
     /// Agent-related commands
@@ -103,6 +108,12 @@ enum Commands {
     Config {
         #[clap(subcommand)]
         command: ConfigCommands,
+    },
+
+    /// Workflow execution commands
+    Workflow {
+        #[clap(subcommand)]
+        command: WorkflowCommands,
     },
 
     /// Login to Distri Cloud and configure workspace
@@ -230,17 +241,48 @@ enum ThreadsCommands {
     List,
 }
 
+#[derive(Subcommand, Debug, Clone)]
+enum WorkflowCommands {
+    /// Run a workflow (by name from server, or local JSON file)
+    Run {
+        #[clap(help = "Workflow name (from server) or path to JSON file")]
+        workflow: String,
+        /// Run one step at a time (interactive)
+        #[clap(long, help = "Run one step at a time")]
+        step: bool,
+        /// JSON input to pass to the workflow context
+        #[clap(long, help = "JSON input for workflow context")]
+        input: Option<String>,
+    },
+    /// Show workflow status (from local file)
+    Status {
+        #[clap(help = "Path to workflow JSON file")]
+        path: PathBuf,
+    },
+    /// Push a workflow to the server
+    Push {
+        #[clap(help = "Path to workflow JSON file")]
+        path: PathBuf,
+        /// Name for the workflow (defaults to filename)
+        #[clap(long)]
+        name: Option<String>,
+    },
+    /// List workflows on the server
+    List,
+}
+
 const COLOR_RESET: &str = "\x1b[0m";
 const COLOR_BRIGHT_GREEN: &str = "\x1b[92m";
 const COLOR_BRIGHT_MAGENTA: &str = "\x1b[95m";
 const COLOR_BRIGHT_YELLOW: &str = "\x1b[93m";
 const COLOR_GRAY: &str = "\x1b[90m";
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 enum SlashCommandResult {
     Continue,
     Exit,
     ClearContext,
+    Resume(String),
 }
 
 #[derive(Clone)]
@@ -292,6 +334,7 @@ impl DistriAutocomplete {
             "/models".to_string(),
             "/model".to_string(),
             "/available-tools".to_string(),
+            "/resume".to_string(),
             "/clear".to_string(),
             "/exit".to_string(),
             "/quit".to_string(),
@@ -401,7 +444,7 @@ async fn main() -> Result<()> {
             let agent_name = agent.unwrap_or_else(|| "distri".to_string());
             run_interactive_chat(&mut app, &config, &base_url, agent_name, cli.verbose).await?;
         }
-        Commands::Run { agent, task } => {
+        Commands::Run { agent, task, context } => {
             let agent_name = agent.unwrap_or_else(|| "distri".to_string());
             // Resolve agent name to UUID for cloud compatibility.
             // Cloud middleware requires UUID for proper workspace context (model settings, secrets).
@@ -413,14 +456,54 @@ async fn main() -> Result<()> {
                     stream_agent_id = uuid.to_string();
                 }
             }
-            let params = build_message_params(task);
+            // Fetch connections to inject into agent context
+            let distri_client = Distri::from_config(config.clone());
+            let connections_context = build_connections_context(&distri_client).await;
+            let mut params = build_message_params(task, connections_context);
+
+            // Merge --context envs/secrets into metadata.env_vars
+            if let Some(ctx_json) = context {
+                if let Ok(ctx) = serde_json::from_str::<serde_json::Value>(&ctx_json) {
+                    let meta = params.metadata.get_or_insert(serde_json::json!({}));
+                    // envs → env_vars in metadata
+                    if let Some(envs) = ctx.get("envs").and_then(|v| v.as_object()) {
+                        let env_vars = meta
+                            .as_object_mut()
+                            .unwrap()
+                            .entry("env_vars")
+                            .or_insert(serde_json::json!({}));
+                        if let Some(ev) = env_vars.as_object_mut() {
+                            for (k, v) in envs {
+                                if let Some(s) = v.as_str() {
+                                    ev.insert(k.clone(), serde_json::Value::String(s.to_string()));
+                                }
+                            }
+                        }
+                    }
+                    // secrets → also env_vars (secrets are just env_vars that shouldn't be logged)
+                    if let Some(secrets) = ctx.get("secrets").and_then(|v| v.as_object()) {
+                        let env_vars = meta
+                            .as_object_mut()
+                            .unwrap()
+                            .entry("env_vars")
+                            .or_insert(serde_json::json!({}));
+                        if let Some(ev) = env_vars.as_object_mut() {
+                            for (k, v) in secrets {
+                                if let Some(s) = v.as_str() {
+                                    ev.insert(k.clone(), serde_json::Value::String(s.to_string()));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
 
             println!("Streaming agent '{}' via {}", agent_name, base_url);
             let registry = app.registry();
             register_approval_handler(&registry);
             let platform_tool = distri::PlatformTool::from_arc(std::sync::Arc::new(Distri::from_config(config.clone())));
             platform_tool.register(&registry);
-            let stream_config = config.clone().with_timeout(60);
+            let stream_config = config.clone().with_timeout(600);
             let http_client = stream_config.build_http_client()?;
             let client = AgentStreamClient::from_config(config.clone())
                 .with_http_client(http_client)
@@ -528,6 +611,9 @@ async fn main() -> Result<()> {
         Commands::Threads { command } => {
             handle_threads_command(&client, command).await?;
         }
+        Commands::Workflow { command } => {
+            handle_workflow_command(&client, command).await?;
+        }
         Commands::Serve { .. } => unreachable!("serve handled earlier"),
     }
 
@@ -596,26 +682,80 @@ fn resolve_distri_server_binary() -> PathBuf {
 fn platform_tool_definition() -> serde_json::Value {
     serde_json::json!({
         "name": "distri_platform",
-        "description": "Manage platform resources. Actions: list_agents, get_agent({agent_id}), list_skills, get_skill({skill_id}), create_skill({name,content}), delete_skill({skill_id}), list_providers (available OAuth providers), connect({provider,scopes?}) returns auth_url for OAuth, list_connections, get_connection_token({connection_id}), list_secrets, get_secret({key}), set_secret({key,value}), delete_secret({key}), list_threads. Use 'connect' to initiate OAuth and get an auth_url for the user.",
+        "description": "Manage platform resources. Actions: list_agents, get_agent({agent_id}), list_skills, get_skill({skill_id}), create_skill({name,content}), delete_skill({skill_id}), list_providers, connect({provider,scopes?,additional_scopes?}), list_connections, get_connection_usage({connection_id}) returns API docs for a connection, connection_request({connection_id,method,url,headers?,body?}) makes authenticated API calls (token auto-injected), register_connection_provider({id,name,authorization_url,token_url,client_id,client_secret,...}), list_connection_providers, discover_skill({query}), import_skill({url,name?}), list_secrets, get_secret({key}), set_secret({key,value}), delete_secret({key}), list_notes({tag?,search?}), create_note({title,content,tags?}), get_note({note_id}), update_note({note_id,title?,content?,tags?}), delete_note({note_id}), list_threads. Workflow: list_connections → get_connection_usage → connection_request.",
         "parameters": {
             "type": "object",
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["list_actions", "list_agents", "get_agent", "list_skills", "get_skill", "create_skill", "delete_skill", "list_providers", "connect", "list_connections", "get_connection_token", "list_secrets", "get_secret", "set_secret", "delete_secret", "list_threads"],
+                    "enum": ["list_actions", "list_agents", "get_agent", "list_skills", "get_skill", "create_skill", "delete_skill", "list_providers", "connect", "list_connections", "get_connection_usage", "connection_request", "register_connection_provider", "list_connection_providers", "discover_skill", "import_skill", "list_secrets", "get_secret", "set_secret", "delete_secret", "list_notes", "create_note", "get_note", "update_note", "delete_note", "list_threads"],
                     "description": "The action to perform"
                 },
-                "params": {
-                    "type": "object",
-                    "description": "Parameters for the action (e.g. {provider: 'google'} for connect)"
-                }
+                "provider": { "type": "string", "description": "Provider name for connect (e.g. 'google', 'slack')" },
+                "scopes": { "type": "array", "items": { "type": "string" }, "description": "OAuth scopes for connect" },
+                "additional_scopes": { "type": "array", "items": { "type": "string" }, "description": "Extra scopes to add when re-connecting" },
+                "connection_id": { "type": "string", "description": "Connection ID for connection_request/get_connection_usage" },
+                "method": { "type": "string", "description": "HTTP method for connection_request (GET, POST, PUT, DELETE)" },
+                "url": { "type": "string", "description": "API URL for connection_request" },
+                "headers": { "type": "object", "description": "Extra headers for connection_request" },
+                "body": { "description": "Request body for connection_request (JSON)" },
+                "agent_id": { "type": "string", "description": "Agent ID for get_agent" },
+                "skill_id": { "type": "string", "description": "Skill ID for get_skill/delete_skill" },
+                "name": { "type": "string", "description": "Name for create_skill" },
+                "content": { "type": "string", "description": "Content for create_skill" },
+                "key": { "type": "string", "description": "Key for get_secret/set_secret/delete_secret" },
+                "value": { "type": "string", "description": "Value for set_secret" },
+                "query": { "type": "string", "description": "Search query for discover_skill" },
+                "title": { "type": "string", "description": "Title for create_note/update_note" },
+                "note_id": { "type": "string", "description": "Note ID for get_note/update_note/delete_note" },
+                "tags": { "type": "array", "items": { "type": "string" }, "description": "Tags for notes" },
+                "tag": { "type": "string", "description": "Tag filter for list_notes" },
+                "search": { "type": "string", "description": "Search query for list_notes" }
             },
             "required": ["action"]
         }
     })
 }
 
-fn build_message_params(content: String) -> MessageSendParams {
+/// Build a lightweight connections summary to inject into the agent's prompt context.
+async fn build_connections_context(client: &Distri) -> Option<String> {
+    let connections = client.list_connections().await.ok()?;
+    if connections.is_empty() {
+        return None;
+    }
+    let lines: Vec<String> = connections
+        .iter()
+        .filter(|c| c.status.as_deref() == Some("connected"))
+        .map(|c| {
+            let scopes: Vec<String> = c
+                .config
+                .as_ref()
+                .and_then(|cfg| cfg.get("scopes"))
+                .and_then(|v| serde_json::from_value(v.clone()).ok())
+                .unwrap_or_default();
+            format!(
+                "- **{}** (connection_id: `{}`): scopes=[{}]",
+                c.name,
+                c.id,
+                scopes.join(", ")
+            )
+        })
+        .collect();
+    if lines.is_empty() {
+        return None;
+    }
+    Some(lines.join("\n"))
+}
+
+fn build_message_params(content: String, connections_context: Option<String>) -> MessageSendParams {
+    let mut meta = serde_json::json!({
+        "external_tools": [platform_tool_definition()]
+    });
+    if let Some(conn_ctx) = connections_context {
+        meta["dynamic_values"] = serde_json::json!({
+            "available_connections": conn_ctx
+        });
+    }
     MessageSendParams {
         message: A2aMessage {
             kind: EventKind::Message,
@@ -629,18 +769,22 @@ fn build_message_params(content: String) -> MessageSendParams {
             metadata: None,
         },
         configuration: None,
-        metadata: Some(serde_json::json!({
-            "external_tools": [platform_tool_definition()]
-        })),
+        metadata: Some(meta),
     }
 }
 
-fn build_chat_message_params(content: String, thread_id: &str, model: &str) -> MessageSendParams {
+fn build_chat_message_params(content: String, thread_id: &str, model: &str, connections_context: Option<String>) -> MessageSendParams {
     let mut meta = serde_json::json!({
         "external_tools": [platform_tool_definition()]
     });
     if !model.trim().is_empty() {
         meta["definition_overrides"] = serde_json::json!({ "model": model });
+    }
+    if let Some(conn_ctx) = connections_context {
+        let dv = meta.get("dynamic_values").and_then(|v| v.as_object().cloned()).unwrap_or_default();
+        let mut dv = dv;
+        dv.insert("available_connections".to_string(), serde_json::Value::String(conn_ctx));
+        meta["dynamic_values"] = serde_json::Value::Object(dv);
     }
 
     MessageSendParams {
@@ -726,12 +870,17 @@ async fn run_interactive_chat(
         }
 
         if input.starts_with('/') {
-            match handle_slash_command(input, app, &mut current_agent, &mut current_model).await? {
+            match handle_slash_command(input, app, config, &mut current_agent, &mut current_model).await? {
                 SlashCommandResult::Continue => continue,
                 SlashCommandResult::Exit => break,
                 SlashCommandResult::ClearContext => {
                     thread_id = uuid::Uuid::new_v4().to_string();
                     println!("Context cleared - new conversation started");
+                    continue;
+                }
+                SlashCommandResult::Resume(tid) => {
+                    thread_id = tid;
+                    println!("Resumed thread: {}", thread_id);
                     continue;
                 }
             }
@@ -750,12 +899,18 @@ async fn run_interactive_chat(
             }
         };
 
-        let params = build_chat_message_params(input.to_string(), &thread_id, &current_model);
+        // Fetch connections context for agent prompt (lightweight, only connected providers)
+        let distri_client = Distri::from_config(config.clone());
+        let connections_context = build_connections_context(&distri_client).await;
+        let params = build_chat_message_params(input.to_string(), &thread_id, &current_model, connections_context);
 
         if let Err(err) = print_stream_verbose(&stream_client, &stream_agent_id, params, verbose).await {
             eprintln!("Error from agent: {}", err);
         }
     }
+
+    // Save last thread_id for /resume last
+    let _ = save_last_thread(&thread_id);
 
     Ok(())
 }
@@ -763,6 +918,7 @@ async fn run_interactive_chat(
 async fn handle_slash_command(
     input: &str,
     app: &mut DistriClientApp,
+    config: &DistriConfig,
     current_agent: &mut String,
     current_model: &mut String,
 ) -> Result<SlashCommandResult> {
@@ -829,6 +985,58 @@ async fn handle_slash_command(
         "/available-tools" => {
             print_available_tools(app, current_agent).await?;
             Ok(SlashCommandResult::Continue)
+        }
+        "/resume" => {
+            if let Some(resume_arg) = arg {
+                if resume_arg == "last" {
+                    match load_last_thread() {
+                        Some(tid) => {
+                            return Ok(SlashCommandResult::Resume(tid));
+                        }
+                        None => {
+                            println!("No previous thread saved.");
+                            return Ok(SlashCommandResult::Continue);
+                        }
+                    }
+                } else {
+                    // Treat as direct thread ID
+                    return Ok(SlashCommandResult::Resume(resume_arg.to_string()));
+                }
+            }
+            // No arg: list recent threads and let user pick
+            let client = Distri::from_config(config.clone());
+            match client.list_threads().await {
+                Ok(threads) => {
+                    if threads.is_empty() {
+                        println!("No threads found.");
+                        return Ok(SlashCommandResult::Continue);
+                    }
+                    let display: Vec<String> = threads
+                        .iter()
+                        .take(10)
+                        .map(|t| {
+                            let title = t.title.as_deref().unwrap_or("(no title)");
+                            let agent = t.agent_name.as_deref().unwrap_or("unknown");
+                            format!("{} - {} [{}]", t.id, title, agent)
+                        })
+                        .collect();
+                    match Select::new("Select thread to resume", display).prompt() {
+                        Ok(selected) => {
+                            let tid = selected.split(" - ").next().unwrap_or("").to_string();
+                            Ok(SlashCommandResult::Resume(tid))
+                        }
+                        Err(inquire::InquireError::OperationCanceled)
+                        | Err(inquire::InquireError::OperationInterrupted) => {
+                            Ok(SlashCommandResult::Continue)
+                        }
+                        Err(err) => Err(anyhow::anyhow!("Error selecting thread: {}", err)),
+                    }
+                }
+                Err(err) => {
+                    eprintln!("Failed to list threads: {}", err);
+                    Ok(SlashCommandResult::Continue)
+                }
+            }
         }
         _ => {
             println!("Unknown command. Type /help for commands.");
@@ -906,6 +1114,7 @@ fn required_external_tools(agent: &AgentConfig) -> Vec<String> {
             .as_ref()
             .and_then(|tools| tools.external.clone())
             .unwrap_or_default(),
+        AgentConfig::WorkflowAgent(_) => vec![],
     }
 }
 
@@ -992,6 +1201,31 @@ fn get_history_file() -> PathBuf {
     PathBuf::from(".distri").join("history.txt")
 }
 
+fn get_last_thread_file() -> PathBuf {
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .unwrap_or_else(|_| ".".to_string());
+    PathBuf::from(home)
+        .join(".distri")
+        .join("last_thread")
+}
+
+fn save_last_thread(thread_id: &str) -> Result<(), std::io::Error> {
+    let path = get_last_thread_file();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&path, thread_id)
+}
+
+fn load_last_thread() -> Option<String> {
+    let path = get_last_thread_file();
+    std::fs::read_to_string(path)
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
 fn print_welcome_header(agent_name: &str, model_name: &str) {
     println!();
     println!(
@@ -1049,6 +1283,9 @@ fn print_help_message() {
     println!("  /models             - Set model override (prompts for name)");
     println!("  /model <name>       - Set model override directly");
     println!("  /available-tools    - List tools available to the client");
+    println!("  /resume             - Pick from recent threads to resume");
+    println!("  /resume last        - Resume the last thread from previous session");
+    println!("  /resume <id>        - Resume a specific thread by ID");
     println!("  /clear              - Clear the current session context");
     println!("  /help               - Show this help message");
     println!("  /exit               - Exit the chat");
@@ -1626,6 +1863,161 @@ async fn handle_threads_command(client: &Distri, command: ThreadsCommands) -> Re
                     let title = thread.title.as_deref().unwrap_or("(no title)");
                     println!("{} - {} [{}]", thread.id, title, agent);
                 }
+            }
+        }
+    }
+    Ok(())
+}
+
+// ── Workflow commands ────────────────────────────────────────────────────────
+
+async fn handle_workflow_command(client: &distri::Distri, command: WorkflowCommands) -> Result<()> {
+    use distri::workflow::*;
+
+    match command {
+        WorkflowCommands::Run { workflow: workflow_ref, step, input } => {
+            // Resolve workflow: local file or server name/id
+            let mut workflow = if std::path::Path::new(&workflow_ref).exists() {
+                let content = fs::read_to_string(&workflow_ref).await
+                    .with_context(|| format!("Failed to read workflow file: {}", workflow_ref))?;
+                serde_json::from_str::<WorkflowDefinition>(&content)
+                    .with_context(|| "Failed to parse workflow JSON")?
+            } else {
+                println!("  Fetching workflow '{}' from server...", workflow_ref);
+                let list = client.list_workflows().await
+                    .with_context(|| "Failed to list workflows from server")?;
+                let record = list.workflows.iter()
+                    .find(|w| w.name == workflow_ref || w.id == workflow_ref)
+                    .ok_or_else(|| anyhow::anyhow!("Workflow '{}' not found on server", workflow_ref))?;
+                let full = client.get_workflow(&record.id).await
+                    .with_context(|| "Failed to fetch workflow")?;
+                serde_json::from_value::<WorkflowDefinition>(full.definition)
+                    .with_context(|| "Failed to parse workflow definition from server")?
+            };
+
+            // Apply input if provided
+            if let Some(ref input_json) = input {
+                let input_val: serde_json::Value = serde_json::from_str(input_json)
+                    .with_context(|| "Failed to parse --input JSON")?;
+                workflow = workflow.with_input(input_val)
+                    .map_err(|e| anyhow::anyhow!(e))?;
+            }
+
+            println!("{}→ Workflow:{} {} ({})", COLOR_BRIGHT_GREEN, COLOR_RESET, workflow.id, workflow.steps.len());
+            println!("  {} steps, status: {:?}", workflow.steps.len(), workflow.status);
+            println!();
+
+            // Run with event streaming
+            let arc_client = Arc::new(client.clone());
+            let mut session = distri::WorkflowSession::new(arc_client, workflow);
+            let mut rx = session.take_events().unwrap();
+
+            if step {
+                // Step mode: print events as they come, pause between steps
+                let handle = tokio::spawn(async move { session.run().await });
+                let mut last_step = String::new();
+                while let Some(event) = rx.recv().await {
+                    match &event {
+                        WorkflowEvent::StepStarted { step_id, step_label, .. } => {
+                            if !last_step.is_empty() {
+                                print!("  Press Enter for next step (q to quit): ");
+                                io::stdout().flush()?;
+                                let mut buf = String::new();
+                                io::stdin().read_line(&mut buf)?;
+                                if buf.trim() == "q" { break; }
+                            }
+                            println!("  ⏳ {} — {}", step_id, step_label);
+                            last_step = step_id.clone();
+                        }
+                        WorkflowEvent::StepCompleted { step_id, .. } => {
+                            println!("  ✅ {}", step_id);
+                        }
+                        WorkflowEvent::StepFailed { step_id, error, .. } => {
+                            println!("  ❌ {} — {}", step_id, error);
+                        }
+                        WorkflowEvent::WorkflowCompleted { status, steps_done, steps_failed, .. } => {
+                            println!("\n  Status: {:?} ({} done, {} failed)", status, steps_done, steps_failed);
+                        }
+                        _ => {}
+                    }
+                }
+                let _ = handle.await;
+            } else {
+                // Run all, print events as they stream
+                let handle = tokio::spawn(async move { session.run().await });
+                while let Some(event) = rx.recv().await {
+                    match &event {
+                        WorkflowEvent::WorkflowStarted { total_steps, .. } => {
+                            println!("  Starting workflow ({} steps)", total_steps);
+                        }
+                        WorkflowEvent::StepStarted { step_id, step_label, .. } => {
+                            print!("  ⏳ {} — {}...", step_id, step_label);
+                            io::stdout().flush()?;
+                        }
+                        WorkflowEvent::StepCompleted { step_id, .. } => {
+                            println!(" ✅");
+                        }
+                        WorkflowEvent::StepFailed { step_id, error, .. } => {
+                            println!(" ❌ {}", error);
+                        }
+                        WorkflowEvent::WorkflowCompleted { status, steps_done, steps_failed, .. } => {
+                            println!("\n  Status: {:?} ({} done, {} failed)", status, steps_done, steps_failed);
+                        }
+                    }
+                }
+                let _ = handle.await;
+            }
+        }
+
+        WorkflowCommands::Status { path } => {
+            let content = fs::read_to_string(&path).await
+                .with_context(|| format!("Failed to read: {}", path.display()))?;
+            let workflow: WorkflowDefinition = serde_json::from_str(&content)
+                .with_context(|| "Failed to parse workflow JSON")?;
+
+            println!("{}Workflow:{} {}", COLOR_BRIGHT_GREEN, COLOR_RESET, workflow.id);
+            println!("  Status: {:?}", workflow.status);
+            println!("  Steps: {}/{}", workflow.steps.iter().filter(|s| s.status == StepStatus::Done).count(), workflow.steps.len());
+            for (i, s) in workflow.steps.iter().enumerate() {
+                let icon = match s.status { StepStatus::Done => "✅", StepStatus::Failed => "❌", StepStatus::Running => "⏳", StepStatus::Blocked => "🚫", _ => "⬜" };
+                println!("  {} {}. {}", icon, i + 1, s.label);
+            }
+        }
+
+        WorkflowCommands::Push { path, name } => {
+            let content = fs::read_to_string(&path).await
+                .with_context(|| format!("Failed to read workflow file: {}", path.display()))?;
+            let definition: serde_json::Value = serde_json::from_str(&content)
+                .with_context(|| "Failed to parse workflow JSON")?;
+
+            let wf_name = name.unwrap_or_else(|| {
+                path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or("workflow".to_string())
+            });
+
+            match client.push_workflow(&wf_name, definition).await {
+                Ok(record) => {
+                    println!("{}→ Pushed:{} {} ({})", COLOR_BRIGHT_GREEN, COLOR_RESET, record.name, record.id);
+                }
+                Err(e) => {
+                    println!("Failed to push workflow: {}", e);
+                }
+            }
+        }
+
+        WorkflowCommands::List => {
+            match client.list_workflows().await {
+                Ok(response) => {
+                    if response.workflows.is_empty() {
+                        println!("No workflows found.");
+                    } else {
+                        for w in &response.workflows {
+                            let tpl = if w.is_template { " [template]" } else { "" };
+                            println!("  {} ({} steps){}", w.name, w.step_count, tpl);
+                        }
+                        println!("\n  {} total", response.total);
+                    }
+                }
+                Err(e) => println!("Failed to list workflows: {}", e),
             }
         }
     }

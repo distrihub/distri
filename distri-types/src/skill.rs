@@ -145,6 +145,7 @@ impl Skill {
             .iter()
             .find_map(|agent| match &agent.agent_config {
                 AgentConfig::StandardAgent(def) => Some(def.clone()),
+                _ => None,
             })
             .ok_or_else(|| anyhow!("Skill plugin does not contain a standard agent definition"))?;
 

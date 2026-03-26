@@ -165,4 +165,5 @@ pub trait BaseAgent: Send + Sync + std::fmt::Debug {
 pub enum AgentType {
     #[default]
     StandardAgent,
+    WorkflowAgent,
 }

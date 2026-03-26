@@ -71,8 +71,8 @@ pub struct WorkspaceResponse {
 /// ```
 #[derive(Clone)]
 pub struct Distri {
-    base_url: String,
-    http: reqwest::Client,
+    pub(crate) base_url: String,
+    pub(crate) http: reqwest::Client,
     stream: AgentStreamClient,
     config: DistriConfig,
 }
@@ -2019,6 +2019,14 @@ pub struct ProviderInfo {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ConnectionProxyResponse {
+    pub status: u16,
+    #[serde(default)]
+    pub headers: HashMap<String, String>,
+    pub body: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ConnectResponse {
     #[serde(default)]
     pub connection_id: Option<String>,
@@ -2087,6 +2095,30 @@ impl Distri {
         }
     }
 
+    /// List connections with skill content included inline.
+    pub async fn list_connections_with_skills(&self) -> Result<serde_json::Value, ClientError> {
+        let url = format!("{}/connections?include_skills=true", self.base_url);
+        let resp = self.http.get(&url).send().await?;
+        if resp.status().is_success() {
+            Ok(resp.json().await?)
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!("failed to list connections: {}", text)))
+        }
+    }
+
+    /// Get connection detail with skill content.
+    pub async fn get_connection_detail(&self, connection_id: &str) -> Result<serde_json::Value, ClientError> {
+        let url = format!("{}/connections/{}/detail", self.base_url, connection_id);
+        let resp = self.http.get(&url).send().await?;
+        if resp.status().is_success() {
+            Ok(resp.json().await?)
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!("failed to get connection detail: {}", text)))
+        }
+    }
+
     pub async fn get_connection_token(&self, connection_id: &str) -> Result<ConnectionToken, ClientError> {
         let url = format!("{}/connections/{}/token", self.base_url, connection_id);
         let resp = self.http.post(&url).send().await?;
@@ -2119,6 +2151,126 @@ impl Distri {
         } else {
             let text = resp.text().await.unwrap_or_default();
             Err(ClientError::InvalidResponse(format!("failed to list providers: {}", text)))
+        }
+    }
+
+    /// Register a custom connection provider in workspace settings.
+    /// Stores the provider config and secrets (client_id/client_secret) via the upsert flow.
+    pub async fn register_connection_provider(
+        &self,
+        provider: serde_json::Value,
+        client_id: &str,
+        client_secret: &str,
+    ) -> Result<serde_json::Value, ClientError> {
+        let provider_id = provider
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("custom");
+        let payload = serde_json::json!({
+            "provider_id": provider_id,
+            "secrets": {
+                format!("{}_CLIENT_ID", provider_id.to_uppercase()): client_id,
+                format!("{}_CLIENT_SECRET", provider_id.to_uppercase()): client_secret,
+            },
+            "connection_provider": provider,
+        });
+        let url = format!("{}/providers", self.base_url);
+        let resp = self.http.post(&url).json(&payload).send().await?;
+        if resp.status().is_success() {
+            Ok(resp.json().await?)
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!(
+                "failed to register connection provider: {}",
+                text
+            )))
+        }
+    }
+
+    /// List custom connection providers from workspace settings.
+    pub async fn list_connection_providers(&self) -> Result<serde_json::Value, ClientError> {
+        let url = format!("{}/workspaces/current", self.base_url);
+        let resp = self.http.get(&url).send().await?;
+        if resp.status().is_success() {
+            let body: serde_json::Value = resp.json().await?;
+            let providers = body
+                .get("settings")
+                .and_then(|s| s.get("connection_providers"))
+                .cloned()
+                .unwrap_or(serde_json::json!([]));
+            Ok(providers)
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!(
+                "failed to get workspace settings: {}",
+                text
+            )))
+        }
+    }
+
+    /// Discover skills from curated registries.
+    pub async fn discover_skills(&self, query: &str) -> Result<serde_json::Value, ClientError> {
+        let url = format!("{}/skills/discover?query={}", self.base_url, urlencoding::encode(query));
+        let resp = self.http.get(&url).send().await?;
+        if resp.status().is_success() {
+            Ok(resp.json().await?)
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!(
+                "failed to discover skills: {}",
+                text
+            )))
+        }
+    }
+
+    /// Import a skill from a URL.
+    pub async fn import_skill(
+        &self,
+        url: &str,
+        name: Option<&str>,
+    ) -> Result<serde_json::Value, ClientError> {
+        let api_url = format!("{}/skills/import", self.base_url);
+        let mut payload = serde_json::json!({ "url": url });
+        if let Some(n) = name {
+            payload["name"] = serde_json::Value::String(n.to_string());
+        }
+        let resp = self.http.post(&api_url).json(&payload).send().await?;
+        if resp.status().is_success() {
+            Ok(resp.json().await?)
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!(
+                "failed to import skill: {}",
+                text
+            )))
+        }
+    }
+
+    /// Make an authenticated HTTP request through a connection (proxy).
+    pub async fn connection_request(
+        &self,
+        connection_id: &str,
+        method: &str,
+        url: &str,
+        headers: Option<HashMap<String, String>>,
+        body: Option<serde_json::Value>,
+    ) -> Result<ConnectionProxyResponse, ClientError> {
+        let api_url = format!("{}/connections/{}/request", self.base_url, connection_id);
+        let payload = serde_json::json!({
+            "method": method,
+            "url": url,
+            "headers": headers.unwrap_or_default(),
+            "body": body,
+        });
+        let resp = self.http.post(&api_url).json(&payload).send().await?;
+        if resp.status().is_success() {
+            Ok(resp.json().await?)
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!(
+                "connection request failed for {}: {}",
+                connection_id, text
+            )))
         }
     }
 
@@ -2190,6 +2342,81 @@ impl Distri {
         }
     }
 
+    // ========== Notes API ==========
+
+    pub async fn list_notes(&self, tag: Option<&str>, search: Option<&str>) -> Result<Value, ClientError> {
+        let mut url = format!("{}/notes", self.base_url);
+        let mut params = vec![];
+        if let Some(t) = tag {
+            params.push(format!("tag={}", t));
+        }
+        if let Some(s) = search {
+            params.push(format!("search={}", s));
+        }
+        if !params.is_empty() {
+            url = format!("{}?{}", url, params.join("&"));
+        }
+        let resp = self.http.get(&url).send().await?;
+        if resp.status().is_success() {
+            Ok(resp.json().await?)
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!("failed to list notes: {}", text)))
+        }
+    }
+
+    pub async fn create_note(&self, title: &str, content: &str, tags: &[String]) -> Result<Value, ClientError> {
+        let url = format!("{}/notes", self.base_url);
+        let body = serde_json::json!({ "title": title, "content": content, "tags": tags });
+        let resp = self.http.post(&url).json(&body).send().await?;
+        if resp.status().is_success() {
+            Ok(resp.json().await?)
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!("failed to create note: {}", text)))
+        }
+    }
+
+    pub async fn get_note(&self, id: &str) -> Result<Option<Value>, ClientError> {
+        let url = format!("{}/notes/{}", self.base_url, id);
+        let resp = self.http.get(&url).send().await?;
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if resp.status().is_success() {
+            Ok(Some(resp.json().await?))
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!("failed to get note: {}", text)))
+        }
+    }
+
+    pub async fn update_note(&self, id: &str, title: Option<&str>, content: Option<&str>, tags: Option<&[String]>) -> Result<Value, ClientError> {
+        let url = format!("{}/notes/{}", self.base_url, id);
+        let mut body = serde_json::Map::new();
+        if let Some(t) = title { body.insert("title".to_string(), serde_json::json!(t)); }
+        if let Some(c) = content { body.insert("content".to_string(), serde_json::json!(c)); }
+        if let Some(tg) = tags { body.insert("tags".to_string(), serde_json::json!(tg)); }
+        let resp = self.http.put(&url).json(&Value::Object(body)).send().await?;
+        if resp.status().is_success() {
+            Ok(resp.json().await?)
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!("failed to update note: {}", text)))
+        }
+    }
+
+    pub async fn delete_note(&self, id: &str) -> Result<(), ClientError> {
+        let url = format!("{}/notes/{}", self.base_url, id);
+        let resp = self.http.delete(&url).send().await?;
+        if resp.status().is_success() || resp.status() == reqwest::StatusCode::NO_CONTENT {
+            Ok(())
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!("failed to delete note: {}", text)))
+        }
+    }
+
     // ========== Threads API ==========
 
     pub async fn list_threads(&self) -> Result<Vec<ThreadSummary>, ClientError> {
@@ -2201,5 +2428,75 @@ impl Distri {
             let text = resp.text().await.unwrap_or_default();
             Err(ClientError::InvalidResponse(format!("failed to list threads: {}", text)))
         }
+    }
+
+    // ========== Workflows API ==========
+
+    pub async fn list_workflows(&self) -> Result<distri_types::stores::WorkflowsListResponse, ClientError> {
+        let url = format!("{}/workflows", self.base_url);
+        let resp = self.http.get(&url).send().await?;
+        if resp.status().is_success() {
+            Ok(resp.json().await?)
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!("failed to list workflows: {}", text)))
+        }
+    }
+
+    pub async fn get_workflow(&self, id: &str) -> Result<distri_types::stores::WorkflowRecord, ClientError> {
+        let url = format!("{}/workflows/{}", self.base_url, id);
+        let resp = self.http.get(&url).send().await?;
+        if resp.status().is_success() {
+            Ok(resp.json().await?)
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!("failed to get workflow: {}", text)))
+        }
+    }
+
+    pub async fn create_workflow(&self, workflow: distri_types::stores::NewWorkflow) -> Result<distri_types::stores::WorkflowRecord, ClientError> {
+        let url = format!("{}/workflows", self.base_url);
+        let resp = self.http.post(&url).json(&workflow).send().await?;
+        if resp.status().is_success() {
+            Ok(resp.json().await?)
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!("failed to create workflow: {}", text)))
+        }
+    }
+
+    pub async fn update_workflow(&self, id: &str, update: distri_types::stores::UpdateWorkflow) -> Result<distri_types::stores::WorkflowRecord, ClientError> {
+        let url = format!("{}/workflows/{}", self.base_url, id);
+        let resp = self.http.put(&url).json(&update).send().await?;
+        if resp.status().is_success() {
+            Ok(resp.json().await?)
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!("failed to update workflow: {}", text)))
+        }
+    }
+
+    pub async fn delete_workflow(&self, id: &str) -> Result<(), ClientError> {
+        let url = format!("{}/workflows/{}", self.base_url, id);
+        let resp = self.http.delete(&url).send().await?;
+        if resp.status().is_success() || resp.status() == reqwest::StatusCode::NO_CONTENT {
+            Ok(())
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!("failed to delete workflow: {}", text)))
+        }
+    }
+
+    /// Push a workflow definition to the server. Creates or updates.
+    pub async fn push_workflow(&self, name: &str, definition: serde_json::Value) -> Result<distri_types::stores::WorkflowRecord, ClientError> {
+        let new = distri_types::stores::NewWorkflow {
+            name: name.to_string(),
+            description: None,
+            definition,
+            tags: vec![],
+            is_public: false,
+            is_template: false,
+        };
+        self.create_workflow(new).await
     }
 }

@@ -48,6 +48,10 @@ pub async fn validate_provider_secrets(
             Some(ms) => ms.inner.provider.clone(),
             None => return Ok(()),
         },
+        Some(AgentConfig::WorkflowAgent(_)) => {
+            // Workflow agents don't have a single LLM provider; skip validation
+            return Ok(());
+        }
         None => {
             // If agent not found, we'll get an error later; skip validation here
             return Ok(());
@@ -296,8 +300,9 @@ pub async fn handle_message_send_streaming_sse(
         } else {
             tracing::debug!("[stream] No browser_session_id in metadata");
         }
-        if metadata_struct.env_vars.is_some() {
-            exec_ctx.env_vars = metadata_struct.env_vars.clone();
+        if let Some(ref vars) = metadata_struct.env_vars {
+            let mut env = exec_ctx.env_vars.write().await;
+            env.extend(vars.clone());
         }
         if let Some(tool_meta) = metadata_struct.tool_metadata.clone() {
             exec_ctx.tool_metadata = Some(tool_meta);

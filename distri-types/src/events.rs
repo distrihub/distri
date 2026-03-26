@@ -11,8 +11,17 @@ pub struct RunUsage {
     pub total_tokens: u32,
     pub input_tokens: u32,
     pub output_tokens: u32,
+    /// Tokens read from provider cache (e.g., Anthropic prompt caching)
+    #[serde(default)]
+    pub cached_tokens: u32,
     /// Estimated tokens (pre-call estimate)
     pub estimated_tokens: u32,
+    /// Model used for this run (e.g., "gpt-5.1", "claude-sonnet-4")
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// Estimated cost in USD (based on model pricing)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_usd: Option<f64>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

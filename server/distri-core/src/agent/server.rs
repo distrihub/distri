@@ -45,6 +45,7 @@ pub fn build_server<T: Transport>(
                                 distri_types::configuration::AgentConfig::StandardAgent(def) => {
                                     def.model_settings().and_then(|ms| ms.inner.response_format.clone())
                                 }
+                                distri_types::configuration::AgentConfig::WorkflowAgent(_) => None,
                             },
                         })
                         .collect(),

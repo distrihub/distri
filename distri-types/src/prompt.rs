@@ -144,6 +144,14 @@ impl PromptRegistry {
                 "skills",
                 include_str!("../prompt_templates/partials/skills.hbs"),
             ),
+            (
+                "connections",
+                include_str!("../prompt_templates/partials/connections.hbs"),
+            ),
+            (
+                "sub_agents",
+                include_str!("../prompt_templates/partials/sub_agents.hbs"),
+            ),
         ];
 
         let mut partials_lock = self.partials.write().await;

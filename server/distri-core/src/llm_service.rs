@@ -126,7 +126,10 @@ impl LlmExecuteService {
                 total_tokens: context_usage.tokens,
                 input_tokens: context_usage.input_tokens,
                 output_tokens: context_usage.output_tokens,
+                cached_tokens: context_usage.cached_tokens,
                 estimated_tokens: context_usage.context_size.total_estimated_tokens as u32,
+                model: context_usage.model.clone(),
+                cost_usd: None,
             };
 
             context
