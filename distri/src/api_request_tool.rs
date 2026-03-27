@@ -1,11 +1,64 @@
 //! Generic `api_request` tool that makes authenticated HTTP requests to the
 //! Distri platform API using the existing `Distri` client.
 //!
-//! Used by both the CLI and cloud gateway to give agents access to platform APIs.
+//! Provides:
+//! - `ApiRequestTool` — implements `Tool` trait for server-side execution (gateway/channels)
+//! - `execute_api_request()` — shared execution logic, also used by CLI's ExternalToolRegistry
+//! - `api_request_definition()` — JSON schema sent as metadata by CLI and web UI
 
+use std::sync::Arc;
+
+use async_trait::async_trait;
+use distri_types::{Part, Tool, ToolCall, ToolContext};
 use serde_json::{Value, json};
 
 use crate::Distri;
+
+/// Server-side `api_request` tool backed by a `Distri` client.
+/// Implements the `Tool` trait so it can be registered as a dynamic tool on the orchestrator.
+pub struct ApiRequestTool {
+    client: Arc<Distri>,
+}
+
+impl ApiRequestTool {
+    pub fn new(client: Distri) -> Self {
+        Self {
+            client: Arc::new(client),
+        }
+    }
+}
+
+impl std::fmt::Debug for ApiRequestTool {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ApiRequestTool")
+            .field("base_url", &self.client.base_url())
+            .finish()
+    }
+}
+
+#[async_trait]
+impl Tool for ApiRequestTool {
+    fn get_name(&self) -> String {
+        "api_request".to_string()
+    }
+
+    fn get_description(&self) -> String {
+        "Make authenticated HTTP requests to the Distri API. Use the distri_api skill for available endpoints.".to_string()
+    }
+
+    fn get_parameters(&self) -> Value {
+        api_request_definition()["parameters"].clone()
+    }
+
+    async fn execute(
+        &self,
+        tool_call: ToolCall,
+        _context: Arc<ToolContext>,
+    ) -> Result<Vec<Part>, anyhow::Error> {
+        let result = execute_api_request(&self.client, &tool_call.input).await;
+        Ok(vec![Part::Data(result)])
+    }
+}
 
 /// Executes an api_request call using the Distri client's HTTP transport.
 ///
