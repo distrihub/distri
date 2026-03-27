@@ -31,6 +31,10 @@ pub struct WorkflowDefinition {
     /// How workflow state is checkpointed. Defaults to Internal.
     #[serde(default)]
     pub checkpoint: CheckpointStrategy,
+    /// Named entry points for multi-entry workflows.
+    /// Each entry point specifies a starting step and optional pre-populated state.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub entry_points: Vec<EntryPoint>,
     #[serde(default = "default_now")]
     pub created_at: DateTime<Utc>,
     #[serde(default = "default_now")]
@@ -56,6 +60,7 @@ impl WorkflowDefinition {
             notes: vec![],
             input_schema: None,
             checkpoint: CheckpointStrategy::default(),
+            entry_points: vec![],
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }
@@ -76,9 +81,97 @@ impl WorkflowDefinition {
         self
     }
 
+    pub fn with_entry_points(mut self, entry_points: Vec<EntryPoint>) -> Self {
+        self.entry_points = entry_points;
+        self
+    }
+
+    /// Get an entry point by ID.
+    pub fn entry_point(&self, id: &str) -> Option<&EntryPoint> {
+        self.entry_points.iter().find(|ep| ep.id == id)
+    }
+
+    /// Apply an entry point: mark steps before `starts_at` as Skipped,
+    /// pre-populate results from `preset_results`, and return the modified workflow.
+    pub fn apply_entry_point(mut self, entry_point_id: &str) -> Result<Self, String> {
+        let ep = self
+            .entry_points
+            .iter()
+            .find(|ep| ep.id == entry_point_id)
+            .ok_or_else(|| format!("Entry point '{}' not found", entry_point_id))?
+            .clone();
+
+        // Validate starts_at step exists
+        if !self.steps.iter().any(|s| s.id == ep.starts_at) {
+            return Err(format!(
+                "Entry point '{}' references step '{}' which does not exist",
+                entry_point_id, ep.starts_at
+            ));
+        }
+
+        // Collect steps that are "before" starts_at in the DAG.
+        // A step is before if starts_at does not transitively depend on it,
+        // OR it's simply not reachable from starts_at's dependency chain.
+        // Simpler approach: mark all steps as Skipped that are NOT starts_at
+        // and NOT reachable from starts_at via depends_on chain.
+        let reachable = self.reachable_from(&ep.starts_at);
+
+        for step in &mut self.steps {
+            if !reachable.contains(&step.id) {
+                step.status = StepStatus::Skipped;
+                // Apply preset result if available
+                if let Some(result) = ep.preset_results.get(&step.id) {
+                    step.result = Some(result.clone());
+                }
+            }
+        }
+
+        // Pre-populate context with preset results so downstream steps can reference them
+        if let Some(ctx) = self.context.as_object_mut() {
+            let steps = ctx
+                .entry("steps")
+                .or_insert(serde_json::json!({}))
+                .as_object_mut()
+                .expect("steps must be an object");
+            for (step_id, result) in &ep.preset_results {
+                steps.insert(step_id.clone(), result.clone());
+            }
+        }
+
+        Ok(self)
+    }
+
+    /// Find all step IDs reachable from the given step (inclusive) by following depends_on forward.
+    /// "Reachable from X" means X itself, plus any step that X depends on or that depends on X transitively.
+    fn reachable_from(&self, start_step_id: &str) -> std::collections::HashSet<String> {
+        use std::collections::{HashSet, VecDeque};
+
+        let mut reachable = HashSet::new();
+        let mut queue = VecDeque::new();
+        queue.push_back(start_step_id.to_string());
+
+        // Forward: start_step and everything that depends on it (downstream)
+        while let Some(current) = queue.pop_front() {
+            if !reachable.insert(current.clone()) {
+                continue;
+            }
+            // Find steps that depend on `current`
+            for step in &self.steps {
+                if step.depends_on.contains(&current) && !reachable.contains(&step.id) {
+                    queue.push_back(step.id.clone());
+                }
+            }
+        }
+
+        reachable
+    }
+
     /// Merge external input into the workflow context.
     /// Initialize workflow with validated input. Input is validated against
     /// `input_schema` if present, then merged into context.
+    ///
+    /// Input is stored both at the top level (backward compat) and under the
+    /// `input` namespace so that `{input.X}` references work in skip_if and templates.
     pub fn with_input(mut self, input: serde_json::Value) -> Result<Self, String> {
         // Validate input against schema if present
         if let Some(ref schema_value) = self.input_schema {
@@ -94,11 +187,13 @@ impl WorkflowDefinition {
             }
         }
 
-        // Merge input into context
+        // Merge input into context (both flat for backward compat and under "input" namespace)
         if let (Some(ctx), Some(inp)) = (self.context.as_object_mut(), input.as_object()) {
             for (k, v) in inp {
                 ctx.insert(k.clone(), v.clone());
             }
+            // Also store under "input" namespace for {input.X} references
+            ctx.insert("input".to_string(), input.clone());
         }
 
         self.status = WorkflowStatus::Running;
@@ -115,6 +210,7 @@ impl WorkflowDefinition {
     }
 
     /// Get all steps that can run now (pending steps with all dependencies met).
+    /// Dependencies are "met" if the step is Done or Skipped (entry point skips count).
     /// This is a pure query — it does not mutate.
     pub fn runnable_steps(&self) -> Vec<(usize, &WorkflowStep)> {
         let mut runnable = vec![];
@@ -123,11 +219,12 @@ impl WorkflowDefinition {
                 continue;
             }
 
-            // Check if all dependencies are done
+            // Check if all dependencies are done or skipped
             let deps_met = step.depends_on.iter().all(|dep_id| {
-                self.steps
-                    .iter()
-                    .any(|s| &s.id == dep_id && s.status == StepStatus::Done)
+                self.steps.iter().any(|s| {
+                    &s.id == dep_id
+                        && matches!(s.status, StepStatus::Done | StepStatus::Skipped)
+                })
             });
 
             if deps_met {
@@ -273,6 +370,32 @@ impl WorkflowDefinition {
 }
 
 // ============================================================================
+// Entry Point — named starting positions for multi-entry workflows
+// ============================================================================
+
+/// A named entry point into a workflow.
+/// Allows workflows to be started at different steps depending on context.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EntryPoint {
+    /// Unique identifier for this entry point (e.g., "import_from_docs", "grade_only").
+    pub id: String,
+    /// Human-readable label.
+    pub label: String,
+    /// Optional description of when to use this entry point.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// The step ID where execution begins.
+    pub starts_at: String,
+    /// Pre-populated step results for steps that are skipped.
+    /// Maps step_id → result value. These steps are marked Done before execution starts.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub preset_results: HashMap<String, serde_json::Value>,
+    /// Required input fields for this entry point (for UI/validation).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub required_inputs: Vec<String>,
+}
+
+// ============================================================================
 // Workflow Step
 // ============================================================================
 
@@ -311,6 +434,11 @@ pub struct WorkflowStep {
     /// If omitted, the step receives the full execution context.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input: Option<serde_json::Value>,
+    /// Skip this step if the expression evaluates to true against the workflow context.
+    /// Expression format: `{input.field_name}` — truthy check (field exists and is not null/false/empty).
+    /// Supports negation: `!{input.field_name}` — skip if field is absent/falsy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skip_if: Option<String>,
 }
 
 impl WorkflowStep {
@@ -328,6 +456,7 @@ impl WorkflowStep {
             execution: StepExecution::Sequential,
             requires: vec![],
             input: None,
+            skip_if: None,
         }
     }
 
@@ -467,6 +596,11 @@ impl WorkflowStep {
 
     pub fn with_input_mapping(mut self, input: serde_json::Value) -> Self {
         self.input = Some(input);
+        self
+    }
+
+    pub fn with_skip_if(mut self, expression: &str) -> Self {
+        self.skip_if = Some(expression.to_string());
         self
     }
 }

@@ -140,6 +140,77 @@ pub fn resolve_step_input(step_input: Option<&Value>, context: &Value) -> Value 
     }
 }
 
+/// Evaluate a skip_if expression against the workflow context.
+///
+/// Expression format:
+/// - `{input.field}` or `{steps.X.field}` — truthy if field exists and is not null/false/empty string/0
+/// - `!{input.field}` — truthy if field is absent or falsy
+/// - `{input.field} == "value"` — equality check
+pub fn evaluate_skip_condition(expression: &str, context: &Value) -> bool {
+    let expr = expression.trim();
+
+    // Negation: !{ref}
+    if let Some(inner) = expr.strip_prefix('!') {
+        return !evaluate_skip_condition(inner.trim(), context);
+    }
+
+    // Equality: {ref} == "value"
+    if let Some((lhs, rhs)) = expr.split_once("==") {
+        let lhs = lhs.trim();
+        let rhs = rhs.trim().trim_matches('"');
+        let resolved = resolve_single_ref(lhs, context);
+        return match resolved {
+            Some(Value::String(s)) => s == rhs,
+            Some(Value::Number(n)) => n.to_string() == rhs,
+            Some(Value::Bool(b)) => b.to_string() == rhs,
+            _ => false,
+        };
+    }
+
+    // Inequality: {ref} != "value"
+    if let Some((lhs, rhs)) = expr.split_once("!=") {
+        let lhs = lhs.trim();
+        let rhs = rhs.trim().trim_matches('"');
+        let resolved = resolve_single_ref(lhs, context);
+        return match resolved {
+            Some(Value::String(s)) => s != rhs,
+            Some(Value::Number(n)) => n.to_string() != rhs,
+            Some(Value::Bool(b)) => b.to_string() != rhs,
+            None => true,
+            _ => true,
+        };
+    }
+
+    // Simple truthy check: {ref}
+    let resolved = resolve_single_ref(expr, context);
+    is_truthy(&resolved)
+}
+
+/// Resolve a `{namespace.path}` reference, stripping the braces.
+fn resolve_single_ref(expr: &str, context: &Value) -> Option<Value> {
+    let trimmed = expr.trim();
+    if trimmed.starts_with('{') && trimmed.ends_with('}') {
+        let reference = &trimmed[1..trimmed.len() - 1];
+        resolve_reference(reference, context)
+    } else {
+        // Try as bare reference without braces
+        resolve_reference(trimmed, context)
+    }
+}
+
+/// Check if a JSON value is "truthy".
+fn is_truthy(value: &Option<Value>) -> bool {
+    match value {
+        None => false,
+        Some(Value::Null) => false,
+        Some(Value::Bool(b)) => *b,
+        Some(Value::String(s)) => !s.is_empty(),
+        Some(Value::Number(n)) => n.as_f64().map_or(false, |f| f != 0.0),
+        Some(Value::Array(a)) => !a.is_empty(),
+        Some(Value::Object(o)) => !o.is_empty(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -302,6 +373,46 @@ mod tests {
             resolve_template("{input.nonexistent}", &ctx),
             "{input.nonexistent}"
         );
+    }
+
+    #[test]
+    fn evaluate_skip_truthy() {
+        let ctx = test_context();
+        assert!(super::evaluate_skip_condition("{input.doc_id}", &ctx));
+        assert!(!super::evaluate_skip_condition("{input.nonexistent}", &ctx));
+    }
+
+    #[test]
+    fn evaluate_skip_negation() {
+        let ctx = test_context();
+        assert!(!super::evaluate_skip_condition("!{input.doc_id}", &ctx));
+        assert!(super::evaluate_skip_condition("!{input.nonexistent}", &ctx));
+    }
+
+    #[test]
+    fn evaluate_skip_equality() {
+        let ctx = test_context();
+        assert!(super::evaluate_skip_condition("{input.doc_id} == \"abc123\"", &ctx));
+        assert!(!super::evaluate_skip_condition("{input.doc_id} == \"other\"", &ctx));
+    }
+
+    #[test]
+    fn evaluate_skip_inequality() {
+        let ctx = test_context();
+        assert!(super::evaluate_skip_condition("{input.doc_id} != \"other\"", &ctx));
+        assert!(!super::evaluate_skip_condition("{input.doc_id} != \"abc123\"", &ctx));
+    }
+
+    #[test]
+    fn evaluate_skip_array_truthy() {
+        let ctx = test_context();
+        assert!(super::evaluate_skip_condition("{input.tags}", &ctx));
+    }
+
+    #[test]
+    fn evaluate_skip_number_truthy() {
+        let ctx = test_context();
+        assert!(super::evaluate_skip_condition("{steps.fetch_doc.metadata.pages}", &ctx));
     }
 
     #[test]
