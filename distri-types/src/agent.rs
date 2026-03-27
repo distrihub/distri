@@ -19,6 +19,9 @@ pub struct AvailableSkill {
     /// Brief description of what this skill does (shown to the agent)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// Hierarchical path for skill discovery (e.g. "platform/agents", "connections/github")
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
 }
 
 /// Unified Agent Strategy Configuration
