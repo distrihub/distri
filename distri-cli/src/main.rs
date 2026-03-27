@@ -16,10 +16,13 @@ use distri_a2a::{
 use distri_types::configuration::AgentConfig;
 use distri_types::ToolResponse;
 use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher};
-use inquire::{
-    autocompletion::{Autocomplete, Replacement},
-    CustomUserError, Select, Text,
-};
+use inquire::{Select, Text};
+use rustyline::completion::{Completer, Pair};
+use rustyline::error::ReadlineError;
+use rustyline::hint::Hinter;
+use rustyline::highlight::Highlighter;
+use rustyline::validate::Validator;
+use rustyline::{Config, Editor, Helper};
 use tokio::fs;
 mod logging;
 mod login;
@@ -307,25 +310,14 @@ impl std::fmt::Display for AgentMenuOption {
     }
 }
 
-/// Fuzzy autocomplete for Distri CLI supporting slash commands and history.
-struct DistriAutocomplete {
+/// Rustyline helper for Distri CLI — provides slash-command completion and placeholder hint.
+struct DistriHelper {
     slash_commands: Vec<String>,
-    history: Vec<String>,
     matcher: SkimMatcherV2,
 }
 
-impl Clone for DistriAutocomplete {
-    fn clone(&self) -> Self {
-        Self {
-            slash_commands: self.slash_commands.clone(),
-            history: self.history.clone(),
-            matcher: SkimMatcherV2::default(),
-        }
-    }
-}
-
-impl DistriAutocomplete {
-    fn new(history: Vec<String>) -> Self {
+impl DistriHelper {
+    fn new() -> Self {
         let slash_commands = vec![
             "/help".to_string(),
             "/agents".to_string(),
@@ -341,62 +333,62 @@ impl DistriAutocomplete {
 
         Self {
             slash_commands,
-            history,
             matcher: SkimMatcherV2::default(),
         }
     }
-
-    fn update_history(&mut self, new_history: Vec<String>) {
-        self.history = new_history;
-    }
 }
 
-impl Autocomplete for DistriAutocomplete {
-    fn get_suggestions(&mut self, input: &str) -> Result<Vec<String>, CustomUserError> {
-        if input.is_empty() {
-            return Ok(Vec::new());
+impl Validator for DistriHelper {}
+impl Highlighter for DistriHelper {}
+impl Helper for DistriHelper {}
+
+impl Completer for DistriHelper {
+    type Candidate = Pair;
+
+    fn complete(
+        &self,
+        line: &str,
+        pos: usize,
+        _ctx: &rustyline::Context<'_>,
+    ) -> rustyline::Result<(usize, Vec<Pair>)> {
+        if !line.starts_with('/') {
+            return Ok((0, vec![]));
         }
 
-        let mut all_options = Vec::new();
-
-        if input.starts_with('/') {
-            all_options.extend(self.slash_commands.clone());
-        } else {
-            all_options.extend(self.history.iter().filter(|h| !h.starts_with('/')).cloned());
-        }
-
-        let mut matches: Vec<(i64, String)> = all_options
-            .into_iter()
-            .filter_map(|option| {
+        let input = &line[..pos];
+        let mut matches: Vec<(i64, &String)> = self
+            .slash_commands
+            .iter()
+            .filter_map(|cmd| {
                 self.matcher
-                    .fuzzy_match(&option, input)
-                    .map(|score| (score, option))
+                    .fuzzy_match(cmd, input)
+                    .map(|score| (score, cmd))
             })
             .collect();
 
         matches.sort_by(|a, b| b.0.cmp(&a.0));
 
-        Ok(matches
+        let pairs = matches
             .into_iter()
             .take(15)
-            .map(|(_, option)| option)
-            .collect())
-    }
+            .map(|(_, cmd)| Pair {
+                display: cmd.clone(),
+                replacement: cmd.clone(),
+            })
+            .collect();
 
-    fn get_completion(
-        &mut self,
-        input: &str,
-        highlighted_suggestion: Option<String>,
-    ) -> Result<Replacement, CustomUserError> {
-        if let Some(suggestion) = highlighted_suggestion {
-            Ok(Replacement::Some(suggestion))
+        Ok((0, pairs))
+    }
+}
+
+impl Hinter for DistriHelper {
+    type Hint = String;
+
+    fn hint(&self, line: &str, _pos: usize, _ctx: &rustyline::Context<'_>) -> Option<String> {
+        if line.is_empty() {
+            Some("  /help for commands... Ask me anything".to_string())
         } else {
-            let suggestions = self.get_suggestions(input)?;
-            if let Some(best_match) = suggestions.first() {
-                Ok(Replacement::Some(best_match.clone()))
-            } else {
-                Ok(Replacement::None)
-            }
+            None
         }
     }
 }
@@ -832,8 +824,16 @@ async fn run_interactive_chat(
         COLOR_GRAY, COLOR_RESET, base_url, workspace_label
     );
 
-    let mut history = load_history().unwrap_or_default();
-    let mut autocomplete = DistriAutocomplete::new(history.clone());
+    let rl_config = Config::builder()
+        .auto_add_history(true)
+        .bracketed_paste(true)
+        .build();
+    let mut rl = Editor::with_config(rl_config)?;
+    rl.set_helper(Some(DistriHelper::new()));
+
+    // Load history from existing file
+    let history_path = get_history_file();
+    let _ = rl.load_history(&history_path);
 
     let registry = app.registry();
     register_approval_handler(&registry);
@@ -849,25 +849,9 @@ async fn run_interactive_chat(
         print_context_status();
         print_separator_line();
 
-        let input = match Text::new("> ")
-            .with_autocomplete(autocomplete.clone())
-            .with_placeholder("/help for commands... Ask me anything")
-            .prompt()
-        {
-            Ok(line) => {
-                print_help_options();
-                if !line.trim().is_empty() && !history.contains(&line) {
-                    history.push(line.clone());
-                    if history.len() > 100 {
-                        history.remove(0);
-                    }
-                    let _ = save_history(&history);
-                    autocomplete.update_history(history.clone());
-                }
-                line
-            }
-            Err(inquire::InquireError::OperationCanceled)
-            | Err(inquire::InquireError::OperationInterrupted) => {
+        let input = match rl.readline("> ") {
+            Ok(line) => line,
+            Err(ReadlineError::Interrupted) | Err(ReadlineError::Eof) => {
                 println!("\nExiting...");
                 break;
             }
@@ -935,7 +919,8 @@ async fn run_interactive_chat(
         }
     }
 
-    // Save last thread_id for /resume last
+    // Save history and last thread_id
+    let _ = rl.save_history(&history_path);
     let _ = save_last_thread(&thread_id);
 
     Ok(())
@@ -1205,26 +1190,11 @@ fn register_approval_handler(registry: &ExternalToolRegistry) {
     });
 }
 
-fn load_history() -> Result<Vec<String>, std::io::Error> {
-    let history_file = get_history_file();
-    if history_file.exists() {
-        let content = std::fs::read_to_string(&history_file)?;
-        Ok(content.lines().map(|s| s.to_string()).collect())
-    } else {
-        Ok(Vec::new())
-    }
-}
-
-fn save_history(history: &[String]) -> Result<(), std::io::Error> {
-    let history_file = get_history_file();
-    if let Some(parent) = history_file.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(&history_file, history.join("\n"))
-}
-
 fn get_history_file() -> PathBuf {
-    PathBuf::from(".distri").join("history.txt")
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .unwrap_or_else(|_| ".".to_string());
+    PathBuf::from(home).join(".distri").join("history.txt")
 }
 
 fn get_last_thread_file() -> PathBuf {
@@ -1319,13 +1289,6 @@ fn print_separator_line() {
     println!("{}", "-".repeat(term_width));
 }
 
-fn print_help_options() {
-    println!(
-        "{}[Tab to autocomplete, /help for commands]{}",
-        COLOR_GRAY, COLOR_RESET
-    );
-}
-
 fn print_help_message() {
     println!("AGENTS:");
     println!("- Use /agents to select an agent from the server");
@@ -1346,7 +1309,9 @@ fn print_help_message() {
     println!();
     println!("USAGE TIPS:");
     println!("- Type normally; the agent decides the best approach");
-    println!("- Tab to autocomplete commands and history");
+    println!("- Tab to autocomplete slash commands");
+    println!("- Up/Down arrows to navigate history");
+    println!("- Paste multi-line text — it stays as one message");
 }
 
 fn handle_config_command(command: ConfigCommands) -> Result<()> {
