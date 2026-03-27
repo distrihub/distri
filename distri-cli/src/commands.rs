@@ -645,6 +645,11 @@ pub async fn handle_workflow_command(client: &distri::Distri, command: WorkflowC
                                 status, steps_done, steps_failed
                             );
                         }
+                        WorkflowEvent::StepWaiting {
+                            step_id, message, ..
+                        } => {
+                            println!(" ✋ {} — waiting for input: {}", step_id, message);
+                        }
                     }
                 }
                 let _ = handle.await;

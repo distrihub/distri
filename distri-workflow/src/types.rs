@@ -244,6 +244,58 @@ impl WorkflowDefinition {
         })
     }
 
+    /// Check if the workflow is paused waiting for human/external input.
+    pub fn is_waiting_for_input(&self) -> bool {
+        self.steps
+            .iter()
+            .any(|s| s.status == StepStatus::WaitingForInput)
+    }
+
+    /// Get the step that is waiting for input, if any.
+    pub fn waiting_step(&self) -> Option<(usize, &WorkflowStep)> {
+        self.steps
+            .iter()
+            .enumerate()
+            .find(|(_, s)| s.status == StepStatus::WaitingForInput)
+    }
+
+    /// Resume a paused workflow by providing input for the waiting step.
+    /// Marks the step as Done with the provided result and sets workflow back to Running.
+    pub fn resume_step(
+        &mut self,
+        step_id: &str,
+        result: serde_json::Value,
+    ) -> Result<usize, String> {
+        let idx = self
+            .steps
+            .iter()
+            .position(|s| s.id == step_id && s.status == StepStatus::WaitingForInput)
+            .ok_or_else(|| {
+                format!(
+                    "Step '{}' not found or not in waiting_for_input state",
+                    step_id
+                )
+            })?;
+
+        self.steps[idx].status = StepStatus::Done;
+        self.steps[idx].result = Some(result.clone());
+        self.steps[idx].completed_at = Some(Utc::now());
+
+        // Store result in context so downstream steps can reference it
+        if let Some(ctx) = self.context.as_object_mut() {
+            let steps = ctx
+                .entry("steps")
+                .or_insert(serde_json::json!({}))
+                .as_object_mut()
+                .expect("steps must be an object");
+            steps.insert(step_id.to_string(), result);
+        }
+
+        self.status = WorkflowStatus::Running;
+        self.updated_at = Utc::now();
+        Ok(idx)
+    }
+
     /// Check if the workflow is stuck — remaining steps are all blocked, no forward progress possible.
     pub fn is_stuck(&self) -> bool {
         let has_blocked = self.steps.iter().any(|s| s.status == StepStatus::Blocked);
@@ -544,6 +596,17 @@ impl WorkflowStep {
         )
     }
 
+    pub fn wait_for_input(id: &str, label: &str, message: &str) -> Self {
+        Self::new_step(
+            id,
+            label,
+            StepKind::WaitForInput {
+                message: message.to_string(),
+                schema: None,
+            },
+        )
+    }
+
     pub fn with_body(mut self, body: serde_json::Value) -> Self {
         if let StepKind::ApiCall {
             body: ref mut b, ..
@@ -677,6 +740,17 @@ pub enum StepKind {
 
     /// No-op / marker step (for documentation or manual checkpoints)
     Checkpoint { message: String },
+
+    /// Pause execution and wait for external/human input before continuing.
+    /// The workflow saves state and stops. A resume call provides the input
+    /// as the step result and continues from here.
+    WaitForInput {
+        /// Message to display to the human (what input is needed)
+        message: String,
+        /// Optional JSON Schema describing the expected input shape
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        schema: Option<serde_json::Value>,
+    },
 }
 
 // ============================================================================
@@ -824,6 +898,8 @@ pub enum StepStatus {
     Done,
     Failed,
     Skipped,
+    /// Step is waiting for external/human input. Workflow is paused.
+    WaitingForInput,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -947,6 +1023,14 @@ pub enum WorkflowEvent {
         step_id: String,
         step_label: String,
         error: String,
+    },
+    /// A step is waiting for external/human input
+    StepWaiting {
+        workflow_id: String,
+        step_id: String,
+        step_label: String,
+        message: String,
+        schema: Option<serde_json::Value>,
     },
     /// Workflow completed (all steps done or failed)
     WorkflowCompleted {

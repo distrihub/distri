@@ -36,6 +36,7 @@ function StepStatusIcon({ status }: { status: StepStatus }) {
     case 'running': return <Clock className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-blue-500 animate-spin" />;
     case 'skipped': return <FastForward className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-muted-foreground" />;
     case 'blocked': return <Ban className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-orange-500" />;
+    case 'waiting_for_input': return <Clock className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-amber-500" />;
     case 'pending': return <Circle className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-muted-foreground" />;
   }
 }

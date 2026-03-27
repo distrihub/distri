@@ -53,6 +53,14 @@ impl EventSink for TracingEventSink {
             } => {
                 tracing::info!(%workflow_id, ?status, steps_done, steps_failed, "workflow completed");
             }
+            WorkflowEvent::StepWaiting {
+                step_id,
+                step_label,
+                message,
+                ..
+            } => {
+                tracing::info!(%step_id, %step_label, %message, "step waiting for input");
+            }
         }
     }
 }
@@ -210,7 +218,36 @@ impl<S: WorkflowStateStore, E: StepExecutor, K: EventSink> WorkflowRunner<S, E, 
             return Ok(vec![]);
         }
 
-        let (parallel, sequential): (Vec<_>, Vec<_>) = executable
+        // Filter out WaitForInput steps from parallel — they always pause
+        let (wait_steps, non_wait): (Vec<_>, Vec<_>) = executable
+            .into_iter()
+            .partition(|(_, _, _, step)| matches!(step.kind, StepKind::WaitForInput { .. }));
+
+        // If any WaitForInput step is runnable, pause on the first one
+        if !wait_steps.is_empty() {
+            let (idx, step_id, _, step) = &wait_steps[0];
+            let (message, schema) = match &step.kind {
+                StepKind::WaitForInput { message, schema } => (message.clone(), schema.clone()),
+                _ => unreachable!(),
+            };
+            workflow.steps[*idx].status = StepStatus::WaitingForInput;
+            workflow.steps[*idx].started_at = Some(chrono::Utc::now());
+            workflow.status = WorkflowStatus::Paused;
+            workflow.current_step = *idx;
+            self.store.save(&workflow).await?;
+            self.events
+                .emit(WorkflowEvent::StepWaiting {
+                    workflow_id: workflow_id.to_string(),
+                    step_id: step_id.clone(),
+                    step_label: step.label.clone(),
+                    message,
+                    schema,
+                })
+                .await;
+            return Ok(vec![]);
+        }
+
+        let (parallel, sequential): (Vec<_>, Vec<_>) = non_wait
             .into_iter()
             .partition(|(_, _, exec, _)| *exec == StepExecution::Parallel);
 
@@ -361,10 +398,7 @@ impl<S: WorkflowStateStore, E: StepExecutor, K: EventSink> WorkflowRunner<S, E, 
                 .ok_or("Workflow not found")?;
 
             match workflow.status {
-                WorkflowStatus::Completed
-                | WorkflowStatus::Failed
-                | WorkflowStatus::Paused
-                | WorkflowStatus::Blocked => {
+                WorkflowStatus::Completed | WorkflowStatus::Failed | WorkflowStatus::Blocked => {
                     let done = workflow
                         .steps
                         .iter()
@@ -384,6 +418,10 @@ impl<S: WorkflowStateStore, E: StepExecutor, K: EventSink> WorkflowRunner<S, E, 
                         })
                         .await;
                     return Ok(workflow.status);
+                }
+                // Paused = waiting for human input. Return without emitting completed.
+                WorkflowStatus::Paused => {
+                    return Ok(WorkflowStatus::Paused);
                 }
                 _ => {}
             }
@@ -432,6 +470,34 @@ impl<S: WorkflowStateStore, E: StepExecutor, K: EventSink> WorkflowRunner<S, E, 
                 return Ok(w.status);
             }
         }
+    }
+
+    /// Resume a paused workflow by providing input for the waiting step.
+    /// After providing the input, continues running all remaining steps.
+    pub async fn resume(
+        &self,
+        workflow_id: &str,
+        step_id: &str,
+        input: serde_json::Value,
+    ) -> Result<WorkflowStatus, String> {
+        let mut workflow = self
+            .store
+            .load(workflow_id)
+            .await?
+            .ok_or("Workflow not found")?;
+
+        if workflow.status != WorkflowStatus::Paused {
+            return Err(format!(
+                "Workflow is not paused (status: {:?})",
+                workflow.status
+            ));
+        }
+
+        workflow.resume_step(step_id, input)?;
+        self.store.save(&workflow).await?;
+
+        // Continue running remaining steps
+        self.run_all(workflow_id).await
     }
 
     /// Get current workflow state.

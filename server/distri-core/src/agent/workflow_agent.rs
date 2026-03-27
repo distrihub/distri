@@ -74,6 +74,15 @@ impl EventSink for ContextEventSink {
                 "\n**Workflow {:?}** — {} done, {} failed\n",
                 status, steps_done, steps_failed
             ),
+            WorkflowEvent::StepWaiting {
+                step_id,
+                step_label,
+                message,
+                ..
+            } => format!(
+                "\n**Waiting for input:** `{}` — {} — {}\n",
+                step_id, step_label, message
+            ),
         };
 
         self.context.emit(WorkflowAgent::emit_text(&text)).await;
@@ -239,6 +248,21 @@ impl StepExecutor for ContextStepExecutor {
                 "expression": expression,
                 "evaluated": true
             }))),
+
+            StepKind::WaitForInput { message, schema } => {
+                // This should be intercepted by the executor before reaching here,
+                // but handle defensively.
+                Ok(StepResult {
+                    status: StepStatus::WaitingForInput,
+                    result: Some(serde_json::json!({
+                        "waiting": true,
+                        "message": message,
+                        "schema": schema,
+                    })),
+                    error: None,
+                    context_updates: None,
+                })
+            }
         }
     }
 
