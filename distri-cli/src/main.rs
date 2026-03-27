@@ -1,7 +1,9 @@
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Instant;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -22,7 +24,8 @@ use rustyline::error::ReadlineError;
 use rustyline::hint::Hinter;
 use rustyline::highlight::Highlighter;
 use rustyline::validate::Validator;
-use rustyline::{Config, Editor, Helper};
+use rustyline::{Cmd, ConditionalEventHandler, Config, Editor, Event, EventContext, EventHandler,
+    Helper, KeyEvent, Movement, RepeatCount};
 use tokio::fs;
 mod logging;
 mod login;
@@ -52,6 +55,9 @@ enum Commands {
     Tui {
         #[clap(help = "Agent name (defaults to 'distri')")]
         agent: Option<String>,
+        /// Resume thread by ID, or "last" for most recent
+        #[clap(long)]
+        resume: Option<String>,
     },
 
     /// Run a single task against an agent
@@ -64,6 +70,9 @@ enum Commands {
         /// Envs are available to tools via REQUEST_BASE_URL, REQUEST_AUTH_TOKEN etc.
         #[clap(long, help = "JSON context with envs and secrets")]
         context: Option<String>,
+        /// Resume thread by ID, or "last" for most recent
+        #[clap(long)]
+        resume: Option<String>,
     },
 
     /// Agent-related commands
@@ -314,17 +323,17 @@ impl std::fmt::Display for AgentMenuOption {
 struct DistriHelper {
     slash_commands: Vec<String>,
     matcher: SkimMatcherV2,
+    show_tools: Arc<AtomicBool>,
 }
 
 impl DistriHelper {
-    fn new() -> Self {
+    fn new(show_tools: Arc<AtomicBool>) -> Self {
         let slash_commands = vec![
             "/help".to_string(),
             "/agents".to_string(),
             "/agent".to_string(),
             "/models".to_string(),
             "/model".to_string(),
-            "/tools".to_string(),
             "/available-tools".to_string(),
             "/resume".to_string(),
             "/clear".to_string(),
@@ -335,7 +344,29 @@ impl DistriHelper {
         Self {
             slash_commands,
             matcher: SkimMatcherV2::default(),
+            show_tools,
         }
+    }
+}
+
+/// Ctrl+O handler — toggles tool output visibility.
+struct ToggleToolsHandler {
+    show_tools: Arc<AtomicBool>,
+}
+
+impl ConditionalEventHandler for ToggleToolsHandler {
+    fn handle(
+        &self,
+        _evt: &Event,
+        _n: RepeatCount,
+        _positive: bool,
+        _ctx: &EventContext,
+    ) -> Option<Cmd> {
+        let new_val = !self.show_tools.load(Ordering::Relaxed);
+        self.show_tools.store(new_val, Ordering::Relaxed);
+        // Move cursor to beginning of line to trigger a hint refresh
+        // so the user sees the updated "[tools hidden]" status
+        Some(Cmd::Move(Movement::BeginningOfLine))
     }
 }
 
@@ -387,7 +418,15 @@ impl Hinter for DistriHelper {
 
     fn hint(&self, line: &str, _pos: usize, _ctx: &rustyline::Context<'_>) -> Option<String> {
         if line.is_empty() {
-            Some("  /help for commands... Ask me anything".to_string())
+            let tools_status = if self.show_tools.load(Ordering::Relaxed) {
+                ""
+            } else {
+                " [tools hidden · Ctrl+O]"
+            };
+            Some(format!(
+                "  /help for commands... Ask me anything{}",
+                tools_status
+            ))
         } else {
             None
         }
@@ -403,7 +442,10 @@ async fn main() -> Result<()> {
 
     let cli = parse_cli_with_default_serve();
 
-    let command = cli.command.clone().unwrap_or(Commands::Tui { agent: None });
+    let command = cli
+        .command
+        .clone()
+        .unwrap_or(Commands::Tui { agent: None, resume: None });
 
     if let Commands::Serve {
         host,
@@ -432,14 +474,23 @@ async fn main() -> Result<()> {
         DistriClientApp::from_config(config.clone()).with_workspace_path(workspace.clone());
 
     match command {
-        Commands::Tui { agent } => {
+        Commands::Tui { agent, resume } => {
             let agent_name = agent.unwrap_or_else(|| "distri".to_string());
-            run_interactive_chat(&mut app, &config, &base_url, agent_name, cli.verbose).await?;
+            run_interactive_chat(
+                &mut app,
+                &config,
+                &base_url,
+                agent_name,
+                cli.verbose,
+                resume,
+            )
+            .await?;
         }
         Commands::Run {
             agent,
             task,
             context,
+            resume,
         } => {
             let agent_name = agent.unwrap_or_else(|| "distri".to_string());
             // Resolve agent name to UUID for cloud compatibility.
@@ -456,6 +507,12 @@ async fn main() -> Result<()> {
             let distri_client = Distri::from_config(config.clone());
             let connections_context = build_connections_context(&distri_client).await;
             let mut params = build_message_params(task, connections_context);
+
+            // Set thread_id from --resume
+            if let Some(ref resume_arg) = resume {
+                let tid = resolve_resume_arg(resume_arg);
+                params.message.context_id = Some(tid);
+            }
 
             // Merge --context envs/secrets into metadata.env_vars
             if let Some(ctx_json) = context {
@@ -804,8 +861,14 @@ async fn run_interactive_chat(
     base_url: &str,
     agent_name: String,
     verbose: bool,
+    resume: Option<String>,
 ) -> Result<()> {
-    let mut thread_id = uuid::Uuid::new_v4().to_string();
+    // Resolve --resume flag or start fresh
+    let mut thread_id = if let Some(ref resume_arg) = resume {
+        resolve_resume_arg(resume_arg)
+    } else {
+        uuid::Uuid::new_v4().to_string()
+    };
     let mut current_agent = agent_name;
     // Model priority: last used (~/.distri/last_model) → workspace default → None (auto)
     let mut current_model: Option<String> = load_last_model();
@@ -816,7 +879,7 @@ async fn run_interactive_chat(
         }
     }
 
-    let mut show_tools = true;
+    let show_tools = Arc::new(AtomicBool::new(true));
 
     print_welcome_header(&current_agent, current_model.as_deref().unwrap_or("Auto"), &thread_id);
 
@@ -831,16 +894,28 @@ async fn run_interactive_chat(
         String::new()
     };
     println!(
-        "{}Connected:{} {}{}",
-        COLOR_GRAY, COLOR_RESET, base_url, workspace_label
+        "{}Connected:{} {}{}  {}(Ctrl+O to toggle tool output){}",
+        COLOR_GRAY, COLOR_RESET, base_url, workspace_label, COLOR_GRAY, COLOR_RESET
     );
+
+    // If resuming, print thread history
+    if resume.is_some() {
+        let history_client = Distri::from_config(config.clone());
+        print_thread_history(&history_client, &thread_id).await;
+    }
 
     let rl_config = Config::builder()
         .auto_add_history(true)
         .bracketed_paste(true)
         .build();
     let mut rl = Editor::with_config(rl_config)?;
-    rl.set_helper(Some(DistriHelper::new()));
+    rl.set_helper(Some(DistriHelper::new(show_tools.clone())));
+    rl.bind_sequence(
+        KeyEvent::ctrl('O'),
+        EventHandler::Conditional(Box::new(ToggleToolsHandler {
+            show_tools: show_tools.clone(),
+        })),
+    );
 
     // Load history from existing file
     let history_path = get_history_file();
@@ -856,13 +931,33 @@ async fn run_interactive_chat(
         .with_http_client(http_client)
         .with_tool_registry(registry);
 
+    let mut last_interrupt: Option<Instant> = None;
+
     loop {
         print_context_status();
         print_separator_line();
 
         let input = match rl.readline("> ") {
-            Ok(line) => line,
-            Err(ReadlineError::Interrupted) | Err(ReadlineError::Eof) => {
+            Ok(line) => {
+                last_interrupt = None; // reset on successful input
+                line
+            }
+            Err(ReadlineError::Interrupted) => {
+                // Double Ctrl+C within 2 seconds to exit
+                if let Some(prev) = last_interrupt {
+                    if prev.elapsed().as_secs() < 2 {
+                        println!("\nExiting...");
+                        break;
+                    }
+                }
+                last_interrupt = Some(Instant::now());
+                println!(
+                    "\n{}Press Ctrl+C again to exit (or Ctrl+D){}",
+                    COLOR_GRAY, COLOR_RESET
+                );
+                continue;
+            }
+            Err(ReadlineError::Eof) => {
                 println!("\nExiting...");
                 break;
             }
@@ -878,17 +973,6 @@ async fn run_interactive_chat(
         }
 
         if input.starts_with('/') {
-            // Handle /tools toggle inline (needs local state)
-            if input.trim() == "/tools" {
-                show_tools = !show_tools;
-                println!(
-                    "{}Tool output:{} {}",
-                    COLOR_GRAY,
-                    COLOR_RESET,
-                    if show_tools { "visible" } else { "hidden" }
-                );
-                continue;
-            }
             match handle_slash_command(input, app, config, &mut current_agent, &mut current_model)
                 .await?
             {
@@ -904,7 +988,12 @@ async fn run_interactive_chat(
                 }
                 SlashCommandResult::Resume(tid) => {
                     thread_id = tid;
-                    println!("Resumed thread: {}", thread_id);
+                    println!(
+                        "{}Resumed thread:{} {}",
+                        COLOR_BRIGHT_GREEN, COLOR_RESET, thread_id
+                    );
+                    let history_client = Distri::from_config(config.clone());
+                    print_thread_history(&history_client, &thread_id).await;
                     continue;
                 }
             }
@@ -943,7 +1032,7 @@ async fn run_interactive_chat(
             params,
             verbose,
             Some(current_agent.clone()),
-            show_tools,
+            show_tools.load(Ordering::Relaxed),
         )
         .await
         {
@@ -1235,6 +1324,89 @@ fn get_history_file() -> PathBuf {
     PathBuf::from(home).join(".distri").join("history.txt")
 }
 
+/// Resolve a resume argument: "last" → load saved thread ID, otherwise use as-is.
+fn resolve_resume_arg(arg: &str) -> String {
+    if arg == "last" {
+        load_last_thread().unwrap_or_else(|| {
+            eprintln!("No previous thread saved. Starting fresh.");
+            uuid::Uuid::new_v4().to_string()
+        })
+    } else {
+        arg.to_string()
+    }
+}
+
+/// Fetch and print thread history for a resumed thread.
+async fn print_thread_history(client: &Distri, thread_id: &str) {
+    match client.get_thread_messages(thread_id, true).await {
+        Ok(messages) => {
+            if messages.is_empty() {
+                println!("{}(no previous messages){}", COLOR_GRAY, COLOR_RESET);
+                return;
+            }
+            println!(
+                "{}── Thread history ({} messages) ──{}",
+                COLOR_GRAY,
+                messages.len(),
+                COLOR_RESET
+            );
+            for msg in &messages {
+                let role = msg
+                    .get("role")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown");
+                let parts = msg.get("parts").and_then(|v| v.as_array());
+                let text = parts
+                    .and_then(|parts| {
+                        parts.iter().find_map(|p| {
+                            if p.get("part_type")
+                                .and_then(|t| t.as_str())
+                                .map(|t| t == "text")
+                                .unwrap_or(false)
+                            {
+                                p.get("data").and_then(|d| d.as_str())
+                            } else {
+                                // Fallback: plain text string in parts
+                                p.as_str()
+                            }
+                        })
+                    })
+                    .unwrap_or("");
+
+                if text.is_empty() {
+                    continue;
+                }
+
+                match role {
+                    "user" => {
+                        println!("{}> {}{}", COLOR_GRAY, text, COLOR_RESET);
+                    }
+                    "assistant" => {
+                        let preview = if text.len() > 200 {
+                            format!("{}…", &text[..200])
+                        } else {
+                            text.to_string()
+                        };
+                        println!("{}◆ {}{}", COLOR_GRAY, preview, COLOR_RESET);
+                    }
+                    _ => {}
+                }
+            }
+            println!(
+                "{}── End of history ──{}",
+                COLOR_GRAY, COLOR_RESET
+            );
+            println!();
+        }
+        Err(err) => {
+            eprintln!(
+                "{}Could not load thread history: {}{}",
+                COLOR_GRAY, err, COLOR_RESET
+            );
+        }
+    }
+}
+
 fn get_last_thread_file() -> PathBuf {
     let home = std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
@@ -1345,7 +1517,6 @@ fn print_help_message() {
     println!("  /agent <name>       - Switch to an agent by name");
     println!("  /models             - Set model override (prompts for name)");
     println!("  /model <name>       - Set model override directly");
-    println!("  /tools              - Toggle tool call output on/off");
     println!("  /available-tools    - List tools available to the client");
     println!("  /resume             - Pick from recent threads to resume");
     println!("  /resume last        - Resume the last thread from previous session");
@@ -1354,10 +1525,14 @@ fn print_help_message() {
     println!("  /help               - Show this help message");
     println!("  /exit               - Exit the chat");
     println!();
+    println!("KEYBOARD SHORTCUTS:");
+    println!("  Ctrl+O              - Toggle tool call output on/off");
+    println!("  Tab                 - Autocomplete slash commands");
+    println!("  Up/Down             - Navigate history");
+    println!("  Ctrl+C / Ctrl+D     - Exit");
+    println!();
     println!("USAGE TIPS:");
     println!("- Type normally; the agent decides the best approach");
-    println!("- Tab to autocomplete slash commands");
-    println!("- Up/Down arrows to navigate history");
     println!("- Paste multi-line text — it stays as one message");
     println!("- Thread ID shown at start and exit for /resume");
 }
