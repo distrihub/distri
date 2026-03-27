@@ -871,6 +871,8 @@ pub struct NewSkill {
     pub is_public: bool,
     #[serde(default)]
     pub scripts: Vec<NewSkillScript>,
+    #[serde(default)]
+    pub path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
