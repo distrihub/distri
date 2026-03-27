@@ -1337,59 +1337,61 @@ fn resolve_resume_arg(arg: &str) -> String {
 }
 
 /// Fetch and print thread history for a resumed thread.
+/// Replays messages and events through `EventPrinter` so the output
+/// matches the live streaming format (including tool calls, ctrl+o toggle, etc).
 async fn print_thread_history(client: &Distri, thread_id: &str) {
-    match client.get_thread_messages(thread_id, true).await {
-        Ok(messages) => {
-            if messages.is_empty() {
+    match client.get_thread_messages(thread_id, false).await {
+        Ok(items) => {
+            if items.is_empty() {
                 println!("{}(no previous messages){}", COLOR_GRAY, COLOR_RESET);
                 return;
             }
+            let msg_count = items
+                .iter()
+                .filter(|i| matches!(i, distri_types::TaskMessage::Message(_)))
+                .count();
+            let event_count = items
+                .iter()
+                .filter(|i| matches!(i, distri_types::TaskMessage::Event(_)))
+                .count();
             println!(
-                "{}── Thread history ({} messages) ──{}",
-                COLOR_GRAY,
-                messages.len(),
-                COLOR_RESET
+                "{}── Thread history ({} messages, {} events) ──{}",
+                COLOR_GRAY, msg_count, event_count, COLOR_RESET
             );
-            for msg in &messages {
-                let role = msg
-                    .get("role")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("unknown");
-                let parts = msg.get("parts").and_then(|v| v.as_array());
-                let text = parts
-                    .and_then(|parts| {
-                        parts.iter().find_map(|p| {
-                            if p.get("part_type")
-                                .and_then(|t| t.as_str())
-                                .map(|t| t == "text")
-                                .unwrap_or(false)
-                            {
-                                p.get("data").and_then(|d| d.as_str())
-                            } else {
-                                // Fallback: plain text string in parts
-                                p.as_str()
+
+            let mut printer = distri::EventPrinter::new();
+            for item in &items {
+                match item {
+                    distri_types::TaskMessage::Event(task_event) => {
+                        let agent_event = distri_types::events::AgentEvent::from_task_event(
+                            task_event,
+                            thread_id,
+                        );
+                        printer.handle_event(&agent_event).await;
+                    }
+                    distri_types::TaskMessage::Message(msg) => {
+                        // Show user messages as-is, assistant messages as previews
+                        let text = msg.parts.iter().find_map(|p| match p {
+                            distri_types::Part::Text(t) if !t.is_empty() => Some(t.as_str()),
+                            _ => None,
+                        });
+                        if let Some(text) = text {
+                            match msg.role {
+                                distri_types::MessageRole::User => {
+                                    println!("{}> {}{}", COLOR_GRAY, text, COLOR_RESET);
+                                }
+                                distri_types::MessageRole::Assistant => {
+                                    let preview = if text.len() > 200 {
+                                        format!("{}…", &text[..200])
+                                    } else {
+                                        text.to_string()
+                                    };
+                                    println!("{}◆ {}{}", COLOR_GRAY, preview, COLOR_RESET);
+                                }
+                                _ => {}
                             }
-                        })
-                    })
-                    .unwrap_or("");
-
-                if text.is_empty() {
-                    continue;
-                }
-
-                match role {
-                    "user" => {
-                        println!("{}> {}{}", COLOR_GRAY, text, COLOR_RESET);
+                        }
                     }
-                    "assistant" => {
-                        let preview = if text.len() > 200 {
-                            format!("{}…", &text[..200])
-                        } else {
-                            text.to_string()
-                        };
-                        println!("{}◆ {}{}", COLOR_GRAY, preview, COLOR_RESET);
-                    }
-                    _ => {}
                 }
             }
             println!(

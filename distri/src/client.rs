@@ -2547,25 +2547,38 @@ impl Distri {
     }
 
     /// Fetch messages for a thread, optionally filtered to only user/assistant messages.
+    /// Fetch thread history as distri `TaskMessage`s (messages + events).
+    ///
+    /// The server returns A2A-format entries. This method converts them to
+    /// distri types via the `TryFrom<MessageKind> for TaskMessage` converter.
     pub async fn get_thread_messages(
         &self,
         thread_id: &str,
         messages_only: bool,
-    ) -> Result<Vec<serde_json::Value>, ClientError> {
+    ) -> Result<Vec<distri_types::TaskMessage>, ClientError> {
         let mut url = format!("{}/threads/{}/messages", self.base_url, thread_id);
         if messages_only {
             url.push_str("?filter=Messages");
         }
         let resp = self.http.get(&url).send().await?;
-        if resp.status().is_success() {
-            Ok(resp.json().await?)
-        } else {
+        if !resp.status().is_success() {
             let text = resp.text().await.unwrap_or_default();
-            Err(ClientError::InvalidResponse(format!(
+            return Err(ClientError::InvalidResponse(format!(
                 "failed to get thread messages: {}",
                 text
-            )))
+            )));
         }
+
+        let raw: Vec<serde_json::Value> = resp.json().await?;
+        let items = raw
+            .into_iter()
+            .filter_map(|v| {
+                let mk: distri_a2a::MessageKind = serde_json::from_value(v).ok()?;
+                distri_types::TaskMessage::try_from(mk).ok()
+            })
+            .collect();
+
+        Ok(items)
     }
 
     // ========== Workflows API ==========

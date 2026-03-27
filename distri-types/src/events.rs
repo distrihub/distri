@@ -47,6 +47,25 @@ pub struct AgentEvent {
     pub channel_id: Option<String>,
 }
 
+impl AgentEvent {
+    /// Reconstruct an AgentEvent from a stored TaskEvent (e.g. for history replay).
+    pub fn from_task_event(task_event: &crate::TaskEvent, thread_id: &str) -> Self {
+        Self {
+            event: task_event.event.clone(),
+            agent_id: String::new(),
+            timestamp: chrono::DateTime::from_timestamp_millis(task_event.created_at)
+                .unwrap_or_default(),
+            thread_id: thread_id.to_string(),
+            run_id: String::new(),
+            task_id: String::new(),
+            user_id: None,
+            identifier_id: None,
+            workspace_id: None,
+            channel_id: None,
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "snake_case", tag = "type")]
 pub enum AgentEventType {
