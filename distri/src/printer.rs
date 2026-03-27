@@ -78,6 +78,8 @@ struct ChatState {
 pub struct EventPrinter {
     state: ChatState,
     verbose: bool,
+    show_tools: bool,
+    agent_display_name: Option<String>,
 }
 
 impl EventPrinter {
@@ -85,12 +87,29 @@ impl EventPrinter {
         Self {
             state: ChatState::default(),
             verbose: false,
+            show_tools: true,
+            agent_display_name: None,
         }
     }
 
     pub fn with_verbose(mut self, verbose: bool) -> Self {
         self.verbose = verbose;
         self
+    }
+
+    pub fn with_agent_name(mut self, name: String) -> Self {
+        self.agent_display_name = Some(name);
+        self
+    }
+
+    /// Toggle tool output visibility. Returns the new state.
+    pub fn toggle_show_tools(&mut self) -> bool {
+        self.show_tools = !self.show_tools;
+        self.show_tools
+    }
+
+    pub fn show_tools(&self) -> bool {
+        self.show_tools
     }
 
     /// If "Planning…" is showing on the current line, clear it before printing anything else.
@@ -311,14 +330,26 @@ impl EventPrinter {
         self.state.messages.insert(message_id.to_string(), message);
         self.state.current_message_id = Some(message_id.to_string());
 
-        let role_label = match role {
-            MessageRole::Assistant => "assistant",
-            MessageRole::User => "user",
-            MessageRole::System => "system",
-            MessageRole::Tool => "tool",
-            MessageRole::Developer => "developer",
-        };
-        print!("{}{}:{} ", COLOR_CYAN, role_label, COLOR_RESET);
+        match role {
+            MessageRole::Assistant => {
+                let name = self
+                    .agent_display_name
+                    .as_deref()
+                    .or(self.state.current_agent.as_deref())
+                    .unwrap_or("assistant");
+                print!("{}◆ {}:{} ", COLOR_CYAN, name, COLOR_RESET);
+            }
+            _ => {
+                let role_label = match role {
+                    MessageRole::User => "user",
+                    MessageRole::System => "system",
+                    MessageRole::Tool => "tool",
+                    MessageRole::Developer => "developer",
+                    MessageRole::Assistant => unreachable!(),
+                };
+                print!("{}{}:{} ", COLOR_CYAN, role_label, COLOR_RESET);
+            }
+        }
     }
 
     fn append_message(&mut self, message_id: &str, delta: &str) {
@@ -346,13 +377,45 @@ impl EventPrinter {
         }
     }
 
+    /// Returns true if this tool call looks like an internal discovery/probe call
+    /// that shouldn't be shown to the user.
+    fn is_probe_call(name: &str, input: &serde_json::Value) -> bool {
+        match name {
+            "load_skill" => {
+                let skill = input
+                    .get("skill_name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                skill == "?" || skill.is_empty()
+            }
+            "api_request" => {
+                // Probe requests (discovery GETs to nonexistent endpoints)
+                let method = input
+                    .get("method")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let path = input
+                    .get("path")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                method == "GET"
+                    && (path.ends_with("/v1/agents")
+                        || path.ends_with("/v1/connections")
+                        || path.ends_with("/v1/skills"))
+            }
+            _ => false,
+        }
+    }
+
     fn tool_start(&mut self, tool_call_id: &str, name: &str, input: &serde_json::Value) {
-        println!(
-            "{}⏺ {}{}",
-            COLOR_YELLOW,
-            Self::format_tool_call(name, input),
-            COLOR_RESET
-        );
+        if self.show_tools && !Self::is_probe_call(name, input) {
+            println!(
+                "{}⏺ {}{}",
+                COLOR_YELLOW,
+                Self::format_tool_call(name, input),
+                COLOR_RESET
+            );
+        }
         self.state.tool_calls.insert(
             tool_call_id.to_string(),
             ToolCallState {
@@ -389,6 +452,9 @@ impl EventPrinter {
     }
 
     fn print_tool_result(&self, result: &ToolResponse) {
+        if !self.show_tools {
+            return;
+        }
         crate::renderers::render_tool_output(result, self.verbose);
     }
 
@@ -568,7 +634,7 @@ pub async fn print_stream(
     agent_id: &str,
     params: MessageSendParams,
 ) -> Result<(), StreamError> {
-    print_stream_verbose(client, agent_id, params, false).await
+    print_stream_verbose(client, agent_id, params, false, None, true).await
 }
 
 /// Convenience helper that streams an agent and prints events to stdout,
@@ -578,8 +644,17 @@ pub async fn print_stream_verbose(
     agent_id: &str,
     params: MessageSendParams,
     verbose: bool,
+    agent_display_name: Option<String>,
+    show_tools: bool,
 ) -> Result<(), StreamError> {
-    let printer = Arc::new(Mutex::new(EventPrinter::new().with_verbose(verbose)));
+    let mut printer = EventPrinter::new().with_verbose(verbose);
+    if let Some(name) = agent_display_name {
+        printer = printer.with_agent_name(name);
+    }
+    if !show_tools {
+        printer.toggle_show_tools();
+    }
+    let printer = Arc::new(Mutex::new(printer));
     client
         .stream_agent(agent_id, params, {
             let printer = printer.clone();

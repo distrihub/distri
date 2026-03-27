@@ -324,6 +324,7 @@ impl DistriHelper {
             "/agent".to_string(),
             "/models".to_string(),
             "/model".to_string(),
+            "/tools".to_string(),
             "/available-tools".to_string(),
             "/resume".to_string(),
             "/clear".to_string(),
@@ -502,7 +503,15 @@ async fn main() -> Result<()> {
             let client = AgentStreamClient::from_config(config.clone())
                 .with_http_client(http_client)
                 .with_tool_registry(registry);
-            print_stream_verbose(&client, &stream_agent_id, params, cli.verbose).await?;
+            print_stream_verbose(
+                &client,
+                &stream_agent_id,
+                params,
+                cli.verbose,
+                Some(agent_name.clone()),
+                true,
+            )
+            .await?;
         }
         Commands::Agents { command } => match command {
             AgentsCommands::List => {
@@ -807,7 +816,9 @@ async fn run_interactive_chat(
         }
     }
 
-    print_welcome_header(&current_agent, current_model.as_deref().unwrap_or("Auto"));
+    let mut show_tools = true;
+
+    print_welcome_header(&current_agent, current_model.as_deref().unwrap_or("Auto"), &thread_id);
 
     // Show connected line with workspace name if available
     let distri_for_ws = Distri::from_config(config.clone());
@@ -867,6 +878,17 @@ async fn run_interactive_chat(
         }
 
         if input.starts_with('/') {
+            // Handle /tools toggle inline (needs local state)
+            if input.trim() == "/tools" {
+                show_tools = !show_tools;
+                println!(
+                    "{}Tool output:{} {}",
+                    COLOR_GRAY,
+                    COLOR_RESET,
+                    if show_tools { "visible" } else { "hidden" }
+                );
+                continue;
+            }
             match handle_slash_command(input, app, config, &mut current_agent, &mut current_model)
                 .await?
             {
@@ -874,7 +896,10 @@ async fn run_interactive_chat(
                 SlashCommandResult::Exit => break,
                 SlashCommandResult::ClearContext => {
                     thread_id = uuid::Uuid::new_v4().to_string();
-                    println!("Context cleared - new conversation started");
+                    println!(
+                        "Context cleared - new conversation started (thread: {})",
+                        &thread_id[..8]
+                    );
                     continue;
                 }
                 SlashCommandResult::Resume(tid) => {
@@ -912,12 +937,25 @@ async fn run_interactive_chat(
             connections_context,
         );
 
-        if let Err(err) =
-            print_stream_verbose(&stream_client, &stream_agent_id, params, verbose).await
+        if let Err(err) = print_stream_verbose(
+            &stream_client,
+            &stream_agent_id,
+            params,
+            verbose,
+            Some(current_agent.clone()),
+            show_tools,
+        )
+        .await
         {
             eprintln!("Error from agent: {}", err);
         }
     }
+
+    // Show thread ID on exit so user can resume later
+    println!(
+        "{}Thread:{} {} (use /resume last or /resume {})",
+        COLOR_GRAY, COLOR_RESET, thread_id, &thread_id[..8]
+    );
 
     // Save history and last thread_id
     let _ = rl.save_history(&history_path);
@@ -1250,11 +1288,19 @@ fn load_last_model() -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
-fn print_welcome_header(agent_name: &str, model_name: &str) {
+fn print_welcome_header(agent_name: &str, model_name: &str, thread_id: &str) {
     println!();
     println!(
-        "{}Agent:{} {} {}- Model:{} {}",
-        COLOR_GRAY, COLOR_RESET, agent_name, COLOR_GRAY, COLOR_RESET, model_name
+        "{}Agent:{} {} {}- Model:{} {} {}- Thread:{} {}",
+        COLOR_GRAY,
+        COLOR_RESET,
+        agent_name,
+        COLOR_GRAY,
+        COLOR_RESET,
+        model_name,
+        COLOR_GRAY,
+        COLOR_RESET,
+        &thread_id[..8]
     );
 }
 
@@ -1299,6 +1345,7 @@ fn print_help_message() {
     println!("  /agent <name>       - Switch to an agent by name");
     println!("  /models             - Set model override (prompts for name)");
     println!("  /model <name>       - Set model override directly");
+    println!("  /tools              - Toggle tool call output on/off");
     println!("  /available-tools    - List tools available to the client");
     println!("  /resume             - Pick from recent threads to resume");
     println!("  /resume last        - Resume the last thread from previous session");
@@ -1312,6 +1359,7 @@ fn print_help_message() {
     println!("- Tab to autocomplete slash commands");
     println!("- Up/Down arrows to navigate history");
     println!("- Paste multi-line text — it stays as one message");
+    println!("- Thread ID shown at start and exit for /resume");
 }
 
 fn handle_config_command(command: ConfigCommands) -> Result<()> {
