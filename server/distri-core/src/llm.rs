@@ -814,6 +814,20 @@ impl LLMExecutor {
             None
         };
 
+        // Models that use max_completion_tokens instead of max_tokens.
+        // These are newer OpenAI models (o-series, gpt-4.1+) that reject the legacy parameter.
+        let uses_max_completion_tokens = model.contains("o1")
+            || model.contains("o3")
+            || model.contains("o4")
+            || model.contains("gpt-4.1")
+            || model.contains("gpt-5");
+
+        let (legacy_max_tokens, new_max_completion_tokens) = if uses_max_completion_tokens {
+            (None, settings.inner.max_tokens)
+        } else {
+            (settings.inner.max_tokens, None)
+        };
+
         let request = CreateChatCompletionRequest {
             model: model.to_string(),
             messages,
@@ -821,8 +835,8 @@ impl LLMExecutor {
             temperature: settings.inner.temperature,
             top_p: settings.inner.top_p,
             #[allow(deprecated)]
-            max_tokens: settings.inner.max_tokens,
-            // max_completion_tokens: settings.inner.max_tokens,
+            max_tokens: legacy_max_tokens,
+            max_completion_tokens: new_max_completion_tokens,
             frequency_penalty: settings.inner.frequency_penalty,
             presence_penalty: settings.inner.presence_penalty,
             response_format: settings.inner.response_format.clone().map(|r| {
