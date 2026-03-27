@@ -147,6 +147,11 @@ impl Distri {
         &self.base_url
     }
 
+    /// Get the underlying HTTP client (with auth headers pre-configured).
+    pub fn http_client(&self) -> &reqwest::Client {
+        &self.http
+    }
+
     /// Get the current configuration.
     pub fn config(&self) -> &DistriConfig {
         &self.config

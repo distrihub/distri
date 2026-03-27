@@ -504,10 +504,7 @@ async fn main() -> Result<()> {
             println!("Streaming agent '{}' via {}", agent_name, base_url);
             let registry = app.registry();
             register_approval_handler(&registry);
-            let platform_tool = distri::PlatformTool::from_arc(std::sync::Arc::new(
-                Distri::from_config(config.clone()),
-            ));
-            platform_tool.register(&registry);
+            register_api_request_handler(&registry, Distri::from_config(config.clone()));
             let stream_config = config.clone().with_timeout(600);
             let http_client = stream_config.build_http_client()?;
             let client = AgentStreamClient::from_config(config.clone())
@@ -683,42 +680,23 @@ fn resolve_distri_server_binary() -> PathBuf {
     PathBuf::from(format!("distri-server{}", std::env::consts::EXE_SUFFIX))
 }
 
-fn platform_tool_definition() -> serde_json::Value {
-    serde_json::json!({
-        "name": "distri_platform",
-        "description": "Manage platform resources. Actions: list_agents, get_agent({agent_id}), list_skills, get_skill({skill_id}), create_skill({name,content}), delete_skill({skill_id}), list_providers, connect({provider,scopes?,additional_scopes?}), list_connections, get_connection_usage({connection_id}) returns API docs for a connection, connection_request({connection_id,method,url,headers?,body?}) makes authenticated API calls (token auto-injected), register_connection_provider({id,name,authorization_url,token_url,client_id,client_secret,...}), list_connection_providers, discover_skill({query}), import_skill({url,name?}), list_secrets, get_secret({key}), set_secret({key,value}), delete_secret({key}), list_notes({tag?,search?}), create_note({title,content,tags?}), get_note({note_id}), update_note({note_id,title?,content?,tags?}), delete_note({note_id}), list_threads. Workflow: list_connections → get_connection_usage → connection_request.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "action": {
-                    "type": "string",
-                    "enum": ["list_actions", "list_agents", "get_agent", "list_skills", "get_skill", "create_skill", "delete_skill", "list_providers", "connect", "list_connections", "get_connection_usage", "connection_request", "register_connection_provider", "list_connection_providers", "discover_skill", "import_skill", "list_secrets", "get_secret", "set_secret", "delete_secret", "list_notes", "create_note", "get_note", "update_note", "delete_note", "list_threads"],
-                    "description": "The action to perform"
-                },
-                "provider": { "type": "string", "description": "Provider name for connect (e.g. 'google', 'slack')" },
-                "scopes": { "type": "array", "items": { "type": "string" }, "description": "OAuth scopes for connect" },
-                "additional_scopes": { "type": "array", "items": { "type": "string" }, "description": "Extra scopes to add when re-connecting" },
-                "connection_id": { "type": "string", "description": "Connection ID for connection_request/get_connection_usage" },
-                "method": { "type": "string", "description": "HTTP method for connection_request (GET, POST, PUT, DELETE)" },
-                "url": { "type": "string", "description": "API URL for connection_request" },
-                "headers": { "type": "object", "description": "Extra headers for connection_request" },
-                "body": { "description": "Request body for connection_request (JSON)" },
-                "agent_id": { "type": "string", "description": "Agent ID for get_agent" },
-                "skill_id": { "type": "string", "description": "Skill ID for get_skill/delete_skill" },
-                "name": { "type": "string", "description": "Name for create_skill" },
-                "content": { "type": "string", "description": "Content for create_skill" },
-                "key": { "type": "string", "description": "Key for get_secret/set_secret/delete_secret" },
-                "value": { "type": "string", "description": "Value for set_secret" },
-                "query": { "type": "string", "description": "Search query for discover_skill" },
-                "title": { "type": "string", "description": "Title for create_note/update_note" },
-                "note_id": { "type": "string", "description": "Note ID for get_note/update_note/delete_note" },
-                "tags": { "type": "array", "items": { "type": "string" }, "description": "Tags for notes" },
-                "tag": { "type": "string", "description": "Tag filter for list_notes" },
-                "search": { "type": "string", "description": "Search query for list_notes" }
-            },
-            "required": ["action"]
+/// Register an api_request handler on the external tool registry.
+/// When the agent calls api_request, the CLI executes the HTTP request
+/// using the Distri client and returns the result.
+fn register_api_request_handler(registry: &ExternalToolRegistry, client: Distri) {
+    let client = std::sync::Arc::new(client);
+    registry.register("*", "api_request", move |call, _event| {
+        let client = client.clone();
+        async move {
+            let result = distri::execute_api_request(&client, &call.input).await;
+            Ok(distri_types::ToolResponse {
+                tool_call_id: call.tool_call_id,
+                tool_name: call.tool_name,
+                parts: vec![distri_types::Part::Data(result)],
+                parts_metadata: None,
+            })
         }
-    })
+    });
 }
 
 /// Build a lightweight connections summary to inject into the agent's prompt context.
@@ -753,7 +731,7 @@ async fn build_connections_context(client: &Distri) -> Option<String> {
 
 fn build_message_params(content: String, connections_context: Option<String>) -> MessageSendParams {
     let mut meta = serde_json::json!({
-        "external_tools": [platform_tool_definition()]
+        "external_tools": [distri::api_request_definition()]
     });
     if let Some(conn_ctx) = connections_context {
         meta["dynamic_values"] = serde_json::json!({
@@ -784,7 +762,7 @@ fn build_chat_message_params(
     connections_context: Option<String>,
 ) -> MessageSendParams {
     let mut meta = serde_json::json!({
-        "external_tools": [platform_tool_definition()]
+        "external_tools": [distri::api_request_definition()]
     });
     if !model.trim().is_empty() {
         meta["definition_overrides"] = serde_json::json!({ "model": model });
@@ -859,9 +837,7 @@ async fn run_interactive_chat(
 
     let registry = app.registry();
     register_approval_handler(&registry);
-    let platform_tool =
-        distri::PlatformTool::from_arc(std::sync::Arc::new(Distri::from_config(config.clone())));
-    platform_tool.register(&registry);
+    register_api_request_handler(&registry, Distri::from_config(config.clone()));
 
     let stream_config = config.clone().with_timeout(60);
     let http_client = stream_config.build_http_client()?;

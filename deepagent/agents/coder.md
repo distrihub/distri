@@ -9,14 +9,6 @@ max_iterations = 60
 tool_format = "provider"
 write_large_tool_responses_to_fs = true
 
-[model_settings]
-model = "gpt-4.1-mini"
-temperature = 0.1
-max_tokens = 6000
-
-[model_settings.provider]
-name = "vllora"
-
 [tools]
 builtin = [
   "final",
