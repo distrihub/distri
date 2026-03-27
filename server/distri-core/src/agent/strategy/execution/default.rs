@@ -354,6 +354,47 @@ pub async fn execute_tool_calls_with_timeout(
         async move {
             let (tool, tool_call) = tuple;
 
+            // Dry-run mode: simulate external and unsafe tools via LLM
+            if context.dry_run && (tool.is_external() || !crate::tools::simulator::is_safe_tool(&tool_call.tool_name)) {
+                context
+                    .emit(AgentEventType::ToolExecutionStart {
+                        step_id: step_id.clone(),
+                        tool_call_id: tool_call.tool_call_id.clone(),
+                        tool_call_name: tool_call.tool_name.clone(),
+                        input: tool_call.input.clone(),
+                    })
+                    .await;
+
+                tracing::info!(
+                    tool = %tool_call.tool_name,
+                    external = tool.is_external(),
+                    "Dry-run: simulating tool response via LLM"
+                );
+                let def = tool.get_tool_definition();
+                let parts = crate::tools::simulator::simulate_tool_response(
+                    tool_call,
+                    &def.description,
+                    &def.parameters,
+                )
+                .await
+                .unwrap_or_else(|e| vec![Part::Text(format!("Simulation error: {e}"))]);
+
+                context
+                    .emit(AgentEventType::ToolExecutionEnd {
+                        step_id: step_id.clone(),
+                        tool_call_id: tool_call.tool_call_id.clone(),
+                        tool_call_name: tool_call.tool_name.clone(),
+                        success: true,
+                    })
+                    .await;
+
+                return ToolResultWithSkip::ToolResult(crate::types::ToolResponse::from_parts(
+                    tool_call.tool_call_id.clone(),
+                    tool_call.tool_name.clone(),
+                    parts,
+                ));
+            }
+
             if tool.is_external() {
                 return handle_external_tool_inline(
                     external_tool_calls_store.clone(),
@@ -374,7 +415,7 @@ pub async fn execute_tool_calls_with_timeout(
                 })
                 .await;
 
-            // Dry-run mode: simulate unsafe tools via LLM, execute safe tools normally
+            // Dry-run mode for non-external unsafe tools (shouldn't reach here often)
             if context.dry_run && !crate::tools::simulator::is_safe_tool(&tool_call.tool_name) {
                 tracing::info!(
                     tool = %tool_call.tool_name,
