@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Instant;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -54,6 +55,9 @@ enum Commands {
     Tui {
         #[clap(help = "Agent name (defaults to 'distri')")]
         agent: Option<String>,
+        /// Resume thread by ID, or "last" for most recent
+        #[clap(long)]
+        resume: Option<String>,
     },
 
     /// Run a single task against an agent
@@ -66,6 +70,9 @@ enum Commands {
         /// Envs are available to tools via REQUEST_BASE_URL, REQUEST_AUTH_TOKEN etc.
         #[clap(long, help = "JSON context with envs and secrets")]
         context: Option<String>,
+        /// Resume thread by ID, or "last" for most recent
+        #[clap(long)]
+        resume: Option<String>,
     },
 
     /// Agent-related commands
@@ -435,7 +442,10 @@ async fn main() -> Result<()> {
 
     let cli = parse_cli_with_default_serve();
 
-    let command = cli.command.clone().unwrap_or(Commands::Tui { agent: None });
+    let command = cli
+        .command
+        .clone()
+        .unwrap_or(Commands::Tui { agent: None, resume: None });
 
     if let Commands::Serve {
         host,
@@ -464,14 +474,23 @@ async fn main() -> Result<()> {
         DistriClientApp::from_config(config.clone()).with_workspace_path(workspace.clone());
 
     match command {
-        Commands::Tui { agent } => {
+        Commands::Tui { agent, resume } => {
             let agent_name = agent.unwrap_or_else(|| "distri".to_string());
-            run_interactive_chat(&mut app, &config, &base_url, agent_name, cli.verbose).await?;
+            run_interactive_chat(
+                &mut app,
+                &config,
+                &base_url,
+                agent_name,
+                cli.verbose,
+                resume,
+            )
+            .await?;
         }
         Commands::Run {
             agent,
             task,
             context,
+            resume,
         } => {
             let agent_name = agent.unwrap_or_else(|| "distri".to_string());
             // Resolve agent name to UUID for cloud compatibility.
@@ -488,6 +507,12 @@ async fn main() -> Result<()> {
             let distri_client = Distri::from_config(config.clone());
             let connections_context = build_connections_context(&distri_client).await;
             let mut params = build_message_params(task, connections_context);
+
+            // Set thread_id from --resume
+            if let Some(ref resume_arg) = resume {
+                let tid = resolve_resume_arg(resume_arg);
+                params.message.context_id = Some(tid);
+            }
 
             // Merge --context envs/secrets into metadata.env_vars
             if let Some(ctx_json) = context {
@@ -836,8 +861,14 @@ async fn run_interactive_chat(
     base_url: &str,
     agent_name: String,
     verbose: bool,
+    resume: Option<String>,
 ) -> Result<()> {
-    let mut thread_id = uuid::Uuid::new_v4().to_string();
+    // Resolve --resume flag or start fresh
+    let mut thread_id = if let Some(ref resume_arg) = resume {
+        resolve_resume_arg(resume_arg)
+    } else {
+        uuid::Uuid::new_v4().to_string()
+    };
     let mut current_agent = agent_name;
     // Model priority: last used (~/.distri/last_model) → workspace default → None (auto)
     let mut current_model: Option<String> = load_last_model();
@@ -867,6 +898,12 @@ async fn run_interactive_chat(
         COLOR_GRAY, COLOR_RESET, base_url, workspace_label, COLOR_GRAY, COLOR_RESET
     );
 
+    // If resuming, print thread history
+    if resume.is_some() {
+        let history_client = Distri::from_config(config.clone());
+        print_thread_history(&history_client, &thread_id).await;
+    }
+
     let rl_config = Config::builder()
         .auto_add_history(true)
         .bracketed_paste(true)
@@ -894,13 +931,33 @@ async fn run_interactive_chat(
         .with_http_client(http_client)
         .with_tool_registry(registry);
 
+    let mut last_interrupt: Option<Instant> = None;
+
     loop {
         print_context_status();
         print_separator_line();
 
         let input = match rl.readline("> ") {
-            Ok(line) => line,
-            Err(ReadlineError::Interrupted) | Err(ReadlineError::Eof) => {
+            Ok(line) => {
+                last_interrupt = None; // reset on successful input
+                line
+            }
+            Err(ReadlineError::Interrupted) => {
+                // Double Ctrl+C within 2 seconds to exit
+                if let Some(prev) = last_interrupt {
+                    if prev.elapsed().as_secs() < 2 {
+                        println!("\nExiting...");
+                        break;
+                    }
+                }
+                last_interrupt = Some(Instant::now());
+                println!(
+                    "\n{}Press Ctrl+C again to exit (or Ctrl+D){}",
+                    COLOR_GRAY, COLOR_RESET
+                );
+                continue;
+            }
+            Err(ReadlineError::Eof) => {
                 println!("\nExiting...");
                 break;
             }
@@ -931,7 +988,12 @@ async fn run_interactive_chat(
                 }
                 SlashCommandResult::Resume(tid) => {
                     thread_id = tid;
-                    println!("Resumed thread: {}", thread_id);
+                    println!(
+                        "{}Resumed thread:{} {}",
+                        COLOR_BRIGHT_GREEN, COLOR_RESET, thread_id
+                    );
+                    let history_client = Distri::from_config(config.clone());
+                    print_thread_history(&history_client, &thread_id).await;
                     continue;
                 }
             }
@@ -1260,6 +1322,89 @@ fn get_history_file() -> PathBuf {
         .or_else(|_| std::env::var("USERPROFILE"))
         .unwrap_or_else(|_| ".".to_string());
     PathBuf::from(home).join(".distri").join("history.txt")
+}
+
+/// Resolve a resume argument: "last" → load saved thread ID, otherwise use as-is.
+fn resolve_resume_arg(arg: &str) -> String {
+    if arg == "last" {
+        load_last_thread().unwrap_or_else(|| {
+            eprintln!("No previous thread saved. Starting fresh.");
+            uuid::Uuid::new_v4().to_string()
+        })
+    } else {
+        arg.to_string()
+    }
+}
+
+/// Fetch and print thread history for a resumed thread.
+async fn print_thread_history(client: &Distri, thread_id: &str) {
+    match client.get_thread_messages(thread_id, true).await {
+        Ok(messages) => {
+            if messages.is_empty() {
+                println!("{}(no previous messages){}", COLOR_GRAY, COLOR_RESET);
+                return;
+            }
+            println!(
+                "{}── Thread history ({} messages) ──{}",
+                COLOR_GRAY,
+                messages.len(),
+                COLOR_RESET
+            );
+            for msg in &messages {
+                let role = msg
+                    .get("role")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown");
+                let parts = msg.get("parts").and_then(|v| v.as_array());
+                let text = parts
+                    .and_then(|parts| {
+                        parts.iter().find_map(|p| {
+                            if p.get("part_type")
+                                .and_then(|t| t.as_str())
+                                .map(|t| t == "text")
+                                .unwrap_or(false)
+                            {
+                                p.get("data").and_then(|d| d.as_str())
+                            } else {
+                                // Fallback: plain text string in parts
+                                p.as_str()
+                            }
+                        })
+                    })
+                    .unwrap_or("");
+
+                if text.is_empty() {
+                    continue;
+                }
+
+                match role {
+                    "user" => {
+                        println!("{}> {}{}", COLOR_GRAY, text, COLOR_RESET);
+                    }
+                    "assistant" => {
+                        let preview = if text.len() > 200 {
+                            format!("{}…", &text[..200])
+                        } else {
+                            text.to_string()
+                        };
+                        println!("{}◆ {}{}", COLOR_GRAY, preview, COLOR_RESET);
+                    }
+                    _ => {}
+                }
+            }
+            println!(
+                "{}── End of history ──{}",
+                COLOR_GRAY, COLOR_RESET
+            );
+            println!();
+        }
+        Err(err) => {
+            eprintln!(
+                "{}Could not load thread history: {}{}",
+                COLOR_GRAY, err, COLOR_RESET
+            );
+        }
+    }
 }
 
 fn get_last_thread_file() -> PathBuf {
