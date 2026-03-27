@@ -103,13 +103,9 @@ impl EventPrinter {
     }
 
     pub async fn handle_event(&mut self, event: &AgentEvent) {
-        // Print thread/task IDs once on the first event
+        // Track first event (no header printed — internal IDs aren't useful)
         if !self.state.printed_header {
             self.state.printed_header = true;
-            println!(
-                "{}thread: {}  task: {}{}",
-                COLOR_GRAY, event.thread_id, event.task_id, COLOR_RESET
-            );
         }
 
         // Track agent changes and display them
@@ -167,12 +163,7 @@ impl EventPrinter {
                         end_time: None,
                     },
                 );
-                println!(
-                    "{}→ Starting step {}{}",
-                    COLOR_CYAN,
-                    step_index + 1,
-                    COLOR_RESET
-                );
+                // Suppressed — individual tool calls show progress
             }
             AgentEventType::StepCompleted { step_id, success } => {
                 if let Some(step) = self.state.steps.get_mut(step_id) {
@@ -182,19 +173,15 @@ impl EventPrinter {
                         "error".into()
                     };
                     step.end_time = Some(Instant::now());
-                    let elapsed = step
-                        .start_time
-                        .map(|s| s.elapsed().as_millis())
-                        .unwrap_or(0);
-                    println!(
-                        "{}{} Step {} ({}) [{}ms]{}",
-                        if *success { COLOR_GREEN } else { COLOR_RED },
-                        if *success { "✔" } else { "✖" },
-                        step.index + 1,
-                        step.title,
-                        elapsed,
-                        COLOR_RESET
-                    );
+                    // Only show on failure
+                    if !success {
+                        println!(
+                            "{}✖ Step {} failed{}",
+                            COLOR_RED,
+                            step.index + 1,
+                            COLOR_RESET
+                        );
+                    }
                 }
             }
             AgentEventType::TextMessageStart {
@@ -237,21 +224,13 @@ impl EventPrinter {
             } => {
                 self.handle_tool_calls(tool_calls, parent_message_id.as_deref());
             }
-            AgentEventType::RunFinished {
-                success,
-                total_steps,
-                ..
-            } => {
-                let stamp = Local::now().format("%H:%M:%S").to_string();
-                println!(
-                    "{}{} [{}] run finished ({} steps, {}){}",
-                    COLOR_GREEN,
-                    stamp,
-                    event.agent_id,
-                    total_steps,
-                    if *success { "ok" } else { "error" },
-                    COLOR_RESET
-                );
+            AgentEventType::RunFinished { success, .. } => {
+                if !success {
+                    println!(
+                        "{}Run completed with errors{}",
+                        COLOR_RED, COLOR_RESET
+                    );
+                }
             }
             AgentEventType::RunError { message, code } => {
                 let stamp = Local::now().format("%H:%M:%S").to_string();
@@ -369,10 +348,9 @@ impl EventPrinter {
 
     fn tool_start(&mut self, tool_call_id: &str, name: &str, input: &serde_json::Value) {
         println!(
-            "{}⏺ {} ({}){}",
+            "{}⏺ {}{}",
             COLOR_YELLOW,
-            name,
-            self.format_tool_input(input),
+            Self::format_tool_call(name, input),
             COLOR_RESET
         );
         self.state.tool_calls.insert(
@@ -398,36 +376,16 @@ impl EventPrinter {
                 ToolCallStatus::Error
             };
             state.end_time = Some(Instant::now());
-            let elapsed = state
-                .start_time
-                .map(|s| s.elapsed().as_millis())
-                .unwrap_or(0);
-            println!(
-                "{}{} completed in {}ms{}",
-                if success { COLOR_GREEN } else { COLOR_RED },
-                state.tool_name,
-                elapsed,
-                COLOR_RESET
-            );
+            // No output — the ⎿ result line is sufficient
         }
     }
 
-    fn handle_tool_calls(&mut self, tool_calls: &[distri_types::ToolCall], parent: Option<&str>) {
-        if let Some(parent) = parent {
-            println!(
-                "{}Tool calls for message {}{}",
-                COLOR_GRAY, parent, COLOR_RESET
-            );
-        }
-        for call in tool_calls {
-            println!(
-                "{}• {} ({}){}",
-                COLOR_GRAY,
-                call.tool_name,
-                self.format_tool_input(&call.input),
-                COLOR_RESET
-            );
-        }
+    fn handle_tool_calls(
+        &mut self,
+        _tool_calls: &[distri_types::ToolCall],
+        _parent: Option<&str>,
+    ) {
+        // Suppressed — individual ToolExecutionStart events show each call
     }
 
     fn print_tool_result(&self, result: &ToolResponse) {
@@ -518,6 +476,81 @@ impl EventPrinter {
                 parts.join(" | "),
                 COLOR_RESET
             ))
+        }
+    }
+
+    fn format_tool_call(name: &str, input: &serde_json::Value) -> String {
+        let str_field = |key: &str| {
+            input
+                .get(key)
+                .and_then(|v| v.as_str())
+                .unwrap_or("?")
+                .to_string()
+        };
+        let truncate = |s: &str, max: usize| -> String {
+            if s.len() > max {
+                format!("{}…", &s[..max])
+            } else {
+                s.to_string()
+            }
+        };
+
+        match name {
+            "load_skill" => format!("load_skill(\"{}\")", str_field("skill_name")),
+            "run_skill_script" => {
+                let skill = str_field("skill_name");
+                match input.get("step_index").and_then(|v| v.as_u64()) {
+                    Some(s) => format!("run_skill_script(\"{}\", step={})", skill, s),
+                    None => format!("run_skill_script(\"{}\")", skill),
+                }
+            }
+            "create_skill" | "delete_skill" => {
+                let skill = input
+                    .get("name")
+                    .or(input.get("skill_name"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?");
+                format!("{}(\"{}\")", name, skill)
+            }
+            "browsr_scrape" | "browsr_crawl" => {
+                format!("{}(\"{}\")", name, truncate(&str_field("url"), 60))
+            }
+            "browsr_browser" | "browser_step" => {
+                let action = str_field("action");
+                match input.get("url").and_then(|v| v.as_str()) {
+                    Some(u) => format!("{}({} \"{}\")", name, action, truncate(u, 50)),
+                    None => format!("{}({})", name, action),
+                }
+            }
+            "execute_shell" => {
+                format!("execute_shell(\"{}\")", truncate(&str_field("command"), 60))
+            }
+            "start_shell" | "stop_shell" => format!("{}(…)", name),
+            "search" => format!("search(\"{}\")", truncate(&str_field("query"), 60)),
+            "write_to_storage" | "read_from_storage" => {
+                let key = input
+                    .get("key")
+                    .or(input.get("path"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?");
+                format!("{}(\"{}\")", name, key)
+            }
+            "tool_search" => format!("tool_search(\"{}\")", truncate(&str_field("query"), 60)),
+            "inject_connection_env" => {
+                format!(
+                    "inject_connection_env(\"{}\")",
+                    str_field("provider_name")
+                )
+            }
+            "transfer_to_agent" => {
+                format!("transfer_to_agent(\"{}\")", str_field("agent_name"))
+            }
+            "final" | "reflect" | "console_log" => format!("{}(…)", name),
+            _ => {
+                let compact = serde_json::to_string(input).unwrap_or_else(|_| "…".into());
+                let preview = truncate(&compact, 80);
+                format!("{}({})", name, preview)
+            }
         }
     }
 
