@@ -1,6 +1,7 @@
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -22,7 +23,8 @@ use rustyline::error::ReadlineError;
 use rustyline::hint::Hinter;
 use rustyline::highlight::Highlighter;
 use rustyline::validate::Validator;
-use rustyline::{Config, Editor, Helper};
+use rustyline::{Cmd, ConditionalEventHandler, Config, Editor, Event, EventContext, EventHandler,
+    Helper, KeyEvent, Movement, RepeatCount};
 use tokio::fs;
 mod logging;
 mod login;
@@ -314,17 +316,17 @@ impl std::fmt::Display for AgentMenuOption {
 struct DistriHelper {
     slash_commands: Vec<String>,
     matcher: SkimMatcherV2,
+    show_tools: Arc<AtomicBool>,
 }
 
 impl DistriHelper {
-    fn new() -> Self {
+    fn new(show_tools: Arc<AtomicBool>) -> Self {
         let slash_commands = vec![
             "/help".to_string(),
             "/agents".to_string(),
             "/agent".to_string(),
             "/models".to_string(),
             "/model".to_string(),
-            "/tools".to_string(),
             "/available-tools".to_string(),
             "/resume".to_string(),
             "/clear".to_string(),
@@ -335,7 +337,29 @@ impl DistriHelper {
         Self {
             slash_commands,
             matcher: SkimMatcherV2::default(),
+            show_tools,
         }
+    }
+}
+
+/// Ctrl+O handler — toggles tool output visibility.
+struct ToggleToolsHandler {
+    show_tools: Arc<AtomicBool>,
+}
+
+impl ConditionalEventHandler for ToggleToolsHandler {
+    fn handle(
+        &self,
+        _evt: &Event,
+        _n: RepeatCount,
+        _positive: bool,
+        _ctx: &EventContext,
+    ) -> Option<Cmd> {
+        let new_val = !self.show_tools.load(Ordering::Relaxed);
+        self.show_tools.store(new_val, Ordering::Relaxed);
+        // Move cursor to beginning of line to trigger a hint refresh
+        // so the user sees the updated "[tools hidden]" status
+        Some(Cmd::Move(Movement::BeginningOfLine))
     }
 }
 
@@ -387,7 +411,15 @@ impl Hinter for DistriHelper {
 
     fn hint(&self, line: &str, _pos: usize, _ctx: &rustyline::Context<'_>) -> Option<String> {
         if line.is_empty() {
-            Some("  /help for commands... Ask me anything".to_string())
+            let tools_status = if self.show_tools.load(Ordering::Relaxed) {
+                ""
+            } else {
+                " [tools hidden · Ctrl+O]"
+            };
+            Some(format!(
+                "  /help for commands... Ask me anything{}",
+                tools_status
+            ))
         } else {
             None
         }
@@ -816,7 +848,7 @@ async fn run_interactive_chat(
         }
     }
 
-    let mut show_tools = true;
+    let show_tools = Arc::new(AtomicBool::new(true));
 
     print_welcome_header(&current_agent, current_model.as_deref().unwrap_or("Auto"), &thread_id);
 
@@ -831,8 +863,8 @@ async fn run_interactive_chat(
         String::new()
     };
     println!(
-        "{}Connected:{} {}{}",
-        COLOR_GRAY, COLOR_RESET, base_url, workspace_label
+        "{}Connected:{} {}{}  {}(Ctrl+O to toggle tool output){}",
+        COLOR_GRAY, COLOR_RESET, base_url, workspace_label, COLOR_GRAY, COLOR_RESET
     );
 
     let rl_config = Config::builder()
@@ -840,7 +872,13 @@ async fn run_interactive_chat(
         .bracketed_paste(true)
         .build();
     let mut rl = Editor::with_config(rl_config)?;
-    rl.set_helper(Some(DistriHelper::new()));
+    rl.set_helper(Some(DistriHelper::new(show_tools.clone())));
+    rl.bind_sequence(
+        KeyEvent::ctrl('O'),
+        EventHandler::Conditional(Box::new(ToggleToolsHandler {
+            show_tools: show_tools.clone(),
+        })),
+    );
 
     // Load history from existing file
     let history_path = get_history_file();
@@ -878,17 +916,6 @@ async fn run_interactive_chat(
         }
 
         if input.starts_with('/') {
-            // Handle /tools toggle inline (needs local state)
-            if input.trim() == "/tools" {
-                show_tools = !show_tools;
-                println!(
-                    "{}Tool output:{} {}",
-                    COLOR_GRAY,
-                    COLOR_RESET,
-                    if show_tools { "visible" } else { "hidden" }
-                );
-                continue;
-            }
             match handle_slash_command(input, app, config, &mut current_agent, &mut current_model)
                 .await?
             {
@@ -943,7 +970,7 @@ async fn run_interactive_chat(
             params,
             verbose,
             Some(current_agent.clone()),
-            show_tools,
+            show_tools.load(Ordering::Relaxed),
         )
         .await
         {
@@ -1345,7 +1372,6 @@ fn print_help_message() {
     println!("  /agent <name>       - Switch to an agent by name");
     println!("  /models             - Set model override (prompts for name)");
     println!("  /model <name>       - Set model override directly");
-    println!("  /tools              - Toggle tool call output on/off");
     println!("  /available-tools    - List tools available to the client");
     println!("  /resume             - Pick from recent threads to resume");
     println!("  /resume last        - Resume the last thread from previous session");
@@ -1354,10 +1380,14 @@ fn print_help_message() {
     println!("  /help               - Show this help message");
     println!("  /exit               - Exit the chat");
     println!();
+    println!("KEYBOARD SHORTCUTS:");
+    println!("  Ctrl+O              - Toggle tool call output on/off");
+    println!("  Tab                 - Autocomplete slash commands");
+    println!("  Up/Down             - Navigate history");
+    println!("  Ctrl+C / Ctrl+D     - Exit");
+    println!();
     println!("USAGE TIPS:");
     println!("- Type normally; the agent decides the best approach");
-    println!("- Tab to autocomplete slash commands");
-    println!("- Up/Down arrows to navigate history");
     println!("- Paste multi-line text — it stays as one message");
     println!("- Thread ID shown at start and exit for /resume");
 }
