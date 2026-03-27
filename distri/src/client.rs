@@ -2066,13 +2066,17 @@ pub struct NewSecretRequest {
 pub struct ThreadSummary {
     pub id: String,
     #[serde(default)]
-    pub agent_name: Option<String>,
-    #[serde(default)]
     pub title: Option<String>,
     #[serde(default)]
-    pub created_at: Option<String>,
+    pub agent_id: Option<String>,
+    #[serde(default)]
+    pub agent_name: Option<String>,
     #[serde(default)]
     pub updated_at: Option<String>,
+    #[serde(default)]
+    pub message_count: Option<u32>,
+    #[serde(default)]
+    pub last_message: Option<String>,
 }
 
 impl Distri {
@@ -2535,15 +2539,23 @@ impl Distri {
     pub async fn list_threads(&self) -> Result<Vec<ThreadSummary>, ClientError> {
         let url = format!("{}/threads", self.base_url);
         let resp = self.http.get(&url).send().await?;
-        if resp.status().is_success() {
-            Ok(resp.json().await?)
-        } else {
+        if !resp.status().is_success() {
             let text = resp.text().await.unwrap_or_default();
-            Err(ClientError::InvalidResponse(format!(
+            return Err(ClientError::InvalidResponse(format!(
                 "failed to list threads: {}",
                 text
-            )))
+            )));
         }
+        // Server may return { "threads": [...] } or bare [...]
+        let body: serde_json::Value = resp.json().await?;
+        let arr = if let Some(threads) = body.get("threads") {
+            threads.clone()
+        } else {
+            body
+        };
+        serde_json::from_value(arr).map_err(|e| {
+            ClientError::InvalidResponse(format!("failed to parse threads: {}", e))
+        })
     }
 
     /// Fetch messages for a thread, optionally filtered to only user/assistant messages.
