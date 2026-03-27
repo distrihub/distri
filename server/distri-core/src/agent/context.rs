@@ -70,6 +70,11 @@ pub struct ExecutorContextMetadata {
     /// These are forwarded to skill scripts and plugin contexts alongside secrets.
     #[serde(default)]
     pub env_vars: Option<HashMap<String, String>>,
+
+    /// When true, unsafe tools are simulated via LLM instead of executed.
+    /// Set by the eval simulator to test agent behavior without side effects.
+    #[serde(default)]
+    pub dry_run: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
