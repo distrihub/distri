@@ -41,9 +41,9 @@ pub fn init_logging(level: &str) {
         .with_ansi(true) // Enable colors
         .with_timer(tracing_subscriber::fmt::time::time());
 
-    tracing_subscriber::registry()
+    let _ = tracing_subscriber::registry()
         .with(fmt_layer.with_filter(filter))
-        .init();
+        .try_init();
 }
 
 #[macro_export]

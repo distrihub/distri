@@ -22,6 +22,7 @@ fn test_store_config() -> StoreConfig {
 }
 
 #[tokio::test]
+#[ignore] // requires OPENAI_API_KEY and makes real LLM calls — run with `cargo test --ignored`
 async fn test_artifact_agent() {
     if std::env::var("OPENAI_API_KEY").is_err() {
         eprintln!("skipping artifact agent test; OPENAI_API_KEY not set");
@@ -32,8 +33,7 @@ async fn test_artifact_agent() {
         AgentOrchestratorBuilder,
     };
     dotenv::dotenv().ok();
-    // init_logging may panic if another test already set the global subscriber
-    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| init_logging("info")));
+    init_logging("info");
 
     let orchestrator = Arc::new(
         AgentOrchestratorBuilder::default()
