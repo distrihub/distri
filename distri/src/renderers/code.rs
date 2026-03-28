@@ -22,15 +22,14 @@ pub fn render_code_execution(result: &ToolResponse) {
                         let color = if code == 0 { COLOR_GREEN } else { COLOR_RED };
                         println!("{}{}exit: {}{}", color, RESULT_PREFIX, code, COLOR_RESET);
                     }
-                    if let Some(stderr) = obj.get("stderr").and_then(|s| s.as_str()) {
-                        if !stderr.trim().is_empty() {
+                    if let Some(stderr) = obj.get("stderr").and_then(|s| s.as_str())
+                        && !stderr.trim().is_empty() {
                             let first = stderr.lines().next().unwrap_or("");
                             println!(
                                 "{}{}stderr: {}{}",
                                 COLOR_RED, RESULT_PREFIX, first, COLOR_RESET
                             );
                         }
-                    }
                 }
             }
             Part::Artifact(meta) => {

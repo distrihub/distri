@@ -48,7 +48,7 @@ async fn main() -> Result<()> {
         load_config()?
     };
 
-    let executor = init_agent_executor(&config).await?;
+    let _executor = init_agent_executor(&config).await?;
 
     if let Some(task) = cli.task {
         tracing::info!("Running task: {}", task);

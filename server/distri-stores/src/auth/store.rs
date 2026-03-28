@@ -20,6 +20,12 @@ pub struct InMemoryToolAuthStore {
     oauth2_states: Arc<RwLock<HashMap<String, OAuth2State>>>,
 }
 
+impl Default for InMemoryToolAuthStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl InMemoryToolAuthStore {
     pub fn new() -> Self {
         Self {
@@ -176,7 +182,7 @@ impl ToolAuthStore for InMemoryToolAuthStore {
 
         let mut result = HashMap::new();
         if let Some(user_secrets) = secrets.get(&user_key) {
-            for (_auth_entity, entity_secrets) in user_secrets {
+            for entity_secrets in user_secrets.values() {
                 for (key, secret) in entity_secrets {
                     // Flatten all secrets regardless of auth_entity scope
                     result.insert(key.clone(), secret.clone());

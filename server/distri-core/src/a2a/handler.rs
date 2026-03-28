@@ -125,6 +125,14 @@ impl A2AHandler {
             .and_then(|metadata| serde_json::from_value(metadata).ok())
             .unwrap_or_default();
 
+        let dry_run = metadata.dry_run.unwrap_or_else(|| {
+            metadata_value
+                .as_ref()
+                .and_then(|m| m.get("dry_run"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+        });
+
         let additional_attributes = metadata.additional_attributes.unwrap_or_default();
 
         let thread_id = params
@@ -174,6 +182,7 @@ impl A2AHandler {
             additional_attributes: Some(additional_attributes),
             hook_prompt_state,
             env_vars,
+            dry_run,
             ..Default::default()
         };
 

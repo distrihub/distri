@@ -27,7 +27,7 @@ async fn parse_code_executor_agent() {
     let content = include_str!("../../../agents/code_executor.md");
     let def = parse_agent_markdown_content(content).await.unwrap();
     assert_eq!(def.name, "code");
-    assert_eq!(def.max_iterations, Some(10));
+    assert_eq!(def.max_iterations, Some(15));
     let tools = def
         .tools
         .as_ref()

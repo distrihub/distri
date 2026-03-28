@@ -23,6 +23,7 @@ mod builtin;
 pub mod inject_env;
 pub mod request;
 pub mod skill_script;
+pub mod simulator;
 pub mod tool_search;
 pub use builtin::{
     get_builtin_tools, AgentTool, ConsoleLogTool, DistriExecuteCodeTool, FinalTool,

@@ -65,8 +65,7 @@ impl FileSystemGrepSearcher {
                 } else {
                     // Apply file pattern filtering
                     if let Some(fp) = file_pattern {
-                        if fp.starts_with("*.") {
-                            let extension = &fp[2..];
+                        if let Some(extension) = fp.strip_prefix("*.") {
                             if !entry.name.ends_with(&format!(".{}", extension)) {
                                 continue;
                             }

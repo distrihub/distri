@@ -89,8 +89,8 @@ impl AgentResponse {
             let mut steps = Vec::new();
 
             // Add the action step if we have a valid action (execution cycle)
-            if let Some(action) = agent_resp.action {
-                if !action.is_empty() {
+            if let Some(action) = agent_resp.action
+                && !action.is_empty() {
                     let input = match agent_resp.parameters {
                         Some(params) => params,
                         None => serde_json::json!({}),
@@ -108,7 +108,6 @@ impl AgentResponse {
                         thought: agent_resp.thought.clone(),
                     });
                 }
-            }
 
             return Ok(AgentPlan {
                 steps,
@@ -117,9 +116,9 @@ impl AgentResponse {
         }
 
         // Fallback: create a simple thought step that contains the LLM response
-        return Err(AgentError::Planning(format!(
+        Err(AgentError::Planning(format!(
             "Failed to parse response into plan steps: {}",
             response
-        )));
+        )))
     }
 }

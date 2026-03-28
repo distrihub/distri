@@ -211,8 +211,8 @@ impl UiToolRender for CodeExecutionToolRenderer {
     }
 
     fn render_tool_progress(&self, context: &ToolUiContext) -> Result<Option<ToolUiMessage>> {
-        if let Some(progress_info) = &context.progress_info {
-            if let Some(status) = progress_info.get("status").and_then(|s| s.as_str()) {
+        if let Some(progress_info) = &context.progress_info
+            && let Some(status) = progress_info.get("status").and_then(|s| s.as_str()) {
                 let message = format!("⏳ **Code execution:** {}", status);
 
                 return Ok(Some(ToolUiMessage {
@@ -220,7 +220,6 @@ impl UiToolRender for CodeExecutionToolRenderer {
                     parts: vec![Part::Text(message)],
                 }));
             }
-        }
 
         Ok(None)
     }

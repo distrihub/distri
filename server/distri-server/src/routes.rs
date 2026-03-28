@@ -381,7 +381,7 @@ fn canonical_tool_name(tool: &Arc<dyn distri_core::tools::Tool>) -> String {
     if let Some(plugin) = tool.get_plugin_name() {
         let simple = raw_name
             .split('.')
-            .last()
+            .next_back()
             .unwrap_or(raw_name.as_str())
             .to_string();
         format!("{}::{}", plugin, simple)

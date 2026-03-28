@@ -1,10 +1,14 @@
-//! Generic `api_request` tool that makes authenticated HTTP requests to the
-//! Distri platform API using the existing `Distri` client.
+//! Generic `api_request` tool that makes authenticated HTTP requests.
+//!
+//! Supports two modes:
+//! 1. **Platform API** — `path` param → calls Distri API (e.g., `/agents`, `/skills`)
+//! 2. **Connection proxy** — `url` param + `connection_id` → proxies to external APIs
+//!    (Google, Slack, Notion, etc.) with OAuth token auto-injected
 //!
 //! Provides:
-//! - `ApiRequestTool` — implements `Tool` trait for server-side execution (gateway/channels)
-//! - `execute_api_request()` — shared execution logic, also used by CLI's ExternalToolRegistry
-//! - `api_request_definition()` — JSON schema sent as metadata by CLI and web UI
+//! - `ApiRequestTool` — implements `Tool` trait for server-side execution
+//! - `execute_api_request()` — shared execution logic, also used by CLI
+//! - `api_request_definition()` — JSON schema sent as metadata
 
 use std::sync::Arc;
 
@@ -14,8 +18,6 @@ use serde_json::{Value, json};
 
 use crate::Distri;
 
-/// Server-side `api_request` tool backed by a `Distri` client.
-/// Implements the `Tool` trait so it can be registered as a dynamic tool on the orchestrator.
 pub struct ApiRequestTool {
     client: Arc<Distri>,
 }
@@ -43,7 +45,7 @@ impl Tool for ApiRequestTool {
     }
 
     fn get_description(&self) -> String {
-        "Make authenticated HTTP requests to the Distri API. Use the distri_api skill for available endpoints.".to_string()
+        "Make HTTP requests. For Distri API: use `path`. For external APIs (Google, Slack, etc.): use `url` + `connection_id` to auto-inject OAuth token.".to_string()
     }
 
     fn get_parameters(&self) -> Value {
@@ -60,10 +62,11 @@ impl Tool for ApiRequestTool {
     }
 }
 
-/// Executes an api_request call using the Distri client's HTTP transport.
+/// Executes an api_request call.
 ///
-/// Input: `{ method, path, body?, headers? }`
-/// Returns: `{ status, data }` or `{ status, error }`
+/// Two modes:
+/// - `path` set → Platform API call (e.g., GET /agents)
+/// - `url` set + `connection_id` → Proxy to external API with OAuth token
 pub async fn execute_api_request(
     client: &Distri,
     input: &Value,
@@ -72,49 +75,51 @@ pub async fn execute_api_request(
         .get("method")
         .and_then(|v| v.as_str())
         .unwrap_or("GET");
-    let path = input
-        .get("path")
-        .and_then(|v| v.as_str())
-        .unwrap_or("/");
+    let path = input.get("path").and_then(|v| v.as_str());
+    let external_url = input.get("url").and_then(|v| v.as_str());
+    let connection_id = input.get("connection_id").and_then(|v| v.as_str());
     let body = input.get("body");
     let extra_headers = input.get("headers");
 
+    // Determine if this is a connection proxy request or a platform API call
+    if let Some(url) = external_url {
+        // External API call via connection proxy
+        if let Some(conn_id) = connection_id {
+            return execute_connection_proxy(client, conn_id, method, url, body, extra_headers).await;
+        } else {
+            return json!({
+                "error": "External URL requests require a `connection_id` for authentication. Use `path` for Distri platform API calls."
+            });
+        }
+    }
+
+    // Platform API call
+    let path = path.unwrap_or("/");
     let url = format!(
         "{}{}",
         client.base_url().trim_end_matches('/'),
         if path.starts_with('/') { path.to_string() } else { format!("/{}", path) }
     );
 
-    let reqwest_method = match method.to_uppercase().as_str() {
-        "POST" => reqwest::Method::POST,
-        "PUT" => reqwest::Method::PUT,
-        "DELETE" => reqwest::Method::DELETE,
-        "PATCH" => reqwest::Method::PATCH,
-        _ => reqwest::Method::GET,
-    };
+    let reqwest_method = parse_method(method);
 
     let mut request = client.http_client().request(reqwest_method, &url);
     request = request.header("Content-Type", "application/json");
 
-    // Extra headers from agent input
-    if let Some(headers) = extra_headers {
-        if let Some(obj) = headers.as_object() {
+    if let Some(headers) = extra_headers
+        && let Some(obj) = headers.as_object() {
             for (k, v) in obj {
                 if let Some(val) = v.as_str() {
                     request = request.header(k.as_str(), val);
                 }
             }
         }
-    }
 
-    // Body
-    if let Some(body) = body {
-        if method != "GET" {
+    if let Some(body) = body
+        && method != "GET" {
             request = request.json(body);
         }
-    }
 
-    // Execute
     let response = match request.send().await {
         Ok(r) => r,
         Err(e) => {
@@ -124,10 +129,9 @@ pub async fn execute_api_request(
 
     let status = response.status().as_u16();
     let text = response.text().await.unwrap_or_default();
-
     let payload: Value = serde_json::from_str(&text).unwrap_or(Value::String(text));
 
-    // Unwrap { data: ... } envelope if present (matches client-side behavior)
+    // Unwrap { data: ... } envelope if present
     let data = if let Some(obj) = payload.as_object() {
         if let Some(inner) = obj.get("data") {
             inner.clone()
@@ -153,22 +157,102 @@ pub async fn execute_api_request(
     }
 }
 
-/// Returns the JSON schema definition for the api_request tool.
-/// Used by both CLI (metadata) and cloud (Tool trait).
+/// Proxy an external API call through the connection endpoint.
+/// Calls POST /connections/{id}/request on the platform, which handles token injection.
+async fn execute_connection_proxy(
+    client: &Distri,
+    connection_id: &str,
+    method: &str,
+    url: &str,
+    body: Option<&Value>,
+    extra_headers: Option<&Value>,
+) -> Value {
+    let proxy_path = format!("/connections/{}/request", connection_id);
+    let proxy_url = format!(
+        "{}{}",
+        client.base_url().trim_end_matches('/'),
+        proxy_path
+    );
+
+    let mut proxy_body = json!({
+        "method": method,
+        "url": url,
+    });
+
+    if let Some(headers) = extra_headers {
+        proxy_body["headers"] = headers.clone();
+    }
+    if let Some(body) = body {
+        proxy_body["body"] = body.clone();
+    }
+
+    let response = match client.http_client()
+        .post(&proxy_url)
+        .header("Content-Type", "application/json")
+        .json(&proxy_body)
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            return json!({ "error": format!("Connection proxy failed: {}", e) });
+        }
+    };
+
+    let status = response.status().as_u16();
+    let text = response.text().await.unwrap_or_default();
+    let payload: Value = serde_json::from_str(&text).unwrap_or(Value::String(text));
+
+    if status >= 400 {
+        json!({ "error": format!("Connection request failed ({})", status), "details": payload })
+    } else {
+        // The proxy returns {status, headers, body} — extract the body
+        if let Some(obj) = payload.as_object() {
+            if let Some(body) = obj.get("body") {
+                json!({ "status": status, "data": body })
+            } else {
+                json!({ "status": status, "data": payload })
+            }
+        } else {
+            json!({ "status": status, "data": payload })
+        }
+    }
+}
+
+fn parse_method(method: &str) -> reqwest::Method {
+    match method.to_uppercase().as_str() {
+        "POST" => reqwest::Method::POST,
+        "PUT" => reqwest::Method::PUT,
+        "DELETE" => reqwest::Method::DELETE,
+        "PATCH" => reqwest::Method::PATCH,
+        _ => reqwest::Method::GET,
+    }
+}
+
+/// JSON schema definition for the api_request tool.
 pub fn api_request_definition() -> Value {
     json!({
         "name": "api_request",
-        "description": "Make authenticated HTTP requests to the Distri API. Use the distri_api skill for available endpoints.",
+        "description": "Make HTTP requests. For Distri platform API: use `path`. For external APIs (Google, Slack, Notion, etc.): use `url` + `connection_id` to auto-inject OAuth token.",
         "parameters": {
             "type": "object",
             "properties": {
                 "method": {
                     "type": "string",
-                    "enum": ["GET", "POST", "PUT", "DELETE", "PATCH"]
+                    "enum": ["GET", "POST", "PUT", "DELETE", "PATCH"],
+                    "description": "HTTP method"
                 },
                 "path": {
                     "type": "string",
-                    "description": "API path e.g. /v1/agents, /v1/skills/{id}"
+                    "description": "Distri API path (e.g., /agents, /skills). Mutually exclusive with `url`."
+                },
+                "url": {
+                    "type": "string",
+                    "description": "External API URL (e.g., https://www.googleapis.com/...). Requires `connection_id`."
+                },
+                "connection_id": {
+                    "type": "string",
+                    "description": "Connection ID for OAuth token injection. Required when using `url`."
                 },
                 "body": {
                     "type": "object",
@@ -176,10 +260,10 @@ pub fn api_request_definition() -> Value {
                 },
                 "headers": {
                     "type": "object",
-                    "description": "Additional headers (auth and workspace are automatic)"
+                    "description": "Additional headers"
                 }
             },
-            "required": ["method", "path"]
+            "required": ["method"]
         }
     })
 }

@@ -707,7 +707,7 @@ impl Distri {
         &self,
         agent_id: &str,
         messages: &[Message],
-        mut on_event: H,
+        on_event: H,
     ) -> Result<(), StreamError>
     where
         H: FnMut(StreamItem) -> Fut,
@@ -716,7 +716,7 @@ impl Distri {
         let params = build_params(messages, false, None)
             .map_err(|e| StreamError::InvalidResponse(e.to_string()))?;
         self.stream
-            .stream_agent(agent_id, params, move |evt| on_event(evt))
+            .stream_agent(agent_id, params, on_event)
             .await
     }
 
@@ -783,7 +783,7 @@ impl Distri {
         agent_id: &str,
         messages: &[Message],
         options: InvokeOptions,
-        mut on_event: H,
+        on_event: H,
     ) -> Result<(), StreamError>
     where
         H: FnMut(StreamItem) -> Fut,
@@ -792,7 +792,7 @@ impl Distri {
         let params = build_params(messages, false, Some(&options))
             .map_err(|e| StreamError::InvalidResponse(e.to_string()))?;
         self.stream
-            .stream_agent(agent_id, params, move |evt| on_event(evt))
+            .stream_agent(agent_id, params, on_event)
             .await
     }
 
@@ -1341,16 +1341,14 @@ fn build_params(
             .and_then(|m| m.as_object().cloned())
             .unwrap_or_default();
 
-        if let Some(sections) = &opts.dynamic_sections {
-            if let Ok(val) = serde_json::to_value(sections) {
+        if let Some(sections) = &opts.dynamic_sections
+            && let Ok(val) = serde_json::to_value(sections) {
                 meta.insert("dynamic_sections".to_string(), val);
             }
-        }
-        if let Some(values) = &opts.dynamic_values {
-            if let Ok(val) = serde_json::to_value(values) {
+        if let Some(values) = &opts.dynamic_values
+            && let Ok(val) = serde_json::to_value(values) {
                 meta.insert("dynamic_values".to_string(), val);
             }
-        }
 
         if meta.is_empty() {
             None
@@ -1957,8 +1955,8 @@ impl Distri {
         request: &CreateSkillRequest,
     ) -> Result<SkillResponse, ClientError> {
         // Try to find existing skill to update, but don't fail if list_skills is broken
-        if let Ok(skills) = self.list_skills().await {
-            if let Some(skill) = skills.iter().find(|s| s.name == request.name) {
+        if let Ok(skills) = self.list_skills().await
+            && let Some(skill) = skills.iter().find(|s| s.name == request.name) {
                 let update = UpdateSkillRequest {
                     name: Some(request.name.clone()),
                     description: request.description.clone(),
@@ -1968,7 +1966,6 @@ impl Distri {
                 };
                 return self.update_skill(&skill.id, &update).await;
             }
-        }
         // Create new skill (also used as fallback when list_skills fails)
         self.create_skill(request).await
     }

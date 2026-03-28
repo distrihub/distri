@@ -1,11 +1,9 @@
 use anyhow::Context;
-use chrono;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{self, Value, json};
 use std::default::Default;
 use std::{collections::HashMap, time::SystemTime};
-use uuid;
 
 use crate::filesystem::FileMetadata;
 
@@ -151,18 +149,15 @@ impl Part {
 /// Instruction for how to handle additional parts
 #[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum AdditionalPartsInstruction {
     /// Replace existing additional parts with new ones
+    #[default]
     Replace,
     /// Append new parts to existing ones
     Append,
 }
 
-impl Default for AdditionalPartsInstruction {
-    fn default() -> Self {
-        AdditionalPartsInstruction::Replace
-    }
-}
 
 /// Structure for managing additional user message parts
 /// This allows control over how parts are added and whether artifacts should be expanded
@@ -363,7 +358,7 @@ impl TaskMessage {
     pub fn created_at(&self) -> i64 {
         match self {
             TaskMessage::Message(message) => message.created_at,
-            TaskMessage::Event(event) => event.created_at.clone(),
+            TaskMessage::Event(event) => event.created_at,
         }
     }
 }

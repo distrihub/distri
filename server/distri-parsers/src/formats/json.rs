@@ -164,7 +164,7 @@ impl ToolCallParser for JsonParser {
         }
 
         // Include any partial tool calls we've been accumulating
-        final_tool_calls.extend(self.partial_tool_calls.drain(..));
+        final_tool_calls.append(&mut self.partial_tool_calls);
 
         Ok(final_tool_calls)
     }

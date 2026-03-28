@@ -18,7 +18,30 @@ pub const COLOR_YELLOW: &str = "\x1b[33m";
 pub const COLOR_CYAN: &str = "\x1b[36m";
 pub const COLOR_GRAY: &str = "\x1b[90m";
 pub const COLOR_BRIGHT_CYAN: &str = "\x1b[96m";
-pub const COLOR_BRIGHT_YELLOW: &str = "\x1b[93m";
+/// Distri brand teal — 24-bit ANSI
+pub const COLOR_DISTRI: &str = "\x1b[38;2;0;124;145m";
+pub const COLOR_DISTRI_DIM: &str = "\x1b[38;2;0;80;95m";
+pub const COLOR_DISTRI_BRIGHT: &str = "\x1b[38;2;0;180;210m";
+
+/// Animated spinner frames using distri brand colors.
+/// Each frame is a set of 4 dots where the "bright" one moves across.
+fn distri_spinner_frame(frame: usize) -> String {
+    let dots = ['●', '●', '●', '●'];
+    let pos = frame % 4;
+    let mut result = String::new();
+    for (i, dot) in dots.iter().enumerate() {
+        if i == pos {
+            result.push_str(COLOR_DISTRI_BRIGHT);
+        } else if i == (pos + 3) % 4 {
+            result.push_str(COLOR_DISTRI_DIM);
+        } else {
+            result.push_str(COLOR_DISTRI);
+        }
+        result.push(*dot);
+    }
+    result.push_str(COLOR_RESET);
+    result
+}
 
 #[derive(Debug, Clone, PartialEq)]
 #[allow(dead_code)]
@@ -80,6 +103,16 @@ pub struct EventPrinter {
     verbose: bool,
     show_tools: bool,
     agent_display_name: Option<String>,
+    /// Text shown on the transient planning line (cleared before other output).
+    planning_text: Option<String>,
+    /// Frame counter for spinner animation (advances each redraw).
+    spinner_frame: usize,
+}
+
+impl Default for EventPrinter {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl EventPrinter {
@@ -89,6 +122,8 @@ impl EventPrinter {
             verbose: false,
             show_tools: true,
             agent_display_name: None,
+            planning_text: None,
+            spinner_frame: 0,
         }
     }
 
@@ -112,11 +147,33 @@ impl EventPrinter {
         self.show_tools
     }
 
-    /// If "Planning…" is showing on the current line, clear it before printing anything else.
+    /// Show a planning line with animated spinner. Redraws on same line.
+    fn show_planning(&mut self, text: String) {
+        self.clear_planning_line();
+        self.planning_text = Some(text);
+        self.state.is_planning = true;
+        self.redraw_planning();
+    }
+
+    /// Redraw the planning line with the next animation frame.
+    fn redraw_planning(&mut self) {
+        if let Some(ref text) = self.planning_text {
+            let spinner = distri_spinner_frame(self.spinner_frame);
+            print!(
+                "\r\x1b[2K {} {}{}{}",
+                spinner, COLOR_GRAY, text, COLOR_RESET
+            );
+            let _ = std::io::Write::flush(&mut std::io::stdout());
+            self.spinner_frame += 1;
+        }
+    }
+
+    /// Clear the planning/spinner line completely.
     fn clear_planning_line(&mut self) {
-        if self.state.is_planning {
+        if self.state.is_planning || self.planning_text.is_some() {
             print!("\r\x1b[2K");
             let _ = std::io::Write::flush(&mut std::io::stdout());
+            self.planning_text = None;
             self.state.is_planning = false;
         }
     }
@@ -146,7 +203,7 @@ impl EventPrinter {
             self.state.current_agent = Some(event.agent_id.clone());
         }
 
-        // Clear the transient "Planning…" line before any other event prints output
+        // Clear the spinner before any other event prints output
         match &event.event {
             AgentEventType::PlanStarted { .. } | AgentEventType::PlanFinished { .. } => {}
             _ => self.clear_planning_line(),
@@ -155,13 +212,13 @@ impl EventPrinter {
         match &event.event {
             AgentEventType::PlanStarted { initial_plan } => {
                 self.state.is_planning = true;
-                print!(
-                    "\r\x1b[2K{}🧠 Planning{}{}",
-                    COLOR_BRIGHT_YELLOW,
-                    if *initial_plan { "…" } else { " (refine)…" },
-                    COLOR_RESET
-                );
-                let _ = std::io::Write::flush(&mut std::io::stdout());
+                let idx = self.state.steps.len();
+                let phrase = if *initial_plan {
+                    distri_types::thinking::pick_planning(idx)
+                } else {
+                    distri_types::thinking::pick_replanning(idx)
+                };
+                self.show_planning(format!("{} {}…", phrase.emoji, phrase.text));
             }
             AgentEventType::PlanFinished { .. } => {
                 // Clear the planning line and reset flag
@@ -285,8 +342,7 @@ impl EventPrinter {
                     size,
                     timestamp_ms,
                 } = &event.event
-                {
-                    if let Err(err) = self.print_browser_image(
+                    && let Err(err) = self.print_browser_image(
                         image,
                         format.as_deref(),
                         filename.as_deref(),
@@ -298,7 +354,6 @@ impl EventPrinter {
                             COLOR_GRAY, err, COLOR_RESET
                         );
                     }
-                }
             }
             AgentEventType::AgentHandover {
                 from_agent,
@@ -666,15 +721,12 @@ pub async fn print_stream_verbose(
                         guard.handle_event(&event).await;
                     }
                     // Print the final assistant message text
-                    if let Some(ref msg) = item.message {
-                        if msg.role == distri_types::MessageRole::Assistant {
-                            if let Some(text) = msg.as_text() {
-                                if !text.is_empty() {
+                    if let Some(ref msg) = item.message
+                        && msg.role == distri_types::MessageRole::Assistant
+                            && let Some(text) = msg.as_text()
+                                && !text.is_empty() {
                                     println!("\n{}", text);
                                 }
-                            }
-                        }
-                    }
                 }
             }
         })

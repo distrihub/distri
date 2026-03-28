@@ -24,6 +24,7 @@ pub struct AvailableSkill {
 /// Unified Agent Strategy Configuration
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "snake_case")]
+#[derive(Default)]
 pub struct AgentStrategy {
     /// Depth of reasoning (shallow, standard, deep)
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -42,16 +43,6 @@ pub struct AgentStrategy {
     pub external_tool_timeout_secs: Option<u64>,
 }
 
-impl Default for AgentStrategy {
-    fn default() -> Self {
-        Self {
-            reasoning_depth: None,
-            execution_mode: None,
-            replanning: None,
-            external_tool_timeout_secs: None,
-        }
-    }
-}
 
 impl AgentStrategy {
     /// Get reasoning depth with default fallback
@@ -1028,18 +1019,16 @@ impl StandardDefinition {
         }
 
         // Validate reflection configuration
-        if let Some(ref reflection) = self.reflection {
-            if reflection.enabled {
+        if let Some(ref reflection) = self.reflection
+            && reflection.enabled {
                 // If a custom reflection_agent is specified, validate the name
-                if let Some(ref agent_name) = reflection.reflection_agent {
-                    if agent_name.is_empty() {
+                if let Some(ref agent_name) = reflection.reflection_agent
+                    && agent_name.is_empty() {
                         return Err(anyhow::anyhow!(
                             "Reflection agent name cannot be empty when specified"
                         ));
                     }
-                }
             }
-        }
 
         Ok(())
     }
@@ -1158,7 +1147,7 @@ pub async fn parse_agent_markdown_content(content: &str) -> Result<StandardDefin
             .name
             .chars()
             .next()
-            .map_or(false, |c| c.is_numeric())
+            .is_some_and(|c| c.is_numeric())
     {
         return Err(AgentError::Validation(format!(
             "Invalid agent name '{}': Agent names must be valid JavaScript identifiers (alphanumeric + underscores, cannot start with number). \
@@ -1191,14 +1180,13 @@ pub fn validate_plugin_name(name: &str) -> Result<(), String> {
     }
 
     // Check if first character is valid for JavaScript identifier
-    if let Some(first_char) = name.chars().next() {
-        if !first_char.is_ascii_alphabetic() && first_char != '_' {
+    if let Some(first_char) = name.chars().next()
+        && !first_char.is_ascii_alphabetic() && first_char != '_' {
             return Err(format!(
                 "Plugin name '{}' must start with a letter or underscore",
                 name
             ));
         }
-    }
 
     // Check if all characters are valid for JavaScript identifier
     for ch in name.chars() {

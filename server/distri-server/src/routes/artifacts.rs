@@ -320,7 +320,7 @@ async fn save_artifact(
     let filesystem = executor.session_filesystem.clone();
 
     // Get the filesystem root prefix to show absolute path (before moving filesystem)
-    let filesystem_root = filesystem.root_prefix().unwrap_or_else(|| "".to_string());
+    let filesystem_root = filesystem.root_prefix().unwrap_or_default();
 
     let wrapper = match ArtifactWrapper::new(
         filesystem.clone() as Arc<dyn FileSystemOps>,

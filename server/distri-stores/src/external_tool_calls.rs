@@ -62,7 +62,7 @@ impl ExternalToolCallsStore for InMemoryExternalToolCallsStore {
 
         match sender {
             Some(sender) => {
-                if let Err(_) = sender.send(tool_response) {
+                if sender.send(tool_response).is_err() {
                     return Err(anyhow::anyhow!(
                         "Failed to send tool response for session {} - receiver may have been dropped",
                         tool_call_id

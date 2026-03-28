@@ -227,11 +227,10 @@ fn serialize_agent_event(event: AgentEvent) -> TaskEvent {
 }
 
 fn session_entry_to_value(entry: &SessionEntryModel) -> Option<JsonValue> {
-    if let Some(expiry) = entry.expiry {
-        if from_naive(expiry) < Utc::now() {
+    if let Some(expiry) = entry.expiry
+        && from_naive(expiry) < Utc::now() {
             return None;
         }
-    }
     serde_json::from_str(&entry.value).ok()
 }
 
@@ -918,7 +917,7 @@ where
             if filter
                 .attributes
                 .as_ref()
-                .map_or(true, |f| attributes_match(&thread.attributes, f))
+                .is_none_or(|f| attributes_match(&thread.attributes, f))
             {
                 summaries.push(to_thread_summary(&thread));
             }
@@ -2161,7 +2160,7 @@ where
                 summary.keys.push(entry.key);
                 summary.key_count += 1;
                 let entry_updated = Utc.from_utc_datetime(&entry.updated_at);
-                if summary.updated_at.map_or(true, |curr| entry_updated > curr) {
+                if summary.updated_at.is_none_or(|curr| entry_updated > curr) {
                     summary.updated_at = Some(entry_updated);
                 }
             }
@@ -2263,7 +2262,7 @@ where
             if content.to_lowercase().contains(&query_lower) {
                 results.push(content);
 
-                if limit.map_or(false, |limit| results.len() >= limit) {
+                if limit.is_some_and(|limit| results.len() >= limit) {
                     break;
                 }
             }

@@ -332,7 +332,7 @@ impl ArtifactWrapper {
                     Ok(wrapper) => {
                         // For image artifacts, read as binary (bytes) then encode to base64
                         // This handles the case where artifacts are stored as base64 strings
-                        match wrapper.read_artifact_binary(&filename).await {
+                        match wrapper.read_artifact_binary(filename).await {
                             Ok(bytes) => {
                                 // The bytes are the UTF-8 encoding of the base64 string
                                 // Convert to string and use directly as base64

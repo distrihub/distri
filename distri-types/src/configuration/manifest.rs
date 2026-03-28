@@ -127,7 +127,7 @@ impl DistriServerConfig {
 
     /// Validate that the manifest has at least one of agents or entrypoints
     pub fn validate(&self) -> Result<()> {
-        let has_agents = self.agents.as_ref().map_or(false, |a| !a.is_empty());
+        let has_agents = self.agents.as_ref().is_some_and(|a| !a.is_empty());
         let has_entrypoints = self.entrypoints.is_some();
 
         if !has_agents && !has_entrypoints {

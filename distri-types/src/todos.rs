@@ -6,8 +6,10 @@ use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum TodoStatus {
     #[serde(alias = "pending")]
+    #[default]
     Open,
     #[serde(alias = "in_progress")]
     InProgress,
@@ -15,11 +17,6 @@ pub enum TodoStatus {
     Done,
 }
 
-impl Default for TodoStatus {
-    fn default() -> Self {
-        TodoStatus::Open
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TodoItem {

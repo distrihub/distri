@@ -82,7 +82,7 @@ impl SessionStore for LocalSessionStore {
 
         let mut sessions: Vec<SessionSummary> = guard
             .iter()
-            .filter(|(k, _)| namespace.map_or(true, |n| *k == n))
+            .filter(|(k, _)| namespace.is_none_or(|n| *k == n))
             .map(|(session_id, values)| SessionSummary {
                 session_id: session_id.clone(),
                 keys: values.keys().cloned().collect(),
