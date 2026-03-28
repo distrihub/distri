@@ -261,30 +261,57 @@ impl AgentOrchestratorBuilder {
 }
 
 impl AgentOrchestrator {
-    /// Merge base model settings with agent-level overrides.
+    /// Merge base (workspace) model settings with agent-level overrides.
     ///
-    /// Individual fields on `agent` are considered "explicitly set" when:
-    /// - `model` is non-empty
-    /// - `provider` differs from the default (OpenAI)
-    /// - `context_size` differs from the default
-    /// - Option fields are Some
+    /// Provider resolution:
+    /// - If the agent explicitly sets a provider (not the serde-default OpenAI),
+    ///   the agent's provider and model are used.
+    /// - If the agent's provider is the default (OpenAI), use the workspace's provider.
+    ///
+    /// Model resolution:
+    /// - If the workspace uses a non-default provider (custom, Azure, Anthropic, etc.)
+    ///   and the agent did NOT explicitly set a provider, the workspace model takes
+    ///   precedence — the agent's bare model name is ignored because it may not be
+    ///   available on the workspace's configured provider.
+    /// - Otherwise, the agent's model overrides the workspace model if non-empty.
     pub(crate) fn merge_model_settings(
         base: &ModelSettings,
         agent: &ModelSettings,
     ) -> Result<ModelSettings, AgentError> {
         let default_provider = distri_types::ModelProvider::OpenAI {};
-        let provider = if std::mem::discriminant(&agent.inner.provider)
-            != std::mem::discriminant(&default_provider)
-        {
-            agent.inner.provider.clone()
-        } else {
-            base.inner.provider.clone()
-        };
+        let agent_has_explicit_provider = std::mem::discriminant(&agent.inner.provider)
+            != std::mem::discriminant(&default_provider);
+        let base_has_explicit_provider = std::mem::discriminant(&base.inner.provider)
+            != std::mem::discriminant(&default_provider);
 
-        let model = if !agent.model.is_empty() {
-            agent.model.clone()
+        let (provider, model) = if agent_has_explicit_provider {
+            // Agent explicitly set a provider — use agent's provider and model.
+            let model = if !agent.model.is_empty() {
+                agent.model.clone()
+            } else {
+                base.model.clone()
+            };
+            (agent.inner.provider.clone(), model)
+        } else if base_has_explicit_provider {
+            // Workspace uses a non-default provider (custom, Azure, etc.) and agent
+            // did not specify one — use workspace's provider AND model so we don't
+            // send a mismatched model name (e.g. "gpt-5.1") to a custom provider.
+            let model = if !base.model.is_empty() {
+                base.model.clone()
+            } else if !agent.model.is_empty() {
+                agent.model.clone()
+            } else {
+                String::new()
+            };
+            (base.inner.provider.clone(), model)
         } else {
-            base.model.clone()
+            // Both use default OpenAI provider — agent model can override.
+            let model = if !agent.model.is_empty() {
+                agent.model.clone()
+            } else {
+                base.model.clone()
+            };
+            (base.inner.provider.clone(), model)
         };
         if model.is_empty() {
             return Err(AgentError::InvalidConfiguration(

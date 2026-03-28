@@ -22,6 +22,7 @@ fn test_store_config() -> StoreConfig {
 }
 
 #[tokio::test]
+#[ignore] // requires OPENAI_API_KEY and makes real LLM calls — run with `cargo test --ignored`
 async fn test_artifact_agent() {
     if std::env::var("OPENAI_API_KEY").is_err() {
         eprintln!("skipping artifact agent test; OPENAI_API_KEY not set");

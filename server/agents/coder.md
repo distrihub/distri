@@ -7,9 +7,6 @@ include_scratchpad = true
 write_large_tool_responses_to_fs = true
 tool_format = "provider"
 
-[model_settings]
-model = "claude-sonnet-4"
-
 [strategy]
 reasoning_depth = "standard"
 

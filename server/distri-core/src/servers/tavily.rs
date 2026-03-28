@@ -169,11 +169,12 @@ mod tests {
             eprintln!("skipping tavily test; TAVILY_API_KEY not set");
             return Ok(());
         }
-        tracing_subscriber::fmt()
+        // try_init to avoid panic when another test already set the global subscriber
+        let _ = tracing_subscriber::fmt()
             .with_max_level(tracing::Level::DEBUG)
             // needs to be stderr due to stdio transport
             .with_writer(std::io::stderr)
-            .init();
+            .try_init();
 
         async fn async_server(transport: ServerInMemoryTransport) {
             let server = build(transport.clone()).unwrap();

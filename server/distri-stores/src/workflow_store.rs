@@ -11,6 +11,12 @@ pub struct InMemoryWorkflowStore {
     workflows: Mutex<HashMap<String, WorkflowRecord>>,
 }
 
+impl Default for InMemoryWorkflowStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl InMemoryWorkflowStore {
     pub fn new() -> Self {
         Self {
@@ -29,16 +35,14 @@ impl WorkflowStore for InMemoryWorkflowStore {
         let mut results: Vec<WorkflowRecord> = map
             .values()
             .filter(|w| {
-                if let Some(is_pub) = filter.is_public {
-                    if w.is_public != is_pub {
+                if let Some(is_pub) = filter.is_public
+                    && w.is_public != is_pub {
                         return false;
                     }
-                }
-                if let Some(is_tpl) = filter.is_template {
-                    if w.is_template != is_tpl {
+                if let Some(is_tpl) = filter.is_template
+                    && w.is_template != is_tpl {
                         return false;
                     }
-                }
                 if let Some(ref search) = filter.search {
                     let s = search.to_lowercase();
                     if !w.name.to_lowercase().contains(&s)
@@ -51,11 +55,10 @@ impl WorkflowStore for InMemoryWorkflowStore {
                         return false;
                     }
                 }
-                if let Some(ref tags) = filter.tags {
-                    if !tags.iter().any(|t| w.tags.contains(t)) {
+                if let Some(ref tags) = filter.tags
+                    && !tags.iter().any(|t| w.tags.contains(t)) {
                         return false;
                     }
-                }
                 true
             })
             .cloned()

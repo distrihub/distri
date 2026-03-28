@@ -124,6 +124,50 @@ impl TryFrom<Message> for crate::Message {
     }
 }
 
+impl TryFrom<distri_a2a::TaskStatusUpdateEvent> for crate::TaskEvent {
+    type Error = AgentError;
+
+    fn try_from(event: distri_a2a::TaskStatusUpdateEvent) -> Result<Self, Self::Error> {
+        let agent_event: crate::events::AgentEventType = event
+            .metadata
+            .ok_or_else(|| AgentError::Validation("missing metadata on status update".into()))
+            .and_then(|m| {
+                serde_json::from_value(m)
+                    .map_err(|e| AgentError::Validation(format!("invalid event metadata: {}", e)))
+            })?;
+
+        let created_at = event
+            .status
+            .timestamp
+            .and_then(|t| t.parse::<i64>().ok())
+            .unwrap_or(0);
+
+        Ok(crate::TaskEvent {
+            event: agent_event,
+            created_at,
+            is_final: event.r#final,
+        })
+    }
+}
+
+impl TryFrom<distri_a2a::MessageKind> for crate::TaskMessage {
+    type Error = AgentError;
+
+    fn try_from(mk: distri_a2a::MessageKind) -> Result<Self, Self::Error> {
+        match mk {
+            distri_a2a::MessageKind::Message(msg) => {
+                Ok(crate::TaskMessage::Message(crate::Message::try_from(msg)?))
+            }
+            distri_a2a::MessageKind::TaskStatusUpdate(evt) => {
+                Ok(crate::TaskMessage::Event(crate::TaskEvent::try_from(evt)?))
+            }
+            distri_a2a::MessageKind::Artifact(_) => Err(AgentError::Validation(
+                "artifact conversion not supported".into(),
+            )),
+        }
+    }
+}
+
 impl From<crate::TaskStatus> for TaskState {
     fn from(status: crate::TaskStatus) -> Self {
         match status {
@@ -140,7 +184,7 @@ impl From<crate::TaskStatus> for TaskState {
 impl From<crate::Part> for Part {
     fn from(part: crate::Part) -> Self {
         match part {
-            crate::Part::Text(text) => Part::Text(TextPart { text: text }),
+            crate::Part::Text(text) => Part::Text(TextPart { text }),
             crate::Part::Image(image) => Part::File(FilePart {
                 file: filetype_to_fileobject(image),
                 metadata: None,

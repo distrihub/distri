@@ -1,6 +1,7 @@
 mod browser;
 mod code;
 mod data;
+mod platform;
 mod search;
 mod shell;
 mod tool_result;
@@ -10,8 +11,10 @@ pub use tool_result::render_tool_result;
 use crate::printer::{COLOR_GRAY, COLOR_RESET};
 use distri_types::ToolResponse;
 
+/// Result line prefix: `  ⎿  ` (matches Claude Code style)
+pub const RESULT_PREFIX: &str = "  ⎿  ";
+
 /// Dispatch tool result rendering to the appropriate tool-specific renderer.
-/// Returns true if a specialized renderer handled it, false to fall back to generic.
 pub fn render_tool_output(result: &ToolResponse, verbose: bool) {
     if verbose {
         if let Ok(json) = serde_json::to_string_pretty(&result.parts) {
@@ -23,7 +26,17 @@ pub fn render_tool_output(result: &ToolResponse, verbose: bool) {
     let name = result.tool_name.as_str();
 
     match name {
-        // Browser / scraping tools
+        // Simple tools — suppress output (streamed text is enough)
+        "final" | "reflect" | "console_log" | "transfer_to_agent" => {}
+
+        // Platform / discovery tools
+        "tool_search" | "load_skill" | "run_skill_script" | "list_agents" | "list_skills"
+        | "create_skill" | "delete_skill" | "write_to_storage" | "read_from_storage"
+        | "inject_connection_env" => {
+            platform::render_platform_tool(result);
+        }
+
+        // Browser / scraping
         "browsr_scrape" | "browsr_crawl" => browser::render_scrape(result),
         "browsr_browser" | "browser_step" => browser::render_browser_step(result),
 
@@ -36,37 +49,11 @@ pub fn render_tool_output(result: &ToolResponse, verbose: bool) {
         // Code execution
         "distri_execute_code" => code::render_code_execution(result),
 
-        // Simple tools — just show text parts compactly
-        "final" | "reflect" | "console_log" | "transfer_to_agent" => {
-            render_simple_text(result);
-        }
-
         // Artifact tool
         "artifact_tool" => render_artifact(result),
 
-        // Discovery/platform tools
-        "tool_search" | "load_skill" | "run_skill_script" | "list_agents" | "list_skills"
-        | "create_skill" | "delete_skill" | "write_to_storage" | "read_from_storage" => {
-            render_tool_result(result);
-        }
-
         // Default: generic part-by-part rendering
         _ => render_tool_result(result),
-    }
-}
-
-fn render_simple_text(result: &ToolResponse) {
-    use distri_types::Part;
-    for part in &result.parts {
-        if let Part::Text(text) = part {
-            let lines: Vec<&str> = text.lines().take(3).collect();
-            let preview = lines.join("\n");
-            if text.lines().count() > 3 {
-                println!("{}  {}\n  …{}", COLOR_GRAY, preview, COLOR_RESET);
-            } else {
-                println!("{}  {}{}", COLOR_GRAY, preview, COLOR_RESET);
-            }
-        }
     }
 }
 
@@ -76,8 +63,9 @@ fn render_artifact(result: &ToolResponse) {
         match part {
             Part::Artifact(meta) => {
                 println!(
-                    "{}  artifact: {} ({}){}",
+                    "{}{}artifact: {} ({}){}",
                     COLOR_GRAY,
+                    RESULT_PREFIX,
                     meta.original_filename
                         .as_deref()
                         .unwrap_or(&meta.relative_path),
@@ -87,7 +75,7 @@ fn render_artifact(result: &ToolResponse) {
             }
             Part::Text(text) => {
                 let preview: String = text.lines().take(1).collect();
-                println!("{}  {}{}", COLOR_GRAY, preview, COLOR_RESET);
+                println!("{}{}{}{}", COLOR_GRAY, RESULT_PREFIX, preview, COLOR_RESET);
             }
             _ => {}
         }

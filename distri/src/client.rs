@@ -147,6 +147,11 @@ impl Distri {
         &self.base_url
     }
 
+    /// Get the underlying HTTP client (with auth headers pre-configured).
+    pub fn http_client(&self) -> &reqwest::Client {
+        &self.http
+    }
+
     /// Get the current configuration.
     pub fn config(&self) -> &DistriConfig {
         &self.config
@@ -702,7 +707,7 @@ impl Distri {
         &self,
         agent_id: &str,
         messages: &[Message],
-        mut on_event: H,
+        on_event: H,
     ) -> Result<(), StreamError>
     where
         H: FnMut(StreamItem) -> Fut,
@@ -711,7 +716,7 @@ impl Distri {
         let params = build_params(messages, false, None)
             .map_err(|e| StreamError::InvalidResponse(e.to_string()))?;
         self.stream
-            .stream_agent(agent_id, params, move |evt| on_event(evt))
+            .stream_agent(agent_id, params, on_event)
             .await
     }
 
@@ -778,7 +783,7 @@ impl Distri {
         agent_id: &str,
         messages: &[Message],
         options: InvokeOptions,
-        mut on_event: H,
+        on_event: H,
     ) -> Result<(), StreamError>
     where
         H: FnMut(StreamItem) -> Fut,
@@ -787,7 +792,7 @@ impl Distri {
         let params = build_params(messages, false, Some(&options))
             .map_err(|e| StreamError::InvalidResponse(e.to_string()))?;
         self.stream
-            .stream_agent(agent_id, params, move |evt| on_event(evt))
+            .stream_agent(agent_id, params, on_event)
             .await
     }
 
@@ -1336,16 +1341,14 @@ fn build_params(
             .and_then(|m| m.as_object().cloned())
             .unwrap_or_default();
 
-        if let Some(sections) = &opts.dynamic_sections {
-            if let Ok(val) = serde_json::to_value(sections) {
+        if let Some(sections) = &opts.dynamic_sections
+            && let Ok(val) = serde_json::to_value(sections) {
                 meta.insert("dynamic_sections".to_string(), val);
             }
-        }
-        if let Some(values) = &opts.dynamic_values {
-            if let Ok(val) = serde_json::to_value(values) {
+        if let Some(values) = &opts.dynamic_values
+            && let Ok(val) = serde_json::to_value(values) {
                 meta.insert("dynamic_values".to_string(), val);
             }
-        }
 
         if meta.is_empty() {
             None
@@ -1952,8 +1955,8 @@ impl Distri {
         request: &CreateSkillRequest,
     ) -> Result<SkillResponse, ClientError> {
         // Try to find existing skill to update, but don't fail if list_skills is broken
-        if let Ok(skills) = self.list_skills().await {
-            if let Some(skill) = skills.iter().find(|s| s.name == request.name) {
+        if let Ok(skills) = self.list_skills().await
+            && let Some(skill) = skills.iter().find(|s| s.name == request.name) {
                 let update = UpdateSkillRequest {
                     name: Some(request.name.clone()),
                     description: request.description.clone(),
@@ -1963,7 +1966,6 @@ impl Distri {
                 };
                 return self.update_skill(&skill.id, &update).await;
             }
-        }
         // Create new skill (also used as fallback when list_skills fails)
         self.create_skill(request).await
     }
@@ -2061,13 +2063,17 @@ pub struct NewSecretRequest {
 pub struct ThreadSummary {
     pub id: String,
     #[serde(default)]
-    pub agent_name: Option<String>,
-    #[serde(default)]
     pub title: Option<String>,
     #[serde(default)]
-    pub created_at: Option<String>,
+    pub agent_id: Option<String>,
+    #[serde(default)]
+    pub agent_name: Option<String>,
     #[serde(default)]
     pub updated_at: Option<String>,
+    #[serde(default)]
+    pub message_count: Option<u32>,
+    #[serde(default)]
+    pub last_message: Option<String>,
 }
 
 impl Distri {
@@ -2213,6 +2219,21 @@ impl Distri {
                 "failed to register connection provider: {}",
                 text
             )))
+        }
+    }
+
+    /// Get the workspace default model name (if configured).
+    pub async fn get_default_model(&self) -> Result<Option<String>, ClientError> {
+        let url = format!("{}/providers/default-model", self.base_url);
+        let resp = self.http.get(&url).send().await?;
+        if resp.status().is_success() {
+            let body: serde_json::Value = resp.json().await?;
+            Ok(body
+                .get("default_model")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()))
+        } else {
+            Ok(None)
         }
     }
 
@@ -2515,15 +2536,58 @@ impl Distri {
     pub async fn list_threads(&self) -> Result<Vec<ThreadSummary>, ClientError> {
         let url = format!("{}/threads", self.base_url);
         let resp = self.http.get(&url).send().await?;
-        if resp.status().is_success() {
-            Ok(resp.json().await?)
-        } else {
+        if !resp.status().is_success() {
             let text = resp.text().await.unwrap_or_default();
-            Err(ClientError::InvalidResponse(format!(
+            return Err(ClientError::InvalidResponse(format!(
                 "failed to list threads: {}",
                 text
-            )))
+            )));
         }
+        // Server may return { "threads": [...] } or bare [...]
+        let body: serde_json::Value = resp.json().await?;
+        let arr = if let Some(threads) = body.get("threads") {
+            threads.clone()
+        } else {
+            body
+        };
+        serde_json::from_value(arr).map_err(|e| {
+            ClientError::InvalidResponse(format!("failed to parse threads: {}", e))
+        })
+    }
+
+    /// Fetch messages for a thread, optionally filtered to only user/assistant messages.
+    /// Fetch thread history as distri `TaskMessage`s (messages + events).
+    ///
+    /// The server returns A2A-format entries. This method converts them to
+    /// distri types via the `TryFrom<MessageKind> for TaskMessage` converter.
+    pub async fn get_thread_messages(
+        &self,
+        thread_id: &str,
+        messages_only: bool,
+    ) -> Result<Vec<distri_types::TaskMessage>, ClientError> {
+        let mut url = format!("{}/threads/{}/messages", self.base_url, thread_id);
+        if messages_only {
+            url.push_str("?filter=Messages");
+        }
+        let resp = self.http.get(&url).send().await?;
+        if !resp.status().is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            return Err(ClientError::InvalidResponse(format!(
+                "failed to get thread messages: {}",
+                text
+            )));
+        }
+
+        let raw: Vec<serde_json::Value> = resp.json().await?;
+        let items = raw
+            .into_iter()
+            .filter_map(|v| {
+                let mk: distri_a2a::MessageKind = serde_json::from_value(v).ok()?;
+                distri_types::TaskMessage::try_from(mk).ok()
+            })
+            .collect();
+
+        Ok(items)
     }
 
     // ========== Workflows API ==========

@@ -157,11 +157,10 @@ impl ToolUiRenderRegistry {
             progress_info: Some(progress_info),
         };
 
-        if let Some(renderer) = self.get_renderer(&tool_call.tool_name) {
-            if renderer.supports_progress() {
+        if let Some(renderer) = self.get_renderer(&tool_call.tool_name)
+            && renderer.supports_progress() {
                 return renderer.render_tool_progress(&context);
             }
-        }
 
         Ok(None) // No progress rendering available
     }

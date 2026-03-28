@@ -247,10 +247,10 @@ pub trait TaskStore: Send + Sync {
         thread_id: &str,
         task_id: &str,
     ) -> Result<(), anyhow::Error> {
-        match self.get_task(&task_id).await? {
+        match self.get_task(task_id).await? {
             Some(task) => task,
             None => {
-                self.create_task(&thread_id, Some(&task_id), Some(TaskStatus::Running))
+                self.create_task(thread_id, Some(task_id), Some(TaskStatus::Running))
                     .await?
             }
         };

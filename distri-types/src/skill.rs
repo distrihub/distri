@@ -121,7 +121,7 @@ impl Skill {
             package_name: self.id.clone(),
             version: Some(self.metadata.version.clone()),
             object_prefix,
-            entrypoint: entrypoint.or_else(|| Some(script_path)),
+            entrypoint: entrypoint.or(Some(script_path)),
             artifact,
             updated_at: self.updated_at,
         }
@@ -149,27 +149,22 @@ impl Skill {
             })
             .ok_or_else(|| anyhow!("Skill plugin does not contain a standard agent definition"))?;
 
-        let export = if let Some(tool) = record.artifact.tools.first() {
-            Some(SkillExport::Tool {
+        let export = record.artifact.tools.first().map(|tool| SkillExport::Tool {
                 name: tool.name.clone(),
                 description: if tool.description.is_empty() {
                     None
                 } else {
                     Some(tool.description.clone())
                 },
-            })
-        } else {
-            None
-        };
+            });
 
-        if let Some(export_value) = export {
-            if let Some(script_file) = files
+        if let Some(export_value) = export
+            && let Some(script_file) = files
                 .iter_mut()
                 .find(|file| matches!(file.kind, SkillFileKind::Script))
             {
                 script_file.export = Some(export_value);
             }
-        }
 
         let skill = Skill {
             id: record.package_name.clone(),

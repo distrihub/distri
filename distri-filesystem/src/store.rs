@@ -388,7 +388,7 @@ impl FileSystemStore {
             relative_path: path.trim_start_matches('/').to_string(),
             size: metadata.size as u64,
             content_type: None,
-            original_filename: path.split('/').last().map(|s| s.to_string()),
+            original_filename: path.split('/').next_back().map(|s| s.to_string()),
             created_at: metadata.last_modified,
             updated_at: metadata.last_modified,
             checksum: metadata.e_tag,

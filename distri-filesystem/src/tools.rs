@@ -439,7 +439,7 @@ impl ApplyDiffTool {
             }
 
             let mut search_lines = Vec::new();
-            while let Some(next) = lines.next() {
+            for next in lines.by_ref() {
                 if next.trim() == "=======" {
                     break;
                 }
@@ -447,7 +447,7 @@ impl ApplyDiffTool {
             }
 
             let mut replace_lines = Vec::new();
-            while let Some(next) = lines.next() {
+            for next in lines.by_ref() {
                 if next.trim() == ">>>>>>> REPLACE" {
                     break;
                 }

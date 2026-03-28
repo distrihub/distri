@@ -116,19 +116,19 @@ pub struct AuthSecret {
     /// Key name for this secret
     pub key: String,
 }
-impl Into<McpSession> for AuthSession {
-    fn into(self) -> McpSession {
+impl From<AuthSession> for McpSession {
+    fn from(val: AuthSession) -> Self {
         McpSession {
-            token: self.access_token,
-            expiry: self.expires_at.map(|dt| dt.into()),
+            token: val.access_token,
+            expiry: val.expires_at.map(|dt| dt.into()),
         }
     }
 }
 
-impl Into<McpSession> for AuthSecret {
-    fn into(self) -> McpSession {
+impl From<AuthSecret> for McpSession {
+    fn from(val: AuthSecret) -> Self {
         McpSession {
-            token: self.secret,
+            token: val.secret,
             expiry: None, // Secrets don't expire
         }
     }
@@ -402,7 +402,6 @@ impl OAuth2State {
 #[async_trait]
 pub trait ToolAuthStore: Send + Sync {
     /// Session Management
-
     /// Get current authentication session for an entity
     async fn get_session(
         &self,
@@ -422,7 +421,6 @@ pub trait ToolAuthStore: Send + Sync {
     async fn remove_session(&self, auth_entity: &str, user_id: &str) -> Result<bool, AuthError>;
 
     /// Secret Management
-
     /// Store secret for a user (optionally scoped to auth_entity)
     async fn store_secret(
         &self,
@@ -448,7 +446,6 @@ pub trait ToolAuthStore: Send + Sync {
     ) -> Result<bool, AuthError>;
 
     /// State Management (for OAuth2 flows)
-
     /// Store OAuth2 state for security
     async fn store_oauth2_state(&self, state: OAuth2State) -> Result<(), AuthError>;
 
@@ -545,8 +542,8 @@ impl OAuthHandler {
                 );
 
                 let mut pkce_challenge = None;
-                if let Some(registry) = &self.provider_registry {
-                    if registry.requires_pkce(auth_entity).await {
+                if let Some(registry) = &self.provider_registry
+                    && registry.requires_pkce(auth_entity).await {
                         let (verifier, challenge) = generate_pkce_pair();
                         state.metadata.insert(
                             PKCE_CODE_VERIFIER_KEY.to_string(),
@@ -554,7 +551,6 @@ impl OAuthHandler {
                         );
                         pkce_challenge = Some(challenge);
                     }
-                }
 
                 // Store the state
                 self.store.store_oauth2_state(state.clone()).await?;
@@ -682,7 +678,7 @@ impl OAuthHandler {
         // Get current session
         let current_session = self
             .store
-            .get_session(auth_entity, &user_id)
+            .get_session(auth_entity, user_id)
             .await?
             .ok_or_else(|| {
                 AuthError::TokenRefreshFailed("No session found to refresh".to_string())
@@ -703,7 +699,7 @@ impl OAuthHandler {
 
                 // Store the new session
                 self.store
-                    .store_session(auth_entity, &user_id, new_session.clone())
+                    .store_session(auth_entity, user_id, new_session.clone())
                     .await?;
                 Ok(new_session)
             }
@@ -716,7 +712,7 @@ impl OAuthHandler {
 
                 // Store the new session
                 self.store
-                    .store_session(auth_entity, &user_id, new_session.clone())
+                    .store_session(auth_entity, user_id, new_session.clone())
                     .await?;
                 Ok(new_session)
             }

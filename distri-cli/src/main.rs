@@ -1,28 +1,32 @@
-use std::io::{self, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
-use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use crossterm::terminal;
 use distri::{
-    print_stream_verbose, AgentStreamClient, BuildHttpClient, CreateSkillRequest,
-    CreateSkillScriptRequest, Distri, DistriClientApp, DistriConfig, ExternalToolRegistry,
-};
-use distri_a2a::{
-    EventKind, Message as A2aMessage, MessageSendParams, Part as A2aPart, Role, TextPart,
-};
-use distri_types::configuration::AgentConfig;
-use distri_types::ToolResponse;
-use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher};
-use inquire::{
-    autocompletion::{Autocomplete, Replacement},
-    CustomUserError, Select, Text,
+    print_stream_verbose, AgentStreamClient, BuildHttpClient, Distri, DistriClientApp, DistriConfig,
 };
 use tokio::fs;
+
+mod chat;
+mod commands;
+mod config;
+mod input;
 mod logging;
 mod login;
+mod message;
+mod threads;
+mod tools;
+
+use chat::run_interactive_chat;
+use commands::{
+    handle_config_command, handle_connections_command, handle_prompts_command,
+    handle_secrets_command, handle_skills_command, handle_workflow_command, push_file,
+};
+use config::resolve_workspace;
+use message::{build_connections_context, build_message_params};
+use threads::resolve_resume_arg;
+use tools::{register_api_request_handler, register_approval_handler};
 
 #[derive(Parser, Debug, Clone)]
 #[clap(author, version, about)]
@@ -49,6 +53,9 @@ enum Commands {
     Tui {
         #[clap(help = "Agent name (defaults to 'distri')")]
         agent: Option<String>,
+        /// Resume thread by ID, or "last" for most recent
+        #[clap(long)]
+        resume: Option<String>,
     },
 
     /// Run a single task against an agent
@@ -61,6 +68,9 @@ enum Commands {
         /// Envs are available to tools via REQUEST_BASE_URL, REQUEST_AUTH_TOKEN etc.
         #[clap(long, help = "JSON context with envs and secrets")]
         context: Option<String>,
+        /// Resume thread by ID, or "last" for most recent
+        #[clap(long)]
+        resume: Option<String>,
     },
 
     /// Agent-related commands
@@ -170,7 +180,7 @@ enum ToolsCommands {
 }
 
 #[derive(Subcommand, Debug, Clone)]
-enum ConfigCommands {
+pub(crate) enum ConfigCommands {
     /// Set a config value in ~/.distri/config
     Set {
         #[clap(help = "Config key (api_key, base_url, workspace_id)")]
@@ -181,7 +191,7 @@ enum ConfigCommands {
 }
 
 #[derive(Subcommand, Debug, Clone)]
-enum PromptsCommands {
+pub(crate) enum PromptsCommands {
     /// List prompt templates from the server
     List,
     /// Push prompt templates from a file or directory
@@ -192,7 +202,7 @@ enum PromptsCommands {
 }
 
 #[derive(Subcommand, Debug, Clone)]
-enum SkillsCommands {
+pub(crate) enum SkillsCommands {
     /// List skills from the server
     List,
     /// Push skill(s) to the server from a file or directory
@@ -206,7 +216,7 @@ enum SkillsCommands {
 }
 
 #[derive(Subcommand, Debug, Clone)]
-enum ConnectionsCommands {
+pub(crate) enum ConnectionsCommands {
     /// List all connections
     List,
     /// Get a valid access token for a connection
@@ -217,7 +227,7 @@ enum ConnectionsCommands {
 }
 
 #[derive(Subcommand, Debug, Clone)]
-enum SecretsCommands {
+pub(crate) enum SecretsCommands {
     /// List all secrets (values are masked)
     List,
     /// Set a secret value
@@ -235,13 +245,13 @@ enum SecretsCommands {
 }
 
 #[derive(Subcommand, Debug, Clone)]
-enum ThreadsCommands {
+pub(crate) enum ThreadsCommands {
     /// List all threads
     List,
 }
 
 #[derive(Subcommand, Debug, Clone)]
-enum WorkflowCommands {
+pub(crate) enum WorkflowCommands {
     /// Run a workflow (by name from server, or local JSON file)
     Run {
         #[clap(help = "Workflow name (from server) or path to JSON file")]
@@ -270,136 +280,11 @@ enum WorkflowCommands {
     List,
 }
 
-const COLOR_RESET: &str = "\x1b[0m";
-const COLOR_BRIGHT_GREEN: &str = "\x1b[92m";
-const COLOR_BRIGHT_MAGENTA: &str = "\x1b[95m";
-const COLOR_BRIGHT_YELLOW: &str = "\x1b[93m";
-const COLOR_GRAY: &str = "\x1b[90m";
-
-#[derive(Debug, Clone)]
-enum SlashCommandResult {
-    Continue,
-    Exit,
-    ClearContext,
-    Resume(String),
-}
-
-#[derive(Clone)]
-struct AgentMenuOption {
-    name: String,
-    description: String,
-    disabled: bool,
-    missing_tools: Vec<String>,
-    required_tools: Vec<String>,
-}
-
-impl std::fmt::Display for AgentMenuOption {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if self.disabled {
-            write!(
-                f,
-                "{} - {} [requires external tools]",
-                self.name, self.description
-            )
-        } else {
-            write!(f, "{} - {}", self.name, self.description)
-        }
-    }
-}
-
-/// Fuzzy autocomplete for Distri CLI supporting slash commands and history.
-struct DistriAutocomplete {
-    slash_commands: Vec<String>,
-    history: Vec<String>,
-    matcher: SkimMatcherV2,
-}
-
-impl Clone for DistriAutocomplete {
-    fn clone(&self) -> Self {
-        Self {
-            slash_commands: self.slash_commands.clone(),
-            history: self.history.clone(),
-            matcher: SkimMatcherV2::default(),
-        }
-    }
-}
-
-impl DistriAutocomplete {
-    fn new(history: Vec<String>) -> Self {
-        let slash_commands = vec![
-            "/help".to_string(),
-            "/agents".to_string(),
-            "/agent".to_string(),
-            "/models".to_string(),
-            "/model".to_string(),
-            "/available-tools".to_string(),
-            "/resume".to_string(),
-            "/clear".to_string(),
-            "/exit".to_string(),
-            "/quit".to_string(),
-        ];
-
-        Self {
-            slash_commands,
-            history,
-            matcher: SkimMatcherV2::default(),
-        }
-    }
-
-    fn update_history(&mut self, new_history: Vec<String>) {
-        self.history = new_history;
-    }
-}
-
-impl Autocomplete for DistriAutocomplete {
-    fn get_suggestions(&mut self, input: &str) -> Result<Vec<String>, CustomUserError> {
-        if input.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let mut all_options = Vec::new();
-
-        if input.starts_with('/') {
-            all_options.extend(self.slash_commands.clone());
-        } else {
-            all_options.extend(self.history.iter().filter(|h| !h.starts_with('/')).cloned());
-        }
-
-        let mut matches: Vec<(i64, String)> = all_options
-            .into_iter()
-            .filter_map(|option| {
-                self.matcher
-                    .fuzzy_match(&option, input)
-                    .map(|score| (score, option))
-            })
-            .collect();
-
-        matches.sort_by(|a, b| b.0.cmp(&a.0));
-
-        Ok(matches
-            .into_iter()
-            .take(15)
-            .map(|(_, option)| option)
-            .collect())
-    }
-
-    fn get_completion(
-        &mut self,
-        input: &str,
-        highlighted_suggestion: Option<String>,
-    ) -> Result<Replacement, CustomUserError> {
-        if let Some(suggestion) = highlighted_suggestion {
-            Ok(Replacement::Some(suggestion))
-        } else {
-            let suggestions = self.get_suggestions(input)?;
-            if let Some(best_match) = suggestions.first() {
-                Ok(Replacement::Some(best_match.clone()))
-            } else {
-                Ok(Replacement::None)
-            }
-        }
-    }
-}
+pub(crate) const COLOR_RESET: &str = "\x1b[0m";
+pub(crate) const COLOR_BRIGHT_GREEN: &str = "\x1b[92m";
+pub(crate) const COLOR_BRIGHT_MAGENTA: &str = "\x1b[95m";
+pub(crate) const COLOR_BRIGHT_YELLOW: &str = "\x1b[93m";
+pub(crate) const COLOR_GRAY: &str = "\x1b[90m";
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -410,7 +295,10 @@ async fn main() -> Result<()> {
 
     let cli = parse_cli_with_default_serve();
 
-    let command = cli.command.clone().unwrap_or(Commands::Tui { agent: None });
+    let command = cli
+        .command
+        .clone()
+        .unwrap_or(Commands::Tui { agent: None, resume: None });
 
     if let Commands::Serve {
         host,
@@ -439,14 +327,23 @@ async fn main() -> Result<()> {
         DistriClientApp::from_config(config.clone()).with_workspace_path(workspace.clone());
 
     match command {
-        Commands::Tui { agent } => {
+        Commands::Tui { agent, resume } => {
             let agent_name = agent.unwrap_or_else(|| "distri".to_string());
-            run_interactive_chat(&mut app, &config, &base_url, agent_name, cli.verbose).await?;
+            run_interactive_chat(
+                &mut app,
+                &config,
+                &base_url,
+                agent_name,
+                cli.verbose,
+                resume,
+            )
+            .await?;
         }
         Commands::Run {
             agent,
             task,
             context,
+            resume,
         } => {
             let agent_name = agent.unwrap_or_else(|| "distri".to_string());
             // Resolve agent name to UUID for cloud compatibility.
@@ -463,6 +360,12 @@ async fn main() -> Result<()> {
             let distri_client = Distri::from_config(config.clone());
             let connections_context = build_connections_context(&distri_client).await;
             let mut params = build_message_params(task, connections_context);
+
+            // Set thread_id from --resume
+            if let Some(ref resume_arg) = resume {
+                let tid = resolve_resume_arg(resume_arg);
+                params.message.context_id = Some(tid);
+            }
 
             // Merge --context envs/secrets into metadata.env_vars
             if let Some(ctx_json) = context {
@@ -504,16 +407,21 @@ async fn main() -> Result<()> {
             println!("Streaming agent '{}' via {}", agent_name, base_url);
             let registry = app.registry();
             register_approval_handler(&registry);
-            let platform_tool = distri::PlatformTool::from_arc(std::sync::Arc::new(
-                Distri::from_config(config.clone()),
-            ));
-            platform_tool.register(&registry);
+            register_api_request_handler(&registry, Distri::from_config(config.clone()));
             let stream_config = config.clone().with_timeout(600);
             let http_client = stream_config.build_http_client()?;
             let client = AgentStreamClient::from_config(config.clone())
                 .with_http_client(http_client)
                 .with_tool_registry(registry);
-            print_stream_verbose(&client, &stream_agent_id, params, cli.verbose).await?;
+            print_stream_verbose(
+                &client,
+                &stream_agent_id,
+                params,
+                cli.verbose,
+                Some(agent_name.clone()),
+                true,
+            )
+            .await?;
         }
         Commands::Agents { command } => match command {
             AgentsCommands::List => {
@@ -615,7 +523,7 @@ async fn main() -> Result<()> {
             handle_secrets_command(&client, command).await?;
         }
         Commands::Threads { command } => {
-            handle_threads_command(&client, command).await?;
+            threads::handle_threads_command(&client, command).await?;
         }
         Commands::Workflow { command } => {
             handle_workflow_command(&client, command).await?;
@@ -628,13 +536,6 @@ async fn main() -> Result<()> {
 
 fn parse_cli_with_default_serve() -> Cli {
     Cli::parse()
-}
-
-fn resolve_workspace(config_path: &Option<PathBuf>) -> PathBuf {
-    config_path
-        .as_ref()
-        .and_then(|path| path.parent().map(|p| p.to_path_buf()))
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
 }
 
 fn run_distri_server(
@@ -681,1445 +582,4 @@ fn resolve_distri_server_binary() -> PathBuf {
     }
 
     PathBuf::from(format!("distri-server{}", std::env::consts::EXE_SUFFIX))
-}
-
-fn platform_tool_definition() -> serde_json::Value {
-    serde_json::json!({
-        "name": "distri_platform",
-        "description": "Manage platform resources. Actions: list_agents, get_agent({agent_id}), list_skills, get_skill({skill_id}), create_skill({name,content}), delete_skill({skill_id}), list_providers, connect({provider,scopes?,additional_scopes?}), list_connections, get_connection_usage({connection_id}) returns API docs for a connection, connection_request({connection_id,method,url,headers?,body?}) makes authenticated API calls (token auto-injected), register_connection_provider({id,name,authorization_url,token_url,client_id,client_secret,...}), list_connection_providers, discover_skill({query}), import_skill({url,name?}), list_secrets, get_secret({key}), set_secret({key,value}), delete_secret({key}), list_notes({tag?,search?}), create_note({title,content,tags?}), get_note({note_id}), update_note({note_id,title?,content?,tags?}), delete_note({note_id}), list_threads. Workflow: list_connections → get_connection_usage → connection_request.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "action": {
-                    "type": "string",
-                    "enum": ["list_actions", "list_agents", "get_agent", "list_skills", "get_skill", "create_skill", "delete_skill", "list_providers", "connect", "list_connections", "get_connection_usage", "connection_request", "register_connection_provider", "list_connection_providers", "discover_skill", "import_skill", "list_secrets", "get_secret", "set_secret", "delete_secret", "list_notes", "create_note", "get_note", "update_note", "delete_note", "list_threads"],
-                    "description": "The action to perform"
-                },
-                "provider": { "type": "string", "description": "Provider name for connect (e.g. 'google', 'slack')" },
-                "scopes": { "type": "array", "items": { "type": "string" }, "description": "OAuth scopes for connect" },
-                "additional_scopes": { "type": "array", "items": { "type": "string" }, "description": "Extra scopes to add when re-connecting" },
-                "connection_id": { "type": "string", "description": "Connection ID for connection_request/get_connection_usage" },
-                "method": { "type": "string", "description": "HTTP method for connection_request (GET, POST, PUT, DELETE)" },
-                "url": { "type": "string", "description": "API URL for connection_request" },
-                "headers": { "type": "object", "description": "Extra headers for connection_request" },
-                "body": { "description": "Request body for connection_request (JSON)" },
-                "agent_id": { "type": "string", "description": "Agent ID for get_agent" },
-                "skill_id": { "type": "string", "description": "Skill ID for get_skill/delete_skill" },
-                "name": { "type": "string", "description": "Name for create_skill" },
-                "content": { "type": "string", "description": "Content for create_skill" },
-                "key": { "type": "string", "description": "Key for get_secret/set_secret/delete_secret" },
-                "value": { "type": "string", "description": "Value for set_secret" },
-                "query": { "type": "string", "description": "Search query for discover_skill" },
-                "title": { "type": "string", "description": "Title for create_note/update_note" },
-                "note_id": { "type": "string", "description": "Note ID for get_note/update_note/delete_note" },
-                "tags": { "type": "array", "items": { "type": "string" }, "description": "Tags for notes" },
-                "tag": { "type": "string", "description": "Tag filter for list_notes" },
-                "search": { "type": "string", "description": "Search query for list_notes" }
-            },
-            "required": ["action"]
-        }
-    })
-}
-
-/// Build a lightweight connections summary to inject into the agent's prompt context.
-async fn build_connections_context(client: &Distri) -> Option<String> {
-    let connections = client.list_connections().await.ok()?;
-    if connections.is_empty() {
-        return None;
-    }
-    let lines: Vec<String> = connections
-        .iter()
-        .filter(|c| c.status.as_deref() == Some("connected"))
-        .map(|c| {
-            let scopes: Vec<String> = c
-                .config
-                .as_ref()
-                .and_then(|cfg| cfg.get("scopes"))
-                .and_then(|v| serde_json::from_value(v.clone()).ok())
-                .unwrap_or_default();
-            format!(
-                "- **{}** (connection_id: `{}`): scopes=[{}]",
-                c.name,
-                c.id,
-                scopes.join(", ")
-            )
-        })
-        .collect();
-    if lines.is_empty() {
-        return None;
-    }
-    Some(lines.join("\n"))
-}
-
-fn build_message_params(content: String, connections_context: Option<String>) -> MessageSendParams {
-    let mut meta = serde_json::json!({
-        "external_tools": [platform_tool_definition()]
-    });
-    if let Some(conn_ctx) = connections_context {
-        meta["dynamic_values"] = serde_json::json!({
-            "available_connections": conn_ctx
-        });
-    }
-    MessageSendParams {
-        message: A2aMessage {
-            kind: EventKind::Message,
-            message_id: uuid::Uuid::new_v4().to_string(),
-            role: Role::User,
-            parts: vec![A2aPart::Text(TextPart { text: content })],
-            context_id: None,
-            task_id: None,
-            reference_task_ids: vec![],
-            extensions: vec![],
-            metadata: None,
-        },
-        configuration: None,
-        metadata: Some(meta),
-    }
-}
-
-fn build_chat_message_params(
-    content: String,
-    thread_id: &str,
-    model: &str,
-    connections_context: Option<String>,
-) -> MessageSendParams {
-    let mut meta = serde_json::json!({
-        "external_tools": [platform_tool_definition()]
-    });
-    if !model.trim().is_empty() {
-        meta["definition_overrides"] = serde_json::json!({ "model": model });
-    }
-    if let Some(conn_ctx) = connections_context {
-        let dv = meta
-            .get("dynamic_values")
-            .and_then(|v| v.as_object().cloned())
-            .unwrap_or_default();
-        let mut dv = dv;
-        dv.insert(
-            "available_connections".to_string(),
-            serde_json::Value::String(conn_ctx),
-        );
-        meta["dynamic_values"] = serde_json::Value::Object(dv);
-    }
-
-    MessageSendParams {
-        message: A2aMessage {
-            kind: EventKind::Message,
-            message_id: uuid::Uuid::new_v4().to_string(),
-            role: Role::User,
-            parts: vec![A2aPart::Text(TextPart { text: content })],
-            context_id: Some(thread_id.to_string()),
-            task_id: None,
-            reference_task_ids: vec![],
-            extensions: vec![],
-            metadata: None,
-        },
-        configuration: None,
-        metadata: Some(meta),
-    }
-}
-
-async fn run_interactive_chat(
-    app: &mut DistriClientApp,
-    config: &DistriConfig,
-    base_url: &str,
-    agent_name: String,
-    verbose: bool,
-) -> Result<()> {
-    let mut thread_id = uuid::Uuid::new_v4().to_string();
-    let mut current_agent = agent_name;
-    let mut current_model = "gpt-4.1-mini".to_string();
-
-    print_welcome_header(&current_agent, &current_model);
-    println!("{}Connected:{} {}", COLOR_GRAY, COLOR_RESET, base_url);
-
-    let mut history = load_history().unwrap_or_default();
-    let mut autocomplete = DistriAutocomplete::new(history.clone());
-
-    let registry = app.registry();
-    register_approval_handler(&registry);
-    let platform_tool =
-        distri::PlatformTool::from_arc(std::sync::Arc::new(Distri::from_config(config.clone())));
-    platform_tool.register(&registry);
-
-    let stream_config = config.clone().with_timeout(60);
-    let http_client = stream_config.build_http_client()?;
-    let stream_client = AgentStreamClient::from_config(config.clone())
-        .with_http_client(http_client)
-        .with_tool_registry(registry);
-
-    loop {
-        print_context_status();
-        print_separator_line();
-
-        let input = match Text::new("> ")
-            .with_autocomplete(autocomplete.clone())
-            .with_placeholder("/help for commands... Ask me anything")
-            .prompt()
-        {
-            Ok(line) => {
-                print_help_options();
-                if !line.trim().is_empty() && !history.contains(&line) {
-                    history.push(line.clone());
-                    if history.len() > 100 {
-                        history.remove(0);
-                    }
-                    let _ = save_history(&history);
-                    autocomplete.update_history(history.clone());
-                }
-                line
-            }
-            Err(inquire::InquireError::OperationCanceled)
-            | Err(inquire::InquireError::OperationInterrupted) => {
-                println!("\nExiting...");
-                break;
-            }
-            Err(err) => {
-                eprintln!("Error reading input: {}", err);
-                continue;
-            }
-        };
-
-        let input = input.trim();
-        if input.is_empty() {
-            continue;
-        }
-
-        if input.starts_with('/') {
-            match handle_slash_command(input, app, config, &mut current_agent, &mut current_model)
-                .await?
-            {
-                SlashCommandResult::Continue => continue,
-                SlashCommandResult::Exit => break,
-                SlashCommandResult::ClearContext => {
-                    thread_id = uuid::Uuid::new_v4().to_string();
-                    println!("Context cleared - new conversation started");
-                    continue;
-                }
-                SlashCommandResult::Resume(tid) => {
-                    thread_id = tid;
-                    println!("Resumed thread: {}", thread_id);
-                    continue;
-                }
-            }
-        }
-
-        // Resolve agent name to UUID for cloud compatibility
-        let stream_agent_id = match app.fetch_agent(&current_agent).await? {
-            Some(agent_cfg) => {
-                app.ensure_local_tools(&current_agent, &agent_cfg.agent)
-                    .await?;
-                agent_cfg
-                    .cloud
-                    .id
-                    .map(|u| u.to_string())
-                    .unwrap_or_else(|| current_agent.clone())
-            }
-            None => {
-                eprintln!("Agent '{}' not found on {}", current_agent, base_url);
-                continue;
-            }
-        };
-
-        // Fetch connections context for agent prompt (lightweight, only connected providers)
-        let distri_client = Distri::from_config(config.clone());
-        let connections_context = build_connections_context(&distri_client).await;
-        let params = build_chat_message_params(
-            input.to_string(),
-            &thread_id,
-            &current_model,
-            connections_context,
-        );
-
-        if let Err(err) =
-            print_stream_verbose(&stream_client, &stream_agent_id, params, verbose).await
-        {
-            eprintln!("Error from agent: {}", err);
-        }
-    }
-
-    // Save last thread_id for /resume last
-    let _ = save_last_thread(&thread_id);
-
-    Ok(())
-}
-
-async fn handle_slash_command(
-    input: &str,
-    app: &mut DistriClientApp,
-    config: &DistriConfig,
-    current_agent: &mut String,
-    current_model: &mut String,
-) -> Result<SlashCommandResult> {
-    let mut parts = input.splitn(2, ' ');
-    let command = parts.next().unwrap_or("");
-    let arg = parts.next().map(|s| s.trim()).filter(|s| !s.is_empty());
-
-    match command {
-        "/help" => {
-            print_help_message();
-            Ok(SlashCommandResult::Continue)
-        }
-        "/exit" | "/quit" => Ok(SlashCommandResult::Exit),
-        "/clear" => Ok(SlashCommandResult::ClearContext),
-        "/agent" | "/agents" => {
-            if let Some(agent_name) = arg {
-                if app.fetch_agent(agent_name).await?.is_some() {
-                    *current_agent = agent_name.to_string();
-                    println!(
-                        "{}Switched to agent:{} {}",
-                        COLOR_BRIGHT_GREEN, COLOR_RESET, current_agent
-                    );
-                } else {
-                    eprintln!("Agent '{}' not found", agent_name);
-                }
-            } else if let Some(selected) = select_agent_menu(app).await? {
-                *current_agent = selected;
-                println!(
-                    "{}Switched to agent:{} {}",
-                    COLOR_BRIGHT_GREEN, COLOR_RESET, current_agent
-                );
-            }
-            Ok(SlashCommandResult::Continue)
-        }
-        "/model" | "/models" => {
-            let mut updated = false;
-            if let Some(model) = arg {
-                *current_model = model.to_string();
-                updated = true;
-            } else {
-                match Text::new("Model name: ").prompt() {
-                    Ok(model) => {
-                        let model = model.trim();
-                        if !model.is_empty() {
-                            *current_model = model.to_string();
-                            updated = true;
-                        }
-                    }
-                    Err(inquire::InquireError::OperationCanceled)
-                    | Err(inquire::InquireError::OperationInterrupted) => {}
-                    Err(err) => {
-                        eprintln!("Error reading model: {}", err);
-                    }
-                }
-            }
-            if updated {
-                println!(
-                    "{}Model set to:{} {}",
-                    COLOR_BRIGHT_GREEN, COLOR_RESET, current_model
-                );
-            }
-            Ok(SlashCommandResult::Continue)
-        }
-        "/available-tools" => {
-            print_available_tools(app, current_agent).await?;
-            Ok(SlashCommandResult::Continue)
-        }
-        "/resume" => {
-            if let Some(resume_arg) = arg {
-                if resume_arg == "last" {
-                    match load_last_thread() {
-                        Some(tid) => {
-                            return Ok(SlashCommandResult::Resume(tid));
-                        }
-                        None => {
-                            println!("No previous thread saved.");
-                            return Ok(SlashCommandResult::Continue);
-                        }
-                    }
-                } else {
-                    // Treat as direct thread ID
-                    return Ok(SlashCommandResult::Resume(resume_arg.to_string()));
-                }
-            }
-            // No arg: list recent threads and let user pick
-            let client = Distri::from_config(config.clone());
-            match client.list_threads().await {
-                Ok(threads) => {
-                    if threads.is_empty() {
-                        println!("No threads found.");
-                        return Ok(SlashCommandResult::Continue);
-                    }
-                    let display: Vec<String> = threads
-                        .iter()
-                        .take(10)
-                        .map(|t| {
-                            let title = t.title.as_deref().unwrap_or("(no title)");
-                            let agent = t.agent_name.as_deref().unwrap_or("unknown");
-                            format!("{} - {} [{}]", t.id, title, agent)
-                        })
-                        .collect();
-                    match Select::new("Select thread to resume", display).prompt() {
-                        Ok(selected) => {
-                            let tid = selected.split(" - ").next().unwrap_or("").to_string();
-                            Ok(SlashCommandResult::Resume(tid))
-                        }
-                        Err(inquire::InquireError::OperationCanceled)
-                        | Err(inquire::InquireError::OperationInterrupted) => {
-                            Ok(SlashCommandResult::Continue)
-                        }
-                        Err(err) => Err(anyhow::anyhow!("Error selecting thread: {}", err)),
-                    }
-                }
-                Err(err) => {
-                    eprintln!("Failed to list threads: {}", err);
-                    Ok(SlashCommandResult::Continue)
-                }
-            }
-        }
-        _ => {
-            println!("Unknown command. Type /help for commands.");
-            Ok(SlashCommandResult::Continue)
-        }
-    }
-}
-
-async fn select_agent_menu(app: &mut DistriClientApp) -> Result<Option<String>> {
-    let agents = app.list_agents().await?;
-    if agents.is_empty() {
-        println!("No agents available.");
-        return Ok(None);
-    }
-
-    let registry = app.registry();
-    let mut options = Vec::with_capacity(agents.len());
-
-    for agent in agents {
-        let name = agent.get_name().to_string();
-        let description = agent.get_description().to_string();
-
-        app.ensure_local_tools(&name, &agent).await?;
-
-        let required_tools = required_external_tools(&agent);
-        let missing_tools = required_tools
-            .iter()
-            .filter(|tool| !registry.has_tool(&name, tool))
-            .cloned()
-            .collect::<Vec<_>>();
-        let disabled = !required_tools.is_empty() && !missing_tools.is_empty();
-
-        options.push(AgentMenuOption {
-            name,
-            description,
-            disabled,
-            missing_tools,
-            required_tools,
-        });
-    }
-
-    loop {
-        match Select::new("Select agent", options.clone()).prompt() {
-            Ok(choice) => {
-                if choice.disabled {
-                    println!(
-                        "Agent requires external tools not available in this client: {}",
-                        if choice.missing_tools.is_empty() {
-                            choice.required_tools.to_vec().join(", ")
-                        } else {
-                            choice.missing_tools.join(", ")
-                        }
-                    );
-                    println!("Register the tools in your host application to enable it.");
-                    continue;
-                }
-                return Ok(Some(choice.name));
-            }
-            Err(inquire::InquireError::OperationCanceled)
-            | Err(inquire::InquireError::OperationInterrupted) => return Ok(None),
-            Err(err) => return Err(anyhow::anyhow!("Error selecting agent: {}", err)),
-        }
-    }
-}
-
-fn required_external_tools(agent: &AgentConfig) -> Vec<String> {
-    match agent {
-        AgentConfig::StandardAgent(def) => def
-            .tools
-            .as_ref()
-            .and_then(|tools| tools.external.clone())
-            .unwrap_or_default(),
-        AgentConfig::WorkflowAgent(_) => vec![],
-    }
-}
-
-async fn print_available_tools(app: &mut DistriClientApp, agent: &str) -> Result<()> {
-    if let Some(agent_cfg) = app.fetch_agent(agent).await? {
-        app.ensure_local_tools(agent, &agent_cfg.agent).await?;
-    }
-
-    let tools = app.list_tools().await?;
-    if tools.is_empty() {
-        println!("No tools available.");
-        return Ok(());
-    }
-
-    for tool in tools {
-        println!("{} - {}", tool.tool_name, tool.description);
-    }
-
-    Ok(())
-}
-
-fn register_approval_handler(registry: &ExternalToolRegistry) {
-    registry.register("*", "approval_request", |call, _event| async move {
-        println!(
-            "{}Calling tool:{} {}",
-            COLOR_BRIGHT_MAGENTA, COLOR_RESET, call.tool_name
-        );
-        println!("{}Approval required{}", COLOR_BRIGHT_YELLOW, COLOR_RESET);
-        print!(
-            "{}Do you approve this operation? (y/n): {}",
-            COLOR_BRIGHT_YELLOW, COLOR_RESET
-        );
-        io::stdout().flush().ok();
-
-        let mut input = String::new();
-        if io::stdin().read_line(&mut input).is_err() {
-            return Err(anyhow::anyhow!("Failed to read approval input"));
-        }
-
-        let approved = input.trim().eq_ignore_ascii_case("y");
-        if approved {
-            println!(
-                "{}Operation approved by user.{}",
-                COLOR_BRIGHT_GREEN, COLOR_RESET
-            );
-        } else {
-            println!("Operation rejected by user.");
-        }
-
-        let tool_calls = call.input.clone();
-        let approval_result = serde_json::json!({
-            "approved": approved,
-            "reason": if approved { "Approved by user" } else { "Rejected by user" },
-            "tool_calls": tool_calls,
-        });
-
-        Ok(ToolResponse::direct(
-            call.tool_call_id.clone(),
-            call.tool_name.clone(),
-            approval_result,
-        ))
-    });
-}
-
-fn load_history() -> Result<Vec<String>, std::io::Error> {
-    let history_file = get_history_file();
-    if history_file.exists() {
-        let content = std::fs::read_to_string(&history_file)?;
-        Ok(content.lines().map(|s| s.to_string()).collect())
-    } else {
-        Ok(Vec::new())
-    }
-}
-
-fn save_history(history: &[String]) -> Result<(), std::io::Error> {
-    let history_file = get_history_file();
-    if let Some(parent) = history_file.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(&history_file, history.join("\n"))
-}
-
-fn get_history_file() -> PathBuf {
-    PathBuf::from(".distri").join("history.txt")
-}
-
-fn get_last_thread_file() -> PathBuf {
-    let home = std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(home).join(".distri").join("last_thread")
-}
-
-fn save_last_thread(thread_id: &str) -> Result<(), std::io::Error> {
-    let path = get_last_thread_file();
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(&path, thread_id)
-}
-
-fn load_last_thread() -> Option<String> {
-    let path = get_last_thread_file();
-    std::fs::read_to_string(path)
-        .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-}
-
-fn print_welcome_header(agent_name: &str, model_name: &str) {
-    println!();
-    println!(
-        "{}Agent:{} {} {}- Model:{} {}",
-        COLOR_GRAY, COLOR_RESET, agent_name, COLOR_GRAY, COLOR_RESET, model_name
-    );
-}
-
-fn print_context_status() {
-    let context_remaining = 12;
-    let term_width: usize = if let Ok((w, _)) = terminal::size() {
-        w as usize
-    } else {
-        80
-    };
-
-    let status_text = format!("Context left until auto-compact: {}%", context_remaining);
-    let padding = term_width.saturating_sub(status_text.len());
-
-    println!();
-    println!(
-        "{}{}{}{}",
-        " ".repeat(padding),
-        COLOR_GRAY,
-        status_text,
-        COLOR_RESET
-    );
-}
-
-fn print_separator_line() {
-    let term_width: usize = if let Ok((w, _)) = terminal::size() {
-        w as usize
-    } else {
-        80
-    };
-
-    println!("{}", "-".repeat(term_width));
-}
-
-fn print_help_options() {
-    println!(
-        "{}[Tab to autocomplete, /help for commands]{}",
-        COLOR_GRAY, COLOR_RESET
-    );
-}
-
-fn print_help_message() {
-    println!("AGENTS:");
-    println!("- Use /agents to select an agent from the server");
-    println!("- Use /agent <name> to switch directly");
-    println!();
-    println!("SLASH COMMANDS:");
-    println!("  /agents             - Show agent picker");
-    println!("  /agent <name>       - Switch to an agent by name");
-    println!("  /models             - Set model override (prompts for name)");
-    println!("  /model <name>       - Set model override directly");
-    println!("  /available-tools    - List tools available to the client");
-    println!("  /resume             - Pick from recent threads to resume");
-    println!("  /resume last        - Resume the last thread from previous session");
-    println!("  /resume <id>        - Resume a specific thread by ID");
-    println!("  /clear              - Clear the current session context");
-    println!("  /help               - Show this help message");
-    println!("  /exit               - Exit the chat");
-    println!();
-    println!("USAGE TIPS:");
-    println!("- Type normally; the agent decides the best approach");
-    println!("- Tab to autocomplete commands and history");
-}
-
-fn handle_config_command(command: ConfigCommands) -> Result<()> {
-    match command {
-        ConfigCommands::Set { key, value } => {
-            let raw_value = value
-                .into_iter()
-                .filter(|part| part != "=")
-                .collect::<Vec<_>>()
-                .join(" ");
-            let path = set_client_config_value(&key, &raw_value)?;
-            println!("Updated {} in {}", key, path.display());
-        }
-    }
-    Ok(())
-}
-
-async fn handle_prompts_command(client: &Distri, command: PromptsCommands) -> Result<()> {
-    match command {
-        PromptsCommands::List => {
-            println!("📋 Listing prompt templates...");
-            let templates = client.list_prompt_templates().await?;
-            if templates.is_empty() {
-                println!("No prompt templates found.");
-            } else {
-                for template in templates {
-                    let type_indicator = if template.is_system {
-                        "system"
-                    } else {
-                        "custom"
-                    };
-                    println!(
-                        "{} [{}] - {}",
-                        template.name,
-                        type_indicator,
-                        template
-                            .description
-                            .as_deref()
-                            .unwrap_or("(no description)")
-                    );
-                }
-            }
-        }
-        PromptsCommands::Push { path } => {
-            if !path.exists() {
-                anyhow::bail!("Path does not exist: {}", path.display());
-            }
-
-            let mut templates = Vec::new();
-
-            if path.is_file() {
-                // Single file
-                templates.push(load_template_file(&path).await?);
-            } else if path.is_dir() {
-                // Read all .hbs files in the directory (recursively)
-                fn collect_hbs_files(dir: &Path, files: &mut Vec<PathBuf>) -> std::io::Result<()> {
-                    for entry in std::fs::read_dir(dir)? {
-                        let entry = entry?;
-                        let path = entry.path();
-                        if path.is_dir() {
-                            collect_hbs_files(&path, files)?;
-                        } else if path.is_file() {
-                            if let Some(ext) = path.extension() {
-                                if ext == "hbs" || ext == "handlebars" {
-                                    files.push(path);
-                                }
-                            }
-                        }
-                    }
-                    Ok(())
-                }
-
-                let mut files = Vec::new();
-                collect_hbs_files(&path, &mut files)?;
-                for file_path in files {
-                    templates.push(load_template_file(&file_path).await?);
-                }
-            }
-
-            if templates.is_empty() {
-                println!("No .hbs template files found in {}", path.display());
-                return Ok(());
-            }
-
-            println!(
-                "📤 Pushing {} template(s) to {}...",
-                templates.len(),
-                client.base_url()
-            );
-
-            let result = client.sync_prompt_templates(&templates).await?;
-
-            println!(
-                "{}✔ Synced: {} created, {} updated{}",
-                COLOR_BRIGHT_GREEN, result.created, result.updated, COLOR_RESET
-            );
-
-            // Display workspace information if configured
-            if let Some(workspace_id) = client.workspace_id() {
-                match client.get_workspace(workspace_id).await {
-                    Ok(workspace) => {
-                        let ws_type = if workspace.is_personal {
-                            "Personal"
-                        } else {
-                            "Team"
-                        };
-                        println!(
-                            "{}  Workspace: {} ({} - {}){}",
-                            COLOR_GRAY, workspace.name, ws_type, workspace.role, COLOR_RESET
-                        );
-                    }
-                    Err(_) => {
-                        println!("{}  Workspace: {}{}", COLOR_GRAY, workspace_id, COLOR_RESET);
-                    }
-                }
-            }
-
-            for template in &result.templates {
-                println!("  - {}", template.name);
-            }
-        }
-    }
-    Ok(())
-}
-
-async fn load_template_file(path: &Path) -> Result<distri::NewPromptTemplateRequest> {
-    let content = fs::read_to_string(path)
-        .await
-        .with_context(|| format!("reading {}", path.display()))?;
-
-    let name = path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("unknown")
-        .to_string();
-
-    Ok(distri::NewPromptTemplateRequest {
-        name,
-        template: content,
-        description: None,
-        version: None,
-    })
-}
-
-fn set_client_config_value(key: &str, raw_value: &str) -> Result<PathBuf> {
-    let path = DistriConfig::config_path()
-        .ok_or_else(|| anyhow::anyhow!("Unable to resolve home directory for ~/.distri/config"))?;
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-
-    let mut config = load_client_config_value(&path);
-    let normalized = match key {
-        "api_key" => normalize_optional(raw_value),
-        "base_url" => normalize_base_url(raw_value),
-        "workspace_id" => {
-            let trimmed = normalize_optional(raw_value);
-            if let Some(ref value) = trimmed {
-                // Validate that it's a valid UUID
-                uuid::Uuid::parse_str(value).with_context(|| {
-                    format!("Invalid workspace_id: '{}' is not a valid UUID", value)
-                })?;
-            }
-            trimmed
-        }
-        _ => anyhow::bail!(
-            "Unknown config key '{}'. Supported keys: api_key, base_url, workspace_id",
-            key
-        ),
-    };
-
-    if let toml::Value::Table(ref mut table) = config {
-        match normalized {
-            Some(value) => {
-                table.insert(key.to_string(), toml::Value::String(value));
-            }
-            None => {
-                table.remove(key);
-            }
-        }
-    }
-
-    let contents = toml::to_string_pretty(&config)?;
-    std::fs::write(&path, contents)?;
-    Ok(path)
-}
-
-fn load_client_config_value(path: &Path) -> toml::Value {
-    let parsed = std::fs::read_to_string(path)
-        .ok()
-        .and_then(|contents| contents.parse::<toml::Value>().ok());
-
-    match parsed {
-        Some(toml::Value::Table(table)) => toml::Value::Table(table),
-        _ => toml::Value::Table(toml::map::Map::new()),
-    }
-}
-
-fn normalize_optional(raw: &str) -> Option<String> {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed.to_string())
-    }
-}
-
-fn normalize_base_url(raw: &str) -> Option<String> {
-    normalize_optional(raw).map(|value| value.trim_end_matches('/').to_string())
-}
-
-async fn push_file(client: &Distri, path: &Path) -> Result<()> {
-    println!();
-    println!("→ Validating configuration...");
-
-    let content = fs::read_to_string(path)
-        .await
-        .with_context(|| format!("reading {}", path.display()))?;
-
-    let definition = client.register_agent_markdown(&content).await?;
-
-    let version = definition.version.as_deref().unwrap_or_default();
-    println!(
-        "{}✔ Deployed version {}{}",
-        COLOR_BRIGHT_GREEN, version, COLOR_RESET
-    );
-
-    // Display workspace information if configured
-    if let Some(workspace_id) = client.workspace_id() {
-        // Try to fetch workspace details for a friendly display
-        match client.get_workspace(workspace_id).await {
-            Ok(workspace) => {
-                let ws_type = if workspace.is_personal {
-                    "Personal"
-                } else {
-                    "Team"
-                };
-                println!(
-                    "{}  Workspace: {} ({} - {}){}",
-                    COLOR_GRAY, workspace.name, ws_type, workspace.role, COLOR_RESET
-                );
-            }
-            Err(_) => {
-                // Fallback to just showing the ID if we can't fetch details
-                println!("{}  Workspace: {}{}", COLOR_GRAY, workspace_id, COLOR_RESET);
-            }
-        }
-    }
-
-    println!();
-
-    // Print agent URL
-    let agent_url = format!("{}/agents/{}", client.base_url(), definition.name);
-    println!("{}", agent_url);
-    println!();
-
-    // Print curl example
-    let api_key_header = if client.has_auth() {
-        "\n  -H \"Authorization: Bearer $DISTRI_API_KEY\" \\"
-    } else {
-        ""
-    };
-
-    println!("{}# Example curl command:{}", COLOR_GRAY, COLOR_RESET);
-    println!(
-        r#"{}curl -X POST "{}" \
-  -H "Content-Type: application/json" \{}
-  -d '{{"message": {{"role": "user", "parts": [{{"type": "text", "text": "Hello"}}]}}}}'
-{}"#,
-        COLOR_GRAY, agent_url, api_key_header, COLOR_RESET
-    );
-
-    Ok(())
-}
-
-// ============================================================
-// Skills CLI
-// ============================================================
-
-async fn handle_skills_command(client: &Distri, command: SkillsCommands) -> Result<()> {
-    match command {
-        SkillsCommands::List => {
-            println!("Listing skills...");
-            let skills = client.list_skills().await?;
-            if skills.is_empty() {
-                println!("No skills found.");
-            } else {
-                for skill in skills {
-                    let visibility = if skill.is_public { "public" } else { "private" };
-                    let stars = if skill.star_count > 0 {
-                        format!(" *{}", skill.star_count)
-                    } else {
-                        String::new()
-                    };
-                    println!(
-                        "{} [{}]{} - {}",
-                        skill.name,
-                        visibility,
-                        stars,
-                        skill.description.as_deref().unwrap_or("(no description)")
-                    );
-                }
-            }
-        }
-        SkillsCommands::Push { path, all } => {
-            if !path.exists() {
-                anyhow::bail!("Path does not exist: {}", path.display());
-            }
-
-            let mut skill_files: Vec<PathBuf> = Vec::new();
-
-            if path.is_file() {
-                skill_files.push(path.clone());
-            } else if path.is_dir() {
-                if !all {
-                    eprintln!(
-                        "Path is a directory. Re-run with --all to push all skill markdown files inside."
-                    );
-                    std::process::exit(1);
-                }
-                let mut entries = fs::read_dir(&path).await?;
-                while let Some(entry) = entries.next_entry().await? {
-                    let entry_path = entry.path();
-                    if entry_path.is_file() {
-                        if let Some(ext) = entry_path.extension() {
-                            if ext == "md" {
-                                skill_files.push(entry_path);
-                            }
-                        }
-                    }
-                }
-            }
-
-            if skill_files.is_empty() {
-                println!("No skill markdown files found in {}", path.display());
-                return Ok(());
-            }
-
-            println!(
-                "Pushing {} skill(s) to {}...",
-                skill_files.len(),
-                client.base_url()
-            );
-
-            for skill_path in skill_files {
-                let request = parse_skill_file(&skill_path).await?;
-                let script_count = request.scripts.len();
-                let result = client.upsert_skill(&request).await?;
-                let visibility = if result.is_public {
-                    "public"
-                } else {
-                    "private"
-                };
-                println!(
-                    "{}  Pushed skill '{}' [{}] ({} scripts){}",
-                    COLOR_BRIGHT_GREEN, result.name, visibility, script_count, COLOR_RESET
-                );
-            }
-        }
-    }
-    Ok(())
-}
-
-/// TOML frontmatter for skill files.
-#[derive(Debug, serde::Deserialize)]
-struct SkillFrontmatter {
-    name: String,
-    #[serde(default)]
-    description: Option<String>,
-    #[serde(default)]
-    tags: Vec<String>,
-    #[serde(default)]
-    is_public: bool,
-}
-
-/// Parse a skill markdown file into a CreateSkillRequest.
-///
-/// Format:
-/// ```text
-/// ---
-/// name = "my-skill"
-/// description = "A cool skill"
-/// tags = ["foo", "bar"]
-/// is_public = false
-/// ---
-///
-/// # My Skill
-/// ... content ...
-///
-/// ## Scripts
-///
-/// ### script_name
-///
-/// Description of the script.
-///
-/// ```javascript
-/// // code here
-/// ```
-/// ```
-async fn parse_skill_file(path: &Path) -> Result<CreateSkillRequest> {
-    let raw = fs::read_to_string(path)
-        .await
-        .with_context(|| format!("reading {}", path.display()))?;
-
-    // Split frontmatter and body
-    let (frontmatter_str, body) = if let Some(rest) = raw.strip_prefix("---") {
-        if let Some(end) = rest.find("---") {
-            let fm = &rest[..end];
-            let body = &rest[end + 3..];
-            (fm.trim(), body.trim_start_matches('\n').to_string())
-        } else {
-            anyhow::bail!(
-                "Invalid frontmatter in {}: missing closing ---",
-                path.display()
-            );
-        }
-    } else {
-        anyhow::bail!(
-            "Skill file {} must start with TOML frontmatter (---)",
-            path.display()
-        );
-    };
-
-    let frontmatter: SkillFrontmatter = toml::from_str(frontmatter_str)
-        .with_context(|| format!("parsing frontmatter in {}", path.display()))?;
-
-    // Extract scripts from the body
-    let scripts = extract_scripts_from_markdown(&body);
-
-    Ok(CreateSkillRequest {
-        name: frontmatter.name,
-        description: frontmatter.description,
-        content: body,
-        tags: frontmatter.tags,
-        is_public: frontmatter.is_public,
-        scripts,
-    })
-}
-
-/// Extract scripts from markdown body.
-///
-/// Looks for patterns like:
-/// ### script_name
-/// Description text...
-/// ```javascript
-/// code...
-/// ```
-fn extract_scripts_from_markdown(body: &str) -> Vec<CreateSkillScriptRequest> {
-    let mut scripts = Vec::new();
-    let lines: Vec<&str> = body.lines().collect();
-    let mut i = 0;
-
-    while i < lines.len() {
-        // Look for ### heading (H3)
-        if let Some(name) = lines[i].strip_prefix("### ") {
-            let name = name.trim().to_string();
-            i += 1;
-
-            // Collect description lines until we hit a code fence
-            let mut description_lines = Vec::new();
-            while i < lines.len() && !lines[i].starts_with("```") {
-                let line = lines[i].trim();
-                if !line.is_empty() {
-                    description_lines.push(line);
-                }
-                i += 1;
-            }
-            let description = if description_lines.is_empty() {
-                None
-            } else {
-                Some(description_lines.join(" "))
-            };
-
-            // Parse fenced code block
-            if i < lines.len() && lines[i].starts_with("```") {
-                let fence_line = lines[i];
-                let language = fence_line.trim_start_matches('`').trim().to_string();
-                let language = if language.is_empty() {
-                    "javascript".to_string()
-                } else {
-                    language
-                };
-
-                i += 1;
-                let mut code_lines = Vec::new();
-                while i < lines.len() && !lines[i].starts_with("```") {
-                    code_lines.push(lines[i]);
-                    i += 1;
-                }
-                // Skip closing fence
-                if i < lines.len() {
-                    i += 1;
-                }
-
-                let code = code_lines.join("\n");
-                if !code.trim().is_empty() {
-                    scripts.push(CreateSkillScriptRequest {
-                        name,
-                        description,
-                        code,
-                        language,
-                    });
-                }
-            }
-        } else {
-            i += 1;
-        }
-    }
-
-    scripts
-}
-
-async fn handle_connections_command(client: &Distri, command: ConnectionsCommands) -> Result<()> {
-    match command {
-        ConnectionsCommands::List => {
-            let connections = client.list_connections().await?;
-            if connections.is_empty() {
-                println!("No connections found.");
-            } else {
-                for conn in connections {
-                    let status = conn.status.as_deref().unwrap_or("unknown");
-                    println!("{} - {} ({})", conn.id, conn.name, status);
-                }
-            }
-        }
-        ConnectionsCommands::Token { connection_id } => {
-            let token = client.get_connection_token(&connection_id).await?;
-            println!("{}", token.access_token);
-        }
-    }
-    Ok(())
-}
-
-async fn handle_secrets_command(client: &Distri, command: SecretsCommands) -> Result<()> {
-    match command {
-        SecretsCommands::List => {
-            let secrets = client.list_secrets().await?;
-            if secrets.is_empty() {
-                println!("No secrets found.");
-            } else {
-                for secret in secrets {
-                    println!("{} = {}", secret.key, secret.masked_value);
-                }
-            }
-        }
-        SecretsCommands::Set { key, value } => {
-            client
-                .set_secret(&distri::NewSecretRequest {
-                    key: key.clone(),
-                    value,
-                })
-                .await?;
-            println!("Secret '{}' set.", key);
-        }
-        SecretsCommands::Delete { key } => {
-            client.delete_secret(&key).await?;
-            println!("Secret '{}' deleted.", key);
-        }
-    }
-    Ok(())
-}
-
-async fn handle_threads_command(client: &Distri, command: ThreadsCommands) -> Result<()> {
-    match command {
-        ThreadsCommands::List => {
-            let threads = client.list_threads().await?;
-            if threads.is_empty() {
-                println!("No threads found.");
-            } else {
-                for thread in threads {
-                    let agent = thread.agent_name.as_deref().unwrap_or("unknown");
-                    let title = thread.title.as_deref().unwrap_or("(no title)");
-                    println!("{} - {} [{}]", thread.id, title, agent);
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-// ── Workflow commands ────────────────────────────────────────────────────────
-
-async fn handle_workflow_command(client: &distri::Distri, command: WorkflowCommands) -> Result<()> {
-    use distri::workflow::*;
-
-    match command {
-        WorkflowCommands::Run {
-            workflow: workflow_ref,
-            step,
-            input,
-        } => {
-            // Resolve workflow: local file or server name/id
-            let mut workflow = if std::path::Path::new(&workflow_ref).exists() {
-                let content = fs::read_to_string(&workflow_ref)
-                    .await
-                    .with_context(|| format!("Failed to read workflow file: {}", workflow_ref))?;
-                serde_json::from_str::<WorkflowDefinition>(&content)
-                    .with_context(|| "Failed to parse workflow JSON")?
-            } else {
-                println!("  Fetching workflow '{}' from server...", workflow_ref);
-                let list = client
-                    .list_workflows()
-                    .await
-                    .with_context(|| "Failed to list workflows from server")?;
-                let record = list
-                    .workflows
-                    .iter()
-                    .find(|w| w.name == workflow_ref || w.id == workflow_ref)
-                    .ok_or_else(|| {
-                        anyhow::anyhow!("Workflow '{}' not found on server", workflow_ref)
-                    })?;
-                let full = client
-                    .get_workflow(&record.id)
-                    .await
-                    .with_context(|| "Failed to fetch workflow")?;
-                serde_json::from_value::<WorkflowDefinition>(full.definition)
-                    .with_context(|| "Failed to parse workflow definition from server")?
-            };
-
-            // Apply input if provided
-            if let Some(ref input_json) = input {
-                let input_val: serde_json::Value = serde_json::from_str(input_json)
-                    .with_context(|| "Failed to parse --input JSON")?;
-                workflow = workflow
-                    .with_input(input_val)
-                    .map_err(|e| anyhow::anyhow!(e))?;
-            }
-
-            println!(
-                "{}→ Workflow:{} {} ({})",
-                COLOR_BRIGHT_GREEN,
-                COLOR_RESET,
-                workflow.id,
-                workflow.steps.len()
-            );
-            println!(
-                "  {} steps, status: {:?}",
-                workflow.steps.len(),
-                workflow.status
-            );
-            println!();
-
-            // Run with event streaming
-            let arc_client = Arc::new(client.clone());
-            let mut session = distri::WorkflowSession::new(arc_client, workflow);
-            let mut rx = session.take_events().unwrap();
-
-            if step {
-                // Step mode: print events as they come, pause between steps
-                let handle = tokio::spawn(async move { session.run().await });
-                let mut last_step = String::new();
-                while let Some(event) = rx.recv().await {
-                    match &event {
-                        WorkflowEvent::StepStarted {
-                            step_id,
-                            step_label,
-                            ..
-                        } => {
-                            if !last_step.is_empty() {
-                                print!("  Press Enter for next step (q to quit): ");
-                                io::stdout().flush()?;
-                                let mut buf = String::new();
-                                io::stdin().read_line(&mut buf)?;
-                                if buf.trim() == "q" {
-                                    break;
-                                }
-                            }
-                            println!("  ⏳ {} — {}", step_id, step_label);
-                            last_step = step_id.clone();
-                        }
-                        WorkflowEvent::StepCompleted { step_id, .. } => {
-                            println!("  ✅ {}", step_id);
-                        }
-                        WorkflowEvent::StepFailed { step_id, error, .. } => {
-                            println!("  ❌ {} — {}", step_id, error);
-                        }
-                        WorkflowEvent::WorkflowCompleted {
-                            status,
-                            steps_done,
-                            steps_failed,
-                            ..
-                        } => {
-                            println!(
-                                "\n  Status: {:?} ({} done, {} failed)",
-                                status, steps_done, steps_failed
-                            );
-                        }
-                        _ => {}
-                    }
-                }
-                let _ = handle.await;
-            } else {
-                // Run all, print events as they stream
-                let handle = tokio::spawn(async move { session.run().await });
-                while let Some(event) = rx.recv().await {
-                    match &event {
-                        WorkflowEvent::WorkflowStarted { total_steps, .. } => {
-                            println!("  Starting workflow ({} steps)", total_steps);
-                        }
-                        WorkflowEvent::StepStarted {
-                            step_id,
-                            step_label,
-                            ..
-                        } => {
-                            print!("  ⏳ {} — {}...", step_id, step_label);
-                            io::stdout().flush()?;
-                        }
-                        WorkflowEvent::StepCompleted { step_id: _, .. } => {
-                            println!(" ✅");
-                        }
-                        WorkflowEvent::StepFailed {
-                            step_id: _, error, ..
-                        } => {
-                            println!(" ❌ {}", error);
-                        }
-                        WorkflowEvent::WorkflowCompleted {
-                            status,
-                            steps_done,
-                            steps_failed,
-                            ..
-                        } => {
-                            println!(
-                                "\n  Status: {:?} ({} done, {} failed)",
-                                status, steps_done, steps_failed
-                            );
-                        }
-                    }
-                }
-                let _ = handle.await;
-            }
-        }
-
-        WorkflowCommands::Status { path } => {
-            let content = fs::read_to_string(&path)
-                .await
-                .with_context(|| format!("Failed to read: {}", path.display()))?;
-            let workflow: WorkflowDefinition =
-                serde_json::from_str(&content).with_context(|| "Failed to parse workflow JSON")?;
-
-            println!(
-                "{}Workflow:{} {}",
-                COLOR_BRIGHT_GREEN, COLOR_RESET, workflow.id
-            );
-            println!("  Status: {:?}", workflow.status);
-            println!(
-                "  Steps: {}/{}",
-                workflow
-                    .steps
-                    .iter()
-                    .filter(|s| s.status == StepStatus::Done)
-                    .count(),
-                workflow.steps.len()
-            );
-            for (i, s) in workflow.steps.iter().enumerate() {
-                let icon = match s.status {
-                    StepStatus::Done => "✅",
-                    StepStatus::Failed => "❌",
-                    StepStatus::Running => "⏳",
-                    StepStatus::Blocked => "🚫",
-                    _ => "⬜",
-                };
-                println!("  {} {}. {}", icon, i + 1, s.label);
-            }
-        }
-
-        WorkflowCommands::Push { path, name } => {
-            let content = fs::read_to_string(&path)
-                .await
-                .with_context(|| format!("Failed to read workflow file: {}", path.display()))?;
-            let definition: serde_json::Value =
-                serde_json::from_str(&content).with_context(|| "Failed to parse workflow JSON")?;
-
-            let wf_name = name.unwrap_or_else(|| {
-                path.file_stem()
-                    .map(|s| s.to_string_lossy().to_string())
-                    .unwrap_or("workflow".to_string())
-            });
-
-            match client.push_workflow(&wf_name, definition).await {
-                Ok(record) => {
-                    println!(
-                        "{}→ Pushed:{} {} ({})",
-                        COLOR_BRIGHT_GREEN, COLOR_RESET, record.name, record.id
-                    );
-                }
-                Err(e) => {
-                    println!("Failed to push workflow: {}", e);
-                }
-            }
-        }
-
-        WorkflowCommands::List => match client.list_workflows().await {
-            Ok(response) => {
-                if response.workflows.is_empty() {
-                    println!("No workflows found.");
-                } else {
-                    for w in &response.workflows {
-                        let tpl = if w.is_template { " [template]" } else { "" };
-                        println!("  {} ({} steps){}", w.name, w.step_count, tpl);
-                    }
-                    println!("\n  {} total", response.total);
-                }
-            }
-            Err(e) => println!("Failed to list workflows: {}", e),
-        },
-    }
-    Ok(())
 }

@@ -81,8 +81,7 @@ impl ToolCallParser for XmlParser {
             while current_index < buffer_chars.len() {
                 if let Ok(Some(robust_call)) =
                     self.find_and_parse_tool_call(&buffer_chars, &tool_name, &mut current_index)
-                {
-                    if self.is_top_level_tool_call(&tool_name, &robust_call.raw_content) {
+                    && self.is_top_level_tool_call(&tool_name, &robust_call.raw_content) {
                         // Find the position of this match in the original buffer
                         if let Some(match_start) = updated_buffer.find(&robust_call.raw_content) {
                             let match_end = match_start + robust_call.raw_content.len();
@@ -99,7 +98,6 @@ impl ToolCallParser for XmlParser {
                             matches_to_remove.push((match_start, match_end));
                         }
                     }
-                }
             }
 
             // Remove matched tool calls from buffer (in reverse order to maintain indices)
@@ -142,7 +140,7 @@ impl ToolCallParser for XmlParser {
         }
 
         // Include any partial tool calls we've been accumulating
-        final_tool_calls.extend(self.partial_tool_calls.drain(..));
+        final_tool_calls.append(&mut self.partial_tool_calls);
 
         Ok(final_tool_calls)
     }
@@ -220,7 +218,7 @@ impl XmlParser {
         // Check if this tool call is malformed by looking for closing tags that don't belong
         // A tool call like <limit>5</search> is malformed because it contains </search>
         // but no matching <search> opening tag at this level
-        let all_tool_names = self.extract_tool_names_from_content(&xml_content);
+        let all_tool_names = self.extract_tool_names_from_content(xml_content);
         // Debug: println!("Tool {} -> content tools found: {:?}", tool_name, all_tool_names);
         for other_tool in all_tool_names {
             if other_tool != tool_name {
@@ -463,7 +461,7 @@ impl XmlParser {
         for i in start_index..content_chars.len() {
             if i + tag_len <= content_chars.len() {
                 let matches = (0..tag_len).all(|j| {
-                    content_chars[i + j].to_ascii_lowercase() == tag_chars[j].to_ascii_lowercase()
+                    content_chars[i + j].eq_ignore_ascii_case(&tag_chars[j])
                 });
                 if matches {
                     return Some(i);

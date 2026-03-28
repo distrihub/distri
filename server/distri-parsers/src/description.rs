@@ -34,7 +34,7 @@ pub fn get_tool_descriptions(tool_defs: &[ToolDefinition]) -> String {
             }
         }
 
-        out.push_str("\n");
+        out.push('\n');
     }
 
     out

@@ -94,9 +94,11 @@ impl ExecutorContextTool for ToolSearchTool {
                 // Exact name match mode
                 names.iter().any(|n| n.eq_ignore_ascii_case(&def.name))
             } else if !query.is_empty() {
-                // Keyword search mode
-                tool_name_lower.contains(&query_lower)
-                    || def.description.to_lowercase().contains(&query_lower)
+                // Keyword search mode: name + description
+                let name_match = tool_name_lower.contains(&query_lower);
+                let desc_match = def.description.to_lowercase().contains(&query_lower);
+
+                name_match || desc_match
             } else {
                 // No query - return all tool schemas
                 true

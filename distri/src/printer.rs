@@ -78,6 +78,14 @@ struct ChatState {
 pub struct EventPrinter {
     state: ChatState,
     verbose: bool,
+    show_tools: bool,
+    agent_display_name: Option<String>,
+}
+
+impl Default for EventPrinter {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl EventPrinter {
@@ -85,12 +93,29 @@ impl EventPrinter {
         Self {
             state: ChatState::default(),
             verbose: false,
+            show_tools: true,
+            agent_display_name: None,
         }
     }
 
     pub fn with_verbose(mut self, verbose: bool) -> Self {
         self.verbose = verbose;
         self
+    }
+
+    pub fn with_agent_name(mut self, name: String) -> Self {
+        self.agent_display_name = Some(name);
+        self
+    }
+
+    /// Toggle tool output visibility. Returns the new state.
+    pub fn toggle_show_tools(&mut self) -> bool {
+        self.show_tools = !self.show_tools;
+        self.show_tools
+    }
+
+    pub fn show_tools(&self) -> bool {
+        self.show_tools
     }
 
     /// If "Planning…" is showing on the current line, clear it before printing anything else.
@@ -103,13 +128,9 @@ impl EventPrinter {
     }
 
     pub async fn handle_event(&mut self, event: &AgentEvent) {
-        // Print thread/task IDs once on the first event
+        // Track first event (no header printed — internal IDs aren't useful)
         if !self.state.printed_header {
             self.state.printed_header = true;
-            println!(
-                "{}thread: {}  task: {}{}",
-                COLOR_GRAY, event.thread_id, event.task_id, COLOR_RESET
-            );
         }
 
         // Track agent changes and display them
@@ -167,12 +188,7 @@ impl EventPrinter {
                         end_time: None,
                     },
                 );
-                println!(
-                    "{}→ Starting step {}{}",
-                    COLOR_CYAN,
-                    step_index + 1,
-                    COLOR_RESET
-                );
+                // Suppressed — individual tool calls show progress
             }
             AgentEventType::StepCompleted { step_id, success } => {
                 if let Some(step) = self.state.steps.get_mut(step_id) {
@@ -182,19 +198,15 @@ impl EventPrinter {
                         "error".into()
                     };
                     step.end_time = Some(Instant::now());
-                    let elapsed = step
-                        .start_time
-                        .map(|s| s.elapsed().as_millis())
-                        .unwrap_or(0);
-                    println!(
-                        "{}{} Step {} ({}) [{}ms]{}",
-                        if *success { COLOR_GREEN } else { COLOR_RED },
-                        if *success { "✔" } else { "✖" },
-                        step.index + 1,
-                        step.title,
-                        elapsed,
-                        COLOR_RESET
-                    );
+                    // Only show on failure
+                    if !success {
+                        println!(
+                            "{}✖ Step {} failed{}",
+                            COLOR_RED,
+                            step.index + 1,
+                            COLOR_RESET
+                        );
+                    }
                 }
             }
             AgentEventType::TextMessageStart {
@@ -237,21 +249,13 @@ impl EventPrinter {
             } => {
                 self.handle_tool_calls(tool_calls, parent_message_id.as_deref());
             }
-            AgentEventType::RunFinished {
-                success,
-                total_steps,
-                ..
-            } => {
-                let stamp = Local::now().format("%H:%M:%S").to_string();
-                println!(
-                    "{}{} [{}] run finished ({} steps, {}){}",
-                    COLOR_GREEN,
-                    stamp,
-                    event.agent_id,
-                    total_steps,
-                    if *success { "ok" } else { "error" },
-                    COLOR_RESET
-                );
+            AgentEventType::RunFinished { success, .. } => {
+                if !success {
+                    println!(
+                        "{}Run completed with errors{}",
+                        COLOR_RED, COLOR_RESET
+                    );
+                }
             }
             AgentEventType::RunError { message, code } => {
                 let stamp = Local::now().format("%H:%M:%S").to_string();
@@ -287,8 +291,7 @@ impl EventPrinter {
                     size,
                     timestamp_ms,
                 } = &event.event
-                {
-                    if let Err(err) = self.print_browser_image(
+                    && let Err(err) = self.print_browser_image(
                         image,
                         format.as_deref(),
                         filename.as_deref(),
@@ -300,7 +303,6 @@ impl EventPrinter {
                             COLOR_GRAY, err, COLOR_RESET
                         );
                     }
-                }
             }
             AgentEventType::AgentHandover {
                 from_agent,
@@ -332,14 +334,26 @@ impl EventPrinter {
         self.state.messages.insert(message_id.to_string(), message);
         self.state.current_message_id = Some(message_id.to_string());
 
-        let role_label = match role {
-            MessageRole::Assistant => "assistant",
-            MessageRole::User => "user",
-            MessageRole::System => "system",
-            MessageRole::Tool => "tool",
-            MessageRole::Developer => "developer",
-        };
-        print!("{}{}:{} ", COLOR_CYAN, role_label, COLOR_RESET);
+        match role {
+            MessageRole::Assistant => {
+                let name = self
+                    .agent_display_name
+                    .as_deref()
+                    .or(self.state.current_agent.as_deref())
+                    .unwrap_or("assistant");
+                print!("{}◆ {}:{} ", COLOR_CYAN, name, COLOR_RESET);
+            }
+            _ => {
+                let role_label = match role {
+                    MessageRole::User => "user",
+                    MessageRole::System => "system",
+                    MessageRole::Tool => "tool",
+                    MessageRole::Developer => "developer",
+                    MessageRole::Assistant => unreachable!(),
+                };
+                print!("{}{}:{} ", COLOR_CYAN, role_label, COLOR_RESET);
+            }
+        }
     }
 
     fn append_message(&mut self, message_id: &str, delta: &str) {
@@ -367,14 +381,45 @@ impl EventPrinter {
         }
     }
 
+    /// Returns true if this tool call looks like an internal discovery/probe call
+    /// that shouldn't be shown to the user.
+    fn is_probe_call(name: &str, input: &serde_json::Value) -> bool {
+        match name {
+            "load_skill" => {
+                let skill = input
+                    .get("skill_name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                skill == "?" || skill.is_empty()
+            }
+            "api_request" => {
+                // Probe requests (discovery GETs to nonexistent endpoints)
+                let method = input
+                    .get("method")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let path = input
+                    .get("path")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                method == "GET"
+                    && (path.ends_with("/v1/agents")
+                        || path.ends_with("/v1/connections")
+                        || path.ends_with("/v1/skills"))
+            }
+            _ => false,
+        }
+    }
+
     fn tool_start(&mut self, tool_call_id: &str, name: &str, input: &serde_json::Value) {
-        println!(
-            "{}⏺ {} ({}){}",
-            COLOR_YELLOW,
-            name,
-            self.format_tool_input(input),
-            COLOR_RESET
-        );
+        if self.show_tools && !Self::is_probe_call(name, input) {
+            println!(
+                "{}⏺ {}{}",
+                COLOR_YELLOW,
+                Self::format_tool_call(name, input),
+                COLOR_RESET
+            );
+        }
         self.state.tool_calls.insert(
             tool_call_id.to_string(),
             ToolCallState {
@@ -398,39 +443,22 @@ impl EventPrinter {
                 ToolCallStatus::Error
             };
             state.end_time = Some(Instant::now());
-            let elapsed = state
-                .start_time
-                .map(|s| s.elapsed().as_millis())
-                .unwrap_or(0);
-            println!(
-                "{}{} completed in {}ms{}",
-                if success { COLOR_GREEN } else { COLOR_RED },
-                state.tool_name,
-                elapsed,
-                COLOR_RESET
-            );
+            // No output — the ⎿ result line is sufficient
         }
     }
 
-    fn handle_tool_calls(&mut self, tool_calls: &[distri_types::ToolCall], parent: Option<&str>) {
-        if let Some(parent) = parent {
-            println!(
-                "{}Tool calls for message {}{}",
-                COLOR_GRAY, parent, COLOR_RESET
-            );
-        }
-        for call in tool_calls {
-            println!(
-                "{}• {} ({}){}",
-                COLOR_GRAY,
-                call.tool_name,
-                self.format_tool_input(&call.input),
-                COLOR_RESET
-            );
-        }
+    fn handle_tool_calls(
+        &mut self,
+        _tool_calls: &[distri_types::ToolCall],
+        _parent: Option<&str>,
+    ) {
+        // Suppressed — individual ToolExecutionStart events show each call
     }
 
     fn print_tool_result(&self, result: &ToolResponse) {
+        if !self.show_tools {
+            return;
+        }
         crate::renderers::render_tool_output(result, self.verbose);
     }
 
@@ -521,6 +549,81 @@ impl EventPrinter {
         }
     }
 
+    fn format_tool_call(name: &str, input: &serde_json::Value) -> String {
+        let str_field = |key: &str| {
+            input
+                .get(key)
+                .and_then(|v| v.as_str())
+                .unwrap_or("?")
+                .to_string()
+        };
+        let truncate = |s: &str, max: usize| -> String {
+            if s.len() > max {
+                format!("{}…", &s[..max])
+            } else {
+                s.to_string()
+            }
+        };
+
+        match name {
+            "load_skill" => format!("load_skill(\"{}\")", str_field("skill_name")),
+            "run_skill_script" => {
+                let skill = str_field("skill_name");
+                match input.get("step_index").and_then(|v| v.as_u64()) {
+                    Some(s) => format!("run_skill_script(\"{}\", step={})", skill, s),
+                    None => format!("run_skill_script(\"{}\")", skill),
+                }
+            }
+            "create_skill" | "delete_skill" => {
+                let skill = input
+                    .get("name")
+                    .or(input.get("skill_name"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?");
+                format!("{}(\"{}\")", name, skill)
+            }
+            "browsr_scrape" | "browsr_crawl" => {
+                format!("{}(\"{}\")", name, truncate(&str_field("url"), 60))
+            }
+            "browsr_browser" | "browser_step" => {
+                let action = str_field("action");
+                match input.get("url").and_then(|v| v.as_str()) {
+                    Some(u) => format!("{}({} \"{}\")", name, action, truncate(u, 50)),
+                    None => format!("{}({})", name, action),
+                }
+            }
+            "execute_shell" => {
+                format!("execute_shell(\"{}\")", truncate(&str_field("command"), 60))
+            }
+            "start_shell" | "stop_shell" => format!("{}(…)", name),
+            "search" => format!("search(\"{}\")", truncate(&str_field("query"), 60)),
+            "write_to_storage" | "read_from_storage" => {
+                let key = input
+                    .get("key")
+                    .or(input.get("path"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?");
+                format!("{}(\"{}\")", name, key)
+            }
+            "tool_search" => format!("tool_search(\"{}\")", truncate(&str_field("query"), 60)),
+            "inject_connection_env" => {
+                format!(
+                    "inject_connection_env(\"{}\")",
+                    str_field("provider_name")
+                )
+            }
+            "transfer_to_agent" => {
+                format!("transfer_to_agent(\"{}\")", str_field("agent_name"))
+            }
+            "final" | "reflect" | "console_log" => format!("{}(…)", name),
+            _ => {
+                let compact = serde_json::to_string(input).unwrap_or_else(|_| "…".into());
+                let preview = truncate(&compact, 80);
+                format!("{}({})", name, preview)
+            }
+        }
+    }
+
     fn format_tool_input(&self, input: &serde_json::Value) -> String {
         if input.is_object() && input.as_object().map(|m| m.is_empty()).unwrap_or(false) {
             return "...".into();
@@ -535,7 +638,7 @@ pub async fn print_stream(
     agent_id: &str,
     params: MessageSendParams,
 ) -> Result<(), StreamError> {
-    print_stream_verbose(client, agent_id, params, false).await
+    print_stream_verbose(client, agent_id, params, false, None, true).await
 }
 
 /// Convenience helper that streams an agent and prints events to stdout,
@@ -545,8 +648,17 @@ pub async fn print_stream_verbose(
     agent_id: &str,
     params: MessageSendParams,
     verbose: bool,
+    agent_display_name: Option<String>,
+    show_tools: bool,
 ) -> Result<(), StreamError> {
-    let printer = Arc::new(Mutex::new(EventPrinter::new().with_verbose(verbose)));
+    let mut printer = EventPrinter::new().with_verbose(verbose);
+    if let Some(name) = agent_display_name {
+        printer = printer.with_agent_name(name);
+    }
+    if !show_tools {
+        printer.toggle_show_tools();
+    }
+    let printer = Arc::new(Mutex::new(printer));
     client
         .stream_agent(agent_id, params, {
             let printer = printer.clone();
@@ -558,15 +670,12 @@ pub async fn print_stream_verbose(
                         guard.handle_event(&event).await;
                     }
                     // Print the final assistant message text
-                    if let Some(ref msg) = item.message {
-                        if msg.role == distri_types::MessageRole::Assistant {
-                            if let Some(text) = msg.as_text() {
-                                if !text.is_empty() {
+                    if let Some(ref msg) = item.message
+                        && msg.role == distri_types::MessageRole::Assistant
+                            && let Some(text) = msg.as_text()
+                                && !text.is_empty() {
                                     println!("\n{}", text);
                                 }
-                            }
-                        }
-                    }
                 }
             }
         })

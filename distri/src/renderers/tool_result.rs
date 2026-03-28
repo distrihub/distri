@@ -1,4 +1,5 @@
 use crate::printer::{COLOR_GRAY, COLOR_RESET};
+use crate::renderers::RESULT_PREFIX;
 use crate::renderers::data::render_data_compact;
 use distri_types::{Part, ToolResponse};
 
@@ -8,11 +9,14 @@ pub fn render_tool_result(result: &ToolResponse) {
         match part {
             Part::Text(text) => {
                 let lines: Vec<&str> = text.lines().take(2).collect();
-                let preview = lines.join("\n");
+                let preview = lines.join("\n       ");
                 if text.lines().count() > 2 {
-                    println!("{}  {}\n  …{}", COLOR_GRAY, preview, COLOR_RESET);
+                    println!(
+                        "{}{}{}\n       …{}",
+                        COLOR_GRAY, RESULT_PREFIX, preview, COLOR_RESET
+                    );
                 } else {
-                    println!("{}  {}{}", COLOR_GRAY, preview, COLOR_RESET);
+                    println!("{}{}{}{}", COLOR_GRAY, RESULT_PREFIX, preview, COLOR_RESET);
                 }
             }
             Part::Data(value) => {
@@ -20,8 +24,9 @@ pub fn render_tool_result(result: &ToolResponse) {
             }
             Part::Artifact(meta) => {
                 println!(
-                    "{}  artifact: {} ({}){}",
+                    "{}{}artifact: {} ({}){}",
                     COLOR_GRAY,
+                    RESULT_PREFIX,
                     meta.original_filename
                         .as_deref()
                         .unwrap_or(&meta.relative_path),
@@ -38,10 +43,16 @@ pub fn render_tool_result(result: &ToolResponse) {
                     }
                     distri_types::FileType::Url { url, .. } => url.clone(),
                 };
-                println!("{}  image: {}{}", COLOR_GRAY, label, COLOR_RESET);
+                println!("{}{}image: {}{}", COLOR_GRAY, RESULT_PREFIX, label, COLOR_RESET);
             }
             _ => {
-                println!("{}  [{}]{}", COLOR_GRAY, part.type_name(), COLOR_RESET);
+                println!(
+                    "{}{}[{}]{}",
+                    COLOR_GRAY,
+                    RESULT_PREFIX,
+                    part.type_name(),
+                    COLOR_RESET
+                );
             }
         }
     }

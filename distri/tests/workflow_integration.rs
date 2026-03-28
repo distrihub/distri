@@ -27,9 +27,7 @@ fn get_client() -> Distri {
 async fn test_workflow_session_events() {
     let client = Arc::new(get_client());
 
-    let workflow = WorkflowDefinition::new(
-        "integration_test",
-        vec![
+    let workflow = WorkflowDefinition::new(vec![
             WorkflowStep::api_call(
                 "ping",
                 "Ping server",
@@ -101,9 +99,7 @@ async fn test_workflow_session_events() {
 async fn test_workflow_session_with_input() {
     let client = Arc::new(get_client());
 
-    let workflow = WorkflowDefinition::new(
-        "input_test",
-        vec![
+    let workflow = WorkflowDefinition::new(vec![
             WorkflowStep::api_call("fetch", "Fetch endpoint", "GET", "{context.target_url}"),
             WorkflowStep::checkpoint("done", "Done", "Fetched successfully")
                 .with_depends_on(vec!["fetch"]),

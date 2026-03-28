@@ -58,7 +58,7 @@ pub enum ClientError {
 
 mod external_tools_runtime;
 mod hooks_runtime;
-pub mod platform_tool;
+pub mod api_request_tool;
 
 pub use distri_types as types;
-pub use platform_tool::PlatformTool;
+pub use api_request_tool::{ApiRequestTool, api_request_definition, execute_api_request};
