@@ -32,7 +32,8 @@ async fn test_artifact_agent() {
         AgentOrchestratorBuilder,
     };
     dotenv::dotenv().ok();
-    init_logging("info");
+    // init_logging may panic if another test already set the global subscriber
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| init_logging("info")));
 
     let orchestrator = Arc::new(
         AgentOrchestratorBuilder::default()
