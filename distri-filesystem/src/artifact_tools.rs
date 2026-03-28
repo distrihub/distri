@@ -17,13 +17,11 @@ impl ArtifactBasePath {
         let base_path: Option<&str> = context
             .metadata
             .as_ref()
-            .map(|m| m.get("artifact_base_path"))
-            .flatten()
-            .map(|m| m.as_str())
-            .flatten();
+            .and_then(|m| m.get("artifact_base_path"))
+            .and_then(|m| m.as_str());
         if let Some(v) = base_path {
             tracing::info!("✅ Using artifact_base_path from metadata: {}", v);
-            return Some(v.to_string());
+            Some(v.to_string())
         } else {
             // If not injected from parent, you can use your task namespace
             let artifact_base_path =
@@ -32,7 +30,7 @@ impl ArtifactBasePath {
                 "No metadata provided, using computed path: {}",
                 artifact_base_path
             );
-            return Some(artifact_base_path);
+            Some(artifact_base_path)
         }
     }
 }

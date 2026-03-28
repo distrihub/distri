@@ -134,11 +134,9 @@ impl AgentStreamClient {
                     if let Some(agent_event) = agent_event.clone() {
                         // Fire-and-forget hook execution (no response needed)
                         if let AgentEventType::InlineHookRequested { request } = &agent_event.event
-                        {
-                            if let Some(registry) = &self.hook_registry {
+                            && let Some(registry) = &self.hook_registry {
                                 registry.try_handle(agent_id, request).await;
                             }
-                        }
 
                         if let AgentEventType::ToolCalls { tool_calls, .. } = &agent_event.event {
                             self.try_handle_external_tools(agent_id, &agent_event, tool_calls)

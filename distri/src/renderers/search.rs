@@ -7,8 +7,8 @@ pub fn render_search(result: &ToolResponse) {
     for part in &result.parts {
         match part {
             Part::Data(value) => {
-                if let Some(obj) = value.as_object() {
-                    if let Some(serde_json::Value::Array(items)) = obj.get("data") {
+                if let Some(obj) = value.as_object()
+                    && let Some(serde_json::Value::Array(items)) = obj.get("data") {
                         let count = items.len();
                         println!(
                             "{}{}{} result{}{}",
@@ -35,7 +35,6 @@ pub fn render_search(result: &ToolResponse) {
                         }
                         continue;
                     }
-                }
                 crate::renderers::data::render_data_compact(value);
             }
             Part::Text(text) => {

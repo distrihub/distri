@@ -184,7 +184,7 @@ impl From<crate::TaskStatus> for TaskState {
 impl From<crate::Part> for Part {
     fn from(part: crate::Part) -> Self {
         match part {
-            crate::Part::Text(text) => Part::Text(TextPart { text: text }),
+            crate::Part::Text(text) => Part::Text(TextPart { text }),
             crate::Part::Image(image) => Part::File(FilePart {
                 file: filetype_to_fileobject(image),
                 metadata: None,

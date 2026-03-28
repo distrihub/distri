@@ -97,22 +97,20 @@ pub async fn execute_api_request(
     request = request.header("Content-Type", "application/json");
 
     // Extra headers from agent input
-    if let Some(headers) = extra_headers {
-        if let Some(obj) = headers.as_object() {
+    if let Some(headers) = extra_headers
+        && let Some(obj) = headers.as_object() {
             for (k, v) in obj {
                 if let Some(val) = v.as_str() {
                     request = request.header(k.as_str(), val);
                 }
             }
         }
-    }
 
     // Body
-    if let Some(body) = body {
-        if method != "GET" {
+    if let Some(body) = body
+        && method != "GET" {
             request = request.json(body);
         }
-    }
 
     // Execute
     let response = match request.send().await {

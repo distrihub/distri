@@ -294,22 +294,19 @@ impl PromptRegistry {
             .map_err(|e| AgentError::Planning(format!("Failed to read directory entry: {}", e)))?
         {
             let entry_path = entry.path();
-            if entry_path.is_file() {
-                if let Some(extension) = entry_path.extension() {
-                    if extension == "hbs" || extension == "handlebars" {
-                        if let Some(stem) = entry_path.file_stem() {
-                            let name = stem.to_string_lossy().to_string();
-                            tracing::debug!(
-                                "Registering template '{}' from '{}'",
-                                name,
-                                entry_path.display()
-                            );
-                            self.register_template_file(name, &entry_path, None, None)
-                                .await?;
-                        }
-                    }
+            if entry_path.is_file()
+                && let Some(extension) = entry_path.extension()
+                && (extension == "hbs" || extension == "handlebars")
+                && let Some(stem) = entry_path.file_stem() {
+                    let name = stem.to_string_lossy().to_string();
+                    tracing::debug!(
+                        "Registering template '{}' from '{}'",
+                        name,
+                        entry_path.display()
+                    );
+                    self.register_template_file(name, &entry_path, None, None)
+                        .await?;
                 }
-            }
         }
 
         Ok(())
@@ -338,21 +335,18 @@ impl PromptRegistry {
             .map_err(|e| AgentError::Planning(format!("Failed to read directory entry: {}", e)))?
         {
             let entry_path = entry.path();
-            if entry_path.is_file() {
-                if let Some(extension) = entry_path.extension() {
-                    if extension == "hbs" || extension == "handlebars" {
-                        if let Some(stem) = entry_path.file_stem() {
-                            let name = stem.to_string_lossy().to_string();
-                            tracing::debug!(
-                                "Registering partial '{}' from '{}'",
-                                name,
-                                entry_path.display()
-                            );
-                            self.register_partial_file(name, &entry_path).await?;
-                        }
-                    }
+            if entry_path.is_file()
+                && let Some(extension) = entry_path.extension()
+                && (extension == "hbs" || extension == "handlebars")
+                && let Some(stem) = entry_path.file_stem() {
+                    let name = stem.to_string_lossy().to_string();
+                    tracing::debug!(
+                        "Registering partial '{}' from '{}'",
+                        name,
+                        entry_path.display()
+                    );
+                    self.register_partial_file(name, &entry_path).await?;
                 }
-            }
         }
 
         Ok(())
@@ -471,11 +465,10 @@ pub async fn build_prompt_messages<'a>(
     let system_msg = Message::system(rendered_system, None);
 
     let mut user_msg = user_message.clone();
-    if user_msg.parts.is_empty() {
-        if let Some(text) = user_message.as_text() {
+    if user_msg.parts.is_empty()
+        && let Some(text) = user_message.as_text() {
             user_msg.parts.push(Part::Text(text));
         }
-    }
     if !rendered_user.is_empty() {
         user_msg.parts.push(Part::Text(rendered_user));
     }

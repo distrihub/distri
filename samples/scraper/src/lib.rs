@@ -1,8 +1,7 @@
 use anyhow::Result;
 use distri_core::{AgentOrchestrator, AgentOrchestratorBuilder};
 use distri_types::{
-    configuration::DistriServerConfig, McpServerMetadata, ServerMetadataWrapper, ServerTrait,
-    TransportType,
+    configuration::DistriServerConfig, ServerMetadataWrapper,
 };
 use std::sync::Arc;
 
@@ -33,8 +32,8 @@ pub fn get_agent_server() -> DistriAgentServer {
 }
 
 fn custom_mcp_servers() -> HashMap<String, ServerMetadataWrapper> {
-    let servers = HashMap::new();
-    servers
+    
+    HashMap::new()
 }
 
 /// Load embedded configuration for distri-scraper

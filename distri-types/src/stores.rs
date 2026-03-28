@@ -247,10 +247,10 @@ pub trait TaskStore: Send + Sync {
         thread_id: &str,
         task_id: &str,
     ) -> Result<(), anyhow::Error> {
-        match self.get_task(&task_id).await? {
+        match self.get_task(task_id).await? {
             Some(task) => task,
             None => {
-                self.create_task(&thread_id, Some(&task_id), Some(TaskStatus::Running))
+                self.create_task(thread_id, Some(task_id), Some(TaskStatus::Running))
                     .await?
             }
         };
@@ -947,16 +947,16 @@ pub trait SkillStore: Send + Sync {
     async fn list_starred_skills(&self) -> anyhow::Result<Vec<SkillRecord>>;
     async fn clone_skill(&self, skill_id: &str) -> anyhow::Result<SkillRecord>;
 
-    async fn get_related(&self, skill_id: &str, relation_type: Option<&str>) -> Result<Vec<SkillRecord>, anyhow::Error> {
+    async fn get_related(&self, _skill_id: &str, _relation_type: Option<&str>) -> Result<Vec<SkillRecord>, anyhow::Error> {
         Ok(vec![])
     }
-    async fn add_relation(&self, relation: NewSkillRelation) -> Result<(), anyhow::Error> {
+    async fn add_relation(&self, _relation: NewSkillRelation) -> Result<(), anyhow::Error> {
         Ok(())
     }
-    async fn remove_relation(&self, from_id: &str, to_id: &str, relation_type: &str) -> Result<(), anyhow::Error> {
+    async fn remove_relation(&self, _from_id: &str, _to_id: &str, _relation_type: &str) -> Result<(), anyhow::Error> {
         Ok(())
     }
-    async fn search_by_path(&self, path_prefix: &str) -> Result<Vec<SkillRecord>, anyhow::Error> {
+    async fn search_by_path(&self, _path_prefix: &str) -> Result<Vec<SkillRecord>, anyhow::Error> {
         Ok(vec![])
     }
 }

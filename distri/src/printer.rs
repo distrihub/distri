@@ -82,6 +82,12 @@ pub struct EventPrinter {
     agent_display_name: Option<String>,
 }
 
+impl Default for EventPrinter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EventPrinter {
     pub fn new() -> Self {
         Self {
@@ -285,8 +291,7 @@ impl EventPrinter {
                     size,
                     timestamp_ms,
                 } = &event.event
-                {
-                    if let Err(err) = self.print_browser_image(
+                    && let Err(err) = self.print_browser_image(
                         image,
                         format.as_deref(),
                         filename.as_deref(),
@@ -298,7 +303,6 @@ impl EventPrinter {
                             COLOR_GRAY, err, COLOR_RESET
                         );
                     }
-                }
             }
             AgentEventType::AgentHandover {
                 from_agent,
@@ -666,15 +670,12 @@ pub async fn print_stream_verbose(
                         guard.handle_event(&event).await;
                     }
                     // Print the final assistant message text
-                    if let Some(ref msg) = item.message {
-                        if msg.role == distri_types::MessageRole::Assistant {
-                            if let Some(text) = msg.as_text() {
-                                if !text.is_empty() {
+                    if let Some(ref msg) = item.message
+                        && msg.role == distri_types::MessageRole::Assistant
+                            && let Some(text) = msg.as_text()
+                                && !text.is_empty() {
                                     println!("\n{}", text);
                                 }
-                            }
-                        }
-                    }
                 }
             }
         })

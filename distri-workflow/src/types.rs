@@ -165,7 +165,7 @@ impl WorkflowDefinition {
         }
 
         // Check if any pending step can ever run (all deps must be done or doable)
-        !self.steps.iter().enumerate().any(|(_, step)| {
+        !self.steps.iter().any(|step| {
             step.status == StepStatus::Pending
                 && step.depends_on.iter().all(|dep_id| {
                     self.steps.iter().any(|s| {

@@ -46,7 +46,7 @@ pub fn get_available_tools(tool_defs: &[ToolDefinition]) -> String {
                 ));
                 instructions.push_str(&format!("  {}\n", description));
 
-                instructions.push_str("\n");
+                instructions.push('\n');
             }
         } else if tool_def.parameters.get("type").and_then(|t| t.as_str()) == Some("string") {
             // Handle direct string parameters (like final tool)
@@ -67,7 +67,7 @@ pub fn get_available_tools(tool_defs: &[ToolDefinition]) -> String {
         if let Some(examples) = &tool_def.examples {
             instructions.push_str("**Examples:**\n");
             instructions.push_str(examples);
-            instructions.push_str("\n");
+            instructions.push('\n');
         }
         instructions.push_str("---");
     }
@@ -173,7 +173,7 @@ pub fn generate_usage_examples_from_values(
 
     for (i, (header, example)) in examples.iter().enumerate() {
         if i > 0 {
-            output.push_str("\n");
+            output.push('\n');
         }
         output.push_str(&format!("### {}\n", header));
 

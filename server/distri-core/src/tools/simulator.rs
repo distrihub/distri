@@ -28,6 +28,7 @@ pub fn is_safe_tool(tool_name: &str) -> bool {
 }
 
 /// Tools that should always be simulated (have side effects).
+#[allow(dead_code)]
 const ALWAYS_SIMULATE: &[&str] = &[
     "api_request",        // creates/deletes resources
     "connection_request",  // calls external APIs

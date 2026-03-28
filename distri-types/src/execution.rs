@@ -44,40 +44,40 @@ impl ExecutionResult {
 
         let mut txt = String::new();
         if let Some(reason) = &self.reason {
-            txt.push_str(&reason);
+            txt.push_str(reason);
         }
         let parts_txt = self
             .parts
             .iter()
-            .filter_map(|p| match p {
+            .map(|p| match p {
                 Part::Text(text) => {
                     if text.len() > MAX_TEXT_CHARS {
                         let truncated: String = text.chars().take(MAX_TEXT_CHARS).collect();
-                        Some(format!(
+                        format!(
                             "{}... [truncated, {} total chars]",
                             truncated,
                             text.len()
-                        ))
+                        )
                     } else {
-                        Some(text.clone())
+                        text.clone()
                     }
                 }
-                Part::ToolCall(tool_call) => Some(format!(
+                Part::ToolCall(tool_call) => format!(
                     "Action: {} with {}",
                     tool_call.tool_name,
                     serde_json::to_string(&tool_call.input).unwrap_or_default()
-                )),
+                ),
                 Part::Data(data) => {
                     let serialized = serde_json::to_string(&data).unwrap_or_default();
                     if serialized.len() > MAX_DATA_CHARS {
                         let truncated: String = serialized.chars().take(MAX_DATA_CHARS).collect();
-                        Some(format!(
+                        format!(
                             "{}... [truncated, {} total chars]",
                             truncated,
                             serialized.len()
-                        ))
+                        )
                     } else {
-                        Some(serialized)
+                        serialized
                     }
                 }
                 Part::ToolResult(tool_result) => {
@@ -85,26 +85,26 @@ impl ExecutionResult {
                         serde_json::to_string(&tool_result.result()).unwrap_or_default();
                     if serialized.len() > MAX_DATA_CHARS {
                         let truncated: String = serialized.chars().take(MAX_DATA_CHARS).collect();
-                        Some(format!(
+                        format!(
                             "{}... [truncated, {} total chars]",
                             truncated,
                             serialized.len()
-                        ))
+                        )
                     } else {
-                        Some(serialized)
+                        serialized
                     }
                 }
                 Part::Image(image) => match image {
-                    FileType::Url { url, .. } => Some(format!("[Image: {}]", url)),
+                    FileType::Url { url, .. } => format!("[Image: {}]", url),
                     FileType::Bytes {
                         name, mime_type, ..
-                    } => Some(format!(
+                    } => format!(
                         "[Image: {} ({})]",
                         name.as_deref().unwrap_or("unnamed"),
                         mime_type
-                    )),
+                    ),
                 },
-                Part::Artifact(artifact) => Some(format!(
+                Part::Artifact(artifact) => format!(
                     "[Artifact ID:{}\n You can use artifact tools to read the full content\n{}]",
                     artifact.file_id,
                     if let Some(stats) = &artifact.stats {
@@ -112,12 +112,12 @@ impl ExecutionResult {
                     } else {
                         String::new()
                     }
-                )),
+                ),
             })
             .collect::<Vec<_>>()
             .join("\n");
         if !parts_txt.is_empty() {
-            txt.push_str("\n");
+            txt.push('\n');
             txt.push_str(&parts_txt);
         }
         txt
@@ -220,9 +220,9 @@ pub enum ExecutionStatus {
     InputRequired,
 }
 
-impl Into<TaskStatus> for ExecutionStatus {
-    fn into(self) -> TaskStatus {
-        match self {
+impl From<ExecutionStatus> for TaskStatus {
+    fn from(val: ExecutionStatus) -> Self {
+        match val {
             ExecutionStatus::Success => TaskStatus::Completed,
             ExecutionStatus::Failed => TaskStatus::Failed,
             ExecutionStatus::Rejected => TaskStatus::Canceled,
