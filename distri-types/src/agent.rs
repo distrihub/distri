@@ -305,18 +305,22 @@ impl OpenAiApiFormat {
         }
     }
 
-    /// Heuristic: models that require or should default to the Responses API.
+    /// Heuristic: models that require the Responses API.
     ///
-    /// Codex models are Responses API only — they return errors on /v1/chat/completions.
-    /// Matches patterns like: codex-mini-latest, gpt-5.1-codex, gpt-5.3-codex, etc.
+    /// These models return errors on /v1/chat/completions and MUST use /v1/responses:
+    /// - Codex models: codex-mini-latest, gpt-5.1-codex, gpt-5.3-codex, etc.
+    /// - Pro models: gpt-5-pro, gpt-5.2-pro, gpt-5.4-pro, o3-pro
+    /// - Deep research models: o3-deep-research, o4-mini-deep-research
     fn model_requires_responses_api(model: &str) -> bool {
         let m = model.to_lowercase();
-        // codex-* prefix (e.g. codex-mini-latest, codex-mini-2025-01-24)
+        // Codex models (codex-*, *-codex, */codex*)
         m.starts_with("codex")
-            // *-codex suffix (e.g. gpt-5.1-codex, gpt-5.3-codex)
             || m.ends_with("-codex")
-            // contains codex as a segment (e.g. openai/codex-mini-latest)
             || m.contains("/codex")
+            // Pro models (*-pro) — require multi-turn interactions only Responses supports
+            || m.ends_with("-pro")
+            // Deep research models (*-deep-research)
+            || m.ends_with("-deep-research")
     }
 }
 
@@ -1409,6 +1413,28 @@ mod tests {
     }
 
     #[test]
+    fn test_api_format_auto_detect_pro_models() {
+        let fmt = OpenAiApiFormat::Auto;
+        assert_eq!(fmt.resolve("gpt-5-pro"), ResolvedOpenAiApiFormat::Responses);
+        assert_eq!(fmt.resolve("gpt-5.2-pro"), ResolvedOpenAiApiFormat::Responses);
+        assert_eq!(fmt.resolve("gpt-5.4-pro"), ResolvedOpenAiApiFormat::Responses);
+        assert_eq!(fmt.resolve("o3-pro"), ResolvedOpenAiApiFormat::Responses);
+    }
+
+    #[test]
+    fn test_api_format_auto_detect_deep_research_models() {
+        let fmt = OpenAiApiFormat::Auto;
+        assert_eq!(
+            fmt.resolve("o3-deep-research"),
+            ResolvedOpenAiApiFormat::Responses
+        );
+        assert_eq!(
+            fmt.resolve("o4-mini-deep-research"),
+            ResolvedOpenAiApiFormat::Responses
+        );
+    }
+
+    #[test]
     fn test_api_format_auto_detect_non_codex() {
         let fmt = OpenAiApiFormat::Auto;
         assert_eq!(
@@ -1425,6 +1451,14 @@ mod tests {
         );
         assert_eq!(
             fmt.resolve("o1"),
+            ResolvedOpenAiApiFormat::Completions
+        );
+        assert_eq!(
+            fmt.resolve("gpt-5.4-mini"),
+            ResolvedOpenAiApiFormat::Completions
+        );
+        assert_eq!(
+            fmt.resolve("o3-mini"),
             ResolvedOpenAiApiFormat::Completions
         );
     }
