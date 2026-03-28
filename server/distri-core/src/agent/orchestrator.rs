@@ -629,6 +629,7 @@ impl AgentOrchestrator {
                                         id: s.id,
                                         name: s.name,
                                         description: s.description,
+                                        path: s.path,
                                     })
                                     .collect(),
                                 Err(e) => {
@@ -655,7 +656,14 @@ impl AgentOrchestrator {
                             .iter()
                             .map(|s| {
                                 let desc = s.description.as_deref().unwrap_or("No description");
-                                format!("- **{}** (id: `{}`): {}", s.name, s.id, desc)
+                                if let Some(path) = &s.path {
+                                    format!(
+                                        "- **{}** (id: `{}`, path: {}): {}",
+                                        s.name, s.id, path, desc
+                                    )
+                                } else {
+                                    format!("- **{}** (id: `{}`): {}", s.name, s.id, desc)
+                                }
                             })
                             .collect::<Vec<_>>()
                             .join("\n");

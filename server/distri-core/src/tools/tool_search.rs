@@ -90,13 +90,34 @@ impl ExecutorContextTool for ToolSearchTool {
             let tool_name_lower = def.name.to_lowercase();
             let query_lower = query.to_lowercase();
 
+            // Serialize definition to Value so we can check optional fields (tags, path)
+            // that may be present on skill-backed tools but not on built-in tools.
+            let tool_def = serde_json::to_value(&def).unwrap_or_default();
+
             let matched = if !names.is_empty() {
                 // Exact name match mode
                 names.iter().any(|n| n.eq_ignore_ascii_case(&def.name))
             } else if !query.is_empty() {
                 // Keyword search mode
-                tool_name_lower.contains(&query_lower)
-                    || def.description.to_lowercase().contains(&query_lower)
+                let name_match = tool_name_lower.contains(&query_lower);
+                let desc_match = def.description.to_lowercase().contains(&query_lower);
+
+                let tag_matched =
+                    if let Some(tags) = tool_def.get("tags").and_then(|t| t.as_array()) {
+                        tags.iter().any(|t| {
+                            t.as_str()
+                                .map_or(false, |s| s.to_lowercase().contains(&query_lower))
+                        })
+                    } else {
+                        false
+                    };
+
+                let path_matched = tool_def
+                    .get("path")
+                    .and_then(|p| p.as_str())
+                    .map_or(false, |p| p.to_lowercase().contains(&query_lower));
+
+                name_match || desc_match || tag_matched || path_matched
             } else {
                 // No query - return all tool schemas
                 true
@@ -111,6 +132,14 @@ impl ExecutorContextTool for ToolSearchTool {
 
                 if let Some(examples) = &def.examples {
                     tool_info["examples"] = Value::String(examples.clone());
+                }
+
+                // Include tags and path if present (only on skill-backed tools)
+                if let Some(tags) = tool_def.get("tags") {
+                    tool_info["tags"] = tags.clone();
+                }
+                if let Some(path) = tool_def.get("path") {
+                    tool_info["path"] = path.clone();
                 }
 
                 results.push(tool_info);

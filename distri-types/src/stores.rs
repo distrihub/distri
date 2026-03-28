@@ -826,6 +826,7 @@ pub struct SkillListItem {
     pub is_starred: bool,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -842,6 +843,9 @@ pub struct SkillRecord {
     pub scripts: Vec<SkillScriptRecord>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub path: Option<String>,
+    #[serde(default)]
+    pub relations: Vec<SkillRelation>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -867,6 +871,8 @@ pub struct NewSkill {
     pub is_public: bool,
     #[serde(default)]
     pub scripts: Vec<NewSkillScript>,
+    #[serde(default)]
+    pub path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -899,6 +905,20 @@ pub struct UpdateSkillScript {
     pub language: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillRelation {
+    pub skill_id: String,
+    pub skill_name: String,
+    pub relation_type: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NewSkillRelation {
+    pub from_skill_id: String,
+    pub to_skill_id: String,
+    pub relation_type: String,
+}
+
 #[async_trait]
 pub trait SkillStore: Send + Sync {
     async fn list_skills(&self) -> anyhow::Result<Vec<SkillRecord>>;
@@ -926,6 +946,19 @@ pub trait SkillStore: Send + Sync {
     async fn unstar_skill(&self, skill_id: &str) -> anyhow::Result<()>;
     async fn list_starred_skills(&self) -> anyhow::Result<Vec<SkillRecord>>;
     async fn clone_skill(&self, skill_id: &str) -> anyhow::Result<SkillRecord>;
+
+    async fn get_related(&self, skill_id: &str, relation_type: Option<&str>) -> Result<Vec<SkillRecord>, anyhow::Error> {
+        Ok(vec![])
+    }
+    async fn add_relation(&self, relation: NewSkillRelation) -> Result<(), anyhow::Error> {
+        Ok(())
+    }
+    async fn remove_relation(&self, from_id: &str, to_id: &str, relation_type: &str) -> Result<(), anyhow::Error> {
+        Ok(())
+    }
+    async fn search_by_path(&self, path_prefix: &str) -> Result<Vec<SkillRecord>, anyhow::Error> {
+        Ok(vec![])
+    }
 }
 
 // ========== Workflow Store ==========

@@ -54,6 +54,7 @@ async fn list_skills(executor: web::Data<Arc<AgentOrchestrator>>) -> HttpRespons
                         is_starred: false,
                         created_at: s.created_at,
                         updated_at: s.updated_at,
+                        path: s.path,
                     }
                 })
                 .collect();

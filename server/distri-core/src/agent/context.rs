@@ -70,6 +70,11 @@ pub struct ExecutorContextMetadata {
     /// These are forwarded to skill scripts and plugin contexts alongside secrets.
     #[serde(default)]
     pub env_vars: Option<HashMap<String, String>>,
+
+    /// When true, unsafe tools are simulated via LLM instead of executed.
+    /// Set by the eval simulator to test agent behavior without side effects.
+    #[serde(default)]
+    pub dry_run: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -162,6 +167,9 @@ pub struct ExecutorContext {
     /// Default model settings inherited from the orchestrator/workspace context.
     /// None when no default model is configured yet.
     pub default_model_settings: Option<ModelSettings>,
+    /// When true, unsafe tools are simulated via LLM instead of executed.
+    /// Safe tools (tool_search, load_skill, final, write_todos) still execute normally.
+    pub dry_run: bool,
 }
 
 impl std::fmt::Debug for ExecutorContext {
@@ -216,6 +224,7 @@ impl Default for ExecutorContext {
             hook_prompt_state: Arc::new(RwLock::new(HookPromptState::default())),
             hook_registry: Arc::new(RwLock::new(None)),
             default_model_settings: None,
+            dry_run: false,
         }
     }
 }
@@ -910,6 +919,7 @@ impl ExecutorContext {
             hook_prompt_state: self.hook_prompt_state.clone(),
             hook_registry: self.hook_registry.clone(),
             default_model_settings: self.default_model_settings.clone(),
+            dry_run: self.dry_run,
         };
 
         (inner_context, inner_rx)
