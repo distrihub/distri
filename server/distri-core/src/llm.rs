@@ -1398,8 +1398,31 @@ impl LLMExecutorTrait for crate::claude_llm::ClaudeLLMExecutor {
     }
 }
 
-/// Factory function to create the appropriate LLM executor based on provider.
+#[async_trait::async_trait]
+impl LLMExecutorTrait for crate::openai_responses_llm::OpenAIResponsesLLMExecutor {
+    async fn execute(&self, messages: &[Message]) -> Result<LLMResponse, AgentError> {
+        self.execute(messages).await
+    }
+
+    async fn execute_stream(
+        &self,
+        messages: &[Message],
+        context: Arc<ExecutorContext>,
+    ) -> Result<StreamResult, AgentError> {
+        self.execute_stream(messages, context).await
+    }
+}
+
+/// Factory function to create the appropriate LLM executor based on provider and API format.
 /// Returns a trait object so callers don't need to match on provider type.
+///
+/// Routing logic:
+/// - Anthropic provider → ClaudeLLMExecutor
+/// - OpenAI-family providers with Responses API format → OpenAIResponsesLLMExecutor
+/// - Everything else → LLMExecutor (Chat Completions)
+///
+/// The API format is determined by `model_settings.api_format` (defaults to auto-detection
+/// based on model name, e.g. "codex-*" → Responses API).
 pub fn create_llm_executor(
     llm_def: LlmDefinition,
     tools: Vec<Arc<dyn crate::tools::Tool>>,
@@ -1407,11 +1430,11 @@ pub fn create_llm_executor(
     additional_headers: Option<HashMap<String, String>>,
     label: Option<String>,
 ) -> Result<Box<dyn LLMExecutorTrait>, AgentError> {
-    let provider = &llm_def
+    let ms = llm_def
         .ms()
-        .map_err(AgentError::InvalidConfiguration)?
-        .inner
-        .provider;
+        .map_err(AgentError::InvalidConfiguration)?;
+    let provider = &ms.inner.provider;
+
     match provider {
         ModelProvider::Anthropic { .. } => Ok(Box::new(crate::claude_llm::ClaudeLLMExecutor::new(
             llm_def,
@@ -1420,6 +1443,32 @@ pub fn create_llm_executor(
             additional_headers,
             label,
         ))),
+        // OpenAI-family providers: check api_format to decide Completions vs Responses
+        ModelProvider::OpenAI {}
+        | ModelProvider::OpenAICompatible { .. }
+        | ModelProvider::AzureOpenAI { .. } => {
+            let resolved = ms.inner.api_format.resolve(&ms.model);
+            if resolved == distri_types::ResolvedOpenAiApiFormat::Responses {
+                Ok(Box::new(
+                    crate::openai_responses_llm::OpenAIResponsesLLMExecutor::new(
+                        llm_def,
+                        tools,
+                        context,
+                        additional_headers,
+                        label,
+                    ),
+                ))
+            } else {
+                Ok(Box::new(LLMExecutor::new(
+                    llm_def,
+                    tools,
+                    context,
+                    additional_headers,
+                    label,
+                )))
+            }
+        }
+        // Other providers (vLLORA, etc.) always use Chat Completions
         _ => Ok(Box::new(LLMExecutor::new(
             llm_def,
             tools,

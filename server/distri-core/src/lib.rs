@@ -3,6 +3,8 @@ pub mod agent;
 pub mod claude_client;
 pub mod claude_llm;
 pub mod gateway_config;
+pub mod openai_responses_client;
+pub mod openai_responses_llm;
 pub mod llm;
 pub mod llm_service;
 pub mod logging;

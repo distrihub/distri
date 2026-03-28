@@ -259,6 +259,55 @@ pub enum ToolDeliveryMode {
     ToolSearch,
 }
 
+/// Which OpenAI-family API format to use when talking to the LLM.
+///
+/// - `Completions` (default): Uses the Chat Completions API (`/v1/chat/completions`)
+/// - `Responses`: Uses the Responses API (`/v1/responses`), needed for newer models like Codex
+///
+/// When set to the default value, the format is auto-detected from the model name.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum OpenAiApiFormat {
+    /// Auto-detect based on model name (codex-* → Responses, everything else → Completions)
+    #[default]
+    Auto,
+    /// Chat Completions API (`/v1/chat/completions`)
+    Completions,
+    /// Responses API (`/v1/responses`)
+    Responses,
+}
+
+impl OpenAiApiFormat {
+    /// Resolve the effective format given a model name.
+    /// When `Auto`, inspects the model name to decide.
+    pub fn resolve(&self, model: &str) -> ResolvedOpenAiApiFormat {
+        match self {
+            OpenAiApiFormat::Completions => ResolvedOpenAiApiFormat::Completions,
+            OpenAiApiFormat::Responses => ResolvedOpenAiApiFormat::Responses,
+            OpenAiApiFormat::Auto => {
+                if Self::model_uses_responses_api(model) {
+                    ResolvedOpenAiApiFormat::Responses
+                } else {
+                    ResolvedOpenAiApiFormat::Completions
+                }
+            }
+        }
+    }
+
+    /// Heuristic: models that should use the Responses API by default.
+    fn model_uses_responses_api(model: &str) -> bool {
+        let m = model.to_lowercase();
+        m.starts_with("codex")
+    }
+}
+
+/// Resolved (non-Auto) API format
+#[derive(Debug, Clone, PartialEq)]
+pub enum ResolvedOpenAiApiFormat {
+    Completions,
+    Responses,
+}
+
 /// Supported tool call formats
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -935,6 +984,10 @@ pub struct ModelSettingsInner {
     /// The format of the response, if specified.
     #[serde(default)]
     pub response_format: Option<serde_json::Value>,
+    /// Which OpenAI-family API format to use (auto-detected by default).
+    /// Only relevant for OpenAI, OpenAI-compatible, and Azure OpenAI providers.
+    #[serde(default, skip_serializing_if = "is_default_api_format")]
+    pub api_format: OpenAiApiFormat,
 }
 
 impl ModelSettings {
@@ -1010,6 +1063,10 @@ fn default_model_provider() -> ModelProvider {
 
 fn default_context_size() -> u32 {
     20000 // Default limit for general use - agents can override with higher values as needed
+}
+
+fn is_default_api_format(f: &OpenAiApiFormat) -> bool {
+    *f == OpenAiApiFormat::Auto
 }
 
 fn default_history_size() -> Option<usize> {

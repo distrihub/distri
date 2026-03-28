@@ -321,6 +321,11 @@ impl AgentOrchestrator {
                 } else {
                     base.inner.response_format.clone()
                 },
+                api_format: if agent.inner.api_format != distri_types::OpenAiApiFormat::Auto {
+                    agent.inner.api_format.clone()
+                } else {
+                    base.inner.api_format.clone()
+                },
             },
         })
     }
