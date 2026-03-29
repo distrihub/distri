@@ -38,13 +38,17 @@ pub async fn execute_http_request(
 
     // Proxy to server if secrets needed or connection-id present
     if !unresolved.is_empty() || has_connection_id {
+        let reason = if has_connection_id {
+            "x-connection-id present".to_string()
+        } else {
+            format!("unresolved vars: {}", unresolved.iter().map(|v| format!("${}", v)).collect::<Vec<_>>().join(", "))
+        };
         return client
             .proxy_request(input)
             .await
-            .map_err(|e| anyhow::anyhow!("{}", e));
+            .map_err(|e| anyhow::anyhow!("proxy to server failed ({}): {}", reason, e));
     }
 
-    // Execute locally — all vars are in env_vars
     execute_locally(input, env_vars).await
 }
 
@@ -106,7 +110,8 @@ async fn execute_locally(
     let response = req
         .timeout(std::time::Duration::from_secs(120))
         .send()
-        .await?;
+        .await
+        .map_err(|e| anyhow::anyhow!("{} {} failed: {}", method_str, url, e))?;
 
     // Parse response
     let status = response.status().as_u16();
@@ -159,8 +164,19 @@ pub fn register_client_http_request(
         let client = client.clone();
         let env_vars = env_vars.clone();
         async move {
-            let input: HttpRequestInput = serde_json::from_value(call.input.clone())?;
-            let result = execute_http_request(&input, &env_vars, &client).await?;
+            let input: HttpRequestInput = serde_json::from_value(call.input.clone())
+                .map_err(|e| anyhow::anyhow!(
+                    "http_request: invalid input: {}. Got: {}",
+                    e,
+                    serde_json::to_string(&call.input).unwrap_or_default()
+                ))?;
+            let result = execute_http_request(&input, &env_vars, &client).await
+                .map_err(|e| anyhow::anyhow!(
+                    "http_request {} {} failed: {}",
+                    input.method,
+                    input.url,
+                    e
+                ))?;
             Ok(ToolResponse::direct(
                 call.tool_call_id.clone(),
                 call.tool_name.clone(),
