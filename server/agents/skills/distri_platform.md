@@ -42,9 +42,24 @@ Use the `distri_platform` tool to manage platform resources. Pass `action` and p
 | `list_connections` | — | List connected services with scopes and capabilities |
 | `connect` | `provider, scopes?, additional_scopes?` | Connect a provider or expand scopes |
 | `get_connection_usage` | `connection_id` | Get API docs and examples for a connection |
-| `connection_request` | `connection_id, method, url, headers?, body?` | Make an authenticated API call (token auto-injected) |
 
-**IMPORTANT: Never use raw tokens. Always use `connection_request` — it handles auth automatically.**
+To make authenticated API calls to connected services, use the `request` tool with `x-connection-id` header:
+
+```
+curl -X GET https://sheets.googleapis.com/v4/spreadsheets \
+  -H "x-connection-id: <connection_id>"
+
+curl -X POST https://gmail.googleapis.com/gmail/v1/users/me/messages/send \
+  -H "x-connection-id: <connection_id>" \
+  -d '{"raw": "<base64_encoded_message>"}'
+```
+
+Variables (`$VAR_NAME`) in url, headers, and body are auto-resolved from workspace secrets and context env vars. If a variable is not available, the request will error before sending.
+
+```
+curl -X GET https://api.example.com/v1/items \
+  -H "Authorization: Bearer $API_KEY"
+```
 
 ### Skill Discovery
 | Action | Params | Description |
@@ -60,10 +75,4 @@ Use the `distri_platform` tool to manage platform resources. Pass `action` and p
 
 // Connect Google with Sheets scope
 { "action": "connect", "provider": "google", "additional_scopes": ["drive", "spreadsheets"] }
-
-// Create a Google Sheet
-{ "action": "connection_request", "connection_id": "<id>", "method": "POST", "url": "https://sheets.googleapis.com/v4/spreadsheets", "body": { "properties": { "title": "My Sheet" } } }
-
-// Search Gmail
-{ "action": "connection_request", "connection_id": "<id>", "method": "GET", "url": "https://gmail.googleapis.com/gmail/v1/users/me/messages?q=from:someone@example.com" }
 ```

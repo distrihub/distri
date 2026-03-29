@@ -34,9 +34,7 @@ pub async fn build_connections_context(client: &Distri) -> Option<String> {
 }
 
 pub fn build_message_params(content: String, connections_context: Option<String>) -> MessageSendParams {
-    let mut meta = serde_json::json!({
-        "external_tools": [distri::api_request_definition()]
-    });
+    let mut meta = serde_json::json!({});
     if let Some(conn_ctx) = connections_context {
         meta["dynamic_values"] = serde_json::json!({
             "available_connections": conn_ctx
@@ -65,9 +63,7 @@ pub fn build_chat_message_params(
     model: &str,
     connections_context: Option<String>,
 ) -> MessageSendParams {
-    let mut meta = serde_json::json!({
-        "external_tools": [distri::api_request_definition()]
-    });
+    let mut meta = serde_json::json!({});
     if !model.trim().is_empty() {
         meta["definition_overrides"] = serde_json::json!({ "model": model });
     }

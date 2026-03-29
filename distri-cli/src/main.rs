@@ -26,7 +26,7 @@ use commands::{
 use config::resolve_workspace;
 use message::{build_connections_context, build_message_params};
 use threads::resolve_resume_arg;
-use tools::{register_api_request_handler, register_approval_handler};
+use tools::register_approval_handler;
 
 #[derive(Parser, Debug, Clone)]
 #[clap(author, version, about)]
@@ -40,7 +40,7 @@ struct Cli {
     config: Option<PathBuf>,
 
     /// Verbose output (forwarded to distri-server for serve)
-    #[clap(long, short)]
+    #[clap(long, short, global = true)]
     verbose: bool,
 
     #[clap(subcommand)]
@@ -418,7 +418,6 @@ async fn main() -> Result<()> {
             println!("Streaming agent '{}' via {}", agent_name, base_url);
             let registry = app.registry();
             register_approval_handler(&registry);
-            register_api_request_handler(&registry, Distri::from_config(config.clone()));
             let stream_config = config.clone().with_timeout(600);
             let http_client = stream_config.build_http_client()?;
             let client = AgentStreamClient::from_config(config.clone())

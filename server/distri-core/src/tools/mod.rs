@@ -129,6 +129,8 @@ pub fn cast_to_executor_context_tool(
         "tool_search" => Ok(Box::new(tool_search::ToolSearchTool)),
         // HTTP request tool
         "request" => Ok(Box::new(request::RequestTool)),
+        // Connection env injection
+        "inject_connection_env" => Ok(Box::new(inject_env::InjectConnectionEnvTool)),
         name if name.starts_with("call_") => {
             let safe_agent_name = name.strip_prefix("call_").unwrap_or(name);
             // Convert double underscores back to slashes for package/agent names

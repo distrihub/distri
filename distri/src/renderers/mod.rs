@@ -52,9 +52,53 @@ pub fn render_tool_output(result: &ToolResponse, verbose: bool) {
         // Artifact tool
         "artifact_tool" => render_artifact(result),
 
+        // HTTP request tools
+        "request" => render_request(result),
+
         // Default: generic part-by-part rendering
         _ => render_tool_result(result),
     }
+}
+
+fn render_request(result: &ToolResponse) {
+    use distri_types::Part;
+    for part in &result.parts {
+        if let Part::Data(value) = part {
+            let status = value.get("status").and_then(|v| v.as_u64()).unwrap_or(0);
+            let ok = value.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+
+            if ok {
+                // Show status and compact preview of data
+                let data = value.get("data").unwrap_or(value);
+                let preview = serde_json::to_string(data).unwrap_or_default();
+                let preview = if preview.len() > 120 {
+                    format!("{}…", &preview[..120])
+                } else {
+                    preview
+                };
+                println!(
+                    "{}{}✓ {} — {}{}",
+                    COLOR_GRAY, RESULT_PREFIX, status, preview, COLOR_RESET
+                );
+            } else {
+                // Show error with the actual content
+                let error = value.get("error").unwrap_or(value);
+                let preview = serde_json::to_string(error).unwrap_or_default();
+                let preview = if preview.len() > 200 {
+                    format!("{}…", &preview[..200])
+                } else {
+                    preview
+                };
+                println!(
+                    "{}{}✗ {} — {}{}",
+                    crate::printer::COLOR_RED, RESULT_PREFIX, status, preview, COLOR_RESET
+                );
+            }
+            return;
+        }
+    }
+    // Fallback
+    render_tool_result(result);
 }
 
 fn render_artifact(result: &ToolResponse) {

@@ -238,3 +238,342 @@ fn substitute_value_nested_json() {
     assert_eq!(result["tags"][0], "api.example.com");
     assert_eq!(result["tags"][1], "literal");
 }
+
+// ═══════════════════════════════════════════════════════════════
+// Integration tests for RequestTool with wiremock
+// ═══════════════════════════════════════════════════════════════
+
+use crate::agent::ExecutorContext;
+use crate::tools::request::RequestTool;
+use crate::tools::ExecutorContextTool;
+use distri_types::{Part, ToolCall};
+use wiremock::matchers::{header, method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
+
+/// Build a minimal ExecutorContext with env vars, an in-memory secret store,
+/// and an optional token fetcher.
+async fn make_executor_context(
+    env_vars: HashMap<String, String>,
+    secrets: Vec<(&str, &str)>,
+    token_fetcher: Option<crate::tools::inject_env::TokenFetcher>,
+) -> Arc<ExecutorContext> {
+    let secret_map: HashMap<String, String> = secrets
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+
+    let secret_store: Option<Arc<dyn SecretStore>> = if secret_map.is_empty() {
+        None
+    } else {
+        Some(Arc::new(InMemorySecretStore::new(secret_map)))
+    };
+
+    // Build a minimal InitializedStores with just the secret store.
+    // We use Default for the other stores since they aren't needed by RequestTool.
+    let stores = distri_stores::InitializedStores {
+        secret_store,
+        ..make_dummy_stores().await
+    };
+
+    let mut ctx = ExecutorContext::new_minimal_for_test(stores);
+    *ctx.env_vars.write().await = env_vars;
+    ctx.token_fetcher = token_fetcher;
+    Arc::new(ctx)
+}
+
+/// Create dummy InitializedStores using in-memory SQLite for required fields.
+async fn make_dummy_stores() -> distri_stores::InitializedStores {
+    use distri_stores::StoreBuilder;
+    use distri_types::configuration::{DbConnectionConfig, MetadataStoreConfig, StoreConfig};
+
+    let db_name = uuid::Uuid::new_v4();
+    let db_url = format!("file:{}?mode=memory&cache=shared", db_name);
+    let config = StoreConfig {
+        metadata: MetadataStoreConfig {
+            db_config: Some(DbConnectionConfig {
+                database_url: db_url,
+                max_connections: 1,
+            }),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    StoreBuilder::new(config).build().await.unwrap()
+}
+
+fn make_tool_call(input: serde_json::Value) -> ToolCall {
+    ToolCall {
+        tool_call_id: "test-call-1".to_string(),
+        tool_name: "request".to_string(),
+        input,
+    }
+}
+
+fn extract_data(parts: Vec<Part>) -> serde_json::Value {
+    match &parts[0] {
+        Part::Data(v) => v.clone(),
+        other => panic!("expected Part::Data, got {:?}", other),
+    }
+}
+
+// ── Integration tests ──────────────────────────────────────────
+
+#[tokio::test]
+async fn test_request_tool_success_json() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/items"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"data": [{"id": 1, "name": "item1"}]})),
+        )
+        .mount(&server)
+        .await;
+
+    let ctx = make_executor_context(HashMap::new(), vec![], None).await;
+    let tool_call = make_tool_call(json!({
+        "url": format!("{}/api/items", server.uri()),
+        "method": "GET"
+    }));
+
+    let parts = RequestTool
+        .execute_with_executor_context(tool_call, ctx)
+        .await
+        .unwrap();
+    let result = extract_data(parts);
+
+    assert_eq!(result["ok"], true);
+    assert_eq!(result["status"], 200);
+    assert_eq!(result["data"], json!([{"id": 1, "name": "item1"}]));
+}
+
+#[tokio::test]
+async fn test_request_tool_error_response() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/items"))
+        .respond_with(
+            ResponseTemplate::new(400)
+                .set_body_json(json!({"error": "Invalid input"})),
+        )
+        .mount(&server)
+        .await;
+
+    let ctx = make_executor_context(HashMap::new(), vec![], None).await;
+    let tool_call = make_tool_call(json!({
+        "url": format!("{}/api/items", server.uri()),
+        "method": "POST",
+        "body": {"name": "test"}
+    }));
+
+    let parts = RequestTool
+        .execute_with_executor_context(tool_call, ctx)
+        .await
+        .unwrap();
+    let result = extract_data(parts);
+
+    assert_eq!(result["ok"], false);
+    assert_eq!(result["status"], 400);
+    assert_eq!(result["error"], "Invalid input");
+}
+
+#[tokio::test]
+async fn test_request_tool_non_json_response() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/error"))
+        .respond_with(
+            ResponseTemplate::new(500)
+                .set_body_string("<html>Internal Server Error</html>"),
+        )
+        .mount(&server)
+        .await;
+
+    let ctx = make_executor_context(HashMap::new(), vec![], None).await;
+    let tool_call = make_tool_call(json!({
+        "url": format!("{}/error", server.uri()),
+        "method": "GET"
+    }));
+
+    let parts = RequestTool
+        .execute_with_executor_context(tool_call, ctx)
+        .await
+        .unwrap();
+    let result = extract_data(parts);
+
+    assert_eq!(result["ok"], false);
+    assert_eq!(result["status"], 500);
+    assert!(result["error"]
+        .as_str()
+        .unwrap()
+        .contains("Internal Server Error"));
+}
+
+#[tokio::test]
+async fn test_request_tool_unresolved_var_errors() {
+    let server = MockServer::start().await;
+
+    let ctx = make_executor_context(HashMap::new(), vec![], None).await;
+    let tool_call = make_tool_call(json!({
+        "url": format!("{}/api/items", server.uri()),
+        "method": "GET",
+        "headers": {
+            "Authorization": "Bearer $MISSING_TOKEN"
+        }
+    }));
+
+    let err = RequestTool
+        .execute_with_executor_context(tool_call, ctx)
+        .await
+        .unwrap_err();
+
+    let msg = format!("{}", err);
+    assert!(msg.contains("MISSING_TOKEN"), "error should mention the var name, got: {}", msg);
+}
+
+#[tokio::test]
+async fn test_request_tool_secret_resolution() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/secure"))
+        .and(header("Authorization", "Bearer secret-key-123"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+        .mount(&server)
+        .await;
+
+    let ctx = make_executor_context(
+        HashMap::new(),
+        vec![("API_KEY", "secret-key-123")],
+        None,
+    )
+    .await;
+
+    let tool_call = make_tool_call(json!({
+        "url": format!("{}/secure", server.uri()),
+        "method": "GET",
+        "headers": {
+            "Authorization": "Bearer $API_KEY"
+        }
+    }));
+
+    let parts = RequestTool
+        .execute_with_executor_context(tool_call, ctx)
+        .await
+        .unwrap();
+    let result = extract_data(parts);
+
+    assert_eq!(result["ok"], true);
+    assert_eq!(result["status"], 200);
+}
+
+#[tokio::test]
+async fn test_request_tool_env_var_priority_over_secret() {
+    let server = MockServer::start().await;
+
+    // The mock expects the env var value, not the secret value
+    Mock::given(method("GET"))
+        .and(path("/priority"))
+        .and(header("Authorization", "Bearer from-env"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"source": "env"})))
+        .mount(&server)
+        .await;
+
+    let ctx = make_executor_context(
+        HashMap::from([("API_KEY".to_string(), "from-env".to_string())]),
+        vec![("API_KEY", "from-secret")],
+        None,
+    )
+    .await;
+
+    let tool_call = make_tool_call(json!({
+        "url": format!("{}/priority", server.uri()),
+        "method": "GET",
+        "headers": {
+            "Authorization": "Bearer $API_KEY"
+        }
+    }));
+
+    let parts = RequestTool
+        .execute_with_executor_context(tool_call, ctx)
+        .await
+        .unwrap();
+    let result = extract_data(parts);
+
+    assert_eq!(result["ok"], true);
+    assert_eq!(result["status"], 200);
+}
+
+#[tokio::test]
+async fn test_request_tool_connection_id_injects_bearer() {
+    let server = MockServer::start().await;
+
+    // Mock expects Authorization: Bearer oauth-token-xyz but NOT x-connection-id
+    Mock::given(method("GET"))
+        .and(path("/oauth"))
+        .and(header("Authorization", "Bearer oauth-token-xyz"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"authed": true})))
+        .mount(&server)
+        .await;
+
+    let fetcher: crate::tools::inject_env::TokenFetcher = Arc::new(|_conn_id: String| {
+        Box::pin(async move {
+            Ok(("github".to_string(), "oauth-token-xyz".to_string()))
+        }) as Pin<Box<dyn std::future::Future<Output = Result<(String, String), String>> + Send>>
+    });
+
+    let ctx = make_executor_context(HashMap::new(), vec![], Some(fetcher)).await;
+
+    let tool_call = make_tool_call(json!({
+        "url": format!("{}/oauth", server.uri()),
+        "method": "GET",
+        "headers": {
+            "x-connection-id": "github_conn"
+        }
+    }));
+
+    let parts = RequestTool
+        .execute_with_executor_context(tool_call, ctx)
+        .await
+        .unwrap();
+    let result = extract_data(parts);
+
+    assert_eq!(result["ok"], true);
+    assert_eq!(result["status"], 200);
+
+    // Verify x-connection-id was NOT forwarded: if it were, the mock would still
+    // match (it doesn't check for absence), but we can check the request received.
+    // The key assertion is that Authorization: Bearer was set from the token fetcher.
+    assert_eq!(result["data"]["authed"], true);
+}
+
+#[tokio::test]
+async fn test_request_tool_no_vars_plain_url() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/plain"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"hello": "world"})))
+        .mount(&server)
+        .await;
+
+    let ctx = make_executor_context(HashMap::new(), vec![], None).await;
+    let tool_call = make_tool_call(json!({
+        "url": format!("{}/plain", server.uri()),
+        "method": "GET"
+    }));
+
+    let parts = RequestTool
+        .execute_with_executor_context(tool_call, ctx)
+        .await
+        .unwrap();
+    let result = extract_data(parts);
+
+    assert_eq!(result["ok"], true);
+    assert_eq!(result["status"], 200);
+    assert_eq!(result["data"]["hello"], "world");
+}

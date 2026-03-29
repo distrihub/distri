@@ -1,19 +1,22 @@
 //! HTTP request tool — allows agents to call external APIs.
 //!
-//! Reads auth credentials from ExecutorContext env_vars:
-//! - `REQUEST_AUTH_TOKEN` — Bearer token (e.g. zippy API key)
-//! - `REQUEST_BASE_URL` — optional base URL prepended to relative paths
-//! - `REQUEST_ORG_ID` — optional org ID sent as x-org-id header
+//! Supports `$VAR_NAME` resolution in url, headers, and body from:
+//! - Environment variables (highest priority)
+//! - Secret store
 //!
-//! These are injected by the client (zippy-cli or distrijs) via env_vars
-//! in the executor context metadata.
+//! Supports `x-connection-id` header for OAuth token injection:
+//! when present, the tool fetches an OAuth token via the configured
+//! token fetcher and injects it as `Authorization: Bearer <token>`.
 
 use std::sync::Arc;
 
+use crate::tools::resolve::{
+    extract_vars, extract_vars_from_value, resolve_all, resolve_connection_token,
+    substitute_string, substitute_value, ResolveContext,
+};
+use crate::{agent::ExecutorContext, tools::ExecutorContextTool, types::ToolCall, AgentError};
 use distri_types::{Part, Tool, ToolContext};
 use serde_json::{json, Value};
-
-use crate::{agent::ExecutorContext, tools::ExecutorContextTool, types::ToolCall, AgentError};
 
 #[derive(Debug)]
 pub struct RequestTool;
@@ -25,9 +28,9 @@ impl Tool for RequestTool {
     }
 
     fn get_description(&self) -> String {
-        "Make an HTTP request to an API. Auth credentials are injected from context — \
-         you don't need to provide Authorization headers manually. \
-         Use relative URLs (e.g. /admin/activities) when REQUEST_BASE_URL is configured."
+        "Make an HTTP request to an API. Use $VAR_NAME in url, headers, or body to \
+         reference environment variables or secrets (resolved automatically). \
+         Add an x-connection-id header to inject an OAuth Bearer token for that connection."
             .to_string()
     }
 
@@ -44,7 +47,7 @@ impl Tool for RequestTool {
             "properties": {
                 "url": {
                     "type": "string",
-                    "description": "URL or path (relative paths use REQUEST_BASE_URL from context)"
+                    "description": "Absolute URL. Use $VAR_NAME for variable substitution."
                 },
                 "method": {
                     "type": "string",
@@ -54,27 +57,15 @@ impl Tool for RequestTool {
                 "headers": {
                     "type": "object",
                     "additionalProperties": { "type": "string" },
-                    "description": "Additional headers (auth headers are auto-injected)"
+                    "description": "Request headers. Use $VAR_NAME for variable substitution. \
+                                    Set x-connection-id to inject an OAuth Bearer token."
                 },
                 "body": {
-                    "description": "Request body (sent as JSON for POST/PUT/PATCH)"
+                    "description": "Request body (sent as JSON). Use $VAR_NAME for variable substitution."
                 }
             },
             "additionalProperties": false
         })
-    }
-
-    fn get_tool_examples(&self) -> Option<String> {
-        Some(r#"
-Get an activity:
-{"url": "/admin/activities/act-123", "method": "GET"}
-
-Create an activity:
-{"url": "/admin/activities", "method": "POST", "body": {"class_id": "cls-1", "title": "My Activity", "activity_source": "import"}}
-
-Update activity config:
-{"url": "/admin/activities/act-123", "method": "PATCH", "body": {"config": {"import_status": "review", "detection": {"questions": [], "submissions": []}}}}
-"#.to_string())
     }
 
     async fn execute(
@@ -95,6 +86,7 @@ impl ExecutorContextTool for RequestTool {
     ) -> Result<Vec<Part>, AgentError> {
         let input = &tool_call.input;
 
+        // 1. Parse input
         let method = input
             .get("method")
             .and_then(|v| v.as_str())
@@ -104,31 +96,88 @@ impl ExecutorContextTool for RequestTool {
         let raw_url = input
             .get("url")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| AgentError::ToolExecution("Missing 'url' parameter".into()))?;
+            .ok_or_else(|| AgentError::ToolExecution("Missing 'url' parameter".into()))?
+            .to_string();
 
-        // Read env vars from context
-        let env_vars = context.env_vars.read().await;
-        let base_url = env_vars
-            .get("REQUEST_BASE_URL")
-            .cloned()
-            .unwrap_or_default();
-        let auth_token = env_vars.get("REQUEST_AUTH_TOKEN").cloned();
-        let org_id = env_vars.get("REQUEST_ORG_ID").cloned();
-        drop(env_vars);
+        let headers_value = input.get("headers").cloned().unwrap_or_else(|| json!({}));
+        let body_value = input.get("body").cloned();
 
-        // Resolve URL
-        let url = if raw_url.starts_with("http://") || raw_url.starts_with("https://") {
-            raw_url.to_string()
-        } else if !base_url.is_empty() {
-            format!("{}{}", base_url.trim_end_matches('/'), raw_url)
-        } else {
-            return Err(AgentError::ToolExecution(format!(
-                "Relative URL '{}' used but REQUEST_BASE_URL not set in context",
-                raw_url
-            )));
+        // 2. Check for x-connection-id
+        let connection_id = headers_value
+            .as_object()
+            .and_then(|h| h.get("x-connection-id"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        // 3. Build ResolveContext
+        let env_vars = context.env_vars.read().await.clone();
+        let secret_store = context
+            .stores
+            .as_ref()
+            .and_then(|s| s.secret_store.clone());
+        let token_fetcher = context.token_fetcher.clone();
+
+        let resolve_ctx = ResolveContext {
+            env_vars,
+            secret_store,
+            token_fetcher,
         };
 
-        // Build request
+        // 4. Collect all $VAR references
+        let mut all_vars = extract_vars(&raw_url);
+        all_vars.extend(extract_vars_from_value(&headers_value));
+        if let Some(ref body) = body_value {
+            all_vars.extend(extract_vars_from_value(body));
+        }
+        all_vars.sort();
+        all_vars.dedup();
+
+        // 5. Resolve variables
+        let resolved = resolve_all(&all_vars, &resolve_ctx)
+            .await
+            .map_err(|e| AgentError::ToolExecution(e))?;
+
+        // 6. Substitute resolved values
+        let url = substitute_string(&raw_url, &resolved);
+        let headers_value = substitute_value(&headers_value, &resolved);
+        let body_value = body_value.map(|b| substitute_value(&b, &resolved));
+
+        // 7. Build HeaderMap
+        let mut header_map = reqwest::header::HeaderMap::new();
+        header_map.insert(
+            reqwest::header::CONTENT_TYPE,
+            "application/json".parse().unwrap(),
+        );
+
+        if let Some(headers_obj) = headers_value.as_object() {
+            for (key, value) in headers_obj {
+                // Skip x-connection-id — it's not forwarded as a header
+                if key == "x-connection-id" {
+                    continue;
+                }
+                if let Some(val) = value.as_str() {
+                    if let (Ok(name), Ok(hval)) = (
+                        reqwest::header::HeaderName::from_bytes(key.as_bytes()),
+                        reqwest::header::HeaderValue::from_str(val),
+                    ) {
+                        header_map.insert(name, hval);
+                    }
+                }
+            }
+        }
+
+        // If x-connection-id was present, resolve and inject Bearer token
+        if let Some(ref conn_id) = connection_id {
+            let (_provider, access_token) = resolve_connection_token(conn_id, &resolve_ctx)
+                .await
+                .map_err(|e| AgentError::ToolExecution(e))?;
+            header_map.insert(
+                reqwest::header::AUTHORIZATION,
+                format!("Bearer {}", access_token).parse().unwrap(),
+            );
+        }
+
+        // 8. Build and send request
         let client = reqwest::Client::new();
         let mut request = match method.as_str() {
             "GET" => client.get(&url),
@@ -144,44 +193,33 @@ impl ExecutorContextTool for RequestTool {
             }
         };
 
-        // Auto-inject auth
-        if let Some(token) = &auth_token {
-            request = request.bearer_auth(token);
-        }
-        if let Some(oid) = &org_id {
-            request = request.header("x-org-id", oid);
-        }
-        request = request.header("Content-Type", "application/json");
+        request = request.headers(header_map);
 
-        // Add user-provided headers
-        if let Some(headers) = input.get("headers").and_then(|v| v.as_object()) {
-            for (key, value) in headers {
-                if let Some(val) = value.as_str() {
-                    request = request.header(key.as_str(), val);
-                }
-            }
-        }
-
-        // Add body
-        if let Some(body) = input.get("body") {
+        if let Some(body) = &body_value {
             if method != "GET" && method != "DELETE" {
                 request = request.json(body);
             }
         }
 
-        // Execute
         let response = request
             .timeout(std::time::Duration::from_secs(120))
             .send()
             .await
             .map_err(|e| AgentError::ToolExecution(format!("HTTP request failed: {e}")))?;
 
+        // 9. Read response
         let status = response.status().as_u16();
-        let response_body: Value = response.json().await.unwrap_or_else(|_| json!(null));
+        let response_text = response.text().await.unwrap_or_default();
+        let response_body: Value = serde_json::from_str(&response_text).unwrap_or_else(|_| {
+            if response_text.is_empty() {
+                json!(null)
+            } else {
+                json!(response_text)
+            }
+        });
 
-        // Return structured result
+        // 10. Return consistent format
         let result = if (200..300).contains(&status) {
-            // Success — return the data field if it exists (zippy wraps in {ok, data, error})
             let data = response_body
                 .get("data")
                 .cloned()

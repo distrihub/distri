@@ -36,6 +36,7 @@ pub fn get_builtin_tools(
         Arc::new(crate::tools::tool_search::ToolSearchTool) as Arc<dyn Tool>,
         Arc::new(DistriExecuteCodeTool) as Arc<dyn Tool>,
         Arc::new(crate::tools::request::RequestTool) as Arc<dyn Tool>,
+        Arc::new(crate::tools::inject_env::InjectConnectionEnvTool) as Arc<dyn Tool>,
     ];
 
     if include_filesystem_tools {

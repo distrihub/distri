@@ -1,4 +1,5 @@
 use crate::agent::ExecutorContext;
+use crate::tools::resolve::{resolve_connection_token, ResolveContext};
 use crate::tools::ExecutorContextTool;
 use crate::types::ToolCall;
 use crate::AgentError;
@@ -19,22 +20,8 @@ pub type TokenFetcher = Arc<
 /// Tool that fetches a connection token and injects it as an environment variable.
 /// The token never appears in conversation messages — only in env_vars map.
 /// Child agents (via new_task/continue_as) inherit the env vars automatically.
-pub struct InjectConnectionEnvTool {
-    fetch_token: TokenFetcher,
-}
-
-impl std::fmt::Debug for InjectConnectionEnvTool {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("InjectConnectionEnvTool").finish()
-    }
-}
-
-impl InjectConnectionEnvTool {
-    /// Create a new InjectConnectionEnvTool with a token fetcher callback.
-    pub fn new(fetch_token: TokenFetcher) -> Self {
-        Self { fetch_token }
-    }
-}
+#[derive(Debug)]
+pub struct InjectConnectionEnvTool;
 
 #[async_trait::async_trait]
 impl Tool for InjectConnectionEnvTool {
@@ -94,8 +81,22 @@ impl ExecutorContextTool for InjectConnectionEnvTool {
                 AgentError::ToolExecution("Missing 'connection_id' parameter".to_string())
             })?;
 
-        // Fetch token via callback
-        let (provider, access_token) = (self.fetch_token)(connection_id.to_string())
+        // Build ResolveContext from ExecutorContext (same pattern as RequestTool)
+        let env_vars = context.env_vars.read().await.clone();
+        let secret_store = context
+            .stores
+            .as_ref()
+            .and_then(|s| s.secret_store.clone());
+        let token_fetcher = context.token_fetcher.clone();
+
+        let resolve_ctx = ResolveContext {
+            env_vars,
+            secret_store,
+            token_fetcher,
+        };
+
+        // Fetch token via shared resolution
+        let (provider, access_token) = resolve_connection_token(connection_id, &resolve_ctx)
             .await
             .map_err(|e| AgentError::ToolExecution(e))?;
 
@@ -125,7 +126,6 @@ impl ExecutorContextTool for InjectConnectionEnvTool {
             "provider": provider,
             "env_var": env_var_name,
             "connection_id": connection_id,
-            "tip": format!("Token injected as {}. Child agents will have access to it via os.getenv('{}').", env_var_name, env_var_name)
         }))])
     }
 }
