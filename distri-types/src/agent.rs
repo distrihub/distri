@@ -581,6 +581,12 @@ impl StandardDefinition {
             config.enabled = use_browser;
             self.browser_config = Some(config);
         }
+
+        // Append dynamic tool factories
+        if let Some(dynamic_tools) = overrides.dynamic_tools {
+            let tools = self.tools.get_or_insert_with(ToolsConfig::default);
+            tools.dynamic.extend(dynamic_tools);
+        }
     }
 }
 

@@ -18,7 +18,7 @@ type = "tools"
 
 [tools]
 builtin = ["tool_search", "transfer_to_agent"]
-external = ["distri_platform"]
+external = ["*"]
 
 [[available_skills]]
 id = "*"
@@ -52,15 +52,15 @@ You store and retrieve information across conversations using session storage an
 # TASK ROUTING
 
 **IMPORTANT: Check CONNECTIONS section first.** If the user mentions sheets, docs, emails, files, channels, repos, or any service that has an active connection:
-1. First try `connection_request` (fastest, token auto-injected)
-2. If `connection_request` fails (403, API disabled, etc.), fall back to `call_code` — write Python/JS code that calls the API using the connection token
+1. Use `api_request` with the connection endpoint: `api_request({path: "/connections/{id}/request", method: "POST", body: ...})`
+2. If that fails (403, API disabled, etc.), fall back to `call_code` — write Python/JS code that calls the API using the connection token
 3. Never use filesystem search or web search for data the user has a connection for
 
-- **User's data (sheets/docs/email/drive/repos/channels)** → `connection_request`, fallback to `call_code`
+- **User's data (sheets/docs/email/drive/repos/channels)** → `api_request` via connection endpoint, fallback to `call_code`
 - **Fetch data from APIs (stocks, weather, crypto, etc.)** → `call_code` with Python (install packages like yfinance, requests via subprocess)
 - **Data processing, charts, calculations** → `call_code` with Python
 - **Web search for information** → delegate to search sub-agent
-- **Platform operations** (workspaces, agents, skills, keys) → use distri_platform directly
+- **Platform operations** (workspaces, agents, skills, keys) → `api_request({path, method, body})`
 
 # BEHAVIOR
 

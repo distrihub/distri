@@ -1,3 +1,4 @@
+use crate::dynamic_tool::DynamicToolFactory;
 use serde::{Deserialize, Serialize};
 
 /// Overrides for agent definition - only the most commonly overridden fields
@@ -16,6 +17,10 @@ pub struct DefinitionOverrides {
 
     /// Override browser usage flag
     pub use_browser: Option<bool>,
+
+    /// Additional dynamic tool factories to inject into the agent's tool config
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dynamic_tools: Option<Vec<DynamicToolFactory>>,
 }
 
 impl DefinitionOverrides {
@@ -50,6 +55,11 @@ impl DefinitionOverrides {
 
     pub fn with_browser_enabled(mut self, enabled: bool) -> Self {
         self.use_browser = Some(enabled);
+        self
+    }
+
+    pub fn with_dynamic_tools(mut self, tools: Vec<DynamicToolFactory>) -> Self {
+        self.dynamic_tools = Some(tools);
         self
     }
 }
