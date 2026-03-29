@@ -1,11 +1,11 @@
 ---
 name = "distri_platform"
-description = "Full Distri platform control — manage agents, skills, secrets, threads, connections via api_request HTTP tool"
+description = "Full Distri platform control — manage agents, skills, secrets, threads, connections via distri_request HTTP tool"
 ---
 
 # Distri Platform
 
-Use the `api_request` tool to manage platform resources. Input: `{path, method, headers?, body?}`. Auth headers are injected automatically.
+Use the `distri_request` tool to manage platform resources. Input: `{path, method, headers?, body?}`. Auth headers are injected automatically.
 
 ## API Reference
 

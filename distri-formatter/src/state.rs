@@ -68,7 +68,7 @@ pub fn is_probe_call(name: &str, input: &serde_json::Value) -> bool {
                 .unwrap_or("");
             skill == "?" || skill.is_empty()
         }
-        "api_request" => {
+        "distri_request" => {
             let method = input
                 .get("method")
                 .and_then(|v| v.as_str())
@@ -155,6 +155,14 @@ pub fn format_tool_call(name: &str, input: &serde_json::Value) -> String {
         }
         "final" | "reflect" | "console_log" => format!("{}(...)", name),
         _ => {
+            // HTTP factory tools (e.g. distri_request, zippy_request) use
+            // {path, method, body?} input — print as "name(METHOD /path)".
+            if let (Some(path), Some(method)) = (
+                input.get("path").and_then(|v| v.as_str()),
+                input.get("method").and_then(|v| v.as_str()),
+            ) {
+                return format!("{}({} {})", name, method, truncate(path, 60));
+            }
             let compact = serde_json::to_string(input).unwrap_or_else(|_| "...".into());
             let preview = truncate(&compact, 80);
             format!("{}({})", name, preview)
