@@ -60,7 +60,8 @@ pub fn distri(cfg: &mut web::ServiceConfig) {
         web::resource("/agents/{id}")
             .route(web::get().to(get_agent_definition))
             .route(web::post().to(a2a_handler))
-            .route(web::put().to(update_agent)),
+            .route(web::put().to(update_agent))
+            .route(web::delete().to(delete_agent)),
     )
     .service(web::resource("/agents/{id}/validate").route(web::get().to(validate_agent_handler)))
     .service(
@@ -1391,6 +1392,20 @@ async fn update_agent(
         Err(e) => HttpResponse::BadRequest().json(json!({
             "error": format!("Failed to update agent: {}", e)
         })),
+    }
+}
+
+async fn delete_agent(
+    executor: web::Data<Arc<AgentOrchestrator>>,
+    path: web::Path<String>,
+) -> HttpResponse {
+    let id = path.into_inner();
+    match executor.stores.agent_store.delete(&id).await {
+        Ok(()) => HttpResponse::NoContent().finish(),
+        Err(err) => {
+            tracing::warn!(error = ?err, "Failed to delete agent");
+            HttpResponse::NotFound().json(json!({ "error": format!("Agent not found: {}", id) }))
+        }
     }
 }
 
