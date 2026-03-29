@@ -1,11 +1,31 @@
 {{#if available_connections}}
 # CONNECTIONS
-OAuth connections to external services. **ALWAYS use `connection_request` to make API calls** — it auto-injects the auth token.
+OAuth connections to external services. Two ways to make authenticated API calls:
 
-**NEVER pass raw tokens to sub-agents or code execution.** The `connection_request` action handles authentication automatically.
+**Option 1: Direct API call** (recommended for simple requests)
+Use `distri_request` to proxy through the connection — auth token is injected automatically:
+```
+distri_request({
+  path: "/connections/<connection_id>/request",
+  method: "POST",
+  body: {
+    method: "GET",
+    url: "https://api.example.com/endpoint",
+    headers: {},
+    body: null
+  }
+})
+```
 
-**Workflow:** `get_connection_usage({connection_id})` for API docs → `connection_request({connection_id, method, url, headers?, body?})` to call APIs.
-If scopes are insufficient, use `connect({provider, additional_scopes: [...]})` to expand permissions.
+**Option 2: Code execution** (for scripts, data processing, chaining calls)
+Inject the token as an env var, then use `call_coder`:
+```
+inject_connection_env({ connection_id: "<id>" })
+// Then in call_coder: token = os.getenv("<PROVIDER>_TOKEN")
+```
+
+**NEVER pass raw tokens in conversation messages.**
+If scopes are insufficient, reconnect with additional scopes via the connections API.
 
 ## Connected Services
 {{{available_connections}}}
