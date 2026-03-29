@@ -43,7 +43,6 @@ pub struct AgentStrategy {
     pub external_tool_timeout_secs: Option<u64>,
 }
 
-
 impl AgentStrategy {
     /// Get reasoning depth with default fallback
     pub fn get_reasoning_depth(&self) -> ReasoningDepth {
@@ -596,8 +595,6 @@ pub const VALID_BUILTIN_TOOLS: &[&str] = &[
     "final",
     "reflect",
     "transfer_to_agent",
-    // HTTP & networking
-    "http_request",
     // Browser & scraping
     "browsr_scrape",
     "browsr_browser",
@@ -630,9 +627,9 @@ pub struct ToolsConfig {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub builtin: Vec<String>,
 
-    /// DAP package tools: package_name -> list of tool names
-    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
-    pub packages: std::collections::HashMap<String, Vec<String>>,
+    /// Dynamic tool factories — each creates a named tool at runtime.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dynamic: Vec<crate::dynamic_tool::DynamicToolFactory>,
 
     /// MCP server tool configurations
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1069,15 +1066,17 @@ impl StandardDefinition {
 
         // Validate reflection configuration
         if let Some(ref reflection) = self.reflection
-            && reflection.enabled {
-                // If a custom reflection_agent is specified, validate the name
-                if let Some(ref agent_name) = reflection.reflection_agent
-                    && agent_name.is_empty() {
-                        return Err(anyhow::anyhow!(
-                            "Reflection agent name cannot be empty when specified"
-                        ));
-                    }
+            && reflection.enabled
+        {
+            // If a custom reflection_agent is specified, validate the name
+            if let Some(ref agent_name) = reflection.reflection_agent
+                && agent_name.is_empty()
+            {
+                return Err(anyhow::anyhow!(
+                    "Reflection agent name cannot be empty when specified"
+                ));
             }
+        }
 
         Ok(())
     }
@@ -1128,7 +1127,7 @@ impl ToolsConfig {
     pub fn builtin_only(tools: Vec<&str>) -> Self {
         Self {
             builtin: tools.into_iter().map(|s| s.to_string()).collect(),
-            packages: std::collections::HashMap::new(),
+            dynamic: vec![],
             mcp: vec![],
             external: None,
         }
@@ -1138,7 +1137,7 @@ impl ToolsConfig {
     pub fn mcp_all(server: &str) -> Self {
         Self {
             builtin: vec![],
-            packages: std::collections::HashMap::new(),
+            dynamic: vec![],
             mcp: vec![McpToolConfig {
                 server: server.to_string(),
                 include: vec!["*".to_string()],
@@ -1152,7 +1151,7 @@ impl ToolsConfig {
     pub fn mcp_filtered(server: &str, include: Vec<&str>, exclude: Vec<&str>) -> Self {
         Self {
             builtin: vec![],
-            packages: std::collections::HashMap::new(),
+            dynamic: vec![],
             mcp: vec![McpToolConfig {
                 server: server.to_string(),
                 include: include.into_iter().map(|s| s.to_string()).collect(),
@@ -1230,12 +1229,14 @@ pub fn validate_plugin_name(name: &str) -> Result<(), String> {
 
     // Check if first character is valid for JavaScript identifier
     if let Some(first_char) = name.chars().next()
-        && !first_char.is_ascii_alphabetic() && first_char != '_' {
-            return Err(format!(
-                "Plugin name '{}' must start with a letter or underscore",
-                name
-            ));
-        }
+        && !first_char.is_ascii_alphabetic()
+        && first_char != '_'
+    {
+        return Err(format!(
+            "Plugin name '{}' must start with a letter or underscore",
+            name
+        ));
+    }
 
     // Check if all characters are valid for JavaScript identifier
     for ch in name.chars() {

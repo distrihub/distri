@@ -6,118 +6,13 @@
 //! Used by the `POST /request` server route.
 
 use std::collections::HashMap;
-use std::sync::Arc;
 
-use distri_types::http_request::{HttpRequestInput, HttpRequestResponse, HttpMethod};
-use distri_types::{Part, Tool, ToolContext};
-use serde_json::json;
+use distri_types::http_request::{HttpMethod, HttpRequestInput, HttpRequestResponse};
 
-use crate::agent::ExecutorContext;
 use crate::tools::resolve::{
     extract_vars, extract_vars_from_value, resolve_all, resolve_connection_token,
     substitute_string, ResolveContext,
 };
-use crate::tools::ExecutorContextTool;
-use crate::types::ToolCall;
-use crate::AgentError;
-
-/// Server-side HTTP request tool.
-///
-/// Registered as a builtin so the LLM sees it in the tool list. When a CLI
-/// client is connected, the client intercepts the call via `ExternalToolRegistry`
-/// and executes it client-side (or proxies via `POST /request`). When no client
-/// is connected (self-hosted distri-server), the server executes it directly.
-#[derive(Debug)]
-pub struct HttpRequestTool;
-
-#[async_trait::async_trait]
-impl Tool for HttpRequestTool {
-    fn get_name(&self) -> String {
-        "http_request".to_string()
-    }
-
-    fn get_description(&self) -> String {
-        "Make an HTTP request. Best for short text/JSON API responses. \
-         For large responses, binary data, or streaming use a browsr shell session instead. \
-         Use $VAR_NAME in url, headers, or body to reference environment variables or secrets. \
-         Add an x-connection-id header to inject an OAuth Bearer token for that connection."
-            .to_string()
-    }
-
-    fn needs_executor_context(&self) -> bool {
-        true
-    }
-
-    fn get_parameters(&self) -> serde_json::Value {
-        json!({
-            "$schema": "https://json-schema.org/draft/2020-12/schema",
-            "title": "HttpRequestInput",
-            "type": "object",
-            "required": ["url", "method"],
-            "properties": {
-                "url": {
-                    "type": "string",
-                    "description": "Absolute URL. Use $VAR_NAME for variable substitution."
-                },
-                "method": {
-                    "type": "string",
-                    "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"],
-                    "description": "HTTP method"
-                },
-                "headers": {
-                    "type": "object",
-                    "additionalProperties": { "type": "string" },
-                    "description": "Request headers. Use $VAR_NAME for variable substitution. \
-                                    Set x-connection-id to inject an OAuth Bearer token."
-                },
-                "body": {
-                    "description": "Request body. Sent as JSON if no Content-Type header is set, \
-                                    otherwise sent as-is. Use $VAR_NAME for variable substitution."
-                }
-            },
-            "additionalProperties": false
-        })
-    }
-
-    async fn execute(
-        &self,
-        _tool_call: distri_types::ToolCall,
-        _context: Arc<ToolContext>,
-    ) -> Result<Vec<Part>, anyhow::Error> {
-        Err(anyhow::anyhow!("HttpRequestTool requires ExecutorContext"))
-    }
-}
-
-#[async_trait::async_trait]
-impl ExecutorContextTool for HttpRequestTool {
-    async fn execute_with_executor_context(
-        &self,
-        tool_call: ToolCall,
-        context: Arc<ExecutorContext>,
-    ) -> Result<Vec<Part>, AgentError> {
-        let input: HttpRequestInput = serde_json::from_value(tool_call.input)
-            .map_err(|e| AgentError::ToolExecution(format!("Invalid input: {}", e)))?;
-
-        let env_vars = context.env_vars.read().await.clone();
-        let secret_store = context
-            .stores
-            .as_ref()
-            .and_then(|s| s.secret_store.clone());
-        let token_fetcher = context.token_fetcher.clone();
-
-        let resolve_ctx = ResolveContext {
-            env_vars,
-            secret_store,
-            token_fetcher,
-        };
-
-        let result = execute_http_request(&input, &resolve_ctx)
-            .await
-            .map_err(|e| AgentError::ToolExecution(e.to_string()))?;
-
-        Ok(vec![Part::Data(serde_json::to_value(&result).unwrap_or_default())])
-    }
-}
 
 /// Useful response headers to include (skip noise like cache-control, x-powered-by).
 const USEFUL_HEADERS: &[&str] = &[
@@ -142,14 +37,6 @@ pub async fn execute_http_request(
     input: &HttpRequestInput,
     resolve_ctx: &ResolveContext,
 ) -> Result<HttpRequestResponse, anyhow::Error> {
-    // If URL is relative and REQUEST_BASE_URL is available, prepend it
-    let mut input = input.clone();
-    if input.url.starts_with('/') {
-        if let Some(base) = resolve_ctx.env_vars.get("REQUEST_BASE_URL") {
-            input.url = format!("{}{}", base.trim_end_matches('/'), input.url);
-        }
-    }
-
     // 1. Check for x-connection-id (consumed, not forwarded)
     let connection_id = input.headers.get("x-connection-id").cloned();
 

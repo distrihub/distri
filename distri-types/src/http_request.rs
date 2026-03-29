@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// HTTP method.
@@ -52,6 +53,46 @@ pub struct HttpRequestInput {
     /// May contain `$VAR_NAME` for variable substitution.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub body: Option<serde_json::Value>,
+}
+
+/// Configuration for an HTTP request factory (type = "http").
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct HttpFactoryConfig {
+    /// Base URL for all requests. May contain $VAR_NAME.
+    pub base_url: String,
+    /// Default headers merged into every request. May contain $VAR_NAME.
+    #[serde(default)]
+    pub headers: HashMap<String, String>,
+}
+
+/// Input for a factory-created HTTP tool.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HttpFactoryToolInput {
+    /// Request path (appended to base_url)
+    pub path: String,
+    /// HTTP method. Defaults to GET.
+    #[serde(default)]
+    pub method: HttpMethod,
+    /// Additional headers (merged with factory defaults, per-call wins).
+    #[serde(default)]
+    pub headers: HashMap<String, String>,
+    /// Request body.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<serde_json::Value>,
+}
+
+impl HttpFactoryConfig {
+    /// Build an HttpRequestInput from factory defaults + per-call input.
+    pub fn build_request(&self, input: &HttpFactoryToolInput) -> HttpRequestInput {
+        let mut headers = self.headers.clone();
+        headers.extend(input.headers.clone());
+        HttpRequestInput {
+            url: format!("{}{}", self.base_url.trim_end_matches('/'), input.path),
+            method: input.method.clone(),
+            headers,
+            body: input.body.clone(),
+        }
+    }
 }
 
 /// Response from an HTTP request.

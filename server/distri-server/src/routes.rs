@@ -579,6 +579,15 @@ async fn validate_agent_handler(
                 severity: WarningSeverity::Error,
             });
         }
+        for factory in &tools.dynamic {
+            if let Err(e) = distri_core::tools::dynamic_factory::validate_dynamic_tool(factory) {
+                warnings.push(ValidationWarning {
+                    code: "invalid_dynamic_tool".to_string(),
+                    message: e.to_string(),
+                    severity: WarningSeverity::Error,
+                });
+            }
+        }
     }
 
     HttpResponse::Ok().json(AgentValidationResponse {
@@ -1347,6 +1356,11 @@ async fn create_agent(
                 )
             }));
         }
+        for factory in &tools.dynamic {
+            if let Err(e) = distri_core::tools::dynamic_factory::validate_dynamic_tool(factory) {
+                return HttpResponse::BadRequest().json(json!({ "error": e.to_string() }));
+            }
+        }
     }
 
     match executor.register_agent_definition(definition.clone()).await {
@@ -1426,6 +1440,11 @@ async fn update_agent(
                     distri_types::VALID_BUILTIN_TOOLS.join(", ")
                 )
             }));
+        }
+        for factory in &tools.dynamic {
+            if let Err(e) = distri_core::tools::dynamic_factory::validate_dynamic_tool(factory) {
+                return HttpResponse::BadRequest().json(json!({ "error": e.to_string() }));
+            }
         }
     }
 
