@@ -127,6 +127,8 @@ pub fn cast_to_executor_context_tool(
         "distri_execute_code" => Ok(Box::new(DistriExecuteCodeTool)),
         // Tool discovery
         "tool_search" => Ok(Box::new(tool_search::ToolSearchTool)),
+        // HTTP request
+        "http_request" => Ok(Box::new(request::HttpRequestTool)),
         // Connection env injection
         "inject_connection_env" => Ok(Box::new(inject_env::InjectConnectionEnvTool)),
         name if name.starts_with("call_") => {

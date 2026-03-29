@@ -35,6 +35,7 @@ pub fn get_builtin_tools(
         Arc::new(StopShellTool) as Arc<dyn Tool>,
         Arc::new(crate::tools::tool_search::ToolSearchTool) as Arc<dyn Tool>,
         Arc::new(DistriExecuteCodeTool) as Arc<dyn Tool>,
+        Arc::new(crate::tools::request::HttpRequestTool) as Arc<dyn Tool>,
         Arc::new(crate::tools::inject_env::InjectConnectionEnvTool) as Arc<dyn Tool>,
     ];
 
