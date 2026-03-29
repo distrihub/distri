@@ -26,7 +26,7 @@ use commands::{
 use config::resolve_workspace;
 use message::{build_connections_context, build_message_params};
 use threads::resolve_resume_arg;
-use tools::{register_approval_handler, register_http_request_handler};
+use tools::register_approval_handler;
 
 #[derive(Parser, Debug, Clone)]
 #[clap(author, version, about)]
@@ -390,8 +390,7 @@ async fn main() -> Result<()> {
                 params.message.context_id = Some(tid);
             }
 
-            // Merge --context into metadata.env_vars
-            let mut client_env_vars = std::collections::HashMap::<String, String>::new();
+            // Merge --context into metadata.env_vars for the server
             if let Some(ctx_json) = context {
                 let ctx: RunContext = serde_json::from_str(&ctx_json)
                     .unwrap_or_else(|e| {
@@ -399,17 +398,14 @@ async fn main() -> Result<()> {
                         RunContext::default()
                     });
 
-                // Collect all env vars (envs + env_vars + secrets all merge)
                 let mut all_vars = std::collections::HashMap::<String, String>::new();
                 all_vars.extend(ctx.envs);
                 all_vars.extend(ctx.env_vars);
                 all_vars.extend(ctx.secrets);
 
                 if !all_vars.is_empty() {
-                    // A2A metadata is untyped JSON — set env_vars for the server
                     let meta = params.metadata.get_or_insert(serde_json::json!({}));
                     meta["env_vars"] = serde_json::to_value(&all_vars).unwrap();
-                    client_env_vars = all_vars;
                 }
             }
 

@@ -1,8 +1,6 @@
-use std::collections::HashMap;
 use std::io::{self, Write};
-use std::sync::Arc;
 
-use distri::{register_client_http_request, Distri, DistriConfig, ExternalToolRegistry};
+use distri::ExternalToolRegistry;
 
 use crate::{COLOR_BRIGHT_GREEN, COLOR_BRIGHT_MAGENTA, COLOR_BRIGHT_YELLOW, COLOR_RESET};
 
@@ -47,17 +45,4 @@ pub fn register_approval_handler(registry: &ExternalToolRegistry) {
             approval_result,
         ))
     });
-}
-
-/// Register the client-side `http_request` handler.
-///
-/// Executes locally when all `$VAR_NAME` references are in `env_vars`,
-/// proxies to `POST /request` on the server otherwise.
-pub fn register_http_request_handler(
-    registry: &ExternalToolRegistry,
-    config: &DistriConfig,
-    env_vars: HashMap<String, String>,
-) {
-    let client = Arc::new(Distri::from_config(config.clone()));
-    register_client_http_request(registry, client, env_vars);
 }

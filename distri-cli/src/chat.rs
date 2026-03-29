@@ -17,7 +17,7 @@ use crate::config::{load_last_model, save_last_model};
 use crate::input::{DistriHelper, ToggleToolsHandler};
 use crate::message::{build_chat_message_params, build_connections_context};
 use crate::threads::{load_last_thread, print_thread_history, resolve_resume_arg, save_last_thread};
-use crate::tools::{register_approval_handler, register_http_request_handler};
+use crate::tools::register_approval_handler;
 use crate::{COLOR_BRIGHT_GREEN, COLOR_GRAY, COLOR_RESET};
 
 #[derive(Debug, Clone)]

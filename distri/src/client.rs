@@ -2395,28 +2395,6 @@ impl Distri {
         }
     }
 
-    /// Proxy an HTTP request through the server for secret resolution.
-    ///
-    /// The server resolves `$VAR_NAME` references from its secret store,
-    /// handles `x-connection-id` OAuth injection, executes the request,
-    /// and returns the response. Secrets never leave the server.
-    pub async fn proxy_request(
-        &self,
-        input: &distri_types::http_request::HttpRequestInput,
-    ) -> Result<distri_types::http_request::HttpRequestResponse, ClientError> {
-        let url = format!("{}/request", self.base_url);
-        let resp = self.http.post(&url).json(input).send().await?;
-        if resp.status().is_success() {
-            Ok(resp.json().await?)
-        } else {
-            let text = resp.text().await.unwrap_or_default();
-            Err(ClientError::InvalidResponse(format!(
-                "request proxy failed: {}",
-                text,
-            )))
-        }
-    }
-
     // ========== Notes API ==========
 
     pub async fn list_notes(
