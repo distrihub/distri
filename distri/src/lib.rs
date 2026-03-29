@@ -1,10 +1,12 @@
 mod client;
 mod client_app;
+mod client_http_request;
 mod client_stream;
 pub mod config;
 mod local_tools;
 mod printer;
 mod renderers;
+pub mod secret_cache;
 
 /// Workflow engine — define, execute, and track multi-step workflows.
 pub mod workflow {
@@ -36,7 +38,9 @@ pub use hooks_runtime::*;
 pub use distri_types::{
     HookContext, HookKind, HookMutation, InlineHookRequest, InlineHookResponse, TokenResponse,
 };
+pub use client_http_request::register_client_http_request;
 pub use local_tools::register_local_filesystem_tools;
+pub use secret_cache::SecretCache;
 pub use printer::{EventPrinter, print_stream, print_stream_verbose};
 
 #[cfg(test)]

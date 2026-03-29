@@ -1,6 +1,8 @@
+use std::collections::HashMap;
 use std::io::{self, Write};
+use std::sync::Arc;
 
-use distri::ExternalToolRegistry;
+use distri::{register_client_http_request, Distri, DistriConfig, ExternalToolRegistry};
 
 use crate::{COLOR_BRIGHT_GREEN, COLOR_BRIGHT_MAGENTA, COLOR_BRIGHT_YELLOW, COLOR_RESET};
 
@@ -45,4 +47,10 @@ pub fn register_approval_handler(registry: &ExternalToolRegistry) {
             approval_result,
         ))
     });
+}
+
+/// Register the client-side `http_request` handler with secret resolution.
+pub fn register_http_request_handler(registry: &ExternalToolRegistry, config: &DistriConfig) {
+    let client = Arc::new(Distri::from_config(config.clone()));
+    register_client_http_request(registry, client, HashMap::new());
 }
