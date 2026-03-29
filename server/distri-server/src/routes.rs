@@ -569,6 +569,18 @@ async fn validate_agent_handler(
         });
     }
 
+    // Check for invalid builtin tool names
+    if let Some(ref tools) = def.tools {
+        let invalid = tools.invalid_builtin_tools();
+        if !invalid.is_empty() {
+            warnings.push(ValidationWarning {
+                code: "unknown_builtin_tool".to_string(),
+                message: format!("Unknown builtin tool(s): {}", invalid.join(", ")),
+                severity: WarningSeverity::Error,
+            });
+        }
+    }
+
     HttpResponse::Ok().json(AgentValidationResponse {
         valid: warnings.is_empty(),
         warnings,
@@ -1323,6 +1335,20 @@ async fn create_agent(
         }
     };
 
+    // Validate builtin tool names
+    if let Some(ref tools) = definition.tools {
+        let invalid = tools.invalid_builtin_tools();
+        if !invalid.is_empty() {
+            return HttpResponse::BadRequest().json(json!({
+                "error": format!(
+                    "Unknown builtin tool(s): {}. Valid tools: {}",
+                    invalid.join(", "),
+                    distri_types::VALID_BUILTIN_TOOLS.join(", ")
+                )
+            }));
+        }
+    }
+
     match executor.register_agent_definition(definition.clone()).await {
         Ok(_) => HttpResponse::Ok().json(definition),
         Err(e) => HttpResponse::BadRequest().json(json!({
@@ -1388,6 +1414,20 @@ async fn update_agent(
 
     // Ensure the name matches the path parameter
     definition.name = agent_id;
+
+    // Validate builtin tool names
+    if let Some(ref tools) = definition.tools {
+        let invalid = tools.invalid_builtin_tools();
+        if !invalid.is_empty() {
+            return HttpResponse::BadRequest().json(json!({
+                "error": format!(
+                    "Unknown builtin tool(s): {}. Valid tools: {}",
+                    invalid.join(", "),
+                    distri_types::VALID_BUILTIN_TOOLS.join(", ")
+                )
+            }));
+        }
+    }
 
     match executor.update_agent_definition(definition.clone()).await {
         Ok(_) => HttpResponse::Ok().json(definition),

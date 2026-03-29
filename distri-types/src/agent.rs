@@ -586,6 +586,43 @@ impl StandardDefinition {
 }
 
 /// Tools configuration for agents
+/// Canonical list of valid builtin tool names.
+///
+/// Includes both server-executed tools (search, start_shell, etc.) and
+/// client-executed tools (http_request). Agent definitions reference these
+/// by name in `tools.builtin = [...]`.
+pub const VALID_BUILTIN_TOOLS: &[&str] = &[
+    // Agent control
+    "final",
+    "reflect",
+    "transfer_to_agent",
+    // HTTP & networking
+    "http_request",
+    // Browser & scraping
+    "browsr_scrape",
+    "browsr_browser",
+    "browsr_crawl",
+    "browser_step",
+    "search",
+    // Shell
+    "start_shell",
+    "execute_shell",
+    "stop_shell",
+    // Code execution
+    "distri_execute_code",
+    // Tool discovery
+    "tool_search",
+    "load_skill",
+    // Connection & secrets
+    "inject_connection_env",
+    // Logging
+    "console_log",
+    // Artifacts & filesystem
+    "artifact_tool",
+    // Todos
+    "todos",
+];
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 #[serde(deny_unknown_fields)]
 pub struct ToolsConfig {
@@ -601,9 +638,21 @@ pub struct ToolsConfig {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub mcp: Vec<McpToolConfig>,
 
-    /// External tools to include from client  
+    /// External tools to include from client
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub external: Option<Vec<String>>,
+}
+
+impl ToolsConfig {
+    /// Validate that all builtin tool names are recognized.
+    /// Returns a list of invalid tool names, or empty if all are valid.
+    pub fn invalid_builtin_tools(&self) -> Vec<String> {
+        self.builtin
+            .iter()
+            .filter(|name| !VALID_BUILTIN_TOOLS.contains(&name.as_str()))
+            .cloned()
+            .collect()
+    }
 }
 
 /// Where filesystem and artifact tools should execute
