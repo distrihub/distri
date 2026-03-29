@@ -20,14 +20,6 @@ pub async fn execute_http_request(
     env_vars: &HashMap<String, String>,
     client: &Distri,
 ) -> Result<HttpRequestResponse> {
-    // If URL is relative and REQUEST_BASE_URL is available, prepend it
-    let mut input = input.clone();
-    if input.url.starts_with('/') {
-        if let Some(base) = env_vars.get("REQUEST_BASE_URL") {
-            input.url = format!("{}{}", base.trim_end_matches('/'), input.url);
-        }
-    }
-
     // Collect all $VAR references from url, headers, body
     let mut all_vars = extract_vars(&input.url);
     for (k, v) in &input.headers {
