@@ -142,6 +142,14 @@ pub async fn execute_http_request(
     input: &HttpRequestInput,
     resolve_ctx: &ResolveContext,
 ) -> Result<HttpRequestResponse, anyhow::Error> {
+    // If URL is relative and REQUEST_BASE_URL is available, prepend it
+    let mut input = input.clone();
+    if input.url.starts_with('/') {
+        if let Some(base) = resolve_ctx.env_vars.get("REQUEST_BASE_URL") {
+            input.url = format!("{}{}", base.trim_end_matches('/'), input.url);
+        }
+    }
+
     // 1. Check for x-connection-id (consumed, not forwarded)
     let connection_id = input.headers.get("x-connection-id").cloned();
 
