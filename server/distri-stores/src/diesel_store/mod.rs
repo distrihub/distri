@@ -650,6 +650,18 @@ where
             .context("failed to clear agent configs")?;
         Ok(())
     }
+
+    async fn delete(&self, id: &str) -> Result<()> {
+        let mut connection = self.conn().await?;
+        let deleted = diesel::delete(agent_configs::table.filter(agent_configs::name.eq(id)))
+            .execute(&mut connection)
+            .await
+            .context("failed to delete agent config")?;
+        if deleted == 0 {
+            anyhow::bail!("agent not found: {}", id);
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone)]
