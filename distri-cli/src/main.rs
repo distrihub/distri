@@ -291,6 +291,18 @@ pub(crate) enum WorkflowCommands {
     List,
 }
 
+/// Typed context passed via `--context` JSON.
+/// Accepts `envs`, `env_vars`, and `secrets` — all merge into env_vars.
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+struct RunContext {
+    #[serde(default)]
+    envs: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    env_vars: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    secrets: std::collections::HashMap<String, String>,
+}
+
 pub(crate) const COLOR_RESET: &str = "\x1b[0m";
 pub(crate) const COLOR_BRIGHT_GREEN: &str = "\x1b[92m";
 pub(crate) const COLOR_BRIGHT_MAGENTA: &str = "\x1b[95m";
@@ -378,43 +390,26 @@ async fn main() -> Result<()> {
                 params.message.context_id = Some(tid);
             }
 
-            // Merge --context envs/secrets into metadata.env_vars
+            // Merge --context into metadata.env_vars
             let mut client_env_vars = std::collections::HashMap::<String, String>::new();
             if let Some(ctx_json) = context {
-                if let Ok(ctx) = serde_json::from_str::<serde_json::Value>(&ctx_json) {
+                let ctx: RunContext = serde_json::from_str(&ctx_json)
+                    .unwrap_or_else(|e| {
+                        eprintln!("Warning: failed to parse --context: {}", e);
+                        RunContext::default()
+                    });
+
+                // Collect all env vars (envs + env_vars + secrets all merge)
+                let mut all_vars = std::collections::HashMap::<String, String>::new();
+                all_vars.extend(ctx.envs);
+                all_vars.extend(ctx.env_vars);
+                all_vars.extend(ctx.secrets);
+
+                if !all_vars.is_empty() {
+                    // A2A metadata is untyped JSON — set env_vars for the server
                     let meta = params.metadata.get_or_insert(serde_json::json!({}));
-                    // envs → env_vars in metadata
-                    if let Some(envs) = ctx.get("envs").and_then(|v| v.as_object()) {
-                        let env_vars = meta
-                            .as_object_mut()
-                            .unwrap()
-                            .entry("env_vars")
-                            .or_insert(serde_json::json!({}));
-                        if let Some(ev) = env_vars.as_object_mut() {
-                            for (k, v) in envs {
-                                if let Some(s) = v.as_str() {
-                                    ev.insert(k.clone(), serde_json::Value::String(s.to_string()));
-                                    client_env_vars.insert(k.clone(), s.to_string());
-                                }
-                            }
-                        }
-                    }
-                    // secrets → also env_vars (secrets are just env_vars that shouldn't be logged)
-                    if let Some(secrets) = ctx.get("secrets").and_then(|v| v.as_object()) {
-                        let env_vars = meta
-                            .as_object_mut()
-                            .unwrap()
-                            .entry("env_vars")
-                            .or_insert(serde_json::json!({}));
-                        if let Some(ev) = env_vars.as_object_mut() {
-                            for (k, v) in secrets {
-                                if let Some(s) = v.as_str() {
-                                    ev.insert(k.clone(), serde_json::Value::String(s.to_string()));
-                                    client_env_vars.insert(k.clone(), s.to_string());
-                                }
-                            }
-                        }
-                    }
+                    meta["env_vars"] = serde_json::to_value(&all_vars).unwrap();
+                    client_env_vars = all_vars;
                 }
             }
 
