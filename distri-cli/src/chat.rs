@@ -421,7 +421,7 @@ pub async fn run_interactive_chat(
     let mut rl = Editor::with_config(rl_config)?;
     rl.set_helper(Some(DistriHelper::new(show_tools.clone())));
     rl.bind_sequence(
-        KeyEvent::ctrl('O'),
+        KeyEvent::ctrl('o'),
         EventHandler::Conditional(Box::new(ToggleToolsHandler {
             show_tools: show_tools.clone(),
         })),

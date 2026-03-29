@@ -275,6 +275,19 @@ impl<S: WorkflowStateStore, E: StepExecutor, K: EventSink> WorkflowRunner<S, E, 
                     resolve::resolve_step_input(step.input.as_ref(), &workflow.context);
                 let result = self.executor.execute(step, &step_context).await;
                 match result {
+                    Ok(r) if r.status == StepStatus::Failed => {
+                        let error = r.error.clone().unwrap_or_else(|| "Step failed".to_string());
+                        self.events
+                            .emit(WorkflowEvent::StepFailed {
+                                workflow_id: workflow_id.to_string(),
+                                step_id: step_id.clone(),
+                                step_label: step.label.clone(),
+                                error: error.clone(),
+                            })
+                            .await;
+                        self.store.commit_step(workflow_id, *idx, r.clone()).await?;
+                        results.push((step_id.clone(), r));
+                    }
                     Ok(r) => {
                         self.events
                             .emit(WorkflowEvent::StepCompleted {
@@ -327,6 +340,19 @@ impl<S: WorkflowStateStore, E: StepExecutor, K: EventSink> WorkflowRunner<S, E, 
             let step_context = resolve::resolve_step_input(step.input.as_ref(), &workflow.context);
             let result = self.executor.execute(step, &step_context).await;
             match result {
+                Ok(r) if r.status == StepStatus::Failed => {
+                    let error = r.error.clone().unwrap_or_else(|| "Step failed".to_string());
+                    self.events
+                        .emit(WorkflowEvent::StepFailed {
+                            workflow_id: workflow_id.to_string(),
+                            step_id: step_id.clone(),
+                            step_label: step.label.clone(),
+                            error: error.clone(),
+                        })
+                        .await;
+                    self.store.commit_step(workflow_id, *idx, r.clone()).await?;
+                    results.push((step_id.clone(), r));
+                }
                 Ok(r) => {
                     self.events
                         .emit(WorkflowEvent::StepCompleted {

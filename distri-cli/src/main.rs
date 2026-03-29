@@ -355,9 +355,7 @@ async fn main() -> Result<()> {
             task,
             context,
             resume,
-            verbose: run_verbose,
         } => {
-            let verbose = cli.verbose || run_verbose;
             let agent_name = agent.unwrap_or_else(|| "distri".to_string());
             // Resolve agent name to UUID for cloud compatibility.
             // Cloud middleware requires UUID for proper workspace context (model settings, secrets).
@@ -430,7 +428,7 @@ async fn main() -> Result<()> {
                 &client,
                 &stream_agent_id,
                 params,
-                verbose,
+                cli.verbose,
                 Some(agent_name.clone()),
                 true,
             )

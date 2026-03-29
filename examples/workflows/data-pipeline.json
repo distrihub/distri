@@ -1,0 +1,121 @@
+{
+  "id": "data-pipeline",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "source_url": { "type": "string", "description": "URL to fetch data from" },
+      "project_id": { "type": "string", "description": "Project identifier" },
+      "cached_data": { "type": "object", "description": "Pre-fetched data (optional — skips fetch step)" }
+    },
+    "required": ["project_id"]
+  },
+  "steps": [
+    {
+      "id": "fetch",
+      "label": "Fetch data",
+      "kind": { "type": "tool_call", "tool_name": "fetch_data", "input": {} },
+      "input": { "url": "{input.source_url}", "project_id": "{input.project_id}" },
+      "skip_if": "{input.cached_data}"
+    },
+    {
+      "id": "validate",
+      "label": "Validate data",
+      "kind": { "type": "tool_call", "tool_name": "validate_data", "input": {} },
+      "depends_on": ["fetch"],
+      "input": { "data": "{steps.fetch.records}", "project_id": "{input.project_id}" }
+    },
+    {
+      "id": "transform_a",
+      "label": "Transform (format)",
+      "kind": { "type": "tool_call", "tool_name": "transform_format", "input": {} },
+      "depends_on": ["validate"],
+      "execution": "parallel",
+      "input": { "records": "{steps.validate.clean_records}" }
+    },
+    {
+      "id": "transform_b",
+      "label": "Transform (enrich)",
+      "kind": { "type": "tool_call", "tool_name": "transform_enrich", "input": {} },
+      "depends_on": ["validate"],
+      "execution": "parallel",
+      "input": { "records": "{steps.validate.clean_records}" }
+    },
+    {
+      "id": "merge",
+      "label": "Merge results",
+      "kind": { "type": "tool_call", "tool_name": "merge_results", "input": {} },
+      "depends_on": ["transform_a", "transform_b"],
+      "input": {
+        "formatted": "{steps.transform_a.output}",
+        "enriched": "{steps.transform_b.output}"
+      }
+    },
+    {
+      "id": "review",
+      "label": "Review before publish",
+      "kind": {
+        "type": "wait_for_input",
+        "message": "Review the merged data before publishing. Check row counts and sample records.",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "approved": { "type": "boolean", "description": "Approve for publishing?" },
+            "notes": { "type": "string", "description": "Optional notes" }
+          },
+          "required": ["approved"]
+        }
+      },
+      "depends_on": ["merge"]
+    },
+    {
+      "id": "publish",
+      "label": "Publish",
+      "kind": { "type": "tool_call", "tool_name": "publish_data", "input": {} },
+      "depends_on": ["review"],
+      "input": {
+        "merged": "{steps.merge.output}",
+        "project_id": "{input.project_id}",
+        "reviewer_notes": "{steps.review.notes}"
+      }
+    }
+  ],
+  "entry_points": [
+    {
+      "id": "full",
+      "label": "Full Pipeline",
+      "description": "Fetch, validate, transform, review, and publish",
+      "starts_at": "fetch",
+      "required_inputs": ["project_id", "source_url"]
+    },
+    {
+      "id": "publish_only",
+      "label": "Publish Only",
+      "description": "Skip everything — publish pre-processed data directly",
+      "starts_at": "publish",
+      "preset_results": {
+        "fetch": { "records": [{"id": 1}, {"id": 2}] },
+        "validate": { "clean_records": [{"id": 1}, {"id": 2}], "errors": [] },
+        "transform_a": { "output": [{"id": 1, "fmt": "ok"}, {"id": 2, "fmt": "ok"}] },
+        "transform_b": { "output": [{"id": 1, "tags": ["a"]}, {"id": 2, "tags": ["b"]}] },
+        "merge": { "output": [{"id": 1, "fmt": "ok", "tags": ["a"]}, {"id": 2, "fmt": "ok", "tags": ["b"]}] },
+        "review": { "approved": true, "notes": "Pre-approved" }
+      },
+      "required_inputs": ["project_id"]
+    },
+    {
+      "id": "review_and_publish",
+      "label": "Review & Publish",
+      "description": "Start at the review checkpoint with pre-processed data",
+      "starts_at": "review",
+      "preset_results": {
+        "fetch": { "records": [{"id": 1}, {"id": 2}] },
+        "validate": { "clean_records": [{"id": 1}, {"id": 2}], "errors": [] },
+        "transform_a": { "output": [{"id": 1, "fmt": "ok"}, {"id": 2, "fmt": "ok"}] },
+        "transform_b": { "output": [{"id": 1, "tags": ["a"]}, {"id": 2, "tags": ["b"]}] },
+        "merge": { "output": [{"id": 1, "fmt": "ok", "tags": ["a"]}, {"id": 2, "fmt": "ok", "tags": ["b"]}] }
+      },
+      "required_inputs": ["project_id"]
+    }
+  ],
+  "checkpoint": { "type": "internal" }
+}
