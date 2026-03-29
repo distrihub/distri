@@ -20,6 +20,7 @@ mod state;
 pub use code::execute_code_with_tools;
 pub use context::to_tool_context;
 mod builtin;
+pub mod dynamic_factory;
 pub mod inject_env;
 pub mod request;
 pub mod skill_script;
@@ -127,8 +128,8 @@ pub fn cast_to_executor_context_tool(
         "distri_execute_code" => Ok(Box::new(DistriExecuteCodeTool)),
         // Tool discovery
         "tool_search" => Ok(Box::new(tool_search::ToolSearchTool)),
-        // HTTP request tool
-        "request" => Ok(Box::new(request::RequestTool)),
+        // Connection env injection
+        "inject_connection_env" => Ok(Box::new(inject_env::InjectConnectionEnvTool)),
         name if name.starts_with("call_") => {
             let safe_agent_name = name.strip_prefix("call_").unwrap_or(name);
             // Convert double underscores back to slashes for package/agent names
@@ -236,6 +237,19 @@ pub async fn resolve_tools_config(
             all_tools.extend(external_tools.to_vec());
         } else if let Some(tool) = external_tools.iter().find(|t| t.get_name() == *tool_name) {
             all_tools.push(tool.clone());
+        }
+    }
+
+    // Create dynamic factory tools (wrapped in DynExecutorTool for cast support)
+    for factory_def in &config.dynamic {
+        match dynamic_factory::create_dynamic_tool(factory_def) {
+            Ok(tool) => {
+                // Wrap in DynExecutorTool so cast_to_executor_context_tool works via downcast
+                all_tools.push(Arc::new(DynExecutorTool::new(tool)));
+            }
+            Err(e) => {
+                tracing::warn!("Failed to create dynamic tool '{}': {}", factory_def.name, e)
+            }
         }
     }
 

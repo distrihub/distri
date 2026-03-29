@@ -1,208 +1,163 @@
-//! HTTP request tool — allows agents to call external APIs.
+//! HTTP request execution with variable resolution.
 //!
-//! Reads auth credentials from ExecutorContext env_vars:
-//! - `REQUEST_AUTH_TOKEN` — Bearer token (e.g. zippy API key)
-//! - `REQUEST_BASE_URL` — optional base URL prepended to relative paths
-//! - `REQUEST_ORG_ID` — optional org ID sent as x-org-id header
+//! Provides `execute_http_request` which resolves `$VAR_NAME` references,
+//! handles `x-connection-id` OAuth injection, and executes the request.
 //!
-//! These are injected by the client (zippy-cli or distrijs) via env_vars
-//! in the executor context metadata.
+//! Used by the `POST /request` server route.
 
-use std::sync::Arc;
+use std::collections::HashMap;
 
-use distri_types::{Part, Tool, ToolContext};
-use serde_json::{json, Value};
+use distri_types::http_request::{HttpMethod, HttpRequestInput, HttpRequestResponse};
 
-use crate::{agent::ExecutorContext, tools::ExecutorContextTool, types::ToolCall, AgentError};
+use crate::tools::resolve::{
+    extract_vars, extract_vars_from_value, resolve_all, resolve_connection_token,
+    substitute_string, ResolveContext,
+};
 
-#[derive(Debug)]
-pub struct RequestTool;
+/// Useful response headers to include (skip noise like cache-control, x-powered-by).
+const USEFUL_HEADERS: &[&str] = &[
+    "content-type",
+    "content-length",
+    "location",
+    "retry-after",
+    "x-request-id",
+    "x-ratelimit-limit",
+    "x-ratelimit-remaining",
+    "x-ratelimit-reset",
+    "www-authenticate",
+    "link",
+];
 
-#[async_trait::async_trait]
-impl Tool for RequestTool {
-    fn get_name(&self) -> String {
-        "request".to_string()
+/// Execute an HTTP request with variable resolution.
+///
+/// Resolves `$VAR_NAME` references in url, headers, and body from the
+/// provided `ResolveContext`. Handles `x-connection-id` for OAuth Bearer
+/// token injection.
+pub async fn execute_http_request(
+    input: &HttpRequestInput,
+    resolve_ctx: &ResolveContext,
+) -> Result<HttpRequestResponse, anyhow::Error> {
+    // 1. Check for x-connection-id (consumed, not forwarded)
+    let connection_id = input.headers.get("x-connection-id").cloned();
+
+    // 2. Collect all $VAR references
+    let mut all_vars = extract_vars(&input.url);
+    for (k, v) in &input.headers {
+        all_vars.extend(extract_vars(k));
+        all_vars.extend(extract_vars(v));
     }
-
-    fn get_description(&self) -> String {
-        "Make an HTTP request to an API. Auth credentials are injected from context — \
-         you don't need to provide Authorization headers manually. \
-         Use relative URLs (e.g. /admin/activities) when REQUEST_BASE_URL is configured."
-            .to_string()
+    if let Some(ref body) = input.body {
+        all_vars.extend(extract_vars_from_value(body));
     }
+    all_vars.sort();
+    all_vars.dedup();
 
-    fn needs_executor_context(&self) -> bool {
-        true
-    }
+    // 3. Resolve variables
+    let resolved = resolve_all(&all_vars, resolve_ctx)
+        .await
+        .map_err(|e| anyhow::anyhow!(e))?;
 
-    fn get_parameters(&self) -> Value {
-        json!({
-            "$schema": "https://json-schema.org/draft/2020-12/schema",
-            "title": "RequestInput",
-            "type": "object",
-            "required": ["url", "method"],
-            "properties": {
-                "url": {
-                    "type": "string",
-                    "description": "URL or path (relative paths use REQUEST_BASE_URL from context)"
-                },
-                "method": {
-                    "type": "string",
-                    "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"],
-                    "description": "HTTP method"
-                },
-                "headers": {
-                    "type": "object",
-                    "additionalProperties": { "type": "string" },
-                    "description": "Additional headers (auth headers are auto-injected)"
-                },
-                "body": {
-                    "description": "Request body (sent as JSON for POST/PUT/PATCH)"
-                }
-            },
-            "additionalProperties": false
-        })
-    }
+    // 4. Substitute resolved values
+    let url = substitute_string(&input.url, &resolved);
+    let headers: HashMap<String, String> = input
+        .headers
+        .iter()
+        .filter(|(k, _)| k.as_str() != "x-connection-id")
+        .map(|(k, v)| (substitute_string(k, &resolved), substitute_string(v, &resolved)))
+        .collect();
+    let body = input
+        .body
+        .as_ref()
+        .map(|b| distri_types::resolve::substitute_value(b, &resolved));
 
-    fn get_tool_examples(&self) -> Option<String> {
-        Some(r#"
-Get an activity:
-{"url": "/admin/activities/act-123", "method": "GET"}
+    // 5. Build request headers
+    let mut header_map = reqwest::header::HeaderMap::new();
+    let mut has_content_type = false;
 
-Create an activity:
-{"url": "/admin/activities", "method": "POST", "body": {"class_id": "cls-1", "title": "My Activity", "activity_source": "import"}}
-
-Update activity config:
-{"url": "/admin/activities/act-123", "method": "PATCH", "body": {"config": {"import_status": "review", "detection": {"questions": [], "submissions": []}}}}
-"#.to_string())
-    }
-
-    async fn execute(
-        &self,
-        _tool_call: distri_types::ToolCall,
-        _context: Arc<ToolContext>,
-    ) -> Result<Vec<Part>, anyhow::Error> {
-        Err(anyhow::anyhow!("RequestTool requires ExecutorContext"))
-    }
-}
-
-#[async_trait::async_trait]
-impl ExecutorContextTool for RequestTool {
-    async fn execute_with_executor_context(
-        &self,
-        tool_call: ToolCall,
-        context: Arc<ExecutorContext>,
-    ) -> Result<Vec<Part>, AgentError> {
-        let input = &tool_call.input;
-
-        let method = input
-            .get("method")
-            .and_then(|v| v.as_str())
-            .unwrap_or("GET")
-            .to_uppercase();
-
-        let raw_url = input
-            .get("url")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| AgentError::ToolExecution("Missing 'url' parameter".into()))?;
-
-        // Read env vars from context
-        let env_vars = context.env_vars.read().await;
-        let base_url = env_vars
-            .get("REQUEST_BASE_URL")
-            .cloned()
-            .unwrap_or_default();
-        let auth_token = env_vars.get("REQUEST_AUTH_TOKEN").cloned();
-        let org_id = env_vars.get("REQUEST_ORG_ID").cloned();
-        drop(env_vars);
-
-        // Resolve URL
-        let url = if raw_url.starts_with("http://") || raw_url.starts_with("https://") {
-            raw_url.to_string()
-        } else if !base_url.is_empty() {
-            format!("{}{}", base_url.trim_end_matches('/'), raw_url)
-        } else {
-            return Err(AgentError::ToolExecution(format!(
-                "Relative URL '{}' used but REQUEST_BASE_URL not set in context",
-                raw_url
-            )));
-        };
-
-        // Build request
-        let client = reqwest::Client::new();
-        let mut request = match method.as_str() {
-            "GET" => client.get(&url),
-            "POST" => client.post(&url),
-            "PUT" => client.put(&url),
-            "PATCH" => client.patch(&url),
-            "DELETE" => client.delete(&url),
-            _ => {
-                return Err(AgentError::ToolExecution(format!(
-                    "Unsupported method: {}",
-                    method
-                )))
+    for (key, value) in &headers {
+        if let (Ok(name), Ok(hval)) = (
+            reqwest::header::HeaderName::from_bytes(key.to_lowercase().as_bytes()),
+            reqwest::header::HeaderValue::from_str(value),
+        ) {
+            if name == reqwest::header::CONTENT_TYPE {
+                has_content_type = true;
             }
-        };
-
-        // Auto-inject auth
-        if let Some(token) = &auth_token {
-            request = request.bearer_auth(token);
+            header_map.insert(name, hval);
         }
-        if let Some(oid) = &org_id {
-            request = request.header("x-org-id", oid);
-        }
-        request = request.header("Content-Type", "application/json");
+    }
 
-        // Add user-provided headers
-        if let Some(headers) = input.get("headers").and_then(|v| v.as_object()) {
-            for (key, value) in headers {
-                if let Some(val) = value.as_str() {
-                    request = request.header(key.as_str(), val);
-                }
-            }
-        }
-
-        // Add body
-        if let Some(body) = input.get("body") {
-            if method != "GET" && method != "DELETE" {
-                request = request.json(body);
-            }
-        }
-
-        // Execute
-        let response = request
-            .timeout(std::time::Duration::from_secs(120))
-            .send()
+    // 6. If x-connection-id was present, resolve and inject Bearer token
+    if let Some(ref conn_id) = connection_id {
+        let (_provider, access_token) = resolve_connection_token(conn_id, resolve_ctx)
             .await
-            .map_err(|e| AgentError::ToolExecution(format!("HTTP request failed: {e}")))?;
-
-        let status = response.status().as_u16();
-        let response_body: Value = response.json().await.unwrap_or_else(|_| json!(null));
-
-        // Return structured result
-        let result = if (200..300).contains(&status) {
-            // Success — return the data field if it exists (zippy wraps in {ok, data, error})
-            let data = response_body
-                .get("data")
-                .cloned()
-                .unwrap_or(response_body.clone());
-            json!({
-                "status": status,
-                "ok": true,
-                "data": data,
-            })
-        } else {
-            let error = response_body
-                .get("error")
-                .cloned()
-                .unwrap_or(response_body.clone());
-            json!({
-                "status": status,
-                "ok": false,
-                "error": error,
-            })
-        };
-
-        Ok(vec![Part::Data(result)])
+            .map_err(|e| anyhow::anyhow!(e))?;
+        header_map.insert(
+            reqwest::header::AUTHORIZATION,
+            format!("Bearer {}", access_token).parse().unwrap(),
+        );
     }
+
+    // 7. Build and send request
+    let client = reqwest::Client::new();
+    let method_str = input.method.to_string();
+    let mut request = match input.method {
+        HttpMethod::GET => client.get(&url),
+        HttpMethod::POST => client.post(&url),
+        HttpMethod::PUT => client.put(&url),
+        HttpMethod::PATCH => client.patch(&url),
+        HttpMethod::DELETE => client.delete(&url),
+    };
+
+    request = request.headers(header_map);
+
+    if let Some(ref body) = body {
+        if method_str != "GET" && method_str != "DELETE" {
+            if !has_content_type {
+                request = request.json(body);
+            } else {
+                let body_str = match body {
+                    serde_json::Value::String(s) => s.clone(),
+                    other => serde_json::to_string(other).unwrap_or_default(),
+                };
+                request = request.body(body_str);
+            }
+        }
+    }
+
+    let response = request
+        .timeout(std::time::Duration::from_secs(120))
+        .send()
+        .await?;
+
+    // 8. Read response
+    let status = response.status().as_u16();
+    let response_headers: HashMap<String, String> = response
+        .headers()
+        .iter()
+        .filter(|(k, _)| USEFUL_HEADERS.contains(&k.as_str()))
+        .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
+        .collect();
+
+    let content_type = response_headers
+        .get("content-type")
+        .map(|s| s.to_lowercase())
+        .unwrap_or_default();
+
+    let response_text = response.text().await.unwrap_or_default();
+
+    let body = if content_type.contains("application/json") {
+        serde_json::from_str(&response_text)
+            .unwrap_or_else(|_| serde_json::Value::String(response_text))
+    } else if response_text.is_empty() {
+        serde_json::Value::Null
+    } else {
+        serde_json::Value::String(response_text)
+    };
+
+    Ok(HttpRequestResponse {
+        status,
+        ok: (200..300).contains(&status),
+        headers: response_headers,
+        body,
+    })
 }

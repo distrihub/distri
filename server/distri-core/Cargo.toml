@@ -82,6 +82,7 @@ html-escape = "0.2"
 dotenv = "0.15"
 tempfile = "3.15.0"
 tracing-subscriber = { workspace = true }
+wiremock = "0.6"
 
 
 [dependencies.openssl]

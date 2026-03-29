@@ -1308,7 +1308,6 @@ impl AgentOrchestrator {
         &self,
     ) -> Result<Vec<Arc<dyn crate::tools::Tool>>, AgentError> {
         use crate::types::ToolsConfig;
-        use std::collections::HashMap;
 
         let builtin_tools = crate::tools::get_builtin_tools(
             self.workspace_filesystem.clone(),
@@ -1319,7 +1318,7 @@ impl AgentOrchestrator {
         // Create a ToolsConfig that includes all available tools
         let all_tools_config = ToolsConfig {
             builtin: vec![], // Don't include builtin tools by default for /toolcall
-            packages: HashMap::new(),
+            dynamic: vec![],
             mcp: Vec::new(),
             external: None,
         };

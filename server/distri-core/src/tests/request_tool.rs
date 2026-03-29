@@ -73,7 +73,6 @@ fn extract_vars_none() {
 #[test]
 fn extract_vars_ignores_lowercase() {
     let vars = extract_vars("$lowercase $UPPER");
-    // $lowercase doesn't match [A-Z][A-Z0-9_]*, only $UPPER does
     assert_eq!(vars, vec!["UPPER"]);
 }
 
@@ -237,4 +236,355 @@ fn substitute_value_nested_json() {
     assert_eq!(result["count"], 5);
     assert_eq!(result["tags"][0], "api.example.com");
     assert_eq!(result["tags"][1], "literal");
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Integration tests for execute_http_request with wiremock
+// ═══════════════════════════════════════════════════════════════
+
+use crate::tools::request::execute_http_request;
+use distri_types::http_request::{HttpMethod, HttpRequestInput};
+use wiremock::matchers::{header, method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
+
+/// Build a ResolveContext with env vars, an in-memory secret store,
+/// and an optional token fetcher.
+fn make_resolve_context(
+    env_vars: HashMap<String, String>,
+    secrets: Vec<(&str, &str)>,
+    token_fetcher: Option<crate::tools::inject_env::TokenFetcher>,
+) -> ResolveContext {
+    let secret_map: HashMap<String, String> = secrets
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+
+    let secret_store: Option<Arc<dyn SecretStore>> = if secret_map.is_empty() {
+        None
+    } else {
+        Some(Arc::new(InMemorySecretStore::new(secret_map)))
+    };
+
+    ResolveContext {
+        env_vars,
+        secret_store,
+        token_fetcher,
+    }
+}
+
+// ── Integration tests ──────────────────────────────────────────
+
+#[tokio::test]
+async fn test_request_tool_success_json() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/items"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "application/json")
+                .set_body_json(json!({"items": [1, 2, 3]})),
+        )
+        .mount(&server)
+        .await;
+
+    let ctx = make_resolve_context(HashMap::new(), vec![], None);
+    let input = HttpRequestInput {
+        url: format!("{}/api/items", server.uri()),
+        method: HttpMethod::GET,
+        headers: HashMap::new(),
+        body: None,
+    };
+
+    let result = execute_http_request(&input, &ctx).await.unwrap();
+
+    assert!(result.ok);
+    assert_eq!(result.status, 200);
+    assert_eq!(result.body["items"], json!([1, 2, 3]));
+    assert!(result.headers["content-type"].contains("application/json"));
+}
+
+#[tokio::test]
+async fn test_request_tool_error_response() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/items"))
+        .respond_with(
+            ResponseTemplate::new(400)
+                .insert_header("content-type", "application/json")
+                .set_body_json(json!({"error": "Invalid input", "code": "VALIDATION"})),
+        )
+        .mount(&server)
+        .await;
+
+    let ctx = make_resolve_context(HashMap::new(), vec![], None);
+    let input = HttpRequestInput {
+        url: format!("{}/api/items", server.uri()),
+        method: HttpMethod::POST,
+        headers: HashMap::new(),
+        body: Some(json!({"name": "test"})),
+    };
+
+    let result = execute_http_request(&input, &ctx).await.unwrap();
+
+    assert!(!result.ok);
+    assert_eq!(result.status, 400);
+    assert_eq!(result.body["error"], "Invalid input");
+    assert_eq!(result.body["code"], "VALIDATION");
+}
+
+#[tokio::test]
+async fn test_request_tool_non_json_response() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/error"))
+        .respond_with(
+            ResponseTemplate::new(500)
+                .insert_header("content-type", "text/html")
+                .set_body_string("<html>Internal Server Error</html>"),
+        )
+        .mount(&server)
+        .await;
+
+    let ctx = make_resolve_context(HashMap::new(), vec![], None);
+    let input = HttpRequestInput {
+        url: format!("{}/error", server.uri()),
+        method: HttpMethod::GET,
+        headers: HashMap::new(),
+        body: None,
+    };
+
+    let result = execute_http_request(&input, &ctx).await.unwrap();
+
+    assert!(!result.ok);
+    assert_eq!(result.status, 500);
+    assert!(result.body.as_str().unwrap().contains("Internal Server Error"));
+}
+
+#[tokio::test]
+async fn test_request_tool_unresolved_var_errors() {
+    let ctx = make_resolve_context(HashMap::new(), vec![], None);
+    let input = HttpRequestInput {
+        url: "https://example.com/api".to_string(),
+        method: HttpMethod::GET,
+        headers: HashMap::from([
+            ("Authorization".to_string(), "Bearer $MISSING_TOKEN".to_string()),
+        ]),
+        body: None,
+    };
+
+    let err = execute_http_request(&input, &ctx).await.unwrap_err();
+
+    let msg = format!("{}", err);
+    assert!(msg.contains("MISSING_TOKEN"), "error should mention the var name, got: {}", msg);
+}
+
+#[tokio::test]
+async fn test_request_tool_secret_resolution() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/secure"))
+        .and(header("Authorization", "Bearer secret-key-123"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "application/json")
+                .set_body_json(json!({"authenticated": true})),
+        )
+        .mount(&server)
+        .await;
+
+    let ctx = make_resolve_context(
+        HashMap::new(),
+        vec![("API_KEY", "secret-key-123")],
+        None,
+    );
+
+    let input = HttpRequestInput {
+        url: format!("{}/secure", server.uri()),
+        method: HttpMethod::GET,
+        headers: HashMap::from([
+            ("Authorization".to_string(), "Bearer $API_KEY".to_string()),
+        ]),
+        body: None,
+    };
+
+    let result = execute_http_request(&input, &ctx).await.unwrap();
+
+    assert!(result.ok);
+    assert_eq!(result.status, 200);
+    assert_eq!(result.body["authenticated"], true);
+}
+
+#[tokio::test]
+async fn test_request_tool_env_var_priority_over_secret() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/priority"))
+        .and(header("Authorization", "Bearer from-env"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "application/json")
+                .set_body_json(json!({"source": "env"})),
+        )
+        .mount(&server)
+        .await;
+
+    let ctx = make_resolve_context(
+        HashMap::from([("API_KEY".to_string(), "from-env".to_string())]),
+        vec![("API_KEY", "from-secret")],
+        None,
+    );
+
+    let input = HttpRequestInput {
+        url: format!("{}/priority", server.uri()),
+        method: HttpMethod::GET,
+        headers: HashMap::from([
+            ("Authorization".to_string(), "Bearer $API_KEY".to_string()),
+        ]),
+        body: None,
+    };
+
+    let result = execute_http_request(&input, &ctx).await.unwrap();
+
+    assert!(result.ok);
+    assert_eq!(result.status, 200);
+}
+
+#[tokio::test]
+async fn test_request_tool_connection_id_injects_bearer() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/oauth"))
+        .and(header("Authorization", "Bearer oauth-token-xyz"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "application/json")
+                .set_body_json(json!({"authed": true})),
+        )
+        .mount(&server)
+        .await;
+
+    let fetcher: crate::tools::inject_env::TokenFetcher = Arc::new(|_conn_id: String| {
+        Box::pin(async move {
+            Ok(("github".to_string(), "oauth-token-xyz".to_string()))
+        }) as Pin<Box<dyn std::future::Future<Output = Result<(String, String), String>> + Send>>
+    });
+
+    let ctx = make_resolve_context(HashMap::new(), vec![], Some(fetcher));
+
+    let input = HttpRequestInput {
+        url: format!("{}/oauth", server.uri()),
+        method: HttpMethod::GET,
+        headers: HashMap::from([
+            ("x-connection-id".to_string(), "github_conn".to_string()),
+        ]),
+        body: None,
+    };
+
+    let result = execute_http_request(&input, &ctx).await.unwrap();
+
+    assert!(result.ok);
+    assert_eq!(result.status, 200);
+    assert_eq!(result.body["authed"], true);
+}
+
+#[tokio::test]
+async fn test_request_tool_no_vars_plain_url() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/plain"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "application/json")
+                .set_body_json(json!({"hello": "world"})),
+        )
+        .mount(&server)
+        .await;
+
+    let ctx = make_resolve_context(HashMap::new(), vec![], None);
+    let input = HttpRequestInput {
+        url: format!("{}/plain", server.uri()),
+        method: HttpMethod::GET,
+        headers: HashMap::new(),
+        body: None,
+    };
+
+    let result = execute_http_request(&input, &ctx).await.unwrap();
+
+    assert!(result.ok);
+    assert_eq!(result.status, 200);
+    assert_eq!(result.body["hello"], "world");
+}
+
+#[tokio::test]
+async fn test_request_tool_plain_text_response_not_parsed_as_json() {
+    let server = MockServer::start().await;
+
+    // Response is valid JSON string but content-type is text/plain — should NOT parse
+    Mock::given(method("GET"))
+        .and(path("/text"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "text/plain")
+                .set_body_string(r#"{"this": "is text not json"}"#),
+        )
+        .mount(&server)
+        .await;
+
+    let ctx = make_resolve_context(HashMap::new(), vec![], None);
+    let input = HttpRequestInput {
+        url: format!("{}/text", server.uri()),
+        method: HttpMethod::GET,
+        headers: HashMap::new(),
+        body: None,
+    };
+
+    let result = execute_http_request(&input, &ctx).await.unwrap();
+
+    assert!(result.ok);
+    assert_eq!(result.status, 200);
+    // Body is a string, not parsed JSON object
+    assert!(result.body.is_string());
+    assert!(result.body.as_str().unwrap().contains("is text not json"));
+}
+
+#[tokio::test]
+async fn test_request_tool_response_headers_filtered() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/headers"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "application/json")
+                .insert_header("x-request-id", "req-abc-123")
+                .insert_header("x-powered-by", "should-be-filtered")
+                .insert_header("cache-control", "should-be-filtered")
+                .set_body_json(json!({"ok": true})),
+        )
+        .mount(&server)
+        .await;
+
+    let ctx = make_resolve_context(HashMap::new(), vec![], None);
+    let input = HttpRequestInput {
+        url: format!("{}/headers", server.uri()),
+        method: HttpMethod::GET,
+        headers: HashMap::new(),
+        body: None,
+    };
+
+    let result = execute_http_request(&input, &ctx).await.unwrap();
+
+    // Useful headers included
+    assert!(result.headers.get("content-type").is_some());
+    assert_eq!(result.headers["x-request-id"], "req-abc-123");
+    // Noise headers filtered out
+    assert!(result.headers.get("x-powered-by").is_none());
+    assert!(result.headers.get("cache-control").is_none());
 }

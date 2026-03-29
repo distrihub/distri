@@ -26,7 +26,7 @@ use commands::{
 use config::resolve_workspace;
 use message::{build_connections_context, build_message_params};
 use threads::resolve_resume_arg;
-use tools::{register_api_request_handler, register_approval_handler};
+use tools::register_approval_handler;
 
 #[derive(Parser, Debug, Clone)]
 #[clap(author, version, about)]
@@ -40,7 +40,7 @@ struct Cli {
     config: Option<PathBuf>,
 
     /// Verbose output (forwarded to distri-server for serve)
-    #[clap(long, short)]
+    #[clap(long, short, global = true)]
     verbose: bool,
 
     #[clap(subcommand)]
@@ -291,6 +291,18 @@ pub(crate) enum WorkflowCommands {
     List,
 }
 
+/// Typed context passed via `--context` JSON.
+/// Accepts `envs`, `env_vars`, and `secrets` — all merge into env_vars.
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+struct RunContext {
+    #[serde(default)]
+    envs: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    env_vars: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    secrets: std::collections::HashMap<String, String>,
+}
+
 pub(crate) const COLOR_RESET: &str = "\x1b[0m";
 pub(crate) const COLOR_BRIGHT_GREEN: &str = "\x1b[92m";
 pub(crate) const COLOR_BRIGHT_MAGENTA: &str = "\x1b[95m";
@@ -378,47 +390,28 @@ async fn main() -> Result<()> {
                 params.message.context_id = Some(tid);
             }
 
-            // Merge --context envs/secrets into metadata.env_vars
+            // Merge --context into metadata.env_vars for the server
             if let Some(ctx_json) = context {
-                if let Ok(ctx) = serde_json::from_str::<serde_json::Value>(&ctx_json) {
+                let ctx: RunContext = serde_json::from_str(&ctx_json)
+                    .unwrap_or_else(|e| {
+                        eprintln!("Warning: failed to parse --context: {}", e);
+                        RunContext::default()
+                    });
+
+                let mut all_vars = std::collections::HashMap::<String, String>::new();
+                all_vars.extend(ctx.envs);
+                all_vars.extend(ctx.env_vars);
+                all_vars.extend(ctx.secrets);
+
+                if !all_vars.is_empty() {
                     let meta = params.metadata.get_or_insert(serde_json::json!({}));
-                    // envs → env_vars in metadata
-                    if let Some(envs) = ctx.get("envs").and_then(|v| v.as_object()) {
-                        let env_vars = meta
-                            .as_object_mut()
-                            .unwrap()
-                            .entry("env_vars")
-                            .or_insert(serde_json::json!({}));
-                        if let Some(ev) = env_vars.as_object_mut() {
-                            for (k, v) in envs {
-                                if let Some(s) = v.as_str() {
-                                    ev.insert(k.clone(), serde_json::Value::String(s.to_string()));
-                                }
-                            }
-                        }
-                    }
-                    // secrets → also env_vars (secrets are just env_vars that shouldn't be logged)
-                    if let Some(secrets) = ctx.get("secrets").and_then(|v| v.as_object()) {
-                        let env_vars = meta
-                            .as_object_mut()
-                            .unwrap()
-                            .entry("env_vars")
-                            .or_insert(serde_json::json!({}));
-                        if let Some(ev) = env_vars.as_object_mut() {
-                            for (k, v) in secrets {
-                                if let Some(s) = v.as_str() {
-                                    ev.insert(k.clone(), serde_json::Value::String(s.to_string()));
-                                }
-                            }
-                        }
-                    }
+                    meta["env_vars"] = serde_json::to_value(&all_vars).unwrap();
                 }
             }
 
             println!("Streaming agent '{}' via {}", agent_name, base_url);
             let registry = app.registry();
             register_approval_handler(&registry);
-            register_api_request_handler(&registry, Distri::from_config(config.clone()));
             let stream_config = config.clone().with_timeout(600);
             let http_client = stream_config.build_http_client()?;
             let client = AgentStreamClient::from_config(config.clone())
