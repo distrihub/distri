@@ -239,23 +239,21 @@ fn substitute_value_nested_json() {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// Integration tests for HttpRequestTool with wiremock
+// Integration tests for execute_http_request with wiremock
 // ═══════════════════════════════════════════════════════════════
 
-use crate::agent::ExecutorContext;
-use crate::tools::request::HttpRequestTool;
-use crate::tools::ExecutorContextTool;
-use distri_types::{Part, ToolCall};
+use crate::tools::request::execute_http_request;
+use distri_types::http_request::{HttpMethod, HttpRequestInput};
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-/// Build a minimal ExecutorContext with env vars, an in-memory secret store,
+/// Build a ResolveContext with env vars, an in-memory secret store,
 /// and an optional token fetcher.
-async fn make_executor_context(
+fn make_resolve_context(
     env_vars: HashMap<String, String>,
     secrets: Vec<(&str, &str)>,
     token_fetcher: Option<crate::tools::inject_env::TokenFetcher>,
-) -> Arc<ExecutorContext> {
+) -> ResolveContext {
     let secret_map: HashMap<String, String> = secrets
         .into_iter()
         .map(|(k, v)| (k.to_string(), v.to_string()))
@@ -267,50 +265,10 @@ async fn make_executor_context(
         Some(Arc::new(InMemorySecretStore::new(secret_map)))
     };
 
-    let stores = distri_stores::InitializedStores {
+    ResolveContext {
+        env_vars,
         secret_store,
-        ..make_dummy_stores().await
-    };
-
-    let mut ctx = ExecutorContext::new_minimal_for_test(stores);
-    *ctx.env_vars.write().await = env_vars;
-    ctx.token_fetcher = token_fetcher;
-    Arc::new(ctx)
-}
-
-/// Create dummy InitializedStores using in-memory SQLite for required fields.
-async fn make_dummy_stores() -> distri_stores::InitializedStores {
-    use distri_stores::StoreBuilder;
-    use distri_types::configuration::{DbConnectionConfig, MetadataStoreConfig, StoreConfig};
-
-    let db_name = uuid::Uuid::new_v4();
-    let db_url = format!("file:{}?mode=memory&cache=shared", db_name);
-    let config = StoreConfig {
-        metadata: MetadataStoreConfig {
-            db_config: Some(DbConnectionConfig {
-                database_url: db_url,
-                max_connections: 1,
-            }),
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-
-    StoreBuilder::new(config).build().await.unwrap()
-}
-
-fn make_tool_call(input: serde_json::Value) -> ToolCall {
-    ToolCall {
-        tool_call_id: "test-call-1".to_string(),
-        tool_name: "http_request".to_string(),
-        input,
-    }
-}
-
-fn extract_data(parts: Vec<Part>) -> serde_json::Value {
-    match &parts[0] {
-        Part::Data(v) => v.clone(),
-        other => panic!("expected Part::Data, got {:?}", other),
+        token_fetcher,
     }
 }
 
@@ -330,24 +288,20 @@ async fn test_request_tool_success_json() {
         .mount(&server)
         .await;
 
-    let ctx = make_executor_context(HashMap::new(), vec![], None).await;
-    let tool_call = make_tool_call(json!({
-        "url": format!("{}/api/items", server.uri()),
-        "method": "GET"
-    }));
+    let ctx = make_resolve_context(HashMap::new(), vec![], None);
+    let input = HttpRequestInput {
+        url: format!("{}/api/items", server.uri()),
+        method: HttpMethod::GET,
+        headers: HashMap::new(),
+        body: None,
+    };
 
-    let parts = HttpRequestTool
-        .execute_with_executor_context(tool_call, ctx)
-        .await
-        .unwrap();
-    let result = extract_data(parts);
+    let result = execute_http_request(&input, &ctx).await.unwrap();
 
-    assert_eq!(result["ok"], true);
-    assert_eq!(result["status"], 200);
-    // Body returned as-is — no envelope unwrapping
-    assert_eq!(result["body"]["items"], json!([1, 2, 3]));
-    // Response headers included
-    assert!(result["headers"]["content-type"].as_str().unwrap().contains("application/json"));
+    assert!(result.ok);
+    assert_eq!(result.status, 200);
+    assert_eq!(result.body["items"], json!([1, 2, 3]));
+    assert!(result.headers["content-type"].contains("application/json"));
 }
 
 #[tokio::test]
@@ -364,24 +318,20 @@ async fn test_request_tool_error_response() {
         .mount(&server)
         .await;
 
-    let ctx = make_executor_context(HashMap::new(), vec![], None).await;
-    let tool_call = make_tool_call(json!({
-        "url": format!("{}/api/items", server.uri()),
-        "method": "POST",
-        "body": {"name": "test"}
-    }));
+    let ctx = make_resolve_context(HashMap::new(), vec![], None);
+    let input = HttpRequestInput {
+        url: format!("{}/api/items", server.uri()),
+        method: HttpMethod::POST,
+        headers: HashMap::new(),
+        body: Some(json!({"name": "test"})),
+    };
 
-    let parts = HttpRequestTool
-        .execute_with_executor_context(tool_call, ctx)
-        .await
-        .unwrap();
-    let result = extract_data(parts);
+    let result = execute_http_request(&input, &ctx).await.unwrap();
 
-    assert_eq!(result["ok"], false);
-    assert_eq!(result["status"], 400);
-    // Body returned as-is — not unwrapped
-    assert_eq!(result["body"]["error"], "Invalid input");
-    assert_eq!(result["body"]["code"], "VALIDATION");
+    assert!(!result.ok);
+    assert_eq!(result.status, 400);
+    assert_eq!(result.body["error"], "Invalid input");
+    assert_eq!(result.body["code"], "VALIDATION");
 }
 
 #[tokio::test]
@@ -398,42 +348,34 @@ async fn test_request_tool_non_json_response() {
         .mount(&server)
         .await;
 
-    let ctx = make_executor_context(HashMap::new(), vec![], None).await;
-    let tool_call = make_tool_call(json!({
-        "url": format!("{}/error", server.uri()),
-        "method": "GET"
-    }));
+    let ctx = make_resolve_context(HashMap::new(), vec![], None);
+    let input = HttpRequestInput {
+        url: format!("{}/error", server.uri()),
+        method: HttpMethod::GET,
+        headers: HashMap::new(),
+        body: None,
+    };
 
-    let parts = HttpRequestTool
-        .execute_with_executor_context(tool_call, ctx)
-        .await
-        .unwrap();
-    let result = extract_data(parts);
+    let result = execute_http_request(&input, &ctx).await.unwrap();
 
-    assert_eq!(result["ok"], false);
-    assert_eq!(result["status"], 500);
-    // Non-JSON body returned as string
-    assert!(result["body"]
-        .as_str()
-        .unwrap()
-        .contains("Internal Server Error"));
+    assert!(!result.ok);
+    assert_eq!(result.status, 500);
+    assert!(result.body.as_str().unwrap().contains("Internal Server Error"));
 }
 
 #[tokio::test]
 async fn test_request_tool_unresolved_var_errors() {
-    let ctx = make_executor_context(HashMap::new(), vec![], None).await;
-    let tool_call = make_tool_call(json!({
-        "url": "https://example.com/api",
-        "method": "GET",
-        "headers": {
-            "Authorization": "Bearer $MISSING_TOKEN"
-        }
-    }));
+    let ctx = make_resolve_context(HashMap::new(), vec![], None);
+    let input = HttpRequestInput {
+        url: "https://example.com/api".to_string(),
+        method: HttpMethod::GET,
+        headers: HashMap::from([
+            ("Authorization".to_string(), "Bearer $MISSING_TOKEN".to_string()),
+        ]),
+        body: None,
+    };
 
-    let err = HttpRequestTool
-        .execute_with_executor_context(tool_call, ctx)
-        .await
-        .unwrap_err();
+    let err = execute_http_request(&input, &ctx).await.unwrap_err();
 
     let msg = format!("{}", err);
     assert!(msg.contains("MISSING_TOKEN"), "error should mention the var name, got: {}", msg);
@@ -454,30 +396,26 @@ async fn test_request_tool_secret_resolution() {
         .mount(&server)
         .await;
 
-    let ctx = make_executor_context(
+    let ctx = make_resolve_context(
         HashMap::new(),
         vec![("API_KEY", "secret-key-123")],
         None,
-    )
-    .await;
+    );
 
-    let tool_call = make_tool_call(json!({
-        "url": format!("{}/secure", server.uri()),
-        "method": "GET",
-        "headers": {
-            "Authorization": "Bearer $API_KEY"
-        }
-    }));
+    let input = HttpRequestInput {
+        url: format!("{}/secure", server.uri()),
+        method: HttpMethod::GET,
+        headers: HashMap::from([
+            ("Authorization".to_string(), "Bearer $API_KEY".to_string()),
+        ]),
+        body: None,
+    };
 
-    let parts = HttpRequestTool
-        .execute_with_executor_context(tool_call, ctx)
-        .await
-        .unwrap();
-    let result = extract_data(parts);
+    let result = execute_http_request(&input, &ctx).await.unwrap();
 
-    assert_eq!(result["ok"], true);
-    assert_eq!(result["status"], 200);
-    assert_eq!(result["body"]["authenticated"], true);
+    assert!(result.ok);
+    assert_eq!(result.status, 200);
+    assert_eq!(result.body["authenticated"], true);
 }
 
 #[tokio::test]
@@ -495,29 +433,25 @@ async fn test_request_tool_env_var_priority_over_secret() {
         .mount(&server)
         .await;
 
-    let ctx = make_executor_context(
+    let ctx = make_resolve_context(
         HashMap::from([("API_KEY".to_string(), "from-env".to_string())]),
         vec![("API_KEY", "from-secret")],
         None,
-    )
-    .await;
+    );
 
-    let tool_call = make_tool_call(json!({
-        "url": format!("{}/priority", server.uri()),
-        "method": "GET",
-        "headers": {
-            "Authorization": "Bearer $API_KEY"
-        }
-    }));
+    let input = HttpRequestInput {
+        url: format!("{}/priority", server.uri()),
+        method: HttpMethod::GET,
+        headers: HashMap::from([
+            ("Authorization".to_string(), "Bearer $API_KEY".to_string()),
+        ]),
+        body: None,
+    };
 
-    let parts = HttpRequestTool
-        .execute_with_executor_context(tool_call, ctx)
-        .await
-        .unwrap();
-    let result = extract_data(parts);
+    let result = execute_http_request(&input, &ctx).await.unwrap();
 
-    assert_eq!(result["ok"], true);
-    assert_eq!(result["status"], 200);
+    assert!(result.ok);
+    assert_eq!(result.status, 200);
 }
 
 #[tokio::test]
@@ -541,25 +475,22 @@ async fn test_request_tool_connection_id_injects_bearer() {
         }) as Pin<Box<dyn std::future::Future<Output = Result<(String, String), String>> + Send>>
     });
 
-    let ctx = make_executor_context(HashMap::new(), vec![], Some(fetcher)).await;
+    let ctx = make_resolve_context(HashMap::new(), vec![], Some(fetcher));
 
-    let tool_call = make_tool_call(json!({
-        "url": format!("{}/oauth", server.uri()),
-        "method": "GET",
-        "headers": {
-            "x-connection-id": "github_conn"
-        }
-    }));
+    let input = HttpRequestInput {
+        url: format!("{}/oauth", server.uri()),
+        method: HttpMethod::GET,
+        headers: HashMap::from([
+            ("x-connection-id".to_string(), "github_conn".to_string()),
+        ]),
+        body: None,
+    };
 
-    let parts = HttpRequestTool
-        .execute_with_executor_context(tool_call, ctx)
-        .await
-        .unwrap();
-    let result = extract_data(parts);
+    let result = execute_http_request(&input, &ctx).await.unwrap();
 
-    assert_eq!(result["ok"], true);
-    assert_eq!(result["status"], 200);
-    assert_eq!(result["body"]["authed"], true);
+    assert!(result.ok);
+    assert_eq!(result.status, 200);
+    assert_eq!(result.body["authed"], true);
 }
 
 #[tokio::test]
@@ -576,21 +507,19 @@ async fn test_request_tool_no_vars_plain_url() {
         .mount(&server)
         .await;
 
-    let ctx = make_executor_context(HashMap::new(), vec![], None).await;
-    let tool_call = make_tool_call(json!({
-        "url": format!("{}/plain", server.uri()),
-        "method": "GET"
-    }));
+    let ctx = make_resolve_context(HashMap::new(), vec![], None);
+    let input = HttpRequestInput {
+        url: format!("{}/plain", server.uri()),
+        method: HttpMethod::GET,
+        headers: HashMap::new(),
+        body: None,
+    };
 
-    let parts = HttpRequestTool
-        .execute_with_executor_context(tool_call, ctx)
-        .await
-        .unwrap();
-    let result = extract_data(parts);
+    let result = execute_http_request(&input, &ctx).await.unwrap();
 
-    assert_eq!(result["ok"], true);
-    assert_eq!(result["status"], 200);
-    assert_eq!(result["body"]["hello"], "world");
+    assert!(result.ok);
+    assert_eq!(result.status, 200);
+    assert_eq!(result.body["hello"], "world");
 }
 
 #[tokio::test]
@@ -608,23 +537,21 @@ async fn test_request_tool_plain_text_response_not_parsed_as_json() {
         .mount(&server)
         .await;
 
-    let ctx = make_executor_context(HashMap::new(), vec![], None).await;
-    let tool_call = make_tool_call(json!({
-        "url": format!("{}/text", server.uri()),
-        "method": "GET"
-    }));
+    let ctx = make_resolve_context(HashMap::new(), vec![], None);
+    let input = HttpRequestInput {
+        url: format!("{}/text", server.uri()),
+        method: HttpMethod::GET,
+        headers: HashMap::new(),
+        body: None,
+    };
 
-    let parts = HttpRequestTool
-        .execute_with_executor_context(tool_call, ctx)
-        .await
-        .unwrap();
-    let result = extract_data(parts);
+    let result = execute_http_request(&input, &ctx).await.unwrap();
 
-    assert_eq!(result["ok"], true);
-    assert_eq!(result["status"], 200);
+    assert!(result.ok);
+    assert_eq!(result.status, 200);
     // Body is a string, not parsed JSON object
-    assert!(result["body"].is_string());
-    assert!(result["body"].as_str().unwrap().contains("is text not json"));
+    assert!(result.body.is_string());
+    assert!(result.body.as_str().unwrap().contains("is text not json"));
 }
 
 #[tokio::test]
@@ -644,23 +571,20 @@ async fn test_request_tool_response_headers_filtered() {
         .mount(&server)
         .await;
 
-    let ctx = make_executor_context(HashMap::new(), vec![], None).await;
-    let tool_call = make_tool_call(json!({
-        "url": format!("{}/headers", server.uri()),
-        "method": "GET"
-    }));
+    let ctx = make_resolve_context(HashMap::new(), vec![], None);
+    let input = HttpRequestInput {
+        url: format!("{}/headers", server.uri()),
+        method: HttpMethod::GET,
+        headers: HashMap::new(),
+        body: None,
+    };
 
-    let parts = HttpRequestTool
-        .execute_with_executor_context(tool_call, ctx)
-        .await
-        .unwrap();
-    let result = extract_data(parts);
+    let result = execute_http_request(&input, &ctx).await.unwrap();
 
-    let headers = &result["headers"];
     // Useful headers included
-    assert!(headers["content-type"].as_str().is_some());
-    assert_eq!(headers["x-request-id"], "req-abc-123");
+    assert!(result.headers.get("content-type").is_some());
+    assert_eq!(result.headers["x-request-id"], "req-abc-123");
     // Noise headers filtered out
-    assert!(headers.get("x-powered-by").is_none() || headers["x-powered-by"].is_null());
-    assert!(headers.get("cache-control").is_none() || headers["cache-control"].is_null());
+    assert!(result.headers.get("x-powered-by").is_none());
+    assert!(result.headers.get("cache-control").is_none());
 }
