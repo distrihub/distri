@@ -54,12 +54,16 @@ impl ExternalToolRegistry {
         call: &ToolCall,
         event: &AgentEvent,
     ) -> Option<Result<ToolResponse>> {
-        let guard = self.handlers.read().ok()?;
-        let key = (agent.to_string(), tool_name.to_string());
-        let handler = guard
-            .get(&key)
-            .or_else(|| guard.get(&("*".to_string(), tool_name.to_string())))?
-            .clone();
+        // Clone the handler before dropping the RwLockReadGuard so the guard
+        // is not held across the .await (RwLockReadGuard is !Send).
+        let handler = {
+            let guard = self.handlers.read().ok()?;
+            let key = (agent.to_string(), tool_name.to_string());
+            guard
+                .get(&key)
+                .or_else(|| guard.get(&("*".to_string(), tool_name.to_string())))?
+                .clone()
+        };
         Some(handler(call.clone(), event.clone()).await)
     }
 
