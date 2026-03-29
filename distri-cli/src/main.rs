@@ -153,6 +153,9 @@ enum AgentsCommands {
     Delete {
         #[clap(help = "Agent name or UUID")]
         agent: String,
+        /// Skip confirmation prompt
+        #[clap(long, short, help = "Skip confirmation prompt")]
+        yes: bool,
     },
     /// Push agent definition(s) to the server from a file or directory
     Push {
@@ -352,7 +355,9 @@ async fn main() -> Result<()> {
             task,
             context,
             resume,
+            verbose: run_verbose,
         } => {
+            let verbose = cli.verbose || run_verbose;
             let agent_name = agent.unwrap_or_else(|| "distri".to_string());
             // Resolve agent name to UUID for cloud compatibility.
             // Cloud middleware requires UUID for proper workspace context (model settings, secrets).
@@ -425,7 +430,7 @@ async fn main() -> Result<()> {
                 &client,
                 &stream_agent_id,
                 params,
-                cli.verbose,
+                verbose,
                 Some(agent_name.clone()),
                 true,
             )
@@ -437,7 +442,16 @@ async fn main() -> Result<()> {
                     println!("{} - {}", agent.get_name(), agent.get_description());
                 }
             }
-            AgentsCommands::Delete { agent } => {
+            AgentsCommands::Delete { agent, yes } => {
+                if !yes {
+                    eprint!("Delete agent '{}'? This cannot be undone. [y/N] ", agent);
+                    let mut input = String::new();
+                    std::io::stdin().read_line(&mut input).ok();
+                    if !input.trim().eq_ignore_ascii_case("y") {
+                        println!("Aborted.");
+                        return Ok(());
+                    }
+                }
                 match client.delete_agent(&agent).await {
                     Ok(()) => println!("Agent '{}' deleted successfully.", agent),
                     Err(err) => {
