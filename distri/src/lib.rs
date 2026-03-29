@@ -6,7 +6,6 @@ pub mod config;
 mod local_tools;
 mod printer;
 mod renderers;
-pub mod secret_cache;
 
 /// Workflow engine — define, execute, and track multi-step workflows.
 pub mod workflow {
@@ -40,7 +39,6 @@ pub use distri_types::{
 };
 pub use client_http_request::register_client_http_request;
 pub use local_tools::register_local_filesystem_tools;
-pub use secret_cache::SecretCache;
 pub use printer::{EventPrinter, print_stream, print_stream_verbose};
 
 #[cfg(test)]

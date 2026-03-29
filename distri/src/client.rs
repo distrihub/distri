@@ -2395,24 +2395,23 @@ impl Distri {
         }
     }
 
-    pub async fn resolve_secrets(
+    /// Proxy an HTTP request through the server for secret resolution.
+    ///
+    /// The server resolves `$VAR_NAME` references from its secret store,
+    /// handles `x-connection-id` OAuth injection, executes the request,
+    /// and returns the response. Secrets never leave the server.
+    pub async fn proxy_request(
         &self,
-        keys: &[&str],
-    ) -> Result<HashMap<String, String>, ClientError> {
-        let url = format!("{}/secrets/resolve", self.base_url);
-        let body = serde_json::json!({ "keys": keys });
-        let resp = self.http.post(&url).json(&body).send().await?;
+        input: &distri_types::http_request::HttpRequestInput,
+    ) -> Result<distri_types::http_request::HttpRequestResponse, ClientError> {
+        let url = format!("{}/request", self.base_url);
+        let resp = self.http.post(&url).json(input).send().await?;
         if resp.status().is_success() {
-            #[derive(serde::Deserialize)]
-            struct ResolveResponse {
-                resolved: HashMap<String, String>,
-            }
-            let result: ResolveResponse = resp.json().await?;
-            Ok(result.resolved)
+            Ok(resp.json().await?)
         } else {
             let text = resp.text().await.unwrap_or_default();
             Err(ClientError::InvalidResponse(format!(
-                "failed to resolve secrets: {}",
+                "request proxy failed: {}",
                 text,
             )))
         }
