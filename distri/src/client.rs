@@ -2093,6 +2093,22 @@ impl Distri {
         }
     }
 
+    pub async fn delete_agent(&self, id: &str) -> Result<(), ClientError> {
+        let url = format!("{}/agents/{}", self.base_url, id);
+        let resp = self.http.delete(&url).send().await?;
+        if resp.status().is_success() {
+            Ok(())
+        } else if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            Err(ClientError::InvalidResponse("agent not found".to_string()))
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!(
+                "failed to delete agent: {}",
+                text
+            )))
+        }
+    }
+
     // ========== Connections API ==========
 
     pub async fn list_connections(&self) -> Result<Vec<ConnectionSummary>, ClientError> {
