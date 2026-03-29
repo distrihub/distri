@@ -1609,6 +1609,7 @@ dependencies = [
  "dashmap 6.1.0",
  "distri-a2a",
  "distri-filesystem",
+ "distri-formatter",
  "distri-types",
  "distri-workflow",
  "flate2",
@@ -1775,6 +1776,16 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "distri-formatter"
+version = "0.3.6"
+dependencies = [
+ "chrono",
+ "distri-types",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
