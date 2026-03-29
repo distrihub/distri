@@ -120,7 +120,7 @@ enum Commands {
     },
 
     /// Workflow execution commands
-    Workflow {
+    Workflows {
         #[clap(subcommand)]
         command: WorkflowCommands,
     },
@@ -149,6 +149,11 @@ enum Commands {
 enum AgentsCommands {
     /// List agents from the server
     List,
+    /// Delete an agent by name or ID
+    Delete {
+        #[clap(help = "Agent name or UUID")]
+        agent: String,
+    },
     /// Push agent definition(s) to the server from a file or directory
     Push {
         #[clap(help = "Path to an agent markdown file or directory of files")]
@@ -262,6 +267,9 @@ pub(crate) enum WorkflowCommands {
         /// JSON input to pass to the workflow context
         #[clap(long, help = "JSON input for workflow context")]
         input: Option<String>,
+        /// Entry point ID to start from (skips earlier steps)
+        #[clap(long, help = "Entry point ID to start from")]
+        entry: Option<String>,
     },
     /// Show workflow status (from local file)
     Status {
@@ -429,6 +437,15 @@ async fn main() -> Result<()> {
                     println!("{} - {}", agent.get_name(), agent.get_description());
                 }
             }
+            AgentsCommands::Delete { agent } => {
+                match client.delete_agent(&agent).await {
+                    Ok(()) => println!("Agent '{}' deleted successfully.", agent),
+                    Err(err) => {
+                        eprintln!("Failed to delete agent '{}': {}", agent, err);
+                        std::process::exit(1);
+                    }
+                }
+            }
             AgentsCommands::Push { path, all } => {
                 if path.is_dir() && !all {
                     eprintln!(
@@ -525,7 +542,7 @@ async fn main() -> Result<()> {
         Commands::Threads { command } => {
             threads::handle_threads_command(&client, command).await?;
         }
-        Commands::Workflow { command } => {
+        Commands::Workflows { command } => {
             handle_workflow_command(&client, command).await?;
         }
         Commands::Serve { .. } => unreachable!("serve handled earlier"),
