@@ -26,7 +26,7 @@ use commands::{
 use config::resolve_workspace;
 use message::{build_connections_context, build_message_params};
 use threads::resolve_resume_arg;
-use tools::register_approval_handler;
+use tools::{register_approval_handler, register_http_request_handler};
 
 #[derive(Parser, Debug, Clone)]
 #[clap(author, version, about)]
@@ -379,6 +379,7 @@ async fn main() -> Result<()> {
             }
 
             // Merge --context envs/secrets into metadata.env_vars
+            let mut client_env_vars = std::collections::HashMap::<String, String>::new();
             if let Some(ctx_json) = context {
                 if let Ok(ctx) = serde_json::from_str::<serde_json::Value>(&ctx_json) {
                     let meta = params.metadata.get_or_insert(serde_json::json!({}));
@@ -393,6 +394,7 @@ async fn main() -> Result<()> {
                             for (k, v) in envs {
                                 if let Some(s) = v.as_str() {
                                     ev.insert(k.clone(), serde_json::Value::String(s.to_string()));
+                                    client_env_vars.insert(k.clone(), s.to_string());
                                 }
                             }
                         }
@@ -408,6 +410,7 @@ async fn main() -> Result<()> {
                             for (k, v) in secrets {
                                 if let Some(s) = v.as_str() {
                                     ev.insert(k.clone(), serde_json::Value::String(s.to_string()));
+                                    client_env_vars.insert(k.clone(), s.to_string());
                                 }
                             }
                         }
@@ -418,6 +421,7 @@ async fn main() -> Result<()> {
             println!("Streaming agent '{}' via {}", agent_name, base_url);
             let registry = app.registry();
             register_approval_handler(&registry);
+            register_http_request_handler(&registry, &config, client_env_vars);
             let stream_config = config.clone().with_timeout(600);
             let http_client = stream_config.build_http_client()?;
             let client = AgentStreamClient::from_config(config.clone())
