@@ -81,7 +81,7 @@ impl ExecutorContextTool for InjectConnectionEnvTool {
                 AgentError::ToolExecution("Missing 'connection_id' parameter".to_string())
             })?;
 
-        // Build ResolveContext from ExecutorContext (same pattern as RequestTool)
+        // Build ResolveContext from ExecutorContext (same pattern as HttpRequestTool)
         let env_vars = context.env_vars.read().await.clone();
         let secret_store = context
             .stores

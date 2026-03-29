@@ -43,7 +43,7 @@ Use the `distri_platform` tool to manage platform resources. Pass `action` and p
 | `connect` | `provider, scopes?, additional_scopes?` | Connect a provider or expand scopes |
 | `get_connection_usage` | `connection_id` | Get API docs and examples for a connection |
 
-To make authenticated API calls to connected services, use the `request` tool with `x-connection-id` header:
+To make authenticated API calls to connected services, use the `http_request` tool with `x-connection-id` header. Best for short text/JSON API responses — for large responses or binary data, use a browsr shell session instead.
 
 ```
 curl -X GET https://sheets.googleapis.com/v4/spreadsheets \

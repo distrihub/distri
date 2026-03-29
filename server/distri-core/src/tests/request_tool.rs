@@ -73,7 +73,6 @@ fn extract_vars_none() {
 #[test]
 fn extract_vars_ignores_lowercase() {
     let vars = extract_vars("$lowercase $UPPER");
-    // $lowercase doesn't match [A-Z][A-Z0-9_]*, only $UPPER does
     assert_eq!(vars, vec!["UPPER"]);
 }
 
@@ -240,11 +239,11 @@ fn substitute_value_nested_json() {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// Integration tests for RequestTool with wiremock
+// Integration tests for HttpRequestTool with wiremock
 // ═══════════════════════════════════════════════════════════════
 
 use crate::agent::ExecutorContext;
-use crate::tools::request::RequestTool;
+use crate::tools::request::HttpRequestTool;
 use crate::tools::ExecutorContextTool;
 use distri_types::{Part, ToolCall};
 use wiremock::matchers::{header, method, path};
@@ -268,8 +267,6 @@ async fn make_executor_context(
         Some(Arc::new(InMemorySecretStore::new(secret_map)))
     };
 
-    // Build a minimal InitializedStores with just the secret store.
-    // We use Default for the other stores since they aren't needed by RequestTool.
     let stores = distri_stores::InitializedStores {
         secret_store,
         ..make_dummy_stores().await
@@ -305,7 +302,7 @@ async fn make_dummy_stores() -> distri_stores::InitializedStores {
 fn make_tool_call(input: serde_json::Value) -> ToolCall {
     ToolCall {
         tool_call_id: "test-call-1".to_string(),
-        tool_name: "request".to_string(),
+        tool_name: "http_request".to_string(),
         input,
     }
 }
@@ -327,7 +324,8 @@ async fn test_request_tool_success_json() {
         .and(path("/api/items"))
         .respond_with(
             ResponseTemplate::new(200)
-                .set_body_json(json!({"data": [{"id": 1, "name": "item1"}]})),
+                .insert_header("content-type", "application/json")
+                .set_body_json(json!({"items": [1, 2, 3]})),
         )
         .mount(&server)
         .await;
@@ -338,7 +336,7 @@ async fn test_request_tool_success_json() {
         "method": "GET"
     }));
 
-    let parts = RequestTool
+    let parts = HttpRequestTool
         .execute_with_executor_context(tool_call, ctx)
         .await
         .unwrap();
@@ -346,7 +344,10 @@ async fn test_request_tool_success_json() {
 
     assert_eq!(result["ok"], true);
     assert_eq!(result["status"], 200);
-    assert_eq!(result["data"], json!([{"id": 1, "name": "item1"}]));
+    // Body returned as-is — no envelope unwrapping
+    assert_eq!(result["body"]["items"], json!([1, 2, 3]));
+    // Response headers included
+    assert!(result["headers"]["content-type"].as_str().unwrap().contains("application/json"));
 }
 
 #[tokio::test]
@@ -357,7 +358,8 @@ async fn test_request_tool_error_response() {
         .and(path("/api/items"))
         .respond_with(
             ResponseTemplate::new(400)
-                .set_body_json(json!({"error": "Invalid input"})),
+                .insert_header("content-type", "application/json")
+                .set_body_json(json!({"error": "Invalid input", "code": "VALIDATION"})),
         )
         .mount(&server)
         .await;
@@ -369,7 +371,7 @@ async fn test_request_tool_error_response() {
         "body": {"name": "test"}
     }));
 
-    let parts = RequestTool
+    let parts = HttpRequestTool
         .execute_with_executor_context(tool_call, ctx)
         .await
         .unwrap();
@@ -377,7 +379,9 @@ async fn test_request_tool_error_response() {
 
     assert_eq!(result["ok"], false);
     assert_eq!(result["status"], 400);
-    assert_eq!(result["error"], "Invalid input");
+    // Body returned as-is — not unwrapped
+    assert_eq!(result["body"]["error"], "Invalid input");
+    assert_eq!(result["body"]["code"], "VALIDATION");
 }
 
 #[tokio::test]
@@ -388,6 +392,7 @@ async fn test_request_tool_non_json_response() {
         .and(path("/error"))
         .respond_with(
             ResponseTemplate::new(500)
+                .insert_header("content-type", "text/html")
                 .set_body_string("<html>Internal Server Error</html>"),
         )
         .mount(&server)
@@ -399,7 +404,7 @@ async fn test_request_tool_non_json_response() {
         "method": "GET"
     }));
 
-    let parts = RequestTool
+    let parts = HttpRequestTool
         .execute_with_executor_context(tool_call, ctx)
         .await
         .unwrap();
@@ -407,7 +412,8 @@ async fn test_request_tool_non_json_response() {
 
     assert_eq!(result["ok"], false);
     assert_eq!(result["status"], 500);
-    assert!(result["error"]
+    // Non-JSON body returned as string
+    assert!(result["body"]
         .as_str()
         .unwrap()
         .contains("Internal Server Error"));
@@ -415,18 +421,16 @@ async fn test_request_tool_non_json_response() {
 
 #[tokio::test]
 async fn test_request_tool_unresolved_var_errors() {
-    let server = MockServer::start().await;
-
     let ctx = make_executor_context(HashMap::new(), vec![], None).await;
     let tool_call = make_tool_call(json!({
-        "url": format!("{}/api/items", server.uri()),
+        "url": "https://example.com/api",
         "method": "GET",
         "headers": {
             "Authorization": "Bearer $MISSING_TOKEN"
         }
     }));
 
-    let err = RequestTool
+    let err = HttpRequestTool
         .execute_with_executor_context(tool_call, ctx)
         .await
         .unwrap_err();
@@ -442,7 +446,11 @@ async fn test_request_tool_secret_resolution() {
     Mock::given(method("GET"))
         .and(path("/secure"))
         .and(header("Authorization", "Bearer secret-key-123"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "application/json")
+                .set_body_json(json!({"authenticated": true})),
+        )
         .mount(&server)
         .await;
 
@@ -461,7 +469,7 @@ async fn test_request_tool_secret_resolution() {
         }
     }));
 
-    let parts = RequestTool
+    let parts = HttpRequestTool
         .execute_with_executor_context(tool_call, ctx)
         .await
         .unwrap();
@@ -469,17 +477,21 @@ async fn test_request_tool_secret_resolution() {
 
     assert_eq!(result["ok"], true);
     assert_eq!(result["status"], 200);
+    assert_eq!(result["body"]["authenticated"], true);
 }
 
 #[tokio::test]
 async fn test_request_tool_env_var_priority_over_secret() {
     let server = MockServer::start().await;
 
-    // The mock expects the env var value, not the secret value
     Mock::given(method("GET"))
         .and(path("/priority"))
         .and(header("Authorization", "Bearer from-env"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"source": "env"})))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "application/json")
+                .set_body_json(json!({"source": "env"})),
+        )
         .mount(&server)
         .await;
 
@@ -498,7 +510,7 @@ async fn test_request_tool_env_var_priority_over_secret() {
         }
     }));
 
-    let parts = RequestTool
+    let parts = HttpRequestTool
         .execute_with_executor_context(tool_call, ctx)
         .await
         .unwrap();
@@ -512,11 +524,14 @@ async fn test_request_tool_env_var_priority_over_secret() {
 async fn test_request_tool_connection_id_injects_bearer() {
     let server = MockServer::start().await;
 
-    // Mock expects Authorization: Bearer oauth-token-xyz but NOT x-connection-id
     Mock::given(method("GET"))
         .and(path("/oauth"))
         .and(header("Authorization", "Bearer oauth-token-xyz"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"authed": true})))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "application/json")
+                .set_body_json(json!({"authed": true})),
+        )
         .mount(&server)
         .await;
 
@@ -536,7 +551,7 @@ async fn test_request_tool_connection_id_injects_bearer() {
         }
     }));
 
-    let parts = RequestTool
+    let parts = HttpRequestTool
         .execute_with_executor_context(tool_call, ctx)
         .await
         .unwrap();
@@ -544,11 +559,7 @@ async fn test_request_tool_connection_id_injects_bearer() {
 
     assert_eq!(result["ok"], true);
     assert_eq!(result["status"], 200);
-
-    // Verify x-connection-id was NOT forwarded: if it were, the mock would still
-    // match (it doesn't check for absence), but we can check the request received.
-    // The key assertion is that Authorization: Bearer was set from the token fetcher.
-    assert_eq!(result["data"]["authed"], true);
+    assert_eq!(result["body"]["authed"], true);
 }
 
 #[tokio::test]
@@ -557,7 +568,11 @@ async fn test_request_tool_no_vars_plain_url() {
 
     Mock::given(method("GET"))
         .and(path("/plain"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"hello": "world"})))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "application/json")
+                .set_body_json(json!({"hello": "world"})),
+        )
         .mount(&server)
         .await;
 
@@ -567,7 +582,7 @@ async fn test_request_tool_no_vars_plain_url() {
         "method": "GET"
     }));
 
-    let parts = RequestTool
+    let parts = HttpRequestTool
         .execute_with_executor_context(tool_call, ctx)
         .await
         .unwrap();
@@ -575,5 +590,77 @@ async fn test_request_tool_no_vars_plain_url() {
 
     assert_eq!(result["ok"], true);
     assert_eq!(result["status"], 200);
-    assert_eq!(result["data"]["hello"], "world");
+    assert_eq!(result["body"]["hello"], "world");
+}
+
+#[tokio::test]
+async fn test_request_tool_plain_text_response_not_parsed_as_json() {
+    let server = MockServer::start().await;
+
+    // Response is valid JSON string but content-type is text/plain — should NOT parse
+    Mock::given(method("GET"))
+        .and(path("/text"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "text/plain")
+                .set_body_string(r#"{"this": "is text not json"}"#),
+        )
+        .mount(&server)
+        .await;
+
+    let ctx = make_executor_context(HashMap::new(), vec![], None).await;
+    let tool_call = make_tool_call(json!({
+        "url": format!("{}/text", server.uri()),
+        "method": "GET"
+    }));
+
+    let parts = HttpRequestTool
+        .execute_with_executor_context(tool_call, ctx)
+        .await
+        .unwrap();
+    let result = extract_data(parts);
+
+    assert_eq!(result["ok"], true);
+    assert_eq!(result["status"], 200);
+    // Body is a string, not parsed JSON object
+    assert!(result["body"].is_string());
+    assert!(result["body"].as_str().unwrap().contains("is text not json"));
+}
+
+#[tokio::test]
+async fn test_request_tool_response_headers_filtered() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/headers"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "application/json")
+                .insert_header("x-request-id", "req-abc-123")
+                .insert_header("x-powered-by", "should-be-filtered")
+                .insert_header("cache-control", "should-be-filtered")
+                .set_body_json(json!({"ok": true})),
+        )
+        .mount(&server)
+        .await;
+
+    let ctx = make_executor_context(HashMap::new(), vec![], None).await;
+    let tool_call = make_tool_call(json!({
+        "url": format!("{}/headers", server.uri()),
+        "method": "GET"
+    }));
+
+    let parts = HttpRequestTool
+        .execute_with_executor_context(tool_call, ctx)
+        .await
+        .unwrap();
+    let result = extract_data(parts);
+
+    let headers = &result["headers"];
+    // Useful headers included
+    assert!(headers["content-type"].as_str().is_some());
+    assert_eq!(headers["x-request-id"], "req-abc-123");
+    // Noise headers filtered out
+    assert!(headers.get("x-powered-by").is_none() || headers["x-powered-by"].is_null());
+    assert!(headers.get("cache-control").is_none() || headers["cache-control"].is_null());
 }
