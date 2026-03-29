@@ -4,7 +4,7 @@ use distri_types::stores::NewSecret;
 use distri_types::ModelProvider;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 pub fn configure_secret_routes(cfg: &mut web::ServiceConfig) {
@@ -13,6 +13,7 @@ pub fn configure_secret_routes(cfg: &mut web::ServiceConfig) {
             .route(web::get().to(list_secrets))
             .route(web::post().to(create_secret)),
     )
+    .service(web::resource("/secrets/resolve").route(web::post().to(resolve_secrets)))
     .service(web::resource("/secrets/providers").route(web::get().to(list_provider_definitions)))
     .service(web::resource("/secrets/configured").route(web::get().to(list_configured)))
     .service(
@@ -208,4 +209,37 @@ async fn delete_secret(
         Ok(_) => HttpResponse::NoContent().finish(),
         Err(e) => HttpResponse::InternalServerError().json(json!({"error": e.to_string()})),
     }
+}
+
+#[derive(Deserialize)]
+struct ResolveSecretsRequest {
+    keys: Vec<String>,
+}
+
+async fn resolve_secrets(
+    executor: web::Data<Arc<AgentOrchestrator>>,
+    payload: web::Json<ResolveSecretsRequest>,
+) -> HttpResponse {
+    let store = match &executor.stores.secret_store {
+        Some(s) => s,
+        None => {
+            return HttpResponse::InternalServerError()
+                .json(json!({"error": "Secret store not initialized"}))
+        }
+    };
+
+    let mut resolved = HashMap::new();
+    for key in &payload.keys {
+        match store.get(key).await {
+            Ok(Some(secret)) => {
+                resolved.insert(key.clone(), secret.value);
+            }
+            Ok(None) => {} // omit missing keys
+            Err(e) => {
+                tracing::warn!(key = %key, error = %e, "Failed to resolve secret");
+            }
+        }
+    }
+
+    HttpResponse::Ok().json(json!({ "resolved": resolved }))
 }

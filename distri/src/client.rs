@@ -2395,6 +2395,29 @@ impl Distri {
         }
     }
 
+    pub async fn resolve_secrets(
+        &self,
+        keys: &[&str],
+    ) -> Result<HashMap<String, String>, ClientError> {
+        let url = format!("{}/secrets/resolve", self.base_url);
+        let body = serde_json::json!({ "keys": keys });
+        let resp = self.http.post(&url).json(&body).send().await?;
+        if resp.status().is_success() {
+            #[derive(serde::Deserialize)]
+            struct ResolveResponse {
+                resolved: HashMap<String, String>,
+            }
+            let result: ResolveResponse = resp.json().await?;
+            Ok(result.resolved)
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!(
+                "failed to resolve secrets: {}",
+                text,
+            )))
+        }
+    }
+
     // ========== Notes API ==========
 
     pub async fn list_notes(
