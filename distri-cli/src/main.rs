@@ -416,7 +416,6 @@ async fn main() -> Result<()> {
             println!("Streaming agent '{}' via {}", agent_name, base_url);
             let registry = app.registry();
             register_approval_handler(&registry);
-            register_http_request_handler(&registry, &config, client_env_vars);
             let stream_config = config.clone().with_timeout(600);
             let http_client = stream_config.build_http_client()?;
             let client = AgentStreamClient::from_config(config.clone())

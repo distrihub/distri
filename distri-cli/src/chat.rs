@@ -433,7 +433,6 @@ pub async fn run_interactive_chat(
 
     let registry = app.registry();
     register_approval_handler(&registry);
-    register_http_request_handler(&registry, config, std::collections::HashMap::new());
 
     let stream_config = config.clone().with_timeout(60);
     let http_client = stream_config.build_http_client()?;
