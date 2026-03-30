@@ -2670,4 +2670,288 @@ impl Distri {
         };
         self.create_workflow(new).await
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Text-to-Speech API
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Generate speech from text via the TTS endpoint.
+    ///
+    /// Returns raw audio bytes and the content type (e.g. "audio/mpeg").
+    /// The model and provider are resolved server-side from workspace defaults
+    /// unless explicitly specified in the request.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use distri::{Distri, TtsSpeechRequest};
+    ///
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let client = Distri::from_env();
+    ///
+    /// // Use workspace defaults
+    /// let response = client.tts_speech(TtsSpeechRequest::new("Hello world")).await?;
+    /// println!("Audio size: {} bytes, type: {}", response.audio.len(), response.content_type);
+    ///
+    /// // Explicit model and voice
+    /// let response = client.tts_speech(
+    ///     TtsSpeechRequest::new("Hello world")
+    ///         .with_model("tts-1-hd")
+    ///         .with_voice("nova")
+    ///         .with_provider("openai")
+    /// ).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn tts_speech(
+        &self,
+        request: TtsSpeechRequest,
+    ) -> Result<TtsSpeechResponse, ClientError> {
+        let url = format!("{}/audio/speech", self.base_url);
+        let resp = self.http.post(&url).json(&request).send().await?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ClientError::InvalidResponse(format!(
+                "TTS speech failed ({status}): {body}"
+            )));
+        }
+
+        let content_type = resp
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("audio/mpeg")
+            .to_string();
+        let provider = resp
+            .headers()
+            .get("x-tts-provider")
+            .and_then(|v| v.to_str().ok())
+            .map(String::from);
+        let model = resp
+            .headers()
+            .get("x-tts-model")
+            .and_then(|v| v.to_str().ok())
+            .map(String::from);
+        let voice = resp
+            .headers()
+            .get("x-tts-voice")
+            .and_then(|v| v.to_str().ok())
+            .map(String::from);
+
+        let audio = resp
+            .bytes()
+            .await
+            .map_err(|e| ClientError::InvalidResponse(format!("Failed to read TTS audio: {e}")))?
+            .to_vec();
+
+        Ok(TtsSpeechResponse {
+            audio,
+            content_type,
+            provider,
+            model,
+            voice,
+        })
+    }
+
+    /// List available TTS models and voices.
+    ///
+    /// Returns model info grouped by provider, including available voices
+    /// and supported audio formats.
+    pub async fn tts_models(&self) -> Result<TtsModelsResponse, ClientError> {
+        let url = format!("{}/audio/models", self.base_url);
+        let resp = self.http.get(&url).send().await?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ClientError::InvalidResponse(format!(
+                "TTS models list failed ({status}): {body}"
+            )));
+        }
+
+        resp.json().await.map_err(ClientError::from)
+    }
+
+    /// List TTS provider definitions (required keys, models, configuration status).
+    pub async fn tts_providers(&self) -> Result<Vec<TtsProviderDefinition>, ClientError> {
+        let url = format!("{}/audio/providers", self.base_url);
+        let resp = self.http.get(&url).send().await?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ClientError::InvalidResponse(format!(
+                "TTS providers list failed ({status}): {body}"
+            )));
+        }
+
+        resp.json().await.map_err(ClientError::from)
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TTS Types
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Request to generate speech from text.
+///
+/// Only `input` is required. When `model`, `provider`, or `voice` are omitted
+/// the server resolves them from the workspace's default TTS settings
+/// (configured in Agent Settings > Text-to-Speech).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TtsSpeechRequest {
+    /// The text to synthesize (max 4096 characters).
+    pub input: String,
+    /// TTS model ID (e.g. "tts-1", "tts-1-hd", "gpt-4o-mini-tts").
+    /// Omit to use workspace default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// Voice ID (e.g. "alloy", "nova", "en-US-JennyNeural").
+    /// Omit to use workspace default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub voice: Option<String>,
+    /// Provider name (e.g. "openai", "azure_openai", "azure", "elevenlabs").
+    /// Omit to use workspace default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    /// Audio output format. Defaults to "mp3".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_format: Option<String>,
+    /// Speech speed multiplier (0.25 to 4.0). Provider-dependent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub speed: Option<f32>,
+    /// Additional instructions for the TTS model (e.g. emotion, style).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instructions: Option<String>,
+    /// Azure OpenAI deployment name (defaults to model name).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub azure_deployment: Option<String>,
+    /// Azure Speech region override.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub azure_region: Option<String>,
+    /// ElevenLabs voice ID override.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub voice_id: Option<String>,
+    /// ElevenLabs model ID override.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub elevenlabs_model_id: Option<String>,
+}
+
+impl TtsSpeechRequest {
+    /// Create a new TTS request with the given input text.
+    /// Model, voice, and provider will be resolved from workspace defaults.
+    pub fn new(input: impl Into<String>) -> Self {
+        Self {
+            input: input.into(),
+            model: None,
+            voice: None,
+            provider: None,
+            response_format: None,
+            speed: None,
+            instructions: None,
+            azure_deployment: None,
+            azure_region: None,
+            voice_id: None,
+            elevenlabs_model_id: None,
+        }
+    }
+
+    /// Set the TTS model (e.g. "tts-1", "tts-1-hd").
+    pub fn with_model(mut self, model: impl Into<String>) -> Self {
+        self.model = Some(model.into());
+        self
+    }
+
+    /// Set the voice (e.g. "alloy", "nova").
+    pub fn with_voice(mut self, voice: impl Into<String>) -> Self {
+        self.voice = Some(voice.into());
+        self
+    }
+
+    /// Set the provider (e.g. "openai", "azure_openai").
+    pub fn with_provider(mut self, provider: impl Into<String>) -> Self {
+        self.provider = Some(provider.into());
+        self
+    }
+
+    /// Set the audio format (e.g. "mp3", "wav", "opus").
+    pub fn with_format(mut self, format: impl Into<String>) -> Self {
+        self.response_format = Some(format.into());
+        self
+    }
+
+    /// Set the speech speed multiplier (0.25 to 4.0).
+    pub fn with_speed(mut self, speed: f32) -> Self {
+        self.speed = Some(speed);
+        self
+    }
+
+    /// Set additional instructions for the TTS model.
+    pub fn with_instructions(mut self, instructions: impl Into<String>) -> Self {
+        self.instructions = Some(instructions.into());
+        self
+    }
+}
+
+/// Response from TTS speech generation.
+#[derive(Debug, Clone)]
+pub struct TtsSpeechResponse {
+    /// Raw audio bytes.
+    pub audio: Vec<u8>,
+    /// MIME content type (e.g. "audio/mpeg", "audio/wav").
+    pub content_type: String,
+    /// Provider that was used (from X-TTS-Provider header).
+    pub provider: Option<String>,
+    /// Model that was used (from X-TTS-Model header).
+    pub model: Option<String>,
+    /// Voice that was used (from X-TTS-Voice header).
+    pub voice: Option<String>,
+}
+
+/// Response from the TTS models list endpoint.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TtsModelsResponse {
+    pub models: Vec<TtsModelInfo>,
+}
+
+/// Information about a single TTS model.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TtsModelInfo {
+    pub id: String,
+    pub provider: String,
+    pub name: String,
+    pub voices: Vec<TtsVoiceInfo>,
+    pub formats: Vec<String>,
+}
+
+/// Information about a TTS voice.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TtsVoiceInfo {
+    pub id: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+/// TTS provider definition with required configuration keys.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TtsProviderDefinition {
+    pub id: String,
+    pub label: String,
+    pub keys: Vec<TtsSecretKeyDefinition>,
+    pub models: Vec<TtsModelInfo>,
+}
+
+/// A secret key required by a TTS provider.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TtsSecretKeyDefinition {
+    pub key: String,
+    pub label: String,
+    pub placeholder: String,
+    #[serde(default)]
+    pub required: bool,
+    #[serde(default)]
+    pub sensitive: bool,
 }

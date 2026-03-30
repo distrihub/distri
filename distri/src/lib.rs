@@ -26,7 +26,9 @@ pub use client::{
     LoginUrlResponse, NewPromptTemplateRequest, NewSecretRequest, PluginResponse,
     PluginsListResponse, PromptTemplateResponse, ProviderInfo, SecretEntry, SkillListItemResponse,
     SkillResponse, SyncPromptTemplatesResponse, TaskNamespaceResponse, ThreadSummary,
-    UpdatePluginRequest, UpdateSkillRequest, ValidatePluginResponse, WorkspaceResponse,
+    TtsModelInfo, TtsModelsResponse, TtsProviderDefinition, TtsSecretKeyDefinition,
+    TtsSpeechRequest, TtsSpeechResponse, TtsVoiceInfo, UpdatePluginRequest, UpdateSkillRequest,
+    ValidatePluginResponse, WorkspaceResponse,
 };
 pub use client_app::{AppError, DistriClientApp, ToolListItem};
 pub use client_stream::{AgentStreamClient, StreamError, StreamItem};
