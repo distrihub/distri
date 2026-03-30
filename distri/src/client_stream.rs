@@ -184,23 +184,11 @@ impl AgentStreamClient {
             match event {
                 Ok(Event::Open) => continue,
                 Ok(Event::Message(message)) => {
-                    if message.data.trim().is_empty() {
-                        continue;
-                    }
-                    let rpc: RpcResponse = serde_json::from_str(&message.data)?;
-                    if let Some(err) = rpc.error {
-                        return Err(StreamError::Server(err.message));
-                    }
-                    let Some(result) = rpc.result else {
+                    let Some(item) = parse_sse_data(agent_id, &message.data)? else {
                         continue;
                     };
 
-                    let message_kind: MessageKind = serde_json::from_value(result)?;
-                    let agent_event =
-                        Self::agent_event_from_message(agent_id, &message_kind).unwrap_or(None);
-                    let distri_message = convert_kind(&message_kind)?;
-
-                    if let Some(agent_event) = agent_event.clone() {
+                    if let Some(agent_event) = item.agent_event.clone() {
                         // Fire-and-forget hook execution (no response needed)
                         if let AgentEventType::InlineHookRequested { request } = &agent_event.event
                             && let Some(registry) = &self.hook_registry {
@@ -213,11 +201,7 @@ impl AgentStreamClient {
                         }
                     }
 
-                    on_event(StreamItem {
-                        message: distri_message,
-                        agent_event,
-                    })
-                    .await;
+                    on_event(item).await;
                 }
                 Err(EsError::StreamEnded) => break,
                 Err(err) => return Err(StreamError::Event(err.to_string())),
@@ -365,4 +349,36 @@ fn convert_kind(kind: &MessageKind) -> Result<Option<Message>, StreamError> {
             .map_err(|e| StreamError::InvalidResponse(e.to_string())),
         _ => Ok(None),
     }
+}
+
+/// Parse a raw SSE data string (JSON-RPC response) into a `StreamItem`.
+///
+/// This is the same parsing logic used by `AgentStreamClient::stream_agent()`,
+/// extracted so it can be reused by the gateway or any code that consumes
+/// SSE messages from `handle_message_send_streaming_sse` directly.
+///
+/// Returns `Ok(None)` for empty/non-result messages, `Ok(Some(item))` for
+/// parsed events, or `Err` for parse failures or server errors.
+pub fn parse_sse_data(agent_id: &str, data: &str) -> Result<Option<StreamItem>, StreamError> {
+    if data.trim().is_empty() {
+        return Ok(None);
+    }
+
+    let rpc: RpcResponse = serde_json::from_str(data)?;
+    if let Some(err) = rpc.error {
+        return Err(StreamError::Server(err.message));
+    }
+    let Some(result) = rpc.result else {
+        return Ok(None);
+    };
+
+    let message_kind: MessageKind = serde_json::from_value(result)?;
+    let agent_event =
+        AgentStreamClient::agent_event_from_message(agent_id, &message_kind).unwrap_or(None);
+    let distri_message = convert_kind(&message_kind)?;
+
+    Ok(Some(StreamItem {
+        message: distri_message,
+        agent_event,
+    }))
 }

@@ -29,7 +29,7 @@ pub use client::{
     UpdatePluginRequest, UpdateSkillRequest, ValidatePluginResponse, WorkspaceResponse,
 };
 pub use client_app::{AppError, DistriClientApp, ToolListItem};
-pub use client_stream::{AgentStreamClient, StreamError, StreamItem};
+pub use client_stream::{parse_sse_data, AgentStreamClient, StreamError, StreamItem};
 pub use config::{BuildHttpClient, DistriConfig};
 pub use hooks_runtime::*;
 
