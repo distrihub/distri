@@ -60,7 +60,8 @@ pub fn distri(cfg: &mut web::ServiceConfig) {
         web::resource("/agents/{id}")
             .route(web::get().to(get_agent_definition))
             .route(web::post().to(a2a_handler))
-            .route(web::put().to(update_agent)),
+            .route(web::put().to(update_agent))
+            .route(web::delete().to(delete_agent)),
     )
     .service(web::resource("/agents/{id}/validate").route(web::get().to(validate_agent_handler)))
     .service(
@@ -126,6 +127,8 @@ pub fn distri(cfg: &mut web::ServiceConfig) {
     .service(web::resource("/device").route(web::get().to(get_device_info)))
     .service(web::resource("/home/stats").route(web::get().to(get_home_stats)))
     .configure(prompt_templates::configure_prompt_template_routes)
+    // HTTP request proxy — resolves secrets/connections server-side
+    .service(web::resource("/request").route(web::post().to(proxy_request_handler)))
     .configure(secrets::configure_secret_routes)
     .configure(providers::configure_provider_routes)
     .configure(skills::configure_skill_routes)
@@ -564,6 +567,27 @@ async fn validate_agent_handler(
             ),
             severity: WarningSeverity::Error,
         });
+    }
+
+    // Check for invalid builtin tool names
+    if let Some(ref tools) = def.tools {
+        let invalid = tools.invalid_builtin_tools();
+        if !invalid.is_empty() {
+            warnings.push(ValidationWarning {
+                code: "unknown_builtin_tool".to_string(),
+                message: format!("Unknown builtin tool(s): {}", invalid.join(", ")),
+                severity: WarningSeverity::Error,
+            });
+        }
+        for factory in &tools.dynamic {
+            if let Err(e) = distri_core::tools::dynamic_factory::validate_dynamic_tool(factory) {
+                warnings.push(ValidationWarning {
+                    code: "invalid_dynamic_tool".to_string(),
+                    message: e.to_string(),
+                    severity: WarningSeverity::Error,
+                });
+            }
+        }
     }
 
     HttpResponse::Ok().json(AgentValidationResponse {
@@ -1320,6 +1344,25 @@ async fn create_agent(
         }
     };
 
+    // Validate builtin tool names
+    if let Some(ref tools) = definition.tools {
+        let invalid = tools.invalid_builtin_tools();
+        if !invalid.is_empty() {
+            return HttpResponse::BadRequest().json(json!({
+                "error": format!(
+                    "Unknown builtin tool(s): {}. Valid tools: {}",
+                    invalid.join(", "),
+                    distri_types::VALID_BUILTIN_TOOLS.join(", ")
+                )
+            }));
+        }
+        for factory in &tools.dynamic {
+            if let Err(e) = distri_core::tools::dynamic_factory::validate_dynamic_tool(factory) {
+                return HttpResponse::BadRequest().json(json!({ "error": e.to_string() }));
+            }
+        }
+    }
+
     match executor.register_agent_definition(definition.clone()).await {
         Ok(_) => HttpResponse::Ok().json(definition),
         Err(e) => HttpResponse::BadRequest().json(json!({
@@ -1386,11 +1429,74 @@ async fn update_agent(
     // Ensure the name matches the path parameter
     definition.name = agent_id;
 
+    // Validate builtin tool names
+    if let Some(ref tools) = definition.tools {
+        let invalid = tools.invalid_builtin_tools();
+        if !invalid.is_empty() {
+            return HttpResponse::BadRequest().json(json!({
+                "error": format!(
+                    "Unknown builtin tool(s): {}. Valid tools: {}",
+                    invalid.join(", "),
+                    distri_types::VALID_BUILTIN_TOOLS.join(", ")
+                )
+            }));
+        }
+        for factory in &tools.dynamic {
+            if let Err(e) = distri_core::tools::dynamic_factory::validate_dynamic_tool(factory) {
+                return HttpResponse::BadRequest().json(json!({ "error": e.to_string() }));
+            }
+        }
+    }
+
     match executor.update_agent_definition(definition.clone()).await {
         Ok(_) => HttpResponse::Ok().json(definition),
         Err(e) => HttpResponse::BadRequest().json(json!({
             "error": format!("Failed to update agent: {}", e)
         })),
+    }
+}
+
+/// Proxy an HTTP request with server-side secret resolution.
+///
+/// Accepts `HttpRequestInput`, resolves `$VAR_NAME` from secrets/connections,
+/// executes the request, and returns `HttpRequestResponse`. Secrets never
+/// appear in the response.
+async fn proxy_request_handler(
+    executor: web::Data<Arc<AgentOrchestrator>>,
+    body: web::Json<distri_types::http_request::HttpRequestInput>,
+) -> HttpResponse {
+    use distri_core::tools::request::execute_http_request;
+    use distri_core::tools::resolve::ResolveContext;
+
+    let secret_store = executor.stores.secret_store.clone();
+
+    let resolve_ctx = ResolveContext {
+        env_vars: std::collections::HashMap::new(),
+        secret_store,
+        token_fetcher: None,
+    };
+
+    match execute_http_request(&body, &resolve_ctx).await {
+        Ok(response) => HttpResponse::Ok().json(response),
+        Err(e) => {
+            tracing::warn!(error = ?e, "Request proxy failed");
+            HttpResponse::BadRequest()
+                .json(serde_json::json!({ "error": e.to_string() }))
+        }
+    }
+}
+
+async fn delete_agent(
+    executor: web::Data<Arc<AgentOrchestrator>>,
+    path: web::Path<String>,
+) -> HttpResponse {
+    let id = path.into_inner();
+    match executor.stores.agent_store.delete(&id).await {
+        Ok(()) => HttpResponse::NoContent().finish(),
+        Err(err) => {
+            tracing::warn!(error = ?err, "Failed to delete agent");
+            HttpResponse::NotFound().json(json!({ "error": format!("Agent not found: {}", id) }))
+        }
     }
 }
 

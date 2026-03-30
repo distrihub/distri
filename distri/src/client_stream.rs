@@ -38,6 +38,7 @@ pub struct StreamItem {
 #[derive(Clone)]
 pub struct AgentStreamClient {
     base_url: String,
+    config: config::DistriConfig,
     http: reqwest::Client,
     tool_registry: Option<ExternalToolRegistry>,
     hook_registry: Option<HookRegistry>,
@@ -60,6 +61,7 @@ impl AgentStreamClient {
             .expect("Failed to build HTTP client for AgentStreamClient");
         Self {
             base_url,
+            config: cfg,
             http,
             tool_registry: None,
             hook_registry: None,
@@ -98,6 +100,33 @@ impl AgentStreamClient {
             self.base_url.trim_end_matches('/'),
             agent_id
         );
+
+        // Inject distri_request dynamic tool into definition_overrides so the
+        // agent can call the platform API with the current user's credentials.
+        // This runs for every conversation regardless of client (CLI, SDK, web).
+        let params = {
+            use distri_types::configuration::DefinitionOverrides;
+
+            let mut p = params;
+            let factory = crate::platform_tools::build_distri_request_factory(&self.config);
+
+            let meta = p.metadata.get_or_insert_with(|| serde_json::json!({}));
+
+            // Deserialize existing overrides (may contain model, etc.), add our tool, serialize back.
+            let mut overrides: DefinitionOverrides = meta
+                .get("definition_overrides")
+                .and_then(|v| serde_json::from_value(v.clone()).ok())
+                .unwrap_or_default();
+            overrides
+                .dynamic_tools
+                .get_or_insert_with(Vec::new)
+                .push(factory);
+            meta.as_object_mut()
+                .unwrap()
+                .insert("definition_overrides".to_string(), serde_json::to_value(&overrides).unwrap());
+
+            p
+        };
 
         let rpc = JsonRpcRequest {
             jsonrpc: "2.0".to_string(),

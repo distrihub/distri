@@ -39,7 +39,10 @@ pub mod store;
 pub mod types;
 
 pub use executor::{EventSink, NoopEventSink, StepExecutor, TracingEventSink, WorkflowRunner};
-pub use resolve::{build_execution_context, resolve_step_input, resolve_template, resolve_value};
+pub use resolve::{
+    build_execution_context, evaluate_skip_condition, resolve_step_input, resolve_template,
+    resolve_value,
+};
 pub use store::{InMemoryStore, WorkflowStateStore};
 pub use types::*;
 

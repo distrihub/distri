@@ -98,6 +98,14 @@ impl AgentConfig {
         }
     }
 
+    /// Get the tools configuration, if this is a standard agent.
+    pub fn get_tools_config(&self) -> Option<&crate::ToolsConfig> {
+        match self {
+            AgentConfig::StandardAgent(def) => def.tools.as_ref(),
+            AgentConfig::WorkflowAgent(_) => None,
+        }
+    }
+
     /// Validate the configuration
     pub fn validate(&self) -> anyhow::Result<()> {
         match self {

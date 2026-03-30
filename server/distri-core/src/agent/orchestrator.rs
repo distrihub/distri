@@ -53,6 +53,10 @@ pub struct AgentOrchestrator {
     pub hooks: Arc<RwLock<HashMap<String, Arc<dyn crate::agent::types::AgentHooks>>>>,
     pub inline_hooks: Arc<dashmap::DashMap<String, tokio::sync::oneshot::Sender<HookMutation>>>,
     pub hook_registry: HookRegistry,
+    /// Optional token fetcher for resolving connection OAuth tokens.
+    /// Set by the hosting application (e.g., cloud server) to enable
+    /// `x-connection-id` header support in HTTP tools.
+    pub token_fetcher: Option<crate::tools::inject_env::TokenFetcher>,
 }
 
 impl std::fmt::Debug for AgentOrchestrator {
@@ -81,6 +85,7 @@ pub struct AgentOrchestratorBuilder {
     store_config: Option<StoreConfig>,
     configuration: Option<Arc<RwLock<DistriServerConfig>>>,
     hooks: Option<HashMap<String, Arc<dyn crate::agent::types::AgentHooks>>>,
+    token_fetcher: Option<crate::tools::inject_env::TokenFetcher>,
 }
 
 impl AgentOrchestratorBuilder {
@@ -156,6 +161,11 @@ impl AgentOrchestratorBuilder {
         hooks: HashMap<String, Arc<dyn crate::agent::types::AgentHooks>>,
     ) -> Self {
         self.hooks = Some(hooks);
+        self
+    }
+
+    pub fn with_token_fetcher(mut self, fetcher: crate::tools::inject_env::TokenFetcher) -> Self {
+        self.token_fetcher = Some(fetcher);
         self
     }
 
@@ -246,6 +256,7 @@ impl AgentOrchestratorBuilder {
             hooks: hooks.clone(),
             inline_hooks: Arc::new(dashmap::DashMap::new()),
             hook_registry: HookRegistry::new(),
+            token_fetcher: self.token_fetcher,
         };
 
         // Sync system prompts to the store
@@ -1308,7 +1319,6 @@ impl AgentOrchestrator {
         &self,
     ) -> Result<Vec<Arc<dyn crate::tools::Tool>>, AgentError> {
         use crate::types::ToolsConfig;
-        use std::collections::HashMap;
 
         let builtin_tools = crate::tools::get_builtin_tools(
             self.workspace_filesystem.clone(),
@@ -1319,7 +1329,7 @@ impl AgentOrchestrator {
         // Create a ToolsConfig that includes all available tools
         let all_tools_config = ToolsConfig {
             builtin: vec![], // Don't include builtin tools by default for /toolcall
-            packages: HashMap::new(),
+            dynamic: vec![],
             mcp: Vec::new(),
             external: None,
         };

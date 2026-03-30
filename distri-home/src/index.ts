@@ -24,6 +24,7 @@ export type { AgentSettingsViewProps } from './components/AgentSettingsView';
 export { PromptTemplatesView } from './components/PromptTemplatesView';
 export { SessionsView } from './components/SessionsView';
 export { CodePanel } from './components/CodePanel';
+export { WorkflowEntryPointSelector } from './components/WorkflowEntryPointSelector';
 export type { HomeProps } from './components/Home';
 export type { AgentDetailsProps } from './components/AgentDetails';
 export type { ThreadsViewProps } from './components/ThreadsView';
@@ -31,3 +32,4 @@ export type { SettingsViewProps, SettingsSection } from './components/SettingsVi
 export type { SecretsViewProps } from './components/SecretsView';
 export type { SessionsViewProps } from './components/SessionsView';
 export type { CodePanelProps, CodeLanguage } from './components/CodePanel';
+export type { WorkflowEntryPointSelectorProps } from './components/WorkflowEntryPointSelector';

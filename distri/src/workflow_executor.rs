@@ -153,6 +153,17 @@ impl StepExecutor for DistriStepExecutor {
                 "evaluated": true,
                 "message": "Condition evaluation is placeholder"
             }))),
+
+            StepKind::WaitForInput { message, schema } => Ok(StepResult {
+                status: StepStatus::WaitingForInput,
+                result: Some(json!({
+                    "waiting": true,
+                    "message": message,
+                    "schema": schema,
+                })),
+                error: None,
+                context_updates: None,
+            }),
         }
     }
 

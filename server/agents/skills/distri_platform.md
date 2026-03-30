@@ -1,69 +1,63 @@
 ---
 name = "distri_platform"
-description = "Full Distri platform control — manage agents, skills, secrets, threads, connections, and make authenticated API calls"
+description = "Full Distri platform control — manage agents, skills, secrets, threads, connections via distri_request HTTP tool"
 ---
 
 # Distri Platform
 
-Use the `distri_platform` tool to manage platform resources. Pass `action` and parameters as flat keys (not nested under `params`).
+Use the `distri_request` tool to manage platform resources. Input: `{path, method, headers?, body?}`. Auth headers are injected automatically.
 
-## Actions
+## API Reference
 
 ### Agents
-| Action | Params | Description |
-|--------|--------|-------------|
-| `list_agents` | — | List all agents |
-| `get_agent` | `agent_id` | Get agent details |
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/agents` | List all agents |
+| `GET` | `/agents/{id}` | Get agent details |
 
 ### Skills
-| Action | Params | Description |
-|--------|--------|-------------|
-| `list_skills` | — | List available skills |
-| `get_skill` | `skill_id` | Get skill content |
-| `create_skill` | `name, content` | Create a skill |
-| `delete_skill` | `skill_id` | Delete a skill |
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/skills` | List available skills |
+| `GET` | `/skills/{id}` | Get skill content |
+| `POST` | `/skills` | Create skill — body: `{ name, content, description?, tags? }` |
+| `DELETE` | `/skills/{id}` | Delete a skill |
 
 ### Secrets
-| Action | Params | Description |
-|--------|--------|-------------|
-| `list_secrets` | — | List secret keys (values hidden) |
-| `get_secret` | `key` | Get secret value |
-| `set_secret` | `key, value` | Create or update a secret |
-| `delete_secret` | `key` | Delete a secret |
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/secrets` | List secret keys (values hidden) |
+| `GET` | `/secrets/{key}` | Get secret value |
+| `POST` | `/secrets` | Set secret — body: `{ key, value }` |
+| `DELETE` | `/secrets/{id}` | Delete a secret |
 
 ### Threads
-| Action | Params | Description |
-|--------|--------|-------------|
-| `list_threads` | — | List conversation threads |
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/threads` | List conversation threads |
 
 ### Connections (OAuth Integrations)
-| Action | Params | Description |
-|--------|--------|-------------|
-| `list_connections` | — | List connected services with scopes and capabilities |
-| `connect` | `provider, scopes?, additional_scopes?` | Connect a provider or expand scopes |
-| `get_connection_usage` | `connection_id` | Get API docs and examples for a connection |
-| `connection_request` | `connection_id, method, url, headers?, body?` | Make an authenticated API call (token auto-injected) |
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/connections` | List connected services |
+| `GET` | `/connections/providers` | List available OAuth providers |
+| `POST` | `/connections` | Initiate OAuth — body: `{ auth_type: "oauth", auth: { provider, scopes } }` |
+| `POST` | `/connections/{id}/token` | Get fresh access token |
+| `DELETE` | `/connections/{id}` | Disconnect |
 
-**IMPORTANT: Never use raw tokens. Always use `connection_request` — it handles auth automatically.**
+To make authenticated API calls to connected services, use the `http_request` tool with `x-connection-id` header. Best for short text/JSON API responses — for large responses or binary data, use a browsr shell session instead.
 
-### Skill Discovery
-| Action | Params | Description |
-|--------|--------|-------------|
-| `discover_skill` | `query` | Search curated skill repos |
-| `import_skill` | `url, name?` | Import a skill from URL |
+Variables (`$VAR_NAME`) in url, headers, and body are auto-resolved from workspace secrets and context env vars.
 
 ## Examples
 
 ```json
-// List connections
-{ "action": "list_connections" }
+// List agents
+{ "path": "/agents", "method": "GET" }
 
-// Connect Google with Sheets scope
-{ "action": "connect", "provider": "google", "additional_scopes": ["drive", "spreadsheets"] }
+// Create a skill
+{ "path": "/skills", "method": "POST", "body": { "name": "my-skill", "content": "..." } }
 
-// Create a Google Sheet
-{ "action": "connection_request", "connection_id": "<id>", "method": "POST", "url": "https://sheets.googleapis.com/v4/spreadsheets", "body": { "properties": { "title": "My Sheet" } } }
-
-// Search Gmail
-{ "action": "connection_request", "connection_id": "<id>", "method": "GET", "url": "https://gmail.googleapis.com/gmail/v1/users/me/messages?q=from:someone@example.com" }
+// Connect Google
+{ "path": "/connections", "method": "POST", "body": { "auth_type": "oauth", "auth": { "provider": "google", "scopes": ["drive", "spreadsheets"] } } }
 ```

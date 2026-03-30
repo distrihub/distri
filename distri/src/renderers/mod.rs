@@ -52,9 +52,45 @@ pub fn render_tool_output(result: &ToolResponse, verbose: bool) {
         // Artifact tool
         "artifact_tool" => render_artifact(result),
 
+        // HTTP request tool
+        "http_request" => render_request(result),
+
         // Default: generic part-by-part rendering
         _ => render_tool_result(result),
     }
+}
+
+fn render_request(result: &ToolResponse) {
+    use distri_types::Part;
+    for part in &result.parts {
+        if let Part::Data(value) = part {
+            let status = value.get("status").and_then(|v| v.as_u64()).unwrap_or(0);
+            let ok = value.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+            let body = value.get("body").unwrap_or(value);
+
+            let preview = serde_json::to_string(body).unwrap_or_default();
+            let max_len = if ok { 120 } else { 200 };
+            let preview = if preview.len() > max_len {
+                format!("{}...", &preview[..max_len])
+            } else {
+                preview
+            };
+
+            if ok {
+                println!(
+                    "{}{}{} — {}{}",
+                    COLOR_GRAY, RESULT_PREFIX, status, preview, COLOR_RESET
+                );
+            } else {
+                println!(
+                    "{}{}{} — {}{}",
+                    crate::printer::COLOR_RED, RESULT_PREFIX, status, preview, COLOR_RESET
+                );
+            }
+            return;
+        }
+    }
+    render_tool_result(result);
 }
 
 fn render_artifact(result: &ToolResponse) {

@@ -509,14 +509,24 @@ pub async fn handle_workflow_command(client: &distri::Distri, command: WorkflowC
             workflow: workflow_ref,
             step,
             input,
+            entry,
         } => {
             // Resolve workflow: local file or server name/id
+            let looks_like_path = workflow_ref.contains('/')
+                || workflow_ref.contains('\\')
+                || workflow_ref.ends_with(".json");
+
             let mut workflow = if std::path::Path::new(&workflow_ref).exists() {
                 let content = fs::read_to_string(&workflow_ref)
                     .await
                     .with_context(|| format!("Failed to read workflow file: {}", workflow_ref))?;
                 serde_json::from_str::<WorkflowDefinition>(&content)
                     .with_context(|| "Failed to parse workflow JSON")?
+            } else if looks_like_path {
+                anyhow::bail!(
+                    "File not found: {}\n  Check the path and try again.",
+                    workflow_ref
+                );
             } else {
                 println!("  Fetching workflow '{}' from server...", workflow_ref);
                 let list = client
@@ -537,6 +547,17 @@ pub async fn handle_workflow_command(client: &distri::Distri, command: WorkflowC
                 serde_json::from_value::<WorkflowDefinition>(full.definition)
                     .with_context(|| "Failed to parse workflow definition from server")?
             };
+
+            // Apply entry point if specified (before input, since it may set preset results)
+            if let Some(ref entry_id) = entry {
+                workflow = workflow
+                    .apply_entry_point(entry_id)
+                    .map_err(|e| anyhow::anyhow!(e))?;
+                println!(
+                    "  Using entry point: {}",
+                    entry_id
+                );
+            }
 
             // Apply input if provided
             if let Some(ref input_json) = input {
@@ -644,6 +665,11 @@ pub async fn handle_workflow_command(client: &distri::Distri, command: WorkflowC
                                 "\n  Status: {:?} ({} done, {} failed)",
                                 status, steps_done, steps_failed
                             );
+                        }
+                        WorkflowEvent::StepWaiting {
+                            step_id, message, ..
+                        } => {
+                            println!(" ✋ {} — waiting for input: {}", step_id, message);
                         }
                     }
                 }

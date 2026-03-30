@@ -473,6 +473,9 @@ pub trait AgentStore: Send + Sync {
     async fn update(&self, config: crate::configuration::AgentConfig) -> anyhow::Result<()>;
 
     async fn clear(&self) -> anyhow::Result<()>;
+
+    /// Delete an agent by name or ID
+    async fn delete(&self, id: &str) -> anyhow::Result<()>;
 }
 
 /// Store for managing scratchpad entries across conversations

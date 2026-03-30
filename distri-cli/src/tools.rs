@@ -1,27 +1,8 @@
 use std::io::{self, Write};
 
-use distri::{Distri, ExternalToolRegistry};
+use distri::ExternalToolRegistry;
 
 use crate::{COLOR_BRIGHT_GREEN, COLOR_BRIGHT_MAGENTA, COLOR_BRIGHT_YELLOW, COLOR_RESET};
-
-/// Register an api_request handler on the external tool registry.
-/// When the agent calls api_request, the CLI executes the HTTP request
-/// using the Distri client and returns the result.
-pub fn register_api_request_handler(registry: &ExternalToolRegistry, client: Distri) {
-    let client = std::sync::Arc::new(client);
-    registry.register("*", "api_request", move |call, _event| {
-        let client = client.clone();
-        async move {
-            let result = distri::execute_api_request(&client, &call.input).await;
-            Ok(distri_types::ToolResponse {
-                tool_call_id: call.tool_call_id,
-                tool_name: call.tool_name,
-                parts: vec![distri_types::Part::Data(result)],
-                parts_metadata: None,
-            })
-        }
-    });
-}
 
 pub fn register_approval_handler(registry: &ExternalToolRegistry) {
     registry.register("*", "approval_request", |call, _event| async move {

@@ -26,7 +26,7 @@ use commands::{
 use config::resolve_workspace;
 use message::{build_connections_context, build_message_params};
 use threads::resolve_resume_arg;
-use tools::{register_api_request_handler, register_approval_handler};
+use tools::register_approval_handler;
 
 #[derive(Parser, Debug, Clone)]
 #[clap(author, version, about)]
@@ -40,7 +40,7 @@ struct Cli {
     config: Option<PathBuf>,
 
     /// Verbose output (forwarded to distri-server for serve)
-    #[clap(long, short)]
+    #[clap(long, short, global = true)]
     verbose: bool,
 
     #[clap(subcommand)]
@@ -120,7 +120,7 @@ enum Commands {
     },
 
     /// Workflow execution commands
-    Workflow {
+    Workflows {
         #[clap(subcommand)]
         command: WorkflowCommands,
     },
@@ -149,6 +149,14 @@ enum Commands {
 enum AgentsCommands {
     /// List agents from the server
     List,
+    /// Delete an agent by name or ID
+    Delete {
+        #[clap(help = "Agent name or UUID")]
+        agent: String,
+        /// Skip confirmation prompt
+        #[clap(long, short, help = "Skip confirmation prompt")]
+        yes: bool,
+    },
     /// Push agent definition(s) to the server from a file or directory
     Push {
         #[clap(help = "Path to an agent markdown file or directory of files")]
@@ -262,6 +270,9 @@ pub(crate) enum WorkflowCommands {
         /// JSON input to pass to the workflow context
         #[clap(long, help = "JSON input for workflow context")]
         input: Option<String>,
+        /// Entry point ID to start from (skips earlier steps)
+        #[clap(long, help = "Entry point ID to start from")]
+        entry: Option<String>,
     },
     /// Show workflow status (from local file)
     Status {
@@ -278,6 +289,18 @@ pub(crate) enum WorkflowCommands {
     },
     /// List workflows on the server
     List,
+}
+
+/// Typed context passed via `--context` JSON.
+/// Accepts `envs`, `env_vars`, and `secrets` — all merge into env_vars.
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+struct RunContext {
+    #[serde(default)]
+    envs: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    env_vars: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    secrets: std::collections::HashMap<String, String>,
 }
 
 pub(crate) const COLOR_RESET: &str = "\x1b[0m";
@@ -367,47 +390,28 @@ async fn main() -> Result<()> {
                 params.message.context_id = Some(tid);
             }
 
-            // Merge --context envs/secrets into metadata.env_vars
+            // Merge --context into metadata.env_vars for the server
             if let Some(ctx_json) = context {
-                if let Ok(ctx) = serde_json::from_str::<serde_json::Value>(&ctx_json) {
+                let ctx: RunContext = serde_json::from_str(&ctx_json)
+                    .unwrap_or_else(|e| {
+                        eprintln!("Warning: failed to parse --context: {}", e);
+                        RunContext::default()
+                    });
+
+                let mut all_vars = std::collections::HashMap::<String, String>::new();
+                all_vars.extend(ctx.envs);
+                all_vars.extend(ctx.env_vars);
+                all_vars.extend(ctx.secrets);
+
+                if !all_vars.is_empty() {
                     let meta = params.metadata.get_or_insert(serde_json::json!({}));
-                    // envs → env_vars in metadata
-                    if let Some(envs) = ctx.get("envs").and_then(|v| v.as_object()) {
-                        let env_vars = meta
-                            .as_object_mut()
-                            .unwrap()
-                            .entry("env_vars")
-                            .or_insert(serde_json::json!({}));
-                        if let Some(ev) = env_vars.as_object_mut() {
-                            for (k, v) in envs {
-                                if let Some(s) = v.as_str() {
-                                    ev.insert(k.clone(), serde_json::Value::String(s.to_string()));
-                                }
-                            }
-                        }
-                    }
-                    // secrets → also env_vars (secrets are just env_vars that shouldn't be logged)
-                    if let Some(secrets) = ctx.get("secrets").and_then(|v| v.as_object()) {
-                        let env_vars = meta
-                            .as_object_mut()
-                            .unwrap()
-                            .entry("env_vars")
-                            .or_insert(serde_json::json!({}));
-                        if let Some(ev) = env_vars.as_object_mut() {
-                            for (k, v) in secrets {
-                                if let Some(s) = v.as_str() {
-                                    ev.insert(k.clone(), serde_json::Value::String(s.to_string()));
-                                }
-                            }
-                        }
-                    }
+                    meta["env_vars"] = serde_json::to_value(&all_vars).unwrap();
                 }
             }
 
             println!("Streaming agent '{}' via {}", agent_name, base_url);
             let registry = app.registry();
             register_approval_handler(&registry);
-            register_api_request_handler(&registry, Distri::from_config(config.clone()));
             let stream_config = config.clone().with_timeout(600);
             let http_client = stream_config.build_http_client()?;
             let client = AgentStreamClient::from_config(config.clone())
@@ -427,6 +431,24 @@ async fn main() -> Result<()> {
             AgentsCommands::List => {
                 for agent in app.list_agents().await? {
                     println!("{} - {}", agent.get_name(), agent.get_description());
+                }
+            }
+            AgentsCommands::Delete { agent, yes } => {
+                if !yes {
+                    eprint!("Delete agent '{}'? This cannot be undone. [y/N] ", agent);
+                    let mut input = String::new();
+                    std::io::stdin().read_line(&mut input).ok();
+                    if !input.trim().eq_ignore_ascii_case("y") {
+                        println!("Aborted.");
+                        return Ok(());
+                    }
+                }
+                match client.delete_agent(&agent).await {
+                    Ok(()) => println!("Agent '{}' deleted successfully.", agent),
+                    Err(err) => {
+                        eprintln!("Failed to delete agent '{}': {}", agent, err);
+                        std::process::exit(1);
+                    }
                 }
             }
             AgentsCommands::Push { path, all } => {
@@ -525,7 +547,7 @@ async fn main() -> Result<()> {
         Commands::Threads { command } => {
             threads::handle_threads_command(&client, command).await?;
         }
-        Commands::Workflow { command } => {
+        Commands::Workflows { command } => {
             handle_workflow_command(&client, command).await?;
         }
         Commands::Serve { .. } => unreachable!("serve handled earlier"),

@@ -1,11 +1,26 @@
 {{#if available_connections}}
 # CONNECTIONS
-OAuth connections to external services. **ALWAYS use `connection_request` to make API calls** — it auto-injects the auth token.
+OAuth connections to external services. Two ways to make authenticated API calls:
 
-**NEVER pass raw tokens to sub-agents or code execution.** The `connection_request` action handles authentication automatically.
+**Option 1: Direct API call via `distri_request`** (recommended)
+Use `url` with `x-connection-id` header — the OAuth token is injected automatically, no round trips:
+```
+distri_request({
+  url: "https://www.googleapis.com/calendar/v3/calendars/primary/events",
+  method: "GET",
+  headers: { "x-connection-id": "<connection_id>" }
+})
+```
 
-**Workflow:** `get_connection_usage({connection_id})` for API docs → `connection_request({connection_id, method, url, headers?, body?})` to call APIs.
-If scopes are insufficient, use `connect({provider, additional_scopes: [...]})` to expand permissions.
+**Option 2: Code execution** (for scripts, data processing, chaining calls)
+Inject the token as an env var, then use `call_coder`:
+```
+inject_connection_env({ connection_id: "<id>" })
+// Then in call_coder: token = os.getenv("<PROVIDER>_TOKEN")
+```
+
+**NEVER pass raw tokens in conversation messages.**
+If scopes are insufficient, reconnect with additional scopes via the connections API.
 
 ## Connected Services
 {{{available_connections}}}
