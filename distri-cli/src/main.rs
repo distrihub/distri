@@ -56,6 +56,9 @@ enum Commands {
         /// Resume thread by ID, or "last" for most recent
         #[clap(long)]
         resume: Option<String>,
+        /// JSON definition overrides: {"dynamic_tools": [...], "model": "..."}
+        #[clap(long)]
+        overrides: Option<String>,
     },
 
     /// Run a single task against an agent
@@ -71,6 +74,9 @@ enum Commands {
         /// Resume thread by ID, or "last" for most recent
         #[clap(long)]
         resume: Option<String>,
+        /// JSON definition overrides: {"dynamic_tools": [...], "model": "..."}
+        #[clap(long)]
+        overrides: Option<String>,
     },
 
     /// Agent-related commands
@@ -321,7 +327,7 @@ async fn main() -> Result<()> {
     let command = cli
         .command
         .clone()
-        .unwrap_or(Commands::Tui { agent: None, resume: None });
+        .unwrap_or(Commands::Tui { agent: None, resume: None, overrides: None });
 
     if let Commands::Serve {
         host,
@@ -350,7 +356,8 @@ async fn main() -> Result<()> {
         DistriClientApp::from_config(config.clone()).with_workspace_path(workspace.clone());
 
     match command {
-        Commands::Tui { agent, resume } => {
+        Commands::Tui { agent, resume, overrides } => {
+            let extra_tools = parse_cli_overrides(overrides.as_deref());
             let agent_name = agent.unwrap_or_else(|| "distri".to_string());
             run_interactive_chat(
                 &mut app,
@@ -359,6 +366,7 @@ async fn main() -> Result<()> {
                 agent_name,
                 cli.verbose,
                 resume,
+                extra_tools,
             )
             .await?;
         }
@@ -367,7 +375,9 @@ async fn main() -> Result<()> {
             task,
             context,
             resume,
+            overrides,
         } => {
+            let extra_tools = parse_cli_overrides(overrides.as_deref());
             let agent_name = agent.unwrap_or_else(|| "distri".to_string());
             // Resolve agent name to UUID for cloud compatibility.
             // Cloud middleware requires UUID for proper workspace context (model settings, secrets).
@@ -414,9 +424,12 @@ async fn main() -> Result<()> {
             register_approval_handler(&registry);
             let stream_config = config.clone().with_timeout(600);
             let http_client = stream_config.build_http_client()?;
-            let client = AgentStreamClient::from_config(config.clone())
+            let mut client = AgentStreamClient::from_config(config.clone())
                 .with_http_client(http_client)
                 .with_tool_registry(registry);
+            for tool in extra_tools {
+                client.register_dynamic_tool(tool);
+            }
             print_stream_verbose(
                 &client,
                 &stream_agent_id,
@@ -604,4 +617,19 @@ fn resolve_distri_server_binary() -> PathBuf {
     }
 
     PathBuf::from(format!("distri-server{}", std::env::consts::EXE_SUFFIX))
+}
+
+/// Parse `--overrides` JSON into dynamic tool factories.
+/// Expected format: `{"dynamic_tools": [{"name": "...", "factory_type": "http", "config": {...}}]}`
+fn parse_cli_overrides(json: Option<&str>) -> Vec<distri_types::dynamic_tool::DynamicToolFactory> {
+    let Some(json) = json else {
+        return Vec::new();
+    };
+    match serde_json::from_str::<distri_types::configuration::DefinitionOverrides>(json) {
+        Ok(overrides) => overrides.dynamic_tools.unwrap_or_default(),
+        Err(e) => {
+            eprintln!("Warning: failed to parse --overrides: {e}");
+            Vec::new()
+        }
+    }
 }

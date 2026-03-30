@@ -167,6 +167,23 @@ impl Distri {
         self.config.is_local()
     }
 
+    /// Register a dynamic tool factory that will be included in every outgoing
+    /// message's `definition_overrides.dynamic_tools`.
+    pub fn register_dynamic_tool(&mut self, factory: distri_types::dynamic_tool::DynamicToolFactory) {
+        self.stream.register_dynamic_tool(factory);
+    }
+
+    /// Convenience: register an HTTP dynamic tool factory.
+    pub fn register_http_tool(&mut self, name: &str, config: distri_types::http_request::HttpFactoryConfig) {
+        self.stream.register_http_tool(name, config);
+    }
+
+    /// Build `DefinitionOverrides` with the `distri_request` tool for this client's config.
+    /// Useful for gateway or other code that needs overrides without sending a message.
+    pub fn build_platform_overrides(&self) -> distri_types::configuration::DefinitionOverrides {
+        crate::platform_tools::build_platform_overrides(&self.config)
+    }
+
     pub async fn register_agent(&self, definition: &StandardDefinition) -> Result<(), ClientError> {
         let create_url = format!("{}/agents", self.base_url);
         let resp = self.http.post(&create_url).json(definition).send().await?;

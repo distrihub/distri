@@ -1,5 +1,7 @@
 use chrono::Utc;
 use distri_a2a::{JsonRpcRequest, MessageKind, MessageSendParams};
+use distri_types::dynamic_tool::DynamicToolFactory;
+use distri_types::http_request::HttpFactoryConfig;
 use distri_types::{AgentEvent, AgentEventType, Message, ToolCall, ToolResponse};
 use futures_util::StreamExt;
 use reqwest_eventsource::{Error as EsError, Event, RequestBuilderExt};
@@ -38,10 +40,13 @@ pub struct StreamItem {
 #[derive(Clone)]
 pub struct AgentStreamClient {
     base_url: String,
-    config: config::DistriConfig,
     http: reqwest::Client,
     tool_registry: Option<ExternalToolRegistry>,
     hook_registry: Option<HookRegistry>,
+    /// Dynamic tool factories registered on this client.
+    /// These are automatically merged into every outgoing message's
+    /// `metadata.definition_overrides.dynamic_tools`.
+    registered_tools: Vec<DynamicToolFactory>,
 }
 
 impl AgentStreamClient {
@@ -59,12 +64,17 @@ impl AgentStreamClient {
         // build_http_client is a trait method from BuildHttpClient trait
         let http = <config::DistriConfig as BuildHttpClient>::build_http_client(&cfg)
             .expect("Failed to build HTTP client for AgentStreamClient");
+
+        // Auto-register the `distri_request` platform tool so agents can call
+        // the platform API with the current user's credentials.
+        let platform_tool = crate::platform_tools::build_distri_request_factory(&cfg);
+
         Self {
             base_url,
-            config: cfg,
             http,
             tool_registry: None,
             hook_registry: None,
+            registered_tools: vec![platform_tool],
         }
     }
 
@@ -81,6 +91,59 @@ impl AgentStreamClient {
     pub fn with_hook_registry(mut self, registry: HookRegistry) -> Self {
         self.hook_registry = Some(registry);
         self
+    }
+
+    /// Register a dynamic tool factory. It will be included in every outgoing
+    /// message's `definition_overrides.dynamic_tools`, deduplicated by name.
+    pub fn register_dynamic_tool(&mut self, factory: DynamicToolFactory) {
+        // Replace existing tool with same name, or append
+        if let Some(pos) = self.registered_tools.iter().position(|t| t.name == factory.name) {
+            self.registered_tools[pos] = factory;
+        } else {
+            self.registered_tools.push(factory);
+        }
+    }
+
+    /// Convenience: register an HTTP dynamic tool factory.
+    pub fn register_http_tool(&mut self, name: &str, config: HttpFactoryConfig) {
+        self.register_dynamic_tool(DynamicToolFactory {
+            name: name.to_string(),
+            factory_type: "http".to_string(),
+            config: serde_json::to_value(config).expect("HttpFactoryConfig serialization"),
+            description: Some(format!(
+                "Call the {} REST API. Input: {{path, method, headers?, body?}}",
+                name
+            )),
+        });
+    }
+
+    /// Merge registered tools into message params metadata, deduplicating by name.
+    /// Tools already present in the params take precedence (caller wins).
+    fn merge_registered_tools(&self, mut params: MessageSendParams) -> MessageSendParams {
+        if self.registered_tools.is_empty() {
+            return params;
+        }
+
+        use distri_types::configuration::DefinitionOverrides;
+
+        let meta = params.metadata.get_or_insert_with(|| serde_json::json!({}));
+        let mut overrides: DefinitionOverrides = meta
+            .get("definition_overrides")
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or_default();
+
+        let tools = overrides.dynamic_tools.get_or_insert_with(Vec::new);
+        for factory in &self.registered_tools {
+            if !tools.iter().any(|t| t.name == factory.name) {
+                tools.push(factory.clone());
+            }
+        }
+
+        meta.as_object_mut()
+            .unwrap()
+            .insert("definition_overrides".to_string(), serde_json::to_value(&overrides).unwrap());
+
+        params
     }
 
     /// Stream an agent using the SSE interface (`POST /agents/{id}` with method `message/stream`)
@@ -101,32 +164,9 @@ impl AgentStreamClient {
             agent_id
         );
 
-        // Inject distri_request dynamic tool into definition_overrides so the
-        // agent can call the platform API with the current user's credentials.
-        // This runs for every conversation regardless of client (CLI, SDK, web).
-        let params = {
-            use distri_types::configuration::DefinitionOverrides;
-
-            let mut p = params;
-            let factory = crate::platform_tools::build_distri_request_factory(&self.config);
-
-            let meta = p.metadata.get_or_insert_with(|| serde_json::json!({}));
-
-            // Deserialize existing overrides (may contain model, etc.), add our tool, serialize back.
-            let mut overrides: DefinitionOverrides = meta
-                .get("definition_overrides")
-                .and_then(|v| serde_json::from_value(v.clone()).ok())
-                .unwrap_or_default();
-            overrides
-                .dynamic_tools
-                .get_or_insert_with(Vec::new)
-                .push(factory);
-            meta.as_object_mut()
-                .unwrap()
-                .insert("definition_overrides".to_string(), serde_json::to_value(&overrides).unwrap());
-
-            p
-        };
+        // Merge all registered dynamic tools (including distri_request) into the
+        // message metadata so agents can use them during execution.
+        let params = self.merge_registered_tools(params);
 
         let rpc = JsonRpcRequest {
             jsonrpc: "2.0".to_string(),

@@ -120,10 +120,11 @@ impl A2AHandler {
         }
 
         let metadata_value = params.metadata.clone();
-        let metadata: ExecutorContextMetadata = metadata_value
-            .clone()
-            .and_then(|metadata| serde_json::from_value(metadata).ok())
-            .unwrap_or_default();
+        let metadata: ExecutorContextMetadata = match metadata_value.clone() {
+            Some(m) => serde_json::from_value(m)
+                .map_err(|e| AgentError::Validation(format!("Invalid metadata: {e}")))?,
+            None => ExecutorContextMetadata::default(),
+        };
 
         let dry_run = metadata.dry_run.unwrap_or_else(|| {
             metadata_value

@@ -26,6 +26,7 @@ pub struct TokenUsage {
 pub struct ExternalTool {
     pub name: String,
     pub description: String,
+    #[serde(default)]
     pub parameters: serde_json::Value,
     #[serde(default)]
     pub is_final: bool,
