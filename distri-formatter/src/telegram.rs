@@ -351,23 +351,11 @@ impl Formatter for TelegramFormatter {
                     };
                 }
             }
-            AgentEventType::ToolResults { results, .. } => {
-                for result in results {
-                    // Check if the result contains a diff.
-                    let text_content: String = result
-                        .parts
-                        .iter()
-                        .filter_map(|p| match p {
-                            distri_types::Part::Text(t) => Some(t.as_str()),
-                            _ => None,
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n");
-
-                    if looks_like_diff(&text_content) {
-                        self.renderer.render_diff(&text_content);
-                    }
-                }
+            AgentEventType::ToolResults { .. } => {
+                // Tool results are not shown in Telegram — the status gets
+                // replaced by the next status or the final assistant text.
+                // Rendering tool results here would pollute the output with
+                // skill content, API responses, etc.
             }
             AgentEventType::ToolCalls { .. } => {}
             AgentEventType::RunFinished { .. } => {}
@@ -418,21 +406,15 @@ impl Formatter for TelegramFormatter {
     fn thread_id(&self) -> Option<String> {
         self.state.thread_id.clone()
     }
+
+    fn take_output(&mut self) -> RendererOutput {
+        self.renderer.take_output()
+    }
 }
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-/// Check if text content looks like a unified diff.
-fn looks_like_diff(text: &str) -> bool {
-    let lines: Vec<&str> = text.lines().take(10).collect();
-    let diff_indicators = lines
-        .iter()
-        .filter(|l| l.starts_with('+') || l.starts_with('-') || l.starts_with("@@"))
-        .count();
-    diff_indicators >= 2
-}
 
 /// Split a message into chunks at paragraph/sentence boundaries.
 fn split_message(text: &str, max_len: usize) -> Vec<String> {

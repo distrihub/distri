@@ -69,6 +69,41 @@ pub trait Formatter: Send + Sync {
 
     /// Get the thread ID if captured from events
     fn thread_id(&self) -> Option<String>;
+
+    /// Take any pending renderer output.
+    fn take_output(&mut self) -> RendererOutput;
+
+    /// Handle the final A2A message (from `final` tool or agent completion).
+    /// Called when the stream item carries `item.message` with an assistant
+    /// message — same as what the CLI does in `print_stream_verbose`.
+    /// Default impl renders the text if the formatter hasn't already
+    /// accumulated content from TextMessageContent events.
+    fn handle_final_message(&mut self, message: &distri_types::Message) {
+        if message.role != distri_types::MessageRole::Assistant {
+            return;
+        }
+        if let Some(text) = message.as_text() {
+            if !text.is_empty() && self.final_content().is_empty() {
+                self.handle_event(&distri_types::AgentEvent {
+                    timestamp: chrono::Utc::now(),
+                    thread_id: String::new(),
+                    run_id: String::new(),
+                    event: distri_types::AgentEventType::TextMessageContent {
+                        message_id: message.id.clone(),
+                        step_id: String::new(),
+                        delta: text,
+                        stripped_content: None,
+                    },
+                    task_id: String::new(),
+                    agent_id: String::new(),
+                    user_id: None,
+                    identifier_id: None,
+                    workspace_id: None,
+                    channel_id: None,
+                });
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
