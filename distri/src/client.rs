@@ -7,6 +7,7 @@ use distri_a2a::{
 };
 use distri_types::{
     ExternalTool, LLmContext, LlmDefinition, Message, MessageRole, TokenResponse, ToolCall,
+    TtsModelInfo, TtsProvider, TtsProviderDefinition,
     a2a_converters::MessageMetadata, prompt::PromptSection,
 };
 use distri_types::{StandardDefinition, ToolResponse, configuration::AgentConfigWithTools};
@@ -2815,7 +2816,7 @@ pub struct TtsSpeechRequest {
     /// Provider name (e.g. "openai", "azure_openai", "azure", "elevenlabs").
     /// Omit to use workspace default.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub provider: Option<String>,
+    pub provider: Option<TtsProvider>,
     /// Audio output format. Defaults to "mp3".
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response_format: Option<String>,
@@ -2871,8 +2872,8 @@ impl TtsSpeechRequest {
     }
 
     /// Set the provider (e.g. "openai", "azure_openai").
-    pub fn with_provider(mut self, provider: impl Into<String>) -> Self {
-        self.provider = Some(provider.into());
+    pub fn with_provider(mut self, provider: TtsProvider) -> Self {
+        self.provider = Some(provider);
         self
     }
 
@@ -2914,44 +2915,4 @@ pub struct TtsSpeechResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TtsModelsResponse {
     pub models: Vec<TtsModelInfo>,
-}
-
-/// Information about a single TTS model.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TtsModelInfo {
-    pub id: String,
-    pub provider: String,
-    pub name: String,
-    pub voices: Vec<TtsVoiceInfo>,
-    pub formats: Vec<String>,
-}
-
-/// Information about a TTS voice.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TtsVoiceInfo {
-    pub id: String,
-    pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-}
-
-/// TTS provider definition with required configuration keys.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TtsProviderDefinition {
-    pub id: String,
-    pub label: String,
-    pub keys: Vec<TtsSecretKeyDefinition>,
-    pub models: Vec<TtsModelInfo>,
-}
-
-/// A secret key required by a TTS provider.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TtsSecretKeyDefinition {
-    pub key: String,
-    pub label: String,
-    pub placeholder: String,
-    #[serde(default)]
-    pub required: bool,
-    #[serde(default)]
-    pub sensitive: bool,
 }

@@ -1,4 +1,4 @@
-use crate::{Distri, DistriConfig, LlmExecuteResponse, TtsSpeechRequest};
+use crate::{Distri, DistriConfig, LlmExecuteResponse, TtsProvider, TtsSpeechRequest};
 use actix_web::{App, HttpResponse, HttpServer, dev::ServerHandle, web};
 use distri_a2a::{EventKind, Message as A2aMessage, MessageKind, Part as A2aPart, TextPart};
 use distri_types::{
@@ -113,7 +113,7 @@ async fn tts_speech_with_explicit_params() {
             TtsSpeechRequest::new("Test")
                 .with_model("tts-1-hd")
                 .with_voice("nova")
-                .with_provider("azure_openai"),
+                .with_provider(TtsProvider::AzureOpenai),
         )
         .await
         .unwrap();
@@ -161,7 +161,7 @@ fn tts_speech_request_builder() {
     let req = TtsSpeechRequest::new("Hello")
         .with_model("tts-1-hd")
         .with_voice("nova")
-        .with_provider("openai")
+        .with_provider(TtsProvider::OpenAI)
         .with_format("wav")
         .with_speed(1.5)
         .with_instructions("Speak softly");
@@ -169,7 +169,7 @@ fn tts_speech_request_builder() {
     assert_eq!(req.input, "Hello");
     assert_eq!(req.model.as_deref(), Some("tts-1-hd"));
     assert_eq!(req.voice.as_deref(), Some("nova"));
-    assert_eq!(req.provider.as_deref(), Some("openai"));
+    assert_eq!(req.provider, Some(TtsProvider::OpenAI));
     assert_eq!(req.response_format.as_deref(), Some("wav"));
     assert_eq!(req.speed, Some(1.5));
     assert_eq!(req.instructions.as_deref(), Some("Speak softly"));
@@ -192,7 +192,7 @@ fn tts_speech_request_full_serialization() {
     let req = TtsSpeechRequest::new("Hi")
         .with_model("tts-1")
         .with_voice("alloy")
-        .with_provider("openai")
+        .with_provider(TtsProvider::OpenAI)
         .with_format("mp3")
         .with_speed(1.0);
 

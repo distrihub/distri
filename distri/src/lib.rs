@@ -26,8 +26,8 @@ pub use client::{
     LoginUrlResponse, NewPromptTemplateRequest, NewSecretRequest, PluginResponse,
     PluginsListResponse, PromptTemplateResponse, ProviderInfo, SecretEntry, SkillListItemResponse,
     SkillResponse, SyncPromptTemplatesResponse, TaskNamespaceResponse, ThreadSummary,
-    TtsModelInfo, TtsModelsResponse, TtsProviderDefinition, TtsSecretKeyDefinition,
-    TtsSpeechRequest, TtsSpeechResponse, TtsVoiceInfo, UpdatePluginRequest, UpdateSkillRequest,
+    TtsModelsResponse,
+    TtsSpeechRequest, TtsSpeechResponse, UpdatePluginRequest, UpdateSkillRequest,
     ValidatePluginResponse, WorkspaceResponse,
 };
 pub use client_app::{AppError, DistriClientApp, ToolListItem};
@@ -37,6 +37,7 @@ pub use hooks_runtime::*;
 
 pub use distri_types::{
     HookContext, HookKind, HookMutation, InlineHookRequest, InlineHookResponse, TokenResponse,
+    TtsModelInfo, TtsProvider, TtsProviderDefinition, TtsSecretKeyDefinition, TtsVoiceInfo,
 };
 pub use local_tools::register_local_filesystem_tools;
 pub use printer::{EventPrinter, print_stream, print_stream_verbose};
