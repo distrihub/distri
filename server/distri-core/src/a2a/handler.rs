@@ -165,9 +165,6 @@ impl A2AHandler {
             Arc::new(RwLock::new(state))
         };
 
-        // Pick up token_fetcher from the orchestrator if available
-        let token_fetcher = orchestrator.token_fetcher.clone();
-
         let context = ExecutorContext {
             thread_id,
             task_id: params
@@ -187,7 +184,6 @@ impl A2AHandler {
             hook_prompt_state,
             env_vars,
             dry_run,
-            token_fetcher,
             ..Default::default()
         };
 

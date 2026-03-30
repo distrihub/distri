@@ -156,9 +156,6 @@ pub struct ExecutorContext {
     /// Wrapped in Arc<RwLock> so tools (e.g., inject_connection_env) can mutate env vars
     /// and child contexts inherit the same mutable map.
     pub env_vars: Arc<RwLock<HashMap<String, String>>>,
-    /// Token fetcher callback for resolving connection OAuth tokens.
-    /// Used by request tool and inject_connection_env to fetch tokens on demand.
-    pub token_fetcher: Option<crate::tools::inject_env::TokenFetcher>,
     /// Channel for emitting events to parent agent (for subagent communication)
     pub parent_tx: Option<Arc<mpsc::Sender<AgentEvent>>>,
     /// Parent task_id for subagents to share session data with parent
@@ -221,7 +218,6 @@ impl Default for ExecutorContext {
             current_message_id: Arc::new(RwLock::new(None)),
             additional_attributes: None,
             env_vars: Arc::new(RwLock::new(HashMap::new())),
-            token_fetcher: None,
             parent_tx: None,
             parent_task_id: None,
             dynamic_tools: None,
@@ -804,7 +800,7 @@ impl ExecutorContext {
             tool_metadata: self.tool_metadata.clone(),
             default_model_settings: self.default_model_settings.clone(),
             env_vars: self.env_vars.clone(),
-            token_fetcher: self.token_fetcher.clone(),
+
             ..Default::default()
         }
     }
@@ -838,7 +834,7 @@ impl ExecutorContext {
             tool_metadata: self.tool_metadata.clone(),
             default_model_settings: self.default_model_settings.clone(),
             env_vars: self.env_vars.clone(),
-            token_fetcher: self.token_fetcher.clone(),
+
             ..Default::default()
         }
     }
@@ -919,7 +915,7 @@ impl ExecutorContext {
             current_message_id: self.current_message_id.clone(), // Arc::clone
             additional_attributes: self.additional_attributes.clone(),
             env_vars: self.env_vars.clone(),
-            token_fetcher: self.token_fetcher.clone(),
+
             parent_tx: self.parent_tx.clone(),
             parent_task_id: self.parent_task_id.clone(),
             dynamic_tools: self.dynamic_tools.clone(),

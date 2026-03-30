@@ -150,15 +150,13 @@ impl ExecutorContextTool for HttpFactoryTool {
             .stores
             .as_ref()
             .and_then(|s| s.secret_store.clone());
-        let token_fetcher = context.token_fetcher.clone();
 
         let resolve_ctx = ResolveContext {
             env_vars,
             secret_store,
-            token_fetcher,
         };
 
-        let result = execute_http_request(&request, &resolve_ctx)
+        let result = execute_http_request(&request, &resolve_ctx, context.stores.as_ref())
             .await
             .map_err(|e| AgentError::ToolExecution(format!("{}: {}", self.name, e)))?;
 

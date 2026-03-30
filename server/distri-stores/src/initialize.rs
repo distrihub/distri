@@ -344,6 +344,8 @@ impl StoreBuilder {
             secret_store: Some(secret_store),
             skill_store,
             workflow_store: None,
+            connection_store: None,
+            connection_token_store: None,
         })
     }
 }
@@ -452,6 +454,8 @@ pub async fn create_ephemeral_execution_stores(
         secret_store: base_stores.secret_store.clone(),
         skill_store: base_stores.skill_store.clone(),
         workflow_store: base_stores.workflow_store.clone(),
+        connection_store: base_stores.connection_store.clone(),
+        connection_token_store: base_stores.connection_token_store.clone(),
     })
 }
 
@@ -495,5 +499,7 @@ pub async fn prepare_stores_for_execution(
         secret_store: base_stores.secret_store.clone(),
         skill_store: base_stores.skill_store.clone(),
         workflow_store: base_stores.workflow_store.clone(),
+        connection_store: base_stores.connection_store.clone(),
+        connection_token_store: base_stores.connection_token_store.clone(),
     })
 }

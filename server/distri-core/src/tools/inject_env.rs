@@ -1,21 +1,11 @@
 use crate::agent::ExecutorContext;
-use crate::tools::resolve::{resolve_connection_token, ResolveContext};
+use crate::tools::resolve::resolve_connection_token;
 use crate::tools::ExecutorContextTool;
 use crate::types::ToolCall;
 use crate::AgentError;
 use distri_types::{Part, Tool, ToolContext};
 use serde_json::{json, Value};
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
-
-/// Callback type for fetching a connection token given a connection_id.
-/// Returns (provider_name, access_token) or an error.
-pub type TokenFetcher = Arc<
-    dyn Fn(String) -> Pin<Box<dyn Future<Output = Result<(String, String), String>> + Send>>
-        + Send
-        + Sync,
->;
 
 /// Tool that fetches a connection token and injects it as an environment variable.
 /// The token never appears in conversation messages — only in env_vars map.
@@ -81,22 +71,12 @@ impl ExecutorContextTool for InjectConnectionEnvTool {
                 AgentError::ToolExecution("Missing 'connection_id' parameter".to_string())
             })?;
 
-        // Build ResolveContext from ExecutorContext (same pattern as HttpRequestTool)
-        let env_vars = context.env_vars.read().await.clone();
-        let secret_store = context
-            .stores
-            .as_ref()
-            .and_then(|s| s.secret_store.clone());
-        let token_fetcher = context.token_fetcher.clone();
+        // Fetch token directly from stores
+        let stores = context.stores.as_ref().ok_or_else(|| {
+            AgentError::ToolExecution("stores not available for connection resolution".to_string())
+        })?;
 
-        let resolve_ctx = ResolveContext {
-            env_vars,
-            secret_store,
-            token_fetcher,
-        };
-
-        // Fetch token via shared resolution
-        let (provider, access_token) = resolve_connection_token(connection_id, &resolve_ctx)
+        let (provider, access_token) = resolve_connection_token(connection_id, stores)
             .await
             .map_err(|e| AgentError::ToolExecution(e))?;
 
