@@ -1040,6 +1040,7 @@ impl AgentOrchestrator {
                     attributes,
                     user_id: None,
                     external_id: None,
+                    channel_id: None,
                 };
                 thread_store
                     .create_thread(create_request)

@@ -675,6 +675,9 @@ pub struct ThreadSummary {
     /// Channel ID if this thread originated from a messaging channel
     #[serde(skip_serializing_if = "Option::is_none")]
     pub channel_id: Option<String>,
+    /// Friendly channel name (e.g., "Telegram" or custom channel name)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub channel_name: Option<String>,
     /// Tags extracted from thread attributes
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tags: Option<Vec<String>>,
@@ -701,6 +704,8 @@ pub struct CreateThreadRequest {
     #[serde(default)]
     pub user_id: Option<String>,
     pub external_id: Option<String>,
+    #[serde(default)]
+    pub channel_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
