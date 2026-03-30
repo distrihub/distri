@@ -66,3 +66,6 @@ pub use client_config::DistriConfig;
 pub mod dynamic_tool;
 pub mod http_request;
 pub mod resolve;
+
+pub mod tts;
+pub use tts::*;
