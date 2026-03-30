@@ -68,8 +68,14 @@ pub struct HttpFactoryConfig {
 /// Input for a factory-created HTTP tool.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HttpFactoryToolInput {
-    /// Request path (appended to base_url)
-    pub path: String,
+    /// Request path (appended to base_url). Used for platform API calls.
+    #[serde(default)]
+    pub path: Option<String>,
+    /// Absolute URL. When set, `path` is ignored and `base_url` is NOT prepended.
+    /// Use this for external API calls (e.g., googleapis.com, slack.com).
+    /// Set `x-connection-id` header to auto-inject OAuth Bearer token.
+    #[serde(default)]
+    pub url: Option<String>,
     /// HTTP method. Defaults to GET.
     #[serde(default)]
     pub method: HttpMethod,
@@ -83,11 +89,34 @@ pub struct HttpFactoryToolInput {
 
 impl HttpFactoryConfig {
     /// Build an HttpRequestInput from factory defaults + per-call input.
+    ///
+    /// If `url` is set, use it as-is (external API call — base_url is NOT prepended).
+    /// If `path` is set, prepend base_url (platform API call).
+    /// Factory default headers are merged, but per-call headers win on conflict.
     pub fn build_request(&self, input: &HttpFactoryToolInput) -> HttpRequestInput {
-        let mut headers = self.headers.clone();
-        headers.extend(input.headers.clone());
+        let url = if let Some(ref absolute_url) = input.url {
+            // External API call — use absolute URL directly, skip base_url
+            absolute_url.clone()
+        } else if let Some(ref path) = input.path {
+            // Platform API call — prepend base_url
+            format!("{}{}", self.base_url.trim_end_matches('/'), path)
+        } else {
+            // Fallback: just use base_url (shouldn't normally happen)
+            self.base_url.clone()
+        };
+
+        // For external URLs (url field), don't inject factory default headers
+        // (they contain platform auth like x-api-key which shouldn't leak to external APIs)
+        let headers = if input.url.is_some() {
+            input.headers.clone()
+        } else {
+            let mut headers = self.headers.clone();
+            headers.extend(input.headers.clone());
+            headers
+        };
+
         HttpRequestInput {
-            url: format!("{}{}", self.base_url.trim_end_matches('/'), input.path),
+            url,
             method: input.method.clone(),
             headers,
             body: input.body.clone(),

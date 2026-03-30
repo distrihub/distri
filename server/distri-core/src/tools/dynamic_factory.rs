@@ -94,11 +94,14 @@ impl Tool for HttpFactoryTool {
     fn get_parameters(&self) -> serde_json::Value {
         json!({
             "type": "object",
-            "required": ["path"],
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "Request path (appended to base URL)"
+                    "description": "Request path (appended to base URL). Use for platform API calls."
+                },
+                "url": {
+                    "type": "string",
+                    "description": "Absolute URL for external API calls (e.g. https://googleapis.com/...). When set, base URL is NOT prepended. Set x-connection-id header to auto-inject OAuth token."
                 },
                 "method": {
                     "type": "string",
@@ -108,7 +111,7 @@ impl Tool for HttpFactoryTool {
                 "headers": {
                     "type": "object",
                     "additionalProperties": { "type": "string" },
-                    "description": "Additional headers (merged with defaults)"
+                    "description": "Request headers. Set 'x-connection-id' to a connection ID to auto-inject OAuth Bearer token for external API calls."
                 },
                 "body": {
                     "description": "Request body (sent as JSON by default)"

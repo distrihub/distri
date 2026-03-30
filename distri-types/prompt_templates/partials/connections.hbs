@@ -2,18 +2,13 @@
 # CONNECTIONS
 OAuth connections to external services. Two ways to make authenticated API calls:
 
-**Option 1: Direct API call** (recommended for simple requests)
-Use `distri_request` to proxy through the connection — auth token is injected automatically:
+**Option 1: Direct API call via `distri_request`** (recommended)
+Use `url` with `x-connection-id` header — the OAuth token is injected automatically, no round trips:
 ```
 distri_request({
-  path: "/connections/<connection_id>/request",
-  method: "POST",
-  body: {
-    method: "GET",
-    url: "https://api.example.com/endpoint",
-    headers: {},
-    body: null
-  }
+  url: "https://www.googleapis.com/calendar/v3/calendars/primary/events",
+  method: "GET",
+  headers: { "x-connection-id": "<connection_id>" }
 })
 ```
 
