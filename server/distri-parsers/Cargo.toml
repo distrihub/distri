@@ -1,12 +1,12 @@
 [package]
 name = "distri-parsers"
-version = "0.3.6"
+version = "0.3.7"
 edition = "2024"
 
 [dependencies]
 
 
-distri-types = { path = "../../distri-types", version = "0.3.6" }
+distri-types = { path = "../../distri-types", version = "0.3.7" }
 
 
 serde = { workspace = true }

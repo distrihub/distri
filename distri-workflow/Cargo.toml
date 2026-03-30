@@ -1,8 +1,10 @@
 [package]
 name = "distri-workflow"
-version = "0.1.0"
+version = "0.3.7"
 edition = "2021"
 description = "Workflow engine for Distri — define, execute, and track multi-step workflows"
+license = "MIT"
+repository = "https://github.com/distrihub/distri"
 
 [dependencies]
 async-trait = { workspace = true }

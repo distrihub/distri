@@ -1,7 +1,10 @@
 [package]
 name = "distri-cli"
-version = "0.3.8"
+version = "0.3.7"
 edition = "2021"
+description = "CLI for the Distri A2A agent platform"
+license = "MIT"
+repository = "https://github.com/distrihub/distri"
 
 [dependencies]
 anyhow = { workspace = true }
@@ -19,9 +22,9 @@ warp = "0.3"
 serde = { workspace = true }
 urlencoding = "2.1"
 
-distri = { path = "../distri", version = "0.3.6" }
-distri-a2a = { path = "../distri-a2a", version = "0.3.6" }
-distri-types = { path = "../distri-types", version = "0.3.6" }
+distri = { path = "../distri", version = "0.3.7" }
+distri-a2a = { path = "../distri-a2a", version = "0.3.7" }
+distri-types = { path = "../distri-types", version = "0.3.7" }
 async-trait = { workspace = true }
 uuid = { version = "1.13.1", features = ["v4"] }
 tracing-subscriber = { workspace = true }
