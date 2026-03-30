@@ -73,17 +73,24 @@ pub trait Formatter: Send + Sync {
     /// Take any pending renderer output.
     fn take_output(&mut self) -> RendererOutput;
 
+    /// Clear accumulated output so it can be replaced (e.g. by the final message).
+    fn clear_content(&mut self);
+
     /// Handle the final A2A message (from `final` tool or agent completion).
     /// Called when the stream item carries `item.message` with an assistant
     /// message — same as what the CLI does in `print_stream_verbose`.
-    /// Default impl renders the text if the formatter hasn't already
-    /// accumulated content from TextMessageContent events.
+    ///
+    /// The final message replaces any previously accumulated content because
+    /// the `final` tool's output IS the actual answer — earlier streamed text
+    /// was the agent thinking aloud before calling tools.
     fn handle_final_message(&mut self, message: &distri_types::Message) {
         if message.role != distri_types::MessageRole::Assistant {
             return;
         }
         if let Some(text) = message.as_text() {
-            if !text.is_empty() && self.final_content().is_empty() {
+            if !text.is_empty() {
+                // Replace accumulated content with the final answer.
+                self.clear_content();
                 self.handle_event(&distri_types::AgentEvent {
                     timestamp: chrono::Utc::now(),
                     thread_id: String::new(),

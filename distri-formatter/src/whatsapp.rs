@@ -395,6 +395,11 @@ impl Formatter for WhatsAppFormatter {
     fn take_output(&mut self) -> RendererOutput {
         self.renderer.take_output()
     }
+
+    fn clear_content(&mut self) {
+        self.renderer.output.clear();
+        self.renderer.dirty = false;
+    }
 }
 
 // ---------------------------------------------------------------------------

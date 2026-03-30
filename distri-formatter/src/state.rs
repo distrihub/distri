@@ -61,6 +61,9 @@ pub struct ChatState {
 /// that shouldn't be shown to the user.
 pub fn is_probe_call(name: &str, input: &serde_json::Value) -> bool {
     match name {
+        // Final/reflect/console_log are internal — their output goes through
+        // item.message, not through the event stream.
+        "final" | "reflect" | "console_log" => true,
         "load_skill" => {
             let skill = input
                 .get("skill_name")

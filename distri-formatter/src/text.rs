@@ -311,6 +311,10 @@ impl Formatter for TextFormatter {
             RendererOutput::Text(std::mem::take(&mut self.output))
         }
     }
+
+    fn clear_content(&mut self) {
+        self.output.clear();
+    }
 }
 
 #[cfg(test)]
