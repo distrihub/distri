@@ -71,9 +71,9 @@ impl ExecutorContextTool for InjectConnectionEnvTool {
                 AgentError::ToolExecution("Missing 'connection_id' parameter".to_string())
             })?;
 
-        // Fetch token directly from stores
-        let stores = context.stores.as_ref().ok_or_else(|| {
-            AgentError::ToolExecution("stores not available for connection resolution".to_string())
+        // Get stores from orchestrator (canonical source for connection stores)
+        let stores = context.orchestrator.as_ref().map(|o| &o.stores).ok_or_else(|| {
+            AgentError::ToolExecution("orchestrator not available for connection resolution".to_string())
         })?;
 
         let (provider, access_token) = resolve_connection_token(connection_id, stores)
