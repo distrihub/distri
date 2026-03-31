@@ -398,13 +398,24 @@ impl AgentOrchestrator {
                 .or_insert(serde_json::Value::String(prefix));
         }
 
-        if self.is_ephemeral() && ctx.stores.is_none() {
-            let execution_stores = distri_stores::create_ephemeral_execution_stores(&self.stores)
-                .await
-                .map_err(|e| {
-                    AgentError::Other(format!("Failed to create ephemeral stores: {}", e))
-                })?;
-            ctx.stores = Some(execution_stores);
+        if ctx.stores.is_none() {
+            if self.is_ephemeral() {
+                // Ephemeral mode: create isolated stores for this execution
+                let execution_stores =
+                    distri_stores::create_ephemeral_execution_stores(&self.stores)
+                        .await
+                        .map_err(|e| {
+                            AgentError::Other(format!(
+                                "Failed to create ephemeral stores: {}",
+                                e
+                            ))
+                        })?;
+                ctx.stores = Some(execution_stores);
+            } else {
+                // Cloud mode: share the orchestrator's stores so tools
+                // (e.g. x-connection-id resolution) can access them directly.
+                ctx.stores = Some(self.stores.clone());
+            }
         }
 
         Ok(Arc::new(ctx))
