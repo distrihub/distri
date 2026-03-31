@@ -308,7 +308,8 @@ impl Formatter for TextFormatter {
         if self.output.is_empty() {
             RendererOutput::None
         } else {
-            RendererOutput::Text(std::mem::take(&mut self.output))
+            // Clone, don't take — final_content() needs the accumulated output.
+            RendererOutput::Text(self.output.clone())
         }
     }
 
