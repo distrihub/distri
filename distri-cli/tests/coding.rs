@@ -28,6 +28,22 @@ fn coding_base_url() -> Option<String> {
     )
 }
 
+fn distri_binary() -> PathBuf {
+    // Use the binary built by cargo in the same target directory
+    let mut path = PathBuf::from(env!("CARGO_BIN_EXE_distri"));
+    if !path.exists() {
+        // Fallback: look next to the test binary
+        path = std::env::current_exe()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("distri");
+    }
+    path
+}
+
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -38,7 +54,7 @@ fn repo_root() -> PathBuf {
 /// Run distri CLI with the coder agent and a task, capturing output.
 /// Uses a temp workspace so file operations are isolated.
 fn run_coder_task(base_url: &str, task: &str, workspace: &std::path::Path) -> Result<String> {
-    let output = Command::new("distri")
+    let output = Command::new(distri_binary())
         .arg("--base-url")
         .arg(base_url)
         .arg("run")
