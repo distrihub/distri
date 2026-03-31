@@ -22,6 +22,7 @@ ui = ["distri-server/ui"]
 [dependencies]
 distri-core = { path = "../distri-core", version = "0.3.7", default-features = false }
 distri-types = { path = "../../distri-types", version = "0.3.7" }
+distri-filesystem = { path = "../../distri-filesystem", version = "0.3.7" }
 distri-server = { path = "../distri-server", version = "0.3.7", default-features = false }
 distri-auth = { path = "../distri-auth", version = "0.3.7" }
 open = "5.0"

@@ -658,11 +658,13 @@ impl ToolsConfig {
     }
 }
 
-/// Where filesystem and artifact tools should execute
+/// Where filesystem and artifact tools should execute.
+/// Deprecated: filesystem tools are no longer included as server builtins.
+/// They should be provided as external tools by the client or accessed via shell.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum FileSystemMode {
-    /// Run filesystem/artifact tools on the server (default)
+    /// Previously ran fs tools on the server (now a no-op — fs tools removed from builtins)
     #[default]
     Remote,
     /// Handle filesystem/artifact tools locally via external tool callbacks
@@ -670,8 +672,9 @@ pub enum FileSystemMode {
 }
 
 impl FileSystemMode {
+    /// Deprecated: always returns false since filesystem tools are no longer server builtins.
     pub fn include_server_tools(&self) -> bool {
-        !matches!(self, FileSystemMode::Local)
+        false
     }
 }
 

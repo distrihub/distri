@@ -5,9 +5,6 @@ use distri::{
 };
 
 use crate::tools::ExecuteCommandTool;
-use distri_filesystem::FileSystem;
-use distri_types::configuration::ObjectStorageConfig;
-
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -66,11 +63,11 @@ pub async fn init_coder(
         }
     }
 
-    let file_system = init_fs(home_dir).await?;
+    let session_storage_path = home_dir.join(".distri/session_storage");
     let builder = AgentOrchestratorBuilder::default();
     let orchestrator = builder
         .with_stores(stores)
-        .with_workspace_file_system(Arc::new(file_system))
+        .with_session_storage_path(session_storage_path)
         .with_prompt_registry(prompt_registry)
         .with_store_config(store_config)
         .build()
@@ -108,16 +105,3 @@ pub async fn register_coder_agent(
     Ok(())
 }
 
-pub async fn init_fs(home_dir: &Path) -> Result<FileSystem> {
-    let object_store_config = ObjectStorageConfig::FileSystem {
-        base_path: home_dir.to_string_lossy().to_string(),
-    };
-
-    let fs_config = distri_filesystem::FileSystemConfig {
-        object_store: object_store_config,
-        root_prefix: None,
-    };
-
-    let fs = distri_filesystem::create_file_system(fs_config).await?;
-    Ok(fs)
-}

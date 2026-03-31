@@ -1,11 +1,24 @@
 use std::{collections::HashMap, sync::Arc};
 
-use distri_types::{AgentConfig, AgentError, Part, ToolResponse};
+use distri_types::{filesystem::FileSystemOps, AgentConfig, AgentError, Part, Tool, ToolResponse};
+use tokio::sync::RwLock;
 
 use crate::{
     agent::{parse_agent_markdown_content, ExecutorContext},
     AgentOrchestrator,
 };
+
+/// Create artifact tools on-demand from the orchestrator's session filesystem.
+/// These are injected as dynamic tools for the artifact agent since they are
+/// no longer registered as builtin tools.
+fn create_artifact_dynamic_tools(
+    orchestrator: &AgentOrchestrator,
+) -> Arc<RwLock<Vec<Arc<dyn Tool>>>> {
+    let artifact_tools = distri_filesystem::create_artifact_tools(
+        orchestrator.session_filesystem.clone() as Arc<dyn FileSystemOps>,
+    );
+    Arc::new(RwLock::new(artifact_tools))
+}
 
 #[cfg(test)]
 mod tests;
@@ -29,6 +42,8 @@ pub async fn run_file_agent(
         "artifact_base_path".to_string(),
         base_path.to_string().into(),
     )]));
+    // Inject artifact tools as dynamic tools so the artifact agent can use them
+    context.dynamic_tools = Some(create_artifact_dynamic_tools(orchestrator));
     let result = orchestrator
         .run_inline_agent(
             AgentConfig::StandardAgent(agent_config),
@@ -108,6 +123,8 @@ pub async fn process_large_tool_responses(
             "artifact_base_path".to_string(),
             artifact_base_path.to_string().into(),
         )])),
+        // Inject artifact tools so the artifact agent can read/search/list artifacts
+        dynamic_tools: Some(create_artifact_dynamic_tools(orchestrator)),
         ..Default::default()
     });
 

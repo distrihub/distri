@@ -38,12 +38,13 @@ pub struct AgentOrchestrator {
     pub mcp_registry: Arc<RwLock<McpServerRegistry>>,
     pub coordinator_rx: Arc<Mutex<mpsc::Receiver<CoordinatorMessage>>>,
     pub coordinator_tx: mpsc::Sender<CoordinatorMessage>,
-    pub workspace_filesystem: Arc<FileSystem>,
     pub session_filesystem: Arc<FileSystem>,
     pub session_root_prefix: Option<String>,
+    /// Optional workspace filesystem for HTTP file routes (not used by agent tools).
+    /// Set by the hosting application if workspace file APIs are needed.
+    pub workspace_filesystem: Option<Arc<FileSystem>>,
     pub browser_config: Arc<RwLock<BrowsrClientConfig>>,
     pub additional_tools: Arc<RwLock<HashMap<String, Vec<Arc<dyn Tool>>>>>,
-    pub workspace_path: std::path::PathBuf,
     pub prompt_registry: Arc<PromptRegistry>,
     /// Store configuration for creating new session stores
     pub store_config: StoreConfig,
@@ -77,8 +78,9 @@ pub struct AgentOrchestratorBuilder {
     user_id: Option<String>,
     registry: Option<Arc<RwLock<McpServerRegistry>>>,
     additional_tools: Option<HashMap<String, Vec<Arc<dyn Tool>>>>,
+    session_filesystem: Option<Arc<FileSystem>>,
+    session_storage_path: Option<std::path::PathBuf>,
     workspace_filesystem: Option<Arc<FileSystem>>,
-    workspace_path: Option<std::path::PathBuf>,
     browser_config: Option<BrowsrClientConfig>,
     stores: Option<InitializedStores>,
     prompt_registry: Option<Arc<PromptRegistry>>,
@@ -107,8 +109,20 @@ impl AgentOrchestratorBuilder {
         self
     }
 
-    pub fn with_workspace_path(mut self, workspace_path: std::path::PathBuf) -> Self {
-        self.workspace_path = Some(workspace_path);
+    pub fn with_session_storage_path(mut self, path: std::path::PathBuf) -> Self {
+        self.session_storage_path = Some(path);
+        self
+    }
+
+    pub fn with_session_filesystem(mut self, fs: Arc<FileSystem>) -> Self {
+        self.session_filesystem = Some(fs);
+        self
+    }
+
+    /// Set an optional workspace filesystem for HTTP file routes.
+    /// This is NOT used by agent tools — only by workspace file API endpoints.
+    pub fn with_workspace_filesystem(mut self, fs: Arc<FileSystem>) -> Self {
+        self.workspace_filesystem = Some(fs);
         self
     }
 
@@ -143,11 +157,6 @@ impl AgentOrchestratorBuilder {
 
     pub fn with_configuration(mut self, configuration: Arc<RwLock<DistriServerConfig>>) -> Self {
         self.configuration = Some(configuration);
-        self
-    }
-
-    pub fn with_workspace_file_system(mut self, file_system: Arc<FileSystem>) -> Self {
-        self.workspace_filesystem = Some(file_system);
         self
     }
 
@@ -191,41 +200,30 @@ impl AgentOrchestratorBuilder {
             map
         });
         let hooks = Arc::new(RwLock::new(hooks_map));
-        let workspace_path = self
-            .workspace_path
-            .unwrap_or_else(|| std::path::PathBuf::from("/"));
 
         let configuration = self
             .configuration
             .unwrap_or_else(|| Arc::new(RwLock::new(DistriServerConfig::default())));
-        let filesystem_config = {
-            let cfg_guard = configuration.read().await;
-            cfg_guard.filesystem.clone()
-        };
 
-        let workspace_filesystem = if let Some(fs) = self.workspace_filesystem {
+        // Create session filesystem for internal artifact/large-response processing.
+        // This is independent of any workspace — it's purely for session-scoped storage.
+        let session_filesystem = if let Some(fs) = self.session_filesystem {
             fs
         } else {
-            let object_store_config =
-                filesystem_config
-                    .clone()
-                    .unwrap_or(ObjectStorageConfig::FileSystem {
-                        base_path: workspace_path.to_string_lossy().to_string(),
-                    });
+            let session_path = self
+                .session_storage_path
+                .unwrap_or_else(|| std::path::PathBuf::from("/tmp/distri-sessions"));
 
             let fs_config = distri_filesystem::FileSystemConfig {
-                object_store: object_store_config,
+                object_store: ObjectStorageConfig::FileSystem {
+                    base_path: session_path.to_string_lossy().to_string(),
+                },
                 root_prefix: None,
             };
 
             Arc::new(distri_filesystem::create_file_system(fs_config).await?)
         };
-
-        // Always scope session storage under a stable prefix; paths under here will be
-        // threads/{thread}/tasks/{task}/...
-        let session_prefix = ".distri/session_storage";
-        let session_filesystem = Arc::new(workspace_filesystem.scoped(Some(session_prefix))?);
-        let session_root_prefix = Some(session_prefix.to_string());
+        let session_root_prefix = None;
 
         let browser_config = Arc::new(RwLock::new(browser_config));
 
@@ -243,12 +241,11 @@ impl AgentOrchestratorBuilder {
             mcp_registry: registry,
             coordinator_rx: Arc::new(Mutex::new(coordinator_rx)),
             coordinator_tx,
-            workspace_filesystem,
             session_filesystem,
             session_root_prefix,
+            workspace_filesystem: self.workspace_filesystem,
             browser_config,
             additional_tools: Arc::new(RwLock::new(self.additional_tools.unwrap_or_default())),
-            workspace_path,
             prompt_registry,
             store_config,
             stores,
@@ -539,9 +536,6 @@ impl AgentOrchestrator {
         let mut tools = crate::tools::resolve_tools_config(
             &tools_config,
             self.mcp_registry.clone(),
-            self.workspace_filesystem.clone(),
-            self.session_filesystem.clone(),
-            definition.file_system.include_server_tools(),
             external_tools,
         )
         .await
@@ -1320,11 +1314,7 @@ impl AgentOrchestrator {
     ) -> Result<Vec<Arc<dyn crate::tools::Tool>>, AgentError> {
         use crate::types::ToolsConfig;
 
-        let builtin_tools = crate::tools::get_builtin_tools(
-            self.workspace_filesystem.clone(),
-            self.session_filesystem.clone(),
-            true,
-        );
+        let builtin_tools = crate::tools::get_builtin_tools();
 
         // Create a ToolsConfig that includes all available tools
         let all_tools_config = ToolsConfig {
@@ -1338,9 +1328,6 @@ impl AgentOrchestrator {
         let mut tools = crate::tools::resolve_tools_config(
             &all_tools_config,
             self.mcp_registry.clone(),
-            self.workspace_filesystem.clone(),
-            self.session_filesystem.clone(),
-            true,
             &[],
         )
         .await

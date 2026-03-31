@@ -198,6 +198,17 @@ pub async fn init_orchestrator_with_configuration(
 
     let merged_config = resolved_config_owned.as_ref().or(workspace_config);
 
+    // Create workspace filesystem for file routes (not for agent tools)
+    let workspace_fs = {
+        let fs_config = distri_filesystem::FileSystemConfig {
+            object_store: distri_types::configuration::ObjectStorageConfig::FileSystem {
+                base_path: workspace_path.to_string_lossy().to_string(),
+            },
+            root_prefix: None,
+        };
+        Arc::new(distri_filesystem::create_file_system(fs_config).await?)
+    };
+
     let builder = AgentOrchestratorBuilder::default()
         .with_configuration(configuration_handle)
         .with_browser_config(BrowsrClientConfig::default());
@@ -205,7 +216,8 @@ pub async fn init_orchestrator_with_configuration(
         .with_stores(stores)
         .with_prompt_registry(prompt_registry)
         .with_store_config(store_config)
-        .with_workspace_path(workspace_path.to_path_buf())
+        .with_session_storage_path(workspace_path.join(".distri/session_storage"))
+        .with_workspace_filesystem(workspace_fs)
         .build()
         .await?;
 

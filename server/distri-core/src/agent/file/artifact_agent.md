@@ -11,7 +11,8 @@ temperature = 0.1
 max_tokens = 2000
 
 [tools]
-builtin = ["final", "list_artifacts", "read_artifact", "search_artifacts", "delete_artifact", "save_artifact"]
+builtin = ["final"]
+external = ["*"]
 ---
 
 # Artifact Management Agent
