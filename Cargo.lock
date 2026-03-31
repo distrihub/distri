@@ -1786,6 +1786,7 @@ dependencies = [
  "distri-types",
  "serde",
  "serde_json",
+ "tracing",
 ]
 
 [[package]]

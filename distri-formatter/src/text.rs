@@ -10,7 +10,7 @@ use crate::state::{
     ChatState, MessageState, StepState, ToolCallState, ToolCallStatus,
     format_tool_call, is_probe_call,
 };
-use crate::Formatter;
+use crate::{Formatter, RendererOutput};
 
 /// A plain-text event formatter.
 ///
@@ -302,6 +302,19 @@ impl Formatter for TextFormatter {
 
     fn thread_id(&self) -> Option<String> {
         self.state.thread_id.clone()
+    }
+
+    fn take_output(&mut self) -> RendererOutput {
+        if self.output.is_empty() {
+            RendererOutput::None
+        } else {
+            // Clone, don't take — final_content() needs the accumulated output.
+            RendererOutput::Text(self.output.clone())
+        }
+    }
+
+    fn clear_content(&mut self) {
+        self.output.clear();
     }
 }
 

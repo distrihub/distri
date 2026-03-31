@@ -45,3 +45,31 @@ pub fn build_distri_request_factory(config: &DistriConfig) -> DynamicToolFactory
 pub fn build_platform_overrides(config: &DistriConfig) -> DefinitionOverrides {
     DefinitionOverrides::new().with_dynamic_tools(vec![build_distri_request_factory(config)])
 }
+
+/// Build a `distri_request` factory with an explicit workspace ID override.
+/// Used by the gateway which handles requests for different workspaces.
+pub fn build_distri_request_factory_for_workspace(
+    config: &DistriConfig,
+    workspace_id: uuid::Uuid,
+) -> DynamicToolFactory {
+    let mut headers = HashMap::new();
+    if let Some(ref api_key) = config.api_key {
+        headers.insert("x-api-key".to_string(), api_key.clone());
+    }
+    // Always set the workspace header to the specific workspace
+    headers.insert("x-workspace-id".to_string(), workspace_id.to_string());
+
+    let factory_config = HttpFactoryConfig {
+        base_url: config.base_url.clone(),
+        headers,
+    };
+
+    DynamicToolFactory {
+        name: "distri_request".to_string(),
+        factory_type: "http".to_string(),
+        config: serde_json::to_value(factory_config).expect("HttpFactoryConfig serialization"),
+        description: Some(
+            "Call the Distri platform REST API. Input: {path, method, headers?, body?}".to_string(),
+        ),
+    }
+}

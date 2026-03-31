@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 /// A dynamic tool factory definition. The `factory_type` determines
 /// how `config` is interpreted and what tool is created.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct DynamicToolFactory {
     /// Name of the tool to create (e.g. "zippy_request")
     pub name: String,

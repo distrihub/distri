@@ -63,6 +63,7 @@ pub use ui_tool_renderers::*;
 mod client_config;
 pub use client_config::DistriConfig;
 
+pub mod connections;
 pub mod dynamic_tool;
 pub mod http_request;
 pub mod resolve;

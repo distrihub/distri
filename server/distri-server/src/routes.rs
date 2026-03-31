@@ -1473,10 +1473,9 @@ async fn proxy_request_handler(
     let resolve_ctx = ResolveContext {
         env_vars: std::collections::HashMap::new(),
         secret_store,
-        token_fetcher: None,
     };
 
-    match execute_http_request(&body, &resolve_ctx).await {
+    match execute_http_request(&body, &resolve_ctx, Some(&executor.stores)).await {
         Ok(response) => HttpResponse::Ok().json(response),
         Err(e) => {
             tracing::warn!(error = ?e, "Request proxy failed");
