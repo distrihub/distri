@@ -1167,6 +1167,21 @@ pub trait ConnectionTokenStore: Send + Sync + 'static {
     async fn store_token(&self, connection_id: &str, token: ConnectionToken) -> anyhow::Result<()>;
     async fn get_token(&self, connection_id: &str) -> anyhow::Result<Option<ConnectionToken>>;
     async fn remove_token(&self, connection_id: &str) -> anyhow::Result<()>;
+
+    /// Attempt to refresh an expired OAuth token using the stored refresh_token.
+    /// Returns the new token if refresh succeeds, or None if refresh is not
+    /// supported or fails. The implementation should store the refreshed token.
+    ///
+    /// Cloud implementation uses OAuthHandler.refresh_get_session().
+    /// Default: no refresh support (returns None).
+    async fn refresh_token(
+        &self,
+        _connection_id: &str,
+        _connection: &Connection,
+    ) -> anyhow::Result<Option<ConnectionToken>> {
+        Ok(None)
+    }
+
     async fn store_oauth_state(
         &self,
         state_key: &str,

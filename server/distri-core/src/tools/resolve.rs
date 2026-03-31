@@ -77,12 +77,19 @@ pub async fn resolve_connection_token(
             )
         })?;
 
-    // Check expiry
+    // Check expiry — try refresh if expired
     if token.is_expired() {
-        return Err(format!(
-            "OAuth token expired for '{}'. Please reconnect your {} account.",
-            connection.name, connection.name
-        ));
+        match token_store.refresh_token(connection_id, &connection).await {
+            Ok(Some(refreshed)) => {
+                return Ok((connection.name, refreshed.access_token));
+            }
+            Ok(None) | Err(_) => {
+                return Err(format!(
+                    "OAuth token expired for '{}'. Please reconnect your {} account.",
+                    connection.name, connection.name
+                ));
+            }
+        }
     }
 
     Ok((connection.name, token.access_token))
