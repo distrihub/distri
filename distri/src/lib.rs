@@ -36,7 +36,7 @@ pub use hooks_runtime::*;
 pub use distri_types::{
     HookContext, HookKind, HookMutation, InlineHookRequest, InlineHookResponse, TokenResponse,
 };
-pub use local_tools::register_local_filesystem_tools;
+pub use local_tools::{register_execute_command_tool, register_local_filesystem_tools};
 pub use printer::{EventPrinter, print_stream, print_stream_verbose};
 
 #[cfg(test)]

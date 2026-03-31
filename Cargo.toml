@@ -17,7 +17,6 @@ members = [
   "server/distri-auth",
   "server/distri-parsers",
   # samples
-  "deepagent",
   "samples/scraper",
 ]
 default-members = ["distri-cli", "server/distri-server-cli"]
