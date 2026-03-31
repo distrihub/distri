@@ -249,10 +249,29 @@ pub async fn handle_message_send_streaming_sse(
         }
 
         let metadata_value = params.metadata.clone();
-        let metadata_struct: ExecutorContextMetadata = metadata_value
-            .clone()
-            .and_then(|m| serde_json::from_value(m).ok())
-            .unwrap_or_default();
+        let metadata_struct: ExecutorContextMetadata = match metadata_value.clone() {
+            Some(m) => match serde_json::from_value(m) {
+                Ok(v) => v,
+                Err(e) => {
+                    let error = JsonRpcResponse {
+                        jsonrpc: "2.0".to_string(),
+                        result: None,
+                        error: Some(JsonRpcError {
+                            code: -32602,
+                            message: format!("Invalid metadata: {e}"),
+                            data: None,
+                        }),
+                        id: Some(id_field_clone.clone().into()),
+                    };
+                    yield Ok::<_, std::convert::Infallible>(SseMessage {
+                        event: None,
+                        data: serde_json::to_string(&error).unwrap(),
+                    });
+                    return;
+                }
+            },
+            None => ExecutorContextMetadata::default(),
+        };
 
         // stream! macro doesn't inherit task-local storage, so wrap here
         let (_thread_id, message) = match with_user_and_workspace(

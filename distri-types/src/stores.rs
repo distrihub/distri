@@ -1,3 +1,4 @@
+use crate::connections::{Connection, ConnectionStatus, ConnectionToken, NewConnection};
 use crate::{ScratchpadEntry, ToolAuthStore, ToolResponse};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -67,6 +68,8 @@ pub struct InitializedStores {
     pub secret_store: Option<Arc<dyn SecretStore>>,
     pub skill_store: Option<Arc<dyn SkillStore>>,
     pub workflow_store: Option<Arc<dyn WorkflowStore>>,
+    pub connection_store: Option<Arc<dyn ConnectionStore>>,
+    pub connection_token_store: Option<Arc<dyn ConnectionTokenStore>>,
 }
 impl InitializedStores {
     pub fn set_tool_auth_store(&mut self, tool_auth_store: Arc<dyn ToolAuthStore>) {
@@ -1138,6 +1141,57 @@ impl UsageService for NoOpUsageService {
     async fn get_limits(&self, _workspace_id: &str) -> anyhow::Result<UsageLimits> {
         Ok(UsageLimits::default())
     }
+}
+
+// ========== Connection Store ==========
+
+/// Persistence for connection records (Postgres-backed in cloud).
+#[async_trait]
+pub trait ConnectionStore: Send + Sync + 'static {
+    async fn create(&self, connection: NewConnection) -> anyhow::Result<Connection>;
+    async fn get_by_id(&self, id: &str) -> anyhow::Result<Option<Connection>>;
+    async fn list_by_workspace(&self, workspace_id: &str) -> anyhow::Result<Vec<Connection>>;
+    async fn update_status(&self, id: &str, status: ConnectionStatus) -> anyhow::Result<()>;
+    async fn update_skill_id(&self, id: &str, skill_id: uuid::Uuid) -> anyhow::Result<()>;
+    async fn delete(&self, id: &str) -> anyhow::Result<()>;
+    async fn get_by_provider(
+        &self,
+        workspace_id: &str,
+        provider: &str,
+    ) -> anyhow::Result<Option<Connection>>;
+}
+
+/// Token storage for OAuth connections (Redis-backed in cloud).
+#[async_trait]
+pub trait ConnectionTokenStore: Send + Sync + 'static {
+    async fn store_token(&self, connection_id: &str, token: ConnectionToken) -> anyhow::Result<()>;
+    async fn get_token(&self, connection_id: &str) -> anyhow::Result<Option<ConnectionToken>>;
+    async fn remove_token(&self, connection_id: &str) -> anyhow::Result<()>;
+
+    /// Attempt to refresh an expired OAuth token using the stored refresh_token.
+    /// Returns the new token if refresh succeeds, or None if refresh is not
+    /// supported or fails. The implementation should store the refreshed token.
+    ///
+    /// Cloud implementation uses OAuthHandler.refresh_get_session().
+    /// Default: no refresh support (returns None).
+    async fn refresh_token(
+        &self,
+        _connection_id: &str,
+        _connection: &Connection,
+    ) -> anyhow::Result<Option<ConnectionToken>> {
+        Ok(None)
+    }
+
+    async fn store_oauth_state(
+        &self,
+        state_key: &str,
+        state: serde_json::Value,
+    ) -> anyhow::Result<()>;
+    async fn get_oauth_state(
+        &self,
+        state_key: &str,
+    ) -> anyhow::Result<Option<serde_json::Value>>;
+    async fn remove_oauth_state(&self, state_key: &str) -> anyhow::Result<()>;
 }
 
 #[cfg(test)]

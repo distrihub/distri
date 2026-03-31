@@ -193,6 +193,7 @@ fn to_thread_summary(thread: &Thread) -> ThreadSummary {
         user_id: thread.user_id.clone(),
         external_id: thread.external_id.clone(),
         channel_id: thread.channel_id.clone(),
+        channel_name: None,
         tags: None,
         input_tokens: thread.input_tokens,
         output_tokens: thread.output_tokens,

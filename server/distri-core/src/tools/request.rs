@@ -36,6 +36,7 @@ const USEFUL_HEADERS: &[&str] = &[
 pub async fn execute_http_request(
     input: &HttpRequestInput,
     resolve_ctx: &ResolveContext,
+    stores: Option<&distri_types::stores::InitializedStores>,
 ) -> Result<HttpRequestResponse, anyhow::Error> {
     // 1. Check for x-connection-id (consumed, not forwarded)
     let connection_id = input.headers.get("x-connection-id").cloned();
@@ -88,7 +89,10 @@ pub async fn execute_http_request(
 
     // 6. If x-connection-id was present, resolve and inject Bearer token
     if let Some(ref conn_id) = connection_id {
-        let (_provider, access_token) = resolve_connection_token(conn_id, resolve_ctx)
+        let stores = stores.ok_or_else(|| {
+            anyhow::anyhow!("stores not available for connection resolution")
+        })?;
+        let (_provider, access_token) = resolve_connection_token(conn_id, stores)
             .await
             .map_err(|e| anyhow::anyhow!(e))?;
         header_map.insert(

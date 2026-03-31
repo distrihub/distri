@@ -197,6 +197,7 @@ impl LlmExecuteService {
                 attributes: None,
                 user_id: None, // Will be set by task-local context
                 external_id: external_id.map(|e| e.to_string()),
+                channel_id: None,
             };
 
             self.orchestrator

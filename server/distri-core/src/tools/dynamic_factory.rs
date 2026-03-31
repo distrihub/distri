@@ -146,19 +146,16 @@ impl ExecutorContextTool for HttpFactoryTool {
 
         // Build ResolveContext from ExecutorContext
         let env_vars = context.env_vars.read().await.clone();
-        let secret_store = context
-            .stores
-            .as_ref()
-            .and_then(|s| s.secret_store.clone());
-        let token_fetcher = context.token_fetcher.clone();
+        // Get stores from orchestrator (canonical source for connection stores, secrets, etc.)
+        let orch_stores = context.orchestrator.as_ref().map(|o| &o.stores);
+        let secret_store = orch_stores.and_then(|s| s.secret_store.clone());
 
         let resolve_ctx = ResolveContext {
             env_vars,
             secret_store,
-            token_fetcher,
         };
 
-        let result = execute_http_request(&request, &resolve_ctx)
+        let result = execute_http_request(&request, &resolve_ctx, orch_stores)
             .await
             .map_err(|e| AgentError::ToolExecution(format!("{}: {}", self.name, e)))?;
 

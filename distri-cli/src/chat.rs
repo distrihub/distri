@@ -372,6 +372,7 @@ pub async fn run_interactive_chat(
     agent_name: String,
     verbose: bool,
     resume: Option<String>,
+    extra_tools: Vec<distri_types::dynamic_tool::DynamicToolFactory>,
 ) -> Result<()> {
     // Resolve --resume flag or start fresh
     let mut thread_id = if let Some(ref resume_arg) = resume {
@@ -436,9 +437,12 @@ pub async fn run_interactive_chat(
 
     let stream_config = config.clone().with_timeout(60);
     let http_client = stream_config.build_http_client()?;
-    let stream_client = AgentStreamClient::from_config(config.clone())
+    let mut stream_client = AgentStreamClient::from_config(config.clone())
         .with_http_client(http_client)
         .with_tool_registry(registry);
+    for tool in extra_tools {
+        stream_client.register_dynamic_tool(tool);
+    }
 
     let mut last_interrupt: Option<Instant> = None;
 

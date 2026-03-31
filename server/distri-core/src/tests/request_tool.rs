@@ -1,12 +1,11 @@
 use crate::tools::resolve::{
-    extract_vars, extract_vars_from_value, resolve_all, resolve_connection_token,
-    substitute_string, substitute_value, ResolveContext,
+    extract_vars, extract_vars_from_value, resolve_all, substitute_string, substitute_value,
+    ResolveContext,
 };
 use chrono::Utc;
 use distri_types::stores::{NewSecret, SecretRecord, SecretStore};
 use serde_json::json;
 use std::collections::HashMap;
-use std::pin::Pin;
 use std::sync::Arc;
 
 // ── InMemorySecretStore ────────────────────────────────────────
@@ -111,7 +110,6 @@ async fn resolve_all_from_env_vars() {
     let ctx = ResolveContext {
         env_vars: HashMap::from([("API_KEY".into(), "key123".into())]),
         secret_store: None,
-        token_fetcher: None,
     };
     let resolved = resolve_all(&["API_KEY".into()], &ctx).await.unwrap();
     assert_eq!(resolved.get("API_KEY").unwrap(), "key123");
@@ -125,7 +123,6 @@ async fn resolve_all_from_secrets() {
     let ctx = ResolveContext {
         env_vars: HashMap::new(),
         secret_store: Some(Arc::new(store)),
-        token_fetcher: None,
     };
     let resolved = resolve_all(&["DB_PASSWORD".into()], &ctx).await.unwrap();
     assert_eq!(resolved.get("DB_PASSWORD").unwrap(), "secret123");
@@ -139,7 +136,6 @@ async fn resolve_all_env_var_priority_over_secret() {
     let ctx = ResolveContext {
         env_vars: HashMap::from([("TOKEN".into(), "from_env".into())]),
         secret_store: Some(Arc::new(store)),
-        token_fetcher: None,
     };
     let resolved = resolve_all(&["TOKEN".into()], &ctx).await.unwrap();
     assert_eq!(resolved.get("TOKEN").unwrap(), "from_env");
@@ -150,47 +146,9 @@ async fn resolve_all_unresolved_error() {
     let ctx = ResolveContext {
         env_vars: HashMap::new(),
         secret_store: None,
-        token_fetcher: None,
     };
     let err = resolve_all(&["MISSING_VAR".into()], &ctx).await.unwrap_err();
     assert_eq!(err, "unresolved variable: $MISSING_VAR");
-}
-
-// ── resolve_connection_token tests ─────────────────────────────
-
-#[tokio::test]
-async fn resolve_connection_token_success() {
-    let fetcher: crate::tools::inject_env::TokenFetcher = Arc::new(|conn_id: String| {
-        Box::pin(async move {
-            if conn_id == "github_conn" {
-                Ok(("github".to_string(), "ghp_token123".to_string()))
-            } else {
-                Err("unknown connection".to_string())
-            }
-        }) as Pin<Box<dyn std::future::Future<Output = Result<(String, String), String>> + Send>>
-    });
-
-    let ctx = ResolveContext {
-        env_vars: HashMap::new(),
-        secret_store: None,
-        token_fetcher: Some(fetcher),
-    };
-
-    let (provider, token) = resolve_connection_token("github_conn", &ctx).await.unwrap();
-    assert_eq!(provider, "github");
-    assert_eq!(token, "ghp_token123");
-}
-
-#[tokio::test]
-async fn resolve_connection_token_no_fetcher() {
-    let ctx = ResolveContext {
-        env_vars: HashMap::new(),
-        secret_store: None,
-        token_fetcher: None,
-    };
-
-    let err = resolve_connection_token("any", &ctx).await.unwrap_err();
-    assert_eq!(err, "no token fetcher configured");
 }
 
 // ── substitute_string tests ────────────────────────────────────
@@ -252,7 +210,6 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 fn make_resolve_context(
     env_vars: HashMap<String, String>,
     secrets: Vec<(&str, &str)>,
-    token_fetcher: Option<crate::tools::inject_env::TokenFetcher>,
 ) -> ResolveContext {
     let secret_map: HashMap<String, String> = secrets
         .into_iter()
@@ -268,7 +225,6 @@ fn make_resolve_context(
     ResolveContext {
         env_vars,
         secret_store,
-        token_fetcher,
     }
 }
 
@@ -288,7 +244,7 @@ async fn test_request_tool_success_json() {
         .mount(&server)
         .await;
 
-    let ctx = make_resolve_context(HashMap::new(), vec![], None);
+    let ctx = make_resolve_context(HashMap::new(), vec![]);
     let input = HttpRequestInput {
         url: format!("{}/api/items", server.uri()),
         method: HttpMethod::GET,
@@ -296,7 +252,7 @@ async fn test_request_tool_success_json() {
         body: None,
     };
 
-    let result = execute_http_request(&input, &ctx).await.unwrap();
+    let result = execute_http_request(&input, &ctx, None).await.unwrap();
 
     assert!(result.ok);
     assert_eq!(result.status, 200);
@@ -318,7 +274,7 @@ async fn test_request_tool_error_response() {
         .mount(&server)
         .await;
 
-    let ctx = make_resolve_context(HashMap::new(), vec![], None);
+    let ctx = make_resolve_context(HashMap::new(), vec![]);
     let input = HttpRequestInput {
         url: format!("{}/api/items", server.uri()),
         method: HttpMethod::POST,
@@ -326,7 +282,7 @@ async fn test_request_tool_error_response() {
         body: Some(json!({"name": "test"})),
     };
 
-    let result = execute_http_request(&input, &ctx).await.unwrap();
+    let result = execute_http_request(&input, &ctx, None).await.unwrap();
 
     assert!(!result.ok);
     assert_eq!(result.status, 400);
@@ -348,7 +304,7 @@ async fn test_request_tool_non_json_response() {
         .mount(&server)
         .await;
 
-    let ctx = make_resolve_context(HashMap::new(), vec![], None);
+    let ctx = make_resolve_context(HashMap::new(), vec![]);
     let input = HttpRequestInput {
         url: format!("{}/error", server.uri()),
         method: HttpMethod::GET,
@@ -356,7 +312,7 @@ async fn test_request_tool_non_json_response() {
         body: None,
     };
 
-    let result = execute_http_request(&input, &ctx).await.unwrap();
+    let result = execute_http_request(&input, &ctx, None).await.unwrap();
 
     assert!(!result.ok);
     assert_eq!(result.status, 500);
@@ -365,7 +321,7 @@ async fn test_request_tool_non_json_response() {
 
 #[tokio::test]
 async fn test_request_tool_unresolved_var_errors() {
-    let ctx = make_resolve_context(HashMap::new(), vec![], None);
+    let ctx = make_resolve_context(HashMap::new(), vec![]);
     let input = HttpRequestInput {
         url: "https://example.com/api".to_string(),
         method: HttpMethod::GET,
@@ -375,7 +331,7 @@ async fn test_request_tool_unresolved_var_errors() {
         body: None,
     };
 
-    let err = execute_http_request(&input, &ctx).await.unwrap_err();
+    let err = execute_http_request(&input, &ctx, None).await.unwrap_err();
 
     let msg = format!("{}", err);
     assert!(msg.contains("MISSING_TOKEN"), "error should mention the var name, got: {}", msg);
@@ -399,7 +355,6 @@ async fn test_request_tool_secret_resolution() {
     let ctx = make_resolve_context(
         HashMap::new(),
         vec![("API_KEY", "secret-key-123")],
-        None,
     );
 
     let input = HttpRequestInput {
@@ -411,7 +366,7 @@ async fn test_request_tool_secret_resolution() {
         body: None,
     };
 
-    let result = execute_http_request(&input, &ctx).await.unwrap();
+    let result = execute_http_request(&input, &ctx, None).await.unwrap();
 
     assert!(result.ok);
     assert_eq!(result.status, 200);
@@ -436,7 +391,6 @@ async fn test_request_tool_env_var_priority_over_secret() {
     let ctx = make_resolve_context(
         HashMap::from([("API_KEY".to_string(), "from-env".to_string())]),
         vec![("API_KEY", "from-secret")],
-        None,
     );
 
     let input = HttpRequestInput {
@@ -448,50 +402,15 @@ async fn test_request_tool_env_var_priority_over_secret() {
         body: None,
     };
 
-    let result = execute_http_request(&input, &ctx).await.unwrap();
+    let result = execute_http_request(&input, &ctx, None).await.unwrap();
 
     assert!(result.ok);
     assert_eq!(result.status, 200);
 }
 
-#[tokio::test]
-async fn test_request_tool_connection_id_injects_bearer() {
-    let server = MockServer::start().await;
-
-    Mock::given(method("GET"))
-        .and(path("/oauth"))
-        .and(header("Authorization", "Bearer oauth-token-xyz"))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .insert_header("content-type", "application/json")
-                .set_body_json(json!({"authed": true})),
-        )
-        .mount(&server)
-        .await;
-
-    let fetcher: crate::tools::inject_env::TokenFetcher = Arc::new(|_conn_id: String| {
-        Box::pin(async move {
-            Ok(("github".to_string(), "oauth-token-xyz".to_string()))
-        }) as Pin<Box<dyn std::future::Future<Output = Result<(String, String), String>> + Send>>
-    });
-
-    let ctx = make_resolve_context(HashMap::new(), vec![], Some(fetcher));
-
-    let input = HttpRequestInput {
-        url: format!("{}/oauth", server.uri()),
-        method: HttpMethod::GET,
-        headers: HashMap::from([
-            ("x-connection-id".to_string(), "github_conn".to_string()),
-        ]),
-        body: None,
-    };
-
-    let result = execute_http_request(&input, &ctx).await.unwrap();
-
-    assert!(result.ok);
-    assert_eq!(result.status, 200);
-    assert_eq!(result.body["authed"], true);
-}
+// NOTE: connection_id test removed — resolve_connection_token now requires
+// real InitializedStores with ConnectionStore + ConnectionTokenStore.
+// Integration tests for connection token resolution belong in Step 5.
 
 #[tokio::test]
 async fn test_request_tool_no_vars_plain_url() {
@@ -507,7 +426,7 @@ async fn test_request_tool_no_vars_plain_url() {
         .mount(&server)
         .await;
 
-    let ctx = make_resolve_context(HashMap::new(), vec![], None);
+    let ctx = make_resolve_context(HashMap::new(), vec![]);
     let input = HttpRequestInput {
         url: format!("{}/plain", server.uri()),
         method: HttpMethod::GET,
@@ -515,7 +434,7 @@ async fn test_request_tool_no_vars_plain_url() {
         body: None,
     };
 
-    let result = execute_http_request(&input, &ctx).await.unwrap();
+    let result = execute_http_request(&input, &ctx, None).await.unwrap();
 
     assert!(result.ok);
     assert_eq!(result.status, 200);
@@ -537,7 +456,7 @@ async fn test_request_tool_plain_text_response_not_parsed_as_json() {
         .mount(&server)
         .await;
 
-    let ctx = make_resolve_context(HashMap::new(), vec![], None);
+    let ctx = make_resolve_context(HashMap::new(), vec![]);
     let input = HttpRequestInput {
         url: format!("{}/text", server.uri()),
         method: HttpMethod::GET,
@@ -545,7 +464,7 @@ async fn test_request_tool_plain_text_response_not_parsed_as_json() {
         body: None,
     };
 
-    let result = execute_http_request(&input, &ctx).await.unwrap();
+    let result = execute_http_request(&input, &ctx, None).await.unwrap();
 
     assert!(result.ok);
     assert_eq!(result.status, 200);
@@ -571,7 +490,7 @@ async fn test_request_tool_response_headers_filtered() {
         .mount(&server)
         .await;
 
-    let ctx = make_resolve_context(HashMap::new(), vec![], None);
+    let ctx = make_resolve_context(HashMap::new(), vec![]);
     let input = HttpRequestInput {
         url: format!("{}/headers", server.uri()),
         method: HttpMethod::GET,
@@ -579,7 +498,7 @@ async fn test_request_tool_response_headers_filtered() {
         body: None,
     };
 
-    let result = execute_http_request(&input, &ctx).await.unwrap();
+    let result = execute_http_request(&input, &ctx, None).await.unwrap();
 
     // Useful headers included
     assert!(result.headers.get("content-type").is_some());

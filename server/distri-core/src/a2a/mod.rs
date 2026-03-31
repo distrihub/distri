@@ -1,5 +1,5 @@
 mod handler;
-mod stream;
+pub mod stream;
 use distri_a2a::{EventKind, JsonRpcError, Message, Part, Role, TaskStatus, TaskStatusUpdateEvent};
 use distri_types::{a2a_converters::MessageMetadata, AgentError};
 pub use handler::A2AHandler;
