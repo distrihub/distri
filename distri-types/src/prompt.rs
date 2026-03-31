@@ -33,6 +33,7 @@ pub struct TemplateData<'a> {
     pub task: String,
     pub scratchpad: String,
     pub dynamic_sections: Vec<PromptSection>,
+    #[serde(flatten)]
     pub dynamic_values: std::collections::HashMap<String, serde_json::Value>,
     /// Session values fetched from the session store - available in templates as {{session.key}}
     pub session_values: std::collections::HashMap<String, serde_json::Value>,
