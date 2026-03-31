@@ -249,6 +249,78 @@ pub enum ToolDeliveryMode {
     ToolSearch,
 }
 
+/// Which OpenAI-family API format to use when talking to the LLM.
+///
+/// - `Auto` (default): Auto-detects from the model name. Codex models use Responses API,
+///   everything else uses Chat Completions.
+/// - `Completions`: Forces the Chat Completions API (`/v1/chat/completions`)
+/// - `Responses`: Forces the Responses API (`/v1/responses`)
+///
+/// Most OpenAI models (GPT-4o, GPT-4.1, GPT-5, o1, etc.) support both APIs.
+/// Codex models (`codex-*`, `*-codex`) are Responses API only.
+/// OpenAI recommends the Responses API for new projects (better caching, reasoning).
+///
+/// Can be set at the model_settings level in agent definitions:
+/// ```toml
+/// [model_settings]
+/// model = "codex-mini-latest"
+/// api_format = "responses"  # or "completions" or "auto"
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum OpenAiApiFormat {
+    /// Auto-detect based on model name (codex models → Responses, everything else → Completions)
+    #[default]
+    Auto,
+    /// Chat Completions API (`/v1/chat/completions`)
+    Completions,
+    /// Responses API (`/v1/responses`) — required for Codex models, recommended for new projects
+    Responses,
+}
+
+impl OpenAiApiFormat {
+    /// Resolve the effective format given a model name.
+    /// When `Auto`, inspects the model name to decide.
+    pub fn resolve(&self, model: &str) -> ResolvedOpenAiApiFormat {
+        match self {
+            OpenAiApiFormat::Completions => ResolvedOpenAiApiFormat::Completions,
+            OpenAiApiFormat::Responses => ResolvedOpenAiApiFormat::Responses,
+            OpenAiApiFormat::Auto => {
+                if Self::model_requires_responses_api(model) {
+                    ResolvedOpenAiApiFormat::Responses
+                } else {
+                    ResolvedOpenAiApiFormat::Completions
+                }
+            }
+        }
+    }
+
+    /// Heuristic: models that require the Responses API.
+    ///
+    /// These models return errors on /v1/chat/completions and MUST use /v1/responses:
+    /// - Codex models: codex-mini-latest, gpt-5.1-codex, gpt-5.3-codex, etc.
+    /// - Pro models: gpt-5-pro, gpt-5.2-pro, gpt-5.4-pro, o3-pro
+    /// - Deep research models: o3-deep-research, o4-mini-deep-research
+    fn model_requires_responses_api(model: &str) -> bool {
+        let m = model.to_lowercase();
+        // Codex models (codex-*, *-codex, */codex*)
+        m.starts_with("codex")
+            || m.ends_with("-codex")
+            || m.contains("/codex")
+            // Pro models (*-pro) — require multi-turn interactions only Responses supports
+            || m.ends_with("-pro")
+            // Deep research models (*-deep-research)
+            || m.ends_with("-deep-research")
+    }
+}
+
+/// Resolved (non-Auto) API format
+#[derive(Debug, Clone, PartialEq)]
+pub enum ResolvedOpenAiApiFormat {
+    Completions,
+    Responses,
+}
+
 /// Supported tool call formats
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -982,6 +1054,10 @@ pub struct ModelSettingsInner {
     /// The format of the response, if specified.
     #[serde(default)]
     pub response_format: Option<serde_json::Value>,
+    /// Which OpenAI-family API format to use (auto-detected by default).
+    /// Only relevant for OpenAI, OpenAI-compatible, and Azure OpenAI providers.
+    #[serde(default, skip_serializing_if = "is_default_api_format")]
+    pub api_format: OpenAiApiFormat,
 }
 
 impl ModelSettings {
@@ -1057,6 +1133,10 @@ fn default_model_provider() -> ModelProvider {
 
 fn default_context_size() -> u32 {
     20000 // Default limit for general use - agents can override with higher values as needed
+}
+
+fn is_default_api_format(f: &OpenAiApiFormat) -> bool {
+    *f == OpenAiApiFormat::Auto
 }
 
 fn default_history_size() -> Option<usize> {
@@ -1352,5 +1432,141 @@ mod tests {
         };
         let json = serde_json::to_string(&settings).unwrap();
         assert!(json.contains("\"max_tokens\":2048"));
+    }
+
+    #[test]
+    fn test_api_format_auto_detect_codex_prefix() {
+        let fmt = OpenAiApiFormat::Auto;
+        assert_eq!(
+            fmt.resolve("codex-mini-latest"),
+            ResolvedOpenAiApiFormat::Responses
+        );
+        assert_eq!(
+            fmt.resolve("codex-mini-2025-01-24"),
+            ResolvedOpenAiApiFormat::Responses
+        );
+    }
+
+    #[test]
+    fn test_api_format_auto_detect_codex_suffix() {
+        let fmt = OpenAiApiFormat::Auto;
+        assert_eq!(
+            fmt.resolve("gpt-5.1-codex"),
+            ResolvedOpenAiApiFormat::Responses
+        );
+        assert_eq!(
+            fmt.resolve("gpt-5.3-codex"),
+            ResolvedOpenAiApiFormat::Responses
+        );
+    }
+
+    #[test]
+    fn test_api_format_auto_detect_pro_models() {
+        let fmt = OpenAiApiFormat::Auto;
+        assert_eq!(fmt.resolve("gpt-5-pro"), ResolvedOpenAiApiFormat::Responses);
+        assert_eq!(fmt.resolve("gpt-5.2-pro"), ResolvedOpenAiApiFormat::Responses);
+        assert_eq!(fmt.resolve("gpt-5.4-pro"), ResolvedOpenAiApiFormat::Responses);
+        assert_eq!(fmt.resolve("o3-pro"), ResolvedOpenAiApiFormat::Responses);
+    }
+
+    #[test]
+    fn test_api_format_auto_detect_deep_research_models() {
+        let fmt = OpenAiApiFormat::Auto;
+        assert_eq!(
+            fmt.resolve("o3-deep-research"),
+            ResolvedOpenAiApiFormat::Responses
+        );
+        assert_eq!(
+            fmt.resolve("o4-mini-deep-research"),
+            ResolvedOpenAiApiFormat::Responses
+        );
+    }
+
+    #[test]
+    fn test_api_format_auto_detect_non_codex() {
+        let fmt = OpenAiApiFormat::Auto;
+        assert_eq!(
+            fmt.resolve("gpt-4o"),
+            ResolvedOpenAiApiFormat::Completions
+        );
+        assert_eq!(
+            fmt.resolve("gpt-4.1"),
+            ResolvedOpenAiApiFormat::Completions
+        );
+        assert_eq!(
+            fmt.resolve("gpt-5"),
+            ResolvedOpenAiApiFormat::Completions
+        );
+        assert_eq!(
+            fmt.resolve("o1"),
+            ResolvedOpenAiApiFormat::Completions
+        );
+        assert_eq!(
+            fmt.resolve("gpt-5.4-mini"),
+            ResolvedOpenAiApiFormat::Completions
+        );
+        assert_eq!(
+            fmt.resolve("o3-mini"),
+            ResolvedOpenAiApiFormat::Completions
+        );
+    }
+
+    #[test]
+    fn test_api_format_explicit_override() {
+        // Explicit Responses overrides auto-detect even for non-codex models
+        assert_eq!(
+            OpenAiApiFormat::Responses.resolve("gpt-4o"),
+            ResolvedOpenAiApiFormat::Responses
+        );
+        // Explicit Completions overrides auto-detect even for codex models
+        assert_eq!(
+            OpenAiApiFormat::Completions.resolve("codex-mini-latest"),
+            ResolvedOpenAiApiFormat::Completions
+        );
+    }
+
+    #[test]
+    fn test_api_format_defaults_to_auto() {
+        let inner = ModelSettingsInner::default();
+        assert_eq!(inner.api_format, OpenAiApiFormat::Auto);
+    }
+
+    #[test]
+    fn test_api_format_auto_skipped_in_serialization() {
+        let settings = ModelSettings {
+            model: "test-model".to_string(),
+            inner: ModelSettingsInner {
+                provider: ModelProvider::OpenAI {},
+                ..Default::default()
+            },
+        };
+        let json = serde_json::to_string(&settings).unwrap();
+        assert!(!json.contains("api_format"));
+    }
+
+    #[test]
+    fn test_api_format_responses_serialized() {
+        let settings = ModelSettings {
+            model: "test-model".to_string(),
+            inner: ModelSettingsInner {
+                api_format: OpenAiApiFormat::Responses,
+                provider: ModelProvider::OpenAI {},
+                ..Default::default()
+            },
+        };
+        let json = serde_json::to_string(&settings).unwrap();
+        assert!(json.contains("\"api_format\":\"responses\""));
+    }
+
+    #[test]
+    fn test_api_format_deserializes_from_toml() {
+        let toml_str = r#"
+            model = "codex-mini-latest"
+            api_format = "responses"
+            [provider]
+            name = "openai"
+        "#;
+        let settings: ModelSettings = toml::from_str(toml_str).unwrap();
+        assert_eq!(settings.inner.api_format, OpenAiApiFormat::Responses);
     }
 }
