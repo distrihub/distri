@@ -1,15 +1,13 @@
 use std::{collections::HashMap, path::Path, sync::Arc};
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result};
 use async_trait::async_trait;
 use distri_filesystem::{create_artifact_tools, create_core_filesystem_tools, create_file_system};
 use distri_types::{
-    AgentEvent, Part, Tool, ToolCall, ToolContext, ToolDefinition, ToolResponse,
+    AgentEvent, ToolCall, ToolContext, ToolDefinition, ToolResponse,
     configuration::ObjectStorageConfig,
     stores::{SessionStore, SessionSummary},
 };
-use serde::{Deserialize, Serialize};
-use serde_json::json;
 use tokio::sync::RwLock;
 
 use crate::ExternalToolRegistry;
@@ -177,160 +175,4 @@ pub async fn register_local_filesystem_tools(
     }
 
     Ok(definitions)
-}
-
-// ---------------------------------------------------------------------------
-// ExecuteCommandTool — local shell execution
-// ---------------------------------------------------------------------------
-
-/// Parameters for the execute_command tool.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct ExecuteCommandParams {
-    pub command: String,
-    #[serde(default)]
-    pub cwd: Option<String>,
-    #[serde(default)]
-    pub env: Option<HashMap<String, String>>,
-}
-
-/// Executes shell commands in a workspace directory.
-#[derive(Debug, Clone)]
-pub struct ExecuteCommandTool {
-    workspace_root: std::path::PathBuf,
-}
-
-impl ExecuteCommandTool {
-    pub fn new(workspace_root: impl AsRef<Path>) -> Self {
-        Self {
-            workspace_root: workspace_root.as_ref().to_path_buf(),
-        }
-    }
-
-    fn resolve_working_dir(&self, cwd: Option<String>) -> Result<std::path::PathBuf> {
-        let mut dir = self.workspace_root.clone();
-        if let Some(relative) = cwd {
-            let trimmed = relative.trim();
-            if !trimmed.is_empty() {
-                dir = dir.join(trimmed);
-            }
-        }
-        std::fs::create_dir_all(&dir)
-            .with_context(|| format!("failed to create working directory at {:?}", dir))?;
-        Ok(dir)
-    }
-}
-
-#[async_trait]
-impl Tool for ExecuteCommandTool {
-    fn get_name(&self) -> String {
-        "execute_command".to_string()
-    }
-
-    fn get_description(&self) -> String {
-        "Execute a shell command in the workspace directory".to_string()
-    }
-
-    fn get_parameters(&self) -> serde_json::Value {
-        json!({
-            "type": "object",
-            "properties": {
-                "command": {
-                    "type": "string",
-                    "description": "Shell command to execute"
-                },
-                "cwd": {
-                    "type": "string",
-                    "description": "Optional working directory relative to workspace root",
-                    "default": "."
-                },
-                "env": {
-                    "type": "object",
-                    "description": "Optional environment variables to set for the command",
-                    "additionalProperties": { "type": "string" }
-                }
-            },
-            "required": ["command"]
-        })
-    }
-
-    async fn execute(
-        &self,
-        tool_call: ToolCall,
-        _context: Arc<ToolContext>,
-    ) -> Result<Vec<Part>, anyhow::Error> {
-        let params: ExecuteCommandParams = serde_json::from_value(tool_call.input.clone())
-            .map_err(|e| anyhow!("invalid execute_command parameters: {}", e))?;
-
-        let working_dir = self.resolve_working_dir(params.cwd.clone())?;
-
-        let mut command = if cfg!(target_os = "windows") {
-            let mut cmd = tokio::process::Command::new("cmd");
-            cmd.arg("/C").arg(&params.command);
-            cmd
-        } else {
-            let mut cmd = tokio::process::Command::new("bash");
-            cmd.arg("-lc").arg(&params.command);
-            cmd
-        };
-
-        command.current_dir(&working_dir);
-
-        if let Some(env_map) = &params.env {
-            for (key, value) in env_map {
-                command.env(key, value);
-            }
-        }
-
-        let output = command
-            .output()
-            .await
-            .with_context(|| format!("failed to execute command '{}'", params.command))?;
-
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-        let exit_code = output.status.code().unwrap_or_default();
-
-        let response = json!({
-            "command": params.command,
-            "cwd": params.cwd.unwrap_or_else(|| ".".to_string()),
-            "exit_code": exit_code,
-            "success": output.status.success(),
-            "stdout": stdout,
-            "stderr": stderr
-        });
-
-        Ok(vec![Part::Data(response)])
-    }
-}
-
-/// Register the `execute_command` tool for local shell execution in a workspace.
-pub fn register_execute_command_tool(
-    registry: &ExternalToolRegistry,
-    agent_id: &str,
-    workspace_root: &Path,
-) -> ToolDefinition {
-    let tool = ExecuteCommandTool::new(workspace_root);
-    let definition = tool.get_tool_definition();
-    let tool_name = definition.name.clone();
-
-    let session_store: Arc<dyn SessionStore> = Arc::new(LocalSessionStore::default());
-    registry.register(
-        agent_id.to_string(),
-        tool_name,
-        move |call: ToolCall, event: AgentEvent| {
-            let tool = tool.clone();
-            let session_store = session_store.clone();
-            async move {
-                let context = make_tool_context(&event, session_store);
-                let parts = tool.execute(call.clone(), context).await?;
-                Ok(ToolResponse::from_parts(
-                    call.tool_call_id.clone(),
-                    tool.get_name(),
-                    parts,
-                ))
-            }
-        },
-    );
-
-    definition
 }
