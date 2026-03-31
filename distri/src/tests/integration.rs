@@ -1,4 +1,4 @@
-use crate::{Distri, DistriConfig, LlmExecuteResponse};
+use crate::{Distri, DistriConfig, LlmExecuteResponse, TtsProvider, TtsSpeechRequest};
 use actix_web::{App, HttpResponse, HttpServer, dev::ServerHandle, web};
 use distri_a2a::{EventKind, Message as A2aMessage, MessageKind, Part as A2aPart, TextPart};
 use distri_types::{
@@ -86,12 +86,134 @@ async fn llm_execute_returns_payload() {
     assert_eq!(resp.content, "ok");
 }
 
+#[tokio::test]
+async fn tts_speech_with_defaults() {
+    let server = spawn_test_server().await;
+    let client = Distri::from_config(DistriConfig::new(&server.base_url));
+
+    let resp = client
+        .tts_speech(TtsSpeechRequest::new("Hello world"))
+        .await
+        .unwrap();
+
+    assert!(!resp.audio.is_empty());
+    assert_eq!(resp.content_type, "audio/mpeg");
+    assert_eq!(resp.provider.as_deref(), Some("openai"));
+    assert_eq!(resp.model.as_deref(), Some("tts-1"));
+    assert_eq!(resp.voice.as_deref(), Some("alloy"));
+}
+
+#[tokio::test]
+async fn tts_speech_with_explicit_params() {
+    let server = spawn_test_server().await;
+    let client = Distri::from_config(DistriConfig::new(&server.base_url));
+
+    let resp = client
+        .tts_speech(
+            TtsSpeechRequest::new("Test")
+                .with_model("tts-1-hd")
+                .with_voice("nova")
+                .with_provider(TtsProvider::AzureOpenai),
+        )
+        .await
+        .unwrap();
+
+    assert!(!resp.audio.is_empty());
+    assert_eq!(resp.provider.as_deref(), Some("azure_openai"));
+    assert_eq!(resp.model.as_deref(), Some("tts-1-hd"));
+    assert_eq!(resp.voice.as_deref(), Some("nova"));
+}
+
+#[tokio::test]
+async fn tts_models_returns_list() {
+    let server = spawn_test_server().await;
+    let client = Distri::from_config(DistriConfig::new(&server.base_url));
+
+    let resp = client.tts_models().await.unwrap();
+
+    assert_eq!(resp.models.len(), 1);
+    assert_eq!(resp.models[0].id, "tts-1");
+    assert_eq!(resp.models[0].provider, "openai");
+    assert_eq!(resp.models[0].voices.len(), 2);
+    assert_eq!(resp.models[0].voices[0].id, "alloy");
+    assert!(resp.models[0].voices[0].description.is_some());
+    assert!(resp.models[0].formats.contains(&"mp3".to_string()));
+}
+
+#[tokio::test]
+async fn tts_providers_returns_definitions() {
+    let server = spawn_test_server().await;
+    let client = Distri::from_config(DistriConfig::new(&server.base_url));
+
+    let providers = client.tts_providers().await.unwrap();
+
+    assert_eq!(providers.len(), 1);
+    assert_eq!(providers[0].id, "openai");
+    assert_eq!(providers[0].label, "OpenAI");
+    assert_eq!(providers[0].keys.len(), 1);
+    assert_eq!(providers[0].keys[0].key, "OPENAI_API_KEY");
+    assert!(providers[0].keys[0].sensitive);
+    assert_eq!(providers[0].models.len(), 1);
+}
+
+#[test]
+fn tts_speech_request_builder() {
+    let req = TtsSpeechRequest::new("Hello")
+        .with_model("tts-1-hd")
+        .with_voice("nova")
+        .with_provider(TtsProvider::OpenAI)
+        .with_format("wav")
+        .with_speed(1.5)
+        .with_instructions("Speak softly");
+
+    assert_eq!(req.input, "Hello");
+    assert_eq!(req.model.as_deref(), Some("tts-1-hd"));
+    assert_eq!(req.voice.as_deref(), Some("nova"));
+    assert_eq!(req.provider, Some(TtsProvider::OpenAI));
+    assert_eq!(req.response_format.as_deref(), Some("wav"));
+    assert_eq!(req.speed, Some(1.5));
+    assert_eq!(req.instructions.as_deref(), Some("Speak softly"));
+}
+
+#[test]
+fn tts_speech_request_minimal_serialization() {
+    let req = TtsSpeechRequest::new("Hello world");
+    let json = serde_json::to_value(&req).unwrap();
+
+    // Only `input` should be present when no optional fields are set
+    assert_eq!(json.get("input").unwrap().as_str(), Some("Hello world"));
+    assert!(json.get("model").is_none());
+    assert!(json.get("voice").is_none());
+    assert!(json.get("provider").is_none());
+}
+
+#[test]
+fn tts_speech_request_full_serialization() {
+    let req = TtsSpeechRequest::new("Hi")
+        .with_model("tts-1")
+        .with_voice("alloy")
+        .with_provider(TtsProvider::OpenAI)
+        .with_format("mp3")
+        .with_speed(1.0);
+
+    let json = serde_json::to_value(&req).unwrap();
+    assert_eq!(json["input"], "Hi");
+    assert_eq!(json["model"], "tts-1");
+    assert_eq!(json["voice"], "alloy");
+    assert_eq!(json["provider"], "openai");
+    assert_eq!(json["response_format"], "mp3");
+    assert_eq!(json["speed"], 1.0);
+}
+
 async fn spawn_test_server() -> TestServer {
     let server = HttpServer::new(|| {
         App::new()
             .route("/agents/{id}", web::post().to(agent_handler))
             .route("/tools/call", web::post().to(tool_handler))
             .route("/llm/execute", web::post().to(llm_handler))
+            .route("/audio/speech", web::post().to(tts_speech_handler))
+            .route("/audio/models", web::get().to(tts_models_handler))
+            .route("/audio/providers", web::get().to(tts_providers_handler))
     })
     .bind(("127.0.0.1", 0))
     .unwrap();
@@ -179,6 +301,67 @@ async fn llm_handler(body: web::Json<serde_json::Value>) -> HttpResponse {
         "tool_calls": [],
         "usage": { "input_tokens": messages as u32, "output_tokens": 0, "total_tokens": messages as u32 },
     }))
+}
+
+async fn tts_speech_handler(body: web::Json<serde_json::Value>) -> HttpResponse {
+    let model = body
+        .get("model")
+        .and_then(|v| v.as_str())
+        .unwrap_or("tts-1");
+    let voice = body
+        .get("voice")
+        .and_then(|v| v.as_str())
+        .unwrap_or("alloy");
+    let provider = body
+        .get("provider")
+        .and_then(|v| v.as_str())
+        .unwrap_or("openai");
+
+    // Return fake audio bytes
+    let audio = b"fake-audio-bytes";
+
+    HttpResponse::Ok()
+        .content_type("audio/mpeg")
+        .insert_header(("X-TTS-Provider", provider))
+        .insert_header(("X-TTS-Model", model))
+        .insert_header(("X-TTS-Voice", voice))
+        .body(audio.to_vec())
+}
+
+async fn tts_models_handler() -> HttpResponse {
+    HttpResponse::Ok().json(serde_json::json!({
+        "models": [
+            {
+                "id": "tts-1",
+                "provider": "openai",
+                "name": "TTS-1",
+                "voices": [
+                    { "id": "alloy", "name": "Alloy", "description": "Neutral and balanced" },
+                    { "id": "nova", "name": "Nova", "description": "Bright and energetic" }
+                ],
+                "formats": ["mp3", "wav", "opus"]
+            }
+        ]
+    }))
+}
+
+async fn tts_providers_handler() -> HttpResponse {
+    HttpResponse::Ok().json(serde_json::json!([
+        {
+            "id": "openai",
+            "label": "OpenAI",
+            "keys": [{ "key": "OPENAI_API_KEY", "label": "API key", "placeholder": "sk-...", "required": true, "sensitive": true }],
+            "models": [
+                {
+                    "id": "tts-1",
+                    "provider": "openai",
+                    "name": "TTS-1",
+                    "voices": [{ "id": "alloy", "name": "Alloy" }],
+                    "formats": ["mp3"]
+                }
+            ]
+        }
+    ]))
 }
 
 struct TestServer {
