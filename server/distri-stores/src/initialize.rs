@@ -346,6 +346,7 @@ impl StoreBuilder {
             workflow_store: None,
             connection_store: None,
             connection_token_store: None,
+            provider_registry: None,
         })
     }
 }
@@ -456,6 +457,7 @@ pub async fn create_ephemeral_execution_stores(
         workflow_store: base_stores.workflow_store.clone(),
         connection_store: base_stores.connection_store.clone(),
         connection_token_store: base_stores.connection_token_store.clone(),
+        provider_registry: base_stores.provider_registry.clone(),
     })
 }
 
@@ -501,5 +503,6 @@ pub async fn prepare_stores_for_execution(
         workflow_store: base_stores.workflow_store.clone(),
         connection_store: base_stores.connection_store.clone(),
         connection_token_store: base_stores.connection_token_store.clone(),
+        provider_registry: base_stores.provider_registry.clone(),
     })
 }

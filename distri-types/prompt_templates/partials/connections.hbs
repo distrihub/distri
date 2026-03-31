@@ -25,3 +25,18 @@ If scopes are insufficient, reconnect with additional scopes via the connections
 ## Connected Services
 {{{available_connections}}}
 {{/if}}
+
+{{#if available_providers}}
+## Available Providers (Not Yet Connected)
+These OAuth providers are configured and ready to connect. To set up a connection, use the `connections_manager` skill:
+```
+distri_request({
+  method: "POST",
+  path: "/connections",
+  body: { "auth_type": "oauth", "auth": { "provider": "<name>", "scopes": ["<scope1>"] } }
+})
+```
+Show the returned `auth_url` to the user so they can authorize.
+
+{{{available_providers}}}
+{{/if}}

@@ -70,6 +70,7 @@ pub struct InitializedStores {
     pub workflow_store: Option<Arc<dyn WorkflowStore>>,
     pub connection_store: Option<Arc<dyn ConnectionStore>>,
     pub connection_token_store: Option<Arc<dyn ConnectionTokenStore>>,
+    pub provider_registry: Option<Arc<dyn crate::auth::ProviderRegistry>>,
 }
 impl InitializedStores {
     pub fn set_tool_auth_store(&mut self, tool_auth_store: Arc<dyn ToolAuthStore>) {
