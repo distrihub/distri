@@ -33,7 +33,7 @@ async fn list_models(executor: web::Data<Arc<AgentOrchestrator>>) -> HttpRespons
             }
             all_present
         } else {
-            // No key requirements (e.g., custom/vllora) — always configured
+            // No key requirements — always configured
             true
         };
 
