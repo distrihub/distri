@@ -24,7 +24,6 @@ tokio = { workspace = true, features = [
 ] }
 reqwest = { workspace = true, features = ["json", "stream", "gzip"] }
 flate2 = "1.0"
-reqwest-eventsource = "0.6"
 distri-types = { path = "../distri-types", version = "0.3.7" }
 distri-formatter = { path = "../distri-formatter", version = "0.3.7" }
 distri-a2a = { path = "../distri-a2a", version = "0.3.7" }

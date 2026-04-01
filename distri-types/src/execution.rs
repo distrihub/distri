@@ -42,6 +42,15 @@ impl ExecutionResult {
         const MAX_DATA_CHARS: usize = 500;
         const MAX_TEXT_CHARS: usize = 1000;
 
+        // Phase 6.4: Empty result guard — prevents model issues with empty tool results
+        let has_content = self.parts.iter().any(|p| match p {
+            Part::Text(t) => !t.trim().is_empty(),
+            _ => true,
+        });
+        if !has_content && self.reason.is_none() {
+            return format!("({} completed with no output)", self.step_id);
+        }
+
         let mut txt = String::new();
         if let Some(reason) = &self.reason {
             txt.push_str(reason);
@@ -104,15 +113,23 @@ impl ExecutionResult {
                         mime_type
                     ),
                 },
-                Part::Artifact(artifact) => format!(
-                    "[Artifact ID:{}\n You can use artifact tools to read the full content\n{}]",
-                    artifact.file_id,
-                    if let Some(stats) = &artifact.stats {
-                        format!(" ({})", stats.context_info())
-                    } else {
-                        String::new()
-                    }
-                ),
+                // Phase 6.2: Include artifact preview in observation
+                Part::Artifact(artifact) => {
+                    let preview = artifact
+                        .preview
+                        .as_deref()
+                        .map(|p| format!("\nPreview:\n{}", p))
+                        .unwrap_or_default();
+                    let stats_info = artifact
+                        .stats
+                        .as_ref()
+                        .map(|s| format!("{} — ", s.context_info()))
+                        .unwrap_or_default();
+                    format!(
+                        "[Artifact: {}{}\n... ({}use artifact tools for full content)]",
+                        artifact.file_id, preview, stats_info
+                    )
+                }
             })
             .collect::<Vec<_>>()
             .join("\n");

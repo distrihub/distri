@@ -6,6 +6,23 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::sync::Arc;
 
+// Binary file detection — reject known binary extensions to avoid wasting API calls
+const BINARY_EXTENSIONS: &[&str] = &[
+    "exe", "dll", "so", "o", "a", "lib", "class", "jar", "war", "zip", "tar", "gz", "bz2", "xz",
+    "7z", "rar", "mp3", "mp4", "mov", "avi", "mkv", "flv", "wmv", "wav", "flac", "aac", "ogg",
+    "woff", "woff2", "ttf", "eot", "otf", "ico", "pyc", "pyo", "bin", "dat", "db", "sqlite",
+    "wasm", "deb", "rpm", "dmg", "iso", "img", "psd", "ai", "sketch",
+];
+
+/// Check if a file path has a known binary extension.
+/// Excludes images (png, jpg, gif, webp, svg) and PDFs which may have special handling.
+pub fn is_binary_extension(path: &str) -> bool {
+    path.rsplit('.')
+        .next()
+        .map(|ext| BINARY_EXTENSIONS.contains(&ext.to_lowercase().as_str()))
+        .unwrap_or(false)
+}
+
 // File Operations
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
@@ -332,6 +349,19 @@ impl Tool for ReadFileTool {
         _context: Arc<ToolContext>,
     ) -> Result<Vec<distri_types::Part>, anyhow::Error> {
         let params: ReadFileParams = serde_json::from_value(tool_call.input)?;
+
+        // Phase 7.3: Reject known binary file extensions
+        if is_binary_extension(&params.path) {
+            let ext = params
+                .path
+                .rsplit('.')
+                .next()
+                .unwrap_or("unknown");
+            anyhow::bail!(
+                "Cannot read binary file. The file appears to be a binary .{} file.",
+                ext
+            );
+        }
 
         let read_params = distri_types::filesystem::ReadParams {
             start_line: params.start_line,

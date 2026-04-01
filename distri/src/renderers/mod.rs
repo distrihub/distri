@@ -44,7 +44,12 @@ pub fn render_tool_output(result: &ToolResponse, verbose: bool) {
         "search" => search::render_search(result),
 
         // Shell
-        "start_shell" | "execute_shell" | "stop_shell" => shell::render_shell(result),
+        "start_shell" | "execute_shell" | "stop_shell" | "execute_command" => {
+            shell::render_shell(result)
+        }
+
+        // Todos
+        "write_todos" => render_todos(result),
 
         // Code execution
         "distri_execute_code" => code::render_code_execution(result),
@@ -58,6 +63,35 @@ pub fn render_tool_output(result: &ToolResponse, verbose: bool) {
         // Default: generic part-by-part rendering
         _ => render_tool_result(result),
     }
+}
+
+fn render_todos(result: &ToolResponse) {
+    use distri_types::Part;
+    for part in &result.parts {
+        if let Part::Data(value) = part {
+            if let Some(todos) = value.get("todos").and_then(|v| v.as_array()) {
+                println!("{}{}Updated Plan{}", COLOR_GRAY, RESULT_PREFIX, COLOR_RESET);
+                for todo in todos {
+                    let content = todo
+                        .get("content")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("(missing)");
+                    let status = todo
+                        .get("status")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("pending");
+                    let icon = match status {
+                        "completed" | "done" => "■",
+                        "in_progress" => "◐",
+                        _ => "□",
+                    };
+                    println!("{}  {} {}{}", COLOR_GRAY, icon, content, COLOR_RESET);
+                }
+                return;
+            }
+        }
+    }
+    render_tool_result(result);
 }
 
 fn render_request(result: &ToolResponse) {

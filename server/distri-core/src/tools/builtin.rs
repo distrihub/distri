@@ -1,4 +1,3 @@
-use distri_types::filesystem::FileSystemOps;
 use distri_types::{MessageRole, Part, Tool, ToolContext};
 use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Arc};
@@ -15,12 +14,11 @@ use crate::{
     AgentError,
 };
 
-pub fn get_builtin_tools(
-    workspace_filesystem: Arc<distri_filesystem::FileSystem>,
-    session_filesystem: Arc<distri_filesystem::FileSystem>,
-    include_filesystem_tools: bool,
-) -> Vec<Arc<dyn Tool>> {
-    let mut tools = vec![
+/// Returns the set of builtin tools available to all agents.
+/// Filesystem tools are no longer included as builtins — they should be
+/// provided as external tools by the client or accessed via shell commands.
+pub fn get_builtin_tools() -> Vec<Arc<dyn Tool>> {
+    vec![
         Arc::new(TransferToAgentTool) as Arc<dyn Tool>,
         Arc::new(FinalTool) as Arc<dyn Tool>,
         Arc::new(ReflectTool) as Arc<dyn Tool>,
@@ -36,22 +34,7 @@ pub fn get_builtin_tools(
         Arc::new(crate::tools::tool_search::ToolSearchTool) as Arc<dyn Tool>,
         Arc::new(DistriExecuteCodeTool) as Arc<dyn Tool>,
         Arc::new(crate::tools::inject_env::InjectConnectionEnvTool) as Arc<dyn Tool>,
-    ];
-
-    if include_filesystem_tools {
-        tools.push(Arc::new(ArtifactTool) as Arc<dyn Tool>);
-        // File operations should target the workspace filesystem; artifact tools use the session filesystem.
-        tools.extend(distri_filesystem::create_core_filesystem_tools(
-            workspace_filesystem.clone() as Arc<dyn FileSystemOps>,
-        ));
-
-        // Add artifact tools
-        tools.extend(distri_filesystem::create_artifact_tools(
-            session_filesystem.clone() as Arc<dyn FileSystemOps>,
-        ));
-    }
-
-    tools
+    ]
 }
 
 /// Final tool for code execution mode with state management

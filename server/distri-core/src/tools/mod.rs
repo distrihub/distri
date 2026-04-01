@@ -169,6 +169,10 @@ impl Tool for DynExecutorTool {
         true
     }
 
+    fn is_external(&self) -> bool {
+        self.inner.is_external()
+    }
+
     fn get_auth_metadata(&self) -> Option<Box<dyn distri_types::auth::AuthMetadata>> {
         self.inner.get_auth_metadata()
     }
@@ -251,19 +255,12 @@ impl ResolvedTools {
 pub async fn resolve_tools_config(
     config: &ToolsConfig,
     _registry: Arc<RwLock<McpServerRegistry>>,
-    workspace_filesystem: Arc<distri_filesystem::FileSystem>,
-    session_filesystem: Arc<distri_filesystem::FileSystem>,
-    include_filesystem_tools: bool,
     external_tools: &[Arc<dyn Tool>],
 ) -> Result<Vec<Arc<dyn Tool>>> {
     let mut all_tools = Vec::new();
 
     // Add all builtin tools (both required and user-configured)
-    let builtin_tools = get_builtin_tools(
-        workspace_filesystem,
-        session_filesystem,
-        include_filesystem_tools,
-    );
+    let builtin_tools = get_builtin_tools();
 
     let use_all_builtins = config.builtin.iter().any(|name| name == "*");
     if use_all_builtins {

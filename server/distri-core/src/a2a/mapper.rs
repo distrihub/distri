@@ -26,7 +26,15 @@ pub fn map_final_result(result: &InvokeResult, context: Arc<ExecutorContext>) ->
     })
 }
 pub fn map_agent_event(event: &AgentEvent) -> MessageKind {
-    let meta = serde_json::to_value(event.event.clone()).unwrap_or_default();
+    let mut meta = serde_json::to_value(event.event.clone()).unwrap_or_default();
+    // Include agent_id (name) in metadata so clients can resolve tool registries
+    // for the correct agent, including sub-agents.
+    if let Some(obj) = meta.as_object_mut() {
+        obj.insert(
+            "_agent_id".to_string(),
+            serde_json::Value::String(event.agent_id.clone()),
+        );
+    }
 
     // Create task from event data to use correct task_id
     let event_task = crate::types::Task {

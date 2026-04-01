@@ -165,6 +165,10 @@ impl A2AHandler {
             Arc::new(RwLock::new(state))
         };
 
+        // Resolve agent_id (may be UUID from cloud) to canonical agent name.
+        // This ensures threads, events, and tool lookups all use the agent name.
+        let agent_id = orchestrator.resolve_agent_name(&agent_id).await;
+
         let context = ExecutorContext {
             thread_id,
             task_id: params

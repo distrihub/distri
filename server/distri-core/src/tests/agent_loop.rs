@@ -49,6 +49,47 @@ async fn parse_coder_agent() {
         .expect("coder agent should have tools config");
     assert!(tools.builtin.contains(&"final".to_string()));
     assert!(tools.builtin.contains(&"start_shell".to_string()));
+    // Filesystem tools are no longer builtins — they should be provided as external tools
+    assert!(
+        !tools.builtin.iter().any(|t| t.starts_with("fs_")),
+        "coder agent should not have fs_ tools as builtins"
+    );
+    assert!(
+        !tools.builtin.contains(&"apply_diff".to_string()),
+        "coder agent should not have apply_diff as builtin"
+    );
+    // External tools should list specific filesystem tool names
+    let external = tools.external.as_ref().expect("coder should have external tools");
+    assert!(
+        external.contains(&"fs_read_file".to_string()),
+        "coder agent should list fs_read_file as external tool"
+    );
+    assert!(
+        external.contains(&"execute_command".to_string()),
+        "coder agent should list execute_command as external tool"
+    );
+}
+
+#[test]
+fn builtin_tools_have_no_filesystem_tools() {
+    let tools = crate::tools::get_builtin_tools();
+    let tool_names: Vec<String> = tools.iter().map(|t| t.get_name()).collect();
+    assert!(
+        !tool_names.iter().any(|n| n.starts_with("fs_")),
+        "builtin tools should not include fs_ tools"
+    );
+    assert!(
+        !tool_names.contains(&"apply_diff".to_string()),
+        "builtin tools should not include apply_diff"
+    );
+    assert!(
+        !tool_names.contains(&"list_artifacts".to_string()),
+        "builtin tools should not include artifact tools"
+    );
+    // Shell tools should still be present
+    assert!(tool_names.contains(&"start_shell".to_string()));
+    assert!(tool_names.contains(&"execute_shell".to_string()));
+    assert!(tool_names.contains(&"stop_shell".to_string()));
 }
 
 #[tokio::test]
