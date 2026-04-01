@@ -12,7 +12,7 @@ max_tokens = 2000
 
 [tools]
 builtin = ["final"]
-external = ["*"]
+external = ["list_artifacts", "read_artifact", "search_artifacts", "save_artifact", "delete_artifact"]
 ---
 
 # Artifact Management Agent
