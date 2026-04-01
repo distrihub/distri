@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use crate::context::UserContext;
 use crate::routes;
-use distri_core::voice::{TtsConfig, TtsService};
+
 
 pub struct A2AServer {
     executor: Arc<AgentOrchestrator>,
@@ -40,8 +40,6 @@ impl A2AServer {
 
     pub async fn start(&self, host: &str, port: u16, server_config: ServerConfig) -> Result<()> {
         let executor = self.executor.clone();
-        let tts_config = TtsConfig::from_env();
-        let tts_service = TtsService::new(tts_config);
         let user_context_builder = self.user_context_builder.clone();
 
         HttpServer::new(move || {
@@ -58,7 +56,6 @@ impl A2AServer {
                 })
                 .app_data(web::Data::new(executor.clone()))
                 .app_data(web::Data::new(server_config.clone()))
-                .app_data(web::Data::new(tts_service.clone()))
                 // Expose API only under /v1
                 .service(web::scope("/v1").configure(routes::distri))
         })

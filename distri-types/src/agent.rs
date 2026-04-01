@@ -249,6 +249,78 @@ pub enum ToolDeliveryMode {
     ToolSearch,
 }
 
+/// Which OpenAI-family API format to use when talking to the LLM.
+///
+/// - `Auto` (default): Auto-detects from the model name. Codex models use Responses API,
+///   everything else uses Chat Completions.
+/// - `Completions`: Forces the Chat Completions API (`/v1/chat/completions`)
+/// - `Responses`: Forces the Responses API (`/v1/responses`)
+///
+/// Most OpenAI models (GPT-4o, GPT-4.1, GPT-5, o1, etc.) support both APIs.
+/// Codex models (`codex-*`, `*-codex`) are Responses API only.
+/// OpenAI recommends the Responses API for new projects (better caching, reasoning).
+///
+/// Can be set at the model_settings level in agent definitions:
+/// ```toml
+/// [model_settings]
+/// model = "codex-mini-latest"
+/// api_format = "responses"  # or "completions" or "auto"
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum OpenAiApiFormat {
+    /// Auto-detect based on model name (codex models → Responses, everything else → Completions)
+    #[default]
+    Auto,
+    /// Chat Completions API (`/v1/chat/completions`)
+    Completions,
+    /// Responses API (`/v1/responses`) — required for Codex models, recommended for new projects
+    Responses,
+}
+
+impl OpenAiApiFormat {
+    /// Resolve the effective format given a model name.
+    /// When `Auto`, inspects the model name to decide.
+    pub fn resolve(&self, model: &str) -> ResolvedOpenAiApiFormat {
+        match self {
+            OpenAiApiFormat::Completions => ResolvedOpenAiApiFormat::Completions,
+            OpenAiApiFormat::Responses => ResolvedOpenAiApiFormat::Responses,
+            OpenAiApiFormat::Auto => {
+                if Self::model_requires_responses_api(model) {
+                    ResolvedOpenAiApiFormat::Responses
+                } else {
+                    ResolvedOpenAiApiFormat::Completions
+                }
+            }
+        }
+    }
+
+    /// Heuristic: models that require the Responses API.
+    ///
+    /// These models return errors on /v1/chat/completions and MUST use /v1/responses:
+    /// - Codex models: codex-mini-latest, gpt-5.1-codex, gpt-5.3-codex, etc.
+    /// - Pro models: gpt-5-pro, gpt-5.2-pro, gpt-5.4-pro, o3-pro
+    /// - Deep research models: o3-deep-research, o4-mini-deep-research
+    fn model_requires_responses_api(model: &str) -> bool {
+        let m = model.to_lowercase();
+        // Codex models (codex-*, *-codex, */codex*)
+        m.starts_with("codex")
+            || m.ends_with("-codex")
+            || m.contains("/codex")
+            // Pro models (*-pro) — require multi-turn interactions only Responses supports
+            || m.ends_with("-pro")
+            // Deep research models (*-deep-research)
+            || m.ends_with("-deep-research")
+    }
+}
+
+/// Resolved (non-Auto) API format
+#[derive(Debug, Clone, PartialEq)]
+pub enum ResolvedOpenAiApiFormat {
+    Completions,
+    Responses,
+}
+
 /// Supported tool call formats
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -732,13 +804,9 @@ pub enum ModelProvider {
     },
     #[serde(rename = "azure_openai")]
     AzureOpenAI {
-        /// Azure resource endpoint, e.g. "https://<resource>.openai.azure.com"
         base_url: String,
-        /// Azure API key (or fetched from AZURE_OPENAI_API_KEY secret)
         api_key: Option<String>,
-        /// Azure deployment name
         deployment: String,
-        /// API version, e.g. "2024-06-01"
         #[serde(default = "ModelProvider::azure_api_version")]
         api_version: String,
     },
@@ -748,10 +816,27 @@ pub enum ModelProvider {
         base_url: Option<String>,
         api_key: Option<String>,
     },
-    #[serde(rename = "vllora")]
-    Vllora {
-        #[serde(default = "ModelProvider::vllora_url")]
+    #[serde(rename = "gemini")]
+    Gemini {
+        #[serde(default = "ModelProvider::gemini_base_url")]
         base_url: String,
+        api_key: Option<String>,
+    },
+    #[serde(rename = "azure_ai_foundry")]
+    AzureAiFoundry {
+        base_url: String,
+        api_key: Option<String>,
+    },
+    #[serde(rename = "aws_bedrock")]
+    AwsBedrock {
+        base_url: String,
+        api_key: Option<String>,
+    },
+    #[serde(rename = "google_vertex")]
+    GoogleVertex {
+        base_url: String,
+        api_key: Option<String>,
+        project_id: Option<String>,
     },
 }
 /// Defines the secret requirements for a provider
@@ -807,7 +892,7 @@ struct DefaultProviderEntry {
     id: String,
     label: String,
     keys: Vec<SecretKeyDefinition>,
-    models: Vec<ModelInfo>,
+    models: Vec<crate::models::Model>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -834,7 +919,7 @@ pub struct ProviderModels {
     /// Human-readable provider name
     pub provider_label: String,
     /// Available models for this provider
-    pub models: Vec<ModelInfo>,
+    pub models: Vec<crate::models::Model>,
 }
 
 /// Provider models with configuration status (returned by API)
@@ -847,7 +932,7 @@ pub struct ProviderModelsStatus {
     /// Whether the provider's API key is configured
     pub configured: bool,
     /// Available models for this provider
-    pub models: Vec<ModelInfo>,
+    pub models: Vec<crate::models::Model>,
 }
 
 impl Default for ModelProvider {
@@ -862,54 +947,70 @@ impl ModelProvider {
     }
 
     pub fn anthropic_base_url() -> Option<String> {
-        None // Uses default https://api.anthropic.com
+        None
     }
 
-    pub fn vllora_url() -> String {
-        "http://localhost:9090/v1".to_string()
+    pub fn gemini_base_url() -> String {
+        "https://generativelanguage.googleapis.com/v1beta/openai".to_string()
     }
 
     pub fn azure_api_version() -> String {
         "2024-06-01".to_string()
     }
 
-    /// Returns the provider ID for secret lookup
-    pub fn provider_id(&self) -> &'static str {
+    /// Returns the provider type enum for this provider.
+    pub fn provider_type(&self) -> crate::models::ProviderType {
+        match self {
+            ModelProvider::OpenAI {} => crate::models::ProviderType::OpenAI,
+            ModelProvider::OpenAICompatible { .. } => crate::models::ProviderType::Custom("openai_compat".to_string()),
+            ModelProvider::AzureOpenAI { .. } => crate::models::ProviderType::Azure,
+            ModelProvider::Anthropic { .. } => crate::models::ProviderType::Anthropic,
+            ModelProvider::Gemini { .. } => crate::models::ProviderType::Gemini,
+            ModelProvider::AzureAiFoundry { .. } => crate::models::ProviderType::AzureAiFoundry,
+            ModelProvider::AwsBedrock { .. } => crate::models::ProviderType::AwsBedrock,
+            ModelProvider::GoogleVertex { .. } => crate::models::ProviderType::GoogleVertex,
+        }
+    }
+
+    /// Returns the provider ID string for secret lookup and "provider/model" format.
+    pub fn provider_id(&self) -> &str {
         match self {
             ModelProvider::OpenAI {} => "openai",
             ModelProvider::OpenAICompatible { .. } => "openai_compat",
             ModelProvider::AzureOpenAI { .. } => "azure_openai",
             ModelProvider::Anthropic { .. } => "anthropic",
-            ModelProvider::Vllora { .. } => "vllora",
+            ModelProvider::Gemini { .. } => "gemini",
+            ModelProvider::AzureAiFoundry { .. } => "azure_ai_foundry",
+            ModelProvider::AwsBedrock { .. } => "aws_bedrock",
+            ModelProvider::GoogleVertex { .. } => "google_vertex",
         }
     }
 
-    /// Returns the required secret keys for this provider
+    /// Returns the required secret keys for this provider.
     pub fn required_secret_keys(&self) -> Vec<&'static str> {
         match self {
             ModelProvider::OpenAI {} => vec!["OPENAI_API_KEY"],
             ModelProvider::OpenAICompatible { api_key, .. } => {
-                if api_key.is_some() {
-                    vec![]
-                } else {
-                    vec!["OPENAI_API_KEY"]
-                }
+                if api_key.is_some() { vec![] } else { vec!["OPENAI_API_KEY"] }
             }
             ModelProvider::AzureOpenAI { api_key, .. } => {
-                if api_key.is_some() {
-                    vec![]
-                } else {
-                    vec!["AZURE_OPENAI_API_KEY"]
-                }
+                if api_key.is_some() { vec![] } else { vec!["AZURE_OPENAI_API_KEY"] }
             }
             ModelProvider::Anthropic { api_key, .. } => {
-                if api_key.is_some() {
-                    vec![]
-                } else {
-                    vec!["ANTHROPIC_API_KEY"]
-                }
+                if api_key.is_some() { vec![] } else { vec!["ANTHROPIC_API_KEY"] }
             }
-            ModelProvider::Vllora { .. } => vec![],
+            ModelProvider::Gemini { api_key, .. } => {
+                if api_key.is_some() { vec![] } else { vec!["GEMINI_API_KEY"] }
+            }
+            ModelProvider::AzureAiFoundry { api_key, .. } => {
+                if api_key.is_some() { vec![] } else { vec!["AZURE_AI_FOUNDRY_API_KEY"] }
+            }
+            ModelProvider::AwsBedrock { api_key, .. } => {
+                if api_key.is_some() { vec![] } else { vec!["AWS_ACCESS_KEY_ID"] }
+            }
+            ModelProvider::GoogleVertex { api_key, .. } => {
+                if api_key.is_some() { vec![] } else { vec!["GOOGLE_VERTEX_API_KEY"] }
+            }
         }
     }
 
@@ -943,9 +1044,12 @@ impl ModelProvider {
         match self {
             ModelProvider::OpenAI {} => "OpenAI",
             ModelProvider::OpenAICompatible { .. } => "OpenAI Compatible",
-            ModelProvider::AzureOpenAI { .. } => "Azure OpenAI",
+            ModelProvider::AzureOpenAI { .. } => "Azure",
             ModelProvider::Anthropic { .. } => "Anthropic",
-            ModelProvider::Vllora { .. } => "vLLORA",
+            ModelProvider::Gemini { .. } => "Google Gemini",
+            ModelProvider::AzureAiFoundry { .. } => "Azure AI Foundry",
+            ModelProvider::AwsBedrock { .. } => "AWS Bedrock",
+            ModelProvider::GoogleVertex { .. } => "Google Vertex AI",
         }
     }
 }
@@ -985,6 +1089,10 @@ pub struct ModelSettingsInner {
     /// The format of the response, if specified.
     #[serde(default)]
     pub response_format: Option<serde_json::Value>,
+    /// Which OpenAI-family API format to use (auto-detected by default).
+    /// Only relevant for OpenAI, OpenAI-compatible, and Azure OpenAI providers.
+    #[serde(default, skip_serializing_if = "is_default_api_format")]
+    pub api_format: OpenAiApiFormat,
 }
 
 impl ModelSettings {
@@ -1016,14 +1124,26 @@ impl ModelSettings {
                 base_url: None,
                 api_key: None,
             },
-            "azure_openai" => ModelProvider::AzureOpenAI {
+            "azure_openai" | "azure" => ModelProvider::AzureOpenAI {
                 base_url: String::new(),
                 api_key: None,
                 deployment: model_id.to_string(),
                 api_version: ModelProvider::azure_api_version(),
             },
-            "gemini" => ModelProvider::OpenAICompatible {
-                base_url: "https://generativelanguage.googleapis.com/v1beta/openai".to_string(),
+            "gemini" => ModelProvider::Gemini {
+                base_url: ModelProvider::gemini_base_url(),
+                api_key: None,
+            },
+            "azure_ai_foundry" => ModelProvider::AzureAiFoundry {
+                base_url: String::new(),
+                api_key: None,
+            },
+            "aws_bedrock" => ModelProvider::AwsBedrock {
+                base_url: String::new(),
+                api_key: None,
+            },
+            "google_vertex" => ModelProvider::GoogleVertex {
+                base_url: String::new(),
                 api_key: None,
                 project_id: None,
             },
@@ -1032,11 +1152,11 @@ impl ModelSettings {
                 api_key: None,
                 project_id: None,
             },
-            unknown => {
-                return Err(format!(
-                    "Provider '{}' is not recognized. Supported providers: openai, anthropic, azure_openai, gemini, or custom_* prefixed providers.",
-                    unknown
-                ));
+            // Unknown providers — treat as OpenAI-compatible
+            _ => ModelProvider::OpenAICompatible {
+                base_url: String::new(),
+                api_key: None,
+                project_id: None,
             }
         };
         Ok(Some(Self {
@@ -1060,6 +1180,10 @@ fn default_model_provider() -> ModelProvider {
 
 fn default_context_size() -> u32 {
     20000 // Default limit for general use - agents can override with higher values as needed
+}
+
+fn is_default_api_format(f: &OpenAiApiFormat) -> bool {
+    *f == OpenAiApiFormat::Auto
 }
 
 fn default_history_size() -> Option<usize> {
@@ -1355,5 +1479,141 @@ mod tests {
         };
         let json = serde_json::to_string(&settings).unwrap();
         assert!(json.contains("\"max_tokens\":2048"));
+    }
+
+    #[test]
+    fn test_api_format_auto_detect_codex_prefix() {
+        let fmt = OpenAiApiFormat::Auto;
+        assert_eq!(
+            fmt.resolve("codex-mini-latest"),
+            ResolvedOpenAiApiFormat::Responses
+        );
+        assert_eq!(
+            fmt.resolve("codex-mini-2025-01-24"),
+            ResolvedOpenAiApiFormat::Responses
+        );
+    }
+
+    #[test]
+    fn test_api_format_auto_detect_codex_suffix() {
+        let fmt = OpenAiApiFormat::Auto;
+        assert_eq!(
+            fmt.resolve("gpt-5.1-codex"),
+            ResolvedOpenAiApiFormat::Responses
+        );
+        assert_eq!(
+            fmt.resolve("gpt-5.3-codex"),
+            ResolvedOpenAiApiFormat::Responses
+        );
+    }
+
+    #[test]
+    fn test_api_format_auto_detect_pro_models() {
+        let fmt = OpenAiApiFormat::Auto;
+        assert_eq!(fmt.resolve("gpt-5-pro"), ResolvedOpenAiApiFormat::Responses);
+        assert_eq!(fmt.resolve("gpt-5.2-pro"), ResolvedOpenAiApiFormat::Responses);
+        assert_eq!(fmt.resolve("gpt-5.4-pro"), ResolvedOpenAiApiFormat::Responses);
+        assert_eq!(fmt.resolve("o3-pro"), ResolvedOpenAiApiFormat::Responses);
+    }
+
+    #[test]
+    fn test_api_format_auto_detect_deep_research_models() {
+        let fmt = OpenAiApiFormat::Auto;
+        assert_eq!(
+            fmt.resolve("o3-deep-research"),
+            ResolvedOpenAiApiFormat::Responses
+        );
+        assert_eq!(
+            fmt.resolve("o4-mini-deep-research"),
+            ResolvedOpenAiApiFormat::Responses
+        );
+    }
+
+    #[test]
+    fn test_api_format_auto_detect_non_codex() {
+        let fmt = OpenAiApiFormat::Auto;
+        assert_eq!(
+            fmt.resolve("gpt-4o"),
+            ResolvedOpenAiApiFormat::Completions
+        );
+        assert_eq!(
+            fmt.resolve("gpt-4.1"),
+            ResolvedOpenAiApiFormat::Completions
+        );
+        assert_eq!(
+            fmt.resolve("gpt-5"),
+            ResolvedOpenAiApiFormat::Completions
+        );
+        assert_eq!(
+            fmt.resolve("o1"),
+            ResolvedOpenAiApiFormat::Completions
+        );
+        assert_eq!(
+            fmt.resolve("gpt-5.4-mini"),
+            ResolvedOpenAiApiFormat::Completions
+        );
+        assert_eq!(
+            fmt.resolve("o3-mini"),
+            ResolvedOpenAiApiFormat::Completions
+        );
+    }
+
+    #[test]
+    fn test_api_format_explicit_override() {
+        // Explicit Responses overrides auto-detect even for non-codex models
+        assert_eq!(
+            OpenAiApiFormat::Responses.resolve("gpt-4o"),
+            ResolvedOpenAiApiFormat::Responses
+        );
+        // Explicit Completions overrides auto-detect even for codex models
+        assert_eq!(
+            OpenAiApiFormat::Completions.resolve("codex-mini-latest"),
+            ResolvedOpenAiApiFormat::Completions
+        );
+    }
+
+    #[test]
+    fn test_api_format_defaults_to_auto() {
+        let inner = ModelSettingsInner::default();
+        assert_eq!(inner.api_format, OpenAiApiFormat::Auto);
+    }
+
+    #[test]
+    fn test_api_format_auto_skipped_in_serialization() {
+        let settings = ModelSettings {
+            model: "test-model".to_string(),
+            inner: ModelSettingsInner {
+                provider: ModelProvider::OpenAI {},
+                ..Default::default()
+            },
+        };
+        let json = serde_json::to_string(&settings).unwrap();
+        assert!(!json.contains("api_format"));
+    }
+
+    #[test]
+    fn test_api_format_responses_serialized() {
+        let settings = ModelSettings {
+            model: "test-model".to_string(),
+            inner: ModelSettingsInner {
+                api_format: OpenAiApiFormat::Responses,
+                provider: ModelProvider::OpenAI {},
+                ..Default::default()
+            },
+        };
+        let json = serde_json::to_string(&settings).unwrap();
+        assert!(json.contains("\"api_format\":\"responses\""));
+    }
+
+    #[test]
+    fn test_api_format_deserializes_from_toml() {
+        let toml_str = r#"
+            model = "codex-mini-latest"
+            api_format = "responses"
+            [provider]
+            name = "openai"
+        "#;
+        let settings: ModelSettings = toml::from_str(toml_str).unwrap();
+        assert_eq!(settings.inner.api_format, OpenAiApiFormat::Responses);
     }
 }

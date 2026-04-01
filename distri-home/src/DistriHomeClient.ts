@@ -246,6 +246,40 @@ export class DistriHomeClient {
   }
 
   /**
+   * List provider definitions with their keys and models.
+   */
+  async listProviders(): Promise<ModelProviderDefinition[]> {
+    const response = await this.client.fetch('/providers');
+    if (!response.ok) {
+      throw new Error(`Failed to fetch providers: ${response.statusText}`);
+    }
+    return await response.json();
+  }
+
+  /**
+   * List all models with denormalized provider info and configured status.
+   */
+  async listModels(): Promise<ModelWithProvider[]> {
+    const response = await this.client.fetch('/models');
+    if (!response.ok) {
+      throw new Error(`Failed to fetch models: ${response.statusText}`);
+    }
+    return await response.json();
+  }
+
+  /**
+   * List known provider types.
+   */
+  async listProviderTypes(): Promise<ProviderTypeInfo[]> {
+    const response = await this.client.fetch('/provider-types');
+    if (!response.ok) {
+      throw new Error(`Failed to fetch provider types: ${response.statusText}`);
+    }
+    return await response.json();
+  }
+
+
+  /**
    * Validate an agent's configuration
    * Returns validation results including any warnings (e.g., missing secrets)
    */
@@ -564,9 +598,9 @@ export class DistriHomeClient {
   // ---- TTS Models ----
 
   /**
-   * List available TTS models and voices from the server.
+   * List available TTS models from the server.
    */
-  async listTtsModels(): Promise<TtsModelsResponse> {
+  async listTtsModels(): Promise<{ models: Model[] }> {
     const response = await this.client.fetch('/audio/models');
     if (!response.ok) {
       throw new Error(`Failed to fetch TTS models: ${response.statusText}`);
@@ -575,9 +609,9 @@ export class DistriHomeClient {
   }
 
   /**
-   * List TTS provider definitions (keys + models), same pattern as listProviderDefinitions.
+   * List providers that have TTS models.
    */
-  async listTtsProviders(): Promise<TtsProviderDefinition[]> {
+  async listTtsProviders(): Promise<ModelProviderDefinition[]> {
     const response = await this.client.fetch('/audio/providers');
     if (!response.ok) {
       throw new Error(`Failed to fetch TTS providers: ${response.statusText}`);
@@ -773,7 +807,7 @@ export interface UpsertProviderResponse {
   config_saved: boolean;
 }
 
-// TTS types
+// Model & Provider types
 
 export interface TtsVoiceInfo {
   id: string;
@@ -781,19 +815,35 @@ export interface TtsVoiceInfo {
   description?: string | null;
 }
 
-export interface TtsModelInfo {
+export type ModelCapability = 'completion' | 'tts' | 'stt';
+
+export type ModelPricing =
+  | { type: 'completion'; input: number; output: number; cached_input?: number }
+  | { type: 'tts'; per_1m_chars: number }
+  | { type: 'stt'; per_minute: number };
+
+export interface Model {
   id: string;
-  provider: string;
   name: string;
-  voices: TtsVoiceInfo[];
-  formats: string[];
+  capability: ModelCapability;
+  context_window?: number;
+  pricing?: ModelPricing;
+  voices?: TtsVoiceInfo[];
+  formats?: string[];
 }
 
-export interface TtsModelsResponse {
-  models: TtsModelInfo[];
+export interface ModelWithProvider extends Model {
+  provider_id: string;
+  provider_label: string;
+  configured: boolean;
 }
 
-export interface TtsSecretKeyDefinition {
+export interface ProviderTypeInfo {
+  id: string;
+  label: string;
+}
+
+export interface ProviderKeyDefinition {
   key: string;
   label: string;
   placeholder: string;
@@ -801,9 +851,11 @@ export interface TtsSecretKeyDefinition {
   sensitive: boolean;
 }
 
-export interface TtsProviderDefinition {
+export interface ModelProviderDefinition {
   id: string;
   label: string;
-  keys: TtsSecretKeyDefinition[];
-  models: TtsModelInfo[];
+  keys: ProviderKeyDefinition[];
+  models: Model[];
+  is_custom: boolean;
 }
+

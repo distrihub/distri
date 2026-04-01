@@ -40,7 +40,7 @@ function AgentSettingsSection({ className }: { className?: string }) {
 
 // Default sections - core distri-home sections only (no cloud-specific Account/API Keys)
 export const defaultSections: SettingsSection[] = [
-  { id: 'agent-settings', label: 'Agent Settings', icon: SettingsIcon, href: 'settings', section: AgentSettingsSection },
+  { id: 'models', label: 'Models', icon: SettingsIcon, href: 'settings', section: AgentSettingsSection },
   { id: 'secrets', label: 'Secrets', icon: LockIcon, href: 'settings/secrets', section: SecretsView },
 ];
 

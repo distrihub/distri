@@ -4,61 +4,752 @@
       "id": "openai",
       "label": "OpenAI",
       "keys": [
-        { "key": "OPENAI_API_KEY", "label": "API key", "placeholder": "sk-...", "required": true, "sensitive": true }
+        {
+          "key": "OPENAI_API_KEY",
+          "label": "API key",
+          "placeholder": "sk-...",
+          "required": true,
+          "sensitive": true
+        }
       ],
       "models": [
-        { "id": "gpt-4.1", "name": "GPT-4.1" },
-        { "id": "gpt-4.1-mini", "name": "GPT-4.1 Mini" },
-        { "id": "gpt-4.1-nano", "name": "GPT-4.1 Nano" },
-        { "id": "gpt-4o", "name": "GPT-4o" },
-        { "id": "gpt-4o-mini", "name": "GPT-4o Mini" },
-        { "id": "o3-mini", "name": "o3-mini" }
+        {
+          "id": "gpt-4.1",
+          "name": "GPT-4.1",
+          "capability": "completion",
+          "context_window": 1047576,
+          "pricing": {
+            "type": "completion",
+            "input": 2.00,
+            "output": 8.00,
+            "cached_input": 0.50
+          }
+        },
+        {
+          "id": "gpt-4.1-mini",
+          "name": "GPT-4.1 Mini",
+          "capability": "completion",
+          "context_window": 1047576,
+          "pricing": {
+            "type": "completion",
+            "input": 0.40,
+            "output": 1.60,
+            "cached_input": 0.10
+          }
+        },
+        {
+          "id": "gpt-4.1-nano",
+          "name": "GPT-4.1 Nano",
+          "capability": "completion",
+          "context_window": 1047576,
+          "pricing": {
+            "type": "completion",
+            "input": 0.10,
+            "output": 0.40,
+            "cached_input": 0.025
+          }
+        },
+        {
+          "id": "gpt-4o",
+          "name": "GPT-4o",
+          "capability": "completion",
+          "context_window": 128000,
+          "pricing": {
+            "type": "completion",
+            "input": 2.50,
+            "output": 10.00,
+            "cached_input": 1.25
+          }
+        },
+        {
+          "id": "gpt-4o-mini",
+          "name": "GPT-4o Mini",
+          "capability": "completion",
+          "context_window": 128000,
+          "pricing": {
+            "type": "completion",
+            "input": 0.15,
+            "output": 0.60,
+            "cached_input": 0.075
+          }
+        },
+        {
+          "id": "o3-mini",
+          "name": "o3-mini",
+          "capability": "completion",
+          "context_window": 200000,
+          "pricing": {
+            "type": "completion",
+            "input": 1.10,
+            "output": 4.40,
+            "cached_input": 0.55
+          }
+        },
+        {
+          "id": "o3",
+          "name": "o3",
+          "capability": "completion",
+          "context_window": 200000,
+          "pricing": {
+            "type": "completion",
+            "input": 2.00,
+            "output": 8.00,
+            "cached_input": 0.50
+          }
+        },
+        {
+          "id": "o4-mini",
+          "name": "o4-mini",
+          "capability": "completion",
+          "context_window": 200000,
+          "pricing": {
+            "type": "completion",
+            "input": 1.10,
+            "output": 4.40,
+            "cached_input": 0.55
+          }
+        },
+        {
+          "id": "gpt-4o-mini-tts",
+          "name": "GPT-4o Mini TTS",
+          "capability": "tts",
+          "pricing": {
+            "type": "tts",
+            "per_1m_chars": 12.00
+          },
+          "voices": [
+            {
+              "id": "alloy",
+              "name": "Alloy",
+              "description": "Neutral and balanced"
+            },
+            {
+              "id": "ash",
+              "name": "Ash",
+              "description": "Warm and confident"
+            },
+            {
+              "id": "ballad",
+              "name": "Ballad",
+              "description": "Expressive and melodic"
+            },
+            {
+              "id": "coral",
+              "name": "Coral",
+              "description": "Clear and friendly"
+            },
+            {
+              "id": "echo",
+              "name": "Echo",
+              "description": "Smooth and resonant"
+            },
+            {
+              "id": "fable",
+              "name": "Fable",
+              "description": "Storytelling and warm"
+            },
+            {
+              "id": "nova",
+              "name": "Nova",
+              "description": "Bright and energetic"
+            },
+            {
+              "id": "onyx",
+              "name": "Onyx",
+              "description": "Deep and authoritative"
+            },
+            {
+              "id": "sage",
+              "name": "Sage",
+              "description": "Calm and measured"
+            },
+            {
+              "id": "shimmer",
+              "name": "Shimmer",
+              "description": "Light and gentle"
+            }
+          ],
+          "formats": [
+            "mp3",
+            "wav",
+            "opus",
+            "aac",
+            "flac",
+            "pcm"
+          ]
+        },
+        {
+          "id": "tts-1",
+          "name": "TTS-1",
+          "capability": "tts",
+          "pricing": {
+            "type": "tts",
+            "per_1m_chars": 15.00
+          },
+          "voices": [
+            {
+              "id": "alloy",
+              "name": "Alloy",
+              "description": "Neutral and balanced"
+            },
+            {
+              "id": "echo",
+              "name": "Echo",
+              "description": "Smooth and resonant"
+            },
+            {
+              "id": "fable",
+              "name": "Fable",
+              "description": "Storytelling and warm"
+            },
+            {
+              "id": "onyx",
+              "name": "Onyx",
+              "description": "Deep and authoritative"
+            },
+            {
+              "id": "nova",
+              "name": "Nova",
+              "description": "Bright and energetic"
+            },
+            {
+              "id": "shimmer",
+              "name": "Shimmer",
+              "description": "Light and gentle"
+            }
+          ],
+          "formats": [
+            "mp3",
+            "wav",
+            "opus",
+            "aac",
+            "flac",
+            "pcm"
+          ]
+        },
+        {
+          "id": "tts-1-hd",
+          "name": "TTS-1 HD",
+          "capability": "tts",
+          "pricing": {
+            "type": "tts",
+            "per_1m_chars": 30.00
+          },
+          "voices": [
+            {
+              "id": "alloy",
+              "name": "Alloy",
+              "description": "Neutral and balanced"
+            },
+            {
+              "id": "echo",
+              "name": "Echo",
+              "description": "Smooth and resonant"
+            },
+            {
+              "id": "fable",
+              "name": "Fable",
+              "description": "Storytelling and warm"
+            },
+            {
+              "id": "onyx",
+              "name": "Onyx",
+              "description": "Deep and authoritative"
+            },
+            {
+              "id": "nova",
+              "name": "Nova",
+              "description": "Bright and energetic"
+            },
+            {
+              "id": "shimmer",
+              "name": "Shimmer",
+              "description": "Light and gentle"
+            }
+          ],
+          "formats": [
+            "mp3",
+            "wav",
+            "opus",
+            "aac",
+            "flac",
+            "pcm"
+          ]
+        },
+        {
+          "id": "whisper-1",
+          "name": "Whisper",
+          "capability": "stt",
+          "pricing": {
+            "type": "stt",
+            "per_minute": 0.006
+          }
+        }
       ]
     },
     {
       "id": "anthropic",
       "label": "Anthropic",
       "keys": [
-        { "key": "ANTHROPIC_API_KEY", "label": "API key", "placeholder": "sk-ant-...", "required": true, "sensitive": true }
+        {
+          "key": "ANTHROPIC_API_KEY",
+          "label": "API key",
+          "placeholder": "sk-ant-...",
+          "required": true,
+          "sensitive": true
+        }
       ],
       "models": [
-        { "id": "claude-sonnet-4", "name": "Claude Sonnet 4" },
-        { "id": "claude-opus-4", "name": "Claude Opus 4" },
-        { "id": "claude-haiku-3.5", "name": "Claude Haiku 3.5" }
+        {
+          "id": "claude-sonnet-4",
+          "name": "Claude Sonnet 4",
+          "capability": "completion",
+          "context_window": 200000,
+          "pricing": {
+            "type": "completion",
+            "input": 3.00,
+            "output": 15.00,
+            "cached_input": 0.30
+          }
+        },
+        {
+          "id": "claude-opus-4",
+          "name": "Claude Opus 4",
+          "capability": "completion",
+          "context_window": 200000,
+          "pricing": {
+            "type": "completion",
+            "input": 15.00,
+            "output": 75.00,
+            "cached_input": 1.50
+          }
+        },
+        {
+          "id": "claude-haiku-3.5",
+          "name": "Claude Haiku 3.5",
+          "capability": "completion",
+          "context_window": 200000,
+          "pricing": {
+            "type": "completion",
+            "input": 0.80,
+            "output": 4.00,
+            "cached_input": 0.08
+          }
+        }
       ]
     },
     {
-      "id": "azure_openai",
-      "label": "Azure OpenAI",
+      "id": "azure",
+      "label": "Azure",
       "keys": [
-        { "key": "AZURE_OPENAI_BASE_URL", "label": "Endpoint URL", "placeholder": "https://<resource>.openai.azure.com", "required": true, "sensitive": false },
-        { "key": "AZURE_OPENAI_API_KEY", "label": "API key", "placeholder": "...", "required": true, "sensitive": true },
-        { "key": "AZURE_OPENAI_DEPLOYMENT", "label": "Deployment name", "placeholder": "gpt-4o", "required": true, "sensitive": false },
-        { "key": "AZURE_OPENAI_API_VERSION", "label": "API version", "placeholder": "2024-06-01", "required": false, "sensitive": false }
+        {
+          "key": "AZURE_OPENAI_BASE_URL",
+          "label": "OpenAI Endpoint URL",
+          "placeholder": "https://<resource>.openai.azure.com",
+          "required": true,
+          "sensitive": false
+        },
+        {
+          "key": "AZURE_OPENAI_API_KEY",
+          "label": "OpenAI API key",
+          "placeholder": "...",
+          "required": true,
+          "sensitive": true
+        },
+        {
+          "key": "AZURE_OPENAI_DEPLOYMENT",
+          "label": "Deployment name",
+          "placeholder": "gpt-4o",
+          "required": false,
+          "sensitive": false
+        },
+        {
+          "key": "AZURE_OPENAI_API_VERSION",
+          "label": "API version",
+          "placeholder": "2024-06-01",
+          "required": false,
+          "sensitive": false
+        },
+        {
+          "key": "AZURE_SPEECH_KEY",
+          "label": "Speech Services key",
+          "placeholder": "...",
+          "required": false,
+          "sensitive": true
+        },
+        {
+          "key": "AZURE_SPEECH_REGION",
+          "label": "Speech Services region",
+          "placeholder": "westus2",
+          "required": false,
+          "sensitive": false
+        }
       ],
       "models": [
-        { "id": "gpt-4o", "name": "GPT-4o (Azure)" },
-        { "id": "gpt-4o-mini", "name": "GPT-4o Mini (Azure)" }
+        {
+          "id": "gpt-4o",
+          "name": "GPT-4o (Azure)",
+          "capability": "completion",
+          "context_window": 128000,
+          "pricing": {
+            "type": "completion",
+            "input": 2.50,
+            "output": 10.00,
+            "cached_input": 1.25
+          }
+        },
+        {
+          "id": "gpt-4o-mini",
+          "name": "GPT-4o Mini (Azure)",
+          "capability": "completion",
+          "context_window": 128000,
+          "pricing": {
+            "type": "completion",
+            "input": 0.15,
+            "output": 0.60,
+            "cached_input": 0.075
+          }
+        },
+        {
+          "id": "tts-1",
+          "name": "Azure TTS-1",
+          "capability": "tts",
+          "pricing": {
+            "type": "tts",
+            "per_1m_chars": 15.00
+          },
+          "voices": [
+            {
+              "id": "alloy",
+              "name": "Alloy",
+              "description": "Neutral and balanced"
+            },
+            {
+              "id": "echo",
+              "name": "Echo",
+              "description": "Smooth and resonant"
+            },
+            {
+              "id": "fable",
+              "name": "Fable",
+              "description": "Storytelling and warm"
+            },
+            {
+              "id": "onyx",
+              "name": "Onyx",
+              "description": "Deep and authoritative"
+            },
+            {
+              "id": "nova",
+              "name": "Nova",
+              "description": "Bright and energetic"
+            },
+            {
+              "id": "shimmer",
+              "name": "Shimmer",
+              "description": "Light and gentle"
+            }
+          ],
+          "formats": [
+            "mp3",
+            "wav",
+            "opus",
+            "aac",
+            "flac",
+            "pcm"
+          ]
+        },
+        {
+          "id": "tts-1-hd",
+          "name": "Azure TTS-1 HD",
+          "capability": "tts",
+          "pricing": {
+            "type": "tts",
+            "per_1m_chars": 30.00
+          },
+          "voices": [
+            {
+              "id": "alloy",
+              "name": "Alloy",
+              "description": "Neutral and balanced"
+            },
+            {
+              "id": "echo",
+              "name": "Echo",
+              "description": "Smooth and resonant"
+            },
+            {
+              "id": "fable",
+              "name": "Fable",
+              "description": "Storytelling and warm"
+            },
+            {
+              "id": "onyx",
+              "name": "Onyx",
+              "description": "Deep and authoritative"
+            },
+            {
+              "id": "nova",
+              "name": "Nova",
+              "description": "Bright and energetic"
+            },
+            {
+              "id": "shimmer",
+              "name": "Shimmer",
+              "description": "Light and gentle"
+            }
+          ],
+          "formats": [
+            "mp3",
+            "wav",
+            "opus",
+            "aac",
+            "flac",
+            "pcm"
+          ]
+        },
+        {
+          "id": "azure-neural-tts",
+          "name": "Azure Neural TTS",
+          "capability": "tts",
+          "pricing": {
+            "type": "tts",
+            "per_1m_chars": 16.00
+          },
+          "voices": [
+            {
+              "id": "en-US-JennyNeural",
+              "name": "Jenny",
+              "description": "General purpose female voice"
+            },
+            {
+              "id": "en-US-GuyNeural",
+              "name": "Guy",
+              "description": "General purpose male voice"
+            },
+            {
+              "id": "en-US-AriaNeural",
+              "name": "Aria",
+              "description": "Expressive female voice"
+            },
+            {
+              "id": "en-US-DavisNeural",
+              "name": "Davis",
+              "description": "Calm male voice"
+            },
+            {
+              "id": "en-US-AmberNeural",
+              "name": "Amber",
+              "description": "Warm female voice"
+            },
+            {
+              "id": "en-US-AndrewNeural",
+              "name": "Andrew",
+              "description": "Professional male voice"
+            },
+            {
+              "id": "en-US-EmmaNeural",
+              "name": "Emma",
+              "description": "Friendly female voice"
+            }
+          ],
+          "formats": [
+            "mp3",
+            "wav",
+            "opus"
+          ]
+        },
+        {
+          "id": "whisper-1",
+          "name": "Whisper",
+          "capability": "stt",
+          "pricing": {
+            "type": "stt",
+            "per_minute": 0.006
+          }
+        }
       ]
     },
     {
       "id": "gemini",
       "label": "Google Gemini",
       "keys": [
-        { "key": "GEMINI_API_KEY", "label": "API key", "placeholder": "AIza...", "required": true, "sensitive": true }
+        {
+          "key": "GEMINI_API_KEY",
+          "label": "API key",
+          "placeholder": "AIza...",
+          "required": true,
+          "sensitive": true
+        }
       ],
       "models": [
-        { "id": "gemini-2.5-flash", "name": "Gemini 2.5 Flash" },
-        { "id": "gemini-2.5-pro", "name": "Gemini 2.5 Pro" }
+        {
+          "id": "gemini-2.5-flash",
+          "name": "Gemini 2.5 Flash",
+          "capability": "completion",
+          "context_window": 1048576,
+          "pricing": {
+            "type": "completion",
+            "input": 0.15,
+            "output": 0.60,
+            "cached_input": 0.0375
+          }
+        },
+        {
+          "id": "gemini-2.5-pro",
+          "name": "Gemini 2.5 Pro",
+          "capability": "completion",
+          "context_window": 1048576,
+          "pricing": {
+            "type": "completion",
+            "input": 1.25,
+            "output": 10.00,
+            "cached_input": 0.315
+          }
+        }
       ]
     },
     {
-      "id": "openai_compat",
-      "label": "OpenAI Compatible",
+      "id": "elevenlabs",
+      "label": "ElevenLabs",
       "keys": [
-        { "key": "OPENAI_COMPAT_BASE_URL", "label": "API URL", "placeholder": "https://api.example.com/v1", "required": true, "sensitive": false },
-        { "key": "OPENAI_COMPAT_API_KEY", "label": "API key", "placeholder": "sk-...", "required": true, "sensitive": true },
-        { "key": "OPENAI_COMPAT_PROJECT_ID", "label": "Project ID", "placeholder": "project-123", "required": false, "sensitive": false }
+        {
+          "key": "ELEVENLABS_API_KEY",
+          "label": "API key",
+          "placeholder": "...",
+          "required": true,
+          "sensitive": true
+        }
+      ],
+      "models": [
+        {
+          "id": "eleven_multilingual_v2",
+          "name": "ElevenLabs Multilingual V2",
+          "capability": "tts",
+          "pricing": {
+            "type": "tts",
+            "per_1m_chars": 30.00
+          },
+          "voices": [
+            {
+              "id": "21m00Tcm4TlvDq8ikWAM",
+              "name": "Rachel",
+              "description": "Calm and natural female"
+            },
+            {
+              "id": "29vD33N1CtxCmqQRPOHJ",
+              "name": "Drew",
+              "description": "Well-rounded male"
+            },
+            {
+              "id": "2EiwWnXFnvU5JabPnv8n",
+              "name": "Clyde",
+              "description": "War veteran male"
+            },
+            {
+              "id": "5Q0t7uMcjvnagumLfvZi",
+              "name": "Paul",
+              "description": "Ground news male"
+            },
+            {
+              "id": "AZnzlk1XvdvUeBnXmlld",
+              "name": "Domi",
+              "description": "Strong female"
+            },
+            {
+              "id": "EXAVITQu4vr4xnSDxMaL",
+              "name": "Bella",
+              "description": "Soft female"
+            }
+          ],
+          "formats": [
+            "mp3",
+            "pcm"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "azure_ai_foundry",
+      "label": "Azure AI Foundry",
+      "keys": [
+        {
+          "key": "AZURE_AI_FOUNDRY_ENDPOINT",
+          "label": "Endpoint URL",
+          "placeholder": "https://<project>.services.ai.azure.com/v1",
+          "required": true,
+          "sensitive": false
+        },
+        {
+          "key": "AZURE_AI_FOUNDRY_API_KEY",
+          "label": "API key",
+          "placeholder": "...",
+          "required": true,
+          "sensitive": true
+        }
+      ],
+      "models": []
+    },
+    {
+      "id": "aws_bedrock",
+      "label": "AWS Bedrock",
+      "keys": [
+        {
+          "key": "AWS_BEDROCK_ENDPOINT",
+          "label": "Endpoint URL",
+          "placeholder": "https://bedrock-runtime.<region>.amazonaws.com/v1",
+          "required": true,
+          "sensitive": false
+        },
+        {
+          "key": "AWS_ACCESS_KEY_ID",
+          "label": "Access Key ID",
+          "placeholder": "AKIA...",
+          "required": true,
+          "sensitive": true
+        },
+        {
+          "key": "AWS_SECRET_ACCESS_KEY",
+          "label": "Secret Access Key",
+          "placeholder": "...",
+          "required": true,
+          "sensitive": true
+        },
+        {
+          "key": "AWS_REGION",
+          "label": "Region",
+          "placeholder": "us-east-1",
+          "required": false,
+          "sensitive": false
+        }
+      ],
+      "models": []
+    },
+    {
+      "id": "google_vertex",
+      "label": "Google Vertex AI",
+      "keys": [
+        {
+          "key": "GOOGLE_VERTEX_ENDPOINT",
+          "label": "Endpoint URL",
+          "placeholder": "https://<region>-aiplatform.googleapis.com/v1",
+          "required": true,
+          "sensitive": false
+        },
+        {
+          "key": "GOOGLE_VERTEX_API_KEY",
+          "label": "API key",
+          "placeholder": "...",
+          "required": true,
+          "sensitive": true
+        },
+        {
+          "key": "GOOGLE_VERTEX_PROJECT_ID",
+          "label": "Project ID",
+          "placeholder": "my-project",
+          "required": false,
+          "sensitive": false
+        }
       ],
       "models": []
     }
