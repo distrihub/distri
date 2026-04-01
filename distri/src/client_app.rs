@@ -78,6 +78,23 @@ impl DistriClientApp {
         self.registry.clone()
     }
 
+    /// Return local tool definitions as client-delegated dynamic tool factories.
+    /// These should be registered on the `AgentStreamClient` so the server includes
+    /// them in the LLM's tool list.
+    pub fn client_dynamic_tools(&self) -> Vec<distri_types::dynamic_tool::DynamicToolFactory> {
+        self.local_tool_definitions
+            .iter()
+            .map(|def| distri_types::dynamic_tool::DynamicToolFactory {
+                name: def.name.clone(),
+                factory_type: "client".to_string(),
+                config: serde_json::json!({
+                    "parameters": def.parameters,
+                }),
+                description: Some(def.description.clone()),
+            })
+            .collect()
+    }
+
     pub async fn list_agents(&self) -> Result<Vec<AgentConfig>, ClientError> {
         let url = format!("{}/agents", self.base());
         let resp = self.http.get(url).send().await?;

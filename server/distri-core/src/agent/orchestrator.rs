@@ -39,7 +39,6 @@ pub struct AgentOrchestrator {
     pub coordinator_rx: Arc<Mutex<mpsc::Receiver<CoordinatorMessage>>>,
     pub coordinator_tx: mpsc::Sender<CoordinatorMessage>,
     pub session_filesystem: Arc<FileSystem>,
-    pub session_root_prefix: Option<String>,
     /// Optional workspace filesystem for HTTP file routes (not used by agent tools).
     /// Set by the hosting application if workspace file APIs are needed.
     pub workspace_filesystem: Option<Arc<FileSystem>>,
@@ -213,7 +212,6 @@ impl AgentOrchestratorBuilder {
 
             Arc::new(distri_filesystem::create_file_system(fs_config).await?)
         };
-        let session_root_prefix = None;
 
         let browser_config = Arc::new(RwLock::new(browser_config));
 
@@ -232,7 +230,6 @@ impl AgentOrchestratorBuilder {
             coordinator_rx: Arc::new(Mutex::new(coordinator_rx)),
             coordinator_tx,
             session_filesystem,
-            session_root_prefix,
             workspace_filesystem: self.workspace_filesystem,
             browser_config,
             additional_tools: Arc::new(RwLock::new(self.additional_tools.unwrap_or_default())),
@@ -390,15 +387,6 @@ impl AgentOrchestrator {
         context: Arc<ExecutorContext>,
     ) -> Result<Arc<ExecutorContext>, AgentError> {
         let mut ctx = Arc::try_unwrap(context).unwrap_or_else(|arc| (*arc).clone());
-
-        if let Some(prefix) = self.session_root_prefix.clone() {
-            let metadata = ctx
-                .tool_metadata
-                .get_or_insert_with(std::collections::HashMap::new);
-            metadata
-                .entry("filesystem_root_prefix".to_string())
-                .or_insert(serde_json::Value::String(prefix));
-        }
 
         if self.is_ephemeral() && ctx.stores.is_none() {
             let execution_stores = distri_stores::create_ephemeral_execution_stores(&self.stores)
@@ -1320,13 +1308,10 @@ impl AgentOrchestrator {
         };
 
         // Use the standardized resolve_tools_config method
-        let mut tools = crate::tools::resolve_tools_config(
-            &all_tools_config,
-            self.mcp_registry.clone(),
-            &[],
-        )
-        .await
-        .map_err(|e| AgentError::ToolExecution(e.to_string()))?;
+        let mut tools =
+            crate::tools::resolve_tools_config(&all_tools_config, self.mcp_registry.clone(), &[])
+                .await
+                .map_err(|e| AgentError::ToolExecution(e.to_string()))?;
 
         tools.extend(builtin_tools);
 

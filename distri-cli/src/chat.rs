@@ -443,6 +443,11 @@ pub async fn run_interactive_chat(
     for tool in extra_tools {
         stream_client.register_dynamic_tool(tool);
     }
+    // Register local tools (execute_command, filesystem, etc.) so the
+    // server includes them in the LLM's tool list.
+    for tool in app.client_dynamic_tools() {
+        stream_client.register_dynamic_tool(tool);
+    }
 
     let mut last_interrupt: Option<Instant> = None;
 

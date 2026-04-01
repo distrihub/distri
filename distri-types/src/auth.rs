@@ -2,7 +2,6 @@ use async_trait::async_trait;
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chrono::{DateTime, Utc};
-use rand::RngCore;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -337,7 +336,7 @@ const PKCE_RANDOM_BYTES: usize = 32;
 
 pub fn generate_pkce_pair() -> (String, String) {
     let mut random = vec![0u8; PKCE_RANDOM_BYTES];
-    rand::thread_rng().fill_bytes(&mut random);
+    rand::fill(&mut random);
     let verifier = URL_SAFE_NO_PAD.encode(&random);
     let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
     (verifier, challenge)

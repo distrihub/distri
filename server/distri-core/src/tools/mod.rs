@@ -167,6 +167,10 @@ impl Tool for DynExecutorTool {
         true
     }
 
+    fn is_external(&self) -> bool {
+        self.inner.is_external()
+    }
+
     fn get_auth_metadata(&self) -> Option<Box<dyn distri_types::auth::AuthMetadata>> {
         self.inner.get_auth_metadata()
     }

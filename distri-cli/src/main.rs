@@ -430,6 +430,18 @@ async fn main() -> Result<()> {
             for tool in extra_tools {
                 client.register_dynamic_tool(tool);
             }
+            // Register local tools (execute_command, filesystem, etc.) so the
+            // server includes them in the LLM's tool list.
+            let local_tools = app.client_dynamic_tools();
+            if cli.verbose {
+                println!("Registering {} local tools as client dynamic tools", local_tools.len());
+                for t in &local_tools {
+                    println!("  - {} (type: {})", t.name, t.factory_type);
+                }
+            }
+            for tool in local_tools {
+                client.register_dynamic_tool(tool);
+            }
             print_stream_verbose(
                 &client,
                 &stream_agent_id,
