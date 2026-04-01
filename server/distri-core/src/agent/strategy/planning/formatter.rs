@@ -109,6 +109,7 @@ impl<'a> MessageFormatter<'a> {
             todos: todos.clone(),
             json_tools: native_json_tools,
             available_skills,
+            deferred_tools_listing: None, // Set by tool resolution with deferral
         };
 
         let template_to_use = hook_state

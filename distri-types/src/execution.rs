@@ -267,6 +267,84 @@ pub struct ContextUsage {
     /// Model used for LLM calls in this context
     #[serde(default)]
     pub model: Option<String>,
+    /// Per-component token budget tracking for context optimization
+    #[serde(default)]
+    pub context_budget: ContextBudget,
+}
+
+/// Tracks token usage by component for context optimization.
+///
+/// Each field represents the estimated token count for a specific component
+/// of the prompt. This enables:
+/// - Monitoring which components consume the most context
+/// - Triggering compaction when utilization exceeds thresholds
+/// - Informing deferred loading decisions (tools, skills)
+/// - API-side prompt caching optimization
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ContextBudget {
+    /// Static system prompt tokens (cacheable across sessions)
+    pub system_prompt_static_tokens: usize,
+    /// Dynamic system prompt tokens (per-session: env, memory, hooks)
+    pub system_prompt_dynamic_tokens: usize,
+    /// Tool schema tokens (full schemas for core tools)
+    pub tool_schema_tokens: usize,
+    /// Deferred tool listing tokens (name + description only)
+    pub deferred_tool_tokens: usize,
+    /// Skill listing tokens in system prompt
+    pub skill_listing_tokens: usize,
+    /// Conversation history tokens (all messages)
+    pub conversation_tokens: usize,
+    /// Tool result tokens in current turn
+    pub tool_result_tokens: usize,
+    /// Total estimated context window size for the model
+    pub context_window_size: usize,
+    /// Whether the static prompt prefix hash has changed (cache bust)
+    pub static_prefix_cache_hit: bool,
+    /// Hash of the static system prompt prefix for cache tracking
+    #[serde(default)]
+    pub static_prefix_hash: Option<String>,
+}
+
+impl ContextBudget {
+    /// Total tokens currently consumed across all components
+    pub fn total_tokens(&self) -> usize {
+        self.system_prompt_static_tokens
+            + self.system_prompt_dynamic_tokens
+            + self.tool_schema_tokens
+            + self.deferred_tool_tokens
+            + self.skill_listing_tokens
+            + self.conversation_tokens
+            + self.tool_result_tokens
+    }
+
+    /// Context utilization as a percentage (0.0 - 1.0)
+    pub fn utilization(&self) -> f64 {
+        if self.context_window_size == 0 {
+            return 0.0;
+        }
+        self.total_tokens() as f64 / self.context_window_size as f64
+    }
+
+    /// Remaining tokens available in the context window
+    pub fn remaining_tokens(&self) -> usize {
+        self.context_window_size.saturating_sub(self.total_tokens())
+    }
+
+    /// Whether context utilization exceeds the warning threshold (80%)
+    pub fn is_warning(&self) -> bool {
+        self.utilization() > 0.80
+    }
+
+    /// Whether context utilization exceeds the critical threshold (90%)
+    pub fn is_critical(&self) -> bool {
+        self.utilization() > 0.90
+    }
+
+    /// Tokens saved by deferring tools (vs loading all schemas)
+    pub fn deferred_savings(&self) -> usize {
+        // This would be set externally by comparing full vs deferred tool tokens
+        0 // Placeholder - actual savings tracked by tool resolution
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -556,5 +634,56 @@ mod tests {
         // save:false part should be removed.
         assert_eq!(tool.parts.len(), 1);
         assert!(tool.parts_metadata.is_none());
+    }
+
+    #[test]
+    fn test_context_budget_total_tokens() {
+        let budget = ContextBudget {
+            system_prompt_static_tokens: 3000,
+            system_prompt_dynamic_tokens: 2000,
+            tool_schema_tokens: 5000,
+            deferred_tool_tokens: 200,
+            skill_listing_tokens: 500,
+            conversation_tokens: 10000,
+            tool_result_tokens: 1000,
+            context_window_size: 200_000,
+            static_prefix_cache_hit: false,
+            static_prefix_hash: None,
+        };
+
+        assert_eq!(budget.total_tokens(), 21700);
+        assert!((budget.utilization() - 0.1085).abs() < 0.001);
+        assert_eq!(budget.remaining_tokens(), 178300);
+        assert!(!budget.is_warning());
+        assert!(!budget.is_critical());
+    }
+
+    #[test]
+    fn test_context_budget_warning_threshold() {
+        let budget = ContextBudget {
+            conversation_tokens: 85000,
+            context_window_size: 100_000,
+            ..Default::default()
+        };
+        assert!(budget.is_warning());
+        assert!(!budget.is_critical());
+    }
+
+    #[test]
+    fn test_context_budget_critical_threshold() {
+        let budget = ContextBudget {
+            conversation_tokens: 95000,
+            context_window_size: 100_000,
+            ..Default::default()
+        };
+        assert!(budget.is_warning());
+        assert!(budget.is_critical());
+    }
+
+    #[test]
+    fn test_context_budget_zero_window() {
+        let budget = ContextBudget::default();
+        assert_eq!(budget.utilization(), 0.0);
+        assert_eq!(budget.remaining_tokens(), 0);
     }
 }

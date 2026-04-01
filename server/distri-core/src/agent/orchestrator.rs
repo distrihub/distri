@@ -1324,9 +1324,7 @@ impl AgentOrchestrator {
         // Create a ToolsConfig that includes all available tools
         let all_tools_config = ToolsConfig {
             builtin: vec![], // Don't include builtin tools by default for /toolcall
-            dynamic: vec![],
-            mcp: Vec::new(),
-            external: None,
+            ..Default::default()
         };
 
         // Use the standardized resolve_tools_config method
