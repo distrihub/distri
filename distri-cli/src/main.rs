@@ -26,7 +26,7 @@ use commands::{
 use config::resolve_workspace;
 use message::{build_connections_context, build_message_params};
 use threads::resolve_resume_arg;
-use tools::register_approval_handler;
+use tools::{register_approval_handler, register_execute_command};
 
 #[derive(Parser, Debug, Clone)]
 #[clap(author, version, about)]
@@ -389,6 +389,18 @@ async fn main() -> Result<()> {
                     stream_agent_id = uuid.to_string();
                 }
             }
+            // Register execute_command for local shell execution (both agent-specific and wildcard)
+            register_execute_command(&app.registry(), &agent_name, &workspace);
+            register_execute_command(&app.registry(), "*", &workspace);
+            if cli.verbose {
+                let reg = app.registry();
+                println!("External tools registered:");
+                for tool in &["execute_command", "fs_write_file", "fs_read_file"] {
+                    let has_agent = reg.has_tool(&agent_name, tool);
+                    let has_wild = reg.has_tool("*", tool);
+                    println!("  {} — agent={}, wildcard={}", tool, has_agent, has_wild);
+                }
+            }
             // Fetch connections to inject into agent context
             let distri_client = Distri::from_config(config.clone());
             let connections_context = build_connections_context(&distri_client).await;
@@ -428,18 +440,6 @@ async fn main() -> Result<()> {
                 .with_http_client(http_client)
                 .with_tool_registry(registry);
             for tool in extra_tools {
-                client.register_dynamic_tool(tool);
-            }
-            // Register local tools (execute_command, filesystem, etc.) so the
-            // server includes them in the LLM's tool list.
-            let local_tools = app.client_dynamic_tools();
-            if cli.verbose {
-                println!("Registering {} local tools as client dynamic tools", local_tools.len());
-                for t in &local_tools {
-                    println!("  - {} (type: {})", t.name, t.factory_type);
-                }
-            }
-            for tool in local_tools {
                 client.register_dynamic_tool(tool);
             }
             print_stream_verbose(

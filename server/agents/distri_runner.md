@@ -17,7 +17,14 @@ builtin = [
   "todos",
   "search", "browsr_scrape",
 ]
-external = ["*"]
+external = [
+  "fs_read_file", "fs_write_file", "apply_diff",
+  "fs_list_directory", "fs_tree", "fs_get_file_info",
+  "fs_search_files", "fs_search_within_files",
+  "fs_copy_file", "fs_move_file", "fs_delete_file", "fs_create_directory",
+  "execute_command",
+  "list_artifacts", "read_artifact", "search_artifacts", "save_artifact", "delete_artifact",
+]
 
 [[available_skills]]
 id = "*"

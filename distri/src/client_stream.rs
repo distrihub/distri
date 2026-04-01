@@ -46,10 +46,6 @@ pub struct AgentStreamClient {
     /// These are automatically merged into every outgoing message's
     /// `metadata.definition_overrides.dynamic_tools`.
     registered_tools: Vec<DynamicToolFactory>,
-    /// Tool names that are server-external (client-delegated). These should
-    /// only be handled on ToolExecutionStart, not on ToolCalls, because the
-    /// server needs to register the pending call first.
-    server_external_tools: std::collections::HashSet<String>,
 }
 
 impl AgentStreamClient {
@@ -78,7 +74,6 @@ impl AgentStreamClient {
             tool_registry: None,
             hook_registry: None,
             registered_tools: vec![platform_tool],
-            server_external_tools: std::collections::HashSet::new(),
         }
     }
 
@@ -100,11 +95,6 @@ impl AgentStreamClient {
     /// Register a dynamic tool factory. It will be included in every outgoing
     /// message's `definition_overrides.dynamic_tools`, deduplicated by name.
     pub fn register_dynamic_tool(&mut self, factory: DynamicToolFactory) {
-        // Track client-delegated tools — these are server-external and must
-        // be handled on ToolExecutionStart (not ToolCalls) due to timing.
-        if factory.factory_type == "client" {
-            self.server_external_tools.insert(factory.name.clone());
-        }
         // Replace existing tool with same name, or append
         if let Some(pos) = self.registered_tools.iter().position(|t| t.name == factory.name) {
             self.registered_tools[pos] = factory;
@@ -237,27 +227,12 @@ impl AgentStreamClient {
                         }
 
                     if let AgentEventType::ToolCalls { tool_calls, .. } = &agent_event.event {
-                        // Skip server-external (client-delegated) tools — those will
-                        // be handled on ToolExecutionStart after the server registers
-                        // the pending call.
-                        let non_external: Vec<_> = tool_calls
-                            .iter()
-                            .filter(|c| !self.server_external_tools.contains(&c.tool_name))
-                            .cloned()
-                            .collect();
-                        if !non_external.is_empty() {
-                            self.try_handle_external_tools(
-                                agent_id,
-                                &agent_event,
-                                &non_external,
-                            )
+                        self.try_handle_external_tools(agent_id, &agent_event, tool_calls)
                             .await?;
-                        }
                     }
 
-                    // Handle on ToolExecutionStart — for server-side external/client-
-                    // delegated tools, the server registers the pending call THEN emits
-                    // this event. The client executes locally and calls complete-tool.
+                    // Also handle on ToolExecutionStart — for server-declared external
+                    // tools, the server registers the pending call then emits this event.
                     if let AgentEventType::ToolExecutionStart {
                         tool_call_id,
                         tool_call_name,
@@ -376,35 +351,10 @@ impl AgentStreamClient {
             tool_response,
         };
 
-        // Retry with backoff — the server may not have registered the pending
-        // external tool call yet when the client receives the ToolCalls SSE event.
-        let max_retries = 10;
-        for attempt in 0..=max_retries {
-            let resp = self.http.post(&url).json(&payload).send().await?;
-            let status = resp.status();
-            if status.is_success() {
-                return Ok(());
-            }
+        let resp = self.http.post(&url).json(&payload).send().await?;
+        let status = resp.status();
+        if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
-            if status.as_u16() == 400 && body.contains("No pending") {
-                if attempt < max_retries {
-                    let delay = std::time::Duration::from_millis(500 * (attempt as u64 + 1));
-                    tracing::debug!(
-                        "complete_tool: pending call not registered yet (attempt {}), retrying in {:?}",
-                        attempt + 1,
-                        delay
-                    );
-                    tokio::time::sleep(delay).await;
-                    continue;
-                }
-                // If all retries exhausted, store the result to be retried
-                // when ToolExecutionStart arrives. For now, just warn.
-                tracing::warn!(
-                    "complete_tool: giving up after {} retries, tool execution start may retry",
-                    max_retries
-                );
-                return Ok(());
-            }
             tracing::error!("complete_tool failed ({}): {}", status, body);
             return Err(StreamError::InvalidResponse(format!(
                 "complete_tool failed ({}): {}",

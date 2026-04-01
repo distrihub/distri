@@ -434,6 +434,9 @@ pub async fn run_interactive_chat(
 
     let registry = app.registry();
     register_approval_handler(&registry);
+    // Register execute_command for local shell execution
+    let workspace_path = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    crate::tools::register_execute_command(&registry, &current_agent, &workspace_path);
 
     let stream_config = config.clone().with_timeout(60);
     let http_client = stream_config.build_http_client()?;
@@ -441,11 +444,6 @@ pub async fn run_interactive_chat(
         .with_http_client(http_client)
         .with_tool_registry(registry);
     for tool in extra_tools {
-        stream_client.register_dynamic_tool(tool);
-    }
-    // Register local tools (execute_command, filesystem, etc.) so the
-    // server includes them in the LLM's tool list.
-    for tool in app.client_dynamic_tools() {
         stream_client.register_dynamic_tool(tool);
     }
 

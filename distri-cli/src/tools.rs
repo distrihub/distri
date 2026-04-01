@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::Context;
 use distri::ExternalToolRegistry;
-use distri_types::{AgentEvent, Part, ToolCall, ToolDefinition, ToolResponse};
+use distri_types::{AgentEvent, Part, ToolCall, ToolResponse};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -54,7 +54,7 @@ pub fn register_approval_handler(registry: &ExternalToolRegistry) {
 }
 
 // ---------------------------------------------------------------------------
-// ExecuteCommandTool — local shell execution (CLI-specific)
+// ExecuteCommandTool — local shell execution
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -66,55 +66,10 @@ struct ExecuteCommandParams {
     env: Option<HashMap<String, String>>,
 }
 
-fn resolve_working_dir(workspace_root: &Path, cwd: Option<&str>) -> anyhow::Result<PathBuf> {
-    let mut dir = workspace_root.to_path_buf();
-    if let Some(relative) = cwd {
-        let trimmed = relative.trim();
-        if !trimmed.is_empty() {
-            dir = dir.join(trimmed);
-        }
-    }
-    std::fs::create_dir_all(&dir)
-        .with_context(|| format!("failed to create working directory at {:?}", dir))?;
-    Ok(dir)
-}
-
 /// Register the `execute_command` tool for local shell execution in a workspace.
-pub fn register_execute_command_tool(
-    registry: &ExternalToolRegistry,
-    agent_id: &str,
-    workspace_root: &Path,
-) -> ToolDefinition {
+pub fn register_execute_command(registry: &ExternalToolRegistry, agent_id: &str, workspace_root: &Path) {
     let workspace = workspace_root.to_path_buf();
 
-    let definition = ToolDefinition {
-        name: "execute_command".to_string(),
-        description: "Execute a shell command in the workspace directory".to_string(),
-        parameters: json!({
-            "type": "object",
-            "properties": {
-                "command": {
-                    "type": "string",
-                    "description": "Shell command to execute"
-                },
-                "cwd": {
-                    "type": "string",
-                    "description": "Optional working directory relative to workspace root",
-                    "default": "."
-                },
-                "env": {
-                    "type": "object",
-                    "description": "Optional environment variables to set for the command",
-                    "additionalProperties": { "type": "string" }
-                }
-            },
-            "required": ["command"]
-        }),
-        output_schema: None,
-        examples: None,
-    };
-
-    let def_clone = definition.clone();
     registry.register(
         agent_id.to_string(),
         "execute_command".to_string(),
@@ -125,7 +80,15 @@ pub fn register_execute_command_tool(
                     serde_json::from_value(call.input.clone())
                         .map_err(|e| anyhow::anyhow!("invalid execute_command parameters: {}", e))?;
 
-                let working_dir = resolve_working_dir(&workspace, params.cwd.as_deref())?;
+                let mut working_dir = workspace.clone();
+                if let Some(ref relative) = params.cwd {
+                    let trimmed = relative.trim();
+                    if !trimmed.is_empty() && trimmed != "." {
+                        working_dir = working_dir.join(trimmed);
+                    }
+                }
+                std::fs::create_dir_all(&working_dir)
+                    .with_context(|| format!("failed to create working directory {:?}", working_dir))?;
 
                 let mut command = if cfg!(target_os = "windows") {
                     let mut cmd = tokio::process::Command::new("cmd");
@@ -170,6 +133,4 @@ pub fn register_execute_command_tool(
             }
         },
     );
-
-    def_clone
 }
