@@ -226,6 +226,22 @@ impl ExecutionResult {
             timestamp: self.timestamp,
         }
     }
+
+    /// Maximum tokens for a single tool result in the scratchpad.
+    pub const MAX_TOOL_RESULT_TOKENS: usize = 500;
+
+    /// Ensure the result has at least one part. If empty, injects a "[No output]" guard.
+    pub fn with_empty_guard(mut self) -> Self {
+        if self.parts.is_empty() {
+            self.parts.push(Part::Text("[No output]".to_string()));
+        }
+        self
+    }
+
+    /// Compact for storage: applies `compact_for_history()` + `with_empty_guard()`.
+    pub fn compact_for_storage(&self) -> Self {
+        self.compact_for_history().with_empty_guard()
+    }
 }
 
 #[derive(Debug, Clone, JsonSchema, Serialize, Deserialize, PartialEq, Eq)]

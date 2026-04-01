@@ -70,3 +70,6 @@ pub mod resolve;
 
 pub mod models;
 pub use models::*;
+
+#[cfg(test)]
+mod tests;

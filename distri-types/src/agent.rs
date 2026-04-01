@@ -247,13 +247,11 @@ pub enum MemoryKind {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolDeliveryMode {
-    /// All tools get full schemas in the prompt (default, classic behavior).
-    #[default]
+    /// All tools get full schemas in the prompt.
     #[serde(alias = "all_tools")]
     Full,
-    /// Core tools get full schemas; others get name+description only.
-    /// The model uses `tool_search` to fetch full schemas on demand.
-    /// Activates automatically when total tools > `deferred_threshold`.
+    /// Core tools get full schemas; others get name+description only (default).
+    #[default]
     #[serde(alias = "tool_search")]
     Deferred,
     /// Only tool names are listed. Model must use `tool_search` for everything
@@ -763,7 +761,7 @@ pub struct ToolsConfig {
 }
 
 fn is_default_delivery_mode(mode: &ToolDeliveryMode) -> bool {
-    *mode == ToolDeliveryMode::Full
+    *mode == ToolDeliveryMode::Deferred
 }
 
 impl ToolsConfig {
@@ -792,20 +790,9 @@ impl ToolsConfig {
 
     /// Determine the effective delivery mode given the total tool count.
     /// If mode is `Full` but tool count exceeds threshold, stays `Full`
-    /// (explicit opt-in required). If mode is `Deferred`, applies threshold logic.
-    pub fn effective_delivery_mode(&self, total_tools: usize) -> ToolDeliveryMode {
-        match &self.delivery_mode {
-            ToolDeliveryMode::Full => ToolDeliveryMode::Full,
-            ToolDeliveryMode::Deferred => {
-                if total_tools > self.effective_threshold() {
-                    ToolDeliveryMode::Deferred
-                } else {
-                    // Under threshold, no need to defer
-                    ToolDeliveryMode::Full
-                }
-            }
-            ToolDeliveryMode::NamesOnly => ToolDeliveryMode::NamesOnly,
-        }
+    /// Deferred always stays Deferred — context efficiency is the default.
+    pub fn effective_delivery_mode(&self, _total_tools: usize) -> ToolDeliveryMode {
+        self.delivery_mode.clone()
     }
 }
 
@@ -1693,9 +1680,9 @@ mod tests {
     // ── ToolDeliveryMode tests ────────────────────────────────────
 
     #[test]
-    fn test_tool_delivery_mode_defaults_to_full() {
+    fn test_tool_delivery_mode_defaults_to_deferred() {
         let mode: ToolDeliveryMode = Default::default();
-        assert_eq!(mode, ToolDeliveryMode::Full);
+        assert_eq!(mode, ToolDeliveryMode::Deferred);
     }
 
     #[test]
@@ -1748,16 +1735,16 @@ mod tests {
     }
 
     #[test]
-    fn test_effective_delivery_mode_deferred_under_threshold() {
+    fn test_effective_delivery_mode_deferred_stays_deferred() {
         let config = ToolsConfig {
             delivery_mode: ToolDeliveryMode::Deferred,
             deferred_threshold: Some(20),
             ..Default::default()
         };
-        // Under threshold: deferred mode falls back to Full
+        // Deferred always stays Deferred regardless of count
         assert_eq!(
             config.effective_delivery_mode(10),
-            ToolDeliveryMode::Full
+            ToolDeliveryMode::Deferred
         );
     }
 

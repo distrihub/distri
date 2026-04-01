@@ -332,9 +332,6 @@ pub async fn resolve_tools_config(
 pub async fn resolve_tools_with_deferral(
     config: &ToolsConfig,
     registry: Arc<RwLock<McpServerRegistry>>,
-    workspace_filesystem: Arc<distri_filesystem::FileSystem>,
-    session_filesystem: Arc<distri_filesystem::FileSystem>,
-    include_filesystem_tools: bool,
     external_tools: &[Arc<dyn Tool>],
 ) -> Result<ResolvedTools> {
     use distri_types::{ToolDeliveryMode, CORE_TOOLS};
@@ -343,9 +340,6 @@ pub async fn resolve_tools_with_deferral(
     let all_tools = resolve_tools_config(
         config,
         registry,
-        workspace_filesystem,
-        session_filesystem,
-        include_filesystem_tools,
         external_tools,
     )
     .await?;
