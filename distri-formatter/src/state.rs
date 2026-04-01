@@ -99,14 +99,75 @@ pub fn format_tool_call(name: &str, input: &serde_json::Value) -> String {
             .to_string()
     };
     let truncate = |s: &str, max: usize| -> String {
-        if s.len() > max {
-            format!("{}...", &s[..max])
-        } else {
-            s.to_string()
+        if s.len() <= max {
+            return s.to_string();
         }
+        let mut end = max;
+        while end > 0 && !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        format!("{}…", &s[..end])
     };
 
     match name {
+        // Claude Code-style local tools
+        "Bash" => {
+            let cmd = str_field("command");
+            // Show first line, truncated
+            let first_line = cmd.lines().next().unwrap_or(&cmd);
+            format!("Bash(\"{}\")", truncate(first_line, 80))
+        }
+        "Read" => {
+            let path = str_field("file_path");
+            let suffix = match (
+                input.get("offset").and_then(|v| v.as_u64()),
+                input.get("limit").and_then(|v| v.as_u64()),
+            ) {
+                (Some(off), Some(lim)) => format!(", lines {}-{}", off + 1, off + lim),
+                (Some(off), None) => format!(", from line {}", off + 1),
+                _ => String::new(),
+            };
+            format!("Read(\"{}\"{})", truncate(&path, 60), suffix)
+        }
+        "Write" => {
+            let path = str_field("file_path");
+            let lines = input
+                .get("content")
+                .and_then(|v| v.as_str())
+                .map(|s| s.lines().count())
+                .unwrap_or(0);
+            format!("Write(\"{}\", {} lines)", truncate(&path, 60), lines)
+        }
+        "Edit" => {
+            let path = str_field("file_path");
+            let replace_all = input
+                .get("replace_all")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            if replace_all {
+                format!("Edit(\"{}\", replace_all)", truncate(&path, 60))
+            } else {
+                format!("Edit(\"{}\")", truncate(&path, 60))
+            }
+        }
+        "Glob" => {
+            let pattern = str_field("pattern");
+            match input.get("path").and_then(|v| v.as_str()) {
+                Some(p) if !p.is_empty() => {
+                    format!("Glob(\"{}\", path: \"{}\")", pattern, truncate(p, 40))
+                }
+                _ => format!("Glob(\"{}\")", pattern),
+            }
+        }
+        "Grep" => {
+            let pattern = str_field("pattern");
+            match input.get("path").and_then(|v| v.as_str()) {
+                Some(p) if !p.is_empty() => {
+                    format!("Grep(\"{}\", path: \"{}\")", truncate(&pattern, 40), truncate(p, 40))
+                }
+                _ => format!("Grep(\"{}\")", truncate(&pattern, 60)),
+            }
+        }
         "load_skill" => format!("load_skill(\"{}\")", str_field("skill_name")),
         "run_skill_script" => {
             let skill = str_field("skill_name");

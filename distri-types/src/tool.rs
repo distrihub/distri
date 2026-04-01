@@ -44,6 +44,7 @@ pub trait Tool: Send + Sync + std::fmt::Debug + std::any::Any {
             parameters: self.get_parameters(),
             output_schema: None,
             examples: self.get_tool_examples(),
+            prompt: self.prompt(),
         }
     }
 
@@ -51,6 +52,14 @@ pub trait Tool: Send + Sync + std::fmt::Debug + std::any::Any {
     fn get_description(&self) -> String;
 
     fn get_tool_examples(&self) -> Option<String> {
+        None
+    }
+
+    /// Optional detailed prompt/instructions for this tool.
+    /// When provided, these instructions are injected into the system prompt
+    /// so the LLM knows HOW to use the tool (not just what parameters it takes).
+    /// This mirrors claude-code's per-tool `prompt()` pattern.
+    fn prompt(&self) -> Option<String> {
         None
     }
 

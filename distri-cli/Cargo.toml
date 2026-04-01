@@ -22,6 +22,7 @@ warp = "0.3"
 serde = { workspace = true }
 urlencoding = "2.1"
 
+glob = "0.3"
 distri = { path = "../distri", version = "0.3.7" }
 distri-a2a = { path = "../distri-a2a", version = "0.3.7" }
 distri-types = { path = "../distri-types", version = "0.3.7" }
@@ -31,6 +32,8 @@ tracing-subscriber = { workspace = true }
 tracing = { workspace = true }
 [dev-dependencies]
 tempfile = "3"
+chrono = { workspace = true }
+distri-formatter = { path = "../distri-formatter", version = "0.3.7" }
 
 [dependencies.openssl]
 version = "0.10"

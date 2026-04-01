@@ -1,5 +1,5 @@
-use crate::printer::{COLOR_GRAY, COLOR_GREEN, COLOR_RED, COLOR_RESET};
-use crate::renderers::RESULT_PREFIX;
+use crate::colors::{COLOR_GRAY, COLOR_GREEN, COLOR_RED, COLOR_RESET};
+use super::RESULT_PREFIX;
 use distri_types::{Part, ToolResponse};
 
 /// Render distri_execute_code results.

@@ -1,5 +1,5 @@
-use crate::printer::{COLOR_CYAN, COLOR_GRAY, COLOR_RESET};
-use crate::renderers::RESULT_PREFIX;
+use crate::colors::{COLOR_CYAN, COLOR_GRAY, COLOR_RESET};
+use super::RESULT_PREFIX;
 use distri_types::{Part, ToolResponse};
 
 /// Render browsr_scrape / browsr_crawl results.

@@ -33,6 +33,7 @@ pub struct TemplateData<'a> {
     pub task: String,
     pub scratchpad: String,
     pub dynamic_sections: Vec<PromptSection>,
+    #[serde(flatten)]
     pub dynamic_values: std::collections::HashMap<String, serde_json::Value>,
     /// Session values fetched from the session store - available in templates as {{session.key}}
     pub session_values: std::collections::HashMap<String, serde_json::Value>,
@@ -48,6 +49,21 @@ pub struct TemplateData<'a> {
     /// Formatted list of available skills the agent can load on demand
     #[serde(default)]
     pub available_skills: Option<String>,
+    /// Concatenated tool prompts/instructions (all tools).
+    /// Available in templates as `{{{tool_prompts}}}`.
+    #[serde(default)]
+    pub tool_prompts: String,
+    /// Per-tool prompt list for fine-grained control in templates.
+    /// Use `{{#each tool_prompt_list}}` to iterate, each has `.name` and `.prompt`.
+    #[serde(default)]
+    pub tool_prompt_list: Vec<ToolPromptEntry>,
+}
+
+/// A single tool's prompt entry for template iteration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ToolPromptEntry {
+    pub name: String,
+    pub prompt: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

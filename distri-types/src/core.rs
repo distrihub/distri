@@ -22,7 +22,6 @@ pub struct TokenUsage {
 
 /// External tool that delegates execution to the frontend
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
-#[serde(deny_unknown_fields)]
 pub struct ExternalTool {
     pub name: String,
     pub description: String,
@@ -30,6 +29,9 @@ pub struct ExternalTool {
     pub parameters: serde_json::Value,
     #[serde(default)]
     pub is_final: bool,
+    /// Detailed usage instructions injected into the system prompt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
 }
 
 #[async_trait::async_trait]
@@ -54,6 +56,10 @@ impl crate::Tool for ExternalTool {
         self.is_final
     }
 
+    fn prompt(&self) -> Option<String> {
+        self.prompt.clone()
+    }
+
     async fn execute(
         &self,
         _tool_call: crate::ToolCall,
@@ -67,13 +73,18 @@ impl crate::Tool for ExternalTool {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, JsonSchema)]
-#[serde(deny_unknown_fields)]
 pub struct ToolDefinition {
     pub name: String,
     pub description: String,
     pub parameters: serde_json::Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub examples: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_schema: Option<serde_json::Value>,
+    /// Detailed usage instructions injected into the system prompt.
+    /// Tells the LLM HOW to use this tool (behavioral guidelines, not just schema).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
 }
 
 impl From<ToolDefinition> for async_openai::types::chat::ChatCompletionTools {

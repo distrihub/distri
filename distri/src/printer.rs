@@ -11,13 +11,10 @@ use viuer::Config;
 
 use crate::client_stream::{AgentStreamClient, StreamError, StreamItem};
 
-pub const COLOR_RESET: &str = "\x1b[0m";
-pub const COLOR_RED: &str = "\x1b[31m";
-pub const COLOR_GREEN: &str = "\x1b[32m";
-pub const COLOR_YELLOW: &str = "\x1b[33m";
-pub const COLOR_CYAN: &str = "\x1b[36m";
-pub const COLOR_GRAY: &str = "\x1b[90m";
-pub const COLOR_BRIGHT_CYAN: &str = "\x1b[96m";
+// Re-export shared color constants from the formatter
+pub use distri_formatter::colors::{
+    COLOR_BRIGHT_CYAN, COLOR_CYAN, COLOR_GRAY, COLOR_RED, COLOR_RESET, COLOR_YELLOW,
+};
 /// Distri brand teal — 24-bit ANSI
 pub const COLOR_DISTRI: &str = "\x1b[38;2;0;124;145m";
 pub const COLOR_DISTRI_DIM: &str = "\x1b[38;2;0;80;95m";
@@ -432,42 +429,12 @@ impl EventPrinter {
         }
     }
 
-    /// Returns true if this tool call looks like an internal discovery/probe call
-    /// that shouldn't be shown to the user.
-    fn is_probe_call(name: &str, input: &serde_json::Value) -> bool {
-        match name {
-            "load_skill" => {
-                let skill = input
-                    .get("skill_name")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-                skill == "?" || skill.is_empty()
-            }
-            "distri_request" => {
-                // Probe requests (discovery GETs to nonexistent endpoints)
-                let method = input
-                    .get("method")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-                let path = input
-                    .get("path")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-                method == "GET"
-                    && (path.ends_with("/v1/agents")
-                        || path.ends_with("/v1/connections")
-                        || path.ends_with("/v1/skills"))
-            }
-            _ => false,
-        }
-    }
-
     fn tool_start(&mut self, tool_call_id: &str, name: &str, input: &serde_json::Value) {
-        if self.show_tools && !Self::is_probe_call(name, input) {
+        if self.show_tools && !distri_formatter::state::is_probe_call(name, input) {
             println!(
                 "{}⏺ {}{}",
                 COLOR_YELLOW,
-                Self::format_tool_call(name, input),
+                distri_formatter::state::format_tool_call(name, input),
                 COLOR_RESET
             );
         }
@@ -600,114 +567,8 @@ impl EventPrinter {
         }
     }
 
-    fn format_tool_call(name: &str, input: &serde_json::Value) -> String {
-        let str_field = |key: &str| {
-            input
-                .get(key)
-                .and_then(|v| v.as_str())
-                .unwrap_or("?")
-                .to_string()
-        };
-        let truncate = |s: &str, max: usize| -> String {
-            if s.len() > max {
-                format!("{}…", &s[..max])
-            } else {
-                s.to_string()
-            }
-        };
-
-        match name {
-            "load_skill" => format!("load_skill(\"{}\")", str_field("skill_name")),
-            "run_skill_script" => {
-                let skill = str_field("skill_name");
-                match input.get("step_index").and_then(|v| v.as_u64()) {
-                    Some(s) => format!("run_skill_script(\"{}\", step={})", skill, s),
-                    None => format!("run_skill_script(\"{}\")", skill),
-                }
-            }
-            "create_skill" | "delete_skill" => {
-                let skill = input
-                    .get("name")
-                    .or(input.get("skill_name"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("?");
-                format!("{}(\"{}\")", name, skill)
-            }
-            "browsr_scrape" | "browsr_crawl" => {
-                format!("{}(\"{}\")", name, truncate(&str_field("url"), 60))
-            }
-            "browsr_browser" | "browser_step" => {
-                let action = str_field("action");
-                match input.get("url").and_then(|v| v.as_str()) {
-                    Some(u) => format!("{}({} \"{}\")", name, action, truncate(u, 50)),
-                    None => format!("{}({})", name, action),
-                }
-            }
-            "execute_shell" | "execute_command" => {
-                let cwd = input
-                    .get("cwd")
-                    .and_then(|v| v.as_str())
-                    .filter(|v| !v.is_empty() && *v != ".");
-                match cwd {
-                    Some(dir) => format!(
-                        "{}(\"{}\" cwd: {})",
-                        name,
-                        truncate(&str_field("command"), 60),
-                        dir
-                    ),
-                    None => format!("{}(\"{}\")", name, truncate(&str_field("command"), 60)),
-                }
-            }
-            "start_shell" | "stop_shell" => format!("{}(…)", name),
-            "search" => format!("search(\"{}\")", truncate(&str_field("query"), 60)),
-            "write_to_storage" | "read_from_storage" => {
-                let key = input
-                    .get("key")
-                    .or(input.get("path"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("?");
-                format!("{}(\"{}\")", name, key)
-            }
-            "tool_search" => format!("tool_search(\"{}\")", truncate(&str_field("query"), 60)),
-            "inject_connection_env" => {
-                format!(
-                    "inject_connection_env(\"{}\")",
-                    str_field("provider_name")
-                )
-            }
-            "transfer_to_agent" => {
-                format!("transfer_to_agent(\"{}\")", str_field("agent_name"))
-            }
-            "write_todos" => {
-                let count = input
-                    .get("todos")
-                    .and_then(|v| v.as_array())
-                    .map(|a| a.len())
-                    .unwrap_or(0);
-                format!("write_todos({} items)", count)
-            }
-            "final" | "reflect" | "console_log" => format!("{}(…)", name),
-            _ => {
-                // HTTP factory tools (e.g. distri_request, zippy_request) use
-                // {path, method, body?} input — print as "name(METHOD /path)".
-                if let (Some(path), Some(method)) = (
-                    input.get("path").and_then(|v| v.as_str()),
-                    input.get("method").and_then(|v| v.as_str()),
-                ) {
-                    return format!("{}({} {})", name, method, truncate(path, 60));
-                }
-                let compact = serde_json::to_string(input).unwrap_or_else(|_| "…".into());
-                let preview = truncate(&compact, 80);
-                format!("{}({})", name, preview)
-            }
-        }
-    }
-
     fn format_tool_input(&self, input: &serde_json::Value) -> String {
-        if input.is_object() && input.as_object().map(|m| m.is_empty()).unwrap_or(false) {
-            return "...".into();
-        }
-        serde_json::to_string(input).unwrap_or_else(|_| "...".into())
+        distri_formatter::state::format_tool_input(input)
     }
 }
 

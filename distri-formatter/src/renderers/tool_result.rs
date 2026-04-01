@@ -1,6 +1,6 @@
-use crate::printer::{COLOR_GRAY, COLOR_RESET};
-use crate::renderers::RESULT_PREFIX;
-use crate::renderers::data::render_data_compact;
+use crate::colors::{COLOR_GRAY, COLOR_RESET};
+use super::RESULT_PREFIX;
+use super::data::render_data_compact;
 use distri_types::{Part, ToolResponse};
 
 /// Generic part-by-part tool result rendering (fallback for unrecognized tools).

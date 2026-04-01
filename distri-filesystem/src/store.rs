@@ -368,6 +368,27 @@ impl FileSystemStore {
     }
 
     pub async fn info(&self, path: &str) -> Result<distri_types::filesystem::FileMetadata> {
+        let normalized = path.trim_matches('/').trim_matches('.');
+        // Root directory or empty path — return directory metadata from listing
+        if normalized.is_empty() {
+            let listing = self.list(path).await?;
+            return Ok(distri_types::filesystem::FileMetadata {
+                file_id: uuid::Uuid::new_v4().to_string(),
+                relative_path: ".".to_string(),
+                size: 0,
+                content_type: Some("directory".to_string()),
+                original_filename: Some(".".to_string()),
+                created_at: chrono::Utc::now(),
+                updated_at: chrono::Utc::now(),
+                checksum: None,
+                stats: None,
+                preview: Some(format!(
+                    "Directory with {} entries",
+                    listing.entries.len()
+                )),
+            });
+        }
+
         let object_path = self
             .sanitize_object_path(path)
             .with_context(|| format!("invalid info path: {}", path))?;

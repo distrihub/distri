@@ -81,6 +81,15 @@ impl DistriClientApp {
     /// Inject local tool definitions into message params metadata as `external_tools`.
     /// This tells the server the tool schemas so it can include them in the LLM's tool list.
     /// Same pattern as distrijs `enhanceParamsWithTools`.
+    /// Add tool definitions to be injected into requests as external tools.
+    pub fn add_tool_definitions(&mut self, defs: Vec<ToolDefinition>) {
+        for def in defs {
+            if !self.local_tool_definitions.iter().any(|d| d.name == def.name) {
+                self.local_tool_definitions.push(def);
+            }
+        }
+    }
+
     pub fn inject_external_tools(&self, params: &mut distri_a2a::MessageSendParams) {
         if self.local_tool_definitions.is_empty() {
             return;
@@ -89,11 +98,15 @@ impl DistriClientApp {
             .local_tool_definitions
             .iter()
             .map(|def| {
-                serde_json::json!({
+                let mut tool = serde_json::json!({
                     "name": def.name,
                     "description": def.description,
                     "parameters": def.parameters,
-                })
+                });
+                if let Some(ref prompt) = def.prompt {
+                    tool["prompt"] = serde_json::Value::String(prompt.clone());
+                }
+                tool
             })
             .collect();
         let meta = params

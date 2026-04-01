@@ -92,6 +92,11 @@ impl AgentStreamClient {
         self
     }
 
+    /// Update the external tool names (useful when switching agents in interactive mode).
+    pub fn set_external_tool_names(&mut self, names: HashSet<String>) {
+        self.external_tool_names = names;
+    }
+
     pub fn register_dynamic_tool(&mut self, factory: DynamicToolFactory) {
         if let Some(pos) = self.registered_tools.iter().position(|t| t.name == factory.name) {
             self.registered_tools[pos] = factory;
@@ -275,17 +280,26 @@ impl AgentStreamClient {
         {
             Some(Ok(response)) => response,
             Some(Err(err)) => {
-                return Err(StreamError::ExternalTool(format!(
-                    "Tool '{}' execution failed: {}",
-                    call.tool_name, err
-                )));
+                let error_msg = format!("Tool '{}' execution failed: {}", call.tool_name, err);
+                tracing::warn!("{}", error_msg);
+                ToolResponse::direct(
+                    call.tool_call_id.clone(),
+                    call.tool_name.clone(),
+                    serde_json::json!({ "error": error_msg }),
+                )
             }
             None => {
-                return Err(StreamError::ExternalTool(format!(
+                let error_msg = format!(
                     "No handler for external tool '{}' (agent='{}'). \
                      Register it in ExternalToolRegistry.",
                     call.tool_name, tool_agent
-                )));
+                );
+                tracing::warn!("{}", error_msg);
+                ToolResponse::direct(
+                    call.tool_call_id.clone(),
+                    call.tool_name.clone(),
+                    serde_json::json!({ "error": error_msg }),
+                )
             }
         };
 

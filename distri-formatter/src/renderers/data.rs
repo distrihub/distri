@@ -1,5 +1,5 @@
-use crate::printer::{COLOR_GRAY, COLOR_RESET};
-use crate::renderers::RESULT_PREFIX;
+use crate::colors::{COLOR_GRAY, COLOR_RESET};
+use super::{RESULT_PREFIX, truncate_str};
 
 /// Render a Data part compactly — handles search results, markdown, generic JSON.
 pub fn render_data_compact(value: &serde_json::Value) {
@@ -13,7 +13,7 @@ pub fn render_data_compact(value: &serde_json::Value) {
                 } else {
                     let s = serde_json::to_string(item).unwrap_or_default();
                     let preview = if s.len() > 120 {
-                        format!("{}…", &s[..120])
+                        format!("{}…", truncate_str(&s, 120))
                     } else {
                         s
                     };
@@ -40,7 +40,7 @@ pub fn render_data_compact(value: &serde_json::Value) {
     // Fallback: compact single-line JSON
     let s = serde_json::to_string(value).unwrap_or_default();
     let preview = if s.len() > 100 {
-        format!("{}…", &s[..100])
+        format!("{}…", truncate_str(&s, 100))
     } else {
         s
     };

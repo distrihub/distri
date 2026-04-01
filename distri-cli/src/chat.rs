@@ -19,7 +19,7 @@ use crate::message::{build_chat_message_params, build_connections_context};
 use crate::threads::{
     load_last_thread, print_thread_history, resolve_resume_arg, save_last_thread,
 };
-use crate::tools::register_approval_handler;
+use crate::tools::{register_all, register_approval_handler, validate_external_tools};
 use crate::{COLOR_BRIGHT_GREEN, COLOR_GRAY, COLOR_RESET};
 
 #[derive(Debug, Clone)]
@@ -443,9 +443,10 @@ pub async fn run_interactive_chat(
 
     let registry = app.registry();
     register_approval_handler(&registry);
-    // Register execute_command for local shell execution
+    // Register all local CLI tools (Bash, Read, Write, Edit, Glob, Grep, execute_command)
     let workspace_path = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-    crate::tools::register_execute_command(&registry, &current_agent, &workspace_path);
+    let tool_defs = register_all(&registry, &current_agent, &workspace_path);
+    app.add_tool_definitions(tool_defs);
 
     let stream_config = config.clone().with_timeout(60);
     let http_client = stream_config.build_http_client()?;
@@ -525,21 +526,40 @@ pub async fn run_interactive_chat(
         }
 
         // Resolve agent name to UUID for cloud compatibility
-        let stream_agent_id = match app.fetch_agent(&current_agent).await? {
+        let (stream_agent_id, external_tool_names) = match app.fetch_agent(&current_agent).await? {
             Some(agent_cfg) => {
                 app.ensure_local_tools(&current_agent, &agent_cfg.agent)
                     .await?;
-                agent_cfg
+                let id = agent_cfg
                     .cloud
                     .id
                     .map(|u| u.to_string())
-                    .unwrap_or_else(|| current_agent.clone())
+                    .unwrap_or_else(|| current_agent.clone());
+                // Extract external tool names from agent definition
+                let mut ext_names = std::collections::HashSet::new();
+                if let AgentConfig::StandardAgent(def) = &agent_cfg.agent {
+                    if let Some(tools) = &def.tools {
+                        if let Some(ext) = &tools.external {
+                            for name in ext {
+                                if name != "*" {
+                                    ext_names.insert(name.clone());
+                                }
+                            }
+                        }
+                    }
+                }
+                if let Err(e) = validate_external_tools(&app.registry(), &current_agent, &ext_names, verbose) {
+                    eprintln!("{}", e);
+                    continue;
+                }
+                (id, ext_names)
             }
             None => {
                 eprintln!("Agent '{}' not found on {}", current_agent, base_url);
                 continue;
             }
         };
+        stream_client.set_external_tool_names(external_tool_names);
 
         // Fetch connections context for agent prompt (lightweight, only connected providers)
         let distri_client = Distri::from_config(config.clone());

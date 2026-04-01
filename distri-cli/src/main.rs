@@ -26,7 +26,7 @@ use commands::{
 use config::resolve_workspace;
 use message::{build_connections_context, build_message_params};
 use threads::resolve_resume_arg;
-use tools::{register_approval_handler, register_execute_command};
+use tools::{register_all, register_approval_handler, validate_external_tools};
 
 #[derive(Parser, Debug, Clone)]
 #[clap(author, version, about)]
@@ -402,7 +402,9 @@ async fn main() -> Result<()> {
                     }
                 }
             }
-            register_execute_command(&app.registry(), &agent_name, &workspace);
+            let tool_defs = register_all(&app.registry(), &agent_name, &workspace);
+            app.add_tool_definitions(tool_defs);
+            validate_external_tools(&app.registry(), &agent_name, &external_tool_names, cli.verbose)?;
             // Fetch connections to inject into agent context
             let distri_client = Distri::from_config(config.clone());
             let connections_context = build_connections_context(&distri_client).await;

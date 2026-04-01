@@ -1,5 +1,5 @@
-use crate::printer::{COLOR_GRAY, COLOR_GREEN, COLOR_RED, COLOR_RESET};
-use crate::renderers::RESULT_PREFIX;
+use crate::colors::{COLOR_GRAY, COLOR_GREEN, COLOR_RED, COLOR_RESET};
+use super::RESULT_PREFIX;
 use distri_types::{Part, ToolResponse};
 
 pub fn render_platform_tool(result: &ToolResponse) {
@@ -124,7 +124,7 @@ fn render_one_liner(text: Option<&str>, is_error: bool) {
         Some(t) => {
             let first_line = t.lines().next().unwrap_or("");
             let truncated = if first_line.len() > 100 {
-                format!("{}...", &first_line[..100])
+                format!("{}...", super::truncate_str(first_line, 100))
             } else {
                 first_line.to_string()
             };

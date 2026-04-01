@@ -41,13 +41,20 @@ impl<'a> MessageFormatter<'a> {
         user_template: &str,
         todos: Option<String>,
     ) -> Result<Vec<crate::types::Message>, AgentError> {
-        let tool_defs = context
-            .get_tools()
-            .await
+        let tools = context.get_tools().await;
+        let tool_defs = tools
             .iter()
             .map(|t| t.get_tool_definition())
             .collect::<Vec<_>>();
         let available_tools = distri_parsers::get_available_tools(&tool_defs);
+
+        // Collect per-tool prompts into a "tools" dynamic value: {tools.Bash}, {tools.Read}, etc.
+        let tool_prompts_map = Self::collect_tool_prompts_map(&tool_defs);
+        tracing::info!(
+            "Tool prompts injected for: {:?} (total tools: {})",
+            tool_prompts_map.keys().collect::<Vec<_>>(),
+            tool_defs.len()
+        );
 
         let include_scratchpad = self.agent_def.include_scratchpad();
         let scratchpad_entry_limit = Self::scratchpad_entry_limit(self.agent_def);
@@ -90,6 +97,13 @@ impl<'a> MessageFormatter<'a> {
             .remove("available_skills")
             .and_then(|v| v.as_str().map(|s| s.to_string()));
 
+        // Inject tool prompts as {{tools.Bash}}, {{tools.Read}}, etc.
+        // Always inject (even if empty) so handlebars strict mode doesn't fail.
+        dynamic_values.insert(
+            "tools".to_string(),
+            serde_json::Value::Object(tool_prompts_map),
+        );
+
         let template_data = TemplateData {
             description: self.agent_def.description.clone(),
             instructions: self.agent_def.instructions.clone(),
@@ -109,6 +123,8 @@ impl<'a> MessageFormatter<'a> {
             todos: todos.clone(),
             json_tools: native_json_tools,
             available_skills,
+            tool_prompts: String::new(),
+            tool_prompt_list: Vec::new(),
         };
 
         let template_to_use = hook_state
@@ -128,7 +144,6 @@ impl<'a> MessageFormatter<'a> {
             render_prompt(context, user_template_to_use, &template_data).await?;
         self.log_prompt_if_needed(&rendered_prompt);
 
-        println!("{user_additional_data}");
 
         let mut formatted = vec![crate::types::Message::system(rendered_prompt, None)];
 
@@ -194,6 +209,20 @@ impl<'a> MessageFormatter<'a> {
 
     fn native_json_tools(agent_def: &crate::types::StandardDefinition) -> bool {
         matches!(agent_def.tool_format, ToolCallFormat::Provider)
+    }
+
+    /// Collect per-tool prompt instructions into a JSON map keyed by tool name.
+    /// Available in templates as `{{{tools.Bash}}}`, `{{{tools.Read}}}`, etc.
+    /// Every tool gets an entry (empty string if no prompt) so handlebars strict mode works.
+    fn collect_tool_prompts_map(
+        tool_defs: &[distri_types::ToolDefinition],
+    ) -> serde_json::Map<String, serde_json::Value> {
+        let mut map = serde_json::Map::new();
+        for def in tool_defs {
+            let prompt = def.prompt.clone().unwrap_or_default();
+            map.insert(def.name.clone(), serde_json::Value::String(prompt));
+        }
+        map
     }
 
     fn scratchpad_entry_limit(agent_def: &crate::types::StandardDefinition) -> usize {
@@ -929,5 +958,93 @@ mod tests {
         assert!(matches!(messages[1].role, MessageRole::User));
         let user_text = messages[1].as_text().unwrap_or_default();
         assert!(user_text.contains("user_templ"));
+    }
+
+    #[test]
+    fn collect_tool_prompts_map_includes_all_tools() {
+        let defs = vec![
+            distri_types::ToolDefinition {
+                name: "Bash".into(),
+                description: "Run shell".into(),
+                parameters: json!({}),
+                prompt: Some("Use Bash for shell commands.".into()),
+                examples: None,
+                output_schema: None,
+            },
+            distri_types::ToolDefinition {
+                name: "Read".into(),
+                description: "Read file".into(),
+                parameters: json!({}),
+                prompt: Some("Read files with line numbers.".into()),
+                examples: None,
+                output_schema: None,
+            },
+            distri_types::ToolDefinition {
+                name: "final".into(),
+                description: "Final answer".into(),
+                parameters: json!({}),
+                prompt: None, // No prompt
+                examples: None,
+                output_schema: None,
+            },
+        ];
+
+        let map = MessageFormatter::collect_tool_prompts_map(&defs);
+
+        // All tools should be present, even those without prompts
+        assert_eq!(map.len(), 3);
+        assert_eq!(
+            map.get("Bash").unwrap().as_str().unwrap(),
+            "Use Bash for shell commands."
+        );
+        assert_eq!(
+            map.get("Read").unwrap().as_str().unwrap(),
+            "Read files with line numbers."
+        );
+        // Tool without prompt gets empty string
+        assert_eq!(map.get("final").unwrap().as_str().unwrap(), "");
+    }
+
+    #[test]
+    fn tool_prompts_render_in_handlebars_template() {
+        let defs = vec![
+            distri_types::ToolDefinition {
+                name: "Glob".into(),
+                description: "Find files".into(),
+                parameters: json!({}),
+                prompt: Some("Use Glob for file patterns.".into()),
+                examples: None,
+                output_schema: None,
+            },
+            distri_types::ToolDefinition {
+                name: "Grep".into(),
+                description: "Search".into(),
+                parameters: json!({}),
+                prompt: Some("Use Grep for content search.".into()),
+                examples: None,
+                output_schema: None,
+            },
+        ];
+
+        let map = MessageFormatter::collect_tool_prompts_map(&defs);
+
+        // Simulate what the formatter does
+        let mut dynamic_values = std::collections::HashMap::new();
+        dynamic_values.insert(
+            "tools".to_string(),
+            serde_json::Value::Object(map),
+        );
+
+        // Render with handlebars strict mode
+        let mut hbs = handlebars::Handlebars::new();
+        hbs.set_strict_mode(true);
+
+        let template = "## Glob\n{{{tools.Glob}}}\n\n## Grep\n{{{tools.Grep}}}";
+        let result = hbs
+            .render_template(template, &dynamic_values)
+            .expect("template should render");
+
+        assert!(result.contains("Use Glob for file patterns."));
+        assert!(result.contains("Use Grep for content search."));
     }
 }

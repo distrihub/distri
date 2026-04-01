@@ -14,14 +14,42 @@ pub fn format_status_text(name: &str, input: &Value) -> String {
     };
 
     let truncate = |s: &str, max: usize| -> String {
-        if s.len() > max {
-            format!("{}...", &s[..max])
-        } else {
-            s.to_string()
+        if s.len() <= max {
+            return s.to_string();
         }
+        let mut end = max;
+        while end > 0 && !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        format!("{}…", &s[..end])
     };
 
     match name {
+        "Bash" => {
+            let cmd = str_field("command").unwrap_or_else(|| "…".to_string());
+            let first_line = cmd.lines().next().unwrap_or(&cmd);
+            format!("Running: {}", truncate(first_line, 50))
+        }
+        "Read" => {
+            let path = str_field("file_path").unwrap_or_else(|| "…".to_string());
+            format!("Reading {}", truncate(&path, 50))
+        }
+        "Write" => {
+            let path = str_field("file_path").unwrap_or_else(|| "…".to_string());
+            format!("Writing {}", truncate(&path, 50))
+        }
+        "Edit" => {
+            let path = str_field("file_path").unwrap_or_else(|| "…".to_string());
+            format!("Editing {}", truncate(&path, 50))
+        }
+        "Glob" => {
+            let pattern = str_field("pattern").unwrap_or_else(|| "…".to_string());
+            format!("Finding files: {}", truncate(&pattern, 50))
+        }
+        "Grep" => {
+            let pattern = str_field("pattern").unwrap_or_else(|| "…".to_string());
+            format!("Searching: {}", truncate(&pattern, 50))
+        }
         "distri_request" => {
             let method = str_field("method").unwrap_or_default();
             let path = str_field("path").unwrap_or_default();
