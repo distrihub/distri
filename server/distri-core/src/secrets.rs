@@ -171,15 +171,4 @@ mod tests {
         assert!(result.is_err());
     }
 
-    #[tokio::test]
-    async fn test_validate_provider_vllora() {
-        // vLLORA doesn't require secrets
-        let resolver = SecretResolver::new(None);
-        let provider = ModelProvider::Vllora {
-            base_url: "http://localhost:9090/v1".to_string(),
-        };
-
-        let result = resolver.validate_provider(&provider).await;
-        assert!(result.is_ok());
-    }
 }

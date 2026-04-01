@@ -80,9 +80,9 @@ const WrappedTauriContent = () => {
             theme="dark"
             voiceEnabled={true}
             ttsConfig={{
-              model: 'openai',
-              voice: 'alloy',
-              speed: 1.0
+              mode: 'distri',
+              defaultVoice: 'alloy',
+              defaultSpeed: 1.0,
             }}
           />
         </div>

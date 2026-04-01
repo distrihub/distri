@@ -7,6 +7,7 @@ pub mod openai_responses_client;
 pub mod openai_responses_llm;
 pub mod llm;
 pub mod llm_service;
+pub mod provider_config;
 pub mod logging;
 pub mod secrets;
 pub mod servers;

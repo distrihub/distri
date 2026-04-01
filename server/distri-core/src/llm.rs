@@ -1279,92 +1279,49 @@ async fn get_client_with_context(
         .validate_provider(&ms.inner.provider)
         .await?;
 
-    match &ms.inner.provider {
-        ModelProvider::OpenAI {} => {
-            let additional_headers = get_headers(llm_def, additional_headers, label);
-            let api_key = secret_resolver.resolve_or_empty("OPENAI_API_KEY").await;
-
-            let config = GatewayConfig::default()
-                .with_api_base(ModelProvider::openai_base_url())
-                .with_api_key(api_key)
-                .with_context(context)
-                .with_additional_headers(additional_headers);
-
-            Ok(Client::with_config(config))
-        }
-        ModelProvider::OpenAICompatible {
-            base_url,
-            api_key,
-            project_id,
-        } => {
-            let mut additional_headers = get_headers(llm_def, additional_headers, label);
-
-            let mut config = GatewayConfig::default()
-                .with_api_base(base_url)
-                .with_context(context);
-
-            if let Some(api_key) = api_key {
-                config = config.with_api_key(api_key.clone());
-                // Also send as api-key header for Azure-hosted OpenAI compatible endpoints
-                additional_headers.insert("api-key".to_string(), api_key.clone());
-            }
-            config = config.with_additional_headers(additional_headers);
-
-            if let Some(project_id) = project_id {
-                config = config.with_project_id(project_id);
-            }
-
-            Ok(Client::with_config(config))
-        }
-
-        ModelProvider::AzureOpenAI {
-            base_url,
-            api_key,
-            deployment,
-            api_version,
-        } => {
-            let additional_headers = get_headers(llm_def, additional_headers, label);
-
-            let resolved_key = if let Some(key) = api_key {
-                key.clone()
-            } else {
-                secret_resolver
-                    .resolve_or_empty("AZURE_OPENAI_API_KEY")
-                    .await
-            };
-
-            // Azure endpoint: {base_url}/openai/deployments/{deployment}
-            let azure_base = format!(
-                "{}/openai/deployments/{}",
-                base_url.trim_end_matches('/'),
-                deployment
-            );
-
-            let mut headers = additional_headers;
-            headers.insert("api-key".to_string(), resolved_key);
-
-            let config = GatewayConfig::default()
-                .with_api_base(azure_base)
-                .with_context(context)
-                .with_additional_headers(headers)
-                .with_query_param("api-version", api_version);
-
-            Ok(Client::with_config(config))
-        }
-        ModelProvider::Vllora { base_url } => {
-            let additional_headers = get_headers(llm_def, additional_headers, label);
-
-            let config = GatewayConfig::default()
-                .with_api_base(base_url.clone())
-                .with_context(context)
-                .with_additional_headers(additional_headers);
-            Ok(Client::with_config(config))
-        }
-        ModelProvider::Anthropic { .. } => Err(AgentError::InvalidConfiguration(
-            "Anthropic provider should use ClaudeLLMExecutor, not the OpenAI client path"
-                .to_string(),
-        )),
+    if matches!(&ms.inner.provider, ModelProvider::Anthropic { .. }) {
+        return Err(AgentError::InvalidConfiguration(
+            "Anthropic provider should use ClaudeLLMExecutor, not the OpenAI client path".to_string(),
+        ));
     }
+
+    let pcc = crate::provider_config::ProviderClientConfig::from(&ms.inner.provider);
+    let mut headers = get_headers(llm_def, additional_headers, label);
+
+    // Resolve API key: inline from config or from secret store
+    let api_key = if let Some(key) = &pcc.inline_api_key {
+        key.clone()
+    } else if !pcc.api_key_secret.is_empty() {
+        secret_resolver.resolve_or_empty(pcc.api_key_secret).await
+    } else {
+        String::new()
+    };
+
+    // Send api-key header for Azure-style endpoints
+    if pcc.send_api_key_header && !api_key.is_empty() {
+        headers.insert("api-key".to_string(), api_key.clone());
+    }
+
+    // Merge extra headers from provider config
+    for (k, v) in &pcc.extra_headers {
+        headers.insert(k.clone(), v.clone());
+    }
+
+    let mut config = GatewayConfig::default()
+        .with_api_base(pcc.base_url)
+        .with_api_key(api_key)
+        .with_context(context)
+        .with_additional_headers(headers);
+
+    if let Some(pid) = &pcc.project_id {
+        config = config.with_project_id(pid);
+    }
+
+    for (k, v) in &pcc.query_params {
+        config = config.with_query_param(k, v);
+    }
+
+    Ok(Client::with_config(config))
 }
 
 fn get_headers(
@@ -1460,7 +1417,12 @@ pub fn create_llm_executor(
         // OpenAI-family providers: check api_format to decide Completions vs Responses
         ModelProvider::OpenAI {}
         | ModelProvider::OpenAICompatible { .. }
-        | ModelProvider::AzureOpenAI { .. } => {
+        | ModelProvider::AzureOpenAI { .. }
+        | ModelProvider::Gemini { .. }
+        | ModelProvider::AzureAiFoundry { .. }
+        | ModelProvider::AwsBedrock { .. }
+        | ModelProvider::GoogleVertex { .. }
+        => {
             let resolved = ms.inner.api_format.resolve(&ms.model);
             if resolved == distri_types::ResolvedOpenAiApiFormat::Responses {
                 Ok(Box::new(
@@ -1482,13 +1444,5 @@ pub fn create_llm_executor(
                 )))
             }
         }
-        // Other providers (vLLORA, etc.) always use Chat Completions
-        _ => Ok(Box::new(LLMExecutor::new(
-            llm_def,
-            tools,
-            context,
-            additional_headers,
-            label,
-        ))),
     }
 }
