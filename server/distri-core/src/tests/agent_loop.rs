@@ -58,11 +58,15 @@ async fn parse_coder_agent() {
         !tools.builtin.contains(&"apply_diff".to_string()),
         "coder agent should not have apply_diff as builtin"
     );
-    // External tools should accept all client-provided tools
-    assert_eq!(
-        tools.external,
-        Some(vec!["*".to_string()]),
-        "coder agent should accept all external tools"
+    // External tools should list specific filesystem tool names
+    let external = tools.external.as_ref().expect("coder should have external tools");
+    assert!(
+        external.contains(&"fs_read_file".to_string()),
+        "coder agent should list fs_read_file as external tool"
+    );
+    assert!(
+        external.contains(&"execute_command".to_string()),
+        "coder agent should list execute_command as external tool"
     );
 }
 

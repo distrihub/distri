@@ -1,11 +1,7 @@
 use anyhow::Result;
 use clap::Parser;
 use distri_server::agent_server::DistriAgentServer;
-use distri_server_cli::{
-    logging,
-    multi_agent_cli::{MultiAgentCliBuilder, ServeContext, DEFAULT_SERVE_HOST, DEFAULT_SERVE_PORT},
-    Cli, Commands,
-};
+use distri_server_cli::{Cli, init_orchestrator, logging};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -17,55 +13,38 @@ async fn main() -> Result<()> {
 
     dotenv::dotenv().ok();
 
-    let cli: Cli = parse_cli_with_default_serve();
+    let cli = Cli::parse();
 
-    // Enable diesel query logging if verbose mode is enabled
     if cli.verbose {
         distri_core::logging::init_diesel_instrumentation();
     }
 
-    MultiAgentCliBuilder::new()
-        .with_cli_parser(move || cli.clone())
-        .with_server_runner(|ctx| async move {
-            let ServeContext {
-                server_config,
-                executor,
-                host,
-                port,
-                verbose,
-                ..
-            } = ctx;
+    // Load configuration
+    let config = distri_server_cli::load_distri_config(&cli.config);
+    let workspace_path = distri_server_cli::workspace::resolve_workspace_path();
 
-            DistriAgentServer::default()
-                .start(server_config, executor, Some(host), Some(port), verbose)
-                .await
-        })
-        .run()
+    // Initialize orchestrator
+    let orchestrator = init_orchestrator(&workspace_path, &workspace_path, config.as_ref()).await?;
+
+    // Build server config from workspace config
+    let server_config = config
+        .as_ref()
+        .and_then(|c| c.server.clone())
+        .unwrap_or_default();
+
+    tracing::info!(
+        "Starting Distri server at http://{}:{}/",
+        cli.host,
+        cli.port
+    );
+
+    DistriAgentServer::default()
+        .start(
+            server_config,
+            orchestrator,
+            Some(cli.host),
+            Some(cli.port),
+            cli.verbose,
+        )
         .await
-}
-
-fn parse_cli_with_default_serve() -> Cli {
-    let mut cli = Cli::parse();
-
-    if cli.command.is_none() {
-        let host = std::env::var("DISTRI_HOST").unwrap_or_else(|_| DEFAULT_SERVE_HOST.to_string());
-        let port = std::env::var("DISTRI_PORT")
-            .ok()
-            .and_then(|value| value.parse().ok())
-            .unwrap_or(DEFAULT_SERVE_PORT);
-
-        tracing::info!(
-            "No command provided; starting distri server with UI at http://{}:{}/ui/",
-            host,
-            port
-        );
-
-        cli.command = Some(Commands::Serve {
-            host: Some(host),
-            port: Some(port),
-            headless: false,
-        });
-    }
-
-    cli
 }

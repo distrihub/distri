@@ -28,3 +28,4 @@ distri-home/node_modules/**
 
 samples/maps-demo/.env
 browsr
+distri.toml
