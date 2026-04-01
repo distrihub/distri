@@ -66,3 +66,52 @@ pub struct TtsSecretKeyDefinition {
 fn default_true() -> bool {
     true
 }
+
+/// Speech-to-text model info.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SttModelInfo {
+    pub id: String,
+    pub name: String,
+}
+
+/// A completion model exposed by a provider.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompletionModelInfo {
+    pub id: String,
+    pub name: String,
+}
+
+/// All capabilities a provider supports.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderCapabilities {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub completion: Vec<CompletionModelInfo>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tts: Vec<TtsModelInfo>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stt: Vec<SttModelInfo>,
+}
+
+/// Unified provider definition combining secrets and all capabilities.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UnifiedProviderDefinition {
+    pub id: String,
+    pub label: String,
+    pub keys: Vec<UnifiedSecretKeyDefinition>,
+    pub capabilities: ProviderCapabilities,
+    #[serde(default)]
+    pub is_custom: bool,
+}
+
+/// Secret key definition shared across all provider types.
+/// Unifies `SecretKeyDefinition` and `TtsSecretKeyDefinition`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UnifiedSecretKeyDefinition {
+    pub key: String,
+    pub label: String,
+    pub placeholder: String,
+    #[serde(default = "default_true")]
+    pub required: bool,
+    #[serde(default = "default_true")]
+    pub sensitive: bool,
+}

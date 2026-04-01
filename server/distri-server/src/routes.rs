@@ -27,7 +27,6 @@ use uuid::Uuid;
 use crate::agent_server::VerboseLog;
 use crate::auth_routes;
 use crate::context::UserContext;
-use crate::tts::{get_available_voices, synthesize_tts, transcribe_speech};
 
 mod artifacts;
 mod files;
@@ -112,11 +111,6 @@ pub fn distri(cfg: &mut web::ServiceConfig) {
     // Artifact endpoints (session storage for thread/task artifacts)
     .service(web::scope("/artifacts").configure(artifacts::configure_artifact_routes))
     .service(web::resource("/build").route(web::post().to(build_workspace)))
-    // TTS endpoints
-    .service(web::resource("/tts/synthesize").route(web::post().to(synthesize_tts)))
-    .service(web::resource("/tts/voices").route(web::get().to(get_available_voices)))
-    // Speech-to-Text endpoints
-    .service(web::resource("/tts/transcribe").route(web::post().to(transcribe_speech)))
     .configure(tools::configure)
     // Browser session endpoint
     .service(web::resource("/browser/session").route(web::post().to(create_browser_session)))
@@ -134,8 +128,6 @@ pub fn distri(cfg: &mut web::ServiceConfig) {
     .configure(skills::configure_skill_routes)
     .configure(workflows::configure_workflow_routes)
     .configure(models::configure_model_routes)
-    // Voice streaming endpoints - TODO: Implement after fixing compilation issues
-    // .service(web::resource("/voice/stream").route(web::get().to(voice_stream_handler)));
     // Authentication endpoints
     .configure(auth_routes::configure_auth_routes);
 }

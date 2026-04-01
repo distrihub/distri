@@ -731,6 +731,13 @@ pub struct CustomProviderConfig {
 pub struct CustomModelEntry {
     pub provider: String,
     pub model: String,
+    /// "completion" (default), "tts", or "stt"
+    #[serde(default = "default_completion")]
+    pub capability: String,
+}
+
+fn default_completion() -> String {
+    "completion".to_string()
 }
 
 /// A custom connection provider (OAuth integration) stored in workspace settings.

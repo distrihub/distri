@@ -7,7 +7,7 @@ use actix_web::{web, App, HttpResponse, HttpServer, Result as ActixResult};
 use actix_web_static_files::ResourceFiles;
 use anyhow::Result;
 use distri_core::agent::AgentOrchestrator;
-use distri_core::voice::{TtsConfig, TtsService};
+
 use distri_types::configuration::ServerConfig;
 use serde_json::json;
 use std::sync::Arc;
@@ -93,14 +93,10 @@ impl DistriAgentServer {
             let executor = executor.clone();
             let service_name = self.service_name.clone();
 
-            let tts_config = TtsConfig::from_env();
-            let tts_service = TtsService::new(tts_config);
-
             let verbose = Some(VerboseLog(verbose));
             let mut app = App::new()
                 .wrap(Logger::default())
                 .app_data(web::Data::new(server_config.clone()))
-                .app_data(web::Data::new(tts_service.clone()))
                 .wrap(
                     Cors::default()
                         .allow_any_origin()
