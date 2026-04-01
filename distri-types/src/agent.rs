@@ -801,13 +801,9 @@ pub enum ModelProvider {
     },
     #[serde(rename = "azure_openai")]
     AzureOpenAI {
-        /// Azure resource endpoint, e.g. "https://<resource>.openai.azure.com"
         base_url: String,
-        /// Azure API key (or fetched from AZURE_OPENAI_API_KEY secret)
         api_key: Option<String>,
-        /// Azure deployment name
         deployment: String,
-        /// API version, e.g. "2024-06-01"
         #[serde(default = "ModelProvider::azure_api_version")]
         api_version: String,
     },
@@ -817,10 +813,27 @@ pub enum ModelProvider {
         base_url: Option<String>,
         api_key: Option<String>,
     },
-    #[serde(rename = "vllora")]
-    Vllora {
-        #[serde(default = "ModelProvider::vllora_url")]
+    #[serde(rename = "gemini")]
+    Gemini {
+        #[serde(default = "ModelProvider::gemini_base_url")]
         base_url: String,
+        api_key: Option<String>,
+    },
+    #[serde(rename = "azure_ai_foundry")]
+    AzureAiFoundry {
+        base_url: String,
+        api_key: Option<String>,
+    },
+    #[serde(rename = "aws_bedrock")]
+    AwsBedrock {
+        base_url: String,
+        api_key: Option<String>,
+    },
+    #[serde(rename = "google_vertex")]
+    GoogleVertex {
+        base_url: String,
+        api_key: Option<String>,
+        project_id: Option<String>,
     },
 }
 /// Defines the secret requirements for a provider
@@ -876,7 +889,7 @@ struct DefaultProviderEntry {
     id: String,
     label: String,
     keys: Vec<SecretKeyDefinition>,
-    models: Vec<ModelInfo>,
+    models: Vec<crate::models::Model>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -903,7 +916,7 @@ pub struct ProviderModels {
     /// Human-readable provider name
     pub provider_label: String,
     /// Available models for this provider
-    pub models: Vec<ModelInfo>,
+    pub models: Vec<crate::models::Model>,
 }
 
 /// Provider models with configuration status (returned by API)
@@ -916,7 +929,7 @@ pub struct ProviderModelsStatus {
     /// Whether the provider's API key is configured
     pub configured: bool,
     /// Available models for this provider
-    pub models: Vec<ModelInfo>,
+    pub models: Vec<crate::models::Model>,
 }
 
 impl Default for ModelProvider {
@@ -931,54 +944,70 @@ impl ModelProvider {
     }
 
     pub fn anthropic_base_url() -> Option<String> {
-        None // Uses default https://api.anthropic.com
+        None
     }
 
-    pub fn vllora_url() -> String {
-        "http://localhost:9090/v1".to_string()
+    pub fn gemini_base_url() -> String {
+        "https://generativelanguage.googleapis.com/v1beta/openai".to_string()
     }
 
     pub fn azure_api_version() -> String {
         "2024-06-01".to_string()
     }
 
-    /// Returns the provider ID for secret lookup
-    pub fn provider_id(&self) -> &'static str {
+    /// Returns the provider type enum for this provider.
+    pub fn provider_type(&self) -> crate::models::ProviderType {
+        match self {
+            ModelProvider::OpenAI {} => crate::models::ProviderType::OpenAI,
+            ModelProvider::OpenAICompatible { .. } => crate::models::ProviderType::Custom("openai_compat".to_string()),
+            ModelProvider::AzureOpenAI { .. } => crate::models::ProviderType::Azure,
+            ModelProvider::Anthropic { .. } => crate::models::ProviderType::Anthropic,
+            ModelProvider::Gemini { .. } => crate::models::ProviderType::Gemini,
+            ModelProvider::AzureAiFoundry { .. } => crate::models::ProviderType::AzureAiFoundry,
+            ModelProvider::AwsBedrock { .. } => crate::models::ProviderType::AwsBedrock,
+            ModelProvider::GoogleVertex { .. } => crate::models::ProviderType::GoogleVertex,
+        }
+    }
+
+    /// Returns the provider ID string for secret lookup and "provider/model" format.
+    pub fn provider_id(&self) -> &str {
         match self {
             ModelProvider::OpenAI {} => "openai",
             ModelProvider::OpenAICompatible { .. } => "openai_compat",
             ModelProvider::AzureOpenAI { .. } => "azure_openai",
             ModelProvider::Anthropic { .. } => "anthropic",
-            ModelProvider::Vllora { .. } => "vllora",
+            ModelProvider::Gemini { .. } => "gemini",
+            ModelProvider::AzureAiFoundry { .. } => "azure_ai_foundry",
+            ModelProvider::AwsBedrock { .. } => "aws_bedrock",
+            ModelProvider::GoogleVertex { .. } => "google_vertex",
         }
     }
 
-    /// Returns the required secret keys for this provider
+    /// Returns the required secret keys for this provider.
     pub fn required_secret_keys(&self) -> Vec<&'static str> {
         match self {
             ModelProvider::OpenAI {} => vec!["OPENAI_API_KEY"],
             ModelProvider::OpenAICompatible { api_key, .. } => {
-                if api_key.is_some() {
-                    vec![]
-                } else {
-                    vec!["OPENAI_API_KEY"]
-                }
+                if api_key.is_some() { vec![] } else { vec!["OPENAI_API_KEY"] }
             }
             ModelProvider::AzureOpenAI { api_key, .. } => {
-                if api_key.is_some() {
-                    vec![]
-                } else {
-                    vec!["AZURE_OPENAI_API_KEY"]
-                }
+                if api_key.is_some() { vec![] } else { vec!["AZURE_OPENAI_API_KEY"] }
             }
             ModelProvider::Anthropic { api_key, .. } => {
-                if api_key.is_some() {
-                    vec![]
-                } else {
-                    vec!["ANTHROPIC_API_KEY"]
-                }
+                if api_key.is_some() { vec![] } else { vec!["ANTHROPIC_API_KEY"] }
             }
-            ModelProvider::Vllora { .. } => vec![],
+            ModelProvider::Gemini { api_key, .. } => {
+                if api_key.is_some() { vec![] } else { vec!["GEMINI_API_KEY"] }
+            }
+            ModelProvider::AzureAiFoundry { api_key, .. } => {
+                if api_key.is_some() { vec![] } else { vec!["AZURE_AI_FOUNDRY_API_KEY"] }
+            }
+            ModelProvider::AwsBedrock { api_key, .. } => {
+                if api_key.is_some() { vec![] } else { vec!["AWS_ACCESS_KEY_ID"] }
+            }
+            ModelProvider::GoogleVertex { api_key, .. } => {
+                if api_key.is_some() { vec![] } else { vec!["GOOGLE_VERTEX_API_KEY"] }
+            }
         }
     }
 
@@ -1012,9 +1041,12 @@ impl ModelProvider {
         match self {
             ModelProvider::OpenAI {} => "OpenAI",
             ModelProvider::OpenAICompatible { .. } => "OpenAI Compatible",
-            ModelProvider::AzureOpenAI { .. } => "Azure OpenAI",
+            ModelProvider::AzureOpenAI { .. } => "Azure",
             ModelProvider::Anthropic { .. } => "Anthropic",
-            ModelProvider::Vllora { .. } => "vLLORA",
+            ModelProvider::Gemini { .. } => "Google Gemini",
+            ModelProvider::AzureAiFoundry { .. } => "Azure AI Foundry",
+            ModelProvider::AwsBedrock { .. } => "AWS Bedrock",
+            ModelProvider::GoogleVertex { .. } => "Google Vertex AI",
         }
     }
 }
@@ -1089,14 +1121,26 @@ impl ModelSettings {
                 base_url: None,
                 api_key: None,
             },
-            "azure_openai" => ModelProvider::AzureOpenAI {
+            "azure_openai" | "azure" => ModelProvider::AzureOpenAI {
                 base_url: String::new(),
                 api_key: None,
                 deployment: model_id.to_string(),
                 api_version: ModelProvider::azure_api_version(),
             },
-            "gemini" => ModelProvider::OpenAICompatible {
-                base_url: "https://generativelanguage.googleapis.com/v1beta/openai".to_string(),
+            "gemini" => ModelProvider::Gemini {
+                base_url: ModelProvider::gemini_base_url(),
+                api_key: None,
+            },
+            "azure_ai_foundry" => ModelProvider::AzureAiFoundry {
+                base_url: String::new(),
+                api_key: None,
+            },
+            "aws_bedrock" => ModelProvider::AwsBedrock {
+                base_url: String::new(),
+                api_key: None,
+            },
+            "google_vertex" => ModelProvider::GoogleVertex {
+                base_url: String::new(),
                 api_key: None,
                 project_id: None,
             },
@@ -1105,11 +1149,11 @@ impl ModelSettings {
                 api_key: None,
                 project_id: None,
             },
-            unknown => {
-                return Err(format!(
-                    "Provider '{}' is not recognized. Supported providers: openai, anthropic, azure_openai, gemini, or custom_* prefixed providers.",
-                    unknown
-                ));
+            // Unknown providers — treat as OpenAI-compatible
+            _ => ModelProvider::OpenAICompatible {
+                base_url: String::new(),
+                api_key: None,
+                project_id: None,
             }
         };
         Ok(Some(Self {

@@ -7,7 +7,7 @@ use distri_a2a::{
 };
 use distri_types::{
     ExternalTool, LLmContext, LlmDefinition, Message, MessageRole, TokenResponse, ToolCall,
-    TtsModelInfo, TtsProvider, TtsProviderDefinition,
+    Model, ModelProviderDefinition, ProviderType,
     a2a_converters::MessageMetadata, prompt::PromptSection,
 };
 use distri_types::{StandardDefinition, ToolResponse, configuration::AgentConfigWithTools};
@@ -2793,7 +2793,7 @@ impl Distri {
     }
 
     /// List TTS provider definitions (required keys, models, configuration status).
-    pub async fn tts_providers(&self) -> Result<Vec<TtsProviderDefinition>, ClientError> {
+    pub async fn tts_providers(&self) -> Result<Vec<ModelProviderDefinition>, ClientError> {
         let url = format!("{}/audio/providers", self.base_url);
         let resp = self.http.get(&url).send().await?;
 
@@ -2833,7 +2833,7 @@ pub struct TtsSpeechRequest {
     /// Provider name (e.g. "openai", "azure_openai", "azure", "elevenlabs").
     /// Omit to use workspace default.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub provider: Option<TtsProvider>,
+    pub provider: Option<ProviderType>,
     /// Audio output format. Defaults to "mp3".
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response_format: Option<String>,
@@ -2889,7 +2889,7 @@ impl TtsSpeechRequest {
     }
 
     /// Set the provider (e.g. "openai", "azure_openai").
-    pub fn with_provider(mut self, provider: TtsProvider) -> Self {
+    pub fn with_provider(mut self, provider: ProviderType) -> Self {
         self.provider = Some(provider);
         self
     }
@@ -2931,5 +2931,5 @@ pub struct TtsSpeechResponse {
 /// Response from the TTS models list endpoint.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TtsModelsResponse {
-    pub models: Vec<TtsModelInfo>,
+    pub models: Vec<Model>,
 }

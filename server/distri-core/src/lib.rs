@@ -7,6 +7,7 @@ pub mod openai_responses_client;
 pub mod openai_responses_llm;
 pub mod llm;
 pub mod llm_service;
+pub mod provider_config;
 pub mod logging;
 pub mod secrets;
 pub mod servers;
@@ -16,7 +17,6 @@ pub mod types {
 }
 pub mod hooks;
 mod hooks_runtime;
-pub mod voice;
 pub use distri_auth::UserContext;
 pub use distri_stores::*;
 pub use distri_types::AgentError;
