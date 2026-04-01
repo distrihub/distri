@@ -1266,6 +1266,16 @@ impl AgentOrchestrator {
         None
     }
 
+    /// Resolve an agent identifier (UUID or name) to the canonical agent name.
+    /// Returns the original identifier if the agent is not found.
+    pub async fn resolve_agent_name(&self, id_or_name: &str) -> String {
+        if let Some(agent) = self.get_agent(id_or_name).await {
+            agent.get_name().to_string()
+        } else {
+            id_or_name.to_string()
+        }
+    }
+
     fn agent_matches_simple_name(
         agent: &distri_types::configuration::AgentConfig,
         target: &str,

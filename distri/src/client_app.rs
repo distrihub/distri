@@ -78,6 +78,29 @@ impl DistriClientApp {
         self.registry.clone()
     }
 
+    /// Inject local tool definitions into message params metadata as `external_tools`.
+    /// This tells the server the tool schemas so it can include them in the LLM's tool list.
+    /// Same pattern as distrijs `enhanceParamsWithTools`.
+    pub fn inject_external_tools(&self, params: &mut distri_a2a::MessageSendParams) {
+        if self.local_tool_definitions.is_empty() {
+            return;
+        }
+        let external_tools: Vec<serde_json::Value> = self
+            .local_tool_definitions
+            .iter()
+            .map(|def| {
+                serde_json::json!({
+                    "name": def.name,
+                    "description": def.description,
+                    "parameters": def.parameters,
+                })
+            })
+            .collect();
+        let meta = params
+            .metadata
+            .get_or_insert_with(|| serde_json::json!({}));
+        meta["external_tools"] = serde_json::Value::Array(external_tools);
+    }
 
     pub async fn list_agents(&self) -> Result<Vec<AgentConfig>, ClientError> {
         let url = format!("{}/agents", self.base());

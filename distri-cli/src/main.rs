@@ -382,29 +382,32 @@ async fn main() -> Result<()> {
             // Resolve agent name to UUID for cloud compatibility.
             // Cloud middleware requires UUID for proper workspace context (model settings, secrets).
             let mut stream_agent_id = agent_name.clone();
+            let mut external_tool_names = std::collections::HashSet::new();
             if let Some(agent_cfg) = app.fetch_agent(&agent_name).await? {
                 app.ensure_local_tools(&agent_name, &agent_cfg.agent)
                     .await?;
                 if let Some(uuid) = agent_cfg.cloud.id {
                     stream_agent_id = uuid.to_string();
                 }
-            }
-            // Register execute_command for local shell execution (both agent-specific and wildcard)
-            register_execute_command(&app.registry(), &agent_name, &workspace);
-            register_execute_command(&app.registry(), "*", &workspace);
-            if cli.verbose {
-                let reg = app.registry();
-                println!("External tools registered:");
-                for tool in &["execute_command", "fs_write_file", "fs_read_file"] {
-                    let has_agent = reg.has_tool(&agent_name, tool);
-                    let has_wild = reg.has_tool("*", tool);
-                    println!("  {} — agent={}, wildcard={}", tool, has_agent, has_wild);
+                // Extract external tool names from agent definition
+                if let distri_types::configuration::AgentConfig::StandardAgent(def) = &agent_cfg.agent {
+                    if let Some(tools) = &def.tools {
+                        if let Some(ext) = &tools.external {
+                            for name in ext {
+                                if name != "*" {
+                                    external_tool_names.insert(name.clone());
+                                }
+                            }
+                        }
+                    }
                 }
             }
+            register_execute_command(&app.registry(), &agent_name, &workspace);
             // Fetch connections to inject into agent context
             let distri_client = Distri::from_config(config.clone());
             let connections_context = build_connections_context(&distri_client).await;
             let mut params = build_message_params(task, connections_context);
+            app.inject_external_tools(&mut params);
 
             // Set thread_id from --resume
             if let Some(ref resume_arg) = resume {
@@ -438,7 +441,8 @@ async fn main() -> Result<()> {
             let http_client = stream_config.build_http_client()?;
             let mut client = AgentStreamClient::from_config(config.clone())
                 .with_http_client(http_client)
-                .with_tool_registry(registry);
+                .with_tool_registry(registry)
+                .with_external_tool_names(external_tool_names);
             for tool in extra_tools {
                 client.register_dynamic_tool(tool);
             }

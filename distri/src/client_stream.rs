@@ -5,11 +5,11 @@ use distri_types::http_request::HttpFactoryConfig;
 use distri_types::{AgentEvent, AgentEventType, Message, ToolCall, ToolResponse};
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use thiserror::Error;
 use uuid::Uuid;
 
 use crate::{ExternalToolRegistry, HookRegistry};
-// Import config module to bring the BuildHttpClient trait into scope
 use crate::config::{self, BuildHttpClient};
 
 #[derive(Debug, Error)]
@@ -28,8 +28,6 @@ pub enum StreamError {
     Serialization(#[from] serde_json::Error),
 }
 
-/// Incoming item from the agent stream. Carries the raw A2A message kind and the
-/// reconstructed AgentEvent (if the metadata could be parsed).
 #[derive(Debug, Clone)]
 pub struct StreamItem {
     pub message: Option<Message>,
@@ -42,30 +40,24 @@ pub struct AgentStreamClient {
     http: reqwest::Client,
     tool_registry: Option<ExternalToolRegistry>,
     hook_registry: Option<HookRegistry>,
-    /// Dynamic tool factories registered on this client.
-    /// These are automatically merged into every outgoing message's
-    /// `metadata.definition_overrides.dynamic_tools`.
     registered_tools: Vec<DynamicToolFactory>,
+    /// Tool names declared as `external` in the agent definition.
+    /// Only these tools are handled by the client — everything else
+    /// is left to the server.
+    external_tool_names: HashSet<String>,
 }
 
 impl AgentStreamClient {
-    /// Create a new AgentStreamClient from a base URL (for backward compatibility)
-    /// Prefer using `from_config` to preserve API keys and configuration
     pub fn new(base_url: impl Into<String>) -> Self {
         let cfg = config::DistriConfig::new(base_url);
         Self::from_config(cfg)
     }
 
-    /// Create a new AgentStreamClient from DistriClientConfig (preserves API keys and configuration)
-    /// The config must come from crate::config to have the build_http_client method
     pub fn from_config(cfg: config::DistriConfig) -> Self {
         let base_url = cfg.base_url.clone();
-        // build_http_client is a trait method from BuildHttpClient trait
         let http = <config::DistriConfig as BuildHttpClient>::build_http_client(&cfg)
             .expect("Failed to build HTTP client for AgentStreamClient");
 
-        // Auto-register the `distri_request` platform tool so agents can call
-        // the platform API with the current user's credentials.
         let platform_tool = crate::platform_tools::build_distri_request_factory(&cfg);
 
         Self {
@@ -74,6 +66,7 @@ impl AgentStreamClient {
             tool_registry: None,
             hook_registry: None,
             registered_tools: vec![platform_tool],
+            external_tool_names: HashSet::new(),
         }
     }
 
@@ -92,10 +85,14 @@ impl AgentStreamClient {
         self
     }
 
-    /// Register a dynamic tool factory. It will be included in every outgoing
-    /// message's `definition_overrides.dynamic_tools`, deduplicated by name.
+    /// Set the external tool names from the agent definition's `external` field.
+    /// Only tools in this set will be handled by the client.
+    pub fn with_external_tool_names(mut self, names: HashSet<String>) -> Self {
+        self.external_tool_names = names;
+        self
+    }
+
     pub fn register_dynamic_tool(&mut self, factory: DynamicToolFactory) {
-        // Replace existing tool with same name, or append
         if let Some(pos) = self.registered_tools.iter().position(|t| t.name == factory.name) {
             self.registered_tools[pos] = factory;
         } else {
@@ -103,7 +100,6 @@ impl AgentStreamClient {
         }
     }
 
-    /// Convenience: register an HTTP dynamic tool factory.
     pub fn register_http_tool(&mut self, name: &str, config: HttpFactoryConfig) {
         self.register_dynamic_tool(DynamicToolFactory {
             name: name.to_string(),
@@ -116,8 +112,6 @@ impl AgentStreamClient {
         });
     }
 
-    /// Merge registered tools into message params metadata, deduplicating by name.
-    /// Tools already present in the params take precedence (caller wins).
     fn merge_registered_tools(&self, mut params: MessageSendParams) -> MessageSendParams {
         if self.registered_tools.is_empty() {
             return params;
@@ -145,8 +139,11 @@ impl AgentStreamClient {
         params
     }
 
-    /// Stream an agent using the SSE interface (`POST /agents/{id}` with method `message/stream`)
-    /// and feed each parsed event into the provided handler.
+    /// Returns true if this tool name is declared external (client-handled).
+    fn is_external_tool(&self, tool_name: &str) -> bool {
+        self.external_tool_names.contains(tool_name)
+    }
+
     pub async fn stream_agent<H, Fut>(
         &self,
         agent_id: &str,
@@ -163,8 +160,6 @@ impl AgentStreamClient {
             agent_id
         );
 
-        // Merge all registered dynamic tools (including distri_request) into the
-        // message metadata so agents can use them during execution.
         let params = self.merge_registered_tools(params);
 
         let rpc = JsonRpcRequest {
@@ -198,7 +193,6 @@ impl AgentStreamClient {
             let chunk = chunk.map_err(|e| StreamError::Event(e.to_string()))?;
             buf.push_str(&String::from_utf8_lossy(&chunk));
 
-            // Process complete SSE messages (terminated by double newline)
             while let Some(pos) = buf.find("\n\n") {
                 let message_block = buf[..pos].to_string();
                 buf = buf[pos + 2..].to_string();
@@ -219,38 +213,35 @@ impl AgentStreamClient {
                     continue;
                 };
 
-                if let Some(agent_event) = item.agent_event.clone() {
-                    // Fire-and-forget hook execution (no response needed)
+                if let Some(ref agent_event) = item.agent_event {
+                    // Fire-and-forget hook execution
                     if let AgentEventType::InlineHookRequested { request } = &agent_event.event
                         && let Some(registry) = &self.hook_registry {
                             registry.try_handle(agent_id, request).await;
                         }
 
-                    if let AgentEventType::ToolCalls { tool_calls, .. } = &agent_event.event {
-                        self.try_handle_external_tools(agent_id, &agent_event, tool_calls)
-                            .await?;
-                    }
+                    // The server includes _agent_id (agent name) in event metadata.
+                    // Use it for tool registry lookups. Fall back to stream agent_id.
+                    let tool_agent = &agent_event.agent_id;
 
-                    // Also handle on ToolExecutionStart — for server-declared external
-                    // tools, the server registers the pending call then emits this event.
-                    if let AgentEventType::ToolExecutionStart {
-                        tool_call_id,
-                        tool_call_name,
-                        input,
-                        ..
-                    } = &agent_event.event
-                    {
-                        let call = ToolCall {
-                            tool_call_id: tool_call_id.clone(),
-                            tool_name: tool_call_name.clone(),
-                            input: input.clone(),
-                        };
-                        self.try_handle_external_tools(
-                            agent_id,
-                            &agent_event,
-                            &[call],
-                        )
-                        .await?;
+                    // ToolCalls: handle external tools. The server emits ToolCalls
+                    // BEFORE registering the pending call, so complete_tool retries
+                    // until the server is ready.
+                    if let AgentEventType::ToolCalls { tool_calls, .. } = &agent_event.event {
+                        let external_calls: Vec<_> = tool_calls
+                            .iter()
+                            .filter(|c| self.is_external_tool(&c.tool_name))
+                            .cloned()
+                            .collect();
+                        for call in &external_calls {
+                            self.execute_and_complete_external_tool(
+                                tool_agent,
+                                agent_id,
+                                agent_event,
+                                call,
+                            )
+                            .await?;
+                        }
                     }
                 }
 
@@ -261,78 +252,69 @@ impl AgentStreamClient {
         Ok(())
     }
 
-    /// Build an AgentEvent from the metadata attached to a MessageKind.
-    fn agent_event_from_message(
-        agent_id: &str,
-        message: &MessageKind,
-    ) -> Result<Option<AgentEvent>, StreamError> {
-        let (metadata, context_id, task_id) = match message {
-            MessageKind::Message(msg) => (
-                msg.metadata.clone(),
-                msg.context_id.clone(),
-                msg.task_id.clone(),
-            ),
-            MessageKind::TaskStatusUpdate(update) => (
-                update.metadata.clone(),
-                Some(update.context_id.clone()),
-                Some(update.task_id.clone()),
-            ),
-            MessageKind::Artifact(_) => (None, None, None),
-        };
-
-        let Some(meta) = metadata else {
-            return Ok(None);
-        };
-
-        let Ok(event_type) = serde_json::from_value::<AgentEventType>(meta) else {
-            return Ok(None);
-        };
-
-        let thread_id = context_id.unwrap_or_else(|| "unknown_thread".to_string());
-        let task_id = task_id.unwrap_or_else(|| "unknown_task".to_string());
-
-        Ok(Some(AgentEvent {
-            timestamp: Utc::now(),
-            thread_id,
-            run_id: agent_id.to_string(),
-            task_id,
-            event: event_type,
-            agent_id: agent_id.to_string(),
-            user_id: None,
-            identifier_id: None,
-            workspace_id: None,
-            channel_id: None,
-        }))
-    }
-
-    async fn try_handle_external_tools(
+    /// Execute an external tool locally and send the result to the server.
+    /// The server emits ToolCalls before registering the pending call, so
+    /// complete_tool retries with backoff until the server is ready.
+    async fn execute_and_complete_external_tool(
         &self,
-        agent_id: &str,
+        tool_agent: &str,
+        stream_agent_id: &str,
         agent_event: &AgentEvent,
-        tool_calls: &[ToolCall],
+        call: &ToolCall,
     ) -> Result<(), StreamError> {
         let Some(registry) = &self.tool_registry else {
-            return Ok(());
+            return Err(StreamError::ExternalTool(format!(
+                "No tool registry but external tool '{}' called (agent='{}')",
+                call.tool_name, tool_agent
+            )));
         };
 
-        for call in tool_calls {
-            if let Some(result) = registry
-                .try_handle(agent_id, &call.tool_name, call, agent_event)
+        let response = match registry
+            .try_handle(tool_agent, &call.tool_name, call, agent_event)
+            .await
+        {
+            Some(Ok(response)) => response,
+            Some(Err(err)) => {
+                return Err(StreamError::ExternalTool(format!(
+                    "Tool '{}' execution failed: {}",
+                    call.tool_name, err
+                )));
+            }
+            None => {
+                return Err(StreamError::ExternalTool(format!(
+                    "No handler for external tool '{}' (agent='{}'). \
+                     Register it in ExternalToolRegistry.",
+                    call.tool_name, tool_agent
+                )));
+            }
+        };
+
+        // Retry complete_tool — server registers the pending call AFTER
+        // emitting ToolCalls, so the first attempt may get "No pending".
+        for attempt in 0..10u32 {
+            match self
+                .complete_tool(stream_agent_id, &call.tool_call_id, response.clone())
                 .await
             {
-                match result {
-                    Ok(response) => {
-                        self.complete_tool(agent_id, &call.tool_call_id, response)
-                            .await?;
-                    }
-                    Err(err) => {
-                        return Err(StreamError::ExternalTool(err.to_string()));
-                    }
+                Ok(()) => return Ok(()),
+                Err(StreamError::InvalidResponse(ref msg)) if msg.contains("No pending") => {
+                    let delay = std::time::Duration::from_millis(100 * (1 << attempt.min(4)));
+                    tracing::debug!(
+                        "complete_tool '{}': server not ready (attempt {}), retrying in {:?}",
+                        call.tool_name,
+                        attempt + 1,
+                        delay
+                    );
+                    tokio::time::sleep(delay).await;
                 }
+                Err(e) => return Err(e),
             }
         }
 
-        Ok(())
+        Err(StreamError::ExternalTool(format!(
+            "complete_tool for '{}' timed out after retries — server never registered the pending call",
+            call.tool_name
+        )))
     }
 
     async fn complete_tool(
@@ -352,17 +334,51 @@ impl AgentStreamClient {
         };
 
         let resp = self.http.post(&url).json(&payload).send().await?;
-        let status = resp.status();
-        if !status.is_success() {
-            let body = resp.text().await.unwrap_or_default();
-            tracing::error!("complete_tool failed ({}): {}", status, body);
-            return Err(StreamError::InvalidResponse(format!(
-                "complete_tool failed ({}): {}",
-                status, body
-            )));
+        if resp.status().is_success() {
+            return Ok(());
         }
-        Ok(())
+        let body = resp.text().await.unwrap_or_default();
+        Err(StreamError::InvalidResponse(format!(
+            "complete_tool failed for '{}': {}",
+            tool_call_id, body
+        )))
     }
+}
+
+/// Build an AgentEvent from SSE metadata.
+/// Extracts `_agent_id` (agent name) injected by the server, falling back
+/// to the stream URL's agent_id.
+fn build_agent_event(
+    stream_agent_id: &str,
+    meta: &serde_json::Value,
+    context_id: Option<String>,
+    task_id: Option<String>,
+) -> Option<AgentEvent> {
+    let event_type: AgentEventType = serde_json::from_value(meta.clone()).ok()?;
+
+    // Server injects _agent_id (= definition.name) into event metadata.
+    // This is the correct name for tool registry lookups, especially for sub-agents.
+    let agent_id = meta
+        .get("_agent_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or(stream_agent_id)
+        .to_string();
+
+    let thread_id = context_id.unwrap_or_else(|| "unknown_thread".to_string());
+    let task_id = task_id.unwrap_or_else(|| "unknown_task".to_string());
+
+    Some(AgentEvent {
+        timestamp: Utc::now(),
+        thread_id,
+        run_id: stream_agent_id.to_string(),
+        task_id,
+        event: event_type,
+        agent_id,
+        user_id: None,
+        identifier_id: None,
+        workspace_id: None,
+        channel_id: None,
+    })
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -402,13 +418,6 @@ fn convert_kind(kind: &MessageKind) -> Result<Option<Message>, StreamError> {
 }
 
 /// Parse a raw SSE data string (JSON-RPC response) into a `StreamItem`.
-///
-/// This is the same parsing logic used by `AgentStreamClient::stream_agent()`,
-/// extracted so it can be reused by the gateway or any code that consumes
-/// SSE messages from `handle_message_send_streaming_sse` directly.
-///
-/// Returns `Ok(None)` for empty/non-result messages, `Ok(Some(item))` for
-/// parsed events, or `Err` for parse failures or server errors.
 pub fn parse_sse_data(agent_id: &str, data: &str) -> Result<Option<StreamItem>, StreamError> {
     if data.trim().is_empty() {
         return Ok(None);
@@ -423,8 +432,26 @@ pub fn parse_sse_data(agent_id: &str, data: &str) -> Result<Option<StreamItem>, 
     };
 
     let message_kind: MessageKind = serde_json::from_value(result)?;
-    let agent_event =
-        AgentStreamClient::agent_event_from_message(agent_id, &message_kind).unwrap_or(None);
+
+    // Extract metadata to build AgentEvent with correct agent_id
+    let (metadata, context_id, task_id) = match &message_kind {
+        MessageKind::Message(msg) => (
+            msg.metadata.clone(),
+            msg.context_id.clone(),
+            msg.task_id.clone(),
+        ),
+        MessageKind::TaskStatusUpdate(update) => (
+            update.metadata.clone(),
+            Some(update.context_id.clone()),
+            Some(update.task_id.clone()),
+        ),
+        MessageKind::Artifact(_) => (None, None, None),
+    };
+
+    let agent_event = metadata
+        .as_ref()
+        .and_then(|meta| build_agent_event(agent_id, meta, context_id, task_id));
+
     let distri_message = convert_kind(&message_kind)?;
 
     Ok(Some(StreamItem {

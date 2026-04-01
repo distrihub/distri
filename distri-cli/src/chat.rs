@@ -1,12 +1,12 @@
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use anyhow::Result;
 use crossterm::terminal;
 use distri::{
-    print_stream_verbose, AgentStreamClient, BuildHttpClient, Distri, DistriClientApp, DistriConfig,
+    AgentStreamClient, BuildHttpClient, Distri, DistriClientApp, DistriConfig, print_stream_verbose,
 };
 use distri_types::configuration::AgentConfig;
 use inquire::{Select, Text};
@@ -16,7 +16,9 @@ use rustyline::{Config, Editor, EventHandler, KeyEvent};
 use crate::config::{load_last_model, save_last_model};
 use crate::input::{DistriHelper, ToggleToolsHandler};
 use crate::message::{build_chat_message_params, build_connections_context};
-use crate::threads::{load_last_thread, print_thread_history, resolve_resume_arg, save_last_thread};
+use crate::threads::{
+    load_last_thread, print_thread_history, resolve_resume_arg, save_last_thread,
+};
 use crate::tools::register_approval_handler;
 use crate::{COLOR_BRIGHT_GREEN, COLOR_GRAY, COLOR_RESET};
 
@@ -334,7 +336,10 @@ pub async fn handle_slash_command(
                                 title.to_string()
                             };
                             let agent = t.agent_name.as_deref().unwrap_or("unknown");
-                            let msgs = t.message_count.map(|c| format!(" ({} msgs)", c)).unwrap_or_default();
+                            let msgs = t
+                                .message_count
+                                .map(|c| format!(" ({} msgs)", c))
+                                .unwrap_or_default();
                             format!("{} - {} [{}]{}", id_short, title_preview, agent, msgs)
                         })
                         .collect();
@@ -392,7 +397,11 @@ pub async fn run_interactive_chat(
 
     let show_tools = Arc::new(AtomicBool::new(true));
 
-    print_welcome_header(&current_agent, current_model.as_deref().unwrap_or("Auto"), &thread_id);
+    print_welcome_header(
+        &current_agent,
+        current_model.as_deref().unwrap_or("Auto"),
+        &thread_id,
+    );
 
     // Show connected line with workspace name if available
     let distri_for_ws = Distri::from_config(config.clone());
@@ -535,12 +544,13 @@ pub async fn run_interactive_chat(
         // Fetch connections context for agent prompt (lightweight, only connected providers)
         let distri_client = Distri::from_config(config.clone());
         let connections_context = build_connections_context(&distri_client).await;
-        let params = build_chat_message_params(
+        let mut params = build_chat_message_params(
             input.to_string(),
             &thread_id,
-            current_model.as_deref().unwrap_or(""),
+            current_model.as_deref(),
             connections_context,
         );
+        app.inject_external_tools(&mut params);
 
         if let Err(err) = print_stream_verbose(
             &stream_client,
@@ -559,7 +569,10 @@ pub async fn run_interactive_chat(
     // Show thread ID on exit so user can resume later
     println!(
         "{}Thread:{} {} (use /resume last or /resume {})",
-        COLOR_GRAY, COLOR_RESET, thread_id, &thread_id[..8]
+        COLOR_GRAY,
+        COLOR_RESET,
+        thread_id,
+        &thread_id[..8]
     );
 
     // Save history and last thread_id
