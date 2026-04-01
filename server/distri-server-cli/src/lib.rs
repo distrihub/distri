@@ -6,150 +6,73 @@ use distri_core::{
 use distri_types::browser::BrowsrClientConfig;
 use distri_types::configuration::{AgentConfig, DistriServerConfig};
 pub mod workspace;
-use crate::tool_renderers::ToolRendererRegistry;
 use std::{env, fs, path::Path, path::PathBuf, sync::Arc};
 use tokio::sync::RwLock;
 use tracing::debug;
 
 mod cli;
-pub mod handlers;
 pub mod logging;
-mod shared_state;
-pub use shared_state::SharedState;
-pub mod multi_agent_cli;
-pub mod run;
-pub mod slash_commands;
-pub mod tool_renderers;
 
-pub use cli::{Cli, Commands};
+pub use cli::Cli;
 
-/// Load distri.toml file and use its directory as home directory
-/// Uses default configuration if no distri.toml is found
+/// Load distri.toml file and use its directory as home directory.
+/// Returns (config, home_dir). Uses default configuration if no distri.toml is found.
 pub fn load_distri_config(
     config_path: &Option<PathBuf>,
-) -> Result<(Option<DistriServerConfig>, PathBuf)> {
-    let current_dir = std::env::current_dir()?;
+) -> Option<DistriServerConfig> {
+    let toml_path = config_path.clone().or_else(|| {
+        let default = std::env::current_dir().ok()?.join("distri.toml");
+        default.exists().then_some(default)
+    })?;
 
-    let (distri_config_path, home_dir) = match config_path {
-        Some(path) => {
-            if path.exists() {
-                let home = path
-                    .parent()
-                    .unwrap_or_else(|| std::path::Path::new("."))
-                    .to_path_buf();
-                (Some(path.clone()), home)
-            } else {
-                return Err(anyhow::anyhow!(
-                    "distri.toml file not found at: {}",
-                    path.display()
-                ));
-            }
-        }
-        None => {
-            // Check for distri.toml in current directory
-            let default_path = current_dir.join("distri.toml");
-            if default_path.exists() {
-                let home = default_path
-                    .parent()
-                    .unwrap_or_else(|| std::path::Path::new("."))
-                    .to_path_buf();
-                (Some(default_path), home)
-            } else {
-                // No configuration file found, use default settings
-                debug!("No distri.toml found, using default configuration");
-                (None, current_dir.clone())
-            }
-        }
-    };
+    let config_str = std::fs::read_to_string(&toml_path).ok()?;
+    let config_str = replace_env_vars(&config_str);
+    let config: DistriServerConfig = toml::from_str(&config_str).ok()?;
 
-    // Load distri.toml if it exists, otherwise return None
-    let config = if let Some(toml_path) = distri_config_path {
-        let config_str = std::fs::read_to_string(&toml_path)?;
-        let config_str = replace_env_vars(&config_str);
-        let config: DistriServerConfig = toml::from_str(&config_str)?;
-
-        debug!(
-            "DAP config loaded from {}: {:?}",
-            toml_path.display(),
-            config
-        );
-        Some(config)
-    } else {
-        debug!("Using .distri folder configuration without distri.toml");
-        None
-    };
-
-    debug!("Using home directory: {}", home_dir.display());
-
-    Ok((config, home_dir))
+    debug!("Config loaded from {}: {:?}", toml_path.display(), config);
+    Some(config)
 }
 
 /// Replace environment variables in config string ({{ENV_VAR}} format)
 pub fn replace_env_vars(content: &str) -> String {
     let mut result = content.to_string();
-
-    // Find all patterns matching {{ENV_VAR}}
     let re = regex::Regex::new(r"\{\{(\w+)\}\}").unwrap();
-
     for cap in re.captures_iter(content) {
         let full_match = cap.get(0).unwrap().as_str();
         let env_var_name = cap.get(1).unwrap().as_str();
-
         if let Ok(env_value) = env::var(env_var_name) {
             result = result.replace(full_match, &env_value);
         }
     }
-
     result
 }
 
-/// Initialize DAP-based orchestrator using distri.toml home directory or .distri folder
+/// Initialize the orchestrator for the OSS server.
 pub async fn init_orchestrator(
     home_dir: &Path,
     workspace_path: &Path,
     workspace_config: Option<&DistriServerConfig>,
-) -> Result<std::sync::Arc<distri_core::agent::AgentOrchestrator>> {
-    init_orchestrator_with_configuration(home_dir, workspace_path, workspace_config, None).await
-}
-
-/// Initialize orchestrator with a shared configuration handle that can be updated at runtime.
-pub async fn init_orchestrator_with_configuration(
-    home_dir: &Path,
-    workspace_path: &Path,
-    workspace_config: Option<&DistriServerConfig>,
-    configuration: Option<Arc<RwLock<DistriServerConfig>>>,
-) -> Result<std::sync::Arc<distri_core::agent::AgentOrchestrator>> {
+) -> Result<Arc<AgentOrchestrator>> {
     use distri_types::configuration::StoreConfig;
 
-    // Create store config that uses file-based stores with ~/.distri directory
     let distri_dir = dirs::home_dir()
         .ok_or_else(|| anyhow::anyhow!("Could not determine home directory"))?
         .join(".distri");
-
-    // Ensure ~/.distri directory exists
     std::fs::create_dir_all(&distri_dir)?;
 
-    // Configure stores for CLI - use persistent session stores for history
     let mut store_config = StoreConfig::default();
-    store_config.session.ephemeral = false; // CLI needs persistent history
+    store_config.session.ephemeral = false;
 
     let stores = distri_core::initialize_stores(&store_config).await?;
 
-    // Initialize prompt registry with defaults and auto-discovery for CLI
     let prompt_registry = Arc::new(PromptRegistry::with_defaults().await?);
 
-    // Auto-discover prompt templates from home directory (CLI-specific behavior)
+    // Auto-discover prompt templates
     let prompt_templates_path = home_dir.join("prompt_templates");
     if prompt_templates_path.exists() {
-        tracing::debug!(
-            "Auto-registering prompt templates from: {}",
-            prompt_templates_path.display()
-        );
         prompt_registry
             .register_templates_from_directory(&prompt_templates_path)
             .await?;
-
-        // Also register partials from the partials subdirectory
         let partials_path = prompt_templates_path.join("partials");
         if partials_path.exists() {
             prompt_registry
@@ -158,54 +81,47 @@ pub async fn init_orchestrator_with_configuration(
         }
     }
 
-    let mut resolved_config_owned = workspace_config.cloned();
-    if resolved_config_owned.is_none() {
+    // Resolve workspace config
+    let mut resolved_config = workspace_config.cloned();
+    if resolved_config.is_none() {
         let candidate = workspace_path.join("distri.toml");
         if candidate.exists() {
-            match fs::read_to_string(&candidate) {
-                Ok(content) => {
-                    let content = replace_env_vars(&content);
-                    match toml::from_str::<DistriServerConfig>(&content) {
-                        Ok(cfg) => resolved_config_owned = Some(cfg),
-                        Err(error) => tracing::warn!(
-                            "Failed to parse distri.toml at {}: {}",
-                            candidate.display(),
-                            error
-                        ),
-                    }
+            if let Ok(content) = fs::read_to_string(&candidate) {
+                let content = replace_env_vars(&content);
+                if let Ok(cfg) = toml::from_str::<DistriServerConfig>(&content) {
+                    resolved_config = Some(cfg);
                 }
-                Err(error) => tracing::warn!(
-                    "Failed to read distri.toml at {}: {}",
-                    candidate.display(),
-                    error
-                ),
             }
         }
     }
 
-    let configuration_handle = if let Some(handle) = configuration {
-        if resolved_config_owned.is_none() {
-            resolved_config_owned = Some(handle.read().await.clone());
-        }
-        handle
-    } else {
-        Arc::new(RwLock::new(
-            resolved_config_owned
-                .clone()
-                .unwrap_or_else(DistriServerConfig::default),
-        ))
+    let configuration_handle = Arc::new(RwLock::new(
+        resolved_config
+            .clone()
+            .unwrap_or_else(DistriServerConfig::default),
+    ));
+
+    let merged_config = resolved_config.as_ref().or(workspace_config);
+
+    // Create workspace filesystem for file routes (not for agent tools)
+    let workspace_fs = {
+        let fs_config = distri_filesystem::FileSystemConfig {
+            object_store: distri_types::configuration::ObjectStorageConfig::FileSystem {
+                base_path: workspace_path.to_string_lossy().to_string(),
+            },
+            root_prefix: None,
+        };
+        Arc::new(distri_filesystem::create_file_system(fs_config).await?)
     };
 
-    let merged_config = resolved_config_owned.as_ref().or(workspace_config);
-
-    let builder = AgentOrchestratorBuilder::default()
+    let orchestrator = AgentOrchestratorBuilder::default()
         .with_configuration(configuration_handle)
-        .with_browser_config(BrowsrClientConfig::default());
-    let orchestrator = builder
+        .with_browser_config(BrowsrClientConfig::default())
         .with_stores(stores)
         .with_prompt_registry(prompt_registry)
         .with_store_config(store_config)
-        .with_workspace_path(workspace_path.to_path_buf())
+        .with_session_storage_path(workspace_path.join(".distri/session_storage"))
+        .with_workspace_filesystem(workspace_fs)
         .build()
         .await?;
 
@@ -240,44 +156,6 @@ async fn register_workspace_assets(
                 .register(AgentConfig::StandardAgent(definition))
                 .await?;
         }
-    }
-
-    Ok(())
-}
-
-pub async fn build_workspace(
-    _orchestrator: &Arc<AgentOrchestrator>,
-    workspace_path: &Path,
-) -> Result<()> {
-    tracing::info!("Workspace build complete ({})", workspace_path.display());
-    Ok(())
-}
-
-/// Run CLI with the given configuration (DAP-aware)
-pub async fn run_agent_cli(
-    executor: Arc<AgentOrchestrator>,
-    agent_name: &str,
-    input: Option<&str>,
-    user_id: Option<&str>,
-    verbose: bool,
-    tool_renderers: Option<Arc<ToolRendererRegistry>>,
-) -> Result<()> {
-    debug!("Running agent: {:?}", agent_name);
-
-    // Use DAP-aware run function (config not needed for DAP mode)
-    if let Some(input_str) = input {
-        let task_msg = distri_types::Message::user(input_str.to_string(), None);
-        run::background::run(
-            agent_name,
-            executor,
-            task_msg,
-            verbose,
-            user_id,
-            tool_renderers,
-        )
-        .await?;
-    } else {
-        run::chat::run(agent_name, executor, verbose, tool_renderers).await?;
     }
     Ok(())
 }

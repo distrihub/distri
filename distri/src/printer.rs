@@ -643,8 +643,20 @@ impl EventPrinter {
                     None => format!("{}({})", name, action),
                 }
             }
-            "execute_shell" => {
-                format!("execute_shell(\"{}\")", truncate(&str_field("command"), 60))
+            "execute_shell" | "execute_command" => {
+                let cwd = input
+                    .get("cwd")
+                    .and_then(|v| v.as_str())
+                    .filter(|v| !v.is_empty() && *v != ".");
+                match cwd {
+                    Some(dir) => format!(
+                        "{}(\"{}\" cwd: {})",
+                        name,
+                        truncate(&str_field("command"), 60),
+                        dir
+                    ),
+                    None => format!("{}(\"{}\")", name, truncate(&str_field("command"), 60)),
+                }
             }
             "start_shell" | "stop_shell" => format!("{}(…)", name),
             "search" => format!("search(\"{}\")", truncate(&str_field("query"), 60)),
@@ -665,6 +677,14 @@ impl EventPrinter {
             }
             "transfer_to_agent" => {
                 format!("transfer_to_agent(\"{}\")", str_field("agent_name"))
+            }
+            "write_todos" => {
+                let count = input
+                    .get("todos")
+                    .and_then(|v| v.as_array())
+                    .map(|a| a.len())
+                    .unwrap_or(0);
+                format!("write_todos({} items)", count)
             }
             "final" | "reflect" | "console_log" => format!("{}(…)", name),
             _ => {

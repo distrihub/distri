@@ -67,7 +67,10 @@ pub fn configure_file_routes(cfg: &mut web::ServiceConfig) {
 }
 
 async fn list_workspace_files(executor: web::Data<Arc<AgentOrchestrator>>) -> HttpResponse {
-    let filesystem = executor.workspace_filesystem.clone();
+    let filesystem = executor
+        .workspace_filesystem
+        .clone()
+        .expect("workspace filesystem not configured for file routes");
     match gather_workspace_snapshot(&filesystem).await {
         Ok(snapshot) => HttpResponse::Ok().json(snapshot),
         Err(err) => HttpResponse::InternalServerError().json(json!({
@@ -81,7 +84,10 @@ async fn write_workspace_files(
     executor: web::Data<Arc<AgentOrchestrator>>,
 ) -> HttpResponse {
     let request = payload.into_inner();
-    let filesystem = executor.workspace_filesystem.clone();
+    let filesystem = executor
+        .workspace_filesystem
+        .clone()
+        .expect("workspace filesystem not configured for file routes");
 
     match persist_workspace_changes(&filesystem, request).await {
         Ok(response) => HttpResponse::Ok().json(response),
@@ -115,7 +121,10 @@ async fn gather_workspace_snapshot(filesystem: &Arc<FileSystem>) -> Result<Works
 }
 
 async fn list_workspace_metadata(executor: web::Data<Arc<AgentOrchestrator>>) -> HttpResponse {
-    let filesystem = executor.workspace_filesystem.clone();
+    let filesystem = executor
+        .workspace_filesystem
+        .clone()
+        .expect("workspace filesystem not configured for file routes");
     match gather_workspace_metadata(&filesystem).await {
         Ok(files) => HttpResponse::Ok().json(WorkspaceMetadataResponse {
             files,
@@ -188,7 +197,10 @@ async fn read_workspace_file(
     req: HttpRequest,
     executor: web::Data<Arc<AgentOrchestrator>>,
 ) -> HttpResponse {
-    let filesystem = executor.workspace_filesystem.clone();
+    let filesystem = executor
+        .workspace_filesystem
+        .clone()
+        .expect("workspace filesystem not configured for file routes");
     let relative = path.into_inner();
 
     let metadata = match workspace_file_metadata(&filesystem, &relative).await {
@@ -226,7 +238,10 @@ async fn head_workspace_file(
     req: HttpRequest,
     executor: web::Data<Arc<AgentOrchestrator>>,
 ) -> HttpResponse {
-    let filesystem = executor.workspace_filesystem.clone();
+    let filesystem = executor
+        .workspace_filesystem
+        .clone()
+        .expect("workspace filesystem not configured for file routes");
     match workspace_file_metadata(&filesystem, &path.into_inner()).await {
         Ok((_sanitized, modified)) => {
             if let Some(since) = parse_if_modified_since(&req) {

@@ -16,7 +16,7 @@ pub fn render_shell(result: &ToolResponse) {
                 COLOR_GRAY, RESULT_PREFIX, COLOR_RESET
             );
         }
-        "execute_shell" => {
+        "execute_shell" | "execute_command" => {
             for part in &result.parts {
                 match part {
                     Part::Text(text) => {
