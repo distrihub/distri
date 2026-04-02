@@ -1328,17 +1328,17 @@ mod tests {
                 .with_depends_on(vec!["configure_eval"]),
         ];
 
-        let workflow = WorkflowDefinition::new(steps)
-            .with_entry_points(vec![EntryPoint {
-                id: "grade_only".to_string(),
-                label: "Grade Only".to_string(),
-                description: Some("Start at grading".to_string()),
-                starts_at: "grade".to_string(),
-                preset_results: HashMap::from([
-                    ("configure_eval".to_string(), serde_json::json!({"rubric_id": "r1"})),
-                ]),
-                required_inputs: vec!["activity_id".to_string()],
-            }]);
+        let workflow = WorkflowDefinition::new(steps).with_entry_points(vec![EntryPoint {
+            id: "grade_only".to_string(),
+            label: "Grade Only".to_string(),
+            description: Some("Start at grading".to_string()),
+            starts_at: "grade".to_string(),
+            preset_results: HashMap::from([(
+                "configure_eval".to_string(),
+                serde_json::json!({"rubric_id": "r1"}),
+            )]),
+            required_inputs: vec!["activity_id".to_string()],
+        }]);
 
         let applied = workflow.apply_entry_point("grade_only").unwrap();
 
@@ -1367,15 +1367,14 @@ mod tests {
                 .with_depends_on(vec!["eval"]),
         ];
 
-        let workflow = WorkflowDefinition::new(steps)
-            .with_entry_points(vec![EntryPoint {
-                id: "existing_activity".to_string(),
-                label: "Existing Activity".to_string(),
-                description: None,
-                starts_at: "eval".to_string(),
-                preset_results: HashMap::new(),
-                required_inputs: vec![],
-            }]);
+        let workflow = WorkflowDefinition::new(steps).with_entry_points(vec![EntryPoint {
+            id: "existing_activity".to_string(),
+            label: "Existing Activity".to_string(),
+            description: None,
+            starts_at: "eval".to_string(),
+            preset_results: HashMap::new(),
+            required_inputs: vec![],
+        }]);
 
         let applied = workflow.apply_entry_point("existing_activity").unwrap();
         assert_eq!(applied.steps[0].status, StepStatus::Skipped); // detect
@@ -1386,9 +1385,8 @@ mod tests {
 
     #[test]
     fn entry_point_not_found_returns_error() {
-        let workflow = WorkflowDefinition::new(vec![
-            WorkflowStep::api_call("s1", "S1", "GET", "/"),
-        ]);
+        let workflow =
+            WorkflowDefinition::new(vec![WorkflowStep::api_call("s1", "S1", "GET", "/")]);
         assert!(workflow.apply_entry_point("nonexistent").is_err());
     }
 
@@ -1400,23 +1398,26 @@ mod tests {
                 .with_depends_on(vec!["detect"]),
         ];
 
-        let workflow = WorkflowDefinition::new(steps)
-            .with_entry_points(vec![EntryPoint {
-                id: "grade_only".to_string(),
-                label: "Grade Only".to_string(),
-                description: None,
-                starts_at: "grade".to_string(),
-                preset_results: HashMap::from([
-                    ("detect".to_string(), serde_json::json!({"questions": [1, 2, 3]})),
-                ]),
-                required_inputs: vec![],
-            }]);
+        let workflow = WorkflowDefinition::new(steps).with_entry_points(vec![EntryPoint {
+            id: "grade_only".to_string(),
+            label: "Grade Only".to_string(),
+            description: None,
+            starts_at: "grade".to_string(),
+            preset_results: HashMap::from([(
+                "detect".to_string(),
+                serde_json::json!({"questions": [1, 2, 3]}),
+            )]),
+            required_inputs: vec![],
+        }]);
 
         let applied = workflow.apply_entry_point("grade_only").unwrap();
 
         // Context should have preset results under steps namespace
         let ctx_steps = applied.context.get("steps").unwrap();
-        assert_eq!(ctx_steps["detect"]["questions"], serde_json::json!([1, 2, 3]));
+        assert_eq!(
+            ctx_steps["detect"]["questions"],
+            serde_json::json!([1, 2, 3])
+        );
     }
 
     #[tokio::test]
@@ -1513,13 +1514,25 @@ mod tests {
         });
 
         // {input.mode} is truthy
-        assert!(crate::resolve::evaluate_skip_condition("{input.mode}", &ctx));
+        assert!(crate::resolve::evaluate_skip_condition(
+            "{input.mode}",
+            &ctx
+        ));
         // !{input.mode} is falsy
-        assert!(!crate::resolve::evaluate_skip_condition("!{input.mode}", &ctx));
+        assert!(!crate::resolve::evaluate_skip_condition(
+            "!{input.mode}",
+            &ctx
+        ));
         // {input.nonexistent} is falsy
-        assert!(!crate::resolve::evaluate_skip_condition("{input.nonexistent}", &ctx));
+        assert!(!crate::resolve::evaluate_skip_condition(
+            "{input.nonexistent}",
+            &ctx
+        ));
         // !{input.nonexistent} is truthy
-        assert!(crate::resolve::evaluate_skip_condition("!{input.nonexistent}", &ctx));
+        assert!(crate::resolve::evaluate_skip_condition(
+            "!{input.nonexistent}",
+            &ctx
+        ));
     }
 
     #[test]
@@ -1530,9 +1543,18 @@ mod tests {
             "env": {}
         });
 
-        assert!(crate::resolve::evaluate_skip_condition("{input.mode} == \"pick\"", &ctx));
-        assert!(!crate::resolve::evaluate_skip_condition("{input.mode} == \"generate\"", &ctx));
-        assert!(crate::resolve::evaluate_skip_condition("{input.mode} != \"generate\"", &ctx));
+        assert!(crate::resolve::evaluate_skip_condition(
+            "{input.mode} == \"pick\"",
+            &ctx
+        ));
+        assert!(!crate::resolve::evaluate_skip_condition(
+            "{input.mode} == \"generate\"",
+            &ctx
+        ));
+        assert!(crate::resolve::evaluate_skip_condition(
+            "{input.mode} != \"generate\"",
+            &ctx
+        ));
     }
 
     #[test]
@@ -1542,17 +1564,14 @@ mod tests {
             WorkflowStep::api_call("s2", "S2", "GET", "/").with_depends_on(vec!["s1"]),
         ];
 
-        let workflow = WorkflowDefinition::new(steps)
-            .with_entry_points(vec![EntryPoint {
-                id: "from_s2".to_string(),
-                label: "From S2".to_string(),
-                description: Some("Skip S1".to_string()),
-                starts_at: "s2".to_string(),
-                preset_results: HashMap::from([
-                    ("s1".to_string(), serde_json::json!({"done": true})),
-                ]),
-                required_inputs: vec!["data".to_string()],
-            }]);
+        let workflow = WorkflowDefinition::new(steps).with_entry_points(vec![EntryPoint {
+            id: "from_s2".to_string(),
+            label: "From S2".to_string(),
+            description: Some("Skip S1".to_string()),
+            starts_at: "s2".to_string(),
+            preset_results: HashMap::from([("s1".to_string(), serde_json::json!({"done": true}))]),
+            required_inputs: vec!["data".to_string()],
+        }]);
 
         let json = serde_json::to_value(&workflow).unwrap();
         let deserialized: WorkflowDefinition = serde_json::from_value(json).unwrap();
@@ -1565,8 +1584,8 @@ mod tests {
 
     #[test]
     fn skip_if_serializes_roundtrip() {
-        let step = WorkflowStep::api_call("s1", "S1", "GET", "/")
-            .with_skip_if("{input.existing_id}");
+        let step =
+            WorkflowStep::api_call("s1", "S1", "GET", "/").with_skip_if("{input.existing_id}");
 
         let json = serde_json::to_value(&step).unwrap();
         assert_eq!(json["skip_if"], "{input.existing_id}");
@@ -1646,9 +1665,11 @@ mod tests {
 
     #[tokio::test]
     async fn resume_wrong_step_id_fails() {
-        let steps = vec![
-            WorkflowStep::wait_for_input("review", "Review", "Review this"),
-        ];
+        let steps = vec![WorkflowStep::wait_for_input(
+            "review",
+            "Review",
+            "Review this",
+        )];
         let workflow = WorkflowDefinition::new(steps);
         let store = InMemoryStore::new();
         store.save(&workflow).await.unwrap();
@@ -1665,9 +1686,12 @@ mod tests {
 
     #[tokio::test]
     async fn resume_non_paused_workflow_fails() {
-        let steps = vec![
-            WorkflowStep::api_call("step1", "Step 1", "GET", "/api/data"),
-        ];
+        let steps = vec![WorkflowStep::api_call(
+            "step1",
+            "Step 1",
+            "GET",
+            "/api/data",
+        )];
         let workflow = WorkflowDefinition::new(steps);
         let store = InMemoryStore::new();
         store.save(&workflow).await.unwrap();
@@ -1772,7 +1796,11 @@ mod tests {
 
         // Resume second review — should complete
         let status = runner
-            .resume(&workflow.id, "review2", serde_json::json!({"approved": true}))
+            .resume(
+                &workflow.id,
+                "review2",
+                serde_json::json!({"approved": true}),
+            )
             .await
             .unwrap();
         assert_eq!(status, WorkflowStatus::Completed);
@@ -1923,9 +1951,7 @@ mod tests {
 
     #[tokio::test]
     async fn multi_entry_grade_only_skips_to_grade() {
-        let workflow = grading_workflow()
-            .apply_entry_point("grade_only")
-            .unwrap();
+        let workflow = grading_workflow().apply_entry_point("grade_only").unwrap();
 
         let store = InMemoryStore::new();
         store.save(&workflow).await.unwrap();
@@ -1941,8 +1967,8 @@ mod tests {
         assert_eq!(state.steps[1].status, StepStatus::Skipped); // create_content
         assert_eq!(state.steps[2].status, StepStatus::Skipped); // configure_eval
         assert_eq!(state.steps[3].status, StepStatus::Skipped); // review (preset)
-        assert_eq!(state.steps[4].status, StepStatus::Done);    // grade
-        assert_eq!(state.steps[5].status, StepStatus::Done);    // report
+        assert_eq!(state.steps[4].status, StepStatus::Done); // grade
+        assert_eq!(state.steps[5].status, StepStatus::Done); // report
 
         // Preset results should be in context
         let steps_ctx = state.context.get("steps").unwrap();
@@ -1973,7 +1999,11 @@ mod tests {
 
         // Resume and complete
         let status = runner
-            .resume(&workflow.id, "review", serde_json::json!({"approved": true}))
+            .resume(
+                &workflow.id,
+                "review",
+                serde_json::json!({"approved": true}),
+            )
             .await
             .unwrap();
         assert_eq!(status, WorkflowStatus::Completed);
@@ -2011,8 +2041,7 @@ mod tests {
         // Grade step uses {steps.configure_eval.rubric_id} via input mapping
         let steps = vec![
             WorkflowStep::api_call("detect", "Detect", "POST", "/detect"),
-            WorkflowStep::api_call("eval", "Eval", "POST", "/eval")
-                .with_depends_on(vec!["detect"]),
+            WorkflowStep::api_call("eval", "Eval", "POST", "/eval").with_depends_on(vec!["detect"]),
             WorkflowStep::api_call("grade", "Grade", "POST", "/grade")
                 .with_depends_on(vec!["eval"])
                 .with_input_mapping(serde_json::json!({
@@ -2030,7 +2059,10 @@ mod tests {
                 starts_at: "grade".to_string(),
                 preset_results: HashMap::from([
                     ("detect".to_string(), serde_json::json!({"docs": ["d1"]})),
-                    ("eval".to_string(), serde_json::json!({"rubric_id": "rubric-abc"})),
+                    (
+                        "eval".to_string(),
+                        serde_json::json!({"rubric_id": "rubric-abc"}),
+                    ),
                 ]),
                 required_inputs: vec!["activity_id".to_string()],
             }]);
@@ -2041,9 +2073,8 @@ mod tests {
             .with_input(serde_json::json!({"activity_id": "act-456"}))
             .unwrap();
 
-        let executor = ContextCapturingExecutor::new(vec![
-            ("grade", serde_json::json!({"score": 95})),
-        ]);
+        let executor =
+            ContextCapturingExecutor::new(vec![("grade", serde_json::json!({"score": 95}))]);
         let captured = executor.captured();
 
         let store = InMemoryStore::new();
@@ -2067,8 +2098,7 @@ mod tests {
             WorkflowStep::api_call("fetch", "Fetch", "GET", "/data"),
             WorkflowStep::checkpoint("verify", "Verify Data", "Check the fetched data is correct")
                 .with_depends_on(vec!["fetch"]),
-            WorkflowStep::api_call("save", "Save", "POST", "/save")
-                .with_depends_on(vec!["verify"]),
+            WorkflowStep::api_call("save", "Save", "POST", "/save").with_depends_on(vec!["verify"]),
         ];
         let workflow = WorkflowDefinition::new(steps);
         let store = InMemoryStore::new();
@@ -2087,17 +2117,36 @@ mod tests {
 
         // Test that both entry points produce valid workflows
         let ep1 = workflow.clone().apply_entry_point("grade_only").unwrap();
-        let ep2 = workflow.clone().apply_entry_point("review_and_grade").unwrap();
+        let ep2 = workflow
+            .clone()
+            .apply_entry_point("review_and_grade")
+            .unwrap();
 
         // grade_only: 4 skipped (detect, create_content, configure_eval, review), 2 pending
-        let skipped1: Vec<_> = ep1.steps.iter().filter(|s| s.status == StepStatus::Skipped).collect();
-        let pending1: Vec<_> = ep1.steps.iter().filter(|s| s.status == StepStatus::Pending).collect();
+        let skipped1: Vec<_> = ep1
+            .steps
+            .iter()
+            .filter(|s| s.status == StepStatus::Skipped)
+            .collect();
+        let pending1: Vec<_> = ep1
+            .steps
+            .iter()
+            .filter(|s| s.status == StepStatus::Pending)
+            .collect();
         assert_eq!(skipped1.len(), 4);
         assert_eq!(pending1.len(), 2);
 
         // review_and_grade: 3 skipped (detect, create_content, configure_eval), 3 pending (review, grade, report)
-        let skipped2: Vec<_> = ep2.steps.iter().filter(|s| s.status == StepStatus::Skipped).collect();
-        let pending2: Vec<_> = ep2.steps.iter().filter(|s| s.status == StepStatus::Pending).collect();
+        let skipped2: Vec<_> = ep2
+            .steps
+            .iter()
+            .filter(|s| s.status == StepStatus::Skipped)
+            .collect();
+        let pending2: Vec<_> = ep2
+            .steps
+            .iter()
+            .filter(|s| s.status == StepStatus::Pending)
+            .collect();
         assert_eq!(skipped2.len(), 3);
         assert_eq!(pending2.len(), 3);
     }
@@ -2129,9 +2178,18 @@ mod tests {
                 description: None,
                 starts_at: "merge".to_string(),
                 preset_results: HashMap::from([
-                    ("detect".to_string(), serde_json::json!({"items": ["i1", "i2"]})),
-                    ("analyze_a".to_string(), serde_json::json!({"result_a": "done"})),
-                    ("analyze_b".to_string(), serde_json::json!({"result_b": "done"})),
+                    (
+                        "detect".to_string(),
+                        serde_json::json!({"items": ["i1", "i2"]}),
+                    ),
+                    (
+                        "analyze_a".to_string(),
+                        serde_json::json!({"result_a": "done"}),
+                    ),
+                    (
+                        "analyze_b".to_string(),
+                        serde_json::json!({"result_b": "done"}),
+                    ),
                 ]),
                 required_inputs: vec![],
             }]);
@@ -2149,8 +2207,8 @@ mod tests {
         assert_eq!(state.steps[0].status, StepStatus::Skipped); // detect
         assert_eq!(state.steps[1].status, StepStatus::Skipped); // analyze_a
         assert_eq!(state.steps[2].status, StepStatus::Skipped); // analyze_b
-        assert_eq!(state.steps[3].status, StepStatus::Done);    // merge
-        assert_eq!(state.steps[4].status, StepStatus::Done);    // report
+        assert_eq!(state.steps[3].status, StepStatus::Done); // merge
+        assert_eq!(state.steps[4].status, StepStatus::Done); // report
     }
 
     #[tokio::test]
@@ -2186,8 +2244,12 @@ mod tests {
 
         let events = runner.events.events.lock().unwrap();
         // Should have: workflow_started, step_waiting (review)
-        assert!(events.iter().any(|e| matches!(e, WorkflowEvent::WorkflowStarted { .. })));
-        assert!(events.iter().any(|e| matches!(e, WorkflowEvent::StepWaiting { step_id, .. } if step_id == "review")));
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, WorkflowEvent::WorkflowStarted { .. })));
+        assert!(events.iter().any(
+            |e| matches!(e, WorkflowEvent::StepWaiting { step_id, .. } if step_id == "review")
+        ));
 
         // No step_started for skipped steps
         let started_ids: Vec<_> = events
@@ -2210,8 +2272,7 @@ mod tests {
         let steps = vec![
             WorkflowStep::api_call("detect", "Detect", "POST", "/detect")
                 .with_skip_if("{input.activity_id}"),
-            WorkflowStep::api_call("eval", "Eval", "POST", "/eval")
-                .with_depends_on(vec!["detect"]),
+            WorkflowStep::api_call("eval", "Eval", "POST", "/eval").with_depends_on(vec!["detect"]),
             WorkflowStep::api_call("grade", "Grade", "POST", "/grade")
                 .with_depends_on(vec!["eval"]),
         ];
@@ -2241,16 +2302,15 @@ mod tests {
 
         let state = runner.get_state("skip-entry-combo").await.unwrap().unwrap();
         assert_eq!(state.steps[0].status, StepStatus::Skipped); // detect (by entry point)
-        assert_eq!(state.steps[1].status, StepStatus::Done);    // eval
-        assert_eq!(state.steps[2].status, StepStatus::Done);    // grade
+        assert_eq!(state.steps[1].status, StepStatus::Done); // eval
+        assert_eq!(state.steps[2].status, StepStatus::Done); // grade
     }
 
     #[tokio::test]
     async fn checkpoint_with_external_strategy_serializes() {
-        let workflow = grading_workflow()
-            .with_checkpoint(CheckpointStrategy::External {
-                tool_name: "redis_checkpoint".to_string(),
-            });
+        let workflow = grading_workflow().with_checkpoint(CheckpointStrategy::External {
+            tool_name: "redis_checkpoint".to_string(),
+        });
 
         let json = serde_json::to_value(&workflow).unwrap();
         assert_eq!(json["checkpoint"]["type"], "external");

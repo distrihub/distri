@@ -2,7 +2,11 @@ use clap::Parser;
 use std::path::PathBuf;
 
 #[derive(Parser, Debug, Clone)]
-#[clap(author, version, about = "Distri Server — open-source AI agent orchestrator")]
+#[clap(
+    author,
+    version,
+    about = "Distri Server — open-source AI agent orchestrator"
+)]
 pub struct Cli {
     /// Path to distri.toml configuration file
     #[clap(long, short, help = "Path to the distri.toml configuration file")]

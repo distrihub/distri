@@ -352,11 +352,7 @@ impl Tool for ReadFileTool {
 
         // Phase 7.3: Reject known binary file extensions
         if is_binary_extension(&params.path) {
-            let ext = params
-                .path
-                .rsplit('.')
-                .next()
-                .unwrap_or("unknown");
+            let ext = params.path.rsplit('.').next().unwrap_or("unknown");
             anyhow::bail!(
                 "Cannot read binary file. The file appears to be a binary .{} file.",
                 ext

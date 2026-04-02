@@ -86,10 +86,7 @@ impl OpenAIResponsesLLMExecutor {
         } else {
             headers.insert("X-Label".to_string(), self.llm_def.name.clone());
         }
-        headers.insert(
-            "X-Thread-Id".to_string(),
-            self.context.thread_id.clone(),
-        );
+        headers.insert("X-Thread-Id".to_string(), self.context.thread_id.clone());
         headers.insert("X-Run-Id".to_string(), self.context.run_id.clone());
 
         // Resolve base_url and api_key from the existing provider, same as the completions path
@@ -99,9 +96,7 @@ impl OpenAIResponsesLLMExecutor {
                 (ModelProvider::openai_base_url(), api_key)
             }
             ModelProvider::OpenAICompatible {
-                base_url,
-                api_key,
-                ..
+                base_url, api_key, ..
             } => {
                 let key = if let Some(key) = api_key {
                     key.clone()
@@ -290,18 +285,17 @@ impl OpenAIResponsesLLMExecutor {
                     if !output_text.is_empty() {
                         output_text.push('\n');
                     }
-                    output_text
-                        .push_str(&serde_json::to_string(data).unwrap_or_else(|_| "{}".to_string()));
+                    output_text.push_str(
+                        &serde_json::to_string(data).unwrap_or_else(|_| "{}".to_string()),
+                    );
                 }
                 Part::Artifact(artifact) => {
                     if !output_text.is_empty() {
                         output_text.push('\n');
                     }
                     if let Some(preview) = &artifact.preview {
-                        output_text.push_str(&format!(
-                            "[Artifact: {}]\n{}",
-                            artifact.file_id, preview
-                        ));
+                        output_text
+                            .push_str(&format!("[Artifact: {}]\n{}", artifact.file_id, preview));
                     } else {
                         output_text.push_str(&format!(
                             "[Artifact: {}] {}",
@@ -379,7 +373,11 @@ impl OpenAIResponsesLLMExecutor {
 
         let tools = if self.format == ToolCallFormat::Provider {
             let mapped = self.map_tools();
-            if mapped.is_empty() { None } else { Some(mapped) }
+            if mapped.is_empty() {
+                None
+            } else {
+                Some(mapped)
+            }
         } else {
             None
         };
@@ -440,11 +438,7 @@ impl OpenAIResponsesLLMExecutor {
 
         // Emit events
         let message_id = uuid::Uuid::new_v4().to_string();
-        let step_id = self
-            .context
-            .get_current_step_id()
-            .await
-            .unwrap_or_default();
+        let step_id = self.context.get_current_step_id().await.unwrap_or_default();
 
         self.context
             .emit(AgentEventType::TextMessageStart {
@@ -505,9 +499,7 @@ impl OpenAIResponsesLLMExecutor {
 
         for item in output {
             match item {
-                OutputItem::Message(OutputMessage {
-                    content: parts, ..
-                }) => {
+                OutputItem::Message(OutputMessage { content: parts, .. }) => {
                     for part in parts {
                         match part {
                             OutputContentPart::OutputText { text } => {
@@ -566,7 +558,11 @@ impl OpenAIResponsesLLMExecutor {
 
         let tools = if self.format == ToolCallFormat::Provider {
             let mapped = self.map_tools();
-            if mapped.is_empty() { None } else { Some(mapped) }
+            if mapped.is_empty() {
+                None
+            } else {
+                Some(mapped)
+            }
         } else {
             None
         };
@@ -760,9 +756,17 @@ impl OpenAIResponsesLLMExecutor {
                     } => {
                         let (final_call_id, final_name, final_args) =
                             if let Some(partial) = partial_function_calls.remove(&output_index) {
-                                let cid = if !call_id.is_empty() { call_id } else { partial.call_id };
+                                let cid = if !call_id.is_empty() {
+                                    call_id
+                                } else {
+                                    partial.call_id
+                                };
                                 let n = if !name.is_empty() { name } else { partial.name };
-                                let args = if !arguments.is_empty() { arguments } else { partial.arguments };
+                                let args = if !arguments.is_empty() {
+                                    arguments
+                                } else {
+                                    partial.arguments
+                                };
                                 (cid, n, args)
                             } else {
                                 (call_id, name, arguments)

@@ -62,11 +62,7 @@ impl ExecutionResult {
                 Part::Text(text) => {
                     if text.len() > MAX_TEXT_CHARS {
                         let truncated: String = text.chars().take(MAX_TEXT_CHARS).collect();
-                        format!(
-                            "{}... [truncated, {} total chars]",
-                            truncated,
-                            text.len()
-                        )
+                        format!("{}... [truncated, {} total chars]", truncated, text.len())
                     } else {
                         text.clone()
                     }

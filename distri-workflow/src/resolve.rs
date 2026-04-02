@@ -392,15 +392,27 @@ mod tests {
     #[test]
     fn evaluate_skip_equality() {
         let ctx = test_context();
-        assert!(super::evaluate_skip_condition("{input.doc_id} == \"abc123\"", &ctx));
-        assert!(!super::evaluate_skip_condition("{input.doc_id} == \"other\"", &ctx));
+        assert!(super::evaluate_skip_condition(
+            "{input.doc_id} == \"abc123\"",
+            &ctx
+        ));
+        assert!(!super::evaluate_skip_condition(
+            "{input.doc_id} == \"other\"",
+            &ctx
+        ));
     }
 
     #[test]
     fn evaluate_skip_inequality() {
         let ctx = test_context();
-        assert!(super::evaluate_skip_condition("{input.doc_id} != \"other\"", &ctx));
-        assert!(!super::evaluate_skip_condition("{input.doc_id} != \"abc123\"", &ctx));
+        assert!(super::evaluate_skip_condition(
+            "{input.doc_id} != \"other\"",
+            &ctx
+        ));
+        assert!(!super::evaluate_skip_condition(
+            "{input.doc_id} != \"abc123\"",
+            &ctx
+        ));
     }
 
     #[test]
@@ -412,7 +424,10 @@ mod tests {
     #[test]
     fn evaluate_skip_number_truthy() {
         let ctx = test_context();
-        assert!(super::evaluate_skip_condition("{steps.fetch_doc.metadata.pages}", &ctx));
+        assert!(super::evaluate_skip_condition(
+            "{steps.fetch_doc.metadata.pages}",
+            &ctx
+        ));
     }
 
     #[test]

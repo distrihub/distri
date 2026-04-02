@@ -9,7 +9,6 @@ use std::sync::Arc;
 use crate::context::UserContext;
 use crate::routes;
 
-
 pub struct A2AServer {
     executor: Arc<AgentOrchestrator>,
     user_context_builder: Arc<dyn Fn() -> UserContext + Send + Sync>,

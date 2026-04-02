@@ -5,8 +5,8 @@
 
 use crate::types::{Part, ToolCall};
 use async_openai::types::chat::{
-    ChatCompletionRequestSystemMessageArgs,
-    ChatCompletionRequestUserMessageArgs, CreateChatCompletionRequest,
+    ChatCompletionRequestSystemMessageArgs, ChatCompletionRequestUserMessageArgs,
+    CreateChatCompletionRequest,
 };
 use async_openai::Client;
 use serde_json::json;
@@ -16,10 +16,10 @@ const SAFE_TOOLS: &[&str] = &[
     "tool_search",
     "load_skill",
     "run_skill_script",
-    "search",       // web search (read-only)
+    "search",        // web search (read-only)
     "browsr_scrape", // web scrape (read-only)
     "final",
-    "write_todos",  // todos are session-scoped, safe
+    "write_todos", // todos are session-scoped, safe
 ];
 
 /// Check if a tool is safe to execute for real in dry-run mode.
@@ -30,9 +30,9 @@ pub fn is_safe_tool(tool_name: &str) -> bool {
 /// Tools that should always be simulated (have side effects).
 #[allow(dead_code)]
 const ALWAYS_SIMULATE: &[&str] = &[
-    "http_request",       // makes HTTP requests
-    "start_shell",        // starts a shell session
-    "execute_shell",      // runs commands
+    "http_request",  // makes HTTP requests
+    "start_shell",   // starts a shell session
+    "execute_shell", // runs commands
     "inject_connection_env",
     "transfer_to_agent",
     "create_skill",
@@ -50,10 +50,8 @@ pub async fn simulate_tool_response(
     tool_description: &str,
     tool_parameters: &serde_json::Value,
 ) -> Result<Vec<Part>, anyhow::Error> {
-    let endpoint =
-        std::env::var("AZURE_OPENAI_ENDPOINT").unwrap_or_default();
-    let api_key =
-        std::env::var("AZURE_OPENAI_KEY").unwrap_or_default();
+    let endpoint = std::env::var("AZURE_OPENAI_ENDPOINT").unwrap_or_default();
+    let api_key = std::env::var("AZURE_OPENAI_KEY").unwrap_or_default();
 
     if endpoint.is_empty() || api_key.is_empty() {
         // Fallback: return a generic simulated response

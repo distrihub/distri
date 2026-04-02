@@ -299,10 +299,7 @@ impl EventPrinter {
             }
             AgentEventType::RunFinished { success, .. } => {
                 if !success {
-                    println!(
-                        "{}Run completed with errors{}",
-                        COLOR_RED, COLOR_RESET
-                    );
+                    println!("{}Run completed with errors{}", COLOR_RED, COLOR_RESET);
                 }
             }
             AgentEventType::RunError { message, code } => {
@@ -345,12 +342,13 @@ impl EventPrinter {
                         filename.as_deref(),
                         *size,
                         *timestamp_ms,
-                    ) {
-                        println!(
-                            "{}📸 Browser screenshot (render failed: {}){}",
-                            COLOR_GRAY, err, COLOR_RESET
-                        );
-                    }
+                    )
+                {
+                    println!(
+                        "{}📸 Browser screenshot (render failed: {}){}",
+                        COLOR_GRAY, err, COLOR_RESET
+                    );
+                }
             }
             AgentEventType::AgentHandover {
                 from_agent,
@@ -465,11 +463,7 @@ impl EventPrinter {
         }
     }
 
-    fn handle_tool_calls(
-        &mut self,
-        _tool_calls: &[distri_types::ToolCall],
-        _parent: Option<&str>,
-    ) {
+    fn handle_tool_calls(&mut self, _tool_calls: &[distri_types::ToolCall], _parent: Option<&str>) {
         // Suppressed — individual ToolExecutionStart events show each call
     }
 
@@ -612,10 +606,11 @@ pub async fn print_stream_verbose(
                     // Print the final assistant message text
                     if let Some(ref msg) = item.message
                         && msg.role == distri_types::MessageRole::Assistant
-                            && let Some(text) = msg.as_text()
-                                && !text.is_empty() {
-                                    println!("\n{}", text);
-                                }
+                        && let Some(text) = msg.as_text()
+                        && !text.is_empty()
+                    {
+                        println!("\n{}", text);
+                    }
                 }
             }
         })

@@ -319,16 +319,17 @@ impl PromptRegistry {
             if entry_path.is_file()
                 && let Some(extension) = entry_path.extension()
                 && (extension == "hbs" || extension == "handlebars")
-                && let Some(stem) = entry_path.file_stem() {
-                    let name = stem.to_string_lossy().to_string();
-                    tracing::debug!(
-                        "Registering template '{}' from '{}'",
-                        name,
-                        entry_path.display()
-                    );
-                    self.register_template_file(name, &entry_path, None, None)
-                        .await?;
-                }
+                && let Some(stem) = entry_path.file_stem()
+            {
+                let name = stem.to_string_lossy().to_string();
+                tracing::debug!(
+                    "Registering template '{}' from '{}'",
+                    name,
+                    entry_path.display()
+                );
+                self.register_template_file(name, &entry_path, None, None)
+                    .await?;
+            }
         }
 
         Ok(())
@@ -360,15 +361,16 @@ impl PromptRegistry {
             if entry_path.is_file()
                 && let Some(extension) = entry_path.extension()
                 && (extension == "hbs" || extension == "handlebars")
-                && let Some(stem) = entry_path.file_stem() {
-                    let name = stem.to_string_lossy().to_string();
-                    tracing::debug!(
-                        "Registering partial '{}' from '{}'",
-                        name,
-                        entry_path.display()
-                    );
-                    self.register_partial_file(name, &entry_path).await?;
-                }
+                && let Some(stem) = entry_path.file_stem()
+            {
+                let name = stem.to_string_lossy().to_string();
+                tracing::debug!(
+                    "Registering partial '{}' from '{}'",
+                    name,
+                    entry_path.display()
+                );
+                self.register_partial_file(name, &entry_path).await?;
+            }
         }
 
         Ok(())
@@ -488,9 +490,10 @@ pub async fn build_prompt_messages<'a>(
 
     let mut user_msg = user_message.clone();
     if user_msg.parts.is_empty()
-        && let Some(text) = user_message.as_text() {
-            user_msg.parts.push(Part::Text(text));
-        }
+        && let Some(text) = user_message.as_text()
+    {
+        user_msg.parts.push(Part::Text(text));
+    }
     if !rendered_user.is_empty() {
         user_msg.parts.push(Part::Text(rendered_user));
     }

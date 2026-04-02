@@ -8,8 +8,7 @@
 use distri_types::{AgentEvent, AgentEventType, ToolResponse};
 
 use crate::state::{
-    is_probe_call, ChatState, MessageState, StepState, ToolCallState,
-    ToolCallStatus,
+    ChatState, MessageState, StepState, ToolCallState, ToolCallStatus, is_probe_call,
 };
 use crate::status::format_status_text;
 use crate::{Formatter, MediaAttachment, ParseMode, RendererOutput, SurfaceRenderer};
@@ -68,8 +67,7 @@ impl SurfaceRenderer for WhatsAppRenderer {
 
     fn render_code_block(&mut self, code: &str, _lang: Option<&str>) {
         // WhatsApp only supports triple backtick, no language hint.
-        self.output
-            .push_str(&format!("```\n{}\n```\n", code));
+        self.output.push_str(&format!("```\n{}\n```\n", code));
         self.dirty = true;
     }
 
@@ -109,9 +107,7 @@ impl SurfaceRenderer for WhatsAppRenderer {
     fn clear_planning(&mut self) {}
 
     fn render_agent_transfer(&mut self, _from: &str, to: &str, reason: Option<&str>) {
-        let reason_str = reason
-            .map(|r| format!(" ({})", r))
-            .unwrap_or_default();
+        let reason_str = reason.map(|r| format!(" ({})", r)).unwrap_or_default();
         let status = format!("Handing off to {}{}...", to, reason_str);
         self.current_status = Some(status);
         self.status_dirty = true;
@@ -345,8 +341,7 @@ impl Formatter for WhatsAppFormatter {
             AgentEventType::ToolCalls { .. } => {}
             AgentEventType::RunFinished { .. } => {}
             AgentEventType::RunError { message, .. } => {
-                self.renderer
-                    .render_text(&format!("Error: {}", message));
+                self.renderer.render_text(&format!("Error: {}", message));
             }
             AgentEventType::BrowserScreenshot { image, .. } => {
                 if self.renderer.supports_images() {
@@ -377,11 +372,7 @@ impl Formatter for WhatsAppFormatter {
             .collect::<Vec<_>>()
             .join("\n");
 
-        if text.is_empty() {
-            None
-        } else {
-            Some(text)
-        }
+        if text.is_empty() { None } else { Some(text) }
     }
 
     fn final_content(&self) -> String {

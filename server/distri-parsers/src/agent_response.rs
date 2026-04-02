@@ -90,24 +90,25 @@ impl AgentResponse {
 
             // Add the action step if we have a valid action (execution cycle)
             if let Some(action) = agent_resp.action
-                && !action.is_empty() {
-                    let input = match agent_resp.parameters {
-                        Some(params) => params,
-                        None => serde_json::json!({}),
-                    };
+                && !action.is_empty()
+            {
+                let input = match agent_resp.parameters {
+                    Some(params) => params,
+                    None => serde_json::json!({}),
+                };
 
-                    steps.push(PlanStep {
-                        id: uuid::Uuid::new_v4().to_string(),
-                        action: Action::ToolCalls {
-                            tool_calls: vec![ToolCall {
-                                tool_call_id: uuid::Uuid::new_v4().to_string(),
-                                tool_name: action,
-                                input,
-                            }],
-                        },
-                        thought: agent_resp.thought.clone(),
-                    });
-                }
+                steps.push(PlanStep {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    action: Action::ToolCalls {
+                        tool_calls: vec![ToolCall {
+                            tool_call_id: uuid::Uuid::new_v4().to_string(),
+                            tool_name: action,
+                            input,
+                        }],
+                    },
+                    thought: agent_resp.thought.clone(),
+                });
+            }
 
             return Ok(AgentPlan {
                 steps,

@@ -17,9 +17,7 @@ pub use cli::Cli;
 
 /// Load distri.toml file and use its directory as home directory.
 /// Returns (config, home_dir). Uses default configuration if no distri.toml is found.
-pub fn load_distri_config(
-    config_path: &Option<PathBuf>,
-) -> Option<DistriServerConfig> {
+pub fn load_distri_config(config_path: &Option<PathBuf>) -> Option<DistriServerConfig> {
     let toml_path = config_path.clone().or_else(|| {
         let default = std::env::current_dir().ok()?.join("distri.toml");
         default.exists().then_some(default)

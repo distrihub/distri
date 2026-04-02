@@ -16,7 +16,6 @@ pub struct BrowserAgentConfig {
     pub runtime: Option<BrowsrClientConfig>,
 }
 
-
 impl BrowserAgentConfig {
     pub fn is_enabled(&self) -> bool {
         self.enabled

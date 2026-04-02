@@ -117,9 +117,8 @@ async fn resolve_all_from_env_vars() {
 
 #[tokio::test]
 async fn resolve_all_from_secrets() {
-    let store = InMemorySecretStore::new(HashMap::from([
-        ("DB_PASSWORD".into(), "secret123".into()),
-    ]));
+    let store =
+        InMemorySecretStore::new(HashMap::from([("DB_PASSWORD".into(), "secret123".into())]));
     let ctx = ResolveContext {
         env_vars: HashMap::new(),
         secret_store: Some(Arc::new(store)),
@@ -130,9 +129,7 @@ async fn resolve_all_from_secrets() {
 
 #[tokio::test]
 async fn resolve_all_env_var_priority_over_secret() {
-    let store = InMemorySecretStore::new(HashMap::from([
-        ("TOKEN".into(), "from_secret".into()),
-    ]));
+    let store = InMemorySecretStore::new(HashMap::from([("TOKEN".into(), "from_secret".into())]));
     let ctx = ResolveContext {
         env_vars: HashMap::from([("TOKEN".into(), "from_env".into())]),
         secret_store: Some(Arc::new(store)),
@@ -147,7 +144,9 @@ async fn resolve_all_unresolved_error() {
         env_vars: HashMap::new(),
         secret_store: None,
     };
-    let err = resolve_all(&["MISSING_VAR".into()], &ctx).await.unwrap_err();
+    let err = resolve_all(&["MISSING_VAR".into()], &ctx)
+        .await
+        .unwrap_err();
     assert_eq!(err, "unresolved variable: $MISSING_VAR");
 }
 
@@ -316,7 +315,11 @@ async fn test_request_tool_non_json_response() {
 
     assert!(!result.ok);
     assert_eq!(result.status, 500);
-    assert!(result.body.as_str().unwrap().contains("Internal Server Error"));
+    assert!(result
+        .body
+        .as_str()
+        .unwrap()
+        .contains("Internal Server Error"));
 }
 
 #[tokio::test]
@@ -325,16 +328,21 @@ async fn test_request_tool_unresolved_var_errors() {
     let input = HttpRequestInput {
         url: "https://example.com/api".to_string(),
         method: HttpMethod::GET,
-        headers: HashMap::from([
-            ("Authorization".to_string(), "Bearer $MISSING_TOKEN".to_string()),
-        ]),
+        headers: HashMap::from([(
+            "Authorization".to_string(),
+            "Bearer $MISSING_TOKEN".to_string(),
+        )]),
         body: None,
     };
 
     let err = execute_http_request(&input, &ctx, None).await.unwrap_err();
 
     let msg = format!("{}", err);
-    assert!(msg.contains("MISSING_TOKEN"), "error should mention the var name, got: {}", msg);
+    assert!(
+        msg.contains("MISSING_TOKEN"),
+        "error should mention the var name, got: {}",
+        msg
+    );
 }
 
 #[tokio::test]
@@ -352,17 +360,12 @@ async fn test_request_tool_secret_resolution() {
         .mount(&server)
         .await;
 
-    let ctx = make_resolve_context(
-        HashMap::new(),
-        vec![("API_KEY", "secret-key-123")],
-    );
+    let ctx = make_resolve_context(HashMap::new(), vec![("API_KEY", "secret-key-123")]);
 
     let input = HttpRequestInput {
         url: format!("{}/secure", server.uri()),
         method: HttpMethod::GET,
-        headers: HashMap::from([
-            ("Authorization".to_string(), "Bearer $API_KEY".to_string()),
-        ]),
+        headers: HashMap::from([("Authorization".to_string(), "Bearer $API_KEY".to_string())]),
         body: None,
     };
 
@@ -396,9 +399,7 @@ async fn test_request_tool_env_var_priority_over_secret() {
     let input = HttpRequestInput {
         url: format!("{}/priority", server.uri()),
         method: HttpMethod::GET,
-        headers: HashMap::from([
-            ("Authorization".to_string(), "Bearer $API_KEY".to_string()),
-        ]),
+        headers: HashMap::from([("Authorization".to_string(), "Bearer $API_KEY".to_string())]),
         body: None,
     };
 

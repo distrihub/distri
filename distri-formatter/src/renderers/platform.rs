@@ -1,5 +1,5 @@
-use crate::colors::{COLOR_GRAY, COLOR_GREEN, COLOR_RED, COLOR_RESET};
 use super::RESULT_PREFIX;
+use crate::colors::{COLOR_GRAY, COLOR_GREEN, COLOR_RED, COLOR_RESET};
 use distri_types::{Part, ToolResponse};
 
 pub fn render_platform_tool(result: &ToolResponse) {
@@ -109,13 +109,9 @@ fn first_text(parts: &[Part]) -> Option<&str> {
 }
 
 fn first_data(parts: &[Part]) -> Option<&serde_json::Value> {
-    parts.iter().find_map(|p| {
-        if let Part::Data(v) = p {
-            Some(v)
-        } else {
-            None
-        }
-    })
+    parts
+        .iter()
+        .find_map(|p| if let Part::Data(v) = p { Some(v) } else { None })
 }
 
 fn render_one_liner(text: Option<&str>, is_error: bool) {

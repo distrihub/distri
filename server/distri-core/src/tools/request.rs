@@ -64,7 +64,12 @@ pub async fn execute_http_request(
         .headers
         .iter()
         .filter(|(k, _)| k.as_str() != "x-connection-id")
-        .map(|(k, v)| (substitute_string(k, &resolved), substitute_string(v, &resolved)))
+        .map(|(k, v)| {
+            (
+                substitute_string(k, &resolved),
+                substitute_string(v, &resolved),
+            )
+        })
         .collect();
     let body = input
         .body
@@ -89,9 +94,8 @@ pub async fn execute_http_request(
 
     // 6. If x-connection-id was present, resolve and inject Bearer token
     if let Some(ref conn_id) = connection_id {
-        let stores = stores.ok_or_else(|| {
-            anyhow::anyhow!("stores not available for connection resolution")
-        })?;
+        let stores = stores
+            .ok_or_else(|| anyhow::anyhow!("stores not available for connection resolution"))?;
         let (_provider, access_token) = resolve_connection_token(conn_id, stores)
             .await
             .map_err(|e| anyhow::anyhow!(e))?;

@@ -133,18 +133,12 @@ mod tests {
         async fn delete(&self, _id: &str) -> anyhow::Result<()> {
             unimplemented!()
         }
-        async fn get_by_provider(
-            &self,
-            _ws: &str,
-            _p: &str,
-        ) -> anyhow::Result<Option<Connection>> {
+        async fn get_by_provider(&self, _ws: &str, _p: &str) -> anyhow::Result<Option<Connection>> {
             unimplemented!()
         }
     }
 
-    struct TestTokenStore(
-        tokio::sync::RwLock<std::collections::HashMap<String, ConnectionToken>>,
-    );
+    struct TestTokenStore(tokio::sync::RwLock<std::collections::HashMap<String, ConnectionToken>>);
 
     impl TestTokenStore {
         fn with(tokens: Vec<(String, ConnectionToken)>) -> Self {
@@ -164,17 +158,10 @@ mod tests {
         async fn remove_token(&self, _id: &str) -> anyhow::Result<()> {
             unimplemented!()
         }
-        async fn store_oauth_state(
-            &self,
-            _k: &str,
-            _v: serde_json::Value,
-        ) -> anyhow::Result<()> {
+        async fn store_oauth_state(&self, _k: &str, _v: serde_json::Value) -> anyhow::Result<()> {
             unimplemented!()
         }
-        async fn get_oauth_state(
-            &self,
-            _k: &str,
-        ) -> anyhow::Result<Option<serde_json::Value>> {
+        async fn get_oauth_state(&self, _k: &str) -> anyhow::Result<Option<serde_json::Value>> {
             unimplemented!()
         }
         async fn remove_oauth_state(&self, _k: &str) -> anyhow::Result<()> {
@@ -275,8 +262,7 @@ mod tests {
         )
         .await;
 
-        let result =
-            resolve_connection_token(&uuid::Uuid::new_v4().to_string(), &stores).await;
+        let result = resolve_connection_token(&uuid::Uuid::new_v4().to_string(), &stores).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("not found"));
     }
@@ -312,8 +298,7 @@ mod tests {
         };
         let stores = distri_stores::initialize_stores(&config).await.unwrap();
         // connection_store and connection_token_store are None
-        let result =
-            resolve_connection_token(&uuid::Uuid::new_v4().to_string(), &stores).await;
+        let result = resolve_connection_token(&uuid::Uuid::new_v4().to_string(), &stores).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("not configured"));
     }

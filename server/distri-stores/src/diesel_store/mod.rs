@@ -229,9 +229,10 @@ fn serialize_agent_event(event: AgentEvent) -> TaskEvent {
 
 fn session_entry_to_value(entry: &SessionEntryModel) -> Option<JsonValue> {
     if let Some(expiry) = entry.expiry
-        && from_naive(expiry) < Utc::now() {
-            return None;
-        }
+        && from_naive(expiry) < Utc::now()
+    {
+        return None;
+    }
     serde_json::from_str(&entry.value).ok()
 }
 

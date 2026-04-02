@@ -1,8 +1,8 @@
 //! Renderers for local CLI tools (Bash, Read, Write, Edit, Glob, Grep).
 //! Follows claude-code style: compact, informative, consistent prefix.
 
-use crate::colors::{COLOR_GRAY, COLOR_GREEN, COLOR_RED, COLOR_RESET};
 use super::{RESULT_PREFIX, truncate_str};
+use crate::colors::{COLOR_GRAY, COLOR_GREEN, COLOR_RED, COLOR_RESET};
 use distri_types::{Part, ToolResponse};
 
 pub fn render_local_tool(result: &ToolResponse) {
@@ -20,7 +20,10 @@ pub fn render_local_tool(result: &ToolResponse) {
 fn render_bash(result: &ToolResponse) {
     for part in &result.parts {
         if let Part::Data(value) = part {
-            let exit_code = value.get("exit_code").and_then(|v| v.as_i64()).unwrap_or(-1);
+            let exit_code = value
+                .get("exit_code")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(-1);
             let stdout = value.get("stdout").and_then(|v| v.as_str()).unwrap_or("");
             let stderr = value.get("stderr").and_then(|v| v.as_str()).unwrap_or("");
 
@@ -142,17 +145,12 @@ fn render_edit(result: &ToolResponse) {
 fn render_glob(result: &ToolResponse) {
     for part in &result.parts {
         if let Part::Data(value) = part {
-            let num_files = value
-                .get("num_files")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0);
+            let num_files = value.get("num_files").and_then(|v| v.as_u64()).unwrap_or(0);
             let truncated = value
                 .get("truncated")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
-            let filenames = value
-                .get("filenames")
-                .and_then(|v| v.as_array());
+            let filenames = value.get("filenames").and_then(|v| v.as_array());
 
             let suffix = if truncated { " (truncated)" } else { "" };
             println!(
@@ -192,10 +190,7 @@ fn render_grep(result: &ToolResponse) {
                 .get("truncated")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
-            let output = value
-                .get("output")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+            let output = value.get("output").and_then(|v| v.as_str()).unwrap_or("");
 
             let suffix = if truncated { " (truncated)" } else { "" };
             println!(

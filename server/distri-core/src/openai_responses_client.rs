@@ -193,13 +193,37 @@ pub enum TypedStreamEvent {
     ResponseCreated(CreateResponseResponse),
     ResponseCompleted(CreateResponseResponse),
     ResponseFailed(CreateResponseResponse),
-    OutputItemAdded { output_index: usize, item: OutputItem },
-    OutputItemDone { output_index: usize, item: OutputItem },
-    OutputTextDelta { output_index: usize, delta: String },
-    OutputTextDone { output_index: usize, text: String },
-    FunctionCallArgumentsDelta { output_index: usize, item_id: String, delta: String },
-    FunctionCallArgumentsDone { output_index: usize, item_id: String, call_id: String, name: String, arguments: String },
-    Unknown { event_type: String },
+    OutputItemAdded {
+        output_index: usize,
+        item: OutputItem,
+    },
+    OutputItemDone {
+        output_index: usize,
+        item: OutputItem,
+    },
+    OutputTextDelta {
+        output_index: usize,
+        delta: String,
+    },
+    OutputTextDone {
+        output_index: usize,
+        text: String,
+    },
+    FunctionCallArgumentsDelta {
+        output_index: usize,
+        item_id: String,
+        delta: String,
+    },
+    FunctionCallArgumentsDone {
+        output_index: usize,
+        item_id: String,
+        call_id: String,
+        name: String,
+        arguments: String,
+    },
+    Unknown {
+        event_type: String,
+    },
 }
 
 // ─── Client ──────────────────────────────────────────────────────────────────
@@ -284,9 +308,10 @@ impl OpenAIResponsesClient {
             )));
         }
 
-        let body = response.text().await.map_err(|e| {
-            crate::AgentError::LLMError(format!("Failed to read response: {}", e))
-        })?;
+        let body = response
+            .text()
+            .await
+            .map_err(|e| crate::AgentError::LLMError(format!("Failed to read response: {}", e)))?;
 
         serde_json::from_str(&body).map_err(|e| {
             tracing::error!(
@@ -415,102 +440,79 @@ impl OpenAIResponsesClient {
 }
 
 /// Parse a typed stream event from the event name and JSON data
-fn parse_typed_event(
-    event_type: &str,
-    data: &str,
-) -> Option<Result<TypedStreamEvent, String>> {
+fn parse_typed_event(event_type: &str, data: &str) -> Option<Result<TypedStreamEvent, String>> {
     match event_type {
-        "response.created" | "response.in_progress" => {
-            Some(
-                serde_json::from_str::<CreateResponseResponse>(data)
-                    .map(TypedStreamEvent::ResponseCreated)
-                    .map_err(|e| e.to_string()),
-            )
-        }
-        "response.completed" => {
-            Some(
-                serde_json::from_str::<CreateResponseResponse>(data)
-                    .map(TypedStreamEvent::ResponseCompleted)
-                    .map_err(|e| e.to_string()),
-            )
-        }
-        "response.failed" | "response.incomplete" => {
-            Some(
-                serde_json::from_str::<CreateResponseResponse>(data)
-                    .map(TypedStreamEvent::ResponseFailed)
-                    .map_err(|e| e.to_string()),
-            )
-        }
-        "response.output_item.added" => {
-            Some(
-                serde_json::from_str::<OutputItemEventWrapper>(data)
-                    .map(|w| TypedStreamEvent::OutputItemAdded {
-                        output_index: w.output_index,
-                        item: w.item,
-                    })
-                    .map_err(|e| e.to_string()),
-            )
-        }
-        "response.output_item.done" => {
-            Some(
-                serde_json::from_str::<OutputItemEventWrapper>(data)
-                    .map(|w| TypedStreamEvent::OutputItemDone {
-                        output_index: w.output_index,
-                        item: w.item,
-                    })
-                    .map_err(|e| e.to_string()),
-            )
-        }
-        "response.output_text.delta" => {
-            Some(
-                serde_json::from_str::<OutputTextEventWrapper>(data)
-                    .map(|w| TypedStreamEvent::OutputTextDelta {
-                        output_index: w.output_index,
-                        delta: w.delta.unwrap_or_default(),
-                    })
-                    .map_err(|e| e.to_string()),
-            )
-        }
-        "response.output_text.done" => {
-            Some(
-                serde_json::from_str::<OutputTextEventWrapper>(data)
-                    .map(|w| TypedStreamEvent::OutputTextDone {
-                        output_index: w.output_index,
-                        text: w.text.unwrap_or_default(),
-                    })
-                    .map_err(|e| e.to_string()),
-            )
-        }
-        "response.function_call_arguments.delta" => {
-            Some(
-                serde_json::from_str::<FunctionCallArgumentsEventWrapper>(data)
-                    .map(|w| TypedStreamEvent::FunctionCallArgumentsDelta {
-                        output_index: w.output_index,
-                        item_id: w.item_id,
-                        delta: w.delta.unwrap_or_default(),
-                    })
-                    .map_err(|e| e.to_string()),
-            )
-        }
-        "response.function_call_arguments.done" => {
-            Some(
-                serde_json::from_str::<FunctionCallArgumentsEventWrapper>(data)
-                    .map(|w| TypedStreamEvent::FunctionCallArgumentsDone {
-                        output_index: w.output_index,
-                        item_id: w.item_id,
-                        call_id: w.call_id.unwrap_or_default(),
-                        name: w.name.unwrap_or_default(),
-                        arguments: w.arguments.unwrap_or_default(),
-                    })
-                    .map_err(|e| e.to_string()),
-            )
-        }
+        "response.created" | "response.in_progress" => Some(
+            serde_json::from_str::<CreateResponseResponse>(data)
+                .map(TypedStreamEvent::ResponseCreated)
+                .map_err(|e| e.to_string()),
+        ),
+        "response.completed" => Some(
+            serde_json::from_str::<CreateResponseResponse>(data)
+                .map(TypedStreamEvent::ResponseCompleted)
+                .map_err(|e| e.to_string()),
+        ),
+        "response.failed" | "response.incomplete" => Some(
+            serde_json::from_str::<CreateResponseResponse>(data)
+                .map(TypedStreamEvent::ResponseFailed)
+                .map_err(|e| e.to_string()),
+        ),
+        "response.output_item.added" => Some(
+            serde_json::from_str::<OutputItemEventWrapper>(data)
+                .map(|w| TypedStreamEvent::OutputItemAdded {
+                    output_index: w.output_index,
+                    item: w.item,
+                })
+                .map_err(|e| e.to_string()),
+        ),
+        "response.output_item.done" => Some(
+            serde_json::from_str::<OutputItemEventWrapper>(data)
+                .map(|w| TypedStreamEvent::OutputItemDone {
+                    output_index: w.output_index,
+                    item: w.item,
+                })
+                .map_err(|e| e.to_string()),
+        ),
+        "response.output_text.delta" => Some(
+            serde_json::from_str::<OutputTextEventWrapper>(data)
+                .map(|w| TypedStreamEvent::OutputTextDelta {
+                    output_index: w.output_index,
+                    delta: w.delta.unwrap_or_default(),
+                })
+                .map_err(|e| e.to_string()),
+        ),
+        "response.output_text.done" => Some(
+            serde_json::from_str::<OutputTextEventWrapper>(data)
+                .map(|w| TypedStreamEvent::OutputTextDone {
+                    output_index: w.output_index,
+                    text: w.text.unwrap_or_default(),
+                })
+                .map_err(|e| e.to_string()),
+        ),
+        "response.function_call_arguments.delta" => Some(
+            serde_json::from_str::<FunctionCallArgumentsEventWrapper>(data)
+                .map(|w| TypedStreamEvent::FunctionCallArgumentsDelta {
+                    output_index: w.output_index,
+                    item_id: w.item_id,
+                    delta: w.delta.unwrap_or_default(),
+                })
+                .map_err(|e| e.to_string()),
+        ),
+        "response.function_call_arguments.done" => Some(
+            serde_json::from_str::<FunctionCallArgumentsEventWrapper>(data)
+                .map(|w| TypedStreamEvent::FunctionCallArgumentsDone {
+                    output_index: w.output_index,
+                    item_id: w.item_id,
+                    call_id: w.call_id.unwrap_or_default(),
+                    name: w.name.unwrap_or_default(),
+                    arguments: w.arguments.unwrap_or_default(),
+                })
+                .map_err(|e| e.to_string()),
+        ),
         // Skip known but unneeded events
         "response.content_part.added" | "response.content_part.done" => None,
-        _ => {
-            Some(Ok(TypedStreamEvent::Unknown {
-                event_type: event_type.to_string(),
-            }))
-        }
+        _ => Some(Ok(TypedStreamEvent::Unknown {
+            event_type: event_type.to_string(),
+        })),
     }
 }

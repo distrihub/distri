@@ -17,13 +17,9 @@ use crate::AgentError;
 pub fn create_dynamic_tool(factory: &DynamicToolFactory) -> Result<Arc<dyn ExecutorContextTool>> {
     match factory.factory_type.as_str() {
         "http" => {
-            let config: HttpFactoryConfig =
-                serde_json::from_value(factory.config.clone()).map_err(|e| {
-                    anyhow::anyhow!(
-                        "Invalid http factory config for '{}': {}",
-                        factory.name,
-                        e
-                    )
+            let config: HttpFactoryConfig = serde_json::from_value(factory.config.clone())
+                .map_err(|e| {
+                    anyhow::anyhow!("Invalid http factory config for '{}': {}", factory.name, e)
                 })?;
             Ok(Arc::new(HttpFactoryTool {
                 name: factory.name.clone(),
@@ -43,19 +39,12 @@ pub fn create_dynamic_tool(factory: &DynamicToolFactory) -> Result<Arc<dyn Execu
 pub fn validate_dynamic_tool(factory: &DynamicToolFactory) -> Result<()> {
     match factory.factory_type.as_str() {
         "http" => {
-            let config: HttpFactoryConfig =
-                serde_json::from_value(factory.config.clone()).map_err(|e| {
-                    anyhow::anyhow!(
-                        "Invalid http factory config for '{}': {}",
-                        factory.name,
-                        e
-                    )
+            let config: HttpFactoryConfig = serde_json::from_value(factory.config.clone())
+                .map_err(|e| {
+                    anyhow::anyhow!("Invalid http factory config for '{}': {}", factory.name, e)
                 })?;
             if config.base_url.is_empty() {
-                anyhow::bail!(
-                    "Dynamic tool '{}': base_url cannot be empty",
-                    factory.name
-                );
+                anyhow::bail!("Dynamic tool '{}': base_url cannot be empty", factory.name);
             }
             Ok(())
         }

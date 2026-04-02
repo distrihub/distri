@@ -1196,10 +1196,7 @@ pub trait ConnectionTokenStore: Send + Sync + 'static {
         state_key: &str,
         state: serde_json::Value,
     ) -> anyhow::Result<()>;
-    async fn get_oauth_state(
-        &self,
-        state_key: &str,
-    ) -> anyhow::Result<Option<serde_json::Value>>;
+    async fn get_oauth_state(&self, state_key: &str) -> anyhow::Result<Option<serde_json::Value>>;
     async fn remove_oauth_state(&self, state_key: &str) -> anyhow::Result<()>;
 }
 

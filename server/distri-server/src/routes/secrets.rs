@@ -209,4 +209,3 @@ async fn delete_secret(
         Err(e) => HttpResponse::InternalServerError().json(json!({"error": e.to_string()})),
     }
 }
-

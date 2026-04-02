@@ -170,5 +170,4 @@ mod tests {
         let result = resolver.validate_provider(&provider).await;
         assert!(result.is_err());
     }
-
 }

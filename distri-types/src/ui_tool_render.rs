@@ -158,9 +158,10 @@ impl ToolUiRenderRegistry {
         };
 
         if let Some(renderer) = self.get_renderer(&tool_call.tool_name)
-            && renderer.supports_progress() {
-                return renderer.render_tool_progress(&context);
-            }
+            && renderer.supports_progress()
+        {
+            return renderer.render_tool_progress(&context);
+        }
 
         Ok(None) // No progress rendering available
     }

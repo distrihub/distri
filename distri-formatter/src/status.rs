@@ -10,7 +10,10 @@ use serde_json::Value;
 /// Used by all surfaces to show what the agent is currently doing.
 pub fn format_status_text(name: &str, input: &Value) -> String {
     let str_field = |key: &str| -> Option<String> {
-        input.get(key).and_then(|v| v.as_str()).map(|s| s.to_string())
+        input
+            .get(key)
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
     };
 
     let truncate = |s: &str, max: usize| -> String {

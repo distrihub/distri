@@ -72,7 +72,9 @@ max_iterations = 1
     let mut agent_config = AgentConfig::StandardAgent(def.clone());
     let defaults = Some(default_settings.clone());
     AgentOrchestrator::apply_agent_overrides(&mut agent_config, None, &defaults);
-    let AgentConfig::StandardAgent(loaded_def) = &agent_config else { panic!("expected StandardAgent") };
+    let AgentConfig::StandardAgent(loaded_def) = &agent_config else {
+        panic!("expected StandardAgent")
+    };
 
     let ms = loaded_def
         .model_settings()
@@ -121,7 +123,9 @@ temperature = 0.9
     let mut agent_config = AgentConfig::StandardAgent(def.clone());
     let defaults = Some(default_settings);
     AgentOrchestrator::apply_agent_overrides(&mut agent_config, None, &defaults);
-    let AgentConfig::StandardAgent(loaded_def) = &agent_config else { panic!("expected StandardAgent") };
+    let AgentConfig::StandardAgent(loaded_def) = &agent_config else {
+        panic!("expected StandardAgent")
+    };
     let ms = loaded_def
         .model_settings()
         .expect("model_settings should be set after merge");
@@ -175,10 +179,16 @@ async fn test_merge_custom_provider_workspace_overrides_agent_model() {
 
     // Workspace model should win because workspace uses a custom provider
     // and agent did not explicitly set a provider
-    assert_eq!(result.model, "gpt-5.4", "workspace model should take precedence when workspace uses custom provider");
+    assert_eq!(
+        result.model, "gpt-5.4",
+        "workspace model should take precedence when workspace uses custom provider"
+    );
     // Workspace provider should be used
     assert!(
-        matches!(result.inner.provider, distri_types::ModelProvider::OpenAICompatible { .. }),
+        matches!(
+            result.inner.provider,
+            distri_types::ModelProvider::OpenAICompatible { .. }
+        ),
         "workspace custom provider should be used"
     );
 }
@@ -214,7 +224,10 @@ async fn test_merge_agent_explicit_provider_overrides_workspace() {
     // Agent's model and provider should win since it explicitly set a provider
     assert_eq!(result.model, "claude-sonnet-4");
     assert!(
-        matches!(result.inner.provider, distri_types::ModelProvider::Anthropic { .. }),
+        matches!(
+            result.inner.provider,
+            distri_types::ModelProvider::Anthropic { .. }
+        ),
         "agent's explicit provider should be used"
     );
 }

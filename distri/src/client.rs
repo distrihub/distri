@@ -6,9 +6,8 @@ use distri_a2a::{
     MessageSendParams, Role,
 };
 use distri_types::{
-    ExternalTool, LLmContext, LlmDefinition, Message, MessageRole, TokenResponse, ToolCall,
-    Model, ModelProviderDefinition, ProviderType,
-    a2a_converters::MessageMetadata, prompt::PromptSection,
+    ExternalTool, LLmContext, LlmDefinition, Message, MessageRole, Model, ModelProviderDefinition,
+    ProviderType, TokenResponse, ToolCall, a2a_converters::MessageMetadata, prompt::PromptSection,
 };
 use distri_types::{StandardDefinition, ToolResponse, configuration::AgentConfigWithTools};
 use serde::{Deserialize, Serialize};
@@ -170,12 +169,19 @@ impl Distri {
 
     /// Register a dynamic tool factory that will be included in every outgoing
     /// message's `definition_overrides.dynamic_tools`.
-    pub fn register_dynamic_tool(&mut self, factory: distri_types::dynamic_tool::DynamicToolFactory) {
+    pub fn register_dynamic_tool(
+        &mut self,
+        factory: distri_types::dynamic_tool::DynamicToolFactory,
+    ) {
         self.stream.register_dynamic_tool(factory);
     }
 
     /// Convenience: register an HTTP dynamic tool factory.
-    pub fn register_http_tool(&mut self, name: &str, config: distri_types::http_request::HttpFactoryConfig) {
+    pub fn register_http_tool(
+        &mut self,
+        name: &str,
+        config: distri_types::http_request::HttpFactoryConfig,
+    ) {
         self.stream.register_http_tool(name, config);
     }
 
@@ -733,9 +739,7 @@ impl Distri {
     {
         let params = build_params(messages, false, None)
             .map_err(|e| StreamError::InvalidResponse(e.to_string()))?;
-        self.stream
-            .stream_agent(agent_id, params, on_event)
-            .await
+        self.stream.stream_agent(agent_id, params, on_event).await
     }
 
     /// Invoke an agent synchronously with additional options (dynamic_sections, dynamic_values, etc.).
@@ -809,9 +813,7 @@ impl Distri {
     {
         let params = build_params(messages, false, Some(&options))
             .map_err(|e| StreamError::InvalidResponse(e.to_string()))?;
-        self.stream
-            .stream_agent(agent_id, params, on_event)
-            .await
+        self.stream.stream_agent(agent_id, params, on_event).await
     }
 
     /// Call a tool directly via the server `/tools/call` endpoint.
@@ -1360,13 +1362,15 @@ fn build_params(
             .unwrap_or_default();
 
         if let Some(sections) = &opts.dynamic_sections
-            && let Ok(val) = serde_json::to_value(sections) {
-                meta.insert("dynamic_sections".to_string(), val);
-            }
+            && let Ok(val) = serde_json::to_value(sections)
+        {
+            meta.insert("dynamic_sections".to_string(), val);
+        }
         if let Some(values) = &opts.dynamic_values
-            && let Ok(val) = serde_json::to_value(values) {
-                meta.insert("dynamic_values".to_string(), val);
-            }
+            && let Ok(val) = serde_json::to_value(values)
+        {
+            meta.insert("dynamic_values".to_string(), val);
+        }
 
         if meta.is_empty() {
             None
@@ -1974,16 +1978,17 @@ impl Distri {
     ) -> Result<SkillResponse, ClientError> {
         // Try to find existing skill to update, but don't fail if list_skills is broken
         if let Ok(skills) = self.list_skills().await
-            && let Some(skill) = skills.iter().find(|s| s.name == request.name) {
-                let update = UpdateSkillRequest {
-                    name: Some(request.name.clone()),
-                    description: request.description.clone(),
-                    content: Some(request.content.clone()),
-                    tags: Some(request.tags.clone()),
-                    is_public: Some(request.is_public),
-                };
-                return self.update_skill(&skill.id, &update).await;
-            }
+            && let Some(skill) = skills.iter().find(|s| s.name == request.name)
+        {
+            let update = UpdateSkillRequest {
+                name: Some(request.name.clone()),
+                description: request.description.clone(),
+                content: Some(request.content.clone()),
+                tags: Some(request.tags.clone()),
+                is_public: Some(request.is_public),
+            };
+            return self.update_skill(&skill.id, &update).await;
+        }
         // Create new skill (also used as fallback when list_skills fails)
         self.create_skill(request).await
     }
@@ -2548,9 +2553,8 @@ impl Distri {
         } else {
             body
         };
-        serde_json::from_value(arr).map_err(|e| {
-            ClientError::InvalidResponse(format!("failed to parse threads: {}", e))
-        })
+        serde_json::from_value(arr)
+            .map_err(|e| ClientError::InvalidResponse(format!("failed to parse threads: {}", e)))
     }
 
     /// Fetch messages for a thread, optionally filtered to only user/assistant messages.

@@ -1281,7 +1281,8 @@ async fn get_client_with_context(
 
     if matches!(&ms.inner.provider, ModelProvider::Anthropic { .. }) {
         return Err(AgentError::InvalidConfiguration(
-            "Anthropic provider should use ClaudeLLMExecutor, not the OpenAI client path".to_string(),
+            "Anthropic provider should use ClaudeLLMExecutor, not the OpenAI client path"
+                .to_string(),
         ));
     }
 
@@ -1401,9 +1402,7 @@ pub fn create_llm_executor(
     additional_headers: Option<HashMap<String, String>>,
     label: Option<String>,
 ) -> Result<Box<dyn LLMExecutorTrait>, AgentError> {
-    let ms = llm_def
-        .ms()
-        .map_err(AgentError::InvalidConfiguration)?;
+    let ms = llm_def.ms().map_err(AgentError::InvalidConfiguration)?;
     let provider = &ms.inner.provider;
 
     match provider {
@@ -1421,8 +1420,7 @@ pub fn create_llm_executor(
         | ModelProvider::Gemini { .. }
         | ModelProvider::AzureAiFoundry { .. }
         | ModelProvider::AwsBedrock { .. }
-        | ModelProvider::GoogleVertex { .. }
-        => {
+        | ModelProvider::GoogleVertex { .. } => {
             let resolved = ms.inner.api_format.resolve(&ms.model);
             if resolved == distri_types::ResolvedOpenAiApiFormat::Responses {
                 Ok(Box::new(

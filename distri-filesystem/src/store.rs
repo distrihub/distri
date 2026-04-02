@@ -382,10 +382,7 @@ impl FileSystemStore {
                 updated_at: chrono::Utc::now(),
                 checksum: None,
                 stats: None,
-                preview: Some(format!(
-                    "Directory with {} entries",
-                    listing.entries.len()
-                )),
+                preview: Some(format!("Directory with {} entries", listing.entries.len())),
             });
         }
 

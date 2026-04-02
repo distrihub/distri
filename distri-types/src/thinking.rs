@@ -21,7 +21,8 @@ pub struct Phrases {
 pub fn phrases() -> &'static Phrases {
     use std::sync::OnceLock;
     static PHRASES: OnceLock<Phrases> = OnceLock::new();
-    PHRASES.get_or_init(|| serde_json::from_str(PHRASES_JSON).expect("invalid thinking_phrases.json"))
+    PHRASES
+        .get_or_init(|| serde_json::from_str(PHRASES_JSON).expect("invalid thinking_phrases.json"))
 }
 
 /// Pick a phrase from a category using an index (wraps around).

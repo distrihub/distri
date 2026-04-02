@@ -159,7 +159,10 @@ impl<S: WorkflowStateStore, E: StepExecutor, K: EventSink> WorkflowRunner<S, E, 
                 if resolve::evaluate_skip_condition(skip_expr, &workflow.context) {
                     workflow.steps[i].status = StepStatus::Skipped;
                     workflow.steps[i].completed_at = Some(chrono::Utc::now());
-                    workflow.add_note(&workflow.steps[i].id.clone(), "Skipped by skip_if condition");
+                    workflow.add_note(
+                        &workflow.steps[i].id.clone(),
+                        "Skipped by skip_if condition",
+                    );
                     skipped_any = true;
                 }
             }

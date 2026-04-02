@@ -264,7 +264,9 @@ fn register_grep(registry: &ExternalToolRegistry, agent_id: &str, workspace: &Pa
 async fn test_bash_echo() {
     let (registry, _dir) = setup();
     let call = make_call("Bash", json!({"command": "echo hello"}));
-    let result = registry.try_handle("test-agent", "Bash", &call, &make_event()).await;
+    let result = registry
+        .try_handle("test-agent", "Bash", &call, &make_event())
+        .await;
     let resp = result.unwrap().unwrap();
     let data = &resp.parts[0];
     let value = match data {
@@ -279,7 +281,9 @@ async fn test_bash_echo() {
 async fn test_bash_exit_code() {
     let (registry, _dir) = setup();
     let call = make_call("Bash", json!({"command": "exit 42"}));
-    let result = registry.try_handle("test-agent", "Bash", &call, &make_event()).await;
+    let result = registry
+        .try_handle("test-agent", "Bash", &call, &make_event())
+        .await;
     let resp = result.unwrap().unwrap();
     let value = match &resp.parts[0] {
         distri_types::Part::Data(v) => v,
@@ -293,11 +297,18 @@ async fn test_write_and_read() {
     let (registry, _dir) = setup();
 
     // Write a file
-    let call = make_call("Write", json!({
-        "file_path": "test.txt",
-        "content": "line one\nline two\nline three"
-    }));
-    let resp = registry.try_handle("test-agent", "Write", &call, &make_event()).await.unwrap().unwrap();
+    let call = make_call(
+        "Write",
+        json!({
+            "file_path": "test.txt",
+            "content": "line one\nline two\nline three"
+        }),
+    );
+    let resp = registry
+        .try_handle("test-agent", "Write", &call, &make_event())
+        .await
+        .unwrap()
+        .unwrap();
     let value = match &resp.parts[0] {
         distri_types::Part::Data(v) => v,
         _ => panic!("expected Data part"),
@@ -307,7 +318,11 @@ async fn test_write_and_read() {
 
     // Read it back
     let call = make_call("Read", json!({"file_path": "test.txt"}));
-    let resp = registry.try_handle("test-agent", "Read", &call, &make_event()).await.unwrap().unwrap();
+    let resp = registry
+        .try_handle("test-agent", "Read", &call, &make_event())
+        .await
+        .unwrap()
+        .unwrap();
     let value = match &resp.parts[0] {
         distri_types::Part::Data(v) => v,
         _ => panic!("expected Data part"),
@@ -324,11 +339,21 @@ async fn test_write_and_read() {
 async fn test_read_with_offset_and_limit() {
     let (registry, dir) = setup();
     // Create a file with 10 lines
-    let content: String = (1..=10).map(|i| format!("line {}", i)).collect::<Vec<_>>().join("\n");
+    let content: String = (1..=10)
+        .map(|i| format!("line {}", i))
+        .collect::<Vec<_>>()
+        .join("\n");
     std::fs::write(dir.path().join("big.txt"), &content).unwrap();
 
-    let call = make_call("Read", json!({"file_path": "big.txt", "offset": 2, "limit": 3}));
-    let resp = registry.try_handle("test-agent", "Read", &call, &make_event()).await.unwrap().unwrap();
+    let call = make_call(
+        "Read",
+        json!({"file_path": "big.txt", "offset": 2, "limit": 3}),
+    );
+    let resp = registry
+        .try_handle("test-agent", "Read", &call, &make_event())
+        .await
+        .unwrap()
+        .unwrap();
     let value = match &resp.parts[0] {
         distri_types::Part::Data(v) => v,
         _ => panic!("expected Data part"),
@@ -345,11 +370,18 @@ async fn test_read_with_offset_and_limit() {
 #[tokio::test]
 async fn test_write_creates_parent_dirs() {
     let (registry, _dir) = setup();
-    let call = make_call("Write", json!({
-        "file_path": "deep/nested/dir/file.txt",
-        "content": "hello"
-    }));
-    let resp = registry.try_handle("test-agent", "Write", &call, &make_event()).await.unwrap().unwrap();
+    let call = make_call(
+        "Write",
+        json!({
+            "file_path": "deep/nested/dir/file.txt",
+            "content": "hello"
+        }),
+    );
+    let resp = registry
+        .try_handle("test-agent", "Write", &call, &make_event())
+        .await
+        .unwrap()
+        .unwrap();
     let value = match &resp.parts[0] {
         distri_types::Part::Data(v) => v,
         _ => panic!("expected Data part"),
@@ -362,12 +394,19 @@ async fn test_edit_single_replacement() {
     let (registry, dir) = setup();
     std::fs::write(dir.path().join("edit.txt"), "hello world").unwrap();
 
-    let call = make_call("Edit", json!({
-        "file_path": "edit.txt",
-        "old_string": "world",
-        "new_string": "rust"
-    }));
-    let resp = registry.try_handle("test-agent", "Edit", &call, &make_event()).await.unwrap().unwrap();
+    let call = make_call(
+        "Edit",
+        json!({
+            "file_path": "edit.txt",
+            "old_string": "world",
+            "new_string": "rust"
+        }),
+    );
+    let resp = registry
+        .try_handle("test-agent", "Edit", &call, &make_event())
+        .await
+        .unwrap()
+        .unwrap();
     let value = match &resp.parts[0] {
         distri_types::Part::Data(v) => v,
         _ => panic!("expected Data part"),
@@ -383,13 +422,20 @@ async fn test_edit_replace_all() {
     let (registry, dir) = setup();
     std::fs::write(dir.path().join("multi.txt"), "foo bar foo baz foo").unwrap();
 
-    let call = make_call("Edit", json!({
-        "file_path": "multi.txt",
-        "old_string": "foo",
-        "new_string": "qux",
-        "replace_all": true
-    }));
-    let resp = registry.try_handle("test-agent", "Edit", &call, &make_event()).await.unwrap().unwrap();
+    let call = make_call(
+        "Edit",
+        json!({
+            "file_path": "multi.txt",
+            "old_string": "foo",
+            "new_string": "qux",
+            "replace_all": true
+        }),
+    );
+    let resp = registry
+        .try_handle("test-agent", "Edit", &call, &make_event())
+        .await
+        .unwrap()
+        .unwrap();
     let value = match &resp.parts[0] {
         distri_types::Part::Data(v) => v,
         _ => panic!("expected Data part"),
@@ -405,12 +451,18 @@ async fn test_edit_fails_on_ambiguous_match() {
     let (registry, dir) = setup();
     std::fs::write(dir.path().join("ambig.txt"), "aaa aaa aaa").unwrap();
 
-    let call = make_call("Edit", json!({
-        "file_path": "ambig.txt",
-        "old_string": "aaa",
-        "new_string": "bbb"
-    }));
-    let result = registry.try_handle("test-agent", "Edit", &call, &make_event()).await.unwrap();
+    let call = make_call(
+        "Edit",
+        json!({
+            "file_path": "ambig.txt",
+            "old_string": "aaa",
+            "new_string": "bbb"
+        }),
+    );
+    let result = registry
+        .try_handle("test-agent", "Edit", &call, &make_event())
+        .await
+        .unwrap();
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("found 3 times"));
 }
@@ -420,12 +472,18 @@ async fn test_edit_fails_on_not_found() {
     let (registry, dir) = setup();
     std::fs::write(dir.path().join("nf.txt"), "hello").unwrap();
 
-    let call = make_call("Edit", json!({
-        "file_path": "nf.txt",
-        "old_string": "nonexistent",
-        "new_string": "x"
-    }));
-    let result = registry.try_handle("test-agent", "Edit", &call, &make_event()).await.unwrap();
+    let call = make_call(
+        "Edit",
+        json!({
+            "file_path": "nf.txt",
+            "old_string": "nonexistent",
+            "new_string": "x"
+        }),
+    );
+    let result = registry
+        .try_handle("test-agent", "Edit", &call, &make_event())
+        .await
+        .unwrap();
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("not found"));
 }
@@ -438,7 +496,11 @@ async fn test_glob_finds_files() {
     std::fs::write(dir.path().join("c.txt"), "").unwrap();
 
     let call = make_call("Glob", json!({"pattern": "*.rs"}));
-    let resp = registry.try_handle("test-agent", "Glob", &call, &make_event()).await.unwrap().unwrap();
+    let resp = registry
+        .try_handle("test-agent", "Glob", &call, &make_event())
+        .await
+        .unwrap()
+        .unwrap();
     let value = match &resp.parts[0] {
         distri_types::Part::Data(v) => v,
         _ => panic!("expected Data part"),
@@ -459,7 +521,11 @@ async fn test_glob_nested() {
     std::fs::write(dir.path().join("src/utils/helper.rs"), "").unwrap();
 
     let call = make_call("Glob", json!({"pattern": "**/*.rs"}));
-    let resp = registry.try_handle("test-agent", "Glob", &call, &make_event()).await.unwrap().unwrap();
+    let resp = registry
+        .try_handle("test-agent", "Glob", &call, &make_event())
+        .await
+        .unwrap()
+        .unwrap();
     let value = match &resp.parts[0] {
         distri_types::Part::Data(v) => v,
         _ => panic!("expected Data part"),
@@ -470,11 +536,19 @@ async fn test_glob_nested() {
 #[tokio::test]
 async fn test_grep_finds_content() {
     let (registry, dir) = setup();
-    std::fs::write(dir.path().join("search.txt"), "hello world\nfoo bar\nhello again").unwrap();
+    std::fs::write(
+        dir.path().join("search.txt"),
+        "hello world\nfoo bar\nhello again",
+    )
+    .unwrap();
     std::fs::write(dir.path().join("other.txt"), "no match here").unwrap();
 
     let call = make_call("Grep", json!({"pattern": "hello"}));
-    let resp = registry.try_handle("test-agent", "Grep", &call, &make_event()).await.unwrap().unwrap();
+    let resp = registry
+        .try_handle("test-agent", "Grep", &call, &make_event())
+        .await
+        .unwrap()
+        .unwrap();
     let value = match &resp.parts[0] {
         distri_types::Part::Data(v) => v,
         _ => panic!("expected Data part"),
@@ -490,7 +564,11 @@ async fn test_grep_no_matches() {
     std::fs::write(dir.path().join("empty.txt"), "nothing here").unwrap();
 
     let call = make_call("Grep", json!({"pattern": "zzzzzzz"}));
-    let resp = registry.try_handle("test-agent", "Grep", &call, &make_event()).await.unwrap().unwrap();
+    let resp = registry
+        .try_handle("test-agent", "Grep", &call, &make_event())
+        .await
+        .unwrap()
+        .unwrap();
     let value = match &resp.parts[0] {
         distri_types::Part::Data(v) => v,
         _ => panic!("expected Data part"),
@@ -524,25 +602,37 @@ mod formatter_tests {
 
     #[test]
     fn test_format_read_with_offset() {
-        let result = format_tool_call("Read", &json!({"file_path": "big.rs", "offset": 99, "limit": 50}));
+        let result = format_tool_call(
+            "Read",
+            &json!({"file_path": "big.rs", "offset": 99, "limit": 50}),
+        );
         assert_eq!(result, "Read(\"big.rs\", lines 100-149)");
     }
 
     #[test]
     fn test_format_write() {
-        let result = format_tool_call("Write", &json!({"file_path": "out.txt", "content": "a\nb\nc\n"}));
+        let result = format_tool_call(
+            "Write",
+            &json!({"file_path": "out.txt", "content": "a\nb\nc\n"}),
+        );
         assert_eq!(result, "Write(\"out.txt\", 3 lines)");
     }
 
     #[test]
     fn test_format_edit() {
-        let result = format_tool_call("Edit", &json!({"file_path": "f.rs", "old_string": "a", "new_string": "b"}));
+        let result = format_tool_call(
+            "Edit",
+            &json!({"file_path": "f.rs", "old_string": "a", "new_string": "b"}),
+        );
         assert_eq!(result, "Edit(\"f.rs\")");
     }
 
     #[test]
     fn test_format_edit_replace_all() {
-        let result = format_tool_call("Edit", &json!({"file_path": "f.rs", "old_string": "a", "new_string": "b", "replace_all": true}));
+        let result = format_tool_call(
+            "Edit",
+            &json!({"file_path": "f.rs", "old_string": "a", "new_string": "b", "replace_all": true}),
+        );
         assert_eq!(result, "Edit(\"f.rs\", replace_all)");
     }
 
@@ -554,7 +644,10 @@ mod formatter_tests {
 
     #[test]
     fn test_format_glob_with_path() {
-        let result = format_tool_call("Glob", &json!({"pattern": "*.ts", "path": "src/components"}));
+        let result = format_tool_call(
+            "Glob",
+            &json!({"pattern": "*.ts", "path": "src/components"}),
+        );
         assert_eq!(result, "Glob(\"*.ts\", path: \"src/components\")");
     }
 

@@ -355,7 +355,10 @@ pub async fn execute_tool_calls_with_timeout(
             let (tool, tool_call) = tuple;
 
             // Dry-run mode: simulate external and unsafe tools via LLM
-            if context.dry_run && (tool.is_external() || !crate::tools::simulator::is_safe_tool(&tool_call.tool_name)) {
+            if context.dry_run
+                && (tool.is_external()
+                    || !crate::tools::simulator::is_safe_tool(&tool_call.tool_name))
+            {
                 context
                     .emit(AgentEventType::ToolExecutionStart {
                         step_id: step_id.clone(),

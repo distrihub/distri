@@ -68,8 +68,7 @@ pub async fn print_thread_history(client: &Distri, thread_id: &str) {
                 match item {
                     distri_types::TaskMessage::Event(task_event) => {
                         let agent_event = distri_types::events::AgentEvent::from_task_event(
-                            task_event,
-                            thread_id,
+                            task_event, thread_id,
                         );
                         printer.handle_event(&agent_event).await;
                     }
@@ -98,10 +97,7 @@ pub async fn print_thread_history(client: &Distri, thread_id: &str) {
                     }
                 }
             }
-            println!(
-                "{}── End of history ──{}",
-                COLOR_GRAY, COLOR_RESET
-            );
+            println!("{}── End of history ──{}", COLOR_GRAY, COLOR_RESET);
             println!();
         }
         Err(err) => {

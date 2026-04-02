@@ -222,8 +222,7 @@ impl WorkflowDefinition {
             // Check if all dependencies are done or skipped
             let deps_met = step.depends_on.iter().all(|dep_id| {
                 self.steps.iter().any(|s| {
-                    &s.id == dep_id
-                        && matches!(s.status, StepStatus::Done | StepStatus::Skipped)
+                    &s.id == dep_id && matches!(s.status, StepStatus::Done | StepStatus::Skipped)
                 })
             });
 

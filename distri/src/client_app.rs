@@ -84,7 +84,11 @@ impl DistriClientApp {
     /// Add tool definitions to be injected into requests as external tools.
     pub fn add_tool_definitions(&mut self, defs: Vec<ToolDefinition>) {
         for def in defs {
-            if !self.local_tool_definitions.iter().any(|d| d.name == def.name) {
+            if !self
+                .local_tool_definitions
+                .iter()
+                .any(|d| d.name == def.name)
+            {
                 self.local_tool_definitions.push(def);
             }
         }
@@ -109,9 +113,7 @@ impl DistriClientApp {
                 tool
             })
             .collect();
-        let meta = params
-            .metadata
-            .get_or_insert_with(|| serde_json::json!({}));
+        let meta = params.metadata.get_or_insert_with(|| serde_json::json!({}));
         meta["external_tools"] = serde_json::Value::Array(external_tools);
     }
 

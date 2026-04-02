@@ -23,10 +23,10 @@ mod builtin;
 pub mod dynamic_factory;
 pub mod inject_env;
 pub mod request;
-pub mod skill_script;
-pub mod simulator;
-pub mod tool_search;
 pub mod resolve;
+pub mod simulator;
+pub mod skill_script;
+pub mod tool_search;
 pub use builtin::{
     get_builtin_tools, AgentTool, ConsoleLogTool, DistriExecuteCodeTool, FinalTool,
     TransferToAgentTool,
@@ -270,7 +270,11 @@ pub async fn resolve_tools_config(
                 all_tools.push(Arc::new(DynExecutorTool::new(tool)));
             }
             Err(e) => {
-                tracing::warn!("Failed to create dynamic tool '{}': {}", factory_def.name, e)
+                tracing::warn!(
+                    "Failed to create dynamic tool '{}': {}",
+                    factory_def.name,
+                    e
+                )
             }
         }
     }
@@ -551,9 +555,7 @@ mod tests {
                     external_names.insert(tool.get_name());
                     tools.push(tool.clone());
                 }
-            } else if let Some(tool) =
-                external_tools.iter().find(|t| t.get_name() == *tool_name)
-            {
+            } else if let Some(tool) = external_tools.iter().find(|t| t.get_name() == *tool_name) {
                 external_names.insert(tool.get_name());
                 tools.push(tool.clone());
             }
@@ -585,8 +587,16 @@ mod tests {
         )
         .await;
 
-        let zippy: Vec<_> = tools.iter().filter(|t| t.get_name() == "zippy_request").collect();
-        assert_eq!(zippy.len(), 1, "expected exactly 1 zippy_request, got {}", zippy.len());
+        let zippy: Vec<_> = tools
+            .iter()
+            .filter(|t| t.get_name() == "zippy_request")
+            .collect();
+        assert_eq!(
+            zippy.len(),
+            1,
+            "expected exactly 1 zippy_request, got {}",
+            zippy.len()
+        );
         assert_eq!(
             zippy[0].get_description(),
             "external:zippy_request",
@@ -603,7 +613,10 @@ mod tests {
         )
         .await;
 
-        let zippy: Vec<_> = tools.iter().filter(|t| t.get_name() == "zippy_request").collect();
+        let zippy: Vec<_> = tools
+            .iter()
+            .filter(|t| t.get_name() == "zippy_request")
+            .collect();
         assert_eq!(zippy.len(), 1, "factory tool should be present");
     }
 
@@ -625,12 +638,18 @@ mod tests {
         .await;
 
         // zippy_request → external wins
-        let zippy: Vec<_> = tools.iter().filter(|t| t.get_name() == "zippy_request").collect();
+        let zippy: Vec<_> = tools
+            .iter()
+            .filter(|t| t.get_name() == "zippy_request")
+            .collect();
         assert_eq!(zippy.len(), 1);
         assert_eq!(zippy[0].get_description(), "external:zippy_request");
 
         // other_factory → factory survives (no external collision)
-        let other: Vec<_> = tools.iter().filter(|t| t.get_name() == "other_factory").collect();
+        let other: Vec<_> = tools
+            .iter()
+            .filter(|t| t.get_name() == "other_factory")
+            .collect();
         assert_eq!(other.len(), 1, "non-colliding factory tool should remain");
     }
 }

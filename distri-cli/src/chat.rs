@@ -1,12 +1,12 @@
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::Result;
 use crossterm::terminal;
 use distri::{
-    AgentStreamClient, BuildHttpClient, Distri, DistriClientApp, DistriConfig, print_stream_verbose,
+    print_stream_verbose, AgentStreamClient, BuildHttpClient, Distri, DistriClientApp, DistriConfig,
 };
 use distri_types::configuration::AgentConfig;
 use inquire::{Select, Text};
@@ -548,7 +548,9 @@ pub async fn run_interactive_chat(
                         }
                     }
                 }
-                if let Err(e) = validate_external_tools(&app.registry(), &current_agent, &ext_names, verbose) {
+                if let Err(e) =
+                    validate_external_tools(&app.registry(), &current_agent, &ext_names, verbose)
+                {
                     eprintln!("{}", e);
                     continue;
                 }

@@ -26,18 +26,17 @@ pub use client::{
     LoginUrlResponse, NewPromptTemplateRequest, NewSecretRequest, PluginResponse,
     PluginsListResponse, PromptTemplateResponse, ProviderInfo, SecretEntry, SkillListItemResponse,
     SkillResponse, SyncPromptTemplatesResponse, TaskNamespaceResponse, ThreadSummary,
-    TtsModelsResponse,
-    TtsSpeechRequest, TtsSpeechResponse, UpdatePluginRequest, UpdateSkillRequest,
-    ValidatePluginResponse, WorkspaceResponse,
+    TtsModelsResponse, TtsSpeechRequest, TtsSpeechResponse, UpdatePluginRequest,
+    UpdateSkillRequest, ValidatePluginResponse, WorkspaceResponse,
 };
 pub use client_app::{AppError, DistriClientApp, ToolListItem};
-pub use client_stream::{parse_sse_data, AgentStreamClient, StreamError, StreamItem};
+pub use client_stream::{AgentStreamClient, StreamError, StreamItem, parse_sse_data};
 pub use config::{BuildHttpClient, DistriConfig};
 pub use hooks_runtime::*;
 
 pub use distri_types::{
-    HookContext, HookKind, HookMutation, InlineHookRequest, InlineHookResponse, TokenResponse,
-    Model, ModelProviderDefinition, ProviderKeyDefinition, ProviderType, TtsVoiceInfo,
+    HookContext, HookKind, HookMutation, InlineHookRequest, InlineHookResponse, Model,
+    ModelProviderDefinition, ProviderKeyDefinition, ProviderType, TokenResponse, TtsVoiceInfo,
 };
 pub use local_tools::register_local_filesystem_tools;
 pub use printer::{EventPrinter, print_stream, print_stream_verbose};

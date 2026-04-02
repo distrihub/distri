@@ -324,10 +324,11 @@ async fn main() -> Result<()> {
 
     let cli = parse_cli_with_default_serve();
 
-    let command = cli
-        .command
-        .clone()
-        .unwrap_or(Commands::Tui { agent: None, resume: None, overrides: None });
+    let command = cli.command.clone().unwrap_or(Commands::Tui {
+        agent: None,
+        resume: None,
+        overrides: None,
+    });
 
     if let Commands::Serve {
         host,
@@ -356,7 +357,11 @@ async fn main() -> Result<()> {
         DistriClientApp::from_config(config.clone()).with_workspace_path(workspace.clone());
 
     match command {
-        Commands::Tui { agent, resume, overrides } => {
+        Commands::Tui {
+            agent,
+            resume,
+            overrides,
+        } => {
             let extra_tools = parse_cli_overrides(overrides.as_deref());
             let agent_name = agent.unwrap_or_else(|| "distri".to_string());
             run_interactive_chat(
@@ -390,7 +395,9 @@ async fn main() -> Result<()> {
                     stream_agent_id = uuid.to_string();
                 }
                 // Extract external tool names from agent definition
-                if let distri_types::configuration::AgentConfig::StandardAgent(def) = &agent_cfg.agent {
+                if let distri_types::configuration::AgentConfig::StandardAgent(def) =
+                    &agent_cfg.agent
+                {
                     if let Some(tools) = &def.tools {
                         if let Some(ext) = &tools.external {
                             for name in ext {
@@ -404,7 +411,12 @@ async fn main() -> Result<()> {
             }
             let tool_defs = register_all(&app.registry(), &agent_name, &workspace);
             app.add_tool_definitions(tool_defs);
-            validate_external_tools(&app.registry(), &agent_name, &external_tool_names, cli.verbose)?;
+            validate_external_tools(
+                &app.registry(),
+                &agent_name,
+                &external_tool_names,
+                cli.verbose,
+            )?;
             // Fetch connections to inject into agent context
             let distri_client = Distri::from_config(config.clone());
             let connections_context = build_connections_context(&distri_client).await;
@@ -419,11 +431,10 @@ async fn main() -> Result<()> {
 
             // Merge --context into metadata.env_vars for the server
             if let Some(ctx_json) = context {
-                let ctx: RunContext = serde_json::from_str(&ctx_json)
-                    .unwrap_or_else(|e| {
-                        eprintln!("Warning: failed to parse --context: {}", e);
-                        RunContext::default()
-                    });
+                let ctx: RunContext = serde_json::from_str(&ctx_json).unwrap_or_else(|e| {
+                    eprintln!("Warning: failed to parse --context: {}", e);
+                    RunContext::default()
+                });
 
                 let mut all_vars = std::collections::HashMap::<String, String>::new();
                 all_vars.extend(ctx.envs);

@@ -9,8 +9,8 @@ use std::collections::HashSet;
 use thiserror::Error;
 use uuid::Uuid;
 
-use crate::{ExternalToolRegistry, HookRegistry};
 use crate::config::{self, BuildHttpClient};
+use crate::{ExternalToolRegistry, HookRegistry};
 
 #[derive(Debug, Error)]
 pub enum StreamError {
@@ -98,7 +98,11 @@ impl AgentStreamClient {
     }
 
     pub fn register_dynamic_tool(&mut self, factory: DynamicToolFactory) {
-        if let Some(pos) = self.registered_tools.iter().position(|t| t.name == factory.name) {
+        if let Some(pos) = self
+            .registered_tools
+            .iter()
+            .position(|t| t.name == factory.name)
+        {
             self.registered_tools[pos] = factory;
         } else {
             self.registered_tools.push(factory);
@@ -137,9 +141,10 @@ impl AgentStreamClient {
             }
         }
 
-        meta.as_object_mut()
-            .unwrap()
-            .insert("definition_overrides".to_string(), serde_json::to_value(&overrides).unwrap());
+        meta.as_object_mut().unwrap().insert(
+            "definition_overrides".to_string(),
+            serde_json::to_value(&overrides).unwrap(),
+        );
 
         params
     }
@@ -221,9 +226,10 @@ impl AgentStreamClient {
                 if let Some(ref agent_event) = item.agent_event {
                     // Fire-and-forget hook execution
                     if let AgentEventType::InlineHookRequested { request } = &agent_event.event
-                        && let Some(registry) = &self.hook_registry {
-                            registry.try_handle(agent_id, request).await;
-                        }
+                        && let Some(registry) = &self.hook_registry
+                    {
+                        registry.try_handle(agent_id, request).await;
+                    }
 
                     // The server includes _agent_id (agent name) in event metadata.
                     // Use it for tool registry lookups. Fall back to stream agent_id.

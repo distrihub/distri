@@ -59,7 +59,10 @@ async fn parse_coder_agent() {
         "coder agent should not have apply_diff as builtin"
     );
     // External tools should list specific filesystem tool names
-    let external = tools.external.as_ref().expect("coder should have external tools");
+    let external = tools
+        .external
+        .as_ref()
+        .expect("coder should have external tools");
     assert!(
         external.contains(&"fs_read_file".to_string()),
         "coder agent should list fs_read_file as external tool"

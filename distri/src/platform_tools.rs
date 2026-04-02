@@ -8,10 +8,10 @@
 
 use std::collections::HashMap;
 
+use distri_types::DistriConfig;
 use distri_types::configuration::DefinitionOverrides;
 use distri_types::dynamic_tool::DynamicToolFactory;
 use distri_types::http_request::HttpFactoryConfig;
-use distri_types::DistriConfig;
 
 /// Build a `DynamicToolFactory` named `distri_request` from the client's
 /// connection config.  The factory is an HTTP tool whose base_url and auth

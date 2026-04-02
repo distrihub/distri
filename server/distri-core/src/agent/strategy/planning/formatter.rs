@@ -144,7 +144,6 @@ impl<'a> MessageFormatter<'a> {
             render_prompt(context, user_template_to_use, &template_data).await?;
         self.log_prompt_if_needed(&rendered_prompt);
 
-
         let mut formatted = vec![crate::types::Message::system(rendered_prompt, None)];
 
         // Build the current user message with any dynamic additions (step limit, todos, etc.).
@@ -669,11 +668,7 @@ async fn render_prompt(
                                 .register_partial(tpl.name.clone(), tpl.template.clone())
                                 .await
                             {
-                                tracing::debug!(
-                                    "Failed to register partial '{}': {}",
-                                    tpl.name,
-                                    e
-                                );
+                                tracing::debug!("Failed to register partial '{}': {}", tpl.name, e);
                             }
                         }
                     }
@@ -1058,10 +1053,7 @@ mod tests {
 
         // Simulate what the formatter does
         let mut dynamic_values = std::collections::HashMap::new();
-        dynamic_values.insert(
-            "tools".to_string(),
-            serde_json::Value::Object(map),
-        );
+        dynamic_values.insert("tools".to_string(), serde_json::Value::Object(map));
 
         // Render with handlebars strict mode
         let mut hbs = handlebars::Handlebars::new();

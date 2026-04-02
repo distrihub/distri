@@ -519,8 +519,7 @@ async fn read_file_content(filesystem: &Arc<FileSystem>, path: &str) -> Result<S
         .read_binary(path)
         .await
         .with_context(|| format!("Failed to read workspace file {}", path))?;
-    String::from_utf8(bytes)
-        .with_context(|| format!("Failed to decode workspace file {}", path))
+    String::from_utf8(bytes).with_context(|| format!("Failed to decode workspace file {}", path))
 }
 
 fn is_not_found_error(err: &anyhow::Error) -> bool {

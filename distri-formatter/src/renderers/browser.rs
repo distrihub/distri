@@ -1,5 +1,5 @@
-use crate::colors::{COLOR_CYAN, COLOR_GRAY, COLOR_RESET};
 use super::RESULT_PREFIX;
+use crate::colors::{COLOR_CYAN, COLOR_GRAY, COLOR_RESET};
 use distri_types::{Part, ToolResponse};
 
 /// Render browsr_scrape / browsr_crawl results.
@@ -9,7 +9,10 @@ pub fn render_scrape(result: &ToolResponse) {
             Part::Data(value) => {
                 if let Some(obj) = value.as_object() {
                     if let Some(url) = obj.get("url").and_then(|u| u.as_str()) {
-                        println!("{}{}scraped: {}{}", COLOR_CYAN, RESULT_PREFIX, url, COLOR_RESET);
+                        println!(
+                            "{}{}scraped: {}{}",
+                            COLOR_CYAN, RESULT_PREFIX, url, COLOR_RESET
+                        );
                     }
                     if let Some(markdown) = obj.get("markdown").and_then(|m| m.as_str()) {
                         let total = markdown.lines().filter(|l| !l.trim().is_empty()).count();
@@ -47,10 +50,7 @@ pub fn render_browser_step(result: &ToolResponse) {
                         println!("{}{}url: {}{}", COLOR_GRAY, RESULT_PREFIX, url, COLOR_RESET);
                     }
                     if let Some(status) = obj.get("status").and_then(|s| s.as_str()) {
-                        println!(
-                            "{}{}{}{}",
-                            COLOR_GRAY, RESULT_PREFIX, status, COLOR_RESET
-                        );
+                        println!("{}{}{}{}", COLOR_GRAY, RESULT_PREFIX, status, COLOR_RESET);
                     }
                 }
             }

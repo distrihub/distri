@@ -1,5 +1,5 @@
-use crate::colors::{COLOR_GRAY, COLOR_GREEN, COLOR_RED, COLOR_RESET};
 use super::RESULT_PREFIX;
+use crate::colors::{COLOR_GRAY, COLOR_GREEN, COLOR_RED, COLOR_RESET};
 use distri_types::{Part, ToolResponse};
 
 /// Render shell tool results (start_shell, execute_shell, stop_shell).
@@ -8,7 +8,10 @@ pub fn render_shell(result: &ToolResponse) {
 
     match name {
         "start_shell" => {
-            println!("{}{}Shell started{}", COLOR_GREEN, RESULT_PREFIX, COLOR_RESET);
+            println!(
+                "{}{}Shell started{}",
+                COLOR_GREEN, RESULT_PREFIX, COLOR_RESET
+            );
         }
         "stop_shell" => {
             println!(
@@ -26,10 +29,7 @@ pub fn render_shell(result: &ToolResponse) {
                             println!("{}  {}{}", COLOR_GRAY, line, COLOR_RESET);
                         }
                         if total > 5 {
-                            println!(
-                                "{}  … ({} lines total){}",
-                                COLOR_GRAY, total, COLOR_RESET
-                            );
+                            println!("{}  … ({} lines total){}", COLOR_GRAY, total, COLOR_RESET);
                         }
                     }
                     Part::Data(value) => {
@@ -39,13 +39,14 @@ pub fn render_shell(result: &ToolResponse) {
                                 println!("{}{}exit: {}{}", color, RESULT_PREFIX, code, COLOR_RESET);
                             }
                             if let Some(stderr) = obj.get("stderr").and_then(|s| s.as_str())
-                                && !stderr.trim().is_empty() {
-                                    let first = stderr.lines().next().unwrap_or("");
-                                    println!(
-                                        "{}{}stderr: {}{}",
-                                        COLOR_RED, RESULT_PREFIX, first, COLOR_RESET
-                                    );
-                                }
+                                && !stderr.trim().is_empty()
+                            {
+                                let first = stderr.lines().next().unwrap_or("");
+                                println!(
+                                    "{}{}stderr: {}{}",
+                                    COLOR_RED, RESULT_PREFIX, first, COLOR_RESET
+                                );
+                            }
                         }
                     }
                     _ => {}

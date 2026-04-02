@@ -24,7 +24,10 @@ async fn distri_runner_has_external_tools_and_no_shell() {
         sub_agents
     );
 
-    let tools = def.tools.as_ref().expect("distri_runner must have tools config");
+    let tools = def
+        .tools
+        .as_ref()
+        .expect("distri_runner must have tools config");
 
     // Must not have shell builtins
     for forbidden in &["start_shell", "execute_shell", "stop_shell"] {
@@ -36,7 +39,10 @@ async fn distri_runner_has_external_tools_and_no_shell() {
     }
 
     // Must have external tools including fs and execute_command
-    let external = tools.external.as_ref().expect("distri_runner must have external tools");
+    let external = tools
+        .external
+        .as_ref()
+        .expect("distri_runner must have external tools");
     for required in &["fs_write_file", "fs_read_file", "execute_command"] {
         assert!(
             external.contains(&required.to_string()),

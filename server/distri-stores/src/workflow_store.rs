@@ -36,13 +36,15 @@ impl WorkflowStore for InMemoryWorkflowStore {
             .values()
             .filter(|w| {
                 if let Some(is_pub) = filter.is_public
-                    && w.is_public != is_pub {
-                        return false;
-                    }
+                    && w.is_public != is_pub
+                {
+                    return false;
+                }
                 if let Some(is_tpl) = filter.is_template
-                    && w.is_template != is_tpl {
-                        return false;
-                    }
+                    && w.is_template != is_tpl
+                {
+                    return false;
+                }
                 if let Some(ref search) = filter.search {
                     let s = search.to_lowercase();
                     if !w.name.to_lowercase().contains(&s)
@@ -56,9 +58,10 @@ impl WorkflowStore for InMemoryWorkflowStore {
                     }
                 }
                 if let Some(ref tags) = filter.tags
-                    && !tags.iter().any(|t| w.tags.contains(t)) {
-                        return false;
-                    }
+                    && !tags.iter().any(|t| w.tags.contains(t))
+                {
+                    return false;
+                }
                 true
             })
             .cloned()

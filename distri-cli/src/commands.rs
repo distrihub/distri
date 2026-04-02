@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use distri::{CreateSkillRequest, CreateSkillScriptRequest, Distri};
 use tokio::fs;
 
-use crate::config::{set_client_config_value};
+use crate::config::set_client_config_value;
 use crate::{
     ConfigCommands, ConnectionsCommands, PromptsCommands, SecretsCommands, SkillsCommands,
     WorkflowCommands, COLOR_BRIGHT_GREEN, COLOR_GRAY, COLOR_RESET,
@@ -387,7 +387,10 @@ fn extract_scripts_from_markdown(body: &str) -> Vec<CreateSkillScriptRequest> {
     scripts
 }
 
-pub async fn handle_connections_command(client: &Distri, command: ConnectionsCommands) -> Result<()> {
+pub async fn handle_connections_command(
+    client: &Distri,
+    command: ConnectionsCommands,
+) -> Result<()> {
     match command {
         ConnectionsCommands::List => {
             let connections = client.list_connections().await?;
@@ -501,7 +504,10 @@ pub async fn push_file(client: &Distri, path: &Path) -> Result<()> {
     Ok(())
 }
 
-pub async fn handle_workflow_command(client: &distri::Distri, command: WorkflowCommands) -> Result<()> {
+pub async fn handle_workflow_command(
+    client: &distri::Distri,
+    command: WorkflowCommands,
+) -> Result<()> {
     use distri::workflow::*;
 
     match command {
@@ -553,10 +559,7 @@ pub async fn handle_workflow_command(client: &distri::Distri, command: WorkflowC
                 workflow = workflow
                     .apply_entry_point(entry_id)
                     .map_err(|e| anyhow::anyhow!(e))?;
-                println!(
-                    "  Using entry point: {}",
-                    entry_id
-                );
+                println!("  Using entry point: {}", entry_id);
             }
 
             // Apply input if provided

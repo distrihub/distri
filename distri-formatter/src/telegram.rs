@@ -4,8 +4,7 @@
 use distri_types::{AgentEvent, AgentEventType, ToolResponse};
 
 use crate::state::{
-    is_probe_call, ChatState, MessageState, StepState, ToolCallState,
-    ToolCallStatus,
+    ChatState, MessageState, StepState, ToolCallState, ToolCallStatus, is_probe_call,
 };
 use crate::status::format_status_text;
 use crate::{Formatter, MediaAttachment, ParseMode, RendererOutput, SurfaceRenderer};
@@ -107,9 +106,7 @@ impl SurfaceRenderer for TelegramRenderer {
     fn clear_planning(&mut self) {}
 
     fn render_agent_transfer(&mut self, _from: &str, to: &str, reason: Option<&str>) {
-        let reason_str = reason
-            .map(|r| format!(" ({})", r))
-            .unwrap_or_default();
+        let reason_str = reason.map(|r| format!(" ({})", r)).unwrap_or_default();
         let status = format!("Handing off to {}{}...", to, reason_str);
         self.current_status = Some(status);
         self.dirty = true;
@@ -151,9 +148,7 @@ impl SurfaceRenderer for TelegramRenderer {
                     .collect();
                 // Attach media to last chunk.
                 if !media.is_empty() {
-                    if let Some(RendererOutput::RichText { media: m, .. }) =
-                        parts.last_mut()
-                    {
+                    if let Some(RendererOutput::RichText { media: m, .. }) = parts.last_mut() {
                         *m = media;
                     }
                 }
@@ -357,8 +352,7 @@ impl Formatter for TelegramFormatter {
             AgentEventType::ToolCalls { .. } => {}
             AgentEventType::RunFinished { .. } => {}
             AgentEventType::RunError { message, .. } => {
-                self.renderer
-                    .render_text(&format!("Error: {}", message));
+                self.renderer.render_text(&format!("Error: {}", message));
             }
             AgentEventType::BrowserScreenshot { image, .. } => {
                 if self.renderer.supports_images() {
@@ -389,11 +383,7 @@ impl Formatter for TelegramFormatter {
             .collect::<Vec<_>>()
             .join("\n");
 
-        if text.is_empty() {
-            None
-        } else {
-            Some(text)
-        }
+        if text.is_empty() { None } else { Some(text) }
     }
 
     fn final_content(&self) -> String {

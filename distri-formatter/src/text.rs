@@ -7,8 +7,8 @@ use chrono::Local;
 use distri_types::{AgentEvent, AgentEventType, ToolResponse};
 
 use crate::state::{
-    ChatState, MessageState, StepState, ToolCallState, ToolCallStatus,
-    format_tool_call, is_probe_call,
+    ChatState, MessageState, StepState, ToolCallState, ToolCallStatus, format_tool_call,
+    is_probe_call,
 };
 use crate::{Formatter, RendererOutput};
 
@@ -236,8 +236,7 @@ impl Formatter for TextFormatter {
             AgentEventType::InlineHookRequested { request } => {
                 self.push_line(&format!(
                     "Awaiting inline hook {} for {}",
-                    request.hook_id,
-                    request.hook,
+                    request.hook_id, request.hook,
                 ));
             }
             AgentEventType::TodosUpdated {

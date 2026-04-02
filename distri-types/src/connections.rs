@@ -95,8 +95,6 @@ fn default_token_type() -> String {
 
 impl ConnectionToken {
     pub fn is_expired(&self) -> bool {
-        self.expires_at
-            .map(|exp| exp < Utc::now())
-            .unwrap_or(false)
+        self.expires_at.map(|exp| exp < Utc::now()).unwrap_or(false)
     }
 }

@@ -1,5 +1,5 @@
-use crate::colors::{COLOR_GRAY, COLOR_RESET};
 use super::{RESULT_PREFIX, truncate_str};
+use crate::colors::{COLOR_GRAY, COLOR_RESET};
 
 /// Render a Data part compactly — handles search results, markdown, generic JSON.
 pub fn render_data_compact(value: &serde_json::Value) {

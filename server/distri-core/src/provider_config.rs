@@ -4,8 +4,8 @@
 //! headers needed to build a `GatewayConfig`. Keeps all the provider-specific
 //! logic in one place instead of a giant match in llm.rs.
 
-use std::collections::HashMap;
 use distri_types::ModelProvider;
+use std::collections::HashMap;
 
 /// Resolved connection config for an LLM provider.
 #[derive(Debug, Clone)]
@@ -33,7 +33,9 @@ impl From<&ModelProvider> for ProviderClientConfig {
                 send_api_key_header: false,
             },
             ModelProvider::Anthropic { base_url, api_key } => Self {
-                base_url: base_url.clone().unwrap_or_else(|| "https://api.anthropic.com".to_string()),
+                base_url: base_url
+                    .clone()
+                    .unwrap_or_else(|| "https://api.anthropic.com".to_string()),
                 api_key_secret: "ANTHROPIC_API_KEY",
                 inline_api_key: api_key.clone(),
                 project_id: None,
@@ -41,8 +43,17 @@ impl From<&ModelProvider> for ProviderClientConfig {
                 query_params: vec![],
                 send_api_key_header: false,
             },
-            ModelProvider::AzureOpenAI { base_url, api_key, deployment, api_version } => Self {
-                base_url: format!("{}/openai/deployments/{}", base_url.trim_end_matches('/'), deployment),
+            ModelProvider::AzureOpenAI {
+                base_url,
+                api_key,
+                deployment,
+                api_version,
+            } => Self {
+                base_url: format!(
+                    "{}/openai/deployments/{}",
+                    base_url.trim_end_matches('/'),
+                    deployment
+                ),
                 api_key_secret: "AZURE_OPENAI_API_KEY",
                 inline_api_key: api_key.clone(),
                 project_id: None,
@@ -77,7 +88,11 @@ impl From<&ModelProvider> for ProviderClientConfig {
                 query_params: vec![],
                 send_api_key_header: false,
             },
-            ModelProvider::GoogleVertex { base_url, api_key, project_id } => Self {
+            ModelProvider::GoogleVertex {
+                base_url,
+                api_key,
+                project_id,
+            } => Self {
                 base_url: base_url.clone(),
                 api_key_secret: "GOOGLE_VERTEX_API_KEY",
                 inline_api_key: api_key.clone(),
@@ -86,7 +101,11 @@ impl From<&ModelProvider> for ProviderClientConfig {
                 query_params: vec![],
                 send_api_key_header: false,
             },
-            ModelProvider::OpenAICompatible { base_url, api_key, project_id } => Self {
+            ModelProvider::OpenAICompatible {
+                base_url,
+                api_key,
+                project_id,
+            } => Self {
                 base_url: base_url.clone(),
                 api_key_secret: "OPENAI_API_KEY",
                 inline_api_key: api_key.clone(),
@@ -121,10 +140,16 @@ mod tests {
             api_version: "2024-06-01".to_string(),
         };
         let config = ProviderClientConfig::from(&provider);
-        assert_eq!(config.base_url, "https://myresource.openai.azure.com/openai/deployments/gpt-4o");
+        assert_eq!(
+            config.base_url,
+            "https://myresource.openai.azure.com/openai/deployments/gpt-4o"
+        );
         assert_eq!(config.api_key_secret, "AZURE_OPENAI_API_KEY");
         assert!(config.send_api_key_header);
-        assert_eq!(config.query_params, vec![("api-version".to_string(), "2024-06-01".to_string())]);
+        assert_eq!(
+            config.query_params,
+            vec![("api-version".to_string(), "2024-06-01".to_string())]
+        );
     }
 
     #[test]
@@ -136,12 +161,18 @@ mod tests {
             api_version: "2024-06-01".to_string(),
         };
         let config = ProviderClientConfig::from(&provider);
-        assert_eq!(config.base_url, "https://myresource.openai.azure.com/openai/deployments/gpt-4o");
+        assert_eq!(
+            config.base_url,
+            "https://myresource.openai.azure.com/openai/deployments/gpt-4o"
+        );
     }
 
     #[test]
     fn test_anthropic_config() {
-        let provider = ModelProvider::Anthropic { base_url: None, api_key: None };
+        let provider = ModelProvider::Anthropic {
+            base_url: None,
+            api_key: None,
+        };
         let config = ProviderClientConfig::from(&provider);
         assert_eq!(config.base_url, "https://api.anthropic.com");
         assert_eq!(config.api_key_secret, "ANTHROPIC_API_KEY");
@@ -226,12 +257,18 @@ mod tests {
             ("google_vertex", "GOOGLE_VERTEX_API_KEY"),
         ];
         for (provider_str, expected_secret) in cases {
-            let ms = distri_types::ModelSettings::from_provider_model_str(
-                &format!("{}/test-model", provider_str)
-            ).unwrap().unwrap();
+            let ms = distri_types::ModelSettings::from_provider_model_str(&format!(
+                "{}/test-model",
+                provider_str
+            ))
+            .unwrap()
+            .unwrap();
             let config = ProviderClientConfig::from(&ms.inner.provider);
-            assert_eq!(config.api_key_secret, expected_secret,
-                "provider {} should use secret {}", provider_str, expected_secret);
+            assert_eq!(
+                config.api_key_secret, expected_secret,
+                "provider {} should use secret {}",
+                provider_str, expected_secret
+            );
         }
     }
 }

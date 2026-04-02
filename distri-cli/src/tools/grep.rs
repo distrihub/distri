@@ -122,10 +122,7 @@ pub fn register(registry: &ExternalToolRegistry, agent_id: &str, workspace_root:
                     .output()
                     .await
                     .map_err(|e| {
-                        anyhow::anyhow!(
-                            "failed to run rg (is ripgrep installed?): {}",
-                            e
-                        )
+                        anyhow::anyhow!("failed to run rg (is ripgrep installed?): {}", e)
                     })?;
 
                 let stdout = String::from_utf8_lossy(&output.stdout).to_string();

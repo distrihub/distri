@@ -16,7 +16,9 @@ use distri_types::{AgentEvent, Part, ToolCall, ToolDefinition, ToolResponse};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::{COLOR_BRIGHT_GREEN, COLOR_BRIGHT_MAGENTA, COLOR_BRIGHT_YELLOW, COLOR_GRAY, COLOR_RESET};
+use crate::{
+    COLOR_BRIGHT_GREEN, COLOR_BRIGHT_MAGENTA, COLOR_BRIGHT_YELLOW, COLOR_GRAY, COLOR_RESET,
+};
 
 /// Register all local CLI tools and return their definitions (with prompts).
 pub fn register_all(
@@ -201,7 +203,11 @@ struct ExecuteCommandParams {
 }
 
 /// Register the `execute_command` tool for local shell execution in a workspace.
-pub fn register_execute_command(registry: &ExternalToolRegistry, agent_id: &str, workspace_root: &Path) {
+pub fn register_execute_command(
+    registry: &ExternalToolRegistry,
+    agent_id: &str,
+    workspace_root: &Path,
+) {
     let workspace = workspace_root.to_path_buf();
 
     registry.register(
@@ -210,9 +216,8 @@ pub fn register_execute_command(registry: &ExternalToolRegistry, agent_id: &str,
         move |call: ToolCall, _event: AgentEvent| {
             let workspace = workspace.clone();
             async move {
-                let params: ExecuteCommandParams =
-                    serde_json::from_value(call.input.clone())
-                        .map_err(|e| anyhow::anyhow!("invalid execute_command parameters: {}", e))?;
+                let params: ExecuteCommandParams = serde_json::from_value(call.input.clone())
+                    .map_err(|e| anyhow::anyhow!("invalid execute_command parameters: {}", e))?;
 
                 let mut working_dir = workspace.clone();
                 if let Some(ref relative) = params.cwd {
@@ -221,8 +226,9 @@ pub fn register_execute_command(registry: &ExternalToolRegistry, agent_id: &str,
                         working_dir = working_dir.join(trimmed);
                     }
                 }
-                std::fs::create_dir_all(&working_dir)
-                    .with_context(|| format!("failed to create working directory {:?}", working_dir))?;
+                std::fs::create_dir_all(&working_dir).with_context(|| {
+                    format!("failed to create working directory {:?}", working_dir)
+                })?;
 
                 let mut command = if cfg!(target_os = "windows") {
                     let mut cmd = tokio::process::Command::new("cmd");

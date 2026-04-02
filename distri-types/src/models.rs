@@ -94,13 +94,9 @@ pub enum ModelPricing {
         cached_input: Option<f64>,
     },
     /// TTS pricing — per 1M characters (USD).
-    Tts {
-        per_1m_chars: f64,
-    },
+    Tts { per_1m_chars: f64 },
     /// STT pricing — per minute of audio (USD).
-    Stt {
-        per_minute: f64,
-    },
+    Stt { per_minute: f64 },
 }
 
 /// A model with its capability, pricing, and metadata.

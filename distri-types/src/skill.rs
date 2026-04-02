@@ -150,21 +150,21 @@ impl Skill {
             .ok_or_else(|| anyhow!("Skill plugin does not contain a standard agent definition"))?;
 
         let export = record.artifact.tools.first().map(|tool| SkillExport::Tool {
-                name: tool.name.clone(),
-                description: if tool.description.is_empty() {
-                    None
-                } else {
-                    Some(tool.description.clone())
-                },
-            });
+            name: tool.name.clone(),
+            description: if tool.description.is_empty() {
+                None
+            } else {
+                Some(tool.description.clone())
+            },
+        });
 
         if let Some(export_value) = export
             && let Some(script_file) = files
                 .iter_mut()
                 .find(|file| matches!(file.kind, SkillFileKind::Script))
-            {
-                script_file.export = Some(export_value);
-            }
+        {
+            script_file.export = Some(export_value);
+        }
 
         let skill = Skill {
             id: record.package_name.clone(),

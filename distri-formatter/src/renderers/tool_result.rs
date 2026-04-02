@@ -1,6 +1,6 @@
-use crate::colors::{COLOR_GRAY, COLOR_RESET};
 use super::RESULT_PREFIX;
 use super::data::render_data_compact;
+use crate::colors::{COLOR_GRAY, COLOR_RESET};
 use distri_types::{Part, ToolResponse};
 
 /// Generic part-by-part tool result rendering (fallback for unrecognized tools).
@@ -43,7 +43,10 @@ pub fn render_tool_result(result: &ToolResponse) {
                     }
                     distri_types::FileType::Url { url, .. } => url.clone(),
                 };
-                println!("{}{}image: {}{}", COLOR_GRAY, RESULT_PREFIX, label, COLOR_RESET);
+                println!(
+                    "{}{}image: {}{}",
+                    COLOR_GRAY, RESULT_PREFIX, label, COLOR_RESET
+                );
             }
             _ => {
                 println!(

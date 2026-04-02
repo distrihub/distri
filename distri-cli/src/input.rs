@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher};
 use rustyline::completion::{Completer, Pair};
-use rustyline::hint::Hinter;
 use rustyline::highlight::Highlighter;
+use rustyline::hint::Hinter;
 use rustyline::validate::Validator;
 use rustyline::{Cmd, ConditionalEventHandler, Event, EventContext, Helper, Movement, RepeatCount};
 

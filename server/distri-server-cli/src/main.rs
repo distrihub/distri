@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::Parser;
 use distri_server::agent_server::DistriAgentServer;
-use distri_server_cli::{Cli, init_orchestrator, logging};
+use distri_server_cli::{init_orchestrator, logging, Cli};
 
 #[tokio::main]
 async fn main() -> Result<()> {

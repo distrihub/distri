@@ -81,23 +81,24 @@ impl ToolCallParser for XmlParser {
             while current_index < buffer_chars.len() {
                 if let Ok(Some(robust_call)) =
                     self.find_and_parse_tool_call(&buffer_chars, &tool_name, &mut current_index)
-                    && self.is_top_level_tool_call(&tool_name, &robust_call.raw_content) {
-                        // Find the position of this match in the original buffer
-                        if let Some(match_start) = updated_buffer.find(&robust_call.raw_content) {
-                            let match_end = match_start + robust_call.raw_content.len();
+                    && self.is_top_level_tool_call(&tool_name, &robust_call.raw_content)
+                {
+                    // Find the position of this match in the original buffer
+                    if let Some(match_start) = updated_buffer.find(&robust_call.raw_content) {
+                        let match_end = match_start + robust_call.raw_content.len();
 
-                            let tool_call = ToolCall {
-                                tool_call_id: uuid::Uuid::new_v4().to_string(),
-                                tool_name: tool_name.clone(),
-                                input: robust_call.parameters,
-                            };
+                        let tool_call = ToolCall {
+                            tool_call_id: uuid::Uuid::new_v4().to_string(),
+                            tool_name: tool_name.clone(),
+                            input: robust_call.parameters,
+                        };
 
-                            new_tool_calls.push(tool_call);
-                            stripped_content_blocks
-                                .push((match_start, robust_call.raw_content.clone()));
-                            matches_to_remove.push((match_start, match_end));
-                        }
+                        new_tool_calls.push(tool_call);
+                        stripped_content_blocks
+                            .push((match_start, robust_call.raw_content.clone()));
+                        matches_to_remove.push((match_start, match_end));
                     }
+                }
             }
 
             // Remove matched tool calls from buffer (in reverse order to maintain indices)
@@ -460,9 +461,8 @@ impl XmlParser {
 
         for i in start_index..content_chars.len() {
             if i + tag_len <= content_chars.len() {
-                let matches = (0..tag_len).all(|j| {
-                    content_chars[i + j].eq_ignore_ascii_case(&tag_chars[j])
-                });
+                let matches =
+                    (0..tag_len).all(|j| content_chars[i + j].eq_ignore_ascii_case(&tag_chars[j]));
                 if matches {
                     return Some(i);
                 }

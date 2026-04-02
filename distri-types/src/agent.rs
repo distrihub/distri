@@ -962,7 +962,9 @@ impl ModelProvider {
     pub fn provider_type(&self) -> crate::models::ProviderType {
         match self {
             ModelProvider::OpenAI {} => crate::models::ProviderType::OpenAI,
-            ModelProvider::OpenAICompatible { .. } => crate::models::ProviderType::Custom("openai_compat".to_string()),
+            ModelProvider::OpenAICompatible { .. } => {
+                crate::models::ProviderType::Custom("openai_compat".to_string())
+            }
             ModelProvider::AzureOpenAI { .. } => crate::models::ProviderType::Azure,
             ModelProvider::Anthropic { .. } => crate::models::ProviderType::Anthropic,
             ModelProvider::Gemini { .. } => crate::models::ProviderType::Gemini,
@@ -991,25 +993,53 @@ impl ModelProvider {
         match self {
             ModelProvider::OpenAI {} => vec!["OPENAI_API_KEY"],
             ModelProvider::OpenAICompatible { api_key, .. } => {
-                if api_key.is_some() { vec![] } else { vec!["OPENAI_API_KEY"] }
+                if api_key.is_some() {
+                    vec![]
+                } else {
+                    vec!["OPENAI_API_KEY"]
+                }
             }
             ModelProvider::AzureOpenAI { api_key, .. } => {
-                if api_key.is_some() { vec![] } else { vec!["AZURE_OPENAI_API_KEY"] }
+                if api_key.is_some() {
+                    vec![]
+                } else {
+                    vec!["AZURE_OPENAI_API_KEY"]
+                }
             }
             ModelProvider::Anthropic { api_key, .. } => {
-                if api_key.is_some() { vec![] } else { vec!["ANTHROPIC_API_KEY"] }
+                if api_key.is_some() {
+                    vec![]
+                } else {
+                    vec!["ANTHROPIC_API_KEY"]
+                }
             }
             ModelProvider::Gemini { api_key, .. } => {
-                if api_key.is_some() { vec![] } else { vec!["GEMINI_API_KEY"] }
+                if api_key.is_some() {
+                    vec![]
+                } else {
+                    vec!["GEMINI_API_KEY"]
+                }
             }
             ModelProvider::AzureAiFoundry { api_key, .. } => {
-                if api_key.is_some() { vec![] } else { vec!["AZURE_AI_FOUNDRY_API_KEY"] }
+                if api_key.is_some() {
+                    vec![]
+                } else {
+                    vec!["AZURE_AI_FOUNDRY_API_KEY"]
+                }
             }
             ModelProvider::AwsBedrock { api_key, .. } => {
-                if api_key.is_some() { vec![] } else { vec!["AWS_ACCESS_KEY_ID"] }
+                if api_key.is_some() {
+                    vec![]
+                } else {
+                    vec!["AWS_ACCESS_KEY_ID"]
+                }
             }
             ModelProvider::GoogleVertex { api_key, .. } => {
-                if api_key.is_some() { vec![] } else { vec!["GOOGLE_VERTEX_API_KEY"] }
+                if api_key.is_some() {
+                    vec![]
+                } else {
+                    vec!["GOOGLE_VERTEX_API_KEY"]
+                }
             }
         }
     }
@@ -1157,7 +1187,7 @@ impl ModelSettings {
                 base_url: String::new(),
                 api_key: None,
                 project_id: None,
-            }
+            },
         };
         Ok(Some(Self {
             model: model_id.to_string(),
@@ -1511,8 +1541,14 @@ mod tests {
     fn test_api_format_auto_detect_pro_models() {
         let fmt = OpenAiApiFormat::Auto;
         assert_eq!(fmt.resolve("gpt-5-pro"), ResolvedOpenAiApiFormat::Responses);
-        assert_eq!(fmt.resolve("gpt-5.2-pro"), ResolvedOpenAiApiFormat::Responses);
-        assert_eq!(fmt.resolve("gpt-5.4-pro"), ResolvedOpenAiApiFormat::Responses);
+        assert_eq!(
+            fmt.resolve("gpt-5.2-pro"),
+            ResolvedOpenAiApiFormat::Responses
+        );
+        assert_eq!(
+            fmt.resolve("gpt-5.4-pro"),
+            ResolvedOpenAiApiFormat::Responses
+        );
         assert_eq!(fmt.resolve("o3-pro"), ResolvedOpenAiApiFormat::Responses);
     }
 
@@ -1532,30 +1568,15 @@ mod tests {
     #[test]
     fn test_api_format_auto_detect_non_codex() {
         let fmt = OpenAiApiFormat::Auto;
-        assert_eq!(
-            fmt.resolve("gpt-4o"),
-            ResolvedOpenAiApiFormat::Completions
-        );
-        assert_eq!(
-            fmt.resolve("gpt-4.1"),
-            ResolvedOpenAiApiFormat::Completions
-        );
-        assert_eq!(
-            fmt.resolve("gpt-5"),
-            ResolvedOpenAiApiFormat::Completions
-        );
-        assert_eq!(
-            fmt.resolve("o1"),
-            ResolvedOpenAiApiFormat::Completions
-        );
+        assert_eq!(fmt.resolve("gpt-4o"), ResolvedOpenAiApiFormat::Completions);
+        assert_eq!(fmt.resolve("gpt-4.1"), ResolvedOpenAiApiFormat::Completions);
+        assert_eq!(fmt.resolve("gpt-5"), ResolvedOpenAiApiFormat::Completions);
+        assert_eq!(fmt.resolve("o1"), ResolvedOpenAiApiFormat::Completions);
         assert_eq!(
             fmt.resolve("gpt-5.4-mini"),
             ResolvedOpenAiApiFormat::Completions
         );
-        assert_eq!(
-            fmt.resolve("o3-mini"),
-            ResolvedOpenAiApiFormat::Completions
-        );
+        assert_eq!(fmt.resolve("o3-mini"), ResolvedOpenAiApiFormat::Completions);
     }
 
     #[test]

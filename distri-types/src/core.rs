@@ -170,7 +170,6 @@ pub enum AdditionalPartsInstruction {
     Append,
 }
 
-
 /// Structure for managing additional user message parts
 /// This allows control over how parts are added and whether artifacts should be expanded
 #[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, Default)]

@@ -88,8 +88,7 @@ pub fn merge_model_settings(
                 .response_format
                 .clone()
                 .or(base.inner.response_format.clone()),
-            api_format: if override_settings.inner.api_format
-                != distri_types::OpenAiApiFormat::Auto
+            api_format: if override_settings.inner.api_format != distri_types::OpenAiApiFormat::Auto
             {
                 override_settings.inner.api_format.clone()
             } else {

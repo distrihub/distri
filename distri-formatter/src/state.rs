@@ -72,14 +72,8 @@ pub fn is_probe_call(name: &str, input: &serde_json::Value) -> bool {
             skill == "?" || skill.is_empty()
         }
         "distri_request" => {
-            let method = input
-                .get("method")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            let path = input
-                .get("path")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+            let method = input.get("method").and_then(|v| v.as_str()).unwrap_or("");
+            let path = input.get("path").and_then(|v| v.as_str()).unwrap_or("");
             method == "GET"
                 && (path.ends_with("/v1/agents")
                     || path.ends_with("/v1/connections")
@@ -163,7 +157,11 @@ pub fn format_tool_call(name: &str, input: &serde_json::Value) -> String {
             let pattern = str_field("pattern");
             match input.get("path").and_then(|v| v.as_str()) {
                 Some(p) if !p.is_empty() => {
-                    format!("Grep(\"{}\", path: \"{}\")", truncate(&pattern, 40), truncate(p, 40))
+                    format!(
+                        "Grep(\"{}\", path: \"{}\")",
+                        truncate(&pattern, 40),
+                        truncate(p, 40)
+                    )
                 }
                 _ => format!("Grep(\"{}\")", truncate(&pattern, 60)),
             }
@@ -209,10 +207,7 @@ pub fn format_tool_call(name: &str, input: &serde_json::Value) -> String {
         }
         "tool_search" => format!("tool_search(\"{}\")", truncate(&str_field("query"), 60)),
         "inject_connection_env" => {
-            format!(
-                "inject_connection_env(\"{}\")",
-                str_field("provider_name")
-            )
+            format!("inject_connection_env(\"{}\")", str_field("provider_name"))
         }
         "transfer_to_agent" => {
             format!("transfer_to_agent(\"{}\")", str_field("agent_name"))

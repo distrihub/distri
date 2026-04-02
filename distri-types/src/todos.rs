@@ -17,7 +17,6 @@ pub enum TodoStatus {
     Done,
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TodoItem {
     pub id: String,

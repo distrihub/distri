@@ -28,16 +28,15 @@ async fn test_workflow_session_events() {
     let client = Arc::new(get_client());
 
     let workflow = WorkflowDefinition::new(vec![
-            WorkflowStep::api_call(
-                "ping",
-                "Ping server",
-                "GET",
-                "http://localhost:1341/v1/agents",
-            ),
-            WorkflowStep::checkpoint("done", "Complete", "Integration test passed")
-                .with_depends_on(vec!["ping"]),
-        ],
-    );
+        WorkflowStep::api_call(
+            "ping",
+            "Ping server",
+            "GET",
+            "http://localhost:1341/v1/agents",
+        ),
+        WorkflowStep::checkpoint("done", "Complete", "Integration test passed")
+            .with_depends_on(vec!["ping"]),
+    ]);
 
     let mut session = WorkflowSession::new(client, workflow);
     let mut rx = session.take_events().unwrap();
@@ -100,11 +99,10 @@ async fn test_workflow_session_with_input() {
     let client = Arc::new(get_client());
 
     let workflow = WorkflowDefinition::new(vec![
-            WorkflowStep::api_call("fetch", "Fetch endpoint", "GET", "{context.target_url}"),
-            WorkflowStep::checkpoint("done", "Done", "Fetched successfully")
-                .with_depends_on(vec!["fetch"]),
-        ],
-    );
+        WorkflowStep::api_call("fetch", "Fetch endpoint", "GET", "{context.target_url}"),
+        WorkflowStep::checkpoint("done", "Done", "Fetched successfully")
+            .with_depends_on(vec!["fetch"]),
+    ]);
 
     let mut session = WorkflowSession::new(client, workflow);
     let mut rx = session.take_events().unwrap();

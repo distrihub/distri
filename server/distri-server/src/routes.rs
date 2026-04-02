@@ -1471,8 +1471,7 @@ async fn proxy_request_handler(
         Ok(response) => HttpResponse::Ok().json(response),
         Err(e) => {
             tracing::warn!(error = ?e, "Request proxy failed");
-            HttpResponse::BadRequest()
-                .json(serde_json::json!({ "error": e.to_string() }))
+            HttpResponse::BadRequest().json(serde_json::json!({ "error": e.to_string() }))
         }
     }
 }

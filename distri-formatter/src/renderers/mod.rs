@@ -43,8 +43,15 @@ pub fn render_tool_output(result: &ToolResponse, verbose: bool) {
         "final" | "reflect" | "console_log" | "transfer_to_agent" => {}
 
         // Platform / discovery tools
-        "tool_search" | "load_skill" | "run_skill_script" | "list_agents" | "list_skills"
-        | "create_skill" | "delete_skill" | "write_to_storage" | "read_from_storage"
+        "tool_search"
+        | "load_skill"
+        | "run_skill_script"
+        | "list_agents"
+        | "list_skills"
+        | "create_skill"
+        | "delete_skill"
+        | "write_to_storage"
+        | "read_from_storage"
         | "inject_connection_env" => {
             platform::render_platform_tool(result);
         }

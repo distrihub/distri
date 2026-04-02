@@ -542,14 +542,15 @@ impl OAuthHandler {
 
                 let mut pkce_challenge = None;
                 if let Some(registry) = &self.provider_registry
-                    && registry.requires_pkce(auth_entity).await {
-                        let (verifier, challenge) = generate_pkce_pair();
-                        state.metadata.insert(
-                            PKCE_CODE_VERIFIER_KEY.to_string(),
-                            serde_json::Value::String(verifier.clone()),
-                        );
-                        pkce_challenge = Some(challenge);
-                    }
+                    && registry.requires_pkce(auth_entity).await
+                {
+                    let (verifier, challenge) = generate_pkce_pair();
+                    state.metadata.insert(
+                        PKCE_CODE_VERIFIER_KEY.to_string(),
+                        serde_json::Value::String(verifier.clone()),
+                    );
+                    pkce_challenge = Some(challenge);
+                }
 
                 // Store the state
                 self.store.store_oauth2_state(state.clone()).await?;

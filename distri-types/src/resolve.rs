@@ -6,9 +6,7 @@ use std::collections::HashMap;
 /// Variable names must match `[A-Z][A-Z0-9_]*`.
 pub fn extract_vars(s: &str) -> Vec<String> {
     let re = Regex::new(r"\$([A-Z][A-Z0-9_]*)").unwrap();
-    re.captures_iter(s)
-        .map(|cap| cap[1].to_string())
-        .collect()
+    re.captures_iter(s).map(|cap| cap[1].to_string()).collect()
 }
 
 /// Recursively extract `$VAR_NAME` from all string fields in a JSON value.
