@@ -679,6 +679,8 @@ pub struct UpdatePromptTemplate {
 pub trait PromptTemplateStore: Send + Sync {
     async fn list(&self) -> anyhow::Result<Vec<PromptTemplateRecord>>;
     async fn get(&self, id: &str) -> anyhow::Result<Option<PromptTemplateRecord>>;
+    /// Fetch multiple templates by name in a single query.
+    async fn get_by_names(&self, names: &[String]) -> anyhow::Result<Vec<PromptTemplateRecord>>;
     async fn create(&self, template: NewPromptTemplate) -> anyhow::Result<PromptTemplateRecord>;
     async fn update(
         &self,

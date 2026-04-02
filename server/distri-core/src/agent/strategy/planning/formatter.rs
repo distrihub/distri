@@ -651,26 +651,35 @@ async fn render_prompt(
     if let Some(orchestrator) = &context.orchestrator {
         let prompt_registry = orchestrator.get_prompt_registry();
 
-        // Load all user templates from database and register as partials
-        // This allows any template to reference any other template via {{> name}}
+        // Lazily resolve {{> partial}} references from the DB.
+        // Only fetches partials that are referenced AND not already registered (built-in).
         if let Some(ref store) = orchestrator.stores.prompt_template_store {
-            match store.list().await {
-                Ok(templates) => {
-                    for tpl in templates {
-                        if let Err(e) = prompt_registry
-                            .register_partial(tpl.name.clone(), tpl.template.clone())
-                            .await
-                        {
-                            tracing::debug!(
-                                "Failed to register template '{}' as partial: {}",
-                                tpl.name,
-                                e
-                            );
+            let referenced = extract_partial_names(template);
+            let known = prompt_registry.partial_names().await;
+            let missing: Vec<String> = referenced
+                .into_iter()
+                .filter(|name| !known.contains(name))
+                .collect();
+
+            if !missing.is_empty() {
+                match store.get_by_names(&missing).await {
+                    Ok(templates) => {
+                        for tpl in templates {
+                            if let Err(e) = prompt_registry
+                                .register_partial(tpl.name.clone(), tpl.template.clone())
+                                .await
+                            {
+                                tracing::debug!(
+                                    "Failed to register partial '{}': {}",
+                                    tpl.name,
+                                    e
+                                );
+                            }
                         }
                     }
-                }
-                Err(e) => {
-                    tracing::debug!("Failed to load templates from database: {}", e);
+                    Err(e) => {
+                        tracing::debug!("Failed to fetch partials from DB: {}", e);
+                    }
                 }
             }
         }
@@ -682,6 +691,25 @@ async fn render_prompt(
     } else {
         Ok(template.to_string())
     }
+}
+
+/// Extract partial names referenced in a template via `{{> name}}` syntax.
+fn extract_partial_names(template: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut rest = template;
+    while let Some(pos) = rest.find("{{>") {
+        rest = &rest[pos + 3..];
+        let trimmed = rest.trim_start();
+        // Partial name ends at `}}` or whitespace
+        let end = trimmed
+            .find(|c: char| c == '}' || c.is_whitespace())
+            .unwrap_or(trimmed.len());
+        let name = &trimmed[..end];
+        if !name.is_empty() {
+            names.push(name.to_string());
+        }
+    }
+    names
 }
 
 #[cfg(test)]
@@ -1046,5 +1074,182 @@ mod tests {
 
         assert!(result.contains("Use Glob for file patterns."));
         assert!(result.contains("Use Grep for content search."));
+    }
+
+    #[tokio::test]
+    async fn lazy_partial_resolution_from_db() {
+        use crate::AgentOrchestratorBuilder;
+        use distri_types::configuration::{DbConnectionConfig, MetadataStoreConfig, StoreConfig};
+        use distri_types::stores::NewPromptTemplate;
+
+        // 1. Create orchestrator with in-memory SQLite
+        let db_name = uuid::Uuid::new_v4();
+        let db_url = format!("file:{}?mode=memory&cache=shared", db_name);
+        let store_config = StoreConfig {
+            metadata: MetadataStoreConfig {
+                db_config: Some(DbConnectionConfig {
+                    database_url: db_url,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let orchestrator = Arc::new(
+            AgentOrchestratorBuilder::default()
+                .with_store_config(store_config)
+                .build()
+                .await
+                .unwrap(),
+        );
+
+        // 2. Store a custom partial in the DB
+        let store = orchestrator
+            .stores
+            .prompt_template_store
+            .as_ref()
+            .expect("prompt_template_store should exist");
+
+        store
+            .create(NewPromptTemplate {
+                name: "my_tool_instructions".to_string(),
+                template: "Always use Glob before Grep. Read before Edit.".to_string(),
+                description: None,
+                version: None,
+                is_system: false,
+            })
+            .await
+            .unwrap();
+
+        // 3. Verify the partial is NOT pre-registered in the prompt registry
+        let registry = orchestrator.get_prompt_registry();
+        let known_before = registry.partial_names().await;
+        assert!(
+            !known_before.contains("my_tool_instructions"),
+            "partial should NOT be pre-registered"
+        );
+
+        // 4. Build an ExecutorContext that references the orchestrator
+        let mut context = ExecutorContext::default();
+        context.orchestrator = Some(orchestrator.clone());
+
+        // 5. Render a template that references the DB partial
+        let template = "# Instructions\n{{> my_tool_instructions}}\n\nDone.";
+        let template_data = crate::agent::prompt_registry::TemplateData::default();
+
+        let result = render_prompt(&Arc::new(context), template, &template_data).await;
+
+        // 6. Verify the partial was lazily resolved and rendered
+        let rendered = result.expect("render_prompt should succeed");
+        assert!(
+            rendered.contains("Always use Glob before Grep"),
+            "DB partial content should be in rendered output, got: {}",
+            rendered
+        );
+        assert!(
+            rendered.contains("Read before Edit"),
+            "full partial content should be rendered"
+        );
+        assert!(
+            rendered.contains("# Instructions"),
+            "template structure should be preserved"
+        );
+
+        // 7. Verify the partial is now registered (cached for subsequent renders)
+        let known_after = registry.partial_names().await;
+        assert!(
+            known_after.contains("my_tool_instructions"),
+            "partial should be registered after first render"
+        );
+    }
+
+    #[tokio::test]
+    async fn lazy_partial_skips_already_registered_builtins() {
+        use crate::AgentOrchestratorBuilder;
+        use distri_types::configuration::{DbConnectionConfig, MetadataStoreConfig, StoreConfig};
+
+        let db_name = uuid::Uuid::new_v4();
+        let db_url = format!("file:{}?mode=memory&cache=shared", db_name);
+        let store_config = StoreConfig {
+            metadata: MetadataStoreConfig {
+                db_config: Some(DbConnectionConfig {
+                    database_url: db_url,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let orchestrator = Arc::new(
+            AgentOrchestratorBuilder::default()
+                .with_store_config(store_config)
+                .build()
+                .await
+                .unwrap(),
+        );
+
+        // "reasoning" is a built-in partial — it should NOT hit the DB
+        let registry = orchestrator.get_prompt_registry();
+        let known = registry.partial_names().await;
+        assert!(
+            known.contains("reasoning"),
+            "reasoning should be a built-in partial"
+        );
+
+        let mut context = ExecutorContext::default();
+        context.orchestrator = Some(orchestrator.clone());
+
+        // Template references only built-in partials — should render without DB calls
+        let template = "{{> reasoning}}";
+        let template_data = crate::agent::prompt_registry::TemplateData::default();
+
+        let result = render_prompt(&Arc::new(context), template, &template_data).await;
+        assert!(
+            result.is_ok(),
+            "rendering built-in partials should work: {:?}",
+            result.err()
+        );
+    }
+
+    #[tokio::test]
+    async fn lazy_partial_missing_from_db_fails_in_strict_mode() {
+        use crate::AgentOrchestratorBuilder;
+        use distri_types::configuration::{DbConnectionConfig, MetadataStoreConfig, StoreConfig};
+
+        let db_name = uuid::Uuid::new_v4();
+        let db_url = format!("file:{}?mode=memory&cache=shared", db_name);
+        let store_config = StoreConfig {
+            metadata: MetadataStoreConfig {
+                db_config: Some(DbConnectionConfig {
+                    database_url: db_url,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let orchestrator = Arc::new(
+            AgentOrchestratorBuilder::default()
+                .with_store_config(store_config)
+                .build()
+                .await
+                .unwrap(),
+        );
+
+        let mut context = ExecutorContext::default();
+        context.orchestrator = Some(orchestrator);
+
+        // Template references a partial that doesn't exist anywhere
+        let template = "{{> totally_nonexistent_partial}}";
+        let template_data = crate::agent::prompt_registry::TemplateData::default();
+
+        let result = render_prompt(&Arc::new(context), template, &template_data).await;
+        assert!(
+            result.is_err(),
+            "referencing a nonexistent partial should fail in strict mode"
+        );
     }
 }

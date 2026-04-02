@@ -3352,6 +3352,20 @@ where
         Ok(result.map(to_prompt_template_record))
     }
 
+    async fn get_by_names(&self, names: &[String]) -> Result<Vec<PromptTemplateRecord>> {
+        use crate::schema::prompt_templates::dsl::*;
+        if names.is_empty() {
+            return Ok(vec![]);
+        }
+        let mut conn = self.conn().await?;
+        let results = prompt_templates
+            .filter(name.eq_any(names))
+            .select(PromptTemplateModel::as_select())
+            .load::<PromptTemplateModel>(&mut conn)
+            .await?;
+        Ok(results.into_iter().map(to_prompt_template_record).collect())
+    }
+
     async fn create(&self, template_data: NewPromptTemplate) -> Result<PromptTemplateRecord> {
         use crate::schema::prompt_templates::dsl::*;
         let mut conn = self.conn().await?;

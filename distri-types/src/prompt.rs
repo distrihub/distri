@@ -271,6 +271,12 @@ impl PromptRegistry {
         Ok(())
     }
 
+    /// Return the set of currently registered partial names.
+    pub async fn partial_names(&self) -> std::collections::HashSet<String> {
+        let partials = self.partials.read().await;
+        partials.keys().cloned().collect()
+    }
+
     pub async fn register_partial_file<P: AsRef<Path>>(
         &self,
         name: String,
