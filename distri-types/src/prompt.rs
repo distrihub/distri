@@ -807,6 +807,8 @@ mod tests {
             todos: None,
             json_tools: true,
             available_skills: None,
+            tool_prompts: String::new(),
+            tool_prompt_list: vec![],
             deferred_tools_listing: None,
         };
         let msgs = build_prompt_messages(

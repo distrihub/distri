@@ -49,6 +49,11 @@ struct ToolSearchEntry {
     /// Tool usage examples.
     #[serde(skip_serializing_if = "Option::is_none")]
     examples: Option<String>,
+    /// Detailed usage instructions for this tool (behavioral guidelines).
+    /// Included when loading a deferred tool by exact name — replaces
+    /// the system prompt injection that non-deferred tools get.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    prompt: Option<String>,
     /// Whether this tool is deferred (name+description only in the prompt).
     #[serde(skip_serializing_if = "Option::is_none")]
     deferred: Option<bool>,
@@ -172,7 +177,10 @@ impl ExecutorContextTool for ToolSearchTool {
             let tool_name_lower = def.name.to_lowercase();
 
             if !input.names.is_empty() {
-                // ── Exact name lookup: ALWAYS return full schema ──
+                // ── Exact name lookup: ALWAYS return full schema + prompt ──
+                // This is how the model "loads" a deferred tool — it gets the
+                // schema AND the prompt instructions that would normally be in
+                // the system prompt for non-deferred tools.
                 if input.names.iter().any(|n| n.eq_ignore_ascii_case(&def.name)) {
                     scored.push((
                         ToolSearchEntry {
@@ -180,6 +188,7 @@ impl ExecutorContextTool for ToolSearchTool {
                             description: def.description,
                             parameters: Some(def.parameters),
                             examples: def.examples,
+                            prompt: def.prompt,
                             deferred: None,
                             hint: None,
                         },
@@ -199,6 +208,7 @@ impl ExecutorContextTool for ToolSearchTool {
                             description: def.description,
                             parameters: None,
                             examples: None,
+                            prompt: None,
                             deferred: Some(true),
                             hint: Some(
                                 "Use tool_search with names: [\"<name>\"] to fetch the full schema."
@@ -211,6 +221,7 @@ impl ExecutorContextTool for ToolSearchTool {
                             description: def.description,
                             parameters: Some(def.parameters),
                             examples: def.examples,
+                            prompt: None, // Non-deferred tools already have prompts in system prompt
                             deferred: None,
                             hint: None,
                         }
@@ -225,6 +236,7 @@ impl ExecutorContextTool for ToolSearchTool {
                         description: def.description,
                         parameters: None,
                         examples: None,
+                        prompt: None,
                         deferred: if is_deferred { Some(true) } else { None },
                         hint: None,
                     },
