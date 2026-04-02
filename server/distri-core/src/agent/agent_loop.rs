@@ -189,6 +189,11 @@ impl AgentLoop {
             tracing::warn!("Failed to calculate context size: {}", e);
         }
 
+        // Auto-compact before planning if context is getting large
+        if let Err(e) = context.evaluate_compaction().await {
+            tracing::warn!("Failed to evaluate compaction: {}", e);
+        }
+
         // Start with existing plan or None (will be planned in the loop)
         let mut current_plan = context.get_current_plan().await;
 
@@ -369,6 +374,7 @@ impl AgentLoop {
                 .emit(AgentEventType::StepCompleted {
                     step_id: step_id.clone(),
                     success: result.is_success(),
+                    context_budget: Some(context.get_usage().await.context_budget.clone()),
                 })
                 .await;
 
@@ -499,6 +505,7 @@ impl AgentLoop {
                 total_steps,
                 failed_steps,
                 usage: Some(run_usage),
+                context_budget: Some(context.get_usage().await.context_budget.clone()),
             })
             .await;
         // Return validation error if completion was invalid (to maintain existing behavior)

@@ -5,12 +5,14 @@ use tokio::sync::RwLock;
 
 use crate::agent::todos::TodosTool;
 use crate::agent::ExecutorContext;
+use crate::agent::token_estimator::TokenEstimator;
 use crate::servers::registry::McpServerRegistry;
 use crate::tools::browser::{BrowserStepTool, DistriBrowserSharedTool, DistriScrapeSharedTool};
 use crate::tools::builtin::ArtifactTool;
 use crate::types::{ToolCall, ToolsConfig};
 use crate::AgentError;
 use distri_types::Part;
+use serde::{Deserialize, Serialize};
 mod browser;
 pub mod code;
 // pub mod authenticated_example;
@@ -199,6 +201,45 @@ impl ExecutorContextTool for DynExecutorTool {
     }
 }
 
+/// Result of resolving tools with deferred loading support.
+#[derive(Debug, Clone)]
+pub struct ResolvedTools {
+    /// Tools with full schemas (core + under-threshold)
+    pub full_schema_tools: Vec<Arc<dyn Tool>>,
+    /// Tools that are deferred (name + description only, use tool_search for schema)
+    pub deferred_tools: Vec<DeferredToolInfo>,
+    /// All tools (full schema + deferred) — for tool_search lookups
+    pub all_tools: Vec<Arc<dyn Tool>>,
+    /// Estimated token savings from deferral
+    pub deferred_token_savings: usize,
+}
+
+/// Minimal info for a deferred tool shown in the system prompt.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeferredToolInfo {
+    pub name: String,
+    pub description: String,
+}
+
+impl DeferredToolInfo {
+    /// Format as a listing line for the system prompt.
+    pub fn as_listing_line(&self) -> String {
+        format!("- **{}**: {}", self.name, self.description)
+    }
+}
+
+impl ResolvedTools {
+    /// Generate the deferred tools listing text for the system prompt.
+    /// Returns None if no tools are deferred.
+    pub fn deferred_tools_listing(&self) -> Option<String> {
+        if self.deferred_tools.is_empty() {
+            return None;
+        }
+        let lines: Vec<String> = self.deferred_tools.iter().map(|t| t.as_listing_line()).collect();
+        Some(lines.join("\n"))
+    }
+}
+
 /// Resolve tools from the new ToolsConfig format.
 ///
 /// # Tool precedence (highest to lowest)
@@ -282,6 +323,97 @@ pub async fn resolve_tools_config(
     // MCP tools are resolved at runtime via the MCP registry; no static resolution here.
 
     Ok(all_tools)
+}
+
+/// Resolve tools with deferred loading support.
+///
+/// Wraps `resolve_tools_config` and then partitions tools into:
+/// - **full_schema_tools**: Core tools + tools under threshold → full JSON schemas in prompt
+/// - **deferred_tools**: Non-core tools above threshold → name+description only in prompt
+/// - **all_tools**: Complete list for `tool_search` lookups
+///
+/// Returns a `ResolvedTools` struct with the partitioned tools and token savings estimate.
+pub async fn resolve_tools_with_deferral(
+    config: &ToolsConfig,
+    registry: Arc<RwLock<McpServerRegistry>>,
+    external_tools: &[Arc<dyn Tool>],
+) -> Result<ResolvedTools> {
+    use distri_types::{ToolDeliveryMode, CORE_TOOLS};
+
+    // First resolve all tools normally
+    let all_tools = resolve_tools_config(
+        config,
+        registry,
+        external_tools,
+    )
+    .await?;
+
+    let total_count = all_tools.len();
+    let effective_mode = config.effective_delivery_mode(total_count);
+
+    match effective_mode {
+        ToolDeliveryMode::Full => {
+            // All tools get full schemas, no deferral
+            Ok(ResolvedTools {
+                full_schema_tools: all_tools.clone(),
+                deferred_tools: vec![],
+                all_tools,
+                deferred_token_savings: 0,
+            })
+        }
+        ToolDeliveryMode::Deferred | ToolDeliveryMode::NamesOnly => {
+            let mut full_schema = Vec::new();
+            let mut deferred = Vec::new();
+            let mut deferred_savings = 0usize;
+
+            for tool in &all_tools {
+                let name = tool.get_name();
+                let is_core = config.is_core_tool(&name);
+
+                // In NamesOnly mode, only CORE_TOOLS get full schemas
+                // In Deferred mode, core tools + call_* always get full schemas
+                let should_defer = match effective_mode {
+                    ToolDeliveryMode::NamesOnly => !CORE_TOOLS.contains(&name.as_str()),
+                    ToolDeliveryMode::Deferred => !is_core,
+                    _ => false,
+                };
+
+                if should_defer {
+                    // Estimate token savings: full schema vs name+description
+                    let full_schema_tokens = TokenEstimator::rough_token_count(
+                        &serde_json::to_string(&tool.get_parameters()).unwrap_or_default(),
+                    );
+                    let description = tool.get_description();
+                    let listing_tokens =
+                        TokenEstimator::rough_token_count(&format!("- {}: {}", name, description));
+                    deferred_savings += full_schema_tokens.saturating_sub(listing_tokens);
+
+                    deferred.push(DeferredToolInfo {
+                        name,
+                        description,
+                    });
+                } else {
+                    full_schema.push(tool.clone());
+                }
+            }
+
+            if !deferred.is_empty() {
+                tracing::info!(
+                    "Tool deferral: {} full schema, {} deferred (estimated savings: ~{} tokens)",
+                    full_schema.len(),
+                    deferred.len(),
+                    deferred_savings
+                );
+            }
+
+            Ok(ResolvedTools {
+                full_schema_tools: full_schema,
+                deferred_tools: deferred,
+                all_tools,
+                deferred_token_savings: deferred_savings,
+            })
+        }
+    }
 }
 
 /// Simple glob-style pattern matching

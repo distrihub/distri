@@ -110,7 +110,7 @@ impl Formatter for TextFormatter {
                     },
                 );
             }
-            AgentEventType::StepCompleted { step_id, success } => {
+            AgentEventType::StepCompleted { step_id, success, .. } => {
                 let fail_msg = if let Some(step) = self.state.steps.get_mut(step_id) {
                     step.status = if *success {
                         "done".into()

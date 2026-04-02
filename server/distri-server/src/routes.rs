@@ -463,6 +463,7 @@ async fn get_agent_definition(
             let tools = executor
                 .get_agent_tools(def, &context)
                 .await
+                .map(|r| r.all_tools)
                 .unwrap_or_default()
                 .into_iter()
                 .map(|t| t.get_tool_definition())

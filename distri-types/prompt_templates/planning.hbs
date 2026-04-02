@@ -1,30 +1,9 @@
-{{> core_instructions}}
+{{!-- Two-zone system prompt: static prefix (cacheable) + dynamic suffix (per-turn).
+     The boundary between zones enables API-side prompt caching.
+     See partials/static_prefix.hbs and partials/dynamic_suffix.hbs for details. --}}
 
-{{> communication}}
+{{!-- === STATIC ZONE (cacheable) === --}}
+{{> static_prefix}}
 
-{{#if max_steps}}
-# STEP LIMIT
-Steps remaining: {{remaining_steps}}/{{max_steps}}
-{{/if}}
-
-{{#if todos}}
-{{> todo_instructions}}
-{{/if}}
-
-{{#if available_tools}}
-# TOOLS
-{{{available_tools}}}
-{{/if}}
-
-{{#if (eq execution_mode "tools")}}
-{{#if (eq tool_format "xml")}}
-{{> tools_xml}}
-{{/if}}
-{{#if (eq tool_format "json")}}
-{{> tools_json}}
-{{/if}}
-{{/if}}
-
-{{> skills}}
-
-{{> reasoning}}
+{{!-- === DYNAMIC ZONE (per-turn) === --}}
+{{> dynamic_suffix}}

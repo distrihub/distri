@@ -7,7 +7,7 @@ use distri_types::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::{HashMap, HashSet}, sync::Arc};
 use tokio::sync::{mpsc, RwLock};
 
 use crate::agent::prompt_registry::PromptSection;
@@ -162,6 +162,8 @@ pub struct ExecutorContext {
     pub parent_task_id: Option<String>,
 
     pub dynamic_tools: Option<Arc<RwLock<Vec<Arc<dyn Tool>>>>>,
+    /// Names of tools that are deferred (name+description only in prompt).
+    pub deferred_tool_names: Arc<RwLock<HashSet<String>>>,
     pub hook_prompt_state: Arc<RwLock<HookPromptState>>,
     pub hook_registry: Arc<RwLock<Option<HookRegistry>>>,
     /// Default model settings inherited from the orchestrator/workspace context.
@@ -221,6 +223,7 @@ impl Default for ExecutorContext {
             parent_tx: None,
             parent_task_id: None,
             dynamic_tools: None,
+            deferred_tool_names: Arc::new(RwLock::new(HashSet::new())),
             hook_prompt_state: Arc::new(RwLock::new(HookPromptState::default())),
             hook_registry: Arc::new(RwLock::new(None)),
             default_model_settings: None,
@@ -256,6 +259,22 @@ impl ExecutorContext {
     pub async fn extend_tools(&self, tools: Vec<Arc<dyn Tool>>) {
         let mut guard = self.tools.write().await;
         guard.extend(tools);
+    }
+
+    /// Set the names of deferred tools (for tool_search awareness).
+    pub async fn set_deferred_tool_names(&self, names: HashSet<String>) {
+        let mut guard = self.deferred_tool_names.write().await;
+        *guard = names;
+    }
+
+    /// Check if a tool is deferred (name+description only, no schema in prompt).
+    pub async fn is_tool_deferred(&self, name: &str) -> bool {
+        self.deferred_tool_names.read().await.contains(name)
+    }
+
+    /// Get a copy of all deferred tool names.
+    pub async fn get_deferred_tool_names(&self) -> HashSet<String> {
+        self.deferred_tool_names.read().await.clone()
     }
 
     pub async fn merge_hook_prompt_state(&self, state: HookPromptState) {
@@ -919,6 +938,7 @@ impl ExecutorContext {
             parent_tx: self.parent_tx.clone(),
             parent_task_id: self.parent_task_id.clone(),
             dynamic_tools: self.dynamic_tools.clone(),
+            deferred_tool_names: self.deferred_tool_names.clone(),
             hook_prompt_state: self.hook_prompt_state.clone(),
             hook_registry: self.hook_registry.clone(),
             default_model_settings: self.default_model_settings.clone(),
@@ -980,15 +1000,17 @@ impl ExecutorContext {
         }
     }
 
-    /// Store execution result in scratchpad store
+    /// Store execution result in scratchpad store.
+    /// Compacts the result before saving to keep context lean.
     pub async fn store_execution_result(&self, result: &ExecutionResult) -> Result<(), AgentError> {
-        // Continue with the processed result
         tracing::debug!("Storing execution result for task_id: {}", self.task_id);
+        // Compact before storage: truncate large payloads, guard empty results
+        let compacted = result.compact_for_storage();
         let exec_entry = ExecutionHistoryEntry {
             thread_id: self.thread_id.clone(),
             task_id: self.task_id.clone(),
             run_id: self.run_id.clone(),
-            execution_result: result.clone(),
+            execution_result: compacted,
             stored_at: chrono::Utc::now().timestamp_millis(),
         };
 
@@ -1106,6 +1128,7 @@ impl ExecutorContext {
                 context_limit: max_tokens,
                 usage_ratio: result.usage_ratio,
                 summary: None,
+                context_budget: Some(self.get_usage().await.context_budget.clone()),
             })
             .await;
 

@@ -141,6 +141,7 @@ impl LlmExecuteService {
                     total_steps: 1,
                     failed_steps: 0,
                     usage: Some(run_usage),
+                    context_budget: None,
                 })
                 .await;
 

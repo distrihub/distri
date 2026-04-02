@@ -125,6 +125,7 @@ impl<'a> MessageFormatter<'a> {
             available_skills,
             tool_prompts: String::new(),
             tool_prompt_list: Vec::new(),
+            deferred_tools_listing: None, // Set by tool resolution with deferral
         };
 
         let template_to_use = hook_state
