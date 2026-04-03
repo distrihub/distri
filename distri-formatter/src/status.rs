@@ -107,10 +107,6 @@ pub fn format_status_text(name: &str, input: &Value) -> String {
             let skill = str_field("skill_name").unwrap_or_else(|| "...".to_string());
             format!("Loading skill: {}", skill)
         }
-        "run_skill_script" => {
-            let skill = str_field("skill_name").unwrap_or_else(|| "...".to_string());
-            format!("Running skill: {}", skill)
-        }
         "read_file" => {
             let path = str_field("path")
                 .or_else(|| str_field("file_path"))

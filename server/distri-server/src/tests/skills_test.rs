@@ -28,7 +28,7 @@ mod tests {
                 content: "# Test\nDoes things.".to_string(),
                 tags: vec!["test".to_string()],
                 is_public: false,
-                scripts: vec![],
+
                 model: Some("claude-sonnet-4-6".to_string()),
                 context: ContextExecutionType::Inline,
             })
@@ -50,7 +50,7 @@ mod tests {
                 content: "content".to_string(),
                 tags: vec![],
                 is_public: false,
-                scripts: vec![],
+
                 model: None,
                 context: ContextExecutionType::default(),
             })
@@ -73,7 +73,7 @@ mod tests {
                 content: "# Fork skill\nDo deep work.".to_string(),
                 tags: vec!["fork".to_string()],
                 is_public: false,
-                scripts: vec![],
+
                 model: Some("claude-opus-4-6".to_string()),
                 context: ContextExecutionType::Fork,
             })
@@ -105,7 +105,7 @@ mod tests {
                 content: "content".to_string(),
                 tags: vec![],
                 is_public: false,
-                scripts: vec![],
+
                 model: None,
                 context: ContextExecutionType::Inline,
             })
@@ -145,7 +145,7 @@ mod tests {
                 content: "content".to_string(),
                 tags: vec![],
                 is_public: false,
-                scripts: vec![],
+
                 model: None,
                 context: ContextExecutionType::Fork,
             })

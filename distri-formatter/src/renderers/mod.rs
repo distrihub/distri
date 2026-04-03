@@ -45,7 +45,6 @@ pub fn render_tool_output(result: &ToolResponse, verbose: bool) {
         // Platform / discovery tools
         "tool_search"
         | "load_skill"
-        | "run_skill_script"
         | "list_agents"
         | "list_skills"
         | "create_skill"

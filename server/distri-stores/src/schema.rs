@@ -237,21 +237,6 @@ diesel::table! {
 diesel::table! {
     use diesel::sql_types::*;
 
-    skill_scripts (id) {
-        id -> Text,
-        skill_id -> Text,
-        name -> Text,
-        description -> Nullable<Text>,
-        code -> Text,
-        language -> Text,
-        created_at -> Timestamp,
-        updated_at -> Timestamp,
-    }
-}
-
-diesel::table! {
-    use diesel::sql_types::*;
-
     message_reads (id) {
         id -> Text,
         thread_id -> Text,
@@ -284,8 +269,6 @@ diesel::joinable!(session_entries -> threads (thread_id));
 diesel::joinable!(scratchpad_entries -> threads (thread_id));
 diesel::joinable!(message_reads -> threads (thread_id));
 diesel::joinable!(message_votes -> threads (thread_id));
-diesel::joinable!(skill_scripts -> skills (skill_id));
-
 diesel::allow_tables_to_appear_in_same_query!(
     agent_configs,
     threads,
@@ -303,7 +286,6 @@ diesel::allow_tables_to_appear_in_same_query!(
     server_settings,
     secrets,
     skills,
-    skill_scripts,
     message_reads,
     message_votes,
 );

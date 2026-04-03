@@ -957,7 +957,6 @@ pub struct SkillRecord {
     pub is_system: bool,
     pub star_count: i32,
     pub clone_count: i32,
-    pub scripts: Vec<SkillScriptRecord>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
     /// Preferred model for skill execution (overrides agent default)
@@ -969,18 +968,6 @@ pub struct SkillRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SkillScriptRecord {
-    pub id: String,
-    pub skill_id: String,
-    pub name: String,
-    pub description: Option<String>,
-    pub code: String,
-    pub language: String,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NewSkill {
     pub name: String,
     pub description: Option<String>,
@@ -989,25 +976,10 @@ pub struct NewSkill {
     pub tags: Vec<String>,
     #[serde(default)]
     pub is_public: bool,
-    #[serde(default)]
-    pub scripts: Vec<NewSkillScript>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     #[serde(default)]
     pub context: ContextExecutionType,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NewSkillScript {
-    pub name: String,
-    pub description: Option<String>,
-    pub code: String,
-    #[serde(default = "default_script_language")]
-    pub language: String,
-}
-
-fn default_script_language() -> String {
-    "javascript".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1023,14 +995,6 @@ pub struct UpdateSkill {
     pub context: Option<ContextExecutionType>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UpdateSkillScript {
-    pub name: Option<String>,
-    pub description: Option<String>,
-    pub code: Option<String>,
-    pub language: Option<String>,
-}
-
 #[async_trait]
 pub trait SkillStore: Send + Sync {
     async fn list_skills(&self) -> anyhow::Result<Vec<SkillRecord>>;
@@ -1038,19 +1002,6 @@ pub trait SkillStore: Send + Sync {
     async fn create_skill(&self, skill: NewSkill) -> anyhow::Result<SkillRecord>;
     async fn update_skill(&self, id: &str, update: UpdateSkill) -> anyhow::Result<SkillRecord>;
     async fn delete_skill(&self, id: &str) -> anyhow::Result<()>;
-
-    // Script management
-    async fn add_script(
-        &self,
-        skill_id: &str,
-        script: NewSkillScript,
-    ) -> anyhow::Result<SkillScriptRecord>;
-    async fn update_script(
-        &self,
-        script_id: &str,
-        update: UpdateSkillScript,
-    ) -> anyhow::Result<SkillScriptRecord>;
-    async fn delete_script(&self, script_id: &str) -> anyhow::Result<()>;
 
     // Discovery
     async fn list_public_skills(&self) -> anyhow::Result<Vec<SkillRecord>>;

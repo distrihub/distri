@@ -1790,7 +1790,7 @@ impl Distri {
 // Skill API Types and Methods
 // ============================================================
 
-/// Full skill information including content and scripts.
+/// Full skill information including content.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillResponse {
     pub id: String,
@@ -1812,22 +1812,6 @@ pub struct SkillResponse {
     pub clone_count: i32,
     #[serde(default)]
     pub is_starred: bool,
-    #[serde(default)]
-    pub scripts: Vec<SkillScriptResponse>,
-    pub created_at: String,
-    pub updated_at: String,
-}
-
-/// Script within a skill.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SkillScriptResponse {
-    pub id: String,
-    pub skill_id: String,
-    pub name: String,
-    #[serde(default)]
-    pub description: Option<String>,
-    pub code: String,
-    pub language: String,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -1847,18 +1831,6 @@ pub struct CreateSkillRequest {
     pub tags: Vec<String>,
     #[serde(default)]
     pub is_public: bool,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub scripts: Vec<CreateSkillScriptRequest>,
-}
-
-/// Request to create a script within a skill.
-#[derive(Debug, Clone, Serialize)]
-pub struct CreateSkillScriptRequest {
-    pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    pub code: String,
-    pub language: String,
 }
 
 /// Request to update an existing skill.

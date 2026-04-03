@@ -24,13 +24,6 @@ pub fn render_platform_tool(result: &ToolResponse) {
                 render_one_liner(text, false);
             }
         }
-        "run_skill_script" => {
-            if false {
-                render_one_liner(text, true);
-            } else {
-                println!("{}{}Done{}", COLOR_GRAY, RESULT_PREFIX, COLOR_RESET);
-            }
-        }
         "list_skills" => {
             let count = data
                 .and_then(|d| d.as_array())

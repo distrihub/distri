@@ -22,7 +22,7 @@ pub use client::{
     AgentListItem, AgentRegistrationResponse, ApiKeyResponse, ArtifactEntry, ArtifactListResponse,
     ArtifactNamespace, ArtifactNamespaceList, ArtifactReadResponse, ArtifactSaveResponse,
     ConnectResponse, ConnectionSummary, ConnectionToken, CreatePluginRequest, CreateSkillRequest,
-    CreateSkillScriptRequest, Distri, InvokeOptions, LlmExecuteOptions, LlmExecuteResponse,
+    Distri, InvokeOptions, LlmExecuteOptions, LlmExecuteResponse,
     LoginUrlResponse, NewPromptTemplateRequest, NewSecretRequest, PluginResponse,
     PluginsListResponse, PromptTemplateResponse, ProviderInfo, SecretEntry, SkillListItemResponse,
     SkillResponse, SyncPromptTemplatesResponse, TaskNamespaceResponse, ThreadSummary,

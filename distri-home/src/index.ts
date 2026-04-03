@@ -1,6 +1,6 @@
 // Client exports
 export { DistriHomeClient } from './DistriHomeClient';
-export type { HomeStats, HomeStatsThread, RecentlyUsedAgent, AgentUsageInfo, ApiKey, Secret, PromptTemplate, AgentValidationResult, ValidationWarning, ValidationWarningSeverity, SkillRecord, SkillScriptRecord, NewSkill, UpdateSkill, NewSkillScript, UpdateSkillScript, ConfiguredField, CustomProviderConfig, CustomModelEntry, SecretKeyDefinition, UpsertProviderRequest, UpsertProviderResponse, ModelProviderDefinition, Model, ModelWithProvider, ModelCapability, ModelPricing, ProviderKeyDefinition, ProviderTypeInfo } from './DistriHomeClient';
+export type { HomeStats, HomeStatsThread, RecentlyUsedAgent, AgentUsageInfo, ApiKey, Secret, PromptTemplate, AgentValidationResult, ValidationWarning, ValidationWarningSeverity, SkillRecord, NewSkill, UpdateSkill, ConfiguredField, CustomProviderConfig, CustomModelEntry, SecretKeyDefinition, UpsertProviderRequest, UpsertProviderResponse, ModelProviderDefinition, Model, ModelWithProvider, ModelCapability, ModelPricing, ProviderKeyDefinition, ProviderTypeInfo } from './DistriHomeClient';
 
 // Provider exports
 export { DistriHomeProvider, useDistriHome, useDistriHomeConfig, useDistriHomeNavigate, useDistriHomeClient } from './DistriHomeProvider';
