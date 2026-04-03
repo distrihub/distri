@@ -37,6 +37,7 @@ mod tests {
             user_id: Some("user-1".to_string()),
             external_id: None,
             channel_id: None,
+            channel_name: None,
             tags: None,
             input_tokens: 1500,
             output_tokens: 3000,

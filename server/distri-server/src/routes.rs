@@ -1628,11 +1628,23 @@ mod tests {
         let stores = distri_core::initialize_stores(&store_config).await.unwrap();
         let prompt_registry = Arc::new(PromptRegistry::with_defaults().await.unwrap());
 
+        let workspace_fs = {
+            use distri_core::types::configuration::ObjectStorageConfig;
+            use distri_filesystem::{create_file_system, FileSystemConfig};
+            let fs_config = FileSystemConfig {
+                object_store: ObjectStorageConfig::FileSystem {
+                    base_path: temp_path.to_string_lossy().to_string(),
+                },
+                root_prefix: None,
+            };
+            std::sync::Arc::new(create_file_system(fs_config).await.unwrap())
+        };
+
         let orchestrator = AgentOrchestratorBuilder::default()
             .with_stores(stores)
             .with_prompt_registry(prompt_registry)
             .with_store_config(store_config)
-            .with_workspace_path(temp_path.to_path_buf())
+            .with_workspace_filesystem(workspace_fs)
             .build()
             .await
             .unwrap();
