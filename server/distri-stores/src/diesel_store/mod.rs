@@ -3651,9 +3651,9 @@ where
             .await?;
 
         let mut records = Vec::new();
-        for model in results {
-            let skill_scripts = self.load_scripts_for_skill(&mut conn, &model.id).await?;
-            records.push(to_skill_record(model, skill_scripts));
+        for skill_model in results {
+            let skill_scripts = self.load_scripts_for_skill(&mut conn, &skill_model.id).await?;
+            records.push(to_skill_record(skill_model, skill_scripts));
         }
         Ok(records)
     }
@@ -3669,9 +3669,9 @@ where
             .optional()?;
 
         match result {
-            Some(model) => {
-                let script_models = self.load_scripts_for_skill(&mut conn, &model.id).await?;
-                Ok(Some(to_skill_record(model, script_models)))
+            Some(skill_model) => {
+                let script_models = self.load_scripts_for_skill(&mut conn, &skill_model.id).await?;
+                Ok(Some(to_skill_record(skill_model, script_models)))
             }
             None => Ok(None),
         }
@@ -3684,7 +3684,7 @@ where
         let new_id = Uuid::new_v4().to_string();
         let tags_json = serde_json::to_string(&skill.tags)?;
 
-        let model = NewSkillModel {
+        let new_skill = NewSkillModel {
             id: &new_id,
             name: &skill.name,
             description: skill.description.as_deref(),
@@ -3699,7 +3699,7 @@ where
         };
 
         diesel::insert_into(skills)
-            .values(&model)
+            .values(&new_skill)
             .execute(&mut conn)
             .await?;
 
@@ -3906,9 +3906,9 @@ where
             .await?;
 
         let mut records = Vec::new();
-        for model in results {
-            let script_models = self.load_scripts_for_skill(&mut conn, &model.id).await?;
-            records.push(to_skill_record(model, script_models));
+        for skill_model in results {
+            let script_models = self.load_scripts_for_skill(&mut conn, &skill_model.id).await?;
+            records.push(to_skill_record(skill_model, script_models));
         }
         Ok(records)
     }
@@ -3943,7 +3943,7 @@ where
         let new_id = Uuid::new_v4().to_string();
         let new_name = format!("Clone of {}", source.name);
 
-        let model = NewSkillModel {
+        let new_skill = NewSkillModel {
             id: &new_id,
             name: &new_name,
             description: source.description.as_deref(),
@@ -3953,10 +3953,12 @@ where
             is_system: 0,
             created_at: now,
             updated_at: now,
+            model: source.model.as_deref(),
+            max_tokens: source.max_tokens,
         };
 
         diesel::insert_into(skills)
-            .values(&model)
+            .values(&new_skill)
             .execute(&mut conn)
             .await?;
 
