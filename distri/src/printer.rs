@@ -6,7 +6,7 @@ use chrono::Local;
 use distri_a2a::MessageSendParams;
 use distri_types::{AgentEvent, AgentEventType, MessageRole, ToolResponse};
 use image::DynamicImage;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 use viuer::Config;
 
 use crate::client_stream::{AgentStreamClient, StreamError, StreamItem};
@@ -220,7 +220,7 @@ pub struct EventPrinter {
     /// Frame counter for spinner animation (advances each redraw).
     spinner_frame: usize,
     /// Shared context health state — updated by events, read by CLI status line.
-    pub context_health: Arc<Mutex<ContextHealth>>,
+    pub context_health: Arc<RwLock<ContextHealth>>,
 }
 
 impl Default for EventPrinter {
@@ -236,7 +236,7 @@ impl EventPrinter {
             verbose: false,
             show_tools: true,
             agent_display_name: None,
-            context_health: Arc::new(Mutex::new(ContextHealth::default())),
+            context_health: Arc::new(RwLock::new(ContextHealth::default())),
             planning_text: None,
             spinner_frame: 0,
         }
@@ -362,7 +362,7 @@ impl EventPrinter {
                 context_budget,
             } => {
                 if let Some(budget) = context_budget {
-                    let mut health = self.context_health.blocking_lock();
+                    let mut health = self.context_health.write().await;
                     health.update_from_budget(budget);
                 }
                 if let Some(step) = self.state.steps.get_mut(step_id) {
@@ -431,7 +431,7 @@ impl EventPrinter {
             } => {
                 // Update context health from budget + usage
                 {
-                    let mut health = self.context_health.blocking_lock();
+                    let mut health = self.context_health.write().await;
                     if let Some(budget) = context_budget {
                         health.update_from_budget(budget);
                     }
@@ -470,7 +470,7 @@ impl EventPrinter {
                 is_warning,
                 is_critical,
             } => {
-                let mut health = self.context_health.blocking_lock();
+                let mut health = self.context_health.write().await;
                 health.update_from_budget(budget);
                 // Print a warning if crossing thresholds
                 if *is_critical {
@@ -800,8 +800,8 @@ pub async fn print_stream_with_health(
     verbose: bool,
     agent_display_name: Option<String>,
     show_tools: bool,
-    shared_health: Option<Arc<Mutex<ContextHealth>>>,
-) -> Result<(Arc<Mutex<ContextHealth>>, Result<(), StreamError>), StreamError> {
+    shared_health: Option<Arc<RwLock<ContextHealth>>>,
+) -> Result<(Arc<RwLock<ContextHealth>>, Result<(), StreamError>), StreamError> {
     let mut printer = EventPrinter::new().with_verbose(verbose);
     if let Some(name) = agent_display_name {
         printer = printer.with_agent_name(name);

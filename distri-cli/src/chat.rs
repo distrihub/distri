@@ -9,7 +9,7 @@ use distri::{
     print_stream_with_health, AgentStreamClient, BuildHttpClient, ContextHealth, Distri,
     DistriClientApp, DistriConfig,
 };
-use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 use distri_types::configuration::AgentConfig;
 use inquire::{Select, Text};
 use rustyline::error::ReadlineError;
@@ -465,14 +465,10 @@ pub async fn run_interactive_chat(
     }
 
     let mut last_interrupt: Option<Instant> = None;
-    let shared_health: Arc<Mutex<ContextHealth>> =
-        Arc::new(Mutex::new(ContextHealth::default()));
+    let shared_health: Arc<RwLock<ContextHealth>> =
+        Arc::new(RwLock::new(ContextHealth::default()));
 
     loop {
-        {
-            let health = shared_health.blocking_lock();
-            print_context_status(&health);
-        }
         print_separator_line();
 
         let input = match rl.readline("> ") {
@@ -604,6 +600,12 @@ pub async fn run_interactive_chat(
             Err(err) => {
                 eprintln!("Error from agent: {}", err);
             }
+        }
+
+        // Print context usage after every turn
+        {
+            let health = shared_health.read().await;
+            print_context_status(&health);
         }
     }
 
