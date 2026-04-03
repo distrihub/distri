@@ -15,8 +15,7 @@ pub fn configure_skill_routes(cfg: &mut web::ServiceConfig) {
             .route(web::get().to(get_skill))
             .route(web::put().to(update_skill))
             .route(web::delete().to(delete_skill)),
-    )
-    ;
+    );
 }
 
 async fn list_skills(executor: web::Data<Arc<AgentOrchestrator>>) -> HttpResponse {
@@ -131,4 +130,3 @@ async fn delete_skill(
         Err(e) => HttpResponse::InternalServerError().json(json!({"error": e.to_string()})),
     }
 }
-

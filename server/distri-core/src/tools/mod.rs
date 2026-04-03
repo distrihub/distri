@@ -4,8 +4,8 @@ use anyhow::Result;
 use tokio::sync::RwLock;
 
 use crate::agent::todos::TodosTool;
-use crate::agent::ExecutorContext;
 use crate::agent::token_estimator::TokenEstimator;
+use crate::agent::ExecutorContext;
 use crate::servers::registry::McpServerRegistry;
 use crate::tools::browser::{BrowserStepTool, DistriBrowserSharedTool, DistriScrapeSharedTool};
 use crate::tools::builtin::ArtifactTool;
@@ -235,7 +235,11 @@ impl ResolvedTools {
         if self.deferred_tools.is_empty() {
             return None;
         }
-        let lines: Vec<String> = self.deferred_tools.iter().map(|t| t.as_listing_line()).collect();
+        let lines: Vec<String> = self
+            .deferred_tools
+            .iter()
+            .map(|t| t.as_listing_line())
+            .collect();
         Some(lines.join("\n"))
     }
 }
@@ -341,12 +345,7 @@ pub async fn resolve_tools_with_deferral(
     use distri_types::{ToolDeliveryMode, CORE_TOOLS};
 
     // First resolve all tools normally
-    let all_tools = resolve_tools_config(
-        config,
-        registry,
-        external_tools,
-    )
-    .await?;
+    let all_tools = resolve_tools_config(config, registry, external_tools).await?;
 
     let total_count = all_tools.len();
     let effective_mode = config.effective_delivery_mode(total_count);
@@ -388,10 +387,7 @@ pub async fn resolve_tools_with_deferral(
                         TokenEstimator::rough_token_count(&format!("- {}: {}", name, description));
                     deferred_savings += full_schema_tokens.saturating_sub(listing_tokens);
 
-                    deferred.push(DeferredToolInfo {
-                        name,
-                        description,
-                    });
+                    deferred.push(DeferredToolInfo { name, description });
                 } else {
                     full_schema.push(tool.clone());
                 }

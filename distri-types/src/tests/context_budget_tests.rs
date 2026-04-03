@@ -125,4 +125,3 @@ fn budget_update_accumulates_across_turns() {
     budget.conversation_tokens += 3000;
     assert_eq!(budget.total_tokens(), 9500);
 }
-

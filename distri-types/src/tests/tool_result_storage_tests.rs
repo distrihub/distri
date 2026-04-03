@@ -1,5 +1,5 @@
+use crate::core::{FileType, Part, PartMetadata, ToolResponse};
 use crate::execution::{ExecutionResult, ExecutionStatus};
-use crate::core::{Part, ToolResponse, FileType, PartMetadata};
 use serde_json::json;
 
 fn make_result(parts: Vec<Part>) -> ExecutionResult {
@@ -43,7 +43,9 @@ fn compact_for_history_compacts_large_json() {
 #[test]
 fn compact_for_history_strips_images() {
     let result = make_result(vec![Part::Image(FileType::Bytes {
-        bytes: "abc".into(), mime_type: "image/png".into(), name: None,
+        bytes: "abc".into(),
+        mime_type: "image/png".into(),
+        name: None,
     })]);
     let compacted = result.compact_for_history();
     match &compacted.parts[0] {
@@ -58,8 +60,12 @@ fn compact_for_history_filters_save_false_parts() {
     metadata.insert(0, PartMetadata { save: false });
     metadata.insert(1, PartMetadata { save: true });
     let tool_result = ToolResponse {
-        tool_call_id: "tc1".into(), tool_name: "test".into(),
-        parts: vec![Part::Text("ephemeral".into()), Part::Text("persistent".into())],
+        tool_call_id: "tc1".into(),
+        tool_name: "test".into(),
+        parts: vec![
+            Part::Text("ephemeral".into()),
+            Part::Text("persistent".into()),
+        ],
         parts_metadata: Some(metadata),
     };
     let result = make_result(vec![Part::ToolResult(tool_result)]);
@@ -67,7 +73,10 @@ fn compact_for_history_filters_save_false_parts() {
     match &compacted.parts[0] {
         Part::ToolResult(tr) => {
             assert_eq!(tr.parts.len(), 1);
-            match &tr.parts[0] { Part::Text(t) => assert_eq!(t, "persistent"), _ => panic!("expected text") }
+            match &tr.parts[0] {
+                Part::Text(t) => assert_eq!(t, "persistent"),
+                _ => panic!("expected text"),
+            }
         }
         _ => panic!("expected tool result"),
     }
@@ -78,7 +87,10 @@ fn empty_result_gets_no_output_guard() {
     let result = make_result(vec![]);
     let guarded = result.with_empty_guard();
     assert_eq!(guarded.parts.len(), 1);
-    match &guarded.parts[0] { Part::Text(t) => assert_eq!(t, "[No output]"), _ => panic!("expected guard") }
+    match &guarded.parts[0] {
+        Part::Text(t) => assert_eq!(t, "[No output]"),
+        _ => panic!("expected guard"),
+    }
 }
 
 #[test]
@@ -86,14 +98,24 @@ fn compact_for_storage_applies_both() {
     let result = make_result(vec![]);
     let stored = result.compact_for_storage();
     assert_eq!(stored.parts.len(), 1);
-    match &stored.parts[0] { Part::Text(t) => assert_eq!(t, "[No output]"), _ => panic!("expected guard") }
+    match &stored.parts[0] {
+        Part::Text(t) => assert_eq!(t, "[No output]"),
+        _ => panic!("expected guard"),
+    }
 }
 
 #[test]
 fn tool_result_token_estimation() {
     let result = make_result(vec![Part::Text("short result".into())]);
     let compacted = result.compact_for_storage();
-    let text_len: usize = compacted.parts.iter().map(|p| match p { Part::Text(t) => t.len(), _ => 0 }).sum();
+    let text_len: usize = compacted
+        .parts
+        .iter()
+        .map(|p| match p {
+            Part::Text(t) => t.len(),
+            _ => 0,
+        })
+        .sum();
     let tokens = (text_len + 3) / 4;
     assert!(tokens < ExecutionResult::MAX_TOOL_RESULT_TOKENS);
 }

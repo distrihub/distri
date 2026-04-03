@@ -1,14 +1,18 @@
+use crate::agent::pricing;
 use crate::hooks_runtime::HookRegistry;
 use distri_stores::SessionStoreExt;
 use distri_types::filesystem::FileSystemOps;
 use distri_types::{
-    configuration::DefinitionOverrides, AgentContextSize, AgentPlan, ContextSize, ContextUsage,
-    ExecutionHistoryEntry, ExecutionResult, ModelSettings, Part, PlanStep, ScratchpadEntry,
-    ScratchpadEntryType,
+    configuration::DefinitionOverrides, AgentContextSize, AgentPlan, ContextBudget, ContextSize,
+    ContextUsage, ExecutionHistoryEntry, ExecutionResult, ModelSettings, Part, PlanStep, RunUsage,
+    ScratchpadEntry, ScratchpadEntryType,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{collections::{HashMap, HashSet}, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 use tokio::sync::{mpsc, RwLock};
 
 use crate::agent::prompt_registry::PromptSection;
@@ -272,6 +276,20 @@ impl ExecutorContext {
 
     /// Set the names of deferred tools (for tool_search awareness).
     pub async fn set_deferred_tool_names(&self, names: HashSet<String>) {
+        if !names.is_empty() {
+            let mut sorted: Vec<&String> = names.iter().collect();
+            sorted.sort();
+            self.emit_verbose(format!(
+                "[tools] Deferred ({} tools): {}",
+                names.len(),
+                sorted
+                    .iter()
+                    .map(|s| s.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ))
+            .await;
+        }
         let mut guard = self.deferred_tool_names.write().await;
         *guard = names;
     }
@@ -376,6 +394,16 @@ impl ExecutorContext {
         }
     }
 
+    /// Emit a verbose diagnostic message to the client (no-op when not verbose).
+    /// Also logs via tracing so it appears in the server terminal.
+    pub async fn emit_verbose(&self, message: String) {
+        if !self.verbose {
+            return;
+        }
+        tracing::info!("{}", message);
+        self.emit(AgentEventType::DiagnosticLog { message }).await;
+    }
+
     /// Emit event to parent agent only (for subagent communication)
     pub async fn emit_parent(&self, event: AgentEventType) {
         let parent_tx = {
@@ -418,6 +446,12 @@ impl ExecutorContext {
         usage.cached_tokens += cached_tokens;
     }
 
+    /// Update the context budget breakdown (populated after each prompt build).
+    pub async fn update_context_budget(&self, budget: ContextBudget) {
+        let mut u = self.usage.write().await;
+        u.context_budget = budget;
+    }
+
     /// Set the model name on the usage context for cost tracking
     pub async fn set_usage_model(&self, model: String) {
         let mut usage = self.usage.write().await;
@@ -433,6 +467,54 @@ impl ExecutorContext {
     /// Get current usage information
     pub async fn get_usage(&self) -> ContextUsage {
         self.usage.read().await.clone()
+    }
+
+    /// Snapshot the current cumulative token counts as the start of a new step.
+    /// Must be called at the top of each step iteration before any LLM calls.
+    pub async fn snapshot_step_start(&self) {
+        let mut u = self.usage.write().await;
+        u.step_input_start = u.input_tokens;
+        u.step_output_start = u.output_tokens;
+        u.step_cached_start = u.cached_tokens;
+    }
+
+    /// Returns a `RunUsage` with per-step deltas (tokens used only in this step) and
+    /// an estimated cost derived from those deltas.
+    pub async fn get_step_usage(&self) -> RunUsage {
+        let u = self.usage.read().await;
+        let delta_input = u.input_tokens.saturating_sub(u.step_input_start);
+        let delta_output = u.output_tokens.saturating_sub(u.step_output_start);
+        let delta_cached = u.cached_tokens.saturating_sub(u.step_cached_start);
+        let cost = u
+            .model
+            .as_deref()
+            .and_then(|m| pricing::estimate_cost(m, delta_input, delta_output, delta_cached));
+        RunUsage {
+            total_tokens: delta_input + delta_output,
+            input_tokens: delta_input,
+            output_tokens: delta_output,
+            cached_tokens: delta_cached,
+            estimated_tokens: 0,
+            model: u.model.clone(),
+            cost_usd: cost,
+        }
+    }
+
+    /// Returns a `RunUsage` with cumulative totals across the entire run plus total cost.
+    pub async fn get_total_usage(&self) -> RunUsage {
+        let u = self.usage.read().await;
+        let cost = u.model.as_deref().and_then(|m| {
+            pricing::estimate_cost(m, u.input_tokens, u.output_tokens, u.cached_tokens)
+        });
+        RunUsage {
+            total_tokens: u.tokens,
+            input_tokens: u.input_tokens,
+            output_tokens: u.output_tokens,
+            cached_tokens: u.cached_tokens,
+            estimated_tokens: u.context_size.total_estimated_tokens as u32,
+            model: u.model.clone(),
+            cost_usd: cost,
+        }
     }
 
     /// Calculate and update context size statistics

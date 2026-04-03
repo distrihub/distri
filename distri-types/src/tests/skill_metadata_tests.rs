@@ -1,4 +1,6 @@
-use crate::stores::{SkillFrontmatter, format_skill_listing, DEFAULT_SKILL_MAX_TOKENS, SKILL_DESCRIPTION_CAP};
+use crate::stores::{
+    DEFAULT_SKILL_MAX_TOKENS, SKILL_DESCRIPTION_CAP, SkillFrontmatter, format_skill_listing,
+};
 
 #[test]
 fn skill_frontmatter_parse_full() {
@@ -53,9 +55,16 @@ fn skill_frontmatter_paths_relevance() {
 
 #[test]
 fn skill_frontmatter_max_tokens() {
-    let fm = SkillFrontmatter { name: "test".into(), max_tokens: Some(3000), ..Default::default() };
+    let fm = SkillFrontmatter {
+        name: "test".into(),
+        max_tokens: Some(3000),
+        ..Default::default()
+    };
     assert_eq!(fm.effective_max_tokens(), 3000);
-    let fm_default = SkillFrontmatter { name: "test".into(), ..Default::default() };
+    let fm_default = SkillFrontmatter {
+        name: "test".into(),
+        ..Default::default()
+    };
     assert_eq!(fm_default.effective_max_tokens(), DEFAULT_SKILL_MAX_TOKENS);
 }
 
@@ -68,16 +77,24 @@ fn skill_listing_format_one_line() {
         can_spawn_tasks: true,
         ..Default::default()
     };
-    assert_eq!(fm.as_listing_line(), "- web_search: Search the web (model: gpt-4.1, tasks: yes)");
+    assert_eq!(
+        fm.as_listing_line(),
+        "- web_search: Search the web (model: gpt-4.1, tasks: yes)"
+    );
 }
 
 #[test]
 fn skill_listing_budget_capped() {
-    let skills: Vec<SkillFrontmatter> = (0..50).map(|i| SkillFrontmatter {
-        name: format!("skill_{}", i),
-        description: Some(format!("Description for skill {} that is moderately long", i)),
-        ..Default::default()
-    }).collect();
+    let skills: Vec<SkillFrontmatter> = (0..50)
+        .map(|i| SkillFrontmatter {
+            name: format!("skill_{}", i),
+            description: Some(format!(
+                "Description for skill {} that is moderately long",
+                i
+            )),
+            ..Default::default()
+        })
+        .collect();
     let listing = format_skill_listing(&skills, 50);
     let lines: Vec<&str> = listing.lines().collect();
     assert!(lines.len() < 50);
@@ -86,7 +103,11 @@ fn skill_listing_budget_capped() {
 #[test]
 fn skill_description_cap_truncates() {
     let long_desc = "x".repeat(SKILL_DESCRIPTION_CAP + 100);
-    let fm = SkillFrontmatter { name: "test".into(), description: Some(long_desc), ..Default::default() };
+    let fm = SkillFrontmatter {
+        name: "test".into(),
+        description: Some(long_desc),
+        ..Default::default()
+    };
     let line = fm.as_listing_line();
     assert!(line.contains("..."));
 }

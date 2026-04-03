@@ -256,7 +256,9 @@ impl Formatter for WhatsAppFormatter {
                     },
                 );
             }
-            AgentEventType::StepCompleted { step_id, success, .. } => {
+            AgentEventType::StepCompleted {
+                step_id, success, ..
+            } => {
                 if let Some(step) = self.state.steps.get_mut(step_id) {
                     step.status = if *success { "done" } else { "error" }.into();
                 }

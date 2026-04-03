@@ -417,6 +417,7 @@ impl LLMExecutor {
                 .emit(AgentEventType::RunError {
                     message: error_msg.clone(),
                     code: Some("llm_stream_error".to_string()),
+                    usage: None,
                 })
                 .await;
 
@@ -439,6 +440,8 @@ impl LLMExecutor {
         tokio::pin!(stream);
         let mut text_started = false;
         let mut parser = self.get_parser().await;
+        let mut stream_input_tokens: u32 = 0;
+        let mut stream_output_tokens: u32 = 0;
 
         while let Some(chunk) = stream.next().await {
             match chunk {
@@ -449,6 +452,8 @@ impl LLMExecutor {
                         self.context
                             .increment_usage(input_tokens, output_tokens)
                             .await;
+                        stream_input_tokens += input_tokens;
+                        stream_output_tokens += output_tokens;
                     }
                     if let Some(choice) = chunk.choices.first() {
                         let delta = &choice.delta;
@@ -610,6 +615,19 @@ impl LLMExecutor {
                 .transpose()?
                 .unwrap_or(Vec::new()),
         );
+
+        // Verbose: per-call LLM summary
+        if context.verbose && (stream_input_tokens > 0 || stream_output_tokens > 0) {
+            let model = if ms.model.is_empty() { "unset" } else { &ms.model };
+            context
+                .emit_verbose(format!(
+                    "[LLM] {}: {} in, {} out",
+                    model,
+                    format_k(stream_input_tokens as usize),
+                    format_k(stream_output_tokens as usize),
+                ))
+                .await;
+        }
 
         if text_started {
             context
@@ -1442,5 +1460,13 @@ pub fn create_llm_executor(
                 )))
             }
         }
+    }
+}
+
+fn format_k(count: usize) -> String {
+    if count >= 1000 {
+        format!("{:.1}k", count as f64 / 1000.0)
+    } else {
+        format!("{}", count)
     }
 }

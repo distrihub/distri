@@ -98,14 +98,10 @@ impl ContentFormat {
 
 fn is_binary_extension(name: &str) -> bool {
     let binary_exts = [
-        ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".webp", ".svg",
-        ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
-        ".zip", ".tar", ".gz", ".bz2", ".7z", ".rar",
-        ".exe", ".dll", ".so", ".dylib", ".o", ".a",
-        ".wasm", ".pyc", ".class",
-        ".mp3", ".mp4", ".wav", ".avi", ".mkv", ".mov",
-        ".ttf", ".otf", ".woff", ".woff2",
-        ".sqlite", ".db",
+        ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".webp", ".svg", ".pdf", ".doc", ".docx",
+        ".xls", ".xlsx", ".ppt", ".pptx", ".zip", ".tar", ".gz", ".bz2", ".7z", ".rar", ".exe",
+        ".dll", ".so", ".dylib", ".o", ".a", ".wasm", ".pyc", ".class", ".mp3", ".mp4", ".wav",
+        ".avi", ".mkv", ".mov", ".ttf", ".otf", ".woff", ".woff2", ".sqlite", ".db",
     ];
     binary_exts.iter().any(|ext| name.ends_with(ext))
 }
@@ -145,12 +141,10 @@ fn looks_like_csv(content: &str) -> bool {
         return false;
     }
     // Check that subsequent lines have similar column count
-    lines[1..]
-        .iter()
-        .all(|line| {
-            let c = line.matches(separator).count();
-            c == col_count || (c as i64 - col_count as i64).unsigned_abs() <= 1
-        })
+    lines[1..].iter().all(|line| {
+        let c = line.matches(separator).count();
+        c == col_count || (c as i64 - col_count as i64).unsigned_abs() <= 1
+    })
 }
 
 // ── Preview Generation ───────────────────────────────────────────────────────
@@ -257,7 +251,7 @@ fn truncate_at_boundary(content: &str, max_bytes: usize) -> String {
 
     let cut_point = match last_newline {
         Some(pos) if pos > max_bytes / 2 => pos + 1, // Include the newline
-        _ => safe_end,                                 // No good boundary
+        _ => safe_end,                               // No good boundary
     };
 
     content[..cut_point].to_string()

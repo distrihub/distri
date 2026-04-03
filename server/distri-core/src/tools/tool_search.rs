@@ -159,8 +159,8 @@ impl ExecutorContextTool for ToolSearchTool {
         context: Arc<ExecutorContext>,
     ) -> Result<Vec<Part>, AgentError> {
         // Parse input with serde instead of manual json traversal
-        let input: ToolSearchInput = serde_json::from_value(tool_call.input.clone())
-            .unwrap_or(ToolSearchInput {
+        let input: ToolSearchInput =
+            serde_json::from_value(tool_call.input.clone()).unwrap_or(ToolSearchInput {
                 query: None,
                 names: vec![],
                 max_results: 10,
@@ -181,7 +181,11 @@ impl ExecutorContextTool for ToolSearchTool {
                 // This is how the model "loads" a deferred tool — it gets the
                 // schema AND the prompt instructions that would normally be in
                 // the system prompt for non-deferred tools.
-                if input.names.iter().any(|n| n.eq_ignore_ascii_case(&def.name)) {
+                if input
+                    .names
+                    .iter()
+                    .any(|n| n.eq_ignore_ascii_case(&def.name))
+                {
                     scored.push((
                         ToolSearchEntry {
                             name: def.name,

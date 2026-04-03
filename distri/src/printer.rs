@@ -130,6 +130,26 @@ fn format_token_count(count: usize) -> String {
         format!("{}", count)
     }
 }
+/// Print a compact `↳ Xk in, Xk out [· Xk cached] [· $0.0031] [· model]` usage line.
+fn print_usage_line(u: &distri_types::RunUsage) {
+    let input = format_token_count(u.input_tokens as usize);
+    let output = format_token_count(u.output_tokens as usize);
+    let mut parts = vec![format!("{} in, {} out", input, output)];
+    if u.cached_tokens > 0 {
+        parts.push(format!(
+            "{} cached",
+            format_token_count(u.cached_tokens as usize)
+        ));
+    }
+    if let Some(cost) = u.cost_usd {
+        parts.push(format!("${:.4}", cost));
+    }
+    if let Some(model) = &u.model {
+        parts.push(model.clone());
+    }
+    println!("{}  ↳ {}{}", COLOR_GRAY, parts.join(" · "), COLOR_RESET);
+}
+
 /// Distri brand teal — 24-bit ANSI
 pub const COLOR_DISTRI: &str = "\x1b[38;2;0;124;145m";
 pub const COLOR_DISTRI_DIM: &str = "\x1b[38;2;0;80;95m";
@@ -360,10 +380,17 @@ impl EventPrinter {
                 step_id,
                 success,
                 context_budget,
+                usage,
             } => {
                 if let Some(budget) = context_budget {
                     let mut health = self.context_health.write().await;
                     health.update_from_budget(budget);
+                }
+                if let Some(u) = usage {
+                    self.context_health.write().await.update_from_usage(u);
+                    if u.input_tokens > 0 || u.output_tokens > 0 {
+                        print_usage_line(u);
+                    }
                 }
                 if let Some(step) = self.state.steps.get_mut(step_id) {
                     step.status = if *success {
@@ -429,39 +456,16 @@ impl EventPrinter {
                 context_budget,
                 ..
             } => {
-                // Update context health from budget + usage
-                {
-                    let mut health = self.context_health.write().await;
-                    if let Some(budget) = context_budget {
-                        health.update_from_budget(budget);
-                    }
-                    if let Some(u) = usage {
-                        health.update_from_usage(u);
-                    }
+                let mut health = self.context_health.write().await;
+                if let Some(budget) = context_budget {
+                    health.update_from_budget(budget);
                 }
-
+                if let Some(u) = usage {
+                    health.update_from_usage(u);
+                }
+                drop(health);
                 if !success {
                     println!("{}Run completed with errors{}", COLOR_RED, COLOR_RESET);
-                }
-
-                // Print usage summary if verbose
-                if self.verbose {
-                    if let Some(u) = usage {
-                        let input = format_token_count(u.input_tokens as usize);
-                        let output = format_token_count(u.output_tokens as usize);
-                        let model = u.model.as_deref().unwrap_or("unknown");
-                        let mut usage_str = format!("{} in, {} out ({})", input, output, model);
-                        if u.cached_tokens > 0 {
-                            usage_str.push_str(&format!(
-                                ", {} cached",
-                                format_token_count(u.cached_tokens as usize)
-                            ));
-                        }
-                        if let Some(cost) = u.cost_usd {
-                            usage_str.push_str(&format!(", ${:.4}", cost));
-                        }
-                        println!("{}  ↳ {}{}", COLOR_GRAY, usage_str, COLOR_RESET);
-                    }
                 }
             }
 
@@ -472,6 +476,7 @@ impl EventPrinter {
             } => {
                 let mut health = self.context_health.write().await;
                 health.update_from_budget(budget);
+                drop(health);
                 // Print a warning if crossing thresholds
                 if *is_critical {
                     println!(
@@ -490,13 +495,48 @@ impl EventPrinter {
                         COLOR_RESET
                     );
                 }
+                // Verbose: full breakdown of context budget components
+                if self.verbose && budget.context_window_size > 0 {
+                    println!(
+                        "{}[context] {:.0}% ({}/{})",
+                        COLOR_GRAY,
+                        budget.utilization() * 100.0,
+                        format_token_count(budget.total_tokens()),
+                        format_token_count(budget.context_window_size),
+                    );
+                    println!(
+                        "{}  sys static: {}  dynamic: {}  tools: {}  deferred: {}  skills: {}{}",
+                        COLOR_GRAY,
+                        format_token_count(budget.system_prompt_static_tokens),
+                        format_token_count(budget.system_prompt_dynamic_tokens),
+                        format_token_count(budget.tool_schema_tokens),
+                        format_token_count(budget.deferred_tool_tokens),
+                        format_token_count(budget.skill_listing_tokens),
+                        COLOR_RESET,
+                    );
+                    println!(
+                        "{}  convo: {}  tool_results: {}{}",
+                        COLOR_GRAY,
+                        format_token_count(budget.conversation_tokens),
+                        format_token_count(budget.tool_result_tokens),
+                        COLOR_RESET,
+                    );
+                }
             }
-            AgentEventType::RunError { message, code } => {
+            AgentEventType::RunError {
+                message,
+                code,
+                usage,
+                ..
+            } => {
                 let stamp = Local::now().format("%H:%M:%S").to_string();
                 println!(
                     "{}{} [{}] run failed: {} ({:?}){}",
                     COLOR_RED, stamp, event.agent_id, message, code, COLOR_RESET
                 );
+                if let Some(u) = usage {
+                    print_usage_line(u);
+                }
             }
             AgentEventType::InlineHookRequested { request } => {
                 println!(
@@ -552,6 +592,38 @@ impl EventPrinter {
                     "{}⇢ Transferring: {} → {}{}{}",
                     COLOR_BRIGHT_CYAN, from_agent, to_agent, reason_str, COLOR_RESET
                 );
+            }
+            AgentEventType::ContextCompaction {
+                tier,
+                tokens_before,
+                tokens_after,
+                entries_affected,
+                ..
+            } => {
+                let tier_label = match tier {
+                    distri_types::CompactionTier::Trim => "Trim",
+                    distri_types::CompactionTier::Summarize => "Summarize",
+                    distri_types::CompactionTier::Reset => "Reset",
+                };
+                println!(
+                    "{}[compaction] {}: {} → {} tokens ({:.0}% reduction, {} entries){}",
+                    COLOR_GRAY,
+                    tier_label,
+                    format_token_count(*tokens_before),
+                    format_token_count(*tokens_after),
+                    if *tokens_before > 0 {
+                        (1.0 - *tokens_after as f64 / *tokens_before as f64) * 100.0
+                    } else {
+                        0.0
+                    },
+                    entries_affected,
+                    COLOR_RESET
+                );
+            }
+            AgentEventType::DiagnosticLog { message } => {
+                if self.verbose {
+                    println!("{}[dbg] {}{}", COLOR_GRAY, message, COLOR_RESET);
+                }
             }
             _ => {}
         }

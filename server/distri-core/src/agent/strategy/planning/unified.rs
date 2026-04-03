@@ -84,9 +84,11 @@ impl UnifiedPlanner {
             }
         };
 
-        // Call the private build_planning_prompt method
-        self.build_messages(message, context, &template, &user_template)
-            .await
+        // Call the private build_planning_prompt method (discard the budget for display purposes)
+        let (messages, _budget) = self
+            .build_messages(message, context, &template, &user_template)
+            .await?;
+        Ok(messages)
     }
 
     /// Shared function to format TODOs from context using session values
@@ -152,9 +154,10 @@ impl PlanningStrategy for UnifiedPlanner {
                     }
                 };
                 // Build planning prompt with agent instructions and context
-                let mut messages = self
+                let (mut messages, context_budget) = self
                     .build_messages(message, &context, &template, &user_template)
                     .await?;
+                context.update_context_budget(context_budget).await;
 
                 // include additional parts.
 
@@ -291,14 +294,15 @@ impl PlanningStrategy for UnifiedPlanner {
 }
 
 impl UnifiedPlanner {
-    /// Build the complete planning prompt with context
+    /// Build the complete planning prompt with context.
+    /// Returns the message list and a ContextBudget with per-component token estimates.
     async fn build_messages(
         &self,
         message: &crate::types::Message,
         context: &Arc<ExecutorContext>,
         template: &str,
         user_template: &str,
-    ) -> Result<Vec<crate::types::Message>, AgentError> {
+    ) -> Result<(Vec<crate::types::Message>, distri_types::ContextBudget), AgentError> {
         let todos = if self.agent_def.is_todos_enabled() {
             Self::format_todos_from_context(&context).await?
         } else {

@@ -1,4 +1,4 @@
-use crate::agent::{ToolDeliveryMode, ToolsConfig, CORE_TOOLS};
+use crate::agent::{CORE_TOOLS, ToolDeliveryMode, ToolsConfig};
 
 #[test]
 fn default_delivery_mode_is_deferred() {
@@ -51,8 +51,14 @@ fn effective_mode_deferred_stays_deferred() {
         delivery_mode: ToolDeliveryMode::Deferred,
         ..Default::default()
     };
-    assert_eq!(config.effective_delivery_mode(5), ToolDeliveryMode::Deferred);
-    assert_eq!(config.effective_delivery_mode(50), ToolDeliveryMode::Deferred);
+    assert_eq!(
+        config.effective_delivery_mode(5),
+        ToolDeliveryMode::Deferred
+    );
+    assert_eq!(
+        config.effective_delivery_mode(50),
+        ToolDeliveryMode::Deferred
+    );
 }
 
 #[test]
@@ -71,7 +77,10 @@ fn names_only_defers_everything_except_core() {
         delivery_mode: ToolDeliveryMode::NamesOnly,
         ..Default::default()
     };
-    assert_eq!(config.effective_delivery_mode(5), ToolDeliveryMode::NamesOnly);
+    assert_eq!(
+        config.effective_delivery_mode(5),
+        ToolDeliveryMode::NamesOnly
+    );
     assert!(config.is_core_tool("final"));
     assert!(!config.is_core_tool("browsr_scrape"));
 }

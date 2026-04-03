@@ -4,13 +4,22 @@ use super::*;
 
 #[test]
 fn detect_markdown_by_extension() {
-    assert_eq!(ContentFormat::detect("some text", Some("readme.md")), ContentFormat::Markdown);
-    assert_eq!(ContentFormat::detect("some text", Some("doc.mdx")), ContentFormat::Markdown);
+    assert_eq!(
+        ContentFormat::detect("some text", Some("readme.md")),
+        ContentFormat::Markdown
+    );
+    assert_eq!(
+        ContentFormat::detect("some text", Some("doc.mdx")),
+        ContentFormat::Markdown
+    );
 }
 
 #[test]
 fn detect_json_by_extension() {
-    assert_eq!(ContentFormat::detect("not json", Some("data.json")), ContentFormat::Json);
+    assert_eq!(
+        ContentFormat::detect("not json", Some("data.json")),
+        ContentFormat::Json
+    );
 }
 
 #[test]
@@ -45,8 +54,14 @@ fn detect_csv_by_content() {
 
 #[test]
 fn detect_binary_by_extension() {
-    assert_eq!(ContentFormat::detect("anything", Some("image.png")), ContentFormat::Binary);
-    assert_eq!(ContentFormat::detect("anything", Some("archive.zip")), ContentFormat::Binary);
+    assert_eq!(
+        ContentFormat::detect("anything", Some("image.png")),
+        ContentFormat::Binary
+    );
+    assert_eq!(
+        ContentFormat::detect("anything", Some("archive.zip")),
+        ContentFormat::Binary
+    );
 }
 
 #[test]
@@ -171,21 +186,30 @@ fn should_persist_large_content() {
 #[test]
 fn cache_miss_on_first_read() {
     let cache = FileReadCache::new(100);
-    assert_eq!(cache.check("/foo.rs", None, None, Some(1000)), CacheCheck::Miss);
+    assert_eq!(
+        cache.check("/foo.rs", None, None, Some(1000)),
+        CacheCheck::Miss
+    );
 }
 
 #[test]
 fn cache_unchanged_on_same_mtime() {
     let mut cache = FileReadCache::new(100);
     cache.record("/foo.rs", None, None, "content", Some(1000));
-    assert_eq!(cache.check("/foo.rs", None, None, Some(1000)), CacheCheck::Unchanged);
+    assert_eq!(
+        cache.check("/foo.rs", None, None, Some(1000)),
+        CacheCheck::Unchanged
+    );
 }
 
 #[test]
 fn cache_changed_on_different_mtime() {
     let mut cache = FileReadCache::new(100);
     cache.record("/foo.rs", None, None, "content", Some(1000));
-    assert_eq!(cache.check("/foo.rs", None, None, Some(2000)), CacheCheck::Changed);
+    assert_eq!(
+        cache.check("/foo.rs", None, None, Some(2000)),
+        CacheCheck::Changed
+    );
 }
 
 #[test]
@@ -194,7 +218,10 @@ fn cache_unchanged_by_hash() {
     let content = "hello world";
     cache.record("/foo.rs", None, None, content, None);
     let hash = FileReadCache::hash_content(content);
-    assert_eq!(cache.check_by_hash("/foo.rs", None, None, hash), CacheCheck::Unchanged);
+    assert_eq!(
+        cache.check_by_hash("/foo.rs", None, None, hash),
+        CacheCheck::Unchanged
+    );
 }
 
 #[test]
@@ -202,7 +229,10 @@ fn cache_changed_by_hash() {
     let mut cache = FileReadCache::new(100);
     cache.record("/foo.rs", None, None, "original", None);
     let new_hash = FileReadCache::hash_content("modified");
-    assert_eq!(cache.check_by_hash("/foo.rs", None, None, new_hash), CacheCheck::Changed);
+    assert_eq!(
+        cache.check_by_hash("/foo.rs", None, None, new_hash),
+        CacheCheck::Changed
+    );
 }
 
 #[test]
@@ -211,9 +241,18 @@ fn cache_different_offsets_are_separate() {
     cache.record("/foo.rs", Some(0), Some(100), "first 100", Some(1000));
     cache.record("/foo.rs", Some(100), Some(100), "next 100", Some(1000));
 
-    assert_eq!(cache.check("/foo.rs", Some(0), Some(100), Some(1000)), CacheCheck::Unchanged);
-    assert_eq!(cache.check("/foo.rs", Some(100), Some(100), Some(1000)), CacheCheck::Unchanged);
-    assert_eq!(cache.check("/foo.rs", Some(200), Some(100), Some(1000)), CacheCheck::Miss);
+    assert_eq!(
+        cache.check("/foo.rs", Some(0), Some(100), Some(1000)),
+        CacheCheck::Unchanged
+    );
+    assert_eq!(
+        cache.check("/foo.rs", Some(100), Some(100), Some(1000)),
+        CacheCheck::Unchanged
+    );
+    assert_eq!(
+        cache.check("/foo.rs", Some(200), Some(100), Some(1000)),
+        CacheCheck::Miss
+    );
 }
 
 #[test]
@@ -225,7 +264,10 @@ fn cache_invalidate_removes_all_offsets() {
 
     cache.invalidate("/foo.rs");
     assert_eq!(cache.len(), 0);
-    assert_eq!(cache.check("/foo.rs", None, None, Some(1000)), CacheCheck::Miss);
+    assert_eq!(
+        cache.check("/foo.rs", None, None, Some(1000)),
+        CacheCheck::Miss
+    );
 }
 
 #[test]
@@ -239,7 +281,10 @@ fn cache_lru_eviction() {
     cache.record("/d.rs", None, None, "d", Some(4));
     assert_eq!(cache.len(), 3);
     assert_eq!(cache.check("/a.rs", None, None, Some(1)), CacheCheck::Miss);
-    assert_eq!(cache.check("/d.rs", None, None, Some(4)), CacheCheck::Unchanged);
+    assert_eq!(
+        cache.check("/d.rs", None, None, Some(4)),
+        CacheCheck::Unchanged
+    );
 }
 
 #[test]
@@ -254,7 +299,10 @@ fn cache_lru_access_refreshes_order() {
 
     // /d.rs evicts /b.rs (oldest after refresh)
     cache.record("/d.rs", None, None, "d", Some(4));
-    assert_eq!(cache.check("/a.rs", None, None, Some(1)), CacheCheck::Unchanged);
+    assert_eq!(
+        cache.check("/a.rs", None, None, Some(1)),
+        CacheCheck::Unchanged
+    );
     assert_eq!(cache.check("/b.rs", None, None, Some(2)), CacheCheck::Miss);
 }
 
@@ -285,7 +333,9 @@ fn replacement_state_replaced_reapplies() {
 #[test]
 fn scenario_50k_file_read_persistence() {
     let content = "fn main() {\n".to_string()
-        + &(0..2000).map(|i| format!("    println!(\"line {}\");\n", i)).collect::<String>()
+        + &(0..2000)
+            .map(|i| format!("    println!(\"line {}\");\n", i))
+            .collect::<String>()
         + "}\n";
     assert!(content.len() > 50_000);
     assert!(should_persist(&content));
@@ -306,11 +356,20 @@ fn scenario_unchanged_file_dedup() {
     let content = "fn foo() { 42 }";
     let mtime = Some(1000i64);
 
-    assert_eq!(cache.check("/src/lib.rs", None, None, mtime), CacheCheck::Miss);
+    assert_eq!(
+        cache.check("/src/lib.rs", None, None, mtime),
+        CacheCheck::Miss
+    );
     cache.record("/src/lib.rs", None, None, content, mtime);
 
-    assert_eq!(cache.check("/src/lib.rs", None, None, mtime), CacheCheck::Unchanged);
-    assert_eq!(cache.check("/src/lib.rs", None, None, Some(2000)), CacheCheck::Changed);
+    assert_eq!(
+        cache.check("/src/lib.rs", None, None, mtime),
+        CacheCheck::Unchanged
+    );
+    assert_eq!(
+        cache.check("/src/lib.rs", None, None, Some(2000)),
+        CacheCheck::Changed
+    );
 }
 
 #[test]
@@ -364,7 +423,14 @@ fn scenario_binary_file_rejection() {
 fn scenario_csv_large_dataset() {
     let mut csv = String::from("id,name,email,department,salary\n");
     for i in 0..10_000 {
-        csv.push_str(&format!("{},Employee{},emp{}@co.com,Dept{},{}\n", i, i, i, i % 10, 50000 + i * 100));
+        csv.push_str(&format!(
+            "{},Employee{},emp{}@co.com,Dept{},{}\n",
+            i,
+            i,
+            i,
+            i % 10,
+            50000 + i * 100
+        ));
     }
     assert!(csv.len() > 100_000);
 
@@ -385,7 +451,10 @@ fn scenario_replacement_state_cache_stability() {
     state.mark_seen("tc2");
 
     // Turn 2: Both are now locked in
-    assert!(matches!(state.classify("tc1"), ReplacementDecision::MustReapply(_)));
+    assert!(matches!(
+        state.classify("tc1"),
+        ReplacementDecision::MustReapply(_)
+    ));
     assert!(matches!(state.classify("tc2"), ReplacementDecision::Frozen));
 
     // Turn 2: tc3 is new and eligible for replacement

@@ -99,7 +99,10 @@ async fn tool_search_keyword_omits_deferred_params() {
     let tool = &tools[0];
     assert_eq!(tool["name"], "browsr_scrape");
     // Deferred tool: NO parameters field
-    assert!(tool.get("parameters").is_none(), "deferred tool should NOT have parameters in keyword search");
+    assert!(
+        tool.get("parameters").is_none(),
+        "deferred tool should NOT have parameters in keyword search"
+    );
     // Should have deferred flag and hint
     assert_eq!(tool["deferred"], true);
     assert!(tool["hint"].as_str().unwrap().contains("tool_search"));
@@ -112,9 +115,11 @@ async fn tool_search_exact_name_returns_full_schema_and_prompt() {
     let deferred: HashSet<String> = ["browsr_scrape".to_string()].into();
     let ctx = make_context_with_deferred(deferred).await;
 
-    ctx.extend_tools(vec![
-        make_tool("browsr_scrape", "Scrape websites", Some("Use browsr for scraping.")),
-    ])
+    ctx.extend_tools(vec![make_tool(
+        "browsr_scrape",
+        "Scrape websites",
+        Some("Use browsr for scraping."),
+    )])
     .await;
 
     let tool_call = ToolCall {
@@ -138,7 +143,10 @@ async fn tool_search_exact_name_returns_full_schema_and_prompt() {
     assert_eq!(tools.len(), 1);
     let tool = &tools[0];
     // Exact name match: MUST have parameters
-    assert!(tool.get("parameters").is_some(), "exact name lookup MUST return full schema");
+    assert!(
+        tool.get("parameters").is_some(),
+        "exact name lookup MUST return full schema"
+    );
     // MUST have prompt (this is how deferred tool instructions are delivered)
     assert_eq!(tool["prompt"], "Use browsr for scraping.");
     // Should NOT have deferred flag (it's been "loaded")
@@ -178,7 +186,10 @@ async fn tool_search_empty_query_returns_summaries_only() {
     assert_eq!(tools.len(), 2);
     // Empty query: NO parameters (summaries only, saves context)
     for tool in tools {
-        assert!(tool.get("parameters").is_none(), "empty query should return summaries only, not full schemas");
+        assert!(
+            tool.get("parameters").is_none(),
+            "empty query should return summaries only, not full schemas"
+        );
     }
 }
 

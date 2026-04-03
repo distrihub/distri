@@ -9,11 +9,11 @@ use distri::{
     print_stream_with_health, AgentStreamClient, BuildHttpClient, ContextHealth, Distri,
     DistriClientApp, DistriConfig,
 };
-use tokio::sync::RwLock;
 use distri_types::configuration::AgentConfig;
 use inquire::{Select, Text};
 use rustyline::error::ReadlineError;
 use rustyline::{Config, Editor, EventHandler, KeyEvent};
+use tokio::sync::RwLock;
 
 use crate::config::{load_last_model, save_last_model};
 use crate::input::{DistriHelper, ToggleToolsHandler};
@@ -107,40 +107,32 @@ pub fn print_welcome_header(agent_name: &str, model_name: &str, thread_id: &str)
     );
 }
 
-pub fn print_context_status(health: &ContextHealth) {
+pub fn print_separator_with_status(status: &str) {
     let term_width: usize = if let Ok((w, _)) = terminal::size() {
         w as usize
     } else {
         80
     };
 
-    let status_text = health.format_status_line();
-    if status_text.is_empty() {
-        println!();
+    if status.is_empty() {
+        println!("{}", "─".repeat(term_width));
         return;
     }
 
-    let color = health.color();
-    let padding = term_width.saturating_sub(status_text.len());
-
-    println!();
+    // Embed status on the right: ────────────── status ─
+    let padded = format!(" {} ", status);
+    let dashes = term_width.saturating_sub(padded.len());
+    let left = dashes * 2 / 3;
+    let right = dashes - left;
     println!(
-        "{}{}{}{}",
-        " ".repeat(padding),
-        color,
-        status_text,
-        COLOR_RESET
+        "{}{}{}{}{}{}",
+        "─".repeat(left),
+        COLOR_GRAY,
+        padded,
+        COLOR_RESET,
+        "─".repeat(right),
+        ""
     );
-}
-
-pub fn print_separator_line() {
-    let term_width: usize = if let Ok((w, _)) = terminal::size() {
-        w as usize
-    } else {
-        80
-    };
-
-    println!("{}", "-".repeat(term_width));
 }
 
 pub fn print_help_message() {
@@ -465,11 +457,14 @@ pub async fn run_interactive_chat(
     }
 
     let mut last_interrupt: Option<Instant> = None;
-    let shared_health: Arc<RwLock<ContextHealth>> =
-        Arc::new(RwLock::new(ContextHealth::default()));
+    let shared_health: Arc<RwLock<ContextHealth>> = Arc::new(RwLock::new(ContextHealth::default()));
 
     loop {
-        print_separator_line();
+        {
+            let health = shared_health.read().await;
+            let status = health.format_status_line();
+            print_separator_with_status(&status);
+        }
 
         let input = match rl.readline("> ") {
             Ok(line) => {
@@ -600,12 +595,6 @@ pub async fn run_interactive_chat(
             Err(err) => {
                 eprintln!("Error from agent: {}", err);
             }
-        }
-
-        // Print context usage after every turn
-        {
-            let health = shared_health.read().await;
-            print_context_status(&health);
         }
     }
 

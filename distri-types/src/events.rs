@@ -70,6 +70,11 @@ impl AgentEvent {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "snake_case", tag = "type")]
 pub enum AgentEventType {
+    /// Verbose diagnostic message streamed from server to client (only emitted when verbose=true).
+    DiagnosticLog {
+        message: String,
+    },
+
     // Main run events
     RunStarted {},
     RunFinished {
@@ -84,6 +89,9 @@ pub enum AgentEventType {
     RunError {
         message: String,
         code: Option<String>,
+        /// Cumulative token usage at the point of failure
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        usage: Option<RunUsage>,
     },
     PlanStarted {
         initial_plan: bool,
@@ -104,6 +112,9 @@ pub enum AgentEventType {
         success: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         context_budget: Option<ContextBudget>,
+        /// Cumulative token usage for this run up to this step
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        usage: Option<RunUsage>,
     },
 
     // Tool execution events

@@ -600,16 +600,21 @@ impl AgentOrchestrator {
                 };
                 let resolved = self.get_agent_tools(&definition, &external_tools).await?;
                 let deferred_names: std::collections::HashSet<String> = resolved
-                    .deferred_tools.iter().map(|t| t.name.clone()).collect();
+                    .deferred_tools
+                    .iter()
+                    .map(|t| t.name.clone())
+                    .collect();
                 context.set_deferred_tool_names(deferred_names).await;
                 if let Some(listing) = resolved.deferred_tools_listing() {
-                    context.merge_hook_prompt_state(crate::agent::context::HookPromptState {
-                        dynamic_values: std::collections::HashMap::from([(
-                            "deferred_tools_listing".to_string(),
-                            serde_json::Value::String(listing),
-                        )]),
-                        ..Default::default()
-                    }).await;
+                    context
+                        .merge_hook_prompt_state(crate::agent::context::HookPromptState {
+                            dynamic_values: std::collections::HashMap::from([(
+                                "deferred_tools_listing".to_string(),
+                                serde_json::Value::String(listing),
+                            )]),
+                            ..Default::default()
+                        })
+                        .await;
                 }
                 context.extend_tools(resolved.all_tools).await;
 

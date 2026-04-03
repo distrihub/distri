@@ -110,7 +110,9 @@ impl Formatter for TextFormatter {
                     },
                 );
             }
-            AgentEventType::StepCompleted { step_id, success, .. } => {
+            AgentEventType::StepCompleted {
+                step_id, success, ..
+            } => {
                 let fail_msg = if let Some(step) = self.state.steps.get_mut(step_id) {
                     step.status = if *success {
                         "done".into()
@@ -226,7 +228,7 @@ impl Formatter for TextFormatter {
                     self.push_line("Run completed with errors");
                 }
             }
-            AgentEventType::RunError { message, code } => {
+            AgentEventType::RunError { message, code, .. } => {
                 let stamp = Local::now().format("%H:%M:%S").to_string();
                 self.push_line(&format!(
                     "{} [{}] run failed: {} ({:?})",

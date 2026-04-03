@@ -96,9 +96,7 @@ impl TokenEstimator {
     /// Rough token count for a serde_json::Value (serialized)
     pub fn rough_token_count_json(value: &serde_json::Value) -> usize {
         // Estimate based on compact JSON serialization length
-        let len = serde_json::to_string(value)
-            .map(|s| s.len())
-            .unwrap_or(0);
+        let len = serde_json::to_string(value).map(|s| s.len()).unwrap_or(0);
         (len + 3) / 4
     }
 }

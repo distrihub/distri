@@ -365,6 +365,13 @@ pub struct ContextUsage {
     /// Per-component token budget tracking for context optimization
     #[serde(default)]
     pub context_budget: ContextBudget,
+    /// Snapshot taken at the start of each step — used to compute per-step deltas
+    #[serde(default)]
+    pub step_input_start: u32,
+    #[serde(default)]
+    pub step_output_start: u32,
+    #[serde(default)]
+    pub step_cached_start: u32,
 }
 
 /// Tracks token usage by component for context optimization.

@@ -1,6 +1,8 @@
 #[cfg(test)]
 mod tests {
-    use distri_core::diesel_store::{DieselSkillStore, DieselStoreBuilder, SqliteConnectionWrapper};
+    use distri_core::diesel_store::{
+        DieselSkillStore, DieselStoreBuilder, SqliteConnectionWrapper,
+    };
     use distri_types::stores::{ContextExecutionType, NewSkill, SkillStore, UpdateSkill};
 
     async fn make_skill_store() -> DieselSkillStore<SqliteConnectionWrapper> {
@@ -169,7 +171,11 @@ mod tests {
             .await
             .expect("update");
 
-        assert_eq!(updated.context, ContextExecutionType::Fork, "context should be preserved");
+        assert_eq!(
+            updated.context,
+            ContextExecutionType::Fork,
+            "context should be preserved"
+        );
         assert_eq!(updated.model.as_deref(), Some("claude-haiku-4-5"));
     }
 
@@ -222,12 +228,21 @@ mod tests {
 
         assert_eq!(parent_usage.input_tokens, 500, "parent input tokens");
         assert_eq!(parent_usage.output_tokens, 300, "parent output tokens");
-        assert_eq!(child_usage.input_tokens, 100, "child input tokens (isolated)");
-        assert_eq!(child_usage.output_tokens, 50, "child output tokens (isolated)");
+        assert_eq!(
+            child_usage.input_tokens, 100,
+            "child input tokens (isolated)"
+        );
+        assert_eq!(
+            child_usage.output_tokens, 50,
+            "child output tokens (isolated)"
+        );
 
         // Parent's budget must not be contaminated by child's usage
         let parent_check = parent.get_usage().await;
-        assert_eq!(parent_check.input_tokens, 500, "parent unaffected by child tokens");
+        assert_eq!(
+            parent_check.input_tokens, 500,
+            "parent unaffected by child tokens"
+        );
     }
 
     #[tokio::test]
@@ -255,7 +270,13 @@ mod tests {
         assert_ne!(child2.task_id, parent.task_id);
 
         // Both point back to the parent
-        assert_eq!(child1.parent_task_id.as_deref(), Some(parent.task_id.as_str()));
-        assert_eq!(child2.parent_task_id.as_deref(), Some(parent.task_id.as_str()));
+        assert_eq!(
+            child1.parent_task_id.as_deref(),
+            Some(parent.task_id.as_str())
+        );
+        assert_eq!(
+            child2.parent_task_id.as_deref(),
+            Some(parent.task_id.as_str())
+        );
     }
 }

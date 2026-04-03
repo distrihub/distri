@@ -1,9 +1,7 @@
 use std::sync::Arc;
 
 use distri_types::{
-    configuration::DefinitionOverrides,
-    stores::ContextExecutionType,
-    tool::ToolContext,
+    configuration::DefinitionOverrides, stores::ContextExecutionType, tool::ToolContext,
     MessageRole, Part, ToolCall,
 };
 use serde_json::json;
@@ -133,8 +131,8 @@ impl ExecutorContextTool for LoadSkillTool {
                 // Build definition overrides: inject skill content as instructions,
                 // optionally override the model if the skill specifies one.
                 let overrides = {
-                    let base = DefinitionOverrides::default()
-                        .with_instructions(skill.content.clone());
+                    let base =
+                        DefinitionOverrides::default().with_instructions(skill.content.clone());
                     if let Some(model) = skill.model.clone() {
                         base.with_model(model)
                     } else {

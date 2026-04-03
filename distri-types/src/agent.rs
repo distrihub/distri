@@ -785,7 +785,8 @@ impl ToolsConfig {
 
     /// Effective threshold for automatic tool deferral.
     pub fn effective_threshold(&self) -> usize {
-        self.deferred_threshold.unwrap_or(DEFAULT_DEFERRED_THRESHOLD)
+        self.deferred_threshold
+            .unwrap_or(DEFAULT_DEFERRED_THRESHOLD)
     }
 
     /// Determine the effective delivery mode given the total tool count.
@@ -1749,10 +1750,7 @@ mod tests {
             ..Default::default()
         };
         // Even with many tools, Full stays Full
-        assert_eq!(
-            config.effective_delivery_mode(100),
-            ToolDeliveryMode::Full
-        );
+        assert_eq!(config.effective_delivery_mode(100), ToolDeliveryMode::Full);
     }
 
     #[test]

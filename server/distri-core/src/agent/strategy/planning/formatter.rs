@@ -3,13 +3,16 @@ use std::{collections::HashSet, env, fs, sync::Arc};
 use chrono::Utc;
 use distri_parsers;
 use distri_types::{
-    ExecutionResult, MessageRole, Part, ScratchpadEntry, ScratchpadEntryType, ToolCall,
-    ToolCallFormat,
+    ContextBudget, ExecutionResult, MessageRole, Part, ScratchpadEntry, ScratchpadEntryType,
+    ToolCall, ToolCallFormat,
 };
 use tracing::warn;
 
 use crate::{
-    agent::{prompt_registry::TemplateData, types::MAX_ITERATIONS, ExecutorContext},
+    agent::{
+        prompt_registry::TemplateData, token_estimator::TokenEstimator, types::MAX_ITERATIONS,
+        ExecutorContext,
+    },
     AgentError,
 };
 
@@ -40,7 +43,7 @@ impl<'a> MessageFormatter<'a> {
         template: &str,
         user_template: &str,
         todos: Option<String>,
-    ) -> Result<Vec<crate::types::Message>, AgentError> {
+    ) -> Result<(Vec<crate::types::Message>, ContextBudget), AgentError> {
         let tools = context.get_tools().await;
         let tool_defs = tools
             .iter()
@@ -158,6 +161,9 @@ impl<'a> MessageFormatter<'a> {
             render_prompt(context, user_template_to_use, &template_data).await?;
         self.log_prompt_if_needed(&rendered_prompt);
 
+        // Compute rendered prompt token count before moving the string.
+        let rendered_prompt_tokens = TokenEstimator::rough_token_count(&rendered_prompt);
+
         let mut formatted = vec![crate::types::Message::system(rendered_prompt, None)];
 
         // Build the current user message with any dynamic additions (step limit, todos, etc.).
@@ -192,7 +198,82 @@ impl<'a> MessageFormatter<'a> {
             formatted.push(user_message);
         }
 
-        Ok(formatted)
+        // Compute context budget breakdown from the built prompt components.
+        let budget = {
+            // System prompt: static portion = agent instructions (fixed across sessions)
+            let system_prompt_static_tokens =
+                TokenEstimator::rough_token_count(&self.agent_def.instructions);
+
+            // Dynamic portion = rendered prompt minus the static instructions size
+            let system_prompt_dynamic_tokens =
+                rendered_prompt_tokens.saturating_sub(system_prompt_static_tokens);
+
+            // Tool schema tokens: sum of non-deferred tool JSON definitions
+            let tool_schema_tokens: usize = tool_defs
+                .iter()
+                .filter(|def| !deferred_names.contains(&def.name))
+                .map(|def| {
+                    let json = serde_json::to_string(def).unwrap_or_default();
+                    TokenEstimator::rough_token_count(&json)
+                })
+                .sum();
+
+            // Deferred tool listing tokens
+            let deferred_tool_tokens = template_data
+                .deferred_tools_listing
+                .as_deref()
+                .map(TokenEstimator::rough_token_count)
+                .unwrap_or(0);
+
+            // Skill listing tokens
+            let skill_listing_tokens = template_data
+                .available_skills
+                .as_deref()
+                .map(TokenEstimator::rough_token_count)
+                .unwrap_or(0);
+
+            // Conversation history: all non-system messages in `formatted`
+            let conversation_tokens: usize = formatted
+                .iter()
+                .filter(|m| !matches!(m.role, MessageRole::System))
+                .map(|m| {
+                    let text = m.as_text().unwrap_or_default();
+                    TokenEstimator::rough_token_count(&text)
+                })
+                .sum();
+
+            // Tool result tokens: from ToolResult parts in history
+            let tool_result_tokens: usize = formatted
+                .iter()
+                .flat_map(|m| &m.parts)
+                .filter_map(|p| {
+                    if let Part::ToolResult(tr) = p {
+                        let json = serde_json::to_string(&tr.result()).unwrap_or_default();
+                        Some(TokenEstimator::rough_token_count(&json))
+                    } else {
+                        None
+                    }
+                })
+                .sum();
+
+            // Context window size from agent definition
+            let context_window_size = self.agent_def.get_effective_context_size() as usize;
+
+            ContextBudget {
+                system_prompt_static_tokens,
+                system_prompt_dynamic_tokens,
+                tool_schema_tokens,
+                deferred_tool_tokens,
+                skill_listing_tokens,
+                conversation_tokens,
+                tool_result_tokens,
+                context_window_size,
+                static_prefix_cache_hit: false,
+                static_prefix_hash: None,
+            }
+        };
+
+        Ok((formatted, budget))
     }
 
     fn reasoning_depth_name(strategy: &crate::types::AgentStrategy) -> &'static str {
@@ -255,10 +336,7 @@ impl<'a> MessageFormatter<'a> {
             }
 
             let prompt = def.prompt.clone().unwrap_or_default();
-            map.insert(
-                def.name.clone(),
-                serde_json::Value::String(prompt.clone()),
-            );
+            map.insert(def.name.clone(), serde_json::Value::String(prompt.clone()));
 
             if !prompt.is_empty() {
                 // Add to concatenated string
@@ -1068,7 +1146,10 @@ mod tests {
 
         // All tools present in map (deferred gets empty string)
         assert_eq!(map.len(), 3);
-        assert_eq!(map.get("Bash").unwrap().as_str().unwrap(), "Use Bash for shell commands.");
+        assert_eq!(
+            map.get("Bash").unwrap().as_str().unwrap(),
+            "Use Bash for shell commands."
+        );
         assert_eq!(map.get("browsr_scrape").unwrap().as_str().unwrap(), ""); // deferred = empty
         assert_eq!(map.get("final").unwrap().as_str().unwrap(), "");
 
