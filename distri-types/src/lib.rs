@@ -71,5 +71,12 @@ pub mod resolve;
 pub mod models;
 pub use models::*;
 
+pub mod tool_result_store;
+pub use tool_result_store::{
+    CacheCheck, ContentFormat, ContentReplacementState, FileReadCache, PersistedToolResult,
+    Preview, ReplacementDecision, FILE_UNCHANGED_STUB, MAX_TOOL_RESULT_CHARS,
+    MAX_TOOL_RESULTS_PER_MESSAGE_CHARS, PERSIST_THRESHOLD_BYTES, PREVIEW_SIZE_BYTES,
+};
+
 #[cfg(test)]
 mod tests;
