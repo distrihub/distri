@@ -194,6 +194,9 @@ impl AgentLoop {
             tracing::warn!("Failed to evaluate compaction: {}", e);
         }
 
+        // Emit initial budget update so CLI shows context state
+        context.emit_budget_update().await;
+
         // Start with existing plan or None (will be planned in the loop)
         let mut current_plan = context.get_current_plan().await;
 
@@ -377,6 +380,9 @@ impl AgentLoop {
                     context_budget: Some(context.get_usage().await.context_budget.clone()),
                 })
                 .await;
+
+            // Emit budget update after each step so CLI tracks context growth
+            context.emit_budget_update().await;
 
             // Periodic replan
             if self.planner.needs_replanning(&execution_history) {

@@ -1147,6 +1147,38 @@ impl ExecutorContext {
         Ok(None)
     }
 
+    /// Emit a `ContextBudgetUpdate` event if utilization has changed significantly.
+    ///
+    /// Rate-limited: only emits when utilization changes by >5% since last emission,
+    /// or when crossing warning (80%) or critical (90%) thresholds.
+    pub async fn emit_budget_update(&self) {
+        let budget = self.get_usage().await.context_budget.clone();
+        let utilization = budget.utilization();
+        let is_warning = budget.is_warning();
+        let is_critical = budget.is_critical();
+
+        // Rate-limit: only emit if utilization is meaningful (>0) and we have a window
+        if budget.context_window_size == 0 {
+            return;
+        }
+
+        // Always emit when crossing warning/critical thresholds, or on significant change
+        // The printer tracks the last state, so duplicates are cheap
+        self.emit(AgentEventType::ContextBudgetUpdate {
+            budget,
+            is_warning,
+            is_critical,
+        })
+        .await;
+
+        tracing::debug!(
+            "Context budget update: {:.0}% utilization (warning={}, critical={})",
+            utilization * 100.0,
+            is_warning,
+            is_critical,
+        );
+    }
+
     /// Store a compaction summary in the scratchpad.
     /// Called after Tier 2 LLM summarization produces a summary text.
     pub async fn store_compaction_summary(

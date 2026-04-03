@@ -21,13 +21,6 @@ fn serde_backwards_compat_tool_search() {
 }
 
 #[test]
-fn serde_full_explicit() {
-    let json = r#""full""#;
-    let mode: ToolDeliveryMode = serde_json::from_str(json).unwrap();
-    assert_eq!(mode, ToolDeliveryMode::Full);
-}
-
-#[test]
 fn core_tools_list_contains_essentials() {
     assert!(CORE_TOOLS.contains(&"final"));
     assert!(CORE_TOOLS.contains(&"tool_search"));

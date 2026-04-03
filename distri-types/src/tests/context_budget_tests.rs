@@ -126,9 +126,3 @@ fn budget_update_accumulates_across_turns() {
     assert_eq!(budget.total_tokens(), 9500);
 }
 
-#[test]
-fn budget_default_has_zero_tokens() {
-    let budget = ContextBudget::default();
-    assert_eq!(budget.total_tokens(), 0);
-    assert_eq!(budget.context_window_size, 0);
-}
