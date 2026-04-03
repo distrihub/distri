@@ -462,6 +462,8 @@ pub struct SkillModel {
     pub clone_count: i32,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
+    pub model: Option<String>,
+    pub max_tokens: Option<i32>,
 }
 
 #[derive(Debug, Clone, Insertable)]
@@ -476,6 +478,8 @@ pub struct NewSkillModel<'a> {
     pub is_system: i32,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
+    pub model: Option<&'a str>,
+    pub max_tokens: Option<i32>,
 }
 
 #[derive(Debug, Clone, Queryable, Identifiable, Selectable)]

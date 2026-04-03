@@ -229,6 +229,8 @@ diesel::table! {
         clone_count -> Integer,
         created_at -> Timestamp,
         updated_at -> Timestamp,
+        model -> Nullable<Text>,
+        max_tokens -> Nullable<Integer>,
     }
 }
 

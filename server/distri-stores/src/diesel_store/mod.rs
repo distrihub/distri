@@ -3572,8 +3572,8 @@ fn to_skill_record(model: SkillModel, scripts: Vec<SkillScriptModel>) -> SkillRe
         scripts: scripts.into_iter().map(to_skill_script_record).collect(),
         created_at: from_naive(model.created_at),
         updated_at: from_naive(model.updated_at),
-        max_tokens: None,
-        model: None,
+        max_tokens: model.max_tokens.map(|v| v as usize),
+        model: model.model,
     }
 }
 
@@ -3694,6 +3694,8 @@ where
             is_system: 0,
             created_at: now,
             updated_at: now,
+            model: skill.model.as_deref(),
+            max_tokens: skill.max_tokens.map(|v| v as i32),
         };
 
         diesel::insert_into(skills)
@@ -3763,6 +3765,18 @@ where
         if let Some(p) = update.is_public {
             diesel::update(skills.filter(id.eq(skill_id_val)))
                 .set(is_public.eq(if p { 1 } else { 0 }))
+                .execute(&mut conn)
+                .await?;
+        }
+        if let Some(ref m) = update.model {
+            diesel::update(skills.filter(id.eq(skill_id_val)))
+                .set(crate::schema::skills::model.eq(m))
+                .execute(&mut conn)
+                .await?;
+        }
+        if let Some(mt) = update.max_tokens {
+            diesel::update(skills.filter(id.eq(skill_id_val)))
+                .set(crate::schema::skills::max_tokens.eq(mt as i32))
                 .execute(&mut conn)
                 .await?;
         }
