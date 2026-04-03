@@ -618,7 +618,11 @@ impl LLMExecutor {
 
         // Verbose: per-call LLM summary
         if context.verbose && (stream_input_tokens > 0 || stream_output_tokens > 0) {
-            let model = if ms.model.is_empty() { "unset" } else { &ms.model };
+            let model = if ms.model.is_empty() {
+                "unset"
+            } else {
+                &ms.model
+            };
             context
                 .emit_verbose(format!(
                     "[LLM] {}: {} in, {} out",

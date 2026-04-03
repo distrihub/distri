@@ -1,6 +1,6 @@
 use distri_types::{
-    events::{AgentEventType, RunUsage},
     ContextBudget,
+    events::{AgentEventType, RunUsage},
 };
 
 use crate::printer::ContextHealth;
@@ -153,7 +153,10 @@ fn tokens_reset_between_simulated_runs() {
     for _ in 0..2 {
         h.update_from_usage(&make_usage(1_500, 200));
     }
-    assert_eq!(h.api_input_tokens, 3_000, "run 2 total should be 3K, not 6K");
+    assert_eq!(
+        h.api_input_tokens, 3_000,
+        "run 2 total should be 3K, not 6K"
+    );
 }
 
 // ── get_effective_context_size fallback ───────────────────────────────────

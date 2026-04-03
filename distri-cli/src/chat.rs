@@ -125,13 +125,12 @@ pub fn print_separator_with_status(status: &str) {
     let left = dashes * 2 / 3;
     let right = dashes - left;
     println!(
-        "{}{}{}{}{}{}",
+        "{}{}{}{}{}",
         "─".repeat(left),
         COLOR_GRAY,
         padded,
         COLOR_RESET,
-        "─".repeat(right),
-        ""
+        "─".repeat(right)
     );
 }
 
