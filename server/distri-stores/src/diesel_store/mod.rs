@@ -3572,6 +3572,8 @@ fn to_skill_record(model: SkillModel, scripts: Vec<SkillScriptModel>) -> SkillRe
         scripts: scripts.into_iter().map(to_skill_script_record).collect(),
         created_at: from_naive(model.created_at),
         updated_at: from_naive(model.updated_at),
+        max_tokens: None,
+        model: None,
     }
 }
 

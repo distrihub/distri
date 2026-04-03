@@ -239,16 +239,8 @@ pub async fn handle_skills_command(client: &Distri, command: SkillsCommands) -> 
 }
 
 /// TOML frontmatter for skill files.
-#[derive(Debug, serde::Deserialize)]
-struct SkillFrontmatter {
-    name: String,
-    #[serde(default)]
-    description: Option<String>,
-    #[serde(default)]
-    tags: Vec<String>,
-    #[serde(default)]
-    is_public: bool,
-}
+/// Uses the shared SkillFrontmatter from distri-types for consistency.
+type SkillFrontmatter = distri_types::stores::SkillFrontmatter;
 
 /// Parse a skill markdown file into a CreateSkillRequest.
 ///

@@ -79,6 +79,34 @@ impl ExecutorContextTool for LoadSkillTool {
             .map_err(|e| AgentError::ToolExecution(format!("Failed to load skill: {}", e)))?
             .ok_or_else(|| AgentError::ToolExecution(format!("Skill '{}' not found", skill_id)))?;
 
-        Ok(vec![Part::Text(skill.content.clone())])
+        // Respect max_tokens budget: truncate content if it exceeds the per-skill cap.
+        // Default cap is 5000 tokens (~20K chars). This prevents a single skill from
+        // consuming too much of the context window.
+        let max_tokens = skill
+            .max_tokens
+            .unwrap_or(distri_types::stores::DEFAULT_SKILL_MAX_TOKENS);
+        let max_chars = max_tokens * 4; // ~4 chars per token heuristic
+        let content = if skill.content.len() > max_chars {
+            let truncated: String = skill.content.chars().take(max_chars).collect();
+            format!(
+                "{}\n\n[... truncated at {} token budget ({} chars of {} total)]",
+                truncated,
+                max_tokens,
+                max_chars,
+                skill.content.len()
+            )
+        } else {
+            skill.content.clone()
+        };
+
+        let estimated_tokens = (content.len() + 3) / 4;
+        tracing::info!(
+            "Loaded skill '{}' ({} tokens, budget: {})",
+            skill_id,
+            estimated_tokens,
+            max_tokens
+        );
+
+        Ok(vec![Part::Text(content)])
     }
 }

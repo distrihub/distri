@@ -652,15 +652,21 @@ impl AgentOrchestrator {
                         .collect();
 
                     if !resolved_skills.is_empty() {
-                        // Build the available skills description for the prompt template
-                        let skills_description = resolved_skills
-                            .iter()
-                            .map(|s| {
-                                let desc = s.description.as_deref().unwrap_or("No description");
-                                format!("- **{}** (id: `{}`): {}", s.name, s.id, desc)
-                            })
-                            .collect::<Vec<_>>()
-                            .join("\n");
+                        // Build the available skills description using budget-capped listing
+                        let frontmatters: Vec<distri_types::stores::SkillFrontmatter> =
+                            resolved_skills
+                                .iter()
+                                .map(|s| distri_types::stores::SkillFrontmatter {
+                                    name: s.name.clone(),
+                                    description: s.description.clone(),
+                                    ..Default::default()
+                                })
+                                .collect();
+
+                        let skills_description = distri_types::stores::format_skill_listing(
+                            &frontmatters,
+                            distri_types::stores::SKILL_LISTING_BUDGET,
+                        );
 
                         // Inject the skills list via dynamic_values so the {{> skills}} partial can render it
                         context

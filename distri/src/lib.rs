@@ -39,7 +39,9 @@ pub use distri_types::{
     ModelProviderDefinition, ProviderKeyDefinition, ProviderType, TokenResponse, TtsVoiceInfo,
 };
 pub use local_tools::register_local_filesystem_tools;
-pub use printer::{EventPrinter, print_stream, print_stream_verbose};
+pub use printer::{
+    ContextHealth, EventPrinter, print_stream, print_stream_verbose, print_stream_with_health,
+};
 
 #[cfg(test)]
 mod tests;

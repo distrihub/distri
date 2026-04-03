@@ -934,6 +934,12 @@ pub struct SkillRecord {
     pub scripts: Vec<SkillScriptRecord>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
+    /// Max token budget for loaded content. Used by LoadSkillTool to truncate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<usize>,
+    /// Preferred model for skill execution
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

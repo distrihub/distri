@@ -6,8 +6,10 @@ use std::time::Instant;
 use anyhow::Result;
 use crossterm::terminal;
 use distri::{
-    print_stream_verbose, AgentStreamClient, BuildHttpClient, Distri, DistriClientApp, DistriConfig,
+    print_stream_with_health, AgentStreamClient, BuildHttpClient, ContextHealth, Distri,
+    DistriClientApp, DistriConfig,
 };
+use tokio::sync::Mutex;
 use distri_types::configuration::AgentConfig;
 use inquire::{Select, Text};
 use rustyline::error::ReadlineError;
@@ -105,22 +107,27 @@ pub fn print_welcome_header(agent_name: &str, model_name: &str, thread_id: &str)
     );
 }
 
-pub fn print_context_status() {
-    let context_remaining = 12;
+pub fn print_context_status(health: &ContextHealth) {
     let term_width: usize = if let Ok((w, _)) = terminal::size() {
         w as usize
     } else {
         80
     };
 
-    let status_text = format!("Context left until auto-compact: {}%", context_remaining);
+    let status_text = health.format_status_line();
+    if status_text.is_empty() {
+        println!();
+        return;
+    }
+
+    let color = health.color();
     let padding = term_width.saturating_sub(status_text.len());
 
     println!();
     println!(
         "{}{}{}{}",
         " ".repeat(padding),
-        COLOR_GRAY,
+        color,
         status_text,
         COLOR_RESET
     );
@@ -458,9 +465,14 @@ pub async fn run_interactive_chat(
     }
 
     let mut last_interrupt: Option<Instant> = None;
+    let shared_health: Arc<Mutex<ContextHealth>> =
+        Arc::new(Mutex::new(ContextHealth::default()));
 
     loop {
-        print_context_status();
+        {
+            let health = shared_health.blocking_lock();
+            print_context_status(&health);
+        }
         print_separator_line();
 
         let input = match rl.readline("> ") {
@@ -574,17 +586,24 @@ pub async fn run_interactive_chat(
         );
         app.inject_external_tools(&mut params);
 
-        if let Err(err) = print_stream_verbose(
+        match print_stream_with_health(
             &stream_client,
             &stream_agent_id,
             params,
             verbose,
             Some(current_agent.clone()),
             show_tools.load(Ordering::Relaxed),
+            Some(shared_health.clone()),
         )
         .await
         {
-            eprintln!("Error from agent: {}", err);
+            Ok((_health, Ok(()))) => {}
+            Ok((_health, Err(err))) => {
+                eprintln!("Error from agent: {}", err);
+            }
+            Err(err) => {
+                eprintln!("Error from agent: {}", err);
+            }
         }
     }
 
