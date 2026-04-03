@@ -125,3 +125,33 @@ fn budget_update_accumulates_across_turns() {
     budget.conversation_tokens += 3000;
     assert_eq!(budget.total_tokens(), 9500);
 }
+
+// ── get_effective_context_size fallback correctness ───────────────────────
+
+#[test]
+fn effective_context_size_explicit_wins() {
+    use crate::agent::StandardDefinition;
+    let mut def = StandardDefinition::default();
+    def.context_size = Some(80_000);
+    assert_eq!(def.get_effective_context_size(), 80_000);
+}
+
+#[test]
+fn effective_context_size_falls_back_to_default_when_zero_in_model_settings() {
+    use crate::agent::StandardDefinition;
+    // No explicit context_size in def, no model settings → must not return 0
+    let def = StandardDefinition::default();
+    let size = def.get_effective_context_size();
+    assert!(size > 0, "context size should never be 0 (got {})", size);
+    assert_eq!(size, 20_000, "default should be 20K");
+}
+
+#[test]
+fn effective_context_size_zero_explicit_falls_through_to_default() {
+    use crate::agent::StandardDefinition;
+    // Explicitly set to 0 — should fall through to the 20K default
+    let mut def = StandardDefinition::default();
+    def.context_size = Some(0);
+    let size = def.get_effective_context_size();
+    assert_eq!(size, 20_000, "zero context_size should use default 20K");
+}

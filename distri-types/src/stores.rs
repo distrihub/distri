@@ -845,6 +845,8 @@ impl std::str::FromStr for ContextExecutionType {
 pub const SKILL_LISTING_BUDGET: usize = 2_000;
 /// Max description chars per skill in system prompt listing.
 pub const SKILL_DESCRIPTION_CAP: usize = 250;
+/// Default max output tokens for a skill when not explicitly set.
+pub const DEFAULT_SKILL_MAX_TOKENS: u32 = 8000;
 
 /// Parsed frontmatter from a skill markdown file.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -857,6 +859,8 @@ pub struct SkillFrontmatter {
     #[serde(default)]
     pub model: Option<String>,
     #[serde(default)]
+    pub max_tokens: Option<u32>,
+    #[serde(default)]
     pub can_spawn_tasks: bool,
     #[serde(default)]
     pub paths: Vec<String>,
@@ -865,6 +869,10 @@ pub struct SkillFrontmatter {
 }
 
 impl SkillFrontmatter {
+    pub fn effective_max_tokens(&self) -> u32 {
+        self.max_tokens.unwrap_or(DEFAULT_SKILL_MAX_TOKENS)
+    }
+
     pub fn as_listing_line(&self) -> String {
         let desc = self.description.as_deref().unwrap_or("No description");
         let desc_truncated = if desc.len() > SKILL_DESCRIPTION_CAP {

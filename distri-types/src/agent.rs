@@ -613,7 +613,12 @@ impl StandardDefinition {
     /// Get the effective context size (agent-level override or model settings)
     pub fn get_effective_context_size(&self) -> u32 {
         self.context_size
-            .or_else(|| self.model_settings().map(|ms| ms.inner.context_size))
+            .filter(|&s| s > 0)
+            .or_else(|| {
+                self.model_settings()
+                    .map(|ms| ms.inner.context_size)
+                    .filter(|&s| s > 0)
+            })
             .unwrap_or_else(default_context_size)
     }
 

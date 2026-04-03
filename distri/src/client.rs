@@ -2692,7 +2692,7 @@ impl Distri {
     ///     TtsSpeechRequest::new("Hello world")
     ///         .with_model("tts-1-hd")
     ///         .with_voice("nova")
-    ///         .with_provider("openai")
+    ///         .with_provider(distri::ProviderType::OpenAI)
     /// ).await?;
     /// # Ok(())
     /// # }

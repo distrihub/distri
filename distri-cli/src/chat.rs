@@ -145,6 +145,7 @@ pub fn print_help_message() {
     println!("  /agent <name>       - Switch to an agent by name");
     println!("  /models             - Set model override (prompts for name)");
     println!("  /model <name>       - Set model override directly");
+    println!("  /context  (/ctx)    - Show context window breakdown by component");
     println!("  /available-tools    - List tools available to the client");
     println!("  /resume             - Pick from recent threads to resume");
     println!("  /resume last        - Resume the last thread from previous session");
@@ -228,6 +229,7 @@ pub async fn handle_slash_command(
     config: &DistriConfig,
     current_agent: &mut String,
     current_model: &mut Option<String>,
+    shared_health: &Arc<RwLock<distri::ContextHealth>>,
 ) -> Result<SlashCommandResult> {
     let mut parts = input.splitn(2, ' ');
     let command = parts.next().unwrap_or("");
@@ -236,6 +238,11 @@ pub async fn handle_slash_command(
     match command {
         "/help" => {
             print_help_message();
+            Ok(SlashCommandResult::Continue)
+        }
+        "/context" | "/ctx" => {
+            let health = shared_health.read().await;
+            health.print_context_breakdown();
             Ok(SlashCommandResult::Continue)
         }
         "/exit" | "/quit" => Ok(SlashCommandResult::Exit),
@@ -502,8 +509,15 @@ pub async fn run_interactive_chat(
         }
 
         if input.starts_with('/') {
-            match handle_slash_command(input, app, config, &mut current_agent, &mut current_model)
-                .await?
+            match handle_slash_command(
+                input,
+                app,
+                config,
+                &mut current_agent,
+                &mut current_model,
+                &shared_health,
+            )
+            .await?
             {
                 SlashCommandResult::Continue => continue,
                 SlashCommandResult::Exit => break,

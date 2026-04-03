@@ -27,6 +27,7 @@ fn step_completed_carries_budget() {
     let event = AgentEventType::StepCompleted {
         step_id: "s1".into(),
         success: true,
+        usage: None,
         context_budget: Some(ContextBudget {
             conversation_tokens: 50000,
             context_window_size: 200_000,
@@ -95,12 +96,14 @@ fn event_types_exhaustive_match() {
         AgentEventType::RunError {
             message: "err".into(),
             code: None,
+            usage: None,
         },
         AgentEventType::PlanStarted { initial_plan: true },
         AgentEventType::PlanFinished { total_steps: 1 },
         AgentEventType::StepCompleted {
             step_id: "s1".into(),
             success: true,
+            usage: None,
             context_budget: None,
         },
         AgentEventType::ContextBudgetUpdate {

@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderType {
+    #[serde(rename = "openai")]
     OpenAI,
     Anthropic,
     Azure,
@@ -15,6 +16,7 @@ pub enum ProviderType {
     AzureAiFoundry,
     AwsBedrock,
     GoogleVertex,
+    #[serde(rename = "elevenlabs")]
     ElevenLabs,
     /// User-defined provider (LangDB-compatible / OpenAI-compatible)
     #[serde(untagged)]

@@ -39,6 +39,8 @@ pub struct ContextHealth {
     pub api_cached_tokens: u32,
     /// Estimated cost in USD
     pub cost_usd: Option<f64>,
+    /// Last received full context budget breakdown
+    pub last_budget: Option<distri_types::ContextBudget>,
 }
 
 impl ContextHealth {
@@ -49,9 +51,73 @@ impl ContextHealth {
         self.tokens_limit = budget.context_window_size;
         self.is_warning = budget.is_warning();
         self.is_critical = budget.is_critical();
+        self.last_budget = Some(budget.clone());
     }
 
-    /// Update from RunUsage
+    /// Print a detailed context breakdown to stdout.
+    pub fn print_context_breakdown(&self) {
+        let Some(ref budget) = self.last_budget else {
+            println!("No context data yet — run a query first.");
+            return;
+        };
+        if budget.context_window_size == 0 {
+            println!("Context window size unknown.");
+            return;
+        }
+        let total = budget.total_tokens();
+        let window = budget.context_window_size;
+        let pct = budget.utilization() * 100.0;
+        let remaining = budget.remaining_tokens();
+
+        println!(
+            "{}{:.0}% used — {} / {} tokens  ({} remaining){}",
+            COLOR_GRAY,
+            pct,
+            format_token_count(total),
+            format_token_count(window),
+            format_token_count(remaining),
+            COLOR_RESET
+        );
+
+        let rows: &[(&str, usize)] = &[
+            ("system (static)", budget.system_prompt_static_tokens),
+            ("system (dynamic)", budget.system_prompt_dynamic_tokens),
+            ("tool schemas", budget.tool_schema_tokens),
+            ("deferred tools", budget.deferred_tool_tokens),
+            ("skills", budget.skill_listing_tokens),
+            ("conversation", budget.conversation_tokens),
+            ("tool results", budget.tool_result_tokens),
+        ];
+
+        let max_label = rows.iter().map(|(l, _)| l.len()).max().unwrap_or(0);
+        for (label, tokens) in rows {
+            if *tokens == 0 {
+                continue;
+            }
+            let bar_pct = if window > 0 { *tokens * 40 / window } else { 0 };
+            let bar = "█".repeat(bar_pct);
+            println!(
+                "{}  {:<width$}  {:>6}  {}{}",
+                COLOR_GRAY,
+                label,
+                format_token_count(*tokens),
+                bar,
+                COLOR_RESET,
+                width = max_label
+            );
+        }
+    }
+
+    /// Reset per-run token counters. Called on RunStarted so the status bar
+    /// shows "this run" totals instead of accumulating across the whole session.
+    pub fn reset_run_tokens(&mut self) {
+        self.api_input_tokens = 0;
+        self.api_output_tokens = 0;
+        self.api_cached_tokens = 0;
+        self.cost_usd = None;
+    }
+
+    /// Update from RunUsage (per-step delta — adds to current run total).
     pub fn update_from_usage(&mut self, usage: &distri_types::events::RunUsage) {
         self.api_input_tokens = self.api_input_tokens.saturating_add(usage.input_tokens);
         self.api_output_tokens = self.api_output_tokens.saturating_add(usage.output_tokens);
@@ -345,6 +411,10 @@ impl EventPrinter {
         }
 
         match &event.event {
+            AgentEventType::RunStarted {} => {
+                // Reset per-run token counters so the status bar shows this-run totals.
+                self.context_health.write().await.reset_run_tokens();
+            }
             AgentEventType::PlanStarted { initial_plan } => {
                 self.state.is_planning = true;
                 let idx = self.state.steps.len();
