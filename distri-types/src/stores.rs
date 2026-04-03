@@ -965,6 +965,10 @@ pub struct NewSkill {
     pub is_public: bool,
     #[serde(default)]
     pub scripts: Vec<NewSkillScript>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -987,6 +991,10 @@ pub struct UpdateSkill {
     pub content: Option<String>,
     pub tags: Option<Vec<String>>,
     pub is_public: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
