@@ -356,7 +356,15 @@ impl EventPrinter {
                 );
                 // Suppressed — individual tool calls show progress
             }
-            AgentEventType::StepCompleted { step_id, success, .. } => {
+            AgentEventType::StepCompleted {
+                step_id,
+                success,
+                context_budget,
+            } => {
+                if let Some(budget) = context_budget {
+                    let mut health = self.context_health.blocking_lock();
+                    health.update_from_budget(budget);
+                }
                 if let Some(step) = self.state.steps.get_mut(step_id) {
                     step.status = if *success {
                         "done".into()
@@ -442,8 +450,7 @@ impl EventPrinter {
                         let input = format_token_count(u.input_tokens as usize);
                         let output = format_token_count(u.output_tokens as usize);
                         let model = u.model.as_deref().unwrap_or("unknown");
-                        let mut usage_str =
-                            format!("{} in, {} out ({})", input, output, model);
+                        let mut usage_str = format!("{} in, {} out ({})", input, output, model);
                         if u.cached_tokens > 0 {
                             usage_str.push_str(&format!(
                                 ", {} cached",
@@ -457,14 +464,7 @@ impl EventPrinter {
                     }
                 }
             }
-            AgentEventType::StepCompleted {
-                context_budget, ..
-            } => {
-                if let Some(budget) = context_budget {
-                    let mut health = self.context_health.blocking_lock();
-                    health.update_from_budget(budget);
-                }
-            }
+
             AgentEventType::ContextBudgetUpdate {
                 budget,
                 is_warning,

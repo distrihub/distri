@@ -807,8 +807,40 @@ pub trait ProviderStore: Send + Sync {
 
 // ========== Skill Store ==========
 
-/// Default max token budget per loaded skill.
-pub const DEFAULT_SKILL_MAX_TOKENS: usize = 5_000;
+/// How a skill is executed relative to the calling agent's context.
+/// Mirrors the `context` field in claude-code's prompt command spec.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum ContextExecutionType {
+    /// Inject the full skill content into the current agent's context window.
+    /// The calling agent incorporates it directly — no sub-agent spawned.
+    #[default]
+    Inline,
+    /// Spawn an isolated child agent with the skill as its instruction set.
+    /// The child runs with its own token budget and task record; its result
+    /// is summarised and returned to the parent.
+    Fork,
+}
+
+impl std::fmt::Display for ContextExecutionType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ContextExecutionType::Inline => write!(f, "inline"),
+            ContextExecutionType::Fork => write!(f, "fork"),
+        }
+    }
+}
+
+impl std::str::FromStr for ContextExecutionType {
+    type Err = ();
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "fork" => Ok(ContextExecutionType::Fork),
+            _ => Ok(ContextExecutionType::Inline),
+        }
+    }
+}
+
 /// Total token budget for all skill listings in the system prompt.
 pub const SKILL_LISTING_BUDGET: usize = 2_000;
 /// Max description chars per skill in system prompt listing.
@@ -825,8 +857,6 @@ pub struct SkillFrontmatter {
     #[serde(default)]
     pub model: Option<String>,
     #[serde(default)]
-    pub max_tokens: Option<usize>,
-    #[serde(default)]
     pub can_spawn_tasks: bool,
     #[serde(default)]
     pub paths: Vec<String>,
@@ -835,10 +865,6 @@ pub struct SkillFrontmatter {
 }
 
 impl SkillFrontmatter {
-    pub fn effective_max_tokens(&self) -> usize {
-        self.max_tokens.unwrap_or(DEFAULT_SKILL_MAX_TOKENS)
-    }
-
     pub fn as_listing_line(&self) -> String {
         let desc = self.description.as_deref().unwrap_or("No description");
         let desc_truncated = if desc.len() > SKILL_DESCRIPTION_CAP {
@@ -934,12 +960,12 @@ pub struct SkillRecord {
     pub scripts: Vec<SkillScriptRecord>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
-    /// Max token budget for loaded content. Used by LoadSkillTool to truncate.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_tokens: Option<usize>,
-    /// Preferred model for skill execution
+    /// Preferred model for skill execution (overrides agent default)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// How to deliver skill content: inline (default) or fork (isolated sub-agent)
+    #[serde(default)]
+    pub context: ContextExecutionType,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -967,8 +993,8 @@ pub struct NewSkill {
     pub scripts: Vec<NewSkillScript>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_tokens: Option<usize>,
+    #[serde(default)]
+    pub context: ContextExecutionType,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -994,7 +1020,7 @@ pub struct UpdateSkill {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_tokens: Option<usize>,
+    pub context: Option<ContextExecutionType>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

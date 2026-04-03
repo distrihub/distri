@@ -463,7 +463,7 @@ pub struct SkillModel {
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
     pub model: Option<String>,
-    pub max_tokens: Option<i32>,
+    pub context: String,
 }
 
 #[derive(Debug, Clone, Insertable)]
@@ -479,7 +479,7 @@ pub struct NewSkillModel<'a> {
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
     pub model: Option<&'a str>,
-    pub max_tokens: Option<i32>,
+    pub context: &'a str,
 }
 
 #[derive(Debug, Clone, Queryable, Identifiable, Selectable)]

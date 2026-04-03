@@ -3572,8 +3572,8 @@ fn to_skill_record(model: SkillModel, scripts: Vec<SkillScriptModel>) -> SkillRe
         scripts: scripts.into_iter().map(to_skill_script_record).collect(),
         created_at: from_naive(model.created_at),
         updated_at: from_naive(model.updated_at),
-        max_tokens: model.max_tokens.map(|v| v as usize),
         model: model.model,
+        context: model.context.parse().unwrap_or_default(),
     }
 }
 
@@ -3683,6 +3683,7 @@ where
         let now = Utc::now().naive_utc();
         let new_id = Uuid::new_v4().to_string();
         let tags_json = serde_json::to_string(&skill.tags)?;
+        let context_str = skill.context.to_string();
 
         let new_skill = NewSkillModel {
             id: &new_id,
@@ -3695,7 +3696,7 @@ where
             created_at: now,
             updated_at: now,
             model: skill.model.as_deref(),
-            max_tokens: skill.max_tokens.map(|v| v as i32),
+            context: &context_str,
         };
 
         diesel::insert_into(skills)
@@ -3774,9 +3775,9 @@ where
                 .execute(&mut conn)
                 .await?;
         }
-        if let Some(mt) = update.max_tokens {
+        if let Some(ref ctx) = update.context {
             diesel::update(skills.filter(id.eq(skill_id_val)))
-                .set(crate::schema::skills::max_tokens.eq(mt as i32))
+                .set(crate::schema::skills::context.eq(ctx.to_string()))
                 .execute(&mut conn)
                 .await?;
         }
@@ -3954,7 +3955,7 @@ where
             created_at: now,
             updated_at: now,
             model: source.model.as_deref(),
-            max_tokens: source.max_tokens,
+            context: &source.context,
         };
 
         diesel::insert_into(skills)

@@ -230,7 +230,7 @@ diesel::table! {
         created_at -> Timestamp,
         updated_at -> Timestamp,
         model -> Nullable<Text>,
-        max_tokens -> Nullable<Integer>,
+        context -> Text,
     }
 }
 
