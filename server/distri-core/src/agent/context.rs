@@ -1,7 +1,6 @@
 use crate::agent::pricing;
 use crate::hooks_runtime::HookRegistry;
 use distri_stores::SessionStoreExt;
-use distri_types::filesystem::FileSystemOps;
 use distri_types::{
     configuration::DefinitionOverrides, AgentContextSize, AgentPlan, ContextBudget, ContextSize,
     ContextUsage, ExecutionHistoryEntry, ExecutionResult, ModelSettings, Part, PlanStep, RunUsage,
@@ -1146,38 +1145,52 @@ impl ExecutorContext {
         Ok(())
     }
 
-    /// Persist large result parts to disk via session_filesystem.
+    /// Persist large result parts to the session store (Postgres).
     ///
-    /// For each (part_index, content) pair, writes full content to:
-    /// `tool-results/{thread_short}/{task_short}/{step_id}_{part_index}.txt`
+    /// For each (part_index, content) pair, writes full content under the key:
+    /// `tool-results:{thread_id}` / `{step_id}_{part_index}`
     ///
     /// Then replaces the corresponding part in `result` with a preview notice.
-    async fn persist_large_parts(
+    ///
+    /// NOTE: This uses the session store (Postgres) rather than the local filesystem so that
+    /// persisted results survive pod restarts and are accessible across replicas.
+    /// TODO(roadmap): Switch to Azure Blob Storage for very large results (>1MB) — see roadmap.md.
+    pub(crate) async fn persist_large_parts(
         &self,
         result: &mut ExecutionResult,
         parts_to_persist: &[(usize, String)],
     ) -> Result<(), AgentError> {
-        let orchestrator = self.orchestrator.as_ref().ok_or(AgentError::Execution(
-            "Orchestrator not initialized".to_string(),
-        ))?;
+        let session_store = self
+            .stores
+            .as_ref()
+            .map(|s| &s.session_store)
+            .or_else(|| self.orchestrator.as_ref().map(|o| &o.stores.session_store))
+            .ok_or(AgentError::Session("Session store not found".to_string()))?;
 
-        let fs = &orchestrator.session_filesystem;
-        let thread_short = &self.thread_id[..self.thread_id.len().min(8)];
-        let task_short = &self.task_id[..self.task_id.len().min(8)];
-        let base_path = format!("tool-results/{}/{}", thread_short, task_short);
+        let namespace = format!("tool-results:{}", self.thread_id);
 
         for (part_index, content) in parts_to_persist {
-            let filename = format!("{}_{}.txt", result.step_id, part_index);
-            let full_path = format!("{}/{}", base_path, filename);
+            let key = format!("{}_{}", result.step_id, part_index);
 
-            // Write full content to disk
-            if let Err(e) = fs.write(&full_path, content).await {
-                tracing::warn!("Failed to persist tool result to {}: {}", full_path, e);
+            if let Err(e) = session_store
+                .set_value(
+                    &namespace,
+                    &key,
+                    &serde_json::Value::String(content.clone()),
+                )
+                .await
+            {
+                tracing::warn!(
+                    "Failed to persist tool result to session store ({}): {}",
+                    key,
+                    e
+                );
                 continue;
             }
 
-            // Replace in-memory part with preview
-            result.replace_with_preview(*part_index, &full_path, None);
+            // Replace in-memory part with a preview (path encodes the lookup key)
+            let store_ref = format!("session-store:{}/{}", namespace, key);
+            result.replace_with_preview(*part_index, &store_ref, None);
 
             // Update content replacement state for prompt cache stability
             let mut state = self.content_replacement_state.write().await;
@@ -1188,28 +1201,45 @@ impl ExecutorContext {
             state.mark_replaced(&format!("{}:{}", result.step_id, part_index), notice);
 
             tracing::info!(
-                "Persisted large tool result ({} bytes) to {}",
+                "Persisted large tool result ({} bytes) to session store key {}",
                 content.len(),
-                full_path
+                key
             );
         }
 
         Ok(())
     }
 
-    /// Load a persisted tool result from disk.
+    /// Load a persisted tool result from the session store.
     ///
-    /// Returns the full content that was previously persisted via `persist_large_parts`.
-    pub async fn load_persisted_result(&self, persisted_path: &str) -> Result<String, AgentError> {
-        let orchestrator = self.orchestrator.as_ref().ok_or(AgentError::Execution(
-            "Orchestrator not initialized".to_string(),
-        ))?;
+    /// `store_ref` is the value embedded in the `<persisted-output>` notice, formatted as
+    /// `session-store:{namespace}/{key}`.
+    pub async fn load_persisted_result(&self, store_ref: &str) -> Result<String, AgentError> {
+        let rest = store_ref
+            .strip_prefix("session-store:")
+            .ok_or_else(|| AgentError::Execution(format!("Invalid store ref: {}", store_ref)))?;
 
-        orchestrator
-            .session_filesystem
-            .read_raw(persisted_path)
+        let (namespace, key) = rest
+            .split_once('/')
+            .ok_or_else(|| AgentError::Execution(format!("Malformed store ref: {}", store_ref)))?;
+
+        let session_store = self
+            .stores
+            .as_ref()
+            .map(|s| &s.session_store)
+            .or_else(|| self.orchestrator.as_ref().map(|o| &o.stores.session_store))
+            .ok_or(AgentError::Session("Session store not found".to_string()))?;
+
+        let value = session_store
+            .get_value(namespace, key)
             .await
-            .map_err(|e| AgentError::Execution(format!("Failed to load persisted result: {}", e)))
+            .map_err(|e| AgentError::Execution(format!("Failed to load persisted result: {}", e)))?
+            .ok_or_else(|| AgentError::Execution(format!("Persisted result not found: {}", key)))?;
+
+        match value {
+            serde_json::Value::String(s) => Ok(s),
+            other => Ok(other.to_string()),
+        }
     }
 
     /// Check file read cache and return FILE_UNCHANGED_STUB if file hasn't changed.

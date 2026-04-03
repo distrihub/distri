@@ -1073,7 +1073,7 @@ mod tests {
         let user_msg = Message::user("Plan".to_string(), None);
 
         // No orchestrator in this unit test context, so no execution history is available.
-        let messages = formatter
+        let (messages, _) = formatter
             .build_messages(&user_msg, &context, "tmpl", "user_templ", None)
             .await
             .expect("formatter should succeed");
@@ -1093,7 +1093,7 @@ mod tests {
         let context = Arc::new(ExecutorContext::default());
         let user_msg = Message::user("Summarize context".to_string(), None);
         // No orchestrator in this unit test context, so no execution history is available.
-        let messages = formatter
+        let (messages, _) = formatter
             .build_messages(
                 &user_msg,
                 &context,
