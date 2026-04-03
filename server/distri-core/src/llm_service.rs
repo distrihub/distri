@@ -2,7 +2,7 @@ use crate::agent::ExecutorContext;
 use crate::llm::LLMResponse;
 use crate::AgentError;
 use distri_types::{
-    AgentEventType, CreateThreadRequest, LlmDefinition, Message, ModelSettings, RunUsage, Tool,
+    AgentEventType, CreateThreadRequest, LlmDefinition, Message, ModelSettings, Tool,
     ToolCallFormat,
 };
 use std::collections::HashMap;
@@ -124,23 +124,13 @@ impl LlmExecuteService {
 
         // Step 7: Emit RunFinished event for usage tracking (non-sub-tasks only)
         if !is_sub_task {
-            let context_usage = context.get_usage().await;
-            let run_usage = RunUsage {
-                total_tokens: context_usage.tokens,
-                input_tokens: context_usage.input_tokens,
-                output_tokens: context_usage.output_tokens,
-                cached_tokens: context_usage.cached_tokens,
-                estimated_tokens: context_usage.context_size.total_estimated_tokens as u32,
-                model: context_usage.model.clone(),
-                cost_usd: None,
-            };
-
             context
                 .emit(AgentEventType::RunFinished {
                     success: true,
                     total_steps: 1,
                     failed_steps: 0,
-                    usage: Some(run_usage),
+                    usage: Some(context.get_step_usage().await),
+                    context_budget: None,
                 })
                 .await;
 

@@ -119,7 +119,7 @@ async fn tts_speech_with_explicit_params() {
         .unwrap();
 
     assert!(!resp.audio.is_empty());
-    assert_eq!(resp.provider.as_deref(), Some("azure_openai"));
+    assert_eq!(resp.provider.as_deref(), Some("azure"));
     assert_eq!(resp.model.as_deref(), Some("tts-1-hd"));
     assert_eq!(resp.voice.as_deref(), Some("nova"));
 }
@@ -133,7 +133,7 @@ async fn tts_models_returns_list() {
 
     assert_eq!(resp.models.len(), 1);
     assert_eq!(resp.models[0].id, "tts-1");
-    assert_eq!(resp.models[0].provider, "openai");
+    // provider field was removed from Model; just verify id is present
     assert_eq!(resp.models[0].voices.len(), 2);
     assert_eq!(resp.models[0].voices[0].id, "alloy");
     assert!(resp.models[0].voices[0].description.is_some());
@@ -333,8 +333,8 @@ async fn tts_models_handler() -> HttpResponse {
         "models": [
             {
                 "id": "tts-1",
-                "provider": "openai",
                 "name": "TTS-1",
+                "capability": "tts",
                 "voices": [
                     { "id": "alloy", "name": "Alloy", "description": "Neutral and balanced" },
                     { "id": "nova", "name": "Nova", "description": "Bright and energetic" }
@@ -354,8 +354,8 @@ async fn tts_providers_handler() -> HttpResponse {
             "models": [
                 {
                     "id": "tts-1",
-                    "provider": "openai",
                     "name": "TTS-1",
+                    "capability": "tts",
                     "voices": [{ "id": "alloy", "name": "Alloy" }],
                     "formats": ["mp3"]
                 }

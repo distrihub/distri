@@ -6,7 +6,7 @@ use distri_types::configuration::{
 use distri_types::{Message, ModelSettings};
 
 use crate::{
-    agent::{parse_agent_markdown_content, ExecutorContext},
+    agent::parse_agent_markdown_content,
     AgentOrchestrator, AgentOrchestratorBuilder,
 };
 

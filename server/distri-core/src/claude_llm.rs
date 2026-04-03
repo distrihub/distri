@@ -590,9 +590,41 @@ impl ClaudeLLMExecutor {
         let input_tokens = response.usage.input_tokens;
         let output_tokens = response.usage.output_tokens;
         let cached_tokens = response.usage.cache_read_input_tokens.unwrap_or(0);
+        let cache_created = response.usage.cache_creation_input_tokens.unwrap_or(0);
         self.context
             .increment_usage_with_cache(input_tokens, output_tokens, cached_tokens)
             .await;
+
+        // Verbose: per-call LLM summary
+        if self.context.verbose {
+            let model = ms.model.as_str();
+            let cache_pct = if input_tokens > 0 {
+                (cached_tokens as f64 / input_tokens as f64 * 100.0) as u32
+            } else {
+                0
+            };
+            let mut parts = vec![format!(
+                "{} in, {} out",
+                format_k(input_tokens as usize),
+                format_k(output_tokens as usize)
+            )];
+            if cached_tokens > 0 {
+                parts.push(format!(
+                    "{} cached ({}% hit)",
+                    format_k(cached_tokens as usize),
+                    cache_pct
+                ));
+            }
+            if cache_created > 0 {
+                parts.push(format!(
+                    "{} cache_created",
+                    format_k(cache_created as usize)
+                ));
+            }
+            self.context
+                .emit_verbose(format!("[LLM] {}: {}", model, parts.join("  ")))
+                .await;
+        }
 
         let usage = Some(distri_types::TokenUsage {
             input_tokens,
@@ -760,6 +792,11 @@ impl ClaudeLLMExecutor {
         let mut tool_calls: Vec<ToolCall> = Vec::new();
         let mut text_started = false;
         let mut parser = self.get_parser().await;
+        // Track per-call token counts for verbose logging
+        let mut stream_input_tokens: u32 = 0;
+        let mut stream_output_tokens: u32 = 0;
+        let mut stream_cached_tokens: u32 = 0;
+        let mut stream_cache_created: u32 = 0;
 
         // Track partial tool use blocks
         struct PartialToolUse {
@@ -776,9 +813,19 @@ impl ClaudeLLMExecutor {
                 Ok(event) => match event {
                     StreamEvent::MessageStart { message } => {
                         if let Some(usage) = message.usage {
+                            let cached = usage.cache_read_input_tokens.unwrap_or(0);
+                            let created = usage.cache_creation_input_tokens.unwrap_or(0);
                             self.context
-                                .increment_usage(usage.input_tokens, usage.output_tokens)
+                                .increment_usage_with_cache(
+                                    usage.input_tokens,
+                                    usage.output_tokens,
+                                    cached,
+                                )
                                 .await;
+                            stream_input_tokens += usage.input_tokens;
+                            stream_output_tokens += usage.output_tokens;
+                            stream_cached_tokens += cached;
+                            stream_cache_created += created;
                         }
                     }
                     StreamEvent::ContentBlockStart { content_block, .. } => {
@@ -904,6 +951,7 @@ impl ClaudeLLMExecutor {
                             self.context
                                 .increment_usage(usage.input_tokens, usage.output_tokens)
                                 .await;
+                            stream_output_tokens += usage.output_tokens;
                         }
                         // stop_reason is in delta.stop_reason but we handle it via tool_calls presence
                     }
@@ -928,6 +976,37 @@ impl ClaudeLLMExecutor {
                     return Err(e);
                 }
             }
+        }
+
+        // Verbose: streaming LLM summary
+        if context.verbose {
+            let model = ms.model.as_str();
+            let cache_pct = if stream_input_tokens > 0 {
+                (stream_cached_tokens as f64 / stream_input_tokens as f64 * 100.0) as u32
+            } else {
+                0
+            };
+            let mut parts = vec![format!(
+                "{} in, {} out",
+                format_k(stream_input_tokens as usize),
+                format_k(stream_output_tokens as usize)
+            )];
+            if stream_cached_tokens > 0 {
+                parts.push(format!(
+                    "{} cached ({}% hit)",
+                    format_k(stream_cached_tokens as usize),
+                    cache_pct
+                ));
+            }
+            if stream_cache_created > 0 {
+                parts.push(format!(
+                    "{} cache_created",
+                    format_k(stream_cache_created as usize)
+                ));
+            }
+            context
+                .emit_verbose(format!("[LLM] {}: {}", model, parts.join("  ")))
+                .await;
         }
 
         // Finalize parser
@@ -979,6 +1058,20 @@ impl ClaudeLLMExecutor {
             tool_calls,
             content,
         })
+    }
+}
+
+/// Format a token count as a compact string (e.g. 1500 → "1.5K", 200 → "200").
+fn format_k(count: usize) -> String {
+    if count >= 1000 {
+        let k = count as f64 / 1000.0;
+        if k >= 100.0 {
+            format!("{}K", k as usize)
+        } else {
+            format!("{:.1}K", k)
+        }
+    } else {
+        format!("{}", count)
     }
 }
 

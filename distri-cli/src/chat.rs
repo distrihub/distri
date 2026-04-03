@@ -6,12 +6,14 @@ use std::time::Instant;
 use anyhow::Result;
 use crossterm::terminal;
 use distri::{
-    print_stream_verbose, AgentStreamClient, BuildHttpClient, Distri, DistriClientApp, DistriConfig,
+    print_stream_with_health, AgentStreamClient, BuildHttpClient, ContextHealth, Distri,
+    DistriClientApp, DistriConfig,
 };
 use distri_types::configuration::AgentConfig;
 use inquire::{Select, Text};
 use rustyline::error::ReadlineError;
 use rustyline::{Config, Editor, EventHandler, KeyEvent};
+use tokio::sync::RwLock;
 
 use crate::config::{load_last_model, save_last_model};
 use crate::input::{DistriHelper, ToggleToolsHandler};
@@ -105,35 +107,31 @@ pub fn print_welcome_header(agent_name: &str, model_name: &str, thread_id: &str)
     );
 }
 
-pub fn print_context_status() {
-    let context_remaining = 12;
+pub fn print_separator_with_status(status: &str) {
     let term_width: usize = if let Ok((w, _)) = terminal::size() {
         w as usize
     } else {
         80
     };
 
-    let status_text = format!("Context left until auto-compact: {}%", context_remaining);
-    let padding = term_width.saturating_sub(status_text.len());
+    if status.is_empty() {
+        println!("{}", "─".repeat(term_width));
+        return;
+    }
 
-    println!();
+    // Embed status on the right: ────────────── status ─
+    let padded = format!(" {} ", status);
+    let dashes = term_width.saturating_sub(padded.len());
+    let left = dashes * 2 / 3;
+    let right = dashes - left;
     println!(
-        "{}{}{}{}",
-        " ".repeat(padding),
+        "{}{}{}{}{}",
+        "─".repeat(left),
         COLOR_GRAY,
-        status_text,
-        COLOR_RESET
+        padded,
+        COLOR_RESET,
+        "─".repeat(right)
     );
-}
-
-pub fn print_separator_line() {
-    let term_width: usize = if let Ok((w, _)) = terminal::size() {
-        w as usize
-    } else {
-        80
-    };
-
-    println!("{}", "-".repeat(term_width));
 }
 
 pub fn print_help_message() {
@@ -146,6 +144,7 @@ pub fn print_help_message() {
     println!("  /agent <name>       - Switch to an agent by name");
     println!("  /models             - Set model override (prompts for name)");
     println!("  /model <name>       - Set model override directly");
+    println!("  /context  (/ctx)    - Show context window breakdown by component");
     println!("  /available-tools    - List tools available to the client");
     println!("  /resume             - Pick from recent threads to resume");
     println!("  /resume last        - Resume the last thread from previous session");
@@ -229,6 +228,7 @@ pub async fn handle_slash_command(
     config: &DistriConfig,
     current_agent: &mut String,
     current_model: &mut Option<String>,
+    shared_health: &Arc<RwLock<distri::ContextHealth>>,
 ) -> Result<SlashCommandResult> {
     let mut parts = input.splitn(2, ' ');
     let command = parts.next().unwrap_or("");
@@ -237,6 +237,11 @@ pub async fn handle_slash_command(
     match command {
         "/help" => {
             print_help_message();
+            Ok(SlashCommandResult::Continue)
+        }
+        "/context" | "/ctx" => {
+            let health = shared_health.read().await;
+            health.print_context_breakdown();
             Ok(SlashCommandResult::Continue)
         }
         "/exit" | "/quit" => Ok(SlashCommandResult::Exit),
@@ -458,10 +463,14 @@ pub async fn run_interactive_chat(
     }
 
     let mut last_interrupt: Option<Instant> = None;
+    let shared_health: Arc<RwLock<ContextHealth>> = Arc::new(RwLock::new(ContextHealth::default()));
 
     loop {
-        print_context_status();
-        print_separator_line();
+        {
+            let health = shared_health.read().await;
+            let status = health.format_status_line();
+            print_separator_with_status(&status);
+        }
 
         let input = match rl.readline("> ") {
             Ok(line) => {
@@ -499,8 +508,15 @@ pub async fn run_interactive_chat(
         }
 
         if input.starts_with('/') {
-            match handle_slash_command(input, app, config, &mut current_agent, &mut current_model)
-                .await?
+            match handle_slash_command(
+                input,
+                app,
+                config,
+                &mut current_agent,
+                &mut current_model,
+                &shared_health,
+            )
+            .await?
             {
                 SlashCommandResult::Continue => continue,
                 SlashCommandResult::Exit => break,
@@ -574,17 +590,24 @@ pub async fn run_interactive_chat(
         );
         app.inject_external_tools(&mut params);
 
-        if let Err(err) = print_stream_verbose(
+        match print_stream_with_health(
             &stream_client,
             &stream_agent_id,
             params,
             verbose,
             Some(current_agent.clone()),
             show_tools.load(Ordering::Relaxed),
+            Some(shared_health.clone()),
         )
         .await
         {
-            eprintln!("Error from agent: {}", err);
+            Ok((_health, Ok(()))) => {}
+            Ok((_health, Err(err))) => {
+                eprintln!("Error from agent: {}", err);
+            }
+            Err(err) => {
+                eprintln!("Error from agent: {}", err);
+            }
         }
     }
 

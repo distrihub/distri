@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use distri::{CreateSkillRequest, CreateSkillScriptRequest, Distri};
+use distri::{CreateSkillRequest, Distri};
 use tokio::fs;
 
 use crate::config::set_client_config_value;
@@ -221,7 +221,6 @@ pub async fn handle_skills_command(client: &Distri, command: SkillsCommands) -> 
 
             for skill_path in skill_files {
                 let request = parse_skill_file(&skill_path).await?;
-                let script_count = request.scripts.len();
                 let result = client.upsert_skill(&request).await?;
                 let visibility = if result.is_public {
                     "public"
@@ -229,8 +228,8 @@ pub async fn handle_skills_command(client: &Distri, command: SkillsCommands) -> 
                     "private"
                 };
                 println!(
-                    "{}  Pushed skill '{}' [{}] ({} scripts){}",
-                    COLOR_BRIGHT_GREEN, result.name, visibility, script_count, COLOR_RESET
+                    "{}  Pushed skill '{}' [{}]{}",
+                    COLOR_BRIGHT_GREEN, result.name, visibility, COLOR_RESET
                 );
             }
         }
@@ -239,16 +238,8 @@ pub async fn handle_skills_command(client: &Distri, command: SkillsCommands) -> 
 }
 
 /// TOML frontmatter for skill files.
-#[derive(Debug, serde::Deserialize)]
-struct SkillFrontmatter {
-    name: String,
-    #[serde(default)]
-    description: Option<String>,
-    #[serde(default)]
-    tags: Vec<String>,
-    #[serde(default)]
-    is_public: bool,
-}
+/// Uses the shared SkillFrontmatter from distri-types for consistency.
+type SkillFrontmatter = distri_types::stores::SkillFrontmatter;
 
 /// Parse a skill markdown file into a CreateSkillRequest.
 ///
@@ -301,90 +292,13 @@ pub async fn parse_skill_file(path: &Path) -> Result<CreateSkillRequest> {
     let frontmatter: SkillFrontmatter = toml::from_str(frontmatter_str)
         .with_context(|| format!("parsing frontmatter in {}", path.display()))?;
 
-    // Extract scripts from the body
-    let scripts = extract_scripts_from_markdown(&body);
-
     Ok(CreateSkillRequest {
         name: frontmatter.name,
         description: frontmatter.description,
         content: body,
         tags: frontmatter.tags,
         is_public: frontmatter.is_public,
-        scripts,
     })
-}
-
-/// Extract scripts from markdown body.
-///
-/// Looks for patterns like:
-/// ### script_name
-/// Description text...
-/// ```javascript
-/// code...
-/// ```
-fn extract_scripts_from_markdown(body: &str) -> Vec<CreateSkillScriptRequest> {
-    let mut scripts = Vec::new();
-    let lines: Vec<&str> = body.lines().collect();
-    let mut i = 0;
-
-    while i < lines.len() {
-        // Look for ### heading (H3)
-        if let Some(name) = lines[i].strip_prefix("### ") {
-            let name = name.trim().to_string();
-            i += 1;
-
-            // Collect description lines until we hit a code fence
-            let mut description_lines = Vec::new();
-            while i < lines.len() && !lines[i].starts_with("```") {
-                let line = lines[i].trim();
-                if !line.is_empty() {
-                    description_lines.push(line);
-                }
-                i += 1;
-            }
-            let description = if description_lines.is_empty() {
-                None
-            } else {
-                Some(description_lines.join(" "))
-            };
-
-            // Parse fenced code block
-            if i < lines.len() && lines[i].starts_with("```") {
-                let fence_line = lines[i];
-                let language = fence_line.trim_start_matches('`').trim().to_string();
-                let language = if language.is_empty() {
-                    "javascript".to_string()
-                } else {
-                    language
-                };
-
-                i += 1;
-                let mut code_lines = Vec::new();
-                while i < lines.len() && !lines[i].starts_with("```") {
-                    code_lines.push(lines[i]);
-                    i += 1;
-                }
-                // Skip closing fence
-                if i < lines.len() {
-                    i += 1;
-                }
-
-                let code = code_lines.join("\n");
-                if !code.trim().is_empty() {
-                    scripts.push(CreateSkillScriptRequest {
-                        name,
-                        description,
-                        code,
-                        language,
-                    });
-                }
-            }
-        } else {
-            i += 1;
-        }
-    }
-
-    scripts
 }
 
 pub async fn handle_connections_command(

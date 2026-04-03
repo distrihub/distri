@@ -63,7 +63,7 @@ enum Commands {
 
     /// Run a single task against an agent
     Run {
-        #[clap(long, help = "Agent name (defaults to 'distri')")]
+        #[clap(long, help = "Agent name (defaults to 'distri_runner')")]
         agent: Option<String>,
         #[clap(long, help = "Task text to send", required = true)]
         task: String,
@@ -383,7 +383,7 @@ async fn main() -> Result<()> {
             overrides,
         } => {
             let extra_tools = parse_cli_overrides(overrides.as_deref());
-            let agent_name = agent.unwrap_or_else(|| "distri".to_string());
+            let agent_name = agent.unwrap_or_else(|| "distri_runner".to_string());
             // Resolve agent name to UUID for cloud compatibility.
             // Cloud middleware requires UUID for proper workspace context (model settings, secrets).
             let mut stream_agent_id = agent_name.clone();

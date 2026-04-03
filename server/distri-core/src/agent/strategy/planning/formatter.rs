@@ -3,13 +3,16 @@ use std::{collections::HashSet, env, fs, sync::Arc};
 use chrono::Utc;
 use distri_parsers;
 use distri_types::{
-    ExecutionResult, MessageRole, Part, ScratchpadEntry, ScratchpadEntryType, ToolCall,
-    ToolCallFormat,
+    ContextBudget, ExecutionResult, MessageRole, Part, ScratchpadEntry, ScratchpadEntryType,
+    ToolCall, ToolCallFormat,
 };
 use tracing::warn;
 
 use crate::{
-    agent::{prompt_registry::TemplateData, types::MAX_ITERATIONS, ExecutorContext},
+    agent::{
+        prompt_registry::TemplateData, token_estimator::TokenEstimator, types::MAX_ITERATIONS,
+        ExecutorContext,
+    },
     AgentError,
 };
 
@@ -40,21 +43,13 @@ impl<'a> MessageFormatter<'a> {
         template: &str,
         user_template: &str,
         todos: Option<String>,
-    ) -> Result<Vec<crate::types::Message>, AgentError> {
+    ) -> Result<(Vec<crate::types::Message>, ContextBudget), AgentError> {
         let tools = context.get_tools().await;
         let tool_defs = tools
             .iter()
             .map(|t| t.get_tool_definition())
             .collect::<Vec<_>>();
         let available_tools = distri_parsers::get_available_tools(&tool_defs);
-
-        // Collect per-tool prompts into a "tools" dynamic value: {tools.Bash}, {tools.Read}, etc.
-        let tool_prompts_map = Self::collect_tool_prompts_map(&tool_defs);
-        tracing::info!(
-            "Tool prompts injected for: {:?} (total tools: {})",
-            tool_prompts_map.keys().collect::<Vec<_>>(),
-            tool_defs.len()
-        );
 
         let include_scratchpad = self.agent_def.include_scratchpad();
         let scratchpad_entry_limit = Self::scratchpad_entry_limit(self.agent_def);
@@ -97,6 +92,27 @@ impl<'a> MessageFormatter<'a> {
             .remove("available_skills")
             .and_then(|v| v.as_str().map(|s| s.to_string()));
 
+        // Extract deferred_tools_listing injected by orchestrator
+        let deferred_tools_listing = dynamic_values
+            .remove("deferred_tools_listing")
+            .and_then(|v| v.as_str().map(|s| s.to_string()));
+
+        // Get deferred tool names so we can skip their prompts
+        let deferred_names = context.get_deferred_tool_names().await;
+
+        // Collect per-tool prompts only for NON-deferred tools.
+        // Deferred tools shouldn't have prompts in the system prompt — they'll
+        // get their prompts when loaded via tool_search exact name match.
+        let (tool_prompts_map, tool_prompts_concat, tool_prompt_entries) =
+            Self::collect_tool_prompts(&tool_defs, &deferred_names);
+
+        tracing::info!(
+            "Tool prompts injected for: {:?} (total tools: {}, deferred: {})",
+            tool_prompts_map.keys().collect::<Vec<_>>(),
+            tool_defs.len(),
+            deferred_names.len()
+        );
+
         // Inject tool prompts as {{tools.Bash}}, {{tools.Read}}, etc.
         // Always inject (even if empty) so handlebars strict mode doesn't fail.
         dynamic_values.insert(
@@ -123,8 +139,9 @@ impl<'a> MessageFormatter<'a> {
             todos: todos.clone(),
             json_tools: native_json_tools,
             available_skills,
-            tool_prompts: String::new(),
-            tool_prompt_list: Vec::new(),
+            tool_prompts: tool_prompts_concat,
+            tool_prompt_list: tool_prompt_entries,
+            deferred_tools_listing,
         };
 
         let template_to_use = hook_state
@@ -143,6 +160,9 @@ impl<'a> MessageFormatter<'a> {
         let user_additional_data =
             render_prompt(context, user_template_to_use, &template_data).await?;
         self.log_prompt_if_needed(&rendered_prompt);
+
+        // Compute rendered prompt token count before moving the string.
+        let rendered_prompt_tokens = TokenEstimator::rough_token_count(&rendered_prompt);
 
         let mut formatted = vec![crate::types::Message::system(rendered_prompt, None)];
 
@@ -178,7 +198,82 @@ impl<'a> MessageFormatter<'a> {
             formatted.push(user_message);
         }
 
-        Ok(formatted)
+        // Compute context budget breakdown from the built prompt components.
+        let budget = {
+            // System prompt: static portion = agent instructions (fixed across sessions)
+            let system_prompt_static_tokens =
+                TokenEstimator::rough_token_count(&self.agent_def.instructions);
+
+            // Dynamic portion = rendered prompt minus the static instructions size
+            let system_prompt_dynamic_tokens =
+                rendered_prompt_tokens.saturating_sub(system_prompt_static_tokens);
+
+            // Tool schema tokens: sum of non-deferred tool JSON definitions
+            let tool_schema_tokens: usize = tool_defs
+                .iter()
+                .filter(|def| !deferred_names.contains(&def.name))
+                .map(|def| {
+                    let json = serde_json::to_string(def).unwrap_or_default();
+                    TokenEstimator::rough_token_count(&json)
+                })
+                .sum();
+
+            // Deferred tool listing tokens
+            let deferred_tool_tokens = template_data
+                .deferred_tools_listing
+                .as_deref()
+                .map(TokenEstimator::rough_token_count)
+                .unwrap_or(0);
+
+            // Skill listing tokens
+            let skill_listing_tokens = template_data
+                .available_skills
+                .as_deref()
+                .map(TokenEstimator::rough_token_count)
+                .unwrap_or(0);
+
+            // Conversation history: all non-system messages in `formatted`
+            let conversation_tokens: usize = formatted
+                .iter()
+                .filter(|m| !matches!(m.role, MessageRole::System))
+                .map(|m| {
+                    let text = m.as_text().unwrap_or_default();
+                    TokenEstimator::rough_token_count(&text)
+                })
+                .sum();
+
+            // Tool result tokens: from ToolResult parts in history
+            let tool_result_tokens: usize = formatted
+                .iter()
+                .flat_map(|m| &m.parts)
+                .filter_map(|p| {
+                    if let Part::ToolResult(tr) = p {
+                        let json = serde_json::to_string(&tr.result()).unwrap_or_default();
+                        Some(TokenEstimator::rough_token_count(&json))
+                    } else {
+                        None
+                    }
+                })
+                .sum();
+
+            // Context window size from agent definition
+            let context_window_size = self.agent_def.get_effective_context_size() as usize;
+
+            ContextBudget {
+                system_prompt_static_tokens,
+                system_prompt_dynamic_tokens,
+                tool_schema_tokens,
+                deferred_tool_tokens,
+                skill_listing_tokens,
+                conversation_tokens,
+                tool_result_tokens,
+                context_window_size,
+                static_prefix_cache_hit: false,
+                static_prefix_hash: None,
+            }
+        };
+
+        Ok((formatted, budget))
     }
 
     fn reasoning_depth_name(strategy: &crate::types::AgentStrategy) -> &'static str {
@@ -210,18 +305,51 @@ impl<'a> MessageFormatter<'a> {
         matches!(agent_def.tool_format, ToolCallFormat::Provider)
     }
 
-    /// Collect per-tool prompt instructions into a JSON map keyed by tool name.
-    /// Available in templates as `{{{tools.Bash}}}`, `{{{tools.Read}}}`, etc.
-    /// Every tool gets an entry (empty string if no prompt) so handlebars strict mode works.
-    fn collect_tool_prompts_map(
+    /// Collect per-tool prompt instructions, skipping deferred tools.
+    ///
+    /// Returns:
+    /// - JSON map for `{{tools.Bash}}` etc. (all tools get an entry, deferred ones get "")
+    /// - Concatenated prompt string for `{{{tool_prompts}}}`
+    /// - Vec of ToolPromptEntry for `{{#each tool_prompt_list}}`
+    ///
+    /// Deferred tool prompts are NOT included in the system prompt — they're
+    /// delivered when the model loads the tool via `tool_search` exact name match.
+    fn collect_tool_prompts(
         tool_defs: &[distri_types::ToolDefinition],
-    ) -> serde_json::Map<String, serde_json::Value> {
+        deferred_names: &std::collections::HashSet<String>,
+    ) -> (
+        serde_json::Map<String, serde_json::Value>,
+        String,
+        Vec<distri_types::prompt::ToolPromptEntry>,
+    ) {
         let mut map = serde_json::Map::new();
+        let mut concat = String::new();
+        let mut entries = Vec::new();
+
         for def in tool_defs {
+            let is_deferred = deferred_names.contains(&def.name);
+
+            if is_deferred {
+                // Deferred tools get an empty entry so {{tools.X}} doesn't error
+                map.insert(def.name.clone(), serde_json::Value::String(String::new()));
+                continue;
+            }
+
             let prompt = def.prompt.clone().unwrap_or_default();
-            map.insert(def.name.clone(), serde_json::Value::String(prompt));
+            map.insert(def.name.clone(), serde_json::Value::String(prompt.clone()));
+
+            if !prompt.is_empty() {
+                // Add to concatenated string
+                concat.push_str(&format!("## {}\n{}\n\n", def.name, prompt));
+                // Add to iterable list
+                entries.push(distri_types::prompt::ToolPromptEntry {
+                    name: def.name.clone(),
+                    prompt,
+                });
+            }
         }
-        map
+
+        (map, concat, entries)
     }
 
     fn scratchpad_entry_limit(agent_def: &crate::types::StandardDefinition) -> usize {
@@ -945,7 +1073,7 @@ mod tests {
         let user_msg = Message::user("Plan".to_string(), None);
 
         // No orchestrator in this unit test context, so no execution history is available.
-        let messages = formatter
+        let (messages, _) = formatter
             .build_messages(&user_msg, &context, "tmpl", "user_templ", None)
             .await
             .expect("formatter should succeed");
@@ -965,7 +1093,7 @@ mod tests {
         let context = Arc::new(ExecutorContext::default());
         let user_msg = Message::user("Summarize context".to_string(), None);
         // No orchestrator in this unit test context, so no execution history is available.
-        let messages = formatter
+        let (messages, _) = formatter
             .build_messages(
                 &user_msg,
                 &context,
@@ -984,7 +1112,7 @@ mod tests {
     }
 
     #[test]
-    fn collect_tool_prompts_map_includes_all_tools() {
+    fn collect_tool_prompts_skips_deferred() {
         let defs = vec![
             distri_types::ToolDefinition {
                 name: "Bash".into(),
@@ -995,10 +1123,10 @@ mod tests {
                 output_schema: None,
             },
             distri_types::ToolDefinition {
-                name: "Read".into(),
-                description: "Read file".into(),
+                name: "browsr_scrape".into(),
+                description: "Scrape web".into(),
                 parameters: json!({}),
-                prompt: Some("Read files with line numbers.".into()),
+                prompt: Some("Scrape websites for data.".into()),
                 examples: None,
                 output_schema: None,
             },
@@ -1006,26 +1134,32 @@ mod tests {
                 name: "final".into(),
                 description: "Final answer".into(),
                 parameters: json!({}),
-                prompt: None, // No prompt
+                prompt: None,
                 examples: None,
                 output_schema: None,
             },
         ];
 
-        let map = MessageFormatter::collect_tool_prompts_map(&defs);
+        let deferred: std::collections::HashSet<String> =
+            ["browsr_scrape".to_string()].into_iter().collect();
+        let (map, concat, entries) = MessageFormatter::collect_tool_prompts(&defs, &deferred);
 
-        // All tools should be present, even those without prompts
+        // All tools present in map (deferred gets empty string)
         assert_eq!(map.len(), 3);
         assert_eq!(
             map.get("Bash").unwrap().as_str().unwrap(),
             "Use Bash for shell commands."
         );
-        assert_eq!(
-            map.get("Read").unwrap().as_str().unwrap(),
-            "Read files with line numbers."
-        );
-        // Tool without prompt gets empty string
+        assert_eq!(map.get("browsr_scrape").unwrap().as_str().unwrap(), ""); // deferred = empty
         assert_eq!(map.get("final").unwrap().as_str().unwrap(), "");
+
+        // Concatenated prompts should NOT include deferred tool's prompt
+        assert!(concat.contains("Bash"));
+        assert!(!concat.contains("Scrape websites"));
+
+        // Entries should only have non-deferred tools with prompts
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "Bash");
     }
 
     #[test]
@@ -1049,13 +1183,12 @@ mod tests {
             },
         ];
 
-        let map = MessageFormatter::collect_tool_prompts_map(&defs);
+        let no_deferred = std::collections::HashSet::new();
+        let (map, _concat, _entries) = MessageFormatter::collect_tool_prompts(&defs, &no_deferred);
 
-        // Simulate what the formatter does
         let mut dynamic_values = std::collections::HashMap::new();
         dynamic_values.insert("tools".to_string(), serde_json::Value::Object(map));
 
-        // Render with handlebars strict mode
         let mut hbs = handlebars::Handlebars::new();
         hbs.set_strict_mode(true);
 

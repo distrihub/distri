@@ -6,7 +6,7 @@ use chrono::Local;
 use distri_a2a::MessageSendParams;
 use distri_types::{AgentEvent, AgentEventType, MessageRole, ToolResponse};
 use image::DynamicImage;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 use viuer::Config;
 
 use crate::client_stream::{AgentStreamClient, StreamError, StreamItem};
@@ -15,6 +15,207 @@ use crate::client_stream::{AgentStreamClient, StreamError, StreamItem};
 pub use distri_formatter::colors::{
     COLOR_BRIGHT_CYAN, COLOR_CYAN, COLOR_GRAY, COLOR_RED, COLOR_RESET, COLOR_YELLOW,
 };
+
+/// Shared context health state — updated by the event printer, read by the CLI status line.
+#[derive(Debug, Clone, Default)]
+pub struct ContextHealth {
+    /// Context utilization as a percentage (0.0–1.0)
+    pub utilization: f64,
+    /// Total tokens used
+    pub tokens_used: usize,
+    /// Total context window size
+    pub tokens_limit: usize,
+    /// Whether in warning state (>80%)
+    pub is_warning: bool,
+    /// Whether in critical state (>90%)
+    pub is_critical: bool,
+    /// Last model used
+    pub model: Option<String>,
+    /// Cumulative input tokens from API
+    pub api_input_tokens: u32,
+    /// Cumulative output tokens from API
+    pub api_output_tokens: u32,
+    /// Cached tokens
+    pub api_cached_tokens: u32,
+    /// Estimated cost in USD
+    pub cost_usd: Option<f64>,
+    /// Last received full context budget breakdown
+    pub last_budget: Option<distri_types::ContextBudget>,
+}
+
+impl ContextHealth {
+    /// Update from a ContextBudget
+    pub fn update_from_budget(&mut self, budget: &distri_types::ContextBudget) {
+        self.utilization = budget.utilization();
+        self.tokens_used = budget.total_tokens();
+        self.tokens_limit = budget.context_window_size;
+        self.is_warning = budget.is_warning();
+        self.is_critical = budget.is_critical();
+        self.last_budget = Some(budget.clone());
+    }
+
+    /// Print a detailed context breakdown to stdout.
+    pub fn print_context_breakdown(&self) {
+        let Some(ref budget) = self.last_budget else {
+            println!("No context data yet — run a query first.");
+            return;
+        };
+        if budget.context_window_size == 0 {
+            println!("Context window size unknown.");
+            return;
+        }
+        let total = budget.total_tokens();
+        let window = budget.context_window_size;
+        let pct = budget.utilization() * 100.0;
+        let remaining = budget.remaining_tokens();
+
+        println!(
+            "{}{:.0}% used — {} / {} tokens  ({} remaining){}",
+            COLOR_GRAY,
+            pct,
+            format_token_count(total),
+            format_token_count(window),
+            format_token_count(remaining),
+            COLOR_RESET
+        );
+
+        let rows: &[(&str, usize)] = &[
+            ("system (static)", budget.system_prompt_static_tokens),
+            ("system (dynamic)", budget.system_prompt_dynamic_tokens),
+            ("tool schemas", budget.tool_schema_tokens),
+            ("deferred tools", budget.deferred_tool_tokens),
+            ("skills", budget.skill_listing_tokens),
+            ("conversation", budget.conversation_tokens),
+            ("tool results", budget.tool_result_tokens),
+        ];
+
+        let max_label = rows.iter().map(|(l, _)| l.len()).max().unwrap_or(0);
+        for (label, tokens) in rows {
+            if *tokens == 0 {
+                continue;
+            }
+            let bar_pct = if window > 0 { *tokens * 40 / window } else { 0 };
+            let bar = "█".repeat(bar_pct);
+            println!(
+                "{}  {:<width$}  {:>6}  {}{}",
+                COLOR_GRAY,
+                label,
+                format_token_count(*tokens),
+                bar,
+                COLOR_RESET,
+                width = max_label
+            );
+        }
+    }
+
+    /// Reset per-run token counters. Called on RunStarted so the status bar
+    /// shows "this run" totals instead of accumulating across the whole session.
+    pub fn reset_run_tokens(&mut self) {
+        self.api_input_tokens = 0;
+        self.api_output_tokens = 0;
+        self.api_cached_tokens = 0;
+        self.cost_usd = None;
+    }
+
+    /// Update from RunUsage (per-step delta — adds to current run total).
+    pub fn update_from_usage(&mut self, usage: &distri_types::events::RunUsage) {
+        self.api_input_tokens = self.api_input_tokens.saturating_add(usage.input_tokens);
+        self.api_output_tokens = self.api_output_tokens.saturating_add(usage.output_tokens);
+        self.api_cached_tokens = self.api_cached_tokens.saturating_add(usage.cached_tokens);
+        if let Some(model) = &usage.model {
+            self.model = Some(model.clone());
+        }
+        if let Some(cost) = usage.cost_usd {
+            *self.cost_usd.get_or_insert(0.0) += cost;
+        }
+    }
+
+    /// Format as a compact status line string for the terminal.
+    /// Example: "Context: 45% (9.2K/20K) · Tokens: 1.2K in, 340 out · $0.03"
+    pub fn format_status_line(&self) -> String {
+        if self.tokens_limit == 0 && self.api_input_tokens == 0 {
+            return String::new(); // No data yet
+        }
+
+        let mut parts = Vec::new();
+
+        // Context utilization
+        if self.tokens_limit > 0 {
+            let pct = (self.utilization * 100.0) as u32;
+            let used = format_token_count(self.tokens_used);
+            let limit = format_token_count(self.tokens_limit);
+            parts.push(format!("Context: {}% ({}/{})", pct, used, limit));
+        }
+
+        // API token usage
+        if self.api_input_tokens > 0 || self.api_output_tokens > 0 {
+            let input = format_token_count(self.api_input_tokens as usize);
+            let output = format_token_count(self.api_output_tokens as usize);
+            let mut tok = format!("Tokens: {} in, {} out", input, output);
+            if self.api_cached_tokens > 0 {
+                tok.push_str(&format!(
+                    " ({} cached)",
+                    format_token_count(self.api_cached_tokens as usize)
+                ));
+            }
+            parts.push(tok);
+        }
+
+        // Cost
+        if let Some(cost) = self.cost_usd {
+            parts.push(format!("${:.2}", cost));
+        }
+
+        parts.join(" · ")
+    }
+
+    /// ANSI color for the current utilization level.
+    pub fn color(&self) -> &'static str {
+        if self.is_critical {
+            "\x1b[38;2;239;68;68m" // Red
+        } else if self.is_warning {
+            "\x1b[38;2;249;115;22m" // Orange
+        } else if self.utilization > 0.5 {
+            "\x1b[38;2;234;179;8m" // Yellow
+        } else {
+            "\x1b[38;2;34;197;94m" // Green
+        }
+    }
+}
+
+/// Format a token count as "1.2K", "45K", "200K", or "3" for small values.
+fn format_token_count(count: usize) -> String {
+    if count >= 1000 {
+        let k = count as f64 / 1000.0;
+        if k >= 100.0 {
+            format!("{}K", k as usize)
+        } else {
+            format!("{:.1}K", k)
+        }
+    } else {
+        format!("{}", count)
+    }
+}
+/// Print a compact `↳ Xk in, Xk out [· Xk cached] [· $0.0031] [· model]` usage line.
+fn print_usage_line(u: &distri_types::RunUsage) {
+    let input = format_token_count(u.input_tokens as usize);
+    let output = format_token_count(u.output_tokens as usize);
+    let mut parts = vec![format!("{} in, {} out", input, output)];
+    if u.cached_tokens > 0 {
+        parts.push(format!(
+            "{} cached",
+            format_token_count(u.cached_tokens as usize)
+        ));
+    }
+    if let Some(cost) = u.cost_usd {
+        parts.push(format!("${:.4}", cost));
+    }
+    if let Some(model) = &u.model {
+        parts.push(model.clone());
+    }
+    println!("{}  ↳ {}{}", COLOR_GRAY, parts.join(" · "), COLOR_RESET);
+}
+
 /// Distri brand teal — 24-bit ANSI
 pub const COLOR_DISTRI: &str = "\x1b[38;2;0;124;145m";
 pub const COLOR_DISTRI_DIM: &str = "\x1b[38;2;0;80;95m";
@@ -104,6 +305,8 @@ pub struct EventPrinter {
     planning_text: Option<String>,
     /// Frame counter for spinner animation (advances each redraw).
     spinner_frame: usize,
+    /// Shared context health state — updated by events, read by CLI status line.
+    pub context_health: Arc<RwLock<ContextHealth>>,
 }
 
 impl Default for EventPrinter {
@@ -119,6 +322,7 @@ impl EventPrinter {
             verbose: false,
             show_tools: true,
             agent_display_name: None,
+            context_health: Arc::new(RwLock::new(ContextHealth::default())),
             planning_text: None,
             spinner_frame: 0,
         }
@@ -207,6 +411,10 @@ impl EventPrinter {
         }
 
         match &event.event {
+            AgentEventType::RunStarted {} => {
+                // Reset per-run token counters so the status bar shows this-run totals.
+                self.context_health.write().await.reset_run_tokens();
+            }
             AgentEventType::PlanStarted { initial_plan } => {
                 self.state.is_planning = true;
                 let idx = self.state.steps.len();
@@ -238,7 +446,22 @@ impl EventPrinter {
                 );
                 // Suppressed — individual tool calls show progress
             }
-            AgentEventType::StepCompleted { step_id, success } => {
+            AgentEventType::StepCompleted {
+                step_id,
+                success,
+                context_budget,
+                usage,
+            } => {
+                if let Some(budget) = context_budget {
+                    let mut health = self.context_health.write().await;
+                    health.update_from_budget(budget);
+                }
+                if let Some(u) = usage {
+                    self.context_health.write().await.update_from_usage(u);
+                    if u.input_tokens > 0 || u.output_tokens > 0 {
+                        print_usage_line(u);
+                    }
+                }
                 if let Some(step) = self.state.steps.get_mut(step_id) {
                     step.status = if *success {
                         "done".into()
@@ -297,17 +520,93 @@ impl EventPrinter {
             } => {
                 self.handle_tool_calls(tool_calls, parent_message_id.as_deref());
             }
-            AgentEventType::RunFinished { success, .. } => {
+            AgentEventType::RunFinished {
+                success,
+                usage,
+                context_budget,
+                ..
+            } => {
+                let mut health = self.context_health.write().await;
+                if let Some(budget) = context_budget {
+                    health.update_from_budget(budget);
+                }
+                if let Some(u) = usage {
+                    health.update_from_usage(u);
+                }
+                drop(health);
                 if !success {
                     println!("{}Run completed with errors{}", COLOR_RED, COLOR_RESET);
                 }
             }
-            AgentEventType::RunError { message, code } => {
+
+            AgentEventType::ContextBudgetUpdate {
+                budget,
+                is_warning,
+                is_critical,
+            } => {
+                let mut health = self.context_health.write().await;
+                health.update_from_budget(budget);
+                drop(health);
+                // Print a warning if crossing thresholds
+                if *is_critical {
+                    println!(
+                        "{}⚠ Context critical: {:.0}% used ({}/{}){}",
+                        COLOR_RED,
+                        budget.utilization() * 100.0,
+                        format_token_count(budget.total_tokens()),
+                        format_token_count(budget.context_window_size),
+                        COLOR_RESET
+                    );
+                } else if *is_warning {
+                    println!(
+                        "{}⚠ Context warning: {:.0}% used{}",
+                        COLOR_YELLOW,
+                        budget.utilization() * 100.0,
+                        COLOR_RESET
+                    );
+                }
+                // Verbose: full breakdown of context budget components
+                if self.verbose && budget.context_window_size > 0 {
+                    println!(
+                        "{}[context] {:.0}% ({}/{})",
+                        COLOR_GRAY,
+                        budget.utilization() * 100.0,
+                        format_token_count(budget.total_tokens()),
+                        format_token_count(budget.context_window_size),
+                    );
+                    println!(
+                        "{}  sys static: {}  dynamic: {}  tools: {}  deferred: {}  skills: {}{}",
+                        COLOR_GRAY,
+                        format_token_count(budget.system_prompt_static_tokens),
+                        format_token_count(budget.system_prompt_dynamic_tokens),
+                        format_token_count(budget.tool_schema_tokens),
+                        format_token_count(budget.deferred_tool_tokens),
+                        format_token_count(budget.skill_listing_tokens),
+                        COLOR_RESET,
+                    );
+                    println!(
+                        "{}  convo: {}  tool_results: {}{}",
+                        COLOR_GRAY,
+                        format_token_count(budget.conversation_tokens),
+                        format_token_count(budget.tool_result_tokens),
+                        COLOR_RESET,
+                    );
+                }
+            }
+            AgentEventType::RunError {
+                message,
+                code,
+                usage,
+                ..
+            } => {
                 let stamp = Local::now().format("%H:%M:%S").to_string();
                 println!(
                     "{}{} [{}] run failed: {} ({:?}){}",
                     COLOR_RED, stamp, event.agent_id, message, code, COLOR_RESET
                 );
+                if let Some(u) = usage {
+                    print_usage_line(u);
+                }
             }
             AgentEventType::InlineHookRequested { request } => {
                 println!(
@@ -363,6 +662,38 @@ impl EventPrinter {
                     "{}⇢ Transferring: {} → {}{}{}",
                     COLOR_BRIGHT_CYAN, from_agent, to_agent, reason_str, COLOR_RESET
                 );
+            }
+            AgentEventType::ContextCompaction {
+                tier,
+                tokens_before,
+                tokens_after,
+                entries_affected,
+                ..
+            } => {
+                let tier_label = match tier {
+                    distri_types::CompactionTier::Trim => "Trim",
+                    distri_types::CompactionTier::Summarize => "Summarize",
+                    distri_types::CompactionTier::Reset => "Reset",
+                };
+                println!(
+                    "{}[compaction] {}: {} → {} tokens ({:.0}% reduction, {} entries){}",
+                    COLOR_GRAY,
+                    tier_label,
+                    format_token_count(*tokens_before),
+                    format_token_count(*tokens_after),
+                    if *tokens_before > 0 {
+                        (1.0 - *tokens_after as f64 / *tokens_before as f64) * 100.0
+                    } else {
+                        0.0
+                    },
+                    entries_affected,
+                    COLOR_RESET
+                );
+            }
+            AgentEventType::DiagnosticLog { message } => {
+                if self.verbose {
+                    println!("{}[dbg] {}{}", COLOR_GRAY, message, COLOR_RESET);
+                }
             }
             _ => {}
         }
@@ -585,6 +916,34 @@ pub async fn print_stream_verbose(
     agent_display_name: Option<String>,
     show_tools: bool,
 ) -> Result<(), StreamError> {
+    let (_, result) = print_stream_with_health(
+        client,
+        agent_id,
+        params,
+        verbose,
+        agent_display_name,
+        show_tools,
+        None,
+    )
+    .await?;
+    result
+}
+
+/// Stream agent events, print to terminal, and update shared context health state.
+///
+/// If `shared_health` is Some, updates it from budget events so the caller
+/// (e.g., the chat loop) can display context utilization in the status line.
+///
+/// Returns (updated_health, stream_result).
+pub async fn print_stream_with_health(
+    client: &AgentStreamClient,
+    agent_id: &str,
+    params: MessageSendParams,
+    verbose: bool,
+    agent_display_name: Option<String>,
+    show_tools: bool,
+    shared_health: Option<Arc<RwLock<ContextHealth>>>,
+) -> Result<(Arc<RwLock<ContextHealth>>, Result<(), StreamError>), StreamError> {
     let mut printer = EventPrinter::new().with_verbose(verbose);
     if let Some(name) = agent_display_name {
         printer = printer.with_agent_name(name);
@@ -592,8 +951,13 @@ pub async fn print_stream_verbose(
     if !show_tools {
         printer.toggle_show_tools();
     }
+    // Share the health state between the printer and the caller
+    if let Some(ref health) = shared_health {
+        printer.context_health = health.clone();
+    }
+    let health_out = printer.context_health.clone();
     let printer = Arc::new(Mutex::new(printer));
-    client
+    let result = client
         .stream_agent(agent_id, params, {
             let printer = printer.clone();
             move |item: StreamItem| {
@@ -603,7 +967,6 @@ pub async fn print_stream_verbose(
                         let mut guard = printer.lock().await;
                         guard.handle_event(&event).await;
                     }
-                    // Print the final assistant message text
                     if let Some(ref msg) = item.message
                         && msg.role == distri_types::MessageRole::Assistant
                         && let Some(text) = msg.as_text()
@@ -614,5 +977,6 @@ pub async fn print_stream_verbose(
                 }
             }
         })
-        .await
+        .await;
+    Ok((health_out, result))
 }

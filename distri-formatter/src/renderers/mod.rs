@@ -29,12 +29,7 @@ pub fn truncate_str(s: &str, max_bytes: usize) -> &str {
 
 /// Dispatch tool result rendering to the appropriate tool-specific renderer.
 pub fn render_tool_output(result: &ToolResponse, verbose: bool) {
-    if verbose {
-        if let Ok(json) = serde_json::to_string_pretty(&result.parts) {
-            println!("{}Tool result{}:\n{}", COLOR_GRAY, COLOR_RESET, json);
-        }
-        return;
-    }
+    let _ = verbose; // verbose handled by caller; formatting is always the same
 
     let name = result.tool_name.as_str();
 
@@ -45,7 +40,6 @@ pub fn render_tool_output(result: &ToolResponse, verbose: bool) {
         // Platform / discovery tools
         "tool_search"
         | "load_skill"
-        | "run_skill_script"
         | "list_agents"
         | "list_skills"
         | "create_skill"

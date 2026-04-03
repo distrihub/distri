@@ -1,0 +1,19 @@
+{{!-- STATIC ZONE: Cacheable across sessions. Content here should NOT change
+     between turns in the same session or between sessions with the same agent.
+     This enables API-side prompt caching (e.g., Anthropic's cache_control).
+
+     IMPORTANT: Do NOT add per-session data here (env, memory, scratchpad,
+     dynamic_sections, available_tools content, step counts). --}}
+
+{{> core_instructions}}
+
+{{> communication}}
+
+{{#if (eq execution_mode "tools")}}
+{{#if (eq tool_format "json")}}
+{{> tools_json}}
+{{/if}}
+{{#if (eq tool_format "xml")}}
+{{> tools_xml}}
+{{/if}}
+{{/if}}

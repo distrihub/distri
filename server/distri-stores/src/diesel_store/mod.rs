@@ -33,11 +33,10 @@ use distri_types::stores::SessionSummary;
 use distri_types::stores::{
     AgentStatsInfo, AgentStore, AgentUsageInfo, ExternalToolCallsStore, FilterMessageType,
     MemoryStore, MessageFilter, MessageReadStatus, MessageVote, MessageVoteSummary,
-    NewPromptTemplate, NewSecret, NewSkill, NewSkillScript, PromptTemplateRecord,
-    PromptTemplateStore, ScratchpadStore, SecretRecord, SecretStore, SessionMemory, SessionStore,
-    SkillRecord, SkillScriptRecord, SkillStore, TaskStore, ThreadListFilter, ThreadListResponse,
-    ThreadStore, UpdatePromptTemplate, UpdateSkill, UpdateSkillScript, VoteMessageRequest,
-    VoteType,
+    NewPromptTemplate, NewSecret, NewSkill, PromptTemplateRecord, PromptTemplateStore,
+    ScratchpadStore, SecretRecord, SecretStore, SessionMemory, SessionStore, SkillRecord,
+    SkillStore, TaskStore, ThreadListFilter, ThreadListResponse, ThreadStore, UpdatePromptTemplate,
+    UpdateSkill, VoteMessageRequest, VoteType,
 };
 use distri_types::{
     AgentError, AgentEvent, AgentEventType, CreateThreadRequest, Message, ScratchpadEntry, Task,
@@ -3557,7 +3556,7 @@ where
 
 // ========== Skill Store ==========
 
-fn to_skill_record(model: SkillModel, scripts: Vec<SkillScriptModel>) -> SkillRecord {
+fn to_skill_record(model: SkillModel) -> SkillRecord {
     let tags: Vec<String> = serde_json::from_str(&model.tags).unwrap_or_default();
     SkillRecord {
         id: model.id,
@@ -3569,22 +3568,10 @@ fn to_skill_record(model: SkillModel, scripts: Vec<SkillScriptModel>) -> SkillRe
         is_system: model.is_system != 0,
         star_count: model.star_count,
         clone_count: model.clone_count,
-        scripts: scripts.into_iter().map(to_skill_script_record).collect(),
         created_at: from_naive(model.created_at),
         updated_at: from_naive(model.updated_at),
-    }
-}
-
-fn to_skill_script_record(model: SkillScriptModel) -> SkillScriptRecord {
-    SkillScriptRecord {
-        id: model.id,
-        skill_id: model.skill_id,
-        name: model.name,
-        description: model.description,
-        code: model.code,
-        language: model.language,
-        created_at: from_naive(model.created_at),
-        updated_at: from_naive(model.updated_at),
+        model: model.model,
+        context: model.context.parse().unwrap_or_default(),
     }
 }
 
@@ -3615,20 +3602,6 @@ where
             .await
             .context("failed to acquire diesel connection for skills")
     }
-
-    async fn load_scripts_for_skill(
-        &self,
-        conn: &mut DieselConn<'_, Conn>,
-        sid: &str,
-    ) -> Result<Vec<SkillScriptModel>> {
-        use crate::schema::skill_scripts::dsl::*;
-        let results = skill_scripts
-            .filter(skill_id.eq(sid))
-            .select(SkillScriptModel::as_select())
-            .load::<SkillScriptModel>(conn)
-            .await?;
-        Ok(results)
-    }
 }
 
 #[async_trait]
@@ -3648,11 +3621,7 @@ where
             .load::<SkillModel>(&mut conn)
             .await?;
 
-        let mut records = Vec::new();
-        for model in results {
-            let skill_scripts = self.load_scripts_for_skill(&mut conn, &model.id).await?;
-            records.push(to_skill_record(model, skill_scripts));
-        }
+        let records = results.into_iter().map(to_skill_record).collect();
         Ok(records)
     }
 
@@ -3667,10 +3636,7 @@ where
             .optional()?;
 
         match result {
-            Some(model) => {
-                let script_models = self.load_scripts_for_skill(&mut conn, &model.id).await?;
-                Ok(Some(to_skill_record(model, script_models)))
-            }
+            Some(skill_model) => Ok(Some(to_skill_record(skill_model))),
             None => Ok(None),
         }
     }
@@ -3681,8 +3647,9 @@ where
         let now = Utc::now().naive_utc();
         let new_id = Uuid::new_v4().to_string();
         let tags_json = serde_json::to_string(&skill.tags)?;
+        let context_str = skill.context.to_string();
 
-        let model = NewSkillModel {
+        let new_skill = NewSkillModel {
             id: &new_id,
             name: &skill.name,
             description: skill.description.as_deref(),
@@ -3692,39 +3659,21 @@ where
             is_system: 0,
             created_at: now,
             updated_at: now,
+            model: skill.model.as_deref(),
+            context: &context_str,
         };
 
         diesel::insert_into(skills)
-            .values(&model)
+            .values(&new_skill)
             .execute(&mut conn)
             .await?;
-
-        // Create scripts
-        for script in &skill.scripts {
-            let script_id = Uuid::new_v4().to_string();
-            let script_model = NewSkillScriptModel {
-                id: &script_id,
-                skill_id: &new_id,
-                name: &script.name,
-                description: script.description.as_deref(),
-                code: &script.code,
-                language: &script.language,
-                created_at: now,
-                updated_at: now,
-            };
-            diesel::insert_into(crate::schema::skill_scripts::table)
-                .values(&script_model)
-                .execute(&mut conn)
-                .await?;
-        }
 
         let result = skills
             .filter(id.eq(&new_id))
             .select(SkillModel::as_select())
             .first::<SkillModel>(&mut conn)
             .await?;
-        let script_models = self.load_scripts_for_skill(&mut conn, &new_id).await?;
-        Ok(to_skill_record(result, script_models))
+        Ok(to_skill_record(result))
     }
 
     async fn update_skill(&self, skill_id_val: &str, update: UpdateSkill) -> Result<SkillRecord> {
@@ -3764,6 +3713,18 @@ where
                 .execute(&mut conn)
                 .await?;
         }
+        if let Some(ref m) = update.model {
+            diesel::update(skills.filter(id.eq(skill_id_val)))
+                .set(crate::schema::skills::model.eq(m))
+                .execute(&mut conn)
+                .await?;
+        }
+        if let Some(ref ctx) = update.context {
+            diesel::update(skills.filter(id.eq(skill_id_val)))
+                .set(crate::schema::skills::context.eq(ctx.to_string()))
+                .execute(&mut conn)
+                .await?;
+        }
 
         diesel::update(skills.filter(id.eq(skill_id_val)))
             .set(updated_at.eq(now))
@@ -3775,8 +3736,7 @@ where
             .select(SkillModel::as_select())
             .first::<SkillModel>(&mut conn)
             .await?;
-        let script_models = self.load_scripts_for_skill(&mut conn, skill_id_val).await?;
-        Ok(to_skill_record(result, script_models))
+        Ok(to_skill_record(result))
     }
 
     async fn delete_skill(&self, skill_id_val: &str) -> Result<()> {
@@ -3784,96 +3744,6 @@ where
         let mut conn = self.conn().await?;
         // Scripts are deleted via ON DELETE CASCADE
         diesel::delete(skills.filter(id.eq(skill_id_val)))
-            .execute(&mut conn)
-            .await?;
-        Ok(())
-    }
-
-    async fn add_script(
-        &self,
-        skill_id_val: &str,
-        script: NewSkillScript,
-    ) -> Result<SkillScriptRecord> {
-        use crate::schema::skill_scripts::dsl::*;
-        let mut conn = self.conn().await?;
-        let now = Utc::now().naive_utc();
-        let new_id = Uuid::new_v4().to_string();
-
-        let model = NewSkillScriptModel {
-            id: &new_id,
-            skill_id: skill_id_val,
-            name: &script.name,
-            description: script.description.as_deref(),
-            code: &script.code,
-            language: &script.language,
-            created_at: now,
-            updated_at: now,
-        };
-
-        diesel::insert_into(skill_scripts)
-            .values(&model)
-            .execute(&mut conn)
-            .await?;
-
-        let result = skill_scripts
-            .filter(id.eq(&new_id))
-            .select(SkillScriptModel::as_select())
-            .first::<SkillScriptModel>(&mut conn)
-            .await?;
-        Ok(to_skill_script_record(result))
-    }
-
-    async fn update_script(
-        &self,
-        script_id_val: &str,
-        update: UpdateSkillScript,
-    ) -> Result<SkillScriptRecord> {
-        use crate::schema::skill_scripts::dsl::*;
-        let mut conn = self.conn().await?;
-        let now = Utc::now().naive_utc();
-
-        if let Some(ref n) = update.name {
-            diesel::update(skill_scripts.filter(id.eq(script_id_val)))
-                .set(name.eq(n))
-                .execute(&mut conn)
-                .await?;
-        }
-        if let Some(ref d) = update.description {
-            diesel::update(skill_scripts.filter(id.eq(script_id_val)))
-                .set(description.eq(d))
-                .execute(&mut conn)
-                .await?;
-        }
-        if let Some(ref c) = update.code {
-            diesel::update(skill_scripts.filter(id.eq(script_id_val)))
-                .set(code.eq(c))
-                .execute(&mut conn)
-                .await?;
-        }
-        if let Some(ref l) = update.language {
-            diesel::update(skill_scripts.filter(id.eq(script_id_val)))
-                .set(language.eq(l))
-                .execute(&mut conn)
-                .await?;
-        }
-
-        diesel::update(skill_scripts.filter(id.eq(script_id_val)))
-            .set(updated_at.eq(now))
-            .execute(&mut conn)
-            .await?;
-
-        let result = skill_scripts
-            .filter(id.eq(script_id_val))
-            .select(SkillScriptModel::as_select())
-            .first::<SkillScriptModel>(&mut conn)
-            .await?;
-        Ok(to_skill_script_record(result))
-    }
-
-    async fn delete_script(&self, script_id_val: &str) -> Result<()> {
-        use crate::schema::skill_scripts::dsl::*;
-        let mut conn = self.conn().await?;
-        diesel::delete(skill_scripts.filter(id.eq(script_id_val)))
             .execute(&mut conn)
             .await?;
         Ok(())
@@ -3889,11 +3759,7 @@ where
             .load::<SkillModel>(&mut conn)
             .await?;
 
-        let mut records = Vec::new();
-        for model in results {
-            let script_models = self.load_scripts_for_skill(&mut conn, &model.id).await?;
-            records.push(to_skill_record(model, script_models));
-        }
+        let records = results.into_iter().map(to_skill_record).collect();
         Ok(records)
     }
 
@@ -3921,13 +3787,11 @@ where
             .first::<SkillModel>(&mut conn)
             .await?;
 
-        let source_scripts = self.load_scripts_for_skill(&mut conn, skill_id_val).await?;
-
         let now = Utc::now().naive_utc();
         let new_id = Uuid::new_v4().to_string();
         let new_name = format!("Clone of {}", source.name);
 
-        let model = NewSkillModel {
+        let new_skill = NewSkillModel {
             id: &new_id,
             name: &new_name,
             description: source.description.as_deref(),
@@ -3937,39 +3801,21 @@ where
             is_system: 0,
             created_at: now,
             updated_at: now,
+            model: source.model.as_deref(),
+            context: &source.context,
         };
 
         diesel::insert_into(skills)
-            .values(&model)
+            .values(&new_skill)
             .execute(&mut conn)
             .await?;
-
-        // Clone scripts
-        for script in &source_scripts {
-            let script_id = Uuid::new_v4().to_string();
-            let script_model = NewSkillScriptModel {
-                id: &script_id,
-                skill_id: &new_id,
-                name: &script.name,
-                description: script.description.as_deref(),
-                code: &script.code,
-                language: &script.language,
-                created_at: now,
-                updated_at: now,
-            };
-            diesel::insert_into(crate::schema::skill_scripts::table)
-                .values(&script_model)
-                .execute(&mut conn)
-                .await?;
-        }
 
         let result = skills
             .filter(id.eq(&new_id))
             .select(SkillModel::as_select())
             .first::<SkillModel>(&mut conn)
             .await?;
-        let script_models = self.load_scripts_for_skill(&mut conn, &new_id).await?;
-        Ok(to_skill_record(result, script_models))
+        Ok(to_skill_record(result))
     }
 }
 

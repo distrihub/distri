@@ -596,6 +596,7 @@ impl OpenAIResponsesLLMExecutor {
                     .emit(AgentEventType::RunError {
                         message: error_msg.clone(),
                         code: Some("openai_responses_stream_error".to_string()),
+                        usage: None,
                     })
                     .await;
                 return Err(AgentError::LLMError(e.to_string()));

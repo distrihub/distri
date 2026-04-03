@@ -511,17 +511,19 @@ impl AgentOrchestrator {
         &self,
         definition: &crate::types::StandardDefinition,
         external_tools: &[Arc<dyn Tool>],
-    ) -> Result<Vec<Arc<dyn Tool>>, AgentError> {
+    ) -> Result<crate::tools::ResolvedTools, AgentError> {
         // Use new tools configuration if available, fallback to old mcp_servers
         let tools_config = definition.tools.clone().unwrap_or(ToolsConfig::default());
 
-        let mut tools = crate::tools::resolve_tools_config(
+        let mut resolved = crate::tools::resolve_tools_with_deferral(
             &tools_config,
             self.mcp_registry.clone(),
             external_tools,
         )
         .await
         .map_err(|e| AgentError::ToolExecution(e.to_string()))?;
+
+        let mut tools = std::mem::take(&mut resolved.all_tools);
 
         // Get agent-specific additional tools (including DAP tools for this agent)
         let additional_tools = {
@@ -578,7 +580,8 @@ impl AgentOrchestrator {
             }
         }
 
-        Ok(tools)
+        resolved.all_tools = tools;
+        Ok(resolved)
     }
 
     /// Create an agent instance from a config using the factory
@@ -595,8 +598,25 @@ impl AgentOrchestrator {
                         None => vec![],
                     }
                 };
-                let tools = self.get_agent_tools(&definition, &external_tools).await?;
-                context.extend_tools(tools).await;
+                let resolved = self.get_agent_tools(&definition, &external_tools).await?;
+                let deferred_names: std::collections::HashSet<String> = resolved
+                    .deferred_tools
+                    .iter()
+                    .map(|t| t.name.clone())
+                    .collect();
+                context.set_deferred_tool_names(deferred_names).await;
+                if let Some(listing) = resolved.deferred_tools_listing() {
+                    context
+                        .merge_hook_prompt_state(crate::agent::context::HookPromptState {
+                            dynamic_values: std::collections::HashMap::from([(
+                                "deferred_tools_listing".to_string(),
+                                serde_json::Value::String(listing),
+                            )]),
+                            ..Default::default()
+                        })
+                        .await;
+                }
+                context.extend_tools(resolved.all_tools).await;
 
                 // Register load_skill tool and available skills metadata if agent has skills configured
                 if !definition.available_skills.is_empty() && self.stores.skill_store.is_some() {
@@ -637,15 +657,21 @@ impl AgentOrchestrator {
                         .collect();
 
                     if !resolved_skills.is_empty() {
-                        // Build the available skills description for the prompt template
-                        let skills_description = resolved_skills
-                            .iter()
-                            .map(|s| {
-                                let desc = s.description.as_deref().unwrap_or("No description");
-                                format!("- **{}** (id: `{}`): {}", s.name, s.id, desc)
-                            })
-                            .collect::<Vec<_>>()
-                            .join("\n");
+                        // Build the available skills description using budget-capped listing
+                        let frontmatters: Vec<distri_types::stores::SkillFrontmatter> =
+                            resolved_skills
+                                .iter()
+                                .map(|s| distri_types::stores::SkillFrontmatter {
+                                    name: s.name.clone(),
+                                    description: s.description.clone(),
+                                    ..Default::default()
+                                })
+                                .collect();
+
+                        let skills_description = distri_types::stores::format_skill_listing(
+                            &frontmatters,
+                            distri_types::stores::SKILL_LISTING_BUDGET,
+                        );
 
                         // Inject the skills list via dynamic_values so the {{> skills}} partial can render it
                         context
@@ -1312,9 +1338,7 @@ impl AgentOrchestrator {
         // Create a ToolsConfig that includes all available tools
         let all_tools_config = ToolsConfig {
             builtin: vec![], // Don't include builtin tools by default for /toolcall
-            dynamic: vec![],
-            mcp: Vec::new(),
-            external: None,
+            ..Default::default()
         };
 
         // Use the standardized resolve_tools_config method

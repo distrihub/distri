@@ -807,6 +807,117 @@ pub trait ProviderStore: Send + Sync {
 
 // ========== Skill Store ==========
 
+/// How a skill is executed relative to the calling agent's context.
+/// Mirrors the `context` field in claude-code's prompt command spec.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum ContextExecutionType {
+    /// Inject the full skill content into the current agent's context window.
+    /// The calling agent incorporates it directly — no sub-agent spawned.
+    #[default]
+    Inline,
+    /// Spawn an isolated child agent with the skill as its instruction set.
+    /// The child runs with its own token budget and task record; its result
+    /// is summarised and returned to the parent.
+    Fork,
+}
+
+impl std::fmt::Display for ContextExecutionType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ContextExecutionType::Inline => write!(f, "inline"),
+            ContextExecutionType::Fork => write!(f, "fork"),
+        }
+    }
+}
+
+impl std::str::FromStr for ContextExecutionType {
+    type Err = ();
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "fork" => Ok(ContextExecutionType::Fork),
+            _ => Ok(ContextExecutionType::Inline),
+        }
+    }
+}
+
+/// Total token budget for all skill listings in the system prompt.
+pub const SKILL_LISTING_BUDGET: usize = 2_000;
+/// Max description chars per skill in system prompt listing.
+pub const SKILL_DESCRIPTION_CAP: usize = 250;
+/// Default max output tokens for a skill when not explicitly set.
+pub const DEFAULT_SKILL_MAX_TOKENS: u32 = 8000;
+
+/// Parsed frontmatter from a skill markdown file.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SkillFrontmatter {
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub max_tokens: Option<u32>,
+    #[serde(default)]
+    pub can_spawn_tasks: bool,
+    #[serde(default)]
+    pub paths: Vec<String>,
+    #[serde(default)]
+    pub is_public: bool,
+}
+
+impl SkillFrontmatter {
+    pub fn effective_max_tokens(&self) -> u32 {
+        self.max_tokens.unwrap_or(DEFAULT_SKILL_MAX_TOKENS)
+    }
+
+    pub fn as_listing_line(&self) -> String {
+        let desc = self.description.as_deref().unwrap_or("No description");
+        let desc_truncated = if desc.len() > SKILL_DESCRIPTION_CAP {
+            format!("{}...", &desc[..SKILL_DESCRIPTION_CAP.min(desc.len())])
+        } else {
+            desc.to_string()
+        };
+        let mut meta = Vec::new();
+        if let Some(model) = &self.model {
+            meta.push(format!("model: {}", model));
+        }
+        if self.can_spawn_tasks {
+            meta.push("tasks: yes".to_string());
+        }
+        if meta.is_empty() {
+            format!("- {}: {}", self.name, desc_truncated)
+        } else {
+            format!("- {}: {} ({})", self.name, desc_truncated, meta.join(", "))
+        }
+    }
+}
+
+/// Format a list of skills for the system prompt, respecting a token budget.
+pub fn format_skill_listing(skills: &[SkillFrontmatter], budget_tokens: usize) -> String {
+    let budget_chars = budget_tokens * 4;
+    let mut result = String::new();
+    let mut remaining_chars = budget_chars;
+    for skill in skills {
+        let line = format!("{}\n", skill.as_listing_line());
+        if line.len() > remaining_chars {
+            let name_line = format!("- {}\n", skill.name);
+            if name_line.len() <= remaining_chars {
+                result.push_str(&name_line);
+                remaining_chars -= name_line.len();
+            } else {
+                break;
+            }
+        } else {
+            result.push_str(&line);
+            remaining_chars -= line.len();
+        }
+    }
+    result.trim_end().to_string()
+}
+
 /// API response wrapper for skill list endpoints.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillsListResponse {
@@ -854,21 +965,14 @@ pub struct SkillRecord {
     pub is_system: bool,
     pub star_count: i32,
     pub clone_count: i32,
-    pub scripts: Vec<SkillScriptRecord>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SkillScriptRecord {
-    pub id: String,
-    pub skill_id: String,
-    pub name: String,
-    pub description: Option<String>,
-    pub code: String,
-    pub language: String,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
+    /// Preferred model for skill execution (overrides agent default)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// How to deliver skill content: inline (default) or fork (isolated sub-agent)
+    #[serde(default)]
+    pub context: ContextExecutionType,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -880,21 +984,10 @@ pub struct NewSkill {
     pub tags: Vec<String>,
     #[serde(default)]
     pub is_public: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
     #[serde(default)]
-    pub scripts: Vec<NewSkillScript>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NewSkillScript {
-    pub name: String,
-    pub description: Option<String>,
-    pub code: String,
-    #[serde(default = "default_script_language")]
-    pub language: String,
-}
-
-fn default_script_language() -> String {
-    "javascript".to_string()
+    pub context: ContextExecutionType,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -904,14 +997,10 @@ pub struct UpdateSkill {
     pub content: Option<String>,
     pub tags: Option<Vec<String>>,
     pub is_public: Option<bool>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UpdateSkillScript {
-    pub name: Option<String>,
-    pub description: Option<String>,
-    pub code: Option<String>,
-    pub language: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<ContextExecutionType>,
 }
 
 #[async_trait]
@@ -921,19 +1010,6 @@ pub trait SkillStore: Send + Sync {
     async fn create_skill(&self, skill: NewSkill) -> anyhow::Result<SkillRecord>;
     async fn update_skill(&self, id: &str, update: UpdateSkill) -> anyhow::Result<SkillRecord>;
     async fn delete_skill(&self, id: &str) -> anyhow::Result<()>;
-
-    // Script management
-    async fn add_script(
-        &self,
-        skill_id: &str,
-        script: NewSkillScript,
-    ) -> anyhow::Result<SkillScriptRecord>;
-    async fn update_script(
-        &self,
-        script_id: &str,
-        update: UpdateSkillScript,
-    ) -> anyhow::Result<SkillScriptRecord>;
-    async fn delete_script(&self, script_id: &str) -> anyhow::Result<()>;
 
     // Discovery
     async fn list_public_skills(&self) -> anyhow::Result<Vec<SkillRecord>>;

@@ -82,6 +82,23 @@ impl TokenEstimator {
             .map(|est| est.estimated_tokens)
             .unwrap_or(0)
     }
+
+    /// Fast rough token count: ~4 chars per token.
+    /// Use this for budget tracking where speed matters more than precision.
+    /// This is the cheapest estimation method — O(1) after len().
+    #[inline]
+    pub fn rough_token_count(text: &str) -> usize {
+        // ~4 characters per token is a widely-used heuristic
+        // that works reasonably well across English text, code, and JSON schemas
+        (text.len() + 3) / 4
+    }
+
+    /// Rough token count for a serde_json::Value (serialized)
+    pub fn rough_token_count_json(value: &serde_json::Value) -> usize {
+        // Estimate based on compact JSON serialization length
+        let len = serde_json::to_string(value).map(|s| s.len()).unwrap_or(0);
+        (len + 3) / 4
+    }
 }
 
 #[cfg(test)]

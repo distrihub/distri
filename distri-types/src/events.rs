@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::core::{MessageRole, ToolCall, ToolResponse};
+use crate::execution::ContextBudget;
 use crate::hooks::InlineHookRequest;
 
 /// Token usage information for a run
@@ -69,6 +70,11 @@ impl AgentEvent {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "snake_case", tag = "type")]
 pub enum AgentEventType {
+    /// Verbose diagnostic message streamed from server to client (only emitted when verbose=true).
+    DiagnosticLog {
+        message: String,
+    },
+
     // Main run events
     RunStarted {},
     RunFinished {
@@ -77,10 +83,15 @@ pub enum AgentEventType {
         failed_steps: usize,
         /// Token usage for this run
         usage: Option<RunUsage>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        context_budget: Option<ContextBudget>,
     },
     RunError {
         message: String,
         code: Option<String>,
+        /// Cumulative token usage at the point of failure
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        usage: Option<RunUsage>,
     },
     PlanStarted {
         initial_plan: bool,
@@ -99,6 +110,11 @@ pub enum AgentEventType {
     StepCompleted {
         step_id: String,
         success: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        context_budget: Option<ContextBudget>,
+        /// Cumulative token usage for this run up to this step
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        usage: Option<RunUsage>,
     },
 
     // Tool execution events
@@ -179,20 +195,22 @@ pub enum AgentEventType {
 
     // Context management events
     ContextCompaction {
-        /// Which tier of compaction was applied
         tier: CompactionTier,
-        /// Token count before compaction
         tokens_before: usize,
-        /// Token count after compaction
         tokens_after: usize,
-        /// Number of entries removed or summarized
         entries_affected: usize,
-        /// Context budget limit that triggered compaction
         context_limit: usize,
-        /// Usage ratio that triggered compaction (0.0 - 1.0)
         usage_ratio: f64,
-        /// Optional summary text (for Tier 2 summarization)
         summary: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        context_budget: Option<ContextBudget>,
+    },
+
+    /// Emitted each turn with the current context budget breakdown.
+    ContextBudgetUpdate {
+        budget: ContextBudget,
+        is_warning: bool,
+        is_critical: bool,
     },
 }
 

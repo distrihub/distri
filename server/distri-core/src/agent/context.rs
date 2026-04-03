@@ -1,13 +1,17 @@
+use crate::agent::pricing;
 use crate::hooks_runtime::HookRegistry;
 use distri_stores::SessionStoreExt;
 use distri_types::{
-    configuration::DefinitionOverrides, AgentContextSize, AgentPlan, ContextSize, ContextUsage,
-    ExecutionHistoryEntry, ExecutionResult, ModelSettings, Part, PlanStep, ScratchpadEntry,
-    ScratchpadEntryType,
+    configuration::DefinitionOverrides, AgentContextSize, AgentPlan, ContextBudget, ContextSize,
+    ContextUsage, ExecutionHistoryEntry, ExecutionResult, ModelSettings, Part, PlanStep, RunUsage,
+    ScratchpadEntry, ScratchpadEntryType,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 use tokio::sync::{mpsc, RwLock};
 
 use crate::agent::prompt_registry::PromptSection;
@@ -162,6 +166,8 @@ pub struct ExecutorContext {
     pub parent_task_id: Option<String>,
 
     pub dynamic_tools: Option<Arc<RwLock<Vec<Arc<dyn Tool>>>>>,
+    /// Names of tools that are deferred (name+description only in prompt).
+    pub deferred_tool_names: Arc<RwLock<HashSet<String>>>,
     pub hook_prompt_state: Arc<RwLock<HookPromptState>>,
     pub hook_registry: Arc<RwLock<Option<HookRegistry>>>,
     /// Default model settings inherited from the orchestrator/workspace context.
@@ -170,6 +176,10 @@ pub struct ExecutorContext {
     /// When true, unsafe tools are simulated via LLM instead of executed.
     /// Safe tools (tool_search, load_skill, final, write_todos) still execute normally.
     pub dry_run: bool,
+    /// LRU cache for file read deduplication (returns FILE_UNCHANGED_STUB for unchanged files)
+    pub file_read_cache: Arc<RwLock<distri_types::FileReadCache>>,
+    /// Tracks which tool results have been replaced with persisted previews (for prompt cache stability)
+    pub content_replacement_state: Arc<RwLock<distri_types::ContentReplacementState>>,
 }
 
 impl std::fmt::Debug for ExecutorContext {
@@ -221,10 +231,15 @@ impl Default for ExecutorContext {
             parent_tx: None,
             parent_task_id: None,
             dynamic_tools: None,
+            deferred_tool_names: Arc::new(RwLock::new(HashSet::new())),
             hook_prompt_state: Arc::new(RwLock::new(HookPromptState::default())),
             hook_registry: Arc::new(RwLock::new(None)),
             default_model_settings: None,
             dry_run: false,
+            file_read_cache: Arc::new(RwLock::new(distri_types::FileReadCache::new(200))),
+            content_replacement_state: Arc::new(RwLock::new(
+                distri_types::ContentReplacementState::default(),
+            )),
         }
     }
 }
@@ -256,6 +271,36 @@ impl ExecutorContext {
     pub async fn extend_tools(&self, tools: Vec<Arc<dyn Tool>>) {
         let mut guard = self.tools.write().await;
         guard.extend(tools);
+    }
+
+    /// Set the names of deferred tools (for tool_search awareness).
+    pub async fn set_deferred_tool_names(&self, names: HashSet<String>) {
+        if !names.is_empty() {
+            let mut sorted: Vec<&String> = names.iter().collect();
+            sorted.sort();
+            self.emit_verbose(format!(
+                "[tools] Deferred ({} tools): {}",
+                names.len(),
+                sorted
+                    .iter()
+                    .map(|s| s.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ))
+            .await;
+        }
+        let mut guard = self.deferred_tool_names.write().await;
+        *guard = names;
+    }
+
+    /// Check if a tool is deferred (name+description only, no schema in prompt).
+    pub async fn is_tool_deferred(&self, name: &str) -> bool {
+        self.deferred_tool_names.read().await.contains(name)
+    }
+
+    /// Get a copy of all deferred tool names.
+    pub async fn get_deferred_tool_names(&self) -> HashSet<String> {
+        self.deferred_tool_names.read().await.clone()
     }
 
     pub async fn merge_hook_prompt_state(&self, state: HookPromptState) {
@@ -348,6 +393,16 @@ impl ExecutorContext {
         }
     }
 
+    /// Emit a verbose diagnostic message to the client (no-op when not verbose).
+    /// Also logs via tracing so it appears in the server terminal.
+    pub async fn emit_verbose(&self, message: String) {
+        if !self.verbose {
+            return;
+        }
+        tracing::info!("{}", message);
+        self.emit(AgentEventType::DiagnosticLog { message }).await;
+    }
+
     /// Emit event to parent agent only (for subagent communication)
     pub async fn emit_parent(&self, event: AgentEventType) {
         let parent_tx = {
@@ -390,6 +445,12 @@ impl ExecutorContext {
         usage.cached_tokens += cached_tokens;
     }
 
+    /// Update the context budget breakdown (populated after each prompt build).
+    pub async fn update_context_budget(&self, budget: ContextBudget) {
+        let mut u = self.usage.write().await;
+        u.context_budget = budget;
+    }
+
     /// Set the model name on the usage context for cost tracking
     pub async fn set_usage_model(&self, model: String) {
         let mut usage = self.usage.write().await;
@@ -405,6 +466,54 @@ impl ExecutorContext {
     /// Get current usage information
     pub async fn get_usage(&self) -> ContextUsage {
         self.usage.read().await.clone()
+    }
+
+    /// Snapshot the current cumulative token counts as the start of a new step.
+    /// Must be called at the top of each step iteration before any LLM calls.
+    pub async fn snapshot_step_start(&self) {
+        let mut u = self.usage.write().await;
+        u.step_input_start = u.input_tokens;
+        u.step_output_start = u.output_tokens;
+        u.step_cached_start = u.cached_tokens;
+    }
+
+    /// Returns a `RunUsage` with per-step deltas (tokens used only in this step) and
+    /// an estimated cost derived from those deltas.
+    pub async fn get_step_usage(&self) -> RunUsage {
+        let u = self.usage.read().await;
+        let delta_input = u.input_tokens.saturating_sub(u.step_input_start);
+        let delta_output = u.output_tokens.saturating_sub(u.step_output_start);
+        let delta_cached = u.cached_tokens.saturating_sub(u.step_cached_start);
+        let cost = u
+            .model
+            .as_deref()
+            .and_then(|m| pricing::estimate_cost(m, delta_input, delta_output, delta_cached));
+        RunUsage {
+            total_tokens: delta_input + delta_output,
+            input_tokens: delta_input,
+            output_tokens: delta_output,
+            cached_tokens: delta_cached,
+            estimated_tokens: 0,
+            model: u.model.clone(),
+            cost_usd: cost,
+        }
+    }
+
+    /// Returns a `RunUsage` with cumulative totals across the entire run plus total cost.
+    pub async fn get_total_usage(&self) -> RunUsage {
+        let u = self.usage.read().await;
+        let cost = u.model.as_deref().and_then(|m| {
+            pricing::estimate_cost(m, u.input_tokens, u.output_tokens, u.cached_tokens)
+        });
+        RunUsage {
+            total_tokens: u.tokens,
+            input_tokens: u.input_tokens,
+            output_tokens: u.output_tokens,
+            cached_tokens: u.cached_tokens,
+            estimated_tokens: u.context_size.total_estimated_tokens as u32,
+            model: u.model.clone(),
+            cost_usd: cost,
+        }
     }
 
     /// Calculate and update context size statistics
@@ -919,10 +1028,13 @@ impl ExecutorContext {
             parent_tx: self.parent_tx.clone(),
             parent_task_id: self.parent_task_id.clone(),
             dynamic_tools: self.dynamic_tools.clone(),
+            deferred_tool_names: self.deferred_tool_names.clone(),
             hook_prompt_state: self.hook_prompt_state.clone(),
             hook_registry: self.hook_registry.clone(),
             default_model_settings: self.default_model_settings.clone(),
             dry_run: self.dry_run,
+            file_read_cache: self.file_read_cache.clone(),
+            content_replacement_state: self.content_replacement_state.clone(),
         };
 
         (inner_context, inner_rx)
@@ -980,15 +1092,40 @@ impl ExecutorContext {
         }
     }
 
-    /// Store execution result in scratchpad store
+    /// Two-level tool result persistence:
+    /// 1. Persist full results to disk for parts exceeding the threshold
+    /// 2. Store compact version (with previews) in the scratchpad
+    ///
+    /// This mirrors Claude Code's approach: full results always available on disk,
+    /// only compact previews consume context window tokens.
     pub async fn store_execution_result(&self, result: &ExecutionResult) -> Result<(), AgentError> {
-        // Continue with the processed result
         tracing::debug!("Storing execution result for task_id: {}", self.task_id);
+
+        // Level 1: Persist large parts to disk
+        let mut result_with_previews = result.clone();
+        let parts_to_persist = result.parts_to_persist();
+
+        if !parts_to_persist.is_empty() {
+            if let Err(e) = self
+                .persist_large_parts(&mut result_with_previews, &parts_to_persist)
+                .await
+            {
+                tracing::warn!(
+                    "Failed to persist large tool result parts to disk: {}. Falling back to compact.",
+                    e
+                );
+                // Fall back to regular compaction if disk persistence fails
+                result_with_previews = result.clone();
+            }
+        }
+
+        // Level 2: Compact and store in scratchpad (now with preview references for large parts)
+        let compacted = result_with_previews.compact_for_storage();
         let exec_entry = ExecutionHistoryEntry {
             thread_id: self.thread_id.clone(),
             task_id: self.task_id.clone(),
             run_id: self.run_id.clone(),
-            execution_result: result.clone(),
+            execution_result: compacted,
             stored_at: chrono::Utc::now().timestamp_millis(),
         };
 
@@ -1003,10 +1140,146 @@ impl ExecutorContext {
             "Orchestrator not intialized".to_string(),
         ))?;
 
-        // Clone the Arc to keep stores alive during the async operation
         let scratchpad_store = orchestrator.stores.scratchpad_store.clone();
         scratchpad_store.add_entry(&self.thread_id, entry).await?;
         Ok(())
+    }
+
+    /// Persist large result parts to the session store (Postgres).
+    ///
+    /// For each (part_index, content) pair, writes full content under the key:
+    /// `tool-results:{thread_id}` / `{step_id}_{part_index}`
+    ///
+    /// Then replaces the corresponding part in `result` with a preview notice.
+    ///
+    /// NOTE: This uses the session store (Postgres) rather than the local filesystem so that
+    /// persisted results survive pod restarts and are accessible across replicas.
+    /// TODO(roadmap): Switch to Azure Blob Storage for very large results (>1MB) — see roadmap.md.
+    pub(crate) async fn persist_large_parts(
+        &self,
+        result: &mut ExecutionResult,
+        parts_to_persist: &[(usize, String)],
+    ) -> Result<(), AgentError> {
+        let session_store = self
+            .stores
+            .as_ref()
+            .map(|s| &s.session_store)
+            .or_else(|| self.orchestrator.as_ref().map(|o| &o.stores.session_store))
+            .ok_or(AgentError::Session("Session store not found".to_string()))?;
+
+        let namespace = format!("tool-results:{}", self.thread_id);
+
+        for (part_index, content) in parts_to_persist {
+            let key = format!("{}_{}", result.step_id, part_index);
+
+            if let Err(e) = session_store
+                .set_value(
+                    &namespace,
+                    &key,
+                    &serde_json::Value::String(content.clone()),
+                )
+                .await
+            {
+                tracing::warn!(
+                    "Failed to persist tool result to session store ({}): {}",
+                    key,
+                    e
+                );
+                continue;
+            }
+
+            // Replace in-memory part with a preview (path encodes the lookup key)
+            let store_ref = format!("session-store:{}/{}", namespace, key);
+            result.replace_with_preview(*part_index, &store_ref, None);
+
+            // Update content replacement state for prompt cache stability
+            let mut state = self.content_replacement_state.write().await;
+            let notice = match &result.parts[*part_index] {
+                distri_types::Part::Text(t) => t.clone(),
+                _ => continue,
+            };
+            state.mark_replaced(&format!("{}:{}", result.step_id, part_index), notice);
+
+            tracing::info!(
+                "Persisted large tool result ({} bytes) to session store key {}",
+                content.len(),
+                key
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Load a persisted tool result from the session store.
+    ///
+    /// `store_ref` is the value embedded in the `<persisted-output>` notice, formatted as
+    /// `session-store:{namespace}/{key}`.
+    pub async fn load_persisted_result(&self, store_ref: &str) -> Result<String, AgentError> {
+        let rest = store_ref
+            .strip_prefix("session-store:")
+            .ok_or_else(|| AgentError::Execution(format!("Invalid store ref: {}", store_ref)))?;
+
+        let (namespace, key) = rest
+            .split_once('/')
+            .ok_or_else(|| AgentError::Execution(format!("Malformed store ref: {}", store_ref)))?;
+
+        let session_store = self
+            .stores
+            .as_ref()
+            .map(|s| &s.session_store)
+            .or_else(|| self.orchestrator.as_ref().map(|o| &o.stores.session_store))
+            .ok_or(AgentError::Session("Session store not found".to_string()))?;
+
+        let value = session_store
+            .get_value(namespace, key)
+            .await
+            .map_err(|e| AgentError::Execution(format!("Failed to load persisted result: {}", e)))?
+            .ok_or_else(|| AgentError::Execution(format!("Persisted result not found: {}", key)))?;
+
+        match value {
+            serde_json::Value::String(s) => Ok(s),
+            other => Ok(other.to_string()),
+        }
+    }
+
+    /// Check file read cache and return FILE_UNCHANGED_STUB if file hasn't changed.
+    ///
+    /// Returns `Some(FILE_UNCHANGED_STUB)` if the file is unchanged,
+    /// `None` if the file needs to be re-read (cache miss or changed).
+    pub async fn check_file_read_cache(
+        &self,
+        path: &str,
+        offset: Option<usize>,
+        limit: Option<usize>,
+        mtime_ns: Option<i64>,
+    ) -> Option<&'static str> {
+        let cache = self.file_read_cache.read().await;
+        match cache.check(path, offset, limit, mtime_ns) {
+            distri_types::CacheCheck::Unchanged => {
+                tracing::debug!("File read cache hit (unchanged): {}", path);
+                Some(distri_types::FILE_UNCHANGED_STUB)
+            }
+            _ => None,
+        }
+    }
+
+    /// Record a file read in the cache (called after successful read).
+    pub async fn record_file_read(
+        &self,
+        path: &str,
+        offset: Option<usize>,
+        limit: Option<usize>,
+        content: &str,
+        mtime_ns: Option<i64>,
+    ) {
+        let mut cache = self.file_read_cache.write().await;
+        cache.record(path, offset, limit, content, mtime_ns);
+    }
+
+    /// Invalidate file read cache for a path (called after file edits).
+    pub async fn invalidate_file_cache(&self, path: &str) {
+        let mut cache = self.file_read_cache.write().await;
+        cache.invalidate(path);
     }
 
     /// Format agent scratchpad using scratchpad store with context size management
@@ -1106,6 +1379,7 @@ impl ExecutorContext {
                 context_limit: max_tokens,
                 usage_ratio: result.usage_ratio,
                 summary: None,
+                context_budget: Some(self.get_usage().await.context_budget.clone()),
             })
             .await;
 
@@ -1122,6 +1396,38 @@ impl ExecutorContext {
         }
 
         Ok(None)
+    }
+
+    /// Emit a `ContextBudgetUpdate` event if utilization has changed significantly.
+    ///
+    /// Rate-limited: only emits when utilization changes by >5% since last emission,
+    /// or when crossing warning (80%) or critical (90%) thresholds.
+    pub async fn emit_budget_update(&self) {
+        let budget = self.get_usage().await.context_budget.clone();
+        let utilization = budget.utilization();
+        let is_warning = budget.is_warning();
+        let is_critical = budget.is_critical();
+
+        // Rate-limit: only emit if utilization is meaningful (>0) and we have a window
+        if budget.context_window_size == 0 {
+            return;
+        }
+
+        // Always emit when crossing warning/critical thresholds, or on significant change
+        // The printer tracks the last state, so duplicates are cheap
+        self.emit(AgentEventType::ContextBudgetUpdate {
+            budget,
+            is_warning,
+            is_critical,
+        })
+        .await;
+
+        tracing::debug!(
+            "Context budget update: {:.0}% utilization (warning={}, critical={})",
+            utilization * 100.0,
+            is_warning,
+            is_critical,
+        );
     }
 
     /// Store a compaction summary in the scratchpad.

@@ -238,15 +238,25 @@ pub enum MemoryKind {
     LongTerm,
 }
 
-/// How tools are delivered to the LLM
+/// How tools are delivered to the LLM in the prompt.
+///
+/// Controls the tradeoff between prompt size and tool discoverability:
+/// - `Full`: All tools get full schemas (classic behavior, largest prompt)
+/// - `Deferred`: Core tools get full schemas; others are name+description only
+/// - `NamesOnly`: Maximum savings — only core tools have schemas
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolDeliveryMode {
-    /// Send all tool schemas upfront in the system message / tools parameter (default)
+    /// All tools get full schemas in the prompt.
+    #[serde(alias = "all_tools")]
+    Full,
+    /// Core tools get full schemas; others get name+description only (default).
     #[default]
-    AllTools,
-    /// Only send tool names+descriptions; agent uses a `tool_search` tool to fetch full schemas on demand
-    ToolSearch,
+    #[serde(alias = "tool_search")]
+    Deferred,
+    /// Only tool names are listed. Model must use `tool_search` for everything
+    /// except core tools. Maximum context savings.
+    NamesOnly,
 }
 
 /// Which OpenAI-family API format to use when talking to the LLM.
@@ -603,7 +613,12 @@ impl StandardDefinition {
     /// Get the effective context size (agent-level override or model settings)
     pub fn get_effective_context_size(&self) -> u32 {
         self.context_size
-            .or_else(|| self.model_settings().map(|ms| ms.inner.context_size))
+            .filter(|&s| s > 0)
+            .or_else(|| {
+                self.model_settings()
+                    .map(|ms| ms.inner.context_size)
+                    .filter(|&s| s > 0)
+            })
             .unwrap_or_else(default_context_size)
     }
 
@@ -698,6 +713,21 @@ pub const VALID_BUILTIN_TOOLS: &[&str] = &[
     "todos",
 ];
 
+/// Tools that always get full schemas, never deferred.
+/// These are the most commonly used tools that agents need immediately.
+pub const CORE_TOOLS: &[&str] = &[
+    "final",
+    "transfer_to_agent",
+    "tool_search",
+    "write_todos",
+    "execute_shell",
+    "start_shell",
+    "load_skill",
+];
+
+/// Default threshold: defer tools when total count exceeds this.
+pub const DEFAULT_DEFERRED_THRESHOLD: usize = 15;
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 #[serde(deny_unknown_fields)]
 pub struct ToolsConfig {
@@ -716,6 +746,27 @@ pub struct ToolsConfig {
     /// External tools to include from client
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub external: Option<Vec<String>>,
+
+    /// How tools are delivered to the model. Defaults to `Full`.
+    /// When set to `Deferred`, only core tools get full schemas;
+    /// others appear as name+description and must be fetched via `tool_search`.
+    #[serde(default, skip_serializing_if = "is_default_delivery_mode")]
+    pub delivery_mode: ToolDeliveryMode,
+
+    /// Tool count threshold for automatic deferral.
+    /// When `delivery_mode` is `Deferred` and total tools exceed this,
+    /// non-core tools are deferred. Default: 15.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deferred_threshold: Option<usize>,
+
+    /// Additional tool names to always include with full schemas (beyond CORE_TOOLS).
+    /// Useful for agent-specific tools that should never be deferred.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub always_full_schema: Vec<String>,
+}
+
+fn is_default_delivery_mode(mode: &ToolDeliveryMode) -> bool {
+    *mode == ToolDeliveryMode::Deferred
 }
 
 impl ToolsConfig {
@@ -727,6 +778,27 @@ impl ToolsConfig {
             .filter(|name| !VALID_BUILTIN_TOOLS.contains(&name.as_str()))
             .cloned()
             .collect()
+    }
+
+    /// Whether a tool should always get a full schema (never deferred).
+    pub fn is_core_tool(&self, name: &str) -> bool {
+        CORE_TOOLS.contains(&name)
+            || self.always_full_schema.iter().any(|n| n == name)
+            // call_* agent tools are always core (the model needs to know how to call sub-agents)
+            || name.starts_with("call_")
+    }
+
+    /// Effective threshold for automatic tool deferral.
+    pub fn effective_threshold(&self) -> usize {
+        self.deferred_threshold
+            .unwrap_or(DEFAULT_DEFERRED_THRESHOLD)
+    }
+
+    /// Determine the effective delivery mode given the total tool count.
+    /// If mode is `Full` but tool count exceeds threshold, stays `Full`
+    /// Deferred always stays Deferred — context efficiency is the default.
+    pub fn effective_delivery_mode(&self, _total_tools: usize) -> ToolDeliveryMode {
+        self.delivery_mode.clone()
     }
 }
 
@@ -1290,37 +1362,31 @@ impl ToolsConfig {
     pub fn builtin_only(tools: Vec<&str>) -> Self {
         Self {
             builtin: tools.into_iter().map(|s| s.to_string()).collect(),
-            dynamic: vec![],
-            mcp: vec![],
-            external: None,
+            ..Default::default()
         }
     }
 
     /// Create a configuration that includes all tools from an MCP server
     pub fn mcp_all(server: &str) -> Self {
         Self {
-            builtin: vec![],
-            dynamic: vec![],
             mcp: vec![McpToolConfig {
                 server: server.to_string(),
                 include: vec!["*".to_string()],
                 exclude: vec![],
             }],
-            external: None,
+            ..Default::default()
         }
     }
 
     /// Create a configuration with specific MCP tool patterns
     pub fn mcp_filtered(server: &str, include: Vec<&str>, exclude: Vec<&str>) -> Self {
         Self {
-            builtin: vec![],
-            dynamic: vec![],
             mcp: vec![McpToolConfig {
                 server: server.to_string(),
                 include: include.into_iter().map(|s| s.to_string()).collect(),
                 exclude: exclude.into_iter().map(|s| s.to_string()).collect(),
             }],
-            external: None,
+            ..Default::default()
         }
     }
 }
@@ -1636,5 +1702,87 @@ mod tests {
         "#;
         let settings: ModelSettings = toml::from_str(toml_str).unwrap();
         assert_eq!(settings.inner.api_format, OpenAiApiFormat::Responses);
+    }
+
+    // ── ToolDeliveryMode tests ────────────────────────────────────
+
+    #[test]
+    fn test_tool_delivery_mode_defaults_to_deferred() {
+        let mode: ToolDeliveryMode = Default::default();
+        assert_eq!(mode, ToolDeliveryMode::Deferred);
+    }
+
+    #[test]
+    fn test_tool_delivery_mode_backwards_compat_all_tools() {
+        // Old configs that used "all_tools" should deserialize to Full
+        let json = r#""all_tools""#;
+        let mode: ToolDeliveryMode = serde_json::from_str(json).unwrap();
+        assert_eq!(mode, ToolDeliveryMode::Full);
+    }
+
+    #[test]
+    fn test_tool_delivery_mode_backwards_compat_tool_search() {
+        // Old configs that used "tool_search" should deserialize to Deferred
+        let json = r#""tool_search""#;
+        let mode: ToolDeliveryMode = serde_json::from_str(json).unwrap();
+        assert_eq!(mode, ToolDeliveryMode::Deferred);
+    }
+
+    #[test]
+    fn test_tools_config_is_core_tool() {
+        let config = ToolsConfig::default();
+        assert!(config.is_core_tool("final"));
+        assert!(config.is_core_tool("tool_search"));
+        assert!(config.is_core_tool("execute_shell"));
+        assert!(config.is_core_tool("call_coder"));
+        assert!(!config.is_core_tool("browsr_scrape"));
+    }
+
+    #[test]
+    fn test_tools_config_always_full_schema() {
+        let config = ToolsConfig {
+            always_full_schema: vec!["browsr_scrape".to_string()],
+            ..Default::default()
+        };
+        assert!(config.is_core_tool("browsr_scrape"));
+        assert!(!config.is_core_tool("browsr_browser"));
+    }
+
+    #[test]
+    fn test_effective_delivery_mode_full_stays_full() {
+        let config = ToolsConfig {
+            delivery_mode: ToolDeliveryMode::Full,
+            ..Default::default()
+        };
+        // Even with many tools, Full stays Full
+        assert_eq!(config.effective_delivery_mode(100), ToolDeliveryMode::Full);
+    }
+
+    #[test]
+    fn test_effective_delivery_mode_deferred_stays_deferred() {
+        let config = ToolsConfig {
+            delivery_mode: ToolDeliveryMode::Deferred,
+            deferred_threshold: Some(20),
+            ..Default::default()
+        };
+        // Deferred always stays Deferred regardless of count
+        assert_eq!(
+            config.effective_delivery_mode(10),
+            ToolDeliveryMode::Deferred
+        );
+    }
+
+    #[test]
+    fn test_effective_delivery_mode_deferred_over_threshold() {
+        let config = ToolsConfig {
+            delivery_mode: ToolDeliveryMode::Deferred,
+            deferred_threshold: Some(10),
+            ..Default::default()
+        };
+        // Over threshold: stays Deferred
+        assert_eq!(
+            config.effective_delivery_mode(15),
+            ToolDeliveryMode::Deferred
+        );
     }
 }

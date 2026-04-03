@@ -68,7 +68,7 @@ pub fn register(registry: &ExternalToolRegistry, agent_id: &str, workspace_root:
                 match output_mode {
                     "files_with_matches" => args.push("--files-with-matches".to_string()),
                     "count" => args.push("--count".to_string()),
-                    "content" | _ if output_mode == "content" => {
+                    "content" => {
                         // Default content mode — show matching lines
                         let show_numbers = params.line_numbers.unwrap_or(true);
                         if show_numbers {

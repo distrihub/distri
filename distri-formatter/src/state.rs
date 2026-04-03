@@ -167,13 +167,6 @@ pub fn format_tool_call(name: &str, input: &serde_json::Value) -> String {
             }
         }
         "load_skill" => format!("load_skill(\"{}\")", str_field("skill_name")),
-        "run_skill_script" => {
-            let skill = str_field("skill_name");
-            match input.get("step_index").and_then(|v| v.as_u64()) {
-                Some(s) => format!("run_skill_script(\"{}\", step={})", skill, s),
-                None => format!("run_skill_script(\"{}\")", skill),
-            }
-        }
         "create_skill" | "delete_skill" => {
             let skill = input
                 .get("name")

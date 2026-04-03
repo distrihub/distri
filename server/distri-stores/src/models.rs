@@ -462,6 +462,8 @@ pub struct SkillModel {
     pub clone_count: i32,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
+    pub model: Option<String>,
+    pub context: String,
 }
 
 #[derive(Debug, Clone, Insertable)]
@@ -476,32 +478,8 @@ pub struct NewSkillModel<'a> {
     pub is_system: i32,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
-}
-
-#[derive(Debug, Clone, Queryable, Identifiable, Selectable)]
-#[diesel(table_name = skill_scripts)]
-pub struct SkillScriptModel {
-    pub id: String,
-    pub skill_id: String,
-    pub name: String,
-    pub description: Option<String>,
-    pub code: String,
-    pub language: String,
-    pub created_at: NaiveDateTime,
-    pub updated_at: NaiveDateTime,
-}
-
-#[derive(Debug, Clone, Insertable)]
-#[diesel(table_name = skill_scripts)]
-pub struct NewSkillScriptModel<'a> {
-    pub id: &'a str,
-    pub skill_id: &'a str,
-    pub name: &'a str,
-    pub description: Option<&'a str>,
-    pub code: &'a str,
-    pub language: &'a str,
-    pub created_at: NaiveDateTime,
-    pub updated_at: NaiveDateTime,
+    pub model: Option<&'a str>,
+    pub context: &'a str,
 }
 
 // ========== Message Reads ==========
