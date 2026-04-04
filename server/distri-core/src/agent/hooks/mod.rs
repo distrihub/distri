@@ -4,6 +4,7 @@ use crate::agent::types::AgentHooks;
 use crate::AgentError;
 
 pub mod inline;
+pub mod otel;
 
 /// Utility hook that fans out lifecycle events to multiple hook implementations.
 #[derive(Debug)]
@@ -75,6 +76,13 @@ impl AgentHooks for CombinedHooks {
     async fn on_halt(&self, reason: &str) -> Result<(), AgentError> {
         for hook in &self.hooks {
             hook.on_halt(reason).await?;
+        }
+        Ok(())
+    }
+
+    async fn on_event(&self, event: &distri_types::AgentEvent) -> Result<(), AgentError> {
+        for hook in &self.hooks {
+            hook.on_event(event).await?;
         }
         Ok(())
     }
