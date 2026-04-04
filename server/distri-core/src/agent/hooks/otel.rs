@@ -90,6 +90,10 @@ impl AgentHooks for OtelHooks {
                     step_id,
                     &ctx_fields,
                 );
+                // NOTE: tool_span() inherits whatever span is current on this async task as parent.
+                // This is correct only when on_event() is called from within the agent span's
+                // instrument() future. Task 9 must verify that StandardAgent instruments before
+                // the execution strategy emits ToolExecutionStart events.
                 let span = builder::tool_span(&attrs);
                 self.tool_spans.insert(tool_call_id.clone(), span);
             }
@@ -119,7 +123,13 @@ impl AgentHooks for OtelHooks {
                             cost,
                         );
                     }
-                    // span drops here → exports (once StandardAgent's .instrument() also drops)
+                    // KNOWN LIMITATION: record_agent_finish() may be called after StandardAgent's
+                    // .instrument() future has already finished (and its span clone dropped).
+                    // In tracing-opentelemetry, a span is only exported when ALL clones drop.
+                    // If RunFinished fires after the instrument() future returns, the fields are
+                    // still recorded correctly — they land on the same underlying span object.
+                    // If the exporter exports eagerly on first drop, these fields may be lost.
+                    // Monitor production traces to verify cost/token fields appear on agent spans.
                 }
             }
             _ => {}
