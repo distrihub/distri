@@ -5,10 +5,7 @@
 
 use llm_gateway::observability::{
     self,
-    types::{
-        GenAiAgentSpan, GenAiInferenceSpan, GenAiOperation, GenAiProvider, GenAiToolSpan,
-        GenAiToolType,
-    },
+    types::{GenAiAgentSpan, GenAiInferenceSpan, GenAiOperation, GenAiToolSpan, GenAiToolType},
 };
 use std::sync::{Arc, Mutex};
 use tracing::Subscriber;
@@ -98,7 +95,7 @@ fn test_inference_span_required_attributes_present() {
     let fields = run_with_capture(|| {
         let attrs = GenAiInferenceSpan {
             operation: Some(GenAiOperation::Chat),
-            provider: Some(GenAiProvider::Anthropic),
+            provider: Some("anthropic".to_string()),
             request_model: Some("claude-3-5-sonnet-20241022".into()),
             distri_thread_id: Some("thread-1".into()),
             distri_task_id: Some("task-1".into()),
@@ -137,7 +134,7 @@ fn test_deprecated_gen_ai_system_absent() {
     let fields = run_with_capture(|| {
         let attrs = GenAiInferenceSpan {
             operation: Some(GenAiOperation::Chat),
-            provider: Some(GenAiProvider::Anthropic),
+            provider: Some("anthropic".to_string()),
             request_model: Some("claude-3-5-sonnet".into()),
             ..Default::default()
         };
@@ -231,7 +228,7 @@ fn test_record_inference_response_fills_fields() {
     let fields = run_with_capture(|| {
         let attrs = GenAiInferenceSpan {
             operation: Some(GenAiOperation::Chat),
-            provider: Some(GenAiProvider::Anthropic),
+            provider: Some("anthropic".to_string()),
             request_model: Some("claude-3-5-sonnet".into()),
             ..Default::default()
         };
@@ -278,7 +275,7 @@ fn test_optional_fields_absent_when_not_set() {
     let fields = run_with_capture(|| {
         let attrs = GenAiInferenceSpan {
             operation: Some(GenAiOperation::Chat),
-            provider: Some(GenAiProvider::OpenAi),
+            provider: Some("openai".to_string()),
             request_model: Some("gpt-5.1".into()),
             // No distri context set
             ..Default::default()

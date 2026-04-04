@@ -9,8 +9,12 @@ use crate::observability::types::{GenAiAgentSpan, GenAiInferenceSpan, GenAiToolS
 /// Parent span is whatever is current on the calling async task.
 pub fn inference_span(attrs: &GenAiInferenceSpan) -> tracing::Span {
     let name = attrs.span_name();
-    let op = attrs.operation.as_ref().map(|o| o.as_str()).unwrap_or("chat");
-    let provider = attrs.provider.as_ref().map(|p| p.as_str()).unwrap_or("");
+    let op = attrs
+        .operation
+        .as_ref()
+        .map(|o| o.as_str())
+        .unwrap_or("chat");
+    let provider = attrs.provider.as_deref().unwrap_or("");
 
     // tracing::info_span! requires a string literal for the span name, but we need a
     // dynamic name. We use the `otel.name` field which tracing-opentelemetry uses
@@ -146,7 +150,11 @@ pub fn agent_span(attrs: &GenAiAgentSpan) -> tracing::Span {
 /// Create a tracing span for a tool execution.
 pub fn tool_span(attrs: &GenAiToolSpan) -> tracing::Span {
     let name = attrs.span_name();
-    let tool_type = attrs.tool_type.as_ref().map(|t| t.as_str()).unwrap_or("function");
+    let tool_type = attrs
+        .tool_type
+        .as_ref()
+        .map(|t| t.as_str())
+        .unwrap_or("function");
     let span = tracing::info_span!(
         target: "gen_ai",
         "gen_ai.execute_tool",
@@ -200,7 +208,7 @@ mod tests {
     fn builds_without_panic() {
         let inf = GenAiInferenceSpan {
             operation: Some(GenAiOperation::Chat),
-            provider: Some(GenAiProvider::Anthropic),
+            provider: Some("anthropic".to_string()),
             request_model: Some("claude-3-5-sonnet".into()),
             distri_thread_id: Some("t1".into()),
             ..Default::default()

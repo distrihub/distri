@@ -21,48 +21,6 @@ impl GenAiOperation {
     }
 }
 
-/// gen_ai.provider.name values (replaces deprecated gen_ai.system)
-#[derive(Debug, Clone, PartialEq)]
-pub enum GenAiProvider {
-    Anthropic,
-    OpenAi,
-    AwsBedrock,
-    GcpVertexAi,
-    AzureAiOpenAi,
-    Unknown(String),
-}
-
-impl GenAiProvider {
-    pub fn as_str(&self) -> &str {
-        match self {
-            GenAiProvider::Anthropic => "anthropic",
-            GenAiProvider::OpenAi => "openai",
-            GenAiProvider::AwsBedrock => "aws.bedrock",
-            GenAiProvider::GcpVertexAi => "gcp.vertex_ai",
-            GenAiProvider::AzureAiOpenAi => "azure.ai.openai",
-            GenAiProvider::Unknown(s) => s.as_str(),
-        }
-    }
-
-    /// Infer provider from a free-form string (e.g. format!("{:?}", ms.inner.provider))
-    pub fn from_provider_str(s: &str) -> Self {
-        let lower = s.to_lowercase();
-        if lower.contains("anthropic") {
-            GenAiProvider::Anthropic
-        } else if lower.contains("azure") {
-            GenAiProvider::AzureAiOpenAi
-        } else if lower.contains("openai") {
-            GenAiProvider::OpenAi
-        } else if lower.contains("bedrock") {
-            GenAiProvider::AwsBedrock
-        } else if lower.contains("vertex") {
-            GenAiProvider::GcpVertexAi
-        } else {
-            GenAiProvider::Unknown(lower)
-        }
-    }
-}
-
 /// gen_ai.tool.type values
 #[derive(Debug, Clone, PartialEq)]
 pub enum GenAiToolType {
@@ -86,7 +44,9 @@ impl GenAiToolType {
 #[derive(Debug, Default, Clone)]
 pub struct GenAiInferenceSpan {
     pub operation: Option<GenAiOperation>,
-    pub provider: Option<GenAiProvider>,
+    /// OTel `gen_ai.provider.name` value (e.g. "anthropic", "openai", "azure.ai.openai").
+    /// Use `ModelProvider::otel_provider_name()` from distri-types to populate this.
+    pub provider: Option<String>,
     pub request_model: Option<String>,
     pub response_model: Option<String>,
     pub conversation_id: Option<String>,
@@ -112,7 +72,11 @@ pub struct GenAiInferenceSpan {
 
 impl GenAiInferenceSpan {
     pub fn span_name(&self) -> String {
-        let op = self.operation.as_ref().map(|o| o.as_str()).unwrap_or("chat");
+        let op = self
+            .operation
+            .as_ref()
+            .map(|o| o.as_str())
+            .unwrap_or("chat");
         let model = self.request_model.as_deref().unwrap_or("unknown");
         format!("{} {}", op, model)
     }
@@ -170,13 +134,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn provider_display_lowercase() {
-        assert_eq!(GenAiProvider::Anthropic.as_str(), "anthropic");
-        assert_eq!(GenAiProvider::OpenAi.as_str(), "openai");
-        assert_eq!(GenAiProvider::Unknown("custom".into()).as_str(), "custom");
-    }
-
-    #[test]
     fn operation_display() {
         assert_eq!(GenAiOperation::Chat.as_str(), "chat");
         assert_eq!(GenAiOperation::InvokeAgent.as_str(), "invoke_agent");
@@ -193,22 +150,22 @@ mod tests {
         let inf = GenAiInferenceSpan {
             operation: Some(GenAiOperation::Chat),
             request_model: Some("claude-3-5-sonnet-20241022".into()),
+            provider: Some("anthropic".to_string()),
             ..Default::default()
         };
         assert_eq!(inf.span_name(), "chat claude-3-5-sonnet-20241022");
 
-        let agent = GenAiAgentSpan { agent_name: "coder".into(), ..Default::default() };
+        let agent = GenAiAgentSpan {
+            agent_name: "coder".into(),
+            ..Default::default()
+        };
         assert_eq!(agent.span_name(), "invoke_agent coder");
 
-        let tool = GenAiToolSpan { tool_name: "bash".into(), ..Default::default() };
+        let tool = GenAiToolSpan {
+            tool_name: "bash".into(),
+            ..Default::default()
+        };
         assert_eq!(tool.span_name(), "execute_tool bash");
     }
 
-    #[test]
-    fn from_provider_str() {
-        assert_eq!(GenAiProvider::from_provider_str("Anthropic"), GenAiProvider::Anthropic);
-        assert_eq!(GenAiProvider::from_provider_str("OpenAI"), GenAiProvider::OpenAi);
-        assert_eq!(GenAiProvider::from_provider_str("AzureOpenAI"), GenAiProvider::AzureAiOpenAi);
-        assert_eq!(GenAiProvider::from_provider_str("MyCustomLLM"), GenAiProvider::Unknown("mycustomllm".into()));
-    }
 }

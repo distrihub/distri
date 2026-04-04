@@ -1154,6 +1154,21 @@ impl ModelProvider {
             ModelProvider::GoogleVertex { .. } => "Google Vertex AI",
         }
     }
+
+    /// OTel `gen_ai.provider.name` attribute value for this provider.
+    /// Uses the semantic convention identifiers from the 2025 GenAI spec.
+    pub fn otel_provider_name(&self) -> &'static str {
+        match self {
+            ModelProvider::OpenAI { .. } => "openai",
+            ModelProvider::OpenAICompatible { .. } => "openai",
+            ModelProvider::AzureOpenAI { .. } => "azure.ai.openai",
+            ModelProvider::Anthropic { .. } => "anthropic",
+            ModelProvider::Gemini { .. } => "google.gemini",
+            ModelProvider::AzureAiFoundry { .. } => "azure.ai.inference",
+            ModelProvider::AwsBedrock { .. } => "aws.bedrock",
+            ModelProvider::GoogleVertex { .. } => "gcp.vertex_ai",
+        }
+    }
 }
 
 /// Model settings configuration.

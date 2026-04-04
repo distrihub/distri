@@ -4,7 +4,7 @@
 //! to build span structs without depending on distri-core's ExecutorContext directly.
 
 use crate::observability::types::{
-    GenAiAgentSpan, GenAiInferenceSpan, GenAiOperation, GenAiProvider, GenAiToolSpan, GenAiToolType,
+    GenAiAgentSpan, GenAiInferenceSpan, GenAiOperation, GenAiToolSpan, GenAiToolType,
 };
 use distri_types::ModelSettings;
 
@@ -23,15 +23,10 @@ pub struct ContextFields<'a> {
 
 impl GenAiInferenceSpan {
     /// Build from ModelSettings + context fields.
-    /// `provider_str` is the raw `format!("{:?}", ms.inner.provider)` string.
-    pub fn from_model_settings(
-        ms: &ModelSettings,
-        provider_str: &str,
-        ctx: &ContextFields<'_>,
-    ) -> Self {
+    pub fn from_model_settings(ms: &ModelSettings, ctx: &ContextFields<'_>) -> Self {
         Self {
             operation: Some(GenAiOperation::Chat),
-            provider: Some(GenAiProvider::from_provider_str(provider_str)),
+            provider: Some(ms.inner.provider.otel_provider_name().to_string()),
             request_model: Some(ms.model.clone()),
             conversation_id: Some(ctx.thread_id.to_string()),
             temperature: ms.inner.temperature.map(|t| t as f64),
