@@ -180,8 +180,12 @@ pub struct ExecutorContext {
     pub file_read_cache: Arc<RwLock<distri_types::FileReadCache>>,
     /// Tracks which tool results have been replaced with persisted previews (for prompt cache stability)
     pub content_replacement_state: Arc<RwLock<distri_types::ContentReplacementState>>,
-    /// Agent span created by OtelHooks::before_execute.
-    /// StandardAgent::invoke_stream takes it via take_otel_agent_span() to wrap the agent loop.
+    /// Agent span created by OtelHooks::before_execute; consumed once by StandardAgent::invoke_stream.
+    ///
+    /// Single-owner contract: only StandardAgent::invoke_stream calls take_otel_agent_span().
+    /// Clones share the same Arc, so whichever context calls take() first wins. Do not call
+    /// take_otel_agent_span() on inner contexts created by create_inner_context() — those share
+    /// this Arc and would silently steal the span from the outer context.
     pub otel_agent_span: Arc<StdMutex<Option<tracing::Span>>>,
 }
 
@@ -270,6 +274,7 @@ impl ExecutorContext {
     pub fn take_otel_agent_span(&self) -> Option<tracing::Span> {
         self.otel_agent_span.lock().ok()?.take()
     }
+
     pub async fn clone_with_tools(&self, tools: Vec<Arc<dyn Tool>>) -> Self {
         Self {
             tools: Arc::new(RwLock::new(tools)),
