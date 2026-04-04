@@ -8,9 +8,6 @@ async fn main() -> Result<()> {
     let level = std::env::var("DISTRI_LOG").unwrap_or_else(|_| "info".to_string());
     logging::init_logging(&level);
 
-    #[cfg(feature = "otel")]
-    distri_core::logging::init_tracer_provider();
-
     dotenv::dotenv().ok();
 
     let cli = Cli::parse();

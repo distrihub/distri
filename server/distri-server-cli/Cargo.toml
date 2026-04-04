@@ -18,7 +18,12 @@ postgres_vendored = [
   "distri-core/postgres_vendored",
   "distri-server/postgres_vendored",
 ]
-otel = ["distri-server/otel", "distri-core/otel"]
+otel = [
+  "dep:opentelemetry",
+  "dep:opentelemetry_sdk",
+  "dep:opentelemetry-otlp",
+  "dep:tracing-opentelemetry",
+]
 ui = ["distri-server/ui"]
 
 [dependencies]
@@ -35,6 +40,12 @@ tokio = { version = "1.0", features = ["full"] }
 regex = "1.5"
 toml = "0.9.5"
 dirs = "5.0"
+
+# Optional OTEL dependencies (enabled via `otel` feature)
+opentelemetry = { version = "0.28.0", optional = true }
+opentelemetry_sdk = { version = "0.28.0", optional = true }
+opentelemetry-otlp = { version = "0.28.0", features = ["grpc-tonic"], optional = true }
+tracing-opentelemetry = { version = "0.28", optional = true }
 
 [[bin]]
 name = "distri-server"

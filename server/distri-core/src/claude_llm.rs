@@ -524,6 +524,16 @@ impl ClaudeLLMExecutor {
             .llm_def
             .ms()
             .map_err(AgentError::InvalidConfiguration)?;
+        let span = llm_gateway::observability::create_llm_span(&ms.model, "anthropic", "chat");
+        let _guard = span.enter();
+        llm_gateway::observability::record_llm_request(
+            &span,
+            ms.inner.temperature,
+            ms.inner.max_tokens,
+            false,
+        );
+        let start = std::time::Instant::now();
+
         tracing::info!(
             target: "claude_llm.execute",
             "Claude LLM request model={}, max_tokens={:?}, tools={}, messages={}",
@@ -716,6 +726,17 @@ impl ClaudeLLMExecutor {
             _ => async_openai::types::chat::FinishReason::Stop,
         };
 
+        let elapsed = start.elapsed().as_millis() as u64;
+        let tool_names: Vec<&str> = tool_calls.iter().map(|t| t.tool_name.as_str()).collect();
+        llm_gateway::observability::record_llm_response(
+            &span,
+            usage.as_ref(),
+            &format!("{:?}", finish_reason),
+            elapsed,
+            tool_calls.len(),
+            &tool_names.join(","),
+        );
+
         Ok(super::llm::LLMResponse {
             finish_reason,
             tool_calls,
@@ -734,6 +755,16 @@ impl ClaudeLLMExecutor {
             .llm_def
             .ms()
             .map_err(AgentError::InvalidConfiguration)?;
+        let span = llm_gateway::observability::create_llm_span(&ms.model, "anthropic", "chat");
+        let _guard = span.enter();
+        llm_gateway::observability::record_llm_request(
+            &span,
+            ms.inner.temperature,
+            ms.inner.max_tokens,
+            true,
+        );
+        let start = std::time::Instant::now();
+
         tracing::info!(
             target: "claude_llm.execute_stream",
             "Claude LLM stream request model={}, max_tokens={:?}, tools={}, messages={}",
@@ -1052,6 +1083,17 @@ impl ClaudeLLMExecutor {
         } else {
             async_openai::types::chat::FinishReason::Stop
         };
+
+        let elapsed = start.elapsed().as_millis() as u64;
+        let tool_names: Vec<&str> = tool_calls.iter().map(|t| t.tool_name.as_str()).collect();
+        llm_gateway::observability::record_llm_response(
+            &span,
+            None,
+            &format!("{:?}", finish_reason),
+            elapsed,
+            tool_calls.len(),
+            &tool_names.join(","),
+        );
 
         Ok(super::llm::StreamResult {
             finish_reason,

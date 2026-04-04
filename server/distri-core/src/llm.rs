@@ -158,13 +158,24 @@ impl LLMExecutor {
 
     /// Execute with optional format override
     pub async fn execute(&self, messages: &[Message]) -> Result<LLMResponse, AgentError> {
-        tracing::debug!("Executing LLM call with {} messages", messages.len());
-
-        let sanitized_messages = self.sanitize_messages(messages);
         let ms = self
             .llm_def
             .ms()
             .map_err(AgentError::InvalidConfiguration)?;
+        let provider_name = format!("{:?}", ms.inner.provider);
+        let span = llm_gateway::observability::create_llm_span(&ms.model, &provider_name, "chat");
+        let _guard = span.enter();
+        llm_gateway::observability::record_llm_request(
+            &span,
+            ms.inner.temperature,
+            ms.inner.max_tokens,
+            false,
+        );
+        let start = std::time::Instant::now();
+
+        tracing::debug!("Executing LLM call with {} messages", messages.len());
+
+        let sanitized_messages = self.sanitize_messages(messages);
         tracing::info!(
             target: "llm.execute",
             "LLM request (non-stream) model={}, provider={:?}, max_tokens={:?}, temperature={:?}, tool_format={:?}, tools={} messages={}",
@@ -327,6 +338,17 @@ impl LLMExecutor {
             .set_current_message_id(Some(assistant_msg.id.clone()))
             .await;
 
+        let elapsed = start.elapsed().as_millis() as u64;
+        let tool_names: Vec<&str> = tool_calls.iter().map(|t| t.tool_name.as_str()).collect();
+        llm_gateway::observability::record_llm_response(
+            &span,
+            usage.as_ref(),
+            &format!("{:?}", finish_reason),
+            elapsed,
+            tool_calls.len(),
+            &tool_names.join(","),
+        );
+
         Ok(LLMResponse {
             finish_reason,
             tool_calls,
@@ -341,16 +363,27 @@ impl LLMExecutor {
         messages: &[Message],
         context: Arc<ExecutorContext>,
     ) -> Result<StreamResult, AgentError> {
+        let ms = self
+            .llm_def
+            .ms()
+            .map_err(AgentError::InvalidConfiguration)?;
+        let provider_name = format!("{:?}", ms.inner.provider);
+        let span = llm_gateway::observability::create_llm_span(&ms.model, &provider_name, "chat");
+        let _guard = span.enter();
+        llm_gateway::observability::record_llm_request(
+            &span,
+            ms.inner.temperature,
+            ms.inner.max_tokens,
+            true,
+        );
+        let start = std::time::Instant::now();
+
         tracing::debug!(
             "Executing streaming LLM call with {} messages",
             messages.len()
         );
 
         let sanitized_messages = self.sanitize_messages(messages);
-        let ms = self
-            .llm_def
-            .ms()
-            .map_err(AgentError::InvalidConfiguration)?;
         tracing::info!(
             target: "llm.execute_stream",
             "LLM request (stream) model={}, provider={:?}, max_tokens={:?}, temperature={:?}, tool_format={:?}, tools={} messages={}",
@@ -658,20 +691,29 @@ impl LLMExecutor {
             .set_current_message_id(Some(assistant_msg.id.clone()))
             .await;
 
+        let elapsed = start.elapsed().as_millis() as u64;
         if !tool_calls.is_empty() {
             Self::ensure_tool_call_ids(&mut tool_calls);
-            Ok(StreamResult {
-                finish_reason: async_openai::types::chat::FinishReason::ToolCalls,
-                tool_calls,
-                content,
-            })
-        } else {
-            Ok(StreamResult {
-                finish_reason: async_openai::types::chat::FinishReason::Stop,
-                tool_calls: tool_calls,
-                content,
-            })
         }
+        let finish_reason = if !tool_calls.is_empty() {
+            async_openai::types::chat::FinishReason::ToolCalls
+        } else {
+            async_openai::types::chat::FinishReason::Stop
+        };
+        let tool_names: Vec<&str> = tool_calls.iter().map(|t| t.tool_name.as_str()).collect();
+        llm_gateway::observability::record_llm_response(
+            &span,
+            None,
+            &format!("{:?}", finish_reason),
+            elapsed,
+            tool_calls.len(),
+            &tool_names.join(","),
+        );
+        Ok(StreamResult {
+            finish_reason,
+            tool_calls,
+            content,
+        })
     }
     pub fn map_tools(&self) -> Vec<async_openai::types::chat::ChatCompletionTools> {
         self.tools
@@ -1330,10 +1372,14 @@ async fn get_client_with_context(
         headers.insert(k.clone(), v.clone());
     }
 
+    let gw_context = llm_gateway::GatewayContext {
+        thread_id: Some(context.thread_id.clone()),
+        run_id: Some(context.run_id.clone()),
+    };
     let mut config = GatewayConfig::default()
         .with_api_base(pcc.base_url)
         .with_api_key(api_key)
-        .with_context(context)
+        .with_context(gw_context)
         .with_additional_headers(headers);
 
     if let Some(pid) = &pcc.project_id {
