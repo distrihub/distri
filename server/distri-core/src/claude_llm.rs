@@ -33,6 +33,7 @@ use crate::{
 use distri_parsers::{StreamParseResult, ToolCallParser};
 use distri_types::{LlmDefinition, ToolCallFormat};
 use futures::StreamExt;
+use tracing::Instrument as _;
 use serde_json::Value;
 
 /// How many messages from the end to place the conversation cache breakpoint
@@ -587,8 +588,24 @@ impl ClaudeLLMExecutor {
         };
 
         let client = self.build_client().await?;
-        use tracing::Instrument as _;
-        let response = client.create_message(&request).instrument(span.clone()).await?;
+        let response = client
+            .create_message(&request)
+            .instrument(span.clone())
+            .await
+            .map_err(|e| {
+                tracing::error!("LLM request failed: {}", e);
+                let elapsed = start.elapsed().as_millis() as u64;
+                llm_gateway::observability::recorder::record_inference_response(
+                    &span,
+                    Some(ms.model.as_str()),
+                    None,
+                    &["error".to_string()],
+                    None, None, None, None,
+                    elapsed,
+                    None,
+                );
+                e
+            })?;
 
         // Log cache usage
         if let Some(cache_created) = response.usage.cache_creation_input_tokens {
@@ -827,7 +844,6 @@ impl ClaudeLLMExecutor {
         };
 
         let client = self.build_client().await?;
-        use tracing::Instrument as _;
         let stream = client.create_message_stream(&request).instrument(span.clone()).await?;
 
         let message_id = uuid::Uuid::new_v4().to_string();

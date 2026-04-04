@@ -26,6 +26,7 @@ use async_openai::{
 use distri_parsers::{StreamParseResult, ToolCallParser};
 use distri_types::{LlmDefinition, ToolCallFormat};
 use futures::{Stream, StreamExt};
+use tracing::Instrument as _;
 use serde_json::{Map, Value};
 use tokio::sync::RwLock;
 
@@ -217,7 +218,6 @@ impl LLMExecutor {
         );
 
         tracing::debug!("Sending chat completion request");
-        use tracing::Instrument as _;
         let response = completion(
             &self.llm_def,
             request,
@@ -229,7 +229,17 @@ impl LLMExecutor {
         .await
         .map_err(|e| {
             tracing::error!("LLM request failed: {}", e);
-            AgentError::LLMError(e.to_string())
+            let elapsed = start.elapsed().as_millis() as u64;
+            llm_gateway::observability::recorder::record_inference_response(
+                &span,
+                Some(ms.model.as_str()),
+                None,
+                &["error".to_string()],
+                None, None, None, None,
+                elapsed,
+                None,
+            );
+            e
         })?;
 
         let usage = response.usage.as_ref().map(|u| distri_types::TokenUsage {
@@ -444,7 +454,6 @@ impl LLMExecutor {
 
         tracing::debug!("Sending streaming chat completion request");
 
-        use tracing::Instrument as _;
         let stream = completion_stream(
             &self.llm_def,
             request,

@@ -21,6 +21,7 @@ use crate::{
 use distri_parsers::{StreamParseResult, ToolCallParser};
 use distri_types::{LlmDefinition, ModelProvider, ToolCallFormat};
 use futures::StreamExt;
+use tracing::Instrument as _;
 use serde_json::Value;
 
 /// Default max_output_tokens for the Responses API
@@ -415,8 +416,24 @@ impl OpenAIResponsesLLMExecutor {
         };
 
         let client = self.build_client().await?;
-        use tracing::Instrument as _;
-        let response = client.create_response(&request).instrument(span.clone()).await?;
+        let response = client
+            .create_response(&request)
+            .instrument(span.clone())
+            .await
+            .map_err(|e| {
+                tracing::error!("LLM request failed: {}", e);
+                let elapsed = start.elapsed().as_millis() as u64;
+                llm_gateway::observability::recorder::record_inference_response(
+                    &span,
+                    Some(ms.model.as_str()),
+                    None,
+                    &["error".to_string()],
+                    None, None, None, None,
+                    elapsed,
+                    None,
+                );
+                e
+            })?;
 
         let input_tokens = response.usage.input_tokens;
         let output_tokens = response.usage.output_tokens;
@@ -629,7 +646,6 @@ impl OpenAIResponsesLLMExecutor {
         };
 
         let client = self.build_client().await?;
-        use tracing::Instrument as _;
         let stream = match client.create_response_stream(&request).instrument(span.clone()).await {
             Ok(s) => s,
             Err(e) => {
