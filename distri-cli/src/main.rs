@@ -77,6 +77,14 @@ enum Commands {
         /// JSON definition overrides: {"dynamic_tools": [...], "model": "..."}
         #[clap(long)]
         overrides: Option<String>,
+        /// Explicit task ID for this execution (used by deepagent containers).
+        /// Falls back to DISTRI_TASK_ID env var, then auto-generated.
+        #[clap(long)]
+        task_id: Option<String>,
+        /// Explicit thread ID (alias for --resume, used by deepagent containers).
+        /// Falls back to DISTRI_THREAD_ID env var.
+        #[clap(long)]
+        thread_id: Option<String>,
     },
 
     /// Agent-related commands
@@ -381,6 +389,8 @@ async fn main() -> Result<()> {
             context,
             resume,
             overrides,
+            task_id,
+            thread_id,
         } => {
             let extra_tools = parse_cli_overrides(overrides.as_deref());
             let agent_name = agent.unwrap_or_else(|| "distri_runner".to_string());
@@ -423,9 +433,16 @@ async fn main() -> Result<()> {
             let mut params = build_message_params(task, connections_context);
             app.inject_external_tools(&mut params);
 
-            // Set thread_id from --resume
-            if let Some(ref resume_arg) = resume {
-                let tid = resolve_resume_arg(resume_arg);
+            // Set task_id: --task-id flag > DISTRI_TASK_ID env > auto-generated
+            if let Some(tid) = task_id.or_else(|| std::env::var("DISTRI_TASK_ID").ok()) {
+                params.message.task_id = Some(tid);
+            }
+
+            // Set thread_id/context_id: --thread-id > --resume > DISTRI_THREAD_ID env
+            let effective_thread = thread_id
+                .or_else(|| std::env::var("DISTRI_THREAD_ID").ok())
+                .or_else(|| resume.as_ref().map(|r| resolve_resume_arg(r)));
+            if let Some(tid) = effective_thread {
                 params.message.context_id = Some(tid);
             }
 
