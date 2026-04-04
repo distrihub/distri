@@ -79,10 +79,12 @@ impl GenAiToolSpan {
             tool_type: Some(GenAiToolType::Function),
             tool_call_id: Some(tool_call_id.to_string()),
             distri_thread_id: Some(ctx.thread_id.to_string()),
+            distri_workspace_id: ctx.workspace_id.map(str::to_string),
             distri_task_id: Some(ctx.task_id.to_string()),
             distri_step_id: Some(step_id.to_string()),
             distri_agent_id: Some(ctx.agent_id.to_string()),
             distri_run_id: Some(ctx.run_id.to_string()),
+            distri_user_id: Some(ctx.user_id.to_string()),
             ..Default::default()
         }
     }

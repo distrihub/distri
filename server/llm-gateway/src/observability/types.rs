@@ -117,10 +117,12 @@ pub struct GenAiToolSpan {
     pub tool_description: Option<String>,
     pub success: Option<bool>,
     pub distri_thread_id: Option<String>,
+    pub distri_workspace_id: Option<String>,
     pub distri_task_id: Option<String>,
     pub distri_step_id: Option<String>,
     pub distri_agent_id: Option<String>,
     pub distri_run_id: Option<String>,
+    pub distri_user_id: Option<String>,
 }
 
 impl GenAiToolSpan {

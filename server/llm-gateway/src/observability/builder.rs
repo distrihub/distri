@@ -167,10 +167,12 @@ pub fn tool_span(attrs: &GenAiToolSpan) -> tracing::Span {
         // gen_ai.tool.success is filled by recorder::record_tool_result() after execution completes
         "gen_ai.tool.success" = tracing::field::Empty,
         "distri.thread_id" = tracing::field::Empty,
+        "distri.workspace_id" = tracing::field::Empty,
         "distri.task_id" = tracing::field::Empty,
         "distri.step_id" = tracing::field::Empty,
         "distri.agent_id" = tracing::field::Empty,
         "distri.run_id" = tracing::field::Empty,
+        "distri.user_id" = tracing::field::Empty,
     );
 
     // Record known-at-creation-time optional fields
@@ -183,6 +185,9 @@ pub fn tool_span(attrs: &GenAiToolSpan) -> tracing::Span {
     if let Some(v) = &attrs.distri_thread_id {
         span.record("distri.thread_id", v.as_str());
     }
+    if let Some(v) = &attrs.distri_workspace_id {
+        span.record("distri.workspace_id", v.as_str());
+    }
     if let Some(v) = &attrs.distri_task_id {
         span.record("distri.task_id", v.as_str());
     }
@@ -194,6 +199,9 @@ pub fn tool_span(attrs: &GenAiToolSpan) -> tracing::Span {
     }
     if let Some(v) = &attrs.distri_run_id {
         span.record("distri.run_id", v.as_str());
+    }
+    if let Some(v) = &attrs.distri_user_id {
+        span.record("distri.user_id", v.as_str());
     }
 
     span
