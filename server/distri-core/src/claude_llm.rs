@@ -524,7 +524,14 @@ impl ClaudeLLMExecutor {
             .llm_def
             .ms()
             .map_err(AgentError::InvalidConfiguration)?;
-        let span = llm_gateway::observability::create_llm_span(&ms.model, "anthropic", "chat");
+        let span = llm_gateway::observability::create_llm_span(
+            &ms.model,
+            "anthropic",
+            "chat",
+            Some(self.context.thread_id.as_str()),
+            self.context.workspace_id.as_deref(),
+            Some(self.context.task_id.as_str()),
+        );
         let _guard = span.enter();
         llm_gateway::observability::record_llm_request(
             &span,
@@ -755,7 +762,14 @@ impl ClaudeLLMExecutor {
             .llm_def
             .ms()
             .map_err(AgentError::InvalidConfiguration)?;
-        let span = llm_gateway::observability::create_llm_span(&ms.model, "anthropic", "chat");
+        let span = llm_gateway::observability::create_llm_span(
+            &ms.model,
+            "anthropic",
+            "chat",
+            Some(self.context.thread_id.as_str()),
+            self.context.workspace_id.as_deref(),
+            Some(self.context.task_id.as_str()),
+        );
         let _guard = span.enter();
         llm_gateway::observability::record_llm_request(
             &span,

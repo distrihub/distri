@@ -163,7 +163,14 @@ impl LLMExecutor {
             .ms()
             .map_err(AgentError::InvalidConfiguration)?;
         let provider_name = format!("{:?}", ms.inner.provider);
-        let span = llm_gateway::observability::create_llm_span(&ms.model, &provider_name, "chat");
+        let span = llm_gateway::observability::create_llm_span(
+            &ms.model,
+            &provider_name,
+            "chat",
+            Some(self.context.thread_id.as_str()),
+            self.context.workspace_id.as_deref(),
+            Some(self.context.task_id.as_str()),
+        );
         let _guard = span.enter();
         llm_gateway::observability::record_llm_request(
             &span,
@@ -368,7 +375,14 @@ impl LLMExecutor {
             .ms()
             .map_err(AgentError::InvalidConfiguration)?;
         let provider_name = format!("{:?}", ms.inner.provider);
-        let span = llm_gateway::observability::create_llm_span(&ms.model, &provider_name, "chat");
+        let span = llm_gateway::observability::create_llm_span(
+            &ms.model,
+            &provider_name,
+            "chat",
+            Some(self.context.thread_id.as_str()),
+            self.context.workspace_id.as_deref(),
+            Some(self.context.task_id.as_str()),
+        );
         let _guard = span.enter();
         llm_gateway::observability::record_llm_request(
             &span,

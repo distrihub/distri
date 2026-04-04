@@ -13,7 +13,14 @@ use distri_types::TokenUsage;
 ///
 /// The span is created with `Empty` fields that should be filled in after the LLM responds
 /// using [`record_llm_response`].
-pub fn create_llm_span(model: &str, provider: &str, operation: &str) -> tracing::Span {
+pub fn create_llm_span(
+    model: &str,
+    provider: &str,
+    operation: &str,
+    thread_id: Option<&str>,
+    workspace_id: Option<&str>,
+    task_id: Option<&str>,
+) -> tracing::Span {
     tracing::info_span!(
         "gen_ai.chat",
         "gen_ai.system" = provider,
@@ -29,6 +36,9 @@ pub fn create_llm_span(model: &str, provider: &str, operation: &str) -> tracing:
         "llm.tool_call.names" = tracing::field::Empty,
         "llm.duration_ms" = tracing::field::Empty,
         "llm.stream" = tracing::field::Empty,
+        "distri.thread_id" = thread_id,
+        "distri.workspace_id" = workspace_id,
+        "distri.task_id" = task_id,
     )
 }
 
