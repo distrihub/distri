@@ -80,6 +80,7 @@ mod tests {
             "distri.estimated_cost_usd" = tracing::field::Empty,
             "llm.duration_ms" = tracing::field::Empty,
             "gen_ai.tool.success" = tracing::field::Empty,
+            "error.type" = tracing::field::Empty,
         )
     }
 
