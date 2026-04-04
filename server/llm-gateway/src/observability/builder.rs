@@ -3,7 +3,7 @@
 //! Fields not known at creation time use `tracing::field::Empty` and are
 //! filled later via `recorder.rs`.
 
-use crate::observability::types::{GenAiAgentSpan, GenAiInferenceSpan, GenAiToolSpan};
+use crate::observability::types::{GenAiAgentSpan, GenAiInferenceSpan, GenAiStepSpan, GenAiToolSpan};
 
 /// Create a tracing span for an LLM inference call.
 /// Parent span is whatever is current on the calling async task.
@@ -147,6 +147,47 @@ pub fn agent_span(attrs: &GenAiAgentSpan) -> tracing::Span {
     span
 }
 
+/// Create a tracing span for one agent execution step.
+pub fn step_span(attrs: &GenAiStepSpan) -> tracing::Span {
+    let name = attrs.span_name();
+    let span = tracing::info_span!(
+        target: "gen_ai",
+        "gen_ai.step",
+        "otel.name" = tracing::field::Empty,
+        "gen_ai.operation.name" = "step",
+        "gen_ai.step.index" = tracing::field::Empty,
+        "gen_ai.step.id" = tracing::field::Empty,
+        "distri.thread_id" = tracing::field::Empty,
+        "distri.workspace_id" = tracing::field::Empty,
+        "distri.task_id" = tracing::field::Empty,
+        "distri.run_id" = tracing::field::Empty,
+        "distri.agent_id" = tracing::field::Empty,
+        "distri.user_id" = tracing::field::Empty,
+    );
+    span.record("otel.name", name.as_str());
+    span.record("gen_ai.step.index", attrs.step_index as i64);
+    span.record("gen_ai.step.id", attrs.step_id.as_str());
+    if let Some(v) = &attrs.distri_thread_id {
+        span.record("distri.thread_id", v.as_str());
+    }
+    if let Some(v) = &attrs.distri_workspace_id {
+        span.record("distri.workspace_id", v.as_str());
+    }
+    if let Some(v) = &attrs.distri_task_id {
+        span.record("distri.task_id", v.as_str());
+    }
+    if let Some(v) = &attrs.distri_run_id {
+        span.record("distri.run_id", v.as_str());
+    }
+    if let Some(v) = &attrs.distri_agent_id {
+        span.record("distri.agent_id", v.as_str());
+    }
+    if let Some(v) = &attrs.distri_user_id {
+        span.record("distri.user_id", v.as_str());
+    }
+    span
+}
+
 /// Create a tracing span for a tool execution.
 pub fn tool_span(attrs: &GenAiToolSpan) -> tracing::Span {
     let name = attrs.span_name();
@@ -240,5 +281,13 @@ mod tests {
             ..Default::default()
         };
         let _s = tool_span(&tool);
+
+        let step = GenAiStepSpan {
+            step_id: "s1".into(),
+            step_index: 2,
+            distri_run_id: Some("r1".into()),
+            ..Default::default()
+        };
+        let _s = step_span(&step);
     }
 }

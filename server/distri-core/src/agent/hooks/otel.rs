@@ -26,7 +26,7 @@ use crate::{
     AgentError,
 };
 use llm_gateway::observability::{
-    builder, context::ContextFields, recorder, GenAiAgentSpan, GenAiToolSpan,
+    builder, context::ContextFields, recorder, GenAiAgentSpan, GenAiStepSpan, GenAiToolSpan,
 };
 
 /// Hook that creates OTel GenAI spans for every agent run.
@@ -36,6 +36,9 @@ pub struct OtelHooks {
     /// StandardAgent gets a clone via context.otel_agent_span for .instrument().
     /// We keep our own clone here to record aggregate usage at RunFinished.
     pub agent_spans: DashMap<String, tracing::Span>,
+    /// Step spans keyed by step_id. Created at StepStarted, dropped at StepCompleted.
+    /// Tool spans are created as children of the active step span.
+    pub step_spans: DashMap<String, tracing::Span>,
     /// Tool spans keyed by tool_call_id. Created at ToolExecutionStart, dropped at End.
     pub tool_spans: DashMap<String, tracing::Span>,
 }
@@ -69,6 +72,27 @@ impl AgentHooks for OtelHooks {
 
     async fn on_event(&self, event: &AgentEvent) -> Result<(), AgentError> {
         match &event.event {
+            AgentEventType::StepStarted {
+                step_id,
+                step_index,
+            } => {
+                let span = builder::step_span(&GenAiStepSpan {
+                    step_id: step_id.clone(),
+                    step_index: *step_index,
+                    distri_thread_id: Some(event.thread_id.clone()),
+                    distri_workspace_id: event.workspace_id.clone(),
+                    distri_task_id: Some(event.task_id.clone()),
+                    distri_run_id: Some(event.run_id.clone()),
+                    distri_agent_id: Some(event.agent_id.clone()),
+                    distri_user_id: event.user_id.clone(),
+                });
+                self.step_spans.insert(step_id.clone(), span);
+            }
+            AgentEventType::StepCompleted { step_id, .. } => {
+                if let Some((_, span)) = self.step_spans.remove(step_id.as_str()) {
+                    drop(span); // closing exports the step span
+                }
+            }
             AgentEventType::ToolExecutionStart {
                 tool_call_id,
                 tool_call_name,
@@ -100,11 +124,13 @@ impl AgentHooks for OtelHooks {
                     &ctx_fields,
                 );
                 attrs.tool_input = tool_input;
-                // NOTE: tool_span() inherits whatever span is current on this async task as parent.
-                // This is correct only when on_event() is called from within the agent span's
-                // instrument() future. Task 9 must verify that StandardAgent instruments before
-                // the execution strategy emits ToolExecutionStart events.
-                let span = builder::tool_span(&attrs);
+                // Create the tool span as a child of the active step span (if available),
+                // otherwise fall back to whatever span is current on this async task.
+                let span = if let Some(step_span) = self.step_spans.get(step_id.as_str()) {
+                    step_span.in_scope(|| builder::tool_span(&attrs))
+                } else {
+                    builder::tool_span(&attrs)
+                };
                 self.tool_spans.insert(tool_call_id.clone(), span);
             }
             AgentEventType::ToolExecutionEnd {

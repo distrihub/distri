@@ -107,6 +107,26 @@ impl GenAiAgentSpan {
     }
 }
 
+/// Attributes for a step execution span.
+/// gen_ai.operation.name = "step"
+#[derive(Debug, Default, Clone)]
+pub struct GenAiStepSpan {
+    pub step_id: String,
+    pub step_index: usize,
+    pub distri_thread_id: Option<String>,
+    pub distri_workspace_id: Option<String>,
+    pub distri_task_id: Option<String>,
+    pub distri_run_id: Option<String>,
+    pub distri_agent_id: Option<String>,
+    pub distri_user_id: Option<String>,
+}
+
+impl GenAiStepSpan {
+    pub fn span_name(&self) -> String {
+        format!("step {}", self.step_index)
+    }
+}
+
 /// All attributes for a tool execution span.
 /// Span name: "execute_tool {tool_name}"
 #[derive(Debug, Default, Clone)]
@@ -169,6 +189,13 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(tool.span_name(), "execute_tool bash");
+
+        let step = GenAiStepSpan {
+            step_id: "s1".into(),
+            step_index: 3,
+            ..Default::default()
+        };
+        assert_eq!(step.span_name(), "step 3");
     }
 
 }
