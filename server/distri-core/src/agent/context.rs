@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
     collections::{HashMap, HashSet},
-    sync::Arc,
+    sync::{Arc, Mutex as StdMutex},
 };
 use tokio::sync::{mpsc, RwLock};
 
@@ -180,6 +180,9 @@ pub struct ExecutorContext {
     pub file_read_cache: Arc<RwLock<distri_types::FileReadCache>>,
     /// Tracks which tool results have been replaced with persisted previews (for prompt cache stability)
     pub content_replacement_state: Arc<RwLock<distri_types::ContentReplacementState>>,
+    /// Agent span created by OtelHooks::before_execute.
+    /// StandardAgent::invoke_stream takes it via take_otel_agent_span() to wrap the agent loop.
+    pub otel_agent_span: Arc<StdMutex<Option<tracing::Span>>>,
 }
 
 impl std::fmt::Debug for ExecutorContext {
@@ -240,6 +243,7 @@ impl Default for ExecutorContext {
             content_replacement_state: Arc::new(RwLock::new(
                 distri_types::ContentReplacementState::default(),
             )),
+            otel_agent_span: Arc::new(StdMutex::new(None)),
         }
     }
 }
@@ -255,6 +259,16 @@ impl ExecutorContext {
             event_tx: Some(Arc::new(event_tx)),
             ..self.clone()
         }
+    }
+
+    pub fn set_otel_agent_span(&self, span: tracing::Span) {
+        if let Ok(mut guard) = self.otel_agent_span.lock() {
+            *guard = Some(span);
+        }
+    }
+
+    pub fn take_otel_agent_span(&self) -> Option<tracing::Span> {
+        self.otel_agent_span.lock().ok()?.take()
     }
     pub async fn clone_with_tools(&self, tools: Vec<Arc<dyn Tool>>) -> Self {
         Self {
@@ -1035,6 +1049,7 @@ impl ExecutorContext {
             dry_run: self.dry_run,
             file_read_cache: self.file_read_cache.clone(),
             content_replacement_state: self.content_replacement_state.clone(),
+            otel_agent_span: self.otel_agent_span.clone(),
         };
 
         (inner_context, inner_rx)
@@ -1477,5 +1492,20 @@ impl ExecutorContext {
             stores: Some(stores),
             ..Default::default()
         }
+    }
+}
+
+#[cfg(test)]
+mod otel_tests {
+    use super::*;
+    #[test]
+    fn otel_agent_span_round_trip() {
+        let ctx = ExecutorContext::default();
+        assert!(ctx.take_otel_agent_span().is_none(), "initially None");
+        let span = tracing::info_span!("test");
+        ctx.set_otel_agent_span(span);
+        let taken = ctx.take_otel_agent_span();
+        assert!(taken.is_some(), "should be Some after set");
+        assert!(ctx.take_otel_agent_span().is_none(), "None after take");
     }
 }
