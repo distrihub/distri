@@ -3,7 +3,7 @@
 //! Fields not known at creation time use `tracing::field::Empty` and are
 //! filled later via `recorder.rs`.
 
-use crate::observability::types::{GenAiAgentSpan, GenAiInferenceSpan, GenAiStepSpan, GenAiToolSpan};
+use crate::observability::types::{GenAiAgentSpan, GenAiInferenceSpan, GenAiPlanSpan, GenAiStepSpan, GenAiToolSpan};
 
 /// Create a tracing span for an LLM inference call.
 /// Parent span is whatever is current on the calling async task.
@@ -144,6 +144,34 @@ pub fn agent_span(attrs: &GenAiAgentSpan) -> tracing::Span {
         span.record("distri.channel_id", v.as_str());
     }
 
+    span
+}
+
+/// Create a tracing span for the planning phase.
+pub fn plan_span(attrs: &GenAiPlanSpan) -> tracing::Span {
+    let name = if attrs.initial_plan { "plan (initial)" } else { "plan (replan)" };
+    let span = tracing::info_span!(
+        target: "gen_ai",
+        "gen_ai.plan",
+        "otel.name" = tracing::field::Empty,
+        "gen_ai.operation.name" = "plan",
+        "gen_ai.plan.initial" = tracing::field::Empty,
+        "gen_ai.plan.total_steps" = tracing::field::Empty,
+        "distri.thread_id" = tracing::field::Empty,
+        "distri.workspace_id" = tracing::field::Empty,
+        "distri.task_id" = tracing::field::Empty,
+        "distri.run_id" = tracing::field::Empty,
+        "distri.agent_id" = tracing::field::Empty,
+        "distri.user_id" = tracing::field::Empty,
+    );
+    span.record("otel.name", name);
+    span.record("gen_ai.plan.initial", attrs.initial_plan);
+    if let Some(v) = &attrs.distri_thread_id { span.record("distri.thread_id", v.as_str()); }
+    if let Some(v) = &attrs.distri_workspace_id { span.record("distri.workspace_id", v.as_str()); }
+    if let Some(v) = &attrs.distri_task_id { span.record("distri.task_id", v.as_str()); }
+    if let Some(v) = &attrs.distri_run_id { span.record("distri.run_id", v.as_str()); }
+    if let Some(v) = &attrs.distri_agent_id { span.record("distri.agent_id", v.as_str()); }
+    if let Some(v) = &attrs.distri_user_id { span.record("distri.user_id", v.as_str()); }
     span
 }
 

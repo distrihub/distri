@@ -154,10 +154,47 @@ async fn unrelated_events_ignored() {
         identifier_id: None,
         workspace_id: None,
         channel_id: None,
-        event: distri_types::AgentEventType::PlanStarted { initial_plan: true },
+        event: distri_types::AgentEventType::PlanPruned {
+            removed_steps: vec![],
+        },
     };
     // Should not panic or mutate anything
     hooks.on_event(&event).await.unwrap();
     assert!(hooks.agent_spans.is_empty());
     assert!(hooks.tool_spans.is_empty());
+    assert!(hooks.plan_spans.is_empty());
+}
+
+/// PlanStarted stores a plan span; PlanFinished removes it.
+#[tokio::test]
+async fn plan_lifecycle_round_trip() {
+    let hooks = OtelHooks::default();
+
+    let started = distri_types::AgentEvent {
+        timestamp: chrono::Utc::now(),
+        thread_id: "t1".to_string(),
+        run_id: "r1".to_string(),
+        task_id: "task-1".to_string(),
+        agent_id: "coder".to_string(),
+        user_id: None,
+        identifier_id: None,
+        workspace_id: None,
+        channel_id: None,
+        event: distri_types::AgentEventType::PlanStarted { initial_plan: true },
+    };
+    hooks.on_event(&started).await.unwrap();
+    assert!(
+        hooks.plan_spans.contains_key("r1"),
+        "plan span should be stored on PlanStarted"
+    );
+
+    let finished = distri_types::AgentEvent {
+        event: distri_types::AgentEventType::PlanFinished { total_steps: 3 },
+        ..started.clone()
+    };
+    hooks.on_event(&finished).await.unwrap();
+    assert!(
+        !hooks.plan_spans.contains_key("r1"),
+        "plan span should be removed on PlanFinished"
+    );
 }

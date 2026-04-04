@@ -26,7 +26,8 @@ use crate::{
     AgentError,
 };
 use llm_gateway::observability::{
-    builder, context::ContextFields, recorder, GenAiAgentSpan, GenAiStepSpan, GenAiToolSpan,
+    builder, context::ContextFields, recorder, GenAiAgentSpan, GenAiPlanSpan, GenAiStepSpan,
+    GenAiToolSpan,
 };
 
 /// Hook that creates OTel GenAI spans for every agent run.
@@ -36,6 +37,8 @@ pub struct OtelHooks {
     /// StandardAgent gets a clone via context.otel_agent_span for .instrument().
     /// We keep our own clone here to record aggregate usage at RunFinished.
     pub agent_spans: DashMap<String, tracing::Span>,
+    /// Plan spans keyed by run_id. Created at PlanStarted, dropped at PlanFinished.
+    pub plan_spans: DashMap<String, tracing::Span>,
     /// Step spans keyed by step_id. Created at StepStarted, dropped at StepCompleted.
     /// Tool spans are created as children of the active step span.
     pub step_spans: DashMap<String, tracing::Span>,
@@ -72,6 +75,24 @@ impl AgentHooks for OtelHooks {
 
     async fn on_event(&self, event: &AgentEvent) -> Result<(), AgentError> {
         match &event.event {
+            AgentEventType::PlanStarted { initial_plan } => {
+                let span = builder::plan_span(&GenAiPlanSpan {
+                    initial_plan: *initial_plan,
+                    distri_thread_id: Some(event.thread_id.clone()),
+                    distri_workspace_id: event.workspace_id.clone(),
+                    distri_task_id: Some(event.task_id.clone()),
+                    distri_run_id: Some(event.run_id.clone()),
+                    distri_agent_id: Some(event.agent_id.clone()),
+                    distri_user_id: event.user_id.clone(),
+                });
+                self.plan_spans.insert(event.run_id.clone(), span);
+            }
+            AgentEventType::PlanFinished { total_steps } => {
+                if let Some((_, span)) = self.plan_spans.remove(event.run_id.as_str()) {
+                    span.record("gen_ai.plan.total_steps", *total_steps as i64);
+                    drop(span);
+                }
+            }
             AgentEventType::StepStarted {
                 step_id,
                 step_index,

@@ -127,6 +127,19 @@ impl GenAiStepSpan {
     }
 }
 
+/// Attributes for a planning phase span.
+/// gen_ai.operation.name = "plan"
+#[derive(Debug, Default, Clone)]
+pub struct GenAiPlanSpan {
+    pub initial_plan: bool,
+    pub distri_thread_id: Option<String>,
+    pub distri_workspace_id: Option<String>,
+    pub distri_task_id: Option<String>,
+    pub distri_run_id: Option<String>,
+    pub distri_agent_id: Option<String>,
+    pub distri_user_id: Option<String>,
+}
+
 /// All attributes for a tool execution span.
 /// Span name: "execute_tool {tool_name}"
 #[derive(Debug, Default, Clone)]
