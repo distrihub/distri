@@ -54,6 +54,10 @@ pub struct AgentOrchestrator {
     pub inline_hooks: Arc<dashmap::DashMap<String, tokio::sync::oneshot::Sender<HookMutation>>>,
     pub hook_registry: HookRegistry,
     pub system_hooks: Vec<Arc<dyn crate::agent::types::AgentHooks>>,
+    /// Optional event broadcaster for A2A tasks/resubscribe and deepagent event relay.
+    pub broadcaster: Option<Arc<dyn crate::broadcast::AgentEventBroadcaster>>,
+    /// Optional background runner for async agent execution (deepagent containers).
+    pub background_runner: Option<Arc<dyn crate::runner::BackgroundRunner>>,
 }
 
 impl std::fmt::Debug for AgentOrchestrator {
@@ -84,6 +88,8 @@ pub struct AgentOrchestratorBuilder {
     configuration: Option<Arc<RwLock<DistriServerConfig>>>,
     hooks: Option<HashMap<String, Arc<dyn crate::agent::types::AgentHooks>>>,
     system_hooks: Vec<Arc<dyn crate::agent::types::AgentHooks>>,
+    broadcaster: Option<Arc<dyn crate::broadcast::AgentEventBroadcaster>>,
+    background_runner: Option<Arc<dyn crate::runner::BackgroundRunner>>,
 }
 
 impl AgentOrchestratorBuilder {
@@ -176,6 +182,21 @@ impl AgentOrchestratorBuilder {
         self.system_hooks = hooks;
         self
     }
+    pub fn with_broadcaster(
+        mut self,
+        broadcaster: Arc<dyn crate::broadcast::AgentEventBroadcaster>,
+    ) -> Self {
+        self.broadcaster = Some(broadcaster);
+        self
+    }
+
+    pub fn with_background_runner(
+        mut self,
+        runner: Arc<dyn crate::runner::BackgroundRunner>,
+    ) -> Self {
+        self.background_runner = Some(runner);
+        self
+    }
 
     pub async fn build(self) -> anyhow::Result<AgentOrchestrator> {
         let (coordinator_tx, coordinator_rx) = mpsc::channel(10000);
@@ -251,6 +272,8 @@ impl AgentOrchestratorBuilder {
             hooks: hooks.clone(),
             inline_hooks: Arc::new(dashmap::DashMap::new()),
             hook_registry: HookRegistry::new(),
+            broadcaster: self.broadcaster,
+            background_runner: self.background_runner,
         };
 
         // Sync system prompts to the store

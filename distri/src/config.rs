@@ -20,12 +20,24 @@ impl BuildHttpClient for DistriConfig {
 
         let mut headers = reqwest::header::HeaderMap::new();
 
-        // Add API key header if configured
+        // Add API key / token header if configured
         if let Some(ref api_key) = self.api_key {
-            headers.insert(
-                "x-api-key",
-                reqwest::header::HeaderValue::from_str(api_key).expect("Invalid API key format"),
-            );
+            if api_key.starts_with("eyJ") {
+                // JWT token (base64-encoded JSON) — send as Bearer auth
+                // This is used by containers running distri-cli with a minted JWT
+                if let Ok(val) =
+                    reqwest::header::HeaderValue::from_str(&format!("Bearer {}", api_key))
+                {
+                    headers.insert(reqwest::header::AUTHORIZATION, val);
+                }
+            } else {
+                // Regular API key — send as x-api-key header
+                headers.insert(
+                    "x-api-key",
+                    reqwest::header::HeaderValue::from_str(api_key)
+                        .expect("Invalid API key format"),
+                );
+            }
         }
 
         // Add workspace ID header if configured

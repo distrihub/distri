@@ -536,6 +536,12 @@ pub struct StandardDefinition {
         skip_serializing_if = "is_true"
     )]
     pub compaction_enabled: bool,
+
+    /// When true and a sandbox runner is available, this agent runs in an isolated
+    /// browsr container with full local tool access (Read, Write, Grep, Bash, etc.)
+    /// instead of running in-process. Used for sub-agents that need filesystem access.
+    #[serde(default)]
+    pub deepagent: bool,
 }
 fn default_append_default_instructions() -> Option<bool> {
     Some(true)

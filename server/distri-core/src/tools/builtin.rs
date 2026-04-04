@@ -460,42 +460,146 @@ impl ExecutorContextTool for AgentTool {
         };
 
         let orchestrator = context.get_orchestrator()?;
-        // Create a new task context for the child agent (same thread, new task)
-        let child_context = context.new_task(&self.agent_name).await;
 
-        // Create message for the child agent
-        let message = Message {
-            id: uuid::Uuid::new_v4().to_string(),
-            name: None,
-            parts: vec![Part::Text(task.clone())],
-            role: MessageRole::User,
-            created_at: chrono::Utc::now().timestamp_millis(),
-            agent_id: None,
-            parts_metadata: None,
-        };
+        // Check if this sub-agent should run in a remote sandbox (deepagent mode)
+        let use_remote = orchestrator.background_runner.is_some()
+            && orchestrator.broadcaster.is_some()
+            && {
+                let agent_def = orchestrator
+                    .stores
+                    .agent_store
+                    .get(&self.agent_name)
+                    .await;
+                matches!(
+                    agent_def,
+                    Some(distri_types::configuration::AgentConfig::StandardAgent(ref def)) if def.deepagent
+                )
+            };
 
-        // Use regular execute instead of execute_stream to avoid circular event handling
-        let child_context_arc = Arc::new(child_context);
-        let child_context_clone = child_context_arc.clone();
+        if use_remote {
+            // DeepAgent path: spawn in sandbox, subscribe to events, relay to parent
+            let runner = orchestrator.background_runner.as_ref().unwrap();
+            let broadcaster = orchestrator.broadcaster.as_ref().unwrap();
+            let sub_task_id = uuid::Uuid::new_v4().to_string();
+            let env_id = format!(
+                "{}-{}",
+                context.workspace_id.as_deref().unwrap_or("default"),
+                self.agent_name
+            );
 
-        let result = orchestrator
-            .execute_stream(&self.agent_name, message, child_context_arc, None)
-            .await;
+            tracing::info!(
+                "DeepAgent dispatch: spawning {} in sandbox (task_id={})",
+                self.agent_name,
+                sub_task_id
+            );
 
-        // Return result from child agent
-        let res = match result {
-            Ok(invoke_result) => {
-                // Get final result from the child context if available
-                let final_result = child_context_clone.get_final_result().await;
-                let response_text = final_result
-                    .or(invoke_result.content.map(|c| Value::String(c)))
-                    .unwrap_or_else(|| "Child agent completed without response".to_string().into());
+            // Fire-and-forget: spawn container/in-process execution
+            runner
+                .spawn(
+                    sub_task_id.clone(),
+                    self.agent_name.clone(),
+                    task,
+                    context.user_id.clone(),
+                    context.workspace_id.clone(),
+                    Some(env_id),
+                )
+                .await
+                .map_err(|e| {
+                    AgentError::ToolExecution(format!("Failed to spawn deepagent: {}", e))
+                })?;
 
-                Ok(vec![Part::Data(response_text)])
+            // Subscribe to sub-task events, relay to parent event channel
+            let mut stream = broadcaster
+                .subscribe(&sub_task_id)
+                .await
+                .map_err(|e| {
+                    AgentError::ToolExecution(format!(
+                        "Failed to subscribe to deepagent events: {}",
+                        e
+                    ))
+                })?;
+
+            let mut final_result: Option<Value> = None;
+
+            use futures_util::StreamExt;
+            while let Some(event) = stream.next().await {
+                // Relay events to parent's event stream so the caller sees progress
+                context.emit(event.event.clone()).await;
+
+                // Check for completion
+                match &event.event {
+                    distri_types::AgentEventType::RunFinished { .. } => {
+                        // Read result from task store
+                        if let Ok(Some(task_data)) =
+                            orchestrator.stores.task_store.get_task(&sub_task_id).await
+                        {
+                            let a2a_task: distri_a2a::Task = task_data.into();
+                            if let Some(msg) = a2a_task.status.message {
+                                let text: String = msg
+                                    .parts
+                                    .iter()
+                                    .filter_map(|p| match p {
+                                        distri_a2a::Part::Text(t) => Some(t.text.clone()),
+                                        _ => None,
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .join("\n");
+                                if !text.is_empty() {
+                                    final_result = Some(Value::String(text));
+                                }
+                            }
+                        }
+                        break;
+                    }
+                    distri_types::AgentEventType::RunError { message, .. } => {
+                        final_result = Some(Value::String(format!("Deepagent error: {}", message)));
+                        break;
+                    }
+                    _ => {}
+                }
             }
-            Err(e) => Ok(vec![Part::Data(Value::String(e.to_string()))]),
-        };
-        res
+
+            Ok(vec![Part::Data(
+                final_result.unwrap_or_else(|| Value::String("Deepagent completed".to_string())),
+            )])
+        } else {
+            // Standard in-process path (existing behavior)
+            // Create a new task context for the child agent (same thread, new task)
+            let child_context = context.new_task(&self.agent_name).await;
+
+            // Create message for the child agent
+            let message = Message {
+                id: uuid::Uuid::new_v4().to_string(),
+                name: None,
+                parts: vec![Part::Text(task.clone())],
+                role: MessageRole::User,
+                created_at: chrono::Utc::now().timestamp_millis(),
+                agent_id: None,
+                parts_metadata: None,
+            };
+
+            let child_context_arc = Arc::new(child_context);
+            let child_context_clone = child_context_arc.clone();
+
+            let result = orchestrator
+                .execute_stream(&self.agent_name, message, child_context_arc, None)
+                .await;
+
+            // Return result from child agent
+            match result {
+                Ok(invoke_result) => {
+                    let final_result = child_context_clone.get_final_result().await;
+                    let response_text = final_result
+                        .or(invoke_result.content.map(|c| Value::String(c)))
+                        .unwrap_or_else(|| {
+                            "Child agent completed without response".to_string().into()
+                        });
+
+                    Ok(vec![Part::Data(response_text)])
+                }
+                Err(e) => Ok(vec![Part::Data(Value::String(e.to_string()))]),
+            }
+        }
     }
 }
 
