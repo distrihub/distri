@@ -164,6 +164,17 @@ impl AgentHooks for OtelHooks {
                     // span drops here → exports
                 }
             }
+            AgentEventType::RunError { message, code, .. } => {
+                if let Some((_, span)) = self.agent_spans.remove(event.run_id.as_str()) {
+                    span.record("otel.status_code", "ERROR");
+                    span.record("otel.status_description", message.as_str());
+                    span.record("error.message", message.as_str());
+                    if let Some(c) = code {
+                        span.record("error.code", c.as_str());
+                    }
+                    drop(span);
+                }
+            }
             AgentEventType::RunFinished { usage, .. } => {
                 if let Some((_, span)) = self.agent_spans.remove(event.run_id.as_str()) {
                     if let Some(u) = usage {

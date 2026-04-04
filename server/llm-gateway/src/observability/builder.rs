@@ -113,6 +113,8 @@ pub fn agent_span(attrs: &GenAiAgentSpan) -> tracing::Span {
         "distri.run_id" = tracing::field::Empty,
         "distri.user_id" = tracing::field::Empty,
         "distri.channel_id" = tracing::field::Empty,
+        "error.message" = tracing::field::Empty,
+        "error.code" = tracing::field::Empty,
     );
 
     // Record known-at-creation-time optional fields
