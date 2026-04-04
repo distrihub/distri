@@ -49,7 +49,9 @@ impl GenAiProvider {
         let lower = s.to_lowercase();
         if lower.contains("anthropic") {
             GenAiProvider::Anthropic
-        } else if lower.contains("openai") || lower.contains("azure") {
+        } else if lower.contains("azure") {
+            GenAiProvider::AzureAiOpenAi
+        } else if lower.contains("openai") {
             GenAiProvider::OpenAi
         } else if lower.contains("bedrock") {
             GenAiProvider::AwsBedrock
@@ -206,6 +208,7 @@ mod tests {
     fn from_provider_str() {
         assert_eq!(GenAiProvider::from_provider_str("Anthropic"), GenAiProvider::Anthropic);
         assert_eq!(GenAiProvider::from_provider_str("OpenAI"), GenAiProvider::OpenAi);
-        assert_eq!(GenAiProvider::from_provider_str("unknown-llm"), GenAiProvider::Unknown("unknown-llm".into()));
+        assert_eq!(GenAiProvider::from_provider_str("AzureOpenAI"), GenAiProvider::AzureAiOpenAi);
+        assert_eq!(GenAiProvider::from_provider_str("MyCustomLLM"), GenAiProvider::Unknown("mycustomllm".into()));
     }
 }
