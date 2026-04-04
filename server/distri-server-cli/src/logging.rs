@@ -41,7 +41,48 @@ pub fn init_logging(level: &str) {
         .with_ansi(true) // Enable colors
         .with_timer(tracing_subscriber::fmt::time::time());
 
-    tracing_subscriber::registry()
-        .with(fmt_layer.with_filter(filter).with_filter(crate_filter))
-        .init();
+    let registry = tracing_subscriber::registry()
+        .with(fmt_layer.with_filter(filter).with_filter(crate_filter));
+
+    #[cfg(feature = "otel")]
+    let registry = registry.with(init_otel_layer());
+
+    registry.init();
+}
+
+/// Initialize an OpenTelemetry tracing layer that exports spans via OTLP.
+///
+/// Configure the endpoint with `OTEL_EXPORTER_OTLP_ENDPOINT` env var (default: `http://localhost:4317`).
+/// Compatible with Jaeger, Langfuse, SigNoz, and any OTLP-compatible backend.
+#[cfg(feature = "otel")]
+fn init_otel_layer(
+) -> tracing_opentelemetry::OpenTelemetryLayer<
+    tracing_subscriber::Registry,
+    opentelemetry_sdk::trace::SdkTracer,
+> {
+    use opentelemetry::global;
+    use opentelemetry_otlp::{SpanExporter, WithExportConfig};
+    use opentelemetry_sdk::{
+        propagation::TraceContextPropagator, trace::SdkTracerProvider, Resource,
+    };
+
+    let endpoint = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
+        .unwrap_or_else(|_| "http://localhost:4317".to_string());
+
+    let exporter = SpanExporter::builder()
+        .with_tonic()
+        .with_endpoint(&endpoint)
+        .build()
+        .expect("Failed to create OTLP span exporter");
+
+    let provider = SdkTracerProvider::builder()
+        .with_resource(Resource::builder().with_service_name("distri-server").build())
+        .with_batch_exporter(exporter)
+        .build();
+
+    global::set_text_map_propagator(TraceContextPropagator::new());
+    let tracer = provider.tracer("distri-server");
+    global::set_tracer_provider(provider);
+
+    tracing_opentelemetry::layer().with_tracer(tracer)
 }

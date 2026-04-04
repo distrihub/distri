@@ -277,7 +277,7 @@ impl OpenAIResponsesClient {
     pub async fn create_response(
         &self,
         request: &CreateResponseRequest,
-    ) -> Result<CreateResponseResponse, crate::AgentError> {
+    ) -> Result<CreateResponseResponse, distri_types::AgentError> {
         let url = format!("{}/responses", self.base_url.trim_end_matches('/'));
         let headers = self.build_headers();
 
@@ -295,14 +295,14 @@ impl OpenAIResponsesClient {
             .send()
             .await
             .map_err(|e| {
-                crate::AgentError::LLMError(format!("OpenAI Responses API request failed: {}", e))
+                distri_types::AgentError::LLMError(format!("OpenAI Responses API request failed: {}", e))
             })?;
 
         let status = response.status();
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
             tracing::error!("OpenAI Responses API error ({}): {}", status, body);
-            return Err(crate::AgentError::LLMError(format!(
+            return Err(distri_types::AgentError::LLMError(format!(
                 "OpenAI Responses API error ({}): {}",
                 status, body
             )));
@@ -311,7 +311,7 @@ impl OpenAIResponsesClient {
         let body = response
             .text()
             .await
-            .map_err(|e| crate::AgentError::LLMError(format!("Failed to read response: {}", e)))?;
+            .map_err(|e| distri_types::AgentError::LLMError(format!("Failed to read response: {}", e)))?;
 
         serde_json::from_str(&body).map_err(|e| {
             tracing::error!(
@@ -319,7 +319,7 @@ impl OpenAIResponsesClient {
                 e,
                 &body[..body.len().min(500)]
             );
-            crate::AgentError::LLMError(format!("Failed to parse response: {}", e))
+            distri_types::AgentError::LLMError(format!("Failed to parse response: {}", e))
         })
     }
 
@@ -328,8 +328,8 @@ impl OpenAIResponsesClient {
         &self,
         request: &CreateResponseRequest,
     ) -> Result<
-        Pin<Box<dyn Stream<Item = Result<TypedStreamEvent, crate::AgentError>> + Send>>,
-        crate::AgentError,
+        Pin<Box<dyn Stream<Item = Result<TypedStreamEvent, distri_types::AgentError>> + Send>>,
+        distri_types::AgentError,
     > {
         let url = format!("{}/responses", self.base_url.trim_end_matches('/'));
         let headers = self.build_headers();
@@ -351,7 +351,7 @@ impl OpenAIResponsesClient {
             .send()
             .await
             .map_err(|e| {
-                crate::AgentError::LLMError(format!(
+                distri_types::AgentError::LLMError(format!(
                     "OpenAI Responses stream request failed: {}",
                     e
                 ))
@@ -361,7 +361,7 @@ impl OpenAIResponsesClient {
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
             tracing::error!("OpenAI Responses API stream error ({}): {}", status, body);
-            return Err(crate::AgentError::LLMError(format!(
+            return Err(distri_types::AgentError::LLMError(format!(
                 "OpenAI Responses API error ({}): {}",
                 status, body
             )));
@@ -373,7 +373,7 @@ impl OpenAIResponsesClient {
     /// Parse SSE stream from the HTTP response into typed events
     fn parse_sse_stream(
         response: reqwest::Response,
-    ) -> Pin<Box<dyn Stream<Item = Result<TypedStreamEvent, crate::AgentError>> + Send>> {
+    ) -> Pin<Box<dyn Stream<Item = Result<TypedStreamEvent, distri_types::AgentError>> + Send>> {
         use futures::StreamExt;
 
         let byte_stream = response.bytes_stream();
@@ -389,7 +389,7 @@ impl OpenAIResponsesClient {
                 let chunk = match chunk_result {
                     Ok(c) => c,
                     Err(e) => {
-                        yield Err(crate::AgentError::LLMError(format!("Stream read error: {}", e)));
+                        yield Err(distri_types::AgentError::LLMError(format!("Stream read error: {}", e)));
                         return;
                     }
                 };
