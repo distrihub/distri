@@ -4,6 +4,9 @@ version = "0.3.7"
 edition = "2021"
 description = "LLM gateway — unified provider definitions, TTS synthesis, STT transcription, and LLM client abstractions for OpenAI, Anthropic, Azure, ElevenLabs"
 
+[dev-dependencies]
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
 [dependencies]
 distri-types = { path = "../../distri-types", version = "0.3.7" }
 async-openai = { version = "0.32.2", features = [
