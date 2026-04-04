@@ -162,22 +162,17 @@ impl LLMExecutor {
             .llm_def
             .ms()
             .map_err(AgentError::InvalidConfiguration)?;
-        let provider_name = format!("{:?}", ms.inner.provider);
-        let span = llm_gateway::observability::create_llm_span(
-            &ms.model,
-            &provider_name,
-            "chat",
-            Some(self.context.thread_id.as_str()),
-            self.context.workspace_id.as_deref(),
-            Some(self.context.task_id.as_str()),
-        );
-        let _guard = span.enter();
-        llm_gateway::observability::record_llm_request(
-            &span,
-            ms.inner.temperature,
-            ms.inner.max_tokens,
-            false,
-        );
+        let ctx_fields = llm_gateway::observability::ContextFields {
+            thread_id: &self.context.thread_id,
+            task_id: &self.context.task_id,
+            run_id: &self.context.run_id,
+            agent_id: &self.context.agent_id,
+            user_id: &self.context.user_id,
+            workspace_id: self.context.workspace_id.as_deref(),
+            channel_id: self.context.channel_id.as_deref(),
+        };
+        let inf_attrs = llm_gateway::observability::GenAiInferenceSpan::from_model_settings(&ms, &ctx_fields);
+        let span = llm_gateway::observability::builder::inference_span(&inf_attrs);
         let start = std::time::Instant::now();
 
         tracing::debug!("Executing LLM call with {} messages", messages.len());
@@ -222,6 +217,7 @@ impl LLMExecutor {
         );
 
         tracing::debug!("Sending chat completion request");
+        use tracing::Instrument as _;
         let response = completion(
             &self.llm_def,
             request,
@@ -229,6 +225,7 @@ impl LLMExecutor {
             self.additional_headers.clone(),
             self.label.clone(),
         )
+        .instrument(span.clone())
         .await
         .map_err(|e| {
             tracing::error!("LLM request failed: {}", e);
@@ -346,14 +343,21 @@ impl LLMExecutor {
             .await;
 
         let elapsed = start.elapsed().as_millis() as u64;
-        let tool_names: Vec<&str> = tool_calls.iter().map(|t| t.tool_name.as_str()).collect();
-        llm_gateway::observability::record_llm_response(
+        let (inp, out) = usage.as_ref()
+            .map(|u| (u.input_tokens, u.output_tokens))
+            .unwrap_or((0, 0));
+        let cost = crate::agent::pricing::estimate_cost(&ms.model, inp, out, 0);
+        llm_gateway::observability::recorder::record_inference_response(
             &span,
-            usage.as_ref(),
-            &format!("{:?}", finish_reason),
+            Some(ms.model.as_str()),
+            None,
+            &[format!("{:?}", finish_reason)],
+            if inp > 0 { Some(inp as i64) } else { None },
+            if out > 0 { Some(out as i64) } else { None },
+            None,
+            None,
             elapsed,
-            tool_calls.len(),
-            &tool_names.join(","),
+            cost,
         );
 
         Ok(LLMResponse {
@@ -374,22 +378,17 @@ impl LLMExecutor {
             .llm_def
             .ms()
             .map_err(AgentError::InvalidConfiguration)?;
-        let provider_name = format!("{:?}", ms.inner.provider);
-        let span = llm_gateway::observability::create_llm_span(
-            &ms.model,
-            &provider_name,
-            "chat",
-            Some(self.context.thread_id.as_str()),
-            self.context.workspace_id.as_deref(),
-            Some(self.context.task_id.as_str()),
-        );
-        let _guard = span.enter();
-        llm_gateway::observability::record_llm_request(
-            &span,
-            ms.inner.temperature,
-            ms.inner.max_tokens,
-            true,
-        );
+        let ctx_fields = llm_gateway::observability::ContextFields {
+            thread_id: &self.context.thread_id,
+            task_id: &self.context.task_id,
+            run_id: &self.context.run_id,
+            agent_id: &self.context.agent_id,
+            user_id: &self.context.user_id,
+            workspace_id: self.context.workspace_id.as_deref(),
+            channel_id: self.context.channel_id.as_deref(),
+        };
+        let inf_attrs = llm_gateway::observability::GenAiInferenceSpan::from_model_settings(&ms, &ctx_fields);
+        let span = llm_gateway::observability::builder::inference_span(&inf_attrs);
         let start = std::time::Instant::now();
 
         tracing::debug!(
@@ -445,6 +444,7 @@ impl LLMExecutor {
 
         tracing::debug!("Sending streaming chat completion request");
 
+        use tracing::Instrument as _;
         let stream = completion_stream(
             &self.llm_def,
             request,
@@ -452,6 +452,7 @@ impl LLMExecutor {
             self.additional_headers.clone(),
             self.label.clone(),
         )
+        .instrument(span.clone())
         .await;
 
         // If stream creation fails, emit error event and return
@@ -714,14 +715,18 @@ impl LLMExecutor {
         } else {
             async_openai::types::chat::FinishReason::Stop
         };
-        let tool_names: Vec<&str> = tool_calls.iter().map(|t| t.tool_name.as_str()).collect();
-        llm_gateway::observability::record_llm_response(
+        let cost = crate::agent::pricing::estimate_cost(&ms.model, stream_input_tokens, stream_output_tokens, 0);
+        llm_gateway::observability::recorder::record_inference_response(
             &span,
+            Some(ms.model.as_str()),
             None,
-            &format!("{:?}", finish_reason),
+            &[format!("{:?}", finish_reason)],
+            if stream_input_tokens > 0 { Some(stream_input_tokens as i64) } else { None },
+            if stream_output_tokens > 0 { Some(stream_output_tokens as i64) } else { None },
+            None,
+            None,
             elapsed,
-            tool_calls.len(),
-            &tool_names.join(","),
+            cost,
         );
         Ok(StreamResult {
             finish_reason,

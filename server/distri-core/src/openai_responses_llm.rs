@@ -357,22 +357,17 @@ impl OpenAIResponsesLLMExecutor {
             .llm_def
             .ms()
             .map_err(AgentError::InvalidConfiguration)?;
-        let provider_name = format!("{:?}", ms.inner.provider);
-        let span = llm_gateway::observability::create_llm_span(
-            &ms.model,
-            &provider_name,
-            "responses",
-            Some(self.context.thread_id.as_str()),
-            self.context.workspace_id.as_deref(),
-            Some(self.context.task_id.as_str()),
-        );
-        let _guard = span.enter();
-        llm_gateway::observability::record_llm_request(
-            &span,
-            ms.inner.temperature,
-            ms.inner.max_tokens,
-            false,
-        );
+        let ctx_fields = llm_gateway::observability::ContextFields {
+            thread_id: &self.context.thread_id,
+            task_id: &self.context.task_id,
+            run_id: &self.context.run_id,
+            agent_id: &self.context.agent_id,
+            user_id: &self.context.user_id,
+            workspace_id: self.context.workspace_id.as_deref(),
+            channel_id: self.context.channel_id.as_deref(),
+        };
+        let inf_attrs = llm_gateway::observability::GenAiInferenceSpan::from_model_settings(&ms, &ctx_fields);
+        let span = llm_gateway::observability::builder::inference_span(&inf_attrs);
         let start = std::time::Instant::now();
 
         tracing::info!(
@@ -420,7 +415,8 @@ impl OpenAIResponsesLLMExecutor {
         };
 
         let client = self.build_client().await?;
-        let response = client.create_response(&request).await?;
+        use tracing::Instrument as _;
+        let response = client.create_response(&request).instrument(span.clone()).await?;
 
         let input_tokens = response.usage.input_tokens;
         let output_tokens = response.usage.output_tokens;
@@ -503,14 +499,18 @@ impl OpenAIResponsesLLMExecutor {
         };
 
         let elapsed = start.elapsed().as_millis() as u64;
-        let tool_names: Vec<&str> = tool_calls.iter().map(|t| t.tool_name.as_str()).collect();
-        llm_gateway::observability::record_llm_response(
+        let cost = crate::agent::pricing::estimate_cost(&ms.model, input_tokens, output_tokens, 0);
+        llm_gateway::observability::recorder::record_inference_response(
             &span,
-            usage.as_ref(),
-            &format!("{:?}", finish_reason),
+            Some(ms.model.as_str()),
+            None,
+            &[format!("{:?}", finish_reason)],
+            if input_tokens > 0 { Some(input_tokens as i64) } else { None },
+            if output_tokens > 0 { Some(output_tokens as i64) } else { None },
+            None,
+            None,
             elapsed,
-            tool_calls.len(),
-            &tool_names.join(","),
+            cost,
         );
 
         Ok(super::llm::LLMResponse {
@@ -570,22 +570,17 @@ impl OpenAIResponsesLLMExecutor {
             .llm_def
             .ms()
             .map_err(AgentError::InvalidConfiguration)?;
-        let provider_name = format!("{:?}", ms.inner.provider);
-        let span = llm_gateway::observability::create_llm_span(
-            &ms.model,
-            &provider_name,
-            "responses",
-            Some(self.context.thread_id.as_str()),
-            self.context.workspace_id.as_deref(),
-            Some(self.context.task_id.as_str()),
-        );
-        let _guard = span.enter();
-        llm_gateway::observability::record_llm_request(
-            &span,
-            ms.inner.temperature,
-            ms.inner.max_tokens,
-            true,
-        );
+        let ctx_fields = llm_gateway::observability::ContextFields {
+            thread_id: &self.context.thread_id,
+            task_id: &self.context.task_id,
+            run_id: &self.context.run_id,
+            agent_id: &self.context.agent_id,
+            user_id: &self.context.user_id,
+            workspace_id: self.context.workspace_id.as_deref(),
+            channel_id: self.context.channel_id.as_deref(),
+        };
+        let inf_attrs = llm_gateway::observability::GenAiInferenceSpan::from_model_settings(&ms, &ctx_fields);
+        let span = llm_gateway::observability::builder::inference_span(&inf_attrs);
         let start = std::time::Instant::now();
 
         tracing::info!(
@@ -634,7 +629,8 @@ impl OpenAIResponsesLLMExecutor {
         };
 
         let client = self.build_client().await?;
-        let stream = match client.create_response_stream(&request).await {
+        use tracing::Instrument as _;
+        let stream = match client.create_response_stream(&request).instrument(span.clone()).await {
             Ok(s) => s,
             Err(e) => {
                 let error_msg = format!("OpenAI Responses stream request failed: {}", e);
@@ -665,6 +661,8 @@ impl OpenAIResponsesLLMExecutor {
             arguments: String,
         }
         let mut partial_function_calls: HashMap<usize, PartialFunctionCall> = HashMap::new();
+        let mut stream_input_tokens: u32 = 0;
+        let mut stream_output_tokens: u32 = 0;
 
         tokio::pin!(stream);
 
@@ -673,6 +671,7 @@ impl OpenAIResponsesLLMExecutor {
                 Ok(event) => match event {
                     TypedStreamEvent::ResponseCreated(resp) => {
                         if resp.usage.input_tokens > 0 {
+                            stream_input_tokens += resp.usage.input_tokens;
                             self.context
                                 .increment_usage(resp.usage.input_tokens, 0)
                                 .await;
@@ -680,6 +679,7 @@ impl OpenAIResponsesLLMExecutor {
                     }
                     TypedStreamEvent::ResponseCompleted(resp) => {
                         if resp.usage.output_tokens > 0 {
+                            stream_output_tokens += resp.usage.output_tokens;
                             self.context
                                 .increment_usage(0, resp.usage.output_tokens)
                                 .await;
@@ -900,14 +900,18 @@ impl OpenAIResponsesLLMExecutor {
         };
 
         let elapsed = start.elapsed().as_millis() as u64;
-        let tool_names: Vec<&str> = tool_calls.iter().map(|t| t.tool_name.as_str()).collect();
-        llm_gateway::observability::record_llm_response(
+        let cost = crate::agent::pricing::estimate_cost(&ms.model, stream_input_tokens, stream_output_tokens, 0);
+        llm_gateway::observability::recorder::record_inference_response(
             &span,
+            Some(ms.model.as_str()),
             None,
-            &format!("{:?}", finish_reason),
+            &[format!("{:?}", finish_reason)],
+            if stream_input_tokens > 0 { Some(stream_input_tokens as i64) } else { None },
+            if stream_output_tokens > 0 { Some(stream_output_tokens as i64) } else { None },
+            None,
+            None,
             elapsed,
-            tool_calls.len(),
-            &tool_names.join(","),
+            cost,
         );
 
         Ok(super::llm::StreamResult {
