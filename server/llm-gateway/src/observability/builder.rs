@@ -164,6 +164,7 @@ pub fn tool_span(attrs: &GenAiToolSpan) -> tracing::Span {
         "gen_ai.tool.type" = tool_type,
         "gen_ai.tool.call.id" = tracing::field::Empty,
         "gen_ai.tool.description" = tracing::field::Empty,
+        "gen_ai.tool.call.arguments" = tracing::field::Empty,
         // gen_ai.tool.success is filled by recorder::record_tool_result() after execution completes
         "gen_ai.tool.success" = tracing::field::Empty,
         "distri.thread_id" = tracing::field::Empty,
@@ -181,6 +182,9 @@ pub fn tool_span(attrs: &GenAiToolSpan) -> tracing::Span {
     }
     if let Some(v) = &attrs.tool_description {
         span.record("gen_ai.tool.description", v.as_str());
+    }
+    if let Some(v) = &attrs.tool_input {
+        span.record("gen_ai.tool.call.arguments", v.as_str());
     }
     if let Some(v) = &attrs.distri_thread_id {
         span.record("distri.thread_id", v.as_str());

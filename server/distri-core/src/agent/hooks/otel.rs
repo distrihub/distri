@@ -73,7 +73,7 @@ impl AgentHooks for OtelHooks {
                 tool_call_id,
                 tool_call_name,
                 step_id,
-                ..
+                input,
             } => {
                 let ctx_fields = ContextFields {
                     thread_id: &event.thread_id,
@@ -84,12 +84,22 @@ impl AgentHooks for OtelHooks {
                     workspace_id: event.workspace_id.as_deref(),
                     channel_id: event.channel_id.as_deref(),
                 };
-                let attrs = GenAiToolSpan::from_event_fields(
+                // Serialize input arguments, truncate to 2000 chars to avoid huge spans
+                let input_str = serde_json::to_string(input).unwrap_or_default();
+                let tool_input = if input_str.is_empty() || input_str == "null" {
+                    None
+                } else if input_str.len() > 2000 {
+                    Some(format!("{}…", &input_str[..2000]))
+                } else {
+                    Some(input_str)
+                };
+                let mut attrs = GenAiToolSpan::from_event_fields(
                     tool_call_name,
                     tool_call_id,
                     step_id,
                     &ctx_fields,
                 );
+                attrs.tool_input = tool_input;
                 // NOTE: tool_span() inherits whatever span is current on this async task as parent.
                 // This is correct only when on_event() is called from within the agent span's
                 // instrument() future. Task 9 must verify that StandardAgent instruments before

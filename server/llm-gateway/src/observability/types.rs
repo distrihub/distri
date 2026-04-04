@@ -115,6 +115,7 @@ pub struct GenAiToolSpan {
     pub tool_type: Option<GenAiToolType>,
     pub tool_call_id: Option<String>,
     pub tool_description: Option<String>,
+    pub tool_input: Option<String>,
     pub success: Option<bool>,
     pub distri_thread_id: Option<String>,
     pub distri_workspace_id: Option<String>,
