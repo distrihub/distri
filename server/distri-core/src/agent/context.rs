@@ -379,8 +379,13 @@ impl ExecutorContext {
             let _ = tx.send(event.clone()).await;
         }
 
-        // Call on_event on all registered hooks
+        // Call on_event on system hooks first, then named hooks
         if let Some(orchestrator) = &self.orchestrator {
+            for hook in &orchestrator.system_hooks {
+                if let Err(e) = hook.on_event(&event).await {
+                    tracing::warn!("System hook on_event failed: {}", e);
+                }
+            }
             let hooks = orchestrator.hooks.read().await;
             for hook in hooks.values() {
                 if let Err(e) = hook.on_event(&event).await {
