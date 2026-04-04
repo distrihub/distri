@@ -53,6 +53,7 @@ pub struct AgentOrchestrator {
     pub hooks: Arc<RwLock<HashMap<String, Arc<dyn crate::agent::types::AgentHooks>>>>,
     pub inline_hooks: Arc<dashmap::DashMap<String, tokio::sync::oneshot::Sender<HookMutation>>>,
     pub hook_registry: HookRegistry,
+    pub system_hooks: Vec<Arc<dyn crate::agent::types::AgentHooks>>,
 }
 
 impl std::fmt::Debug for AgentOrchestrator {
@@ -82,6 +83,7 @@ pub struct AgentOrchestratorBuilder {
     store_config: Option<StoreConfig>,
     configuration: Option<Arc<RwLock<DistriServerConfig>>>,
     hooks: Option<HashMap<String, Arc<dyn crate::agent::types::AgentHooks>>>,
+    system_hooks: Vec<Arc<dyn crate::agent::types::AgentHooks>>,
 }
 
 impl AgentOrchestratorBuilder {
@@ -167,6 +169,14 @@ impl AgentOrchestratorBuilder {
         self
     }
 
+    pub fn with_system_hooks(
+        mut self,
+        hooks: Vec<Arc<dyn crate::agent::types::AgentHooks>>,
+    ) -> Self {
+        self.system_hooks = hooks;
+        self
+    }
+
     pub async fn build(self) -> anyhow::Result<AgentOrchestrator> {
         let (coordinator_tx, coordinator_rx) = mpsc::channel(10000);
         let browser_config = self.browser_config.unwrap_or_default();
@@ -237,6 +247,7 @@ impl AgentOrchestratorBuilder {
             store_config,
             stores,
             configuration,
+            system_hooks: self.system_hooks,
             hooks: hooks.clone(),
             inline_hooks: Arc::new(dashmap::DashMap::new()),
             hook_registry: HookRegistry::new(),
@@ -729,7 +740,9 @@ impl AgentOrchestrator {
 
                 let hook_impl: Arc<dyn crate::agent::types::AgentHooks> = {
                     let hook_map = self.hooks.read().await;
-                    let mut hooks = Vec::new();
+                    let mut hooks: Vec<Arc<dyn crate::agent::types::AgentHooks>> =
+                        self.system_hooks.clone(); // system hooks always run first
+
                     for hook_name in &definition.hooks {
                         if let Some(hook) = hook_map.get(hook_name) {
                             hooks.push(hook.clone());
