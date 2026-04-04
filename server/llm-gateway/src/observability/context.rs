@@ -3,10 +3,10 @@
 //! `ContextFields` is a borrowed view of ExecutorContext fields, allowing llm-gateway
 //! to build span structs without depending on distri-core's ExecutorContext directly.
 
-use distri_types::ModelSettings;
 use crate::observability::types::{
     GenAiAgentSpan, GenAiInferenceSpan, GenAiOperation, GenAiProvider, GenAiToolSpan, GenAiToolType,
 };
+use distri_types::ModelSettings;
 
 /// Lightweight borrowed view of ExecutorContext fields needed for span creation.
 /// Callers (in distri-core) extract these fields and pass them here, avoiding
@@ -24,7 +24,11 @@ pub struct ContextFields<'a> {
 impl GenAiInferenceSpan {
     /// Build from ModelSettings + context fields.
     /// `provider_str` is the raw `format!("{:?}", ms.inner.provider)` string.
-    pub fn from_model_settings(ms: &ModelSettings, provider_str: &str, ctx: &ContextFields<'_>) -> Self {
+    pub fn from_model_settings(
+        ms: &ModelSettings,
+        provider_str: &str,
+        ctx: &ContextFields<'_>,
+    ) -> Self {
         Self {
             operation: Some(GenAiOperation::Chat),
             provider: Some(GenAiProvider::from_provider_str(provider_str)),
@@ -106,7 +110,7 @@ mod tests {
     }
 
     #[test]
-    fn inference_span_from_model_settings() {
+    fn agent_span_from_context_fields() {
         // ModelSettings is from distri-types; create a minimal one
         // We need to check what ModelSettings looks like — it may not have a simple constructor.
         // If ModelSettings construction is complex, just test ContextFields and the other two impls.

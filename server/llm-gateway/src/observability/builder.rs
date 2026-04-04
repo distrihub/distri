@@ -11,7 +11,6 @@ pub fn inference_span(attrs: &GenAiInferenceSpan) -> tracing::Span {
     let name = attrs.span_name();
     let op = attrs.operation.as_ref().map(|o| o.as_str()).unwrap_or("chat");
     let provider = attrs.provider.as_ref().map(|p| p.as_str()).unwrap_or("");
-    let model = attrs.request_model.as_deref().unwrap_or("");
 
     // tracing::info_span! requires a string literal for the span name, but we need a
     // dynamic name. We use the `otel.name` field which tracing-opentelemetry uses
@@ -21,8 +20,8 @@ pub fn inference_span(attrs: &GenAiInferenceSpan) -> tracing::Span {
         "gen_ai.chat",
         "otel.name" = name,
         "gen_ai.operation.name" = op,
-        "gen_ai.provider.name" = provider,
-        "gen_ai.request.model" = model,
+        "gen_ai.provider.name" = tracing::field::Empty,
+        "gen_ai.request.model" = tracing::field::Empty,
         "gen_ai.request.temperature" = tracing::field::Empty,
         "gen_ai.request.max_tokens" = tracing::field::Empty,
         "gen_ai.request.top_p" = tracing::field::Empty,
@@ -33,19 +32,25 @@ pub fn inference_span(attrs: &GenAiInferenceSpan) -> tracing::Span {
         "gen_ai.usage.output_tokens" = tracing::field::Empty,
         "gen_ai.usage.cache_read.input_tokens" = tracing::field::Empty,
         "gen_ai.usage.cache_creation.input_tokens" = tracing::field::Empty,
-        "gen_ai.conversation.id" = attrs.conversation_id.as_deref().unwrap_or(""),
+        "gen_ai.conversation.id" = tracing::field::Empty,
         "distri.estimated_cost_usd" = tracing::field::Empty,
-        "distri.thread_id" = attrs.distri_thread_id.as_deref().unwrap_or(""),
-        "distri.workspace_id" = attrs.distri_workspace_id.as_deref().unwrap_or(""),
-        "distri.task_id" = attrs.distri_task_id.as_deref().unwrap_or(""),
-        "distri.run_id" = attrs.distri_run_id.as_deref().unwrap_or(""),
-        "distri.agent_id" = attrs.distri_agent_id.as_deref().unwrap_or(""),
-        "distri.user_id" = attrs.distri_user_id.as_deref().unwrap_or(""),
-        "distri.channel_id" = attrs.distri_channel_id.as_deref().unwrap_or(""),
+        "distri.thread_id" = tracing::field::Empty,
+        "distri.workspace_id" = tracing::field::Empty,
+        "distri.task_id" = tracing::field::Empty,
+        "distri.run_id" = tracing::field::Empty,
+        "distri.agent_id" = tracing::field::Empty,
+        "distri.user_id" = tracing::field::Empty,
+        "distri.channel_id" = tracing::field::Empty,
         "llm.duration_ms" = tracing::field::Empty,
     );
 
-    // Record request-time optional fields now (non-Empty)
+    // Record known-at-creation-time optional fields
+    if !provider.is_empty() {
+        span.record("gen_ai.provider.name", provider);
+    }
+    if let Some(m) = &attrs.request_model {
+        span.record("gen_ai.request.model", m.as_str());
+    }
     if let Some(t) = attrs.temperature {
         span.record("gen_ai.request.temperature", t);
     }
@@ -55,6 +60,30 @@ pub fn inference_span(attrs: &GenAiInferenceSpan) -> tracing::Span {
     if let Some(p) = attrs.top_p {
         span.record("gen_ai.request.top_p", p);
     }
+    if let Some(c) = &attrs.conversation_id {
+        span.record("gen_ai.conversation.id", c.as_str());
+    }
+    if let Some(v) = &attrs.distri_thread_id {
+        span.record("distri.thread_id", v.as_str());
+    }
+    if let Some(v) = &attrs.distri_workspace_id {
+        span.record("distri.workspace_id", v.as_str());
+    }
+    if let Some(v) = &attrs.distri_task_id {
+        span.record("distri.task_id", v.as_str());
+    }
+    if let Some(v) = &attrs.distri_run_id {
+        span.record("distri.run_id", v.as_str());
+    }
+    if let Some(v) = &attrs.distri_agent_id {
+        span.record("distri.agent_id", v.as_str());
+    }
+    if let Some(v) = &attrs.distri_user_id {
+        span.record("distri.user_id", v.as_str());
+    }
+    if let Some(v) = &attrs.distri_channel_id {
+        span.record("distri.channel_id", v.as_str());
+    }
 
     span
 }
@@ -62,47 +91,104 @@ pub fn inference_span(attrs: &GenAiInferenceSpan) -> tracing::Span {
 /// Create a tracing span for an agent invocation.
 pub fn agent_span(attrs: &GenAiAgentSpan) -> tracing::Span {
     let name = attrs.span_name();
-    tracing::info_span!(
+    let span = tracing::info_span!(
         target: "gen_ai",
         "gen_ai.invoke_agent",
         "otel.name" = name,
         "gen_ai.operation.name" = "invoke_agent",
-        "gen_ai.agent.id" = attrs.agent_id.as_deref().unwrap_or(""),
+        "gen_ai.agent.id" = tracing::field::Empty,
         "gen_ai.agent.name" = attrs.agent_name.as_str(),
-        "gen_ai.conversation.id" = attrs.conversation_id.as_deref().unwrap_or(""),
-        "gen_ai.agent.parent_id" = attrs.parent_agent_id.as_deref().unwrap_or(""),
+        "gen_ai.conversation.id" = tracing::field::Empty,
+        "gen_ai.agent.parent_id" = tracing::field::Empty,
         "gen_ai.usage.input_tokens" = tracing::field::Empty,
         "gen_ai.usage.output_tokens" = tracing::field::Empty,
         "distri.estimated_cost_usd" = tracing::field::Empty,
-        "distri.thread_id" = attrs.distri_thread_id.as_deref().unwrap_or(""),
-        "distri.workspace_id" = attrs.distri_workspace_id.as_deref().unwrap_or(""),
-        "distri.task_id" = attrs.distri_task_id.as_deref().unwrap_or(""),
-        "distri.run_id" = attrs.distri_run_id.as_deref().unwrap_or(""),
-        "distri.user_id" = attrs.distri_user_id.as_deref().unwrap_or(""),
-        "distri.channel_id" = attrs.distri_channel_id.as_deref().unwrap_or(""),
-    )
+        "distri.thread_id" = tracing::field::Empty,
+        "distri.workspace_id" = tracing::field::Empty,
+        "distri.task_id" = tracing::field::Empty,
+        "distri.run_id" = tracing::field::Empty,
+        "distri.user_id" = tracing::field::Empty,
+        "distri.channel_id" = tracing::field::Empty,
+    );
+
+    // Record known-at-creation-time optional fields
+    if let Some(v) = &attrs.agent_id {
+        span.record("gen_ai.agent.id", v.as_str());
+    }
+    if let Some(v) = &attrs.conversation_id {
+        span.record("gen_ai.conversation.id", v.as_str());
+    }
+    if let Some(v) = &attrs.parent_agent_id {
+        span.record("gen_ai.agent.parent_id", v.as_str());
+    }
+    if let Some(v) = &attrs.distri_thread_id {
+        span.record("distri.thread_id", v.as_str());
+    }
+    if let Some(v) = &attrs.distri_workspace_id {
+        span.record("distri.workspace_id", v.as_str());
+    }
+    if let Some(v) = &attrs.distri_task_id {
+        span.record("distri.task_id", v.as_str());
+    }
+    if let Some(v) = &attrs.distri_run_id {
+        span.record("distri.run_id", v.as_str());
+    }
+    if let Some(v) = &attrs.distri_user_id {
+        span.record("distri.user_id", v.as_str());
+    }
+    if let Some(v) = &attrs.distri_channel_id {
+        span.record("distri.channel_id", v.as_str());
+    }
+
+    span
 }
 
 /// Create a tracing span for a tool execution.
 pub fn tool_span(attrs: &GenAiToolSpan) -> tracing::Span {
     let name = attrs.span_name();
     let tool_type = attrs.tool_type.as_ref().map(|t| t.as_str()).unwrap_or("function");
-    tracing::info_span!(
+    let span = tracing::info_span!(
         target: "gen_ai",
         "gen_ai.execute_tool",
         "otel.name" = name,
         "gen_ai.operation.name" = "execute_tool",
         "gen_ai.tool.name" = attrs.tool_name.as_str(),
         "gen_ai.tool.type" = tool_type,
-        "gen_ai.tool.call.id" = attrs.tool_call_id.as_deref().unwrap_or(""),
-        "gen_ai.tool.description" = attrs.tool_description.as_deref().unwrap_or(""),
+        "gen_ai.tool.call.id" = tracing::field::Empty,
+        "gen_ai.tool.description" = tracing::field::Empty,
+        // gen_ai.tool.success is filled by recorder::record_tool_result() after execution completes
         "gen_ai.tool.success" = tracing::field::Empty,
-        "distri.thread_id" = attrs.distri_thread_id.as_deref().unwrap_or(""),
-        "distri.task_id" = attrs.distri_task_id.as_deref().unwrap_or(""),
-        "distri.step_id" = attrs.distri_step_id.as_deref().unwrap_or(""),
-        "distri.agent_id" = attrs.distri_agent_id.as_deref().unwrap_or(""),
-        "distri.run_id" = attrs.distri_run_id.as_deref().unwrap_or(""),
-    )
+        "distri.thread_id" = tracing::field::Empty,
+        "distri.task_id" = tracing::field::Empty,
+        "distri.step_id" = tracing::field::Empty,
+        "distri.agent_id" = tracing::field::Empty,
+        "distri.run_id" = tracing::field::Empty,
+    );
+
+    // Record known-at-creation-time optional fields
+    if let Some(v) = &attrs.tool_call_id {
+        span.record("gen_ai.tool.call.id", v.as_str());
+    }
+    if let Some(v) = &attrs.tool_description {
+        span.record("gen_ai.tool.description", v.as_str());
+    }
+    if let Some(v) = &attrs.distri_thread_id {
+        span.record("distri.thread_id", v.as_str());
+    }
+    if let Some(v) = &attrs.distri_task_id {
+        span.record("distri.task_id", v.as_str());
+    }
+    if let Some(v) = &attrs.distri_step_id {
+        span.record("distri.step_id", v.as_str());
+    }
+    if let Some(v) = &attrs.distri_agent_id {
+        span.record("distri.agent_id", v.as_str());
+    }
+    if let Some(v) = &attrs.distri_run_id {
+        span.record("distri.run_id", v.as_str());
+    }
+
+    span
 }
 
 #[cfg(test)]
