@@ -21,7 +21,10 @@ pub fn record_inference_response(
         span.record("gen_ai.response.id", id);
     }
     if !finish_reasons.is_empty() {
-        span.record("gen_ai.response.finish_reasons", finish_reasons.join(",").as_str());
+        span.record(
+            "gen_ai.response.finish_reasons",
+            finish_reasons.join(",").as_str(),
+        );
     }
     if let Some(n) = input_tokens {
         span.record("gen_ai.usage.input_tokens", n);
@@ -117,18 +120,7 @@ mod tests {
     fn record_inference_with_none_values() {
         // Should not panic when optional fields are None
         let span = make_span();
-        record_inference_response(
-            &span,
-            None,
-            None,
-            &[],
-            None,
-            None,
-            None,
-            None,
-            100,
-            None,
-        );
+        record_inference_response(&span, None, None, &[], None, None, None, None, 100, None);
     }
 
     #[test]

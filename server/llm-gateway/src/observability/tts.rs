@@ -1,7 +1,12 @@
 //! TTS (text-to-speech) span creation and recording.
 
 /// Create a tracing span for a TTS (text-to-speech) call.
-pub fn create_tts_span(model: &str, provider: &str, voice: &str, audio_format: &str) -> tracing::Span {
+pub fn create_tts_span(
+    model: &str,
+    provider: &str,
+    voice: &str,
+    audio_format: &str,
+) -> tracing::Span {
     tracing::info_span!(
         "gen_ai.tts",
         "gen_ai.provider.name" = provider,

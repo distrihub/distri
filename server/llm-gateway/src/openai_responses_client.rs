@@ -295,7 +295,10 @@ impl OpenAIResponsesClient {
             .send()
             .await
             .map_err(|e| {
-                distri_types::AgentError::LLMError(format!("OpenAI Responses API request failed: {}", e))
+                distri_types::AgentError::LLMError(format!(
+                    "OpenAI Responses API request failed: {}",
+                    e
+                ))
             })?;
 
         let status = response.status();
@@ -308,10 +311,9 @@ impl OpenAIResponsesClient {
             )));
         }
 
-        let body = response
-            .text()
-            .await
-            .map_err(|e| distri_types::AgentError::LLMError(format!("Failed to read response: {}", e)))?;
+        let body = response.text().await.map_err(|e| {
+            distri_types::AgentError::LLMError(format!("Failed to read response: {}", e))
+        })?;
 
         serde_json::from_str(&body).map_err(|e| {
             tracing::error!(
@@ -373,7 +375,8 @@ impl OpenAIResponsesClient {
     /// Parse SSE stream from the HTTP response into typed events
     fn parse_sse_stream(
         response: reqwest::Response,
-    ) -> Pin<Box<dyn Stream<Item = Result<TypedStreamEvent, distri_types::AgentError>> + Send>> {
+    ) -> Pin<Box<dyn Stream<Item = Result<TypedStreamEvent, distri_types::AgentError>> + Send>>
+    {
         use futures::StreamExt;
 
         let byte_stream = response.bytes_stream();

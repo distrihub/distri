@@ -118,7 +118,9 @@ async fn call_azure_openai(
         .trim_end_matches("/openai/v1")
         .trim_end_matches("/openai")
         .trim_end_matches('/');
-    let url = format!("{base}/openai/deployments/{deployment}/audio/speech?api-version=2024-12-01-preview");
+    let url = format!(
+        "{base}/openai/deployments/{deployment}/audio/speech?api-version=2024-12-01-preview"
+    );
 
     let mut body = serde_json::json!({
         "model": req.model,
