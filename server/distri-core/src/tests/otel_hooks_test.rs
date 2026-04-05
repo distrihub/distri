@@ -5,11 +5,7 @@
 
 use std::sync::Arc;
 
-use crate::agent::{
-    context::ExecutorContext,
-    hooks::otel::OtelHooks,
-    types::AgentHooks,
-};
+use crate::agent::{context::ExecutorContext, hooks::otel::OtelHooks, types::AgentHooks};
 use crate::types::Message;
 
 /// RunFinished with usage data should not panic even when agent_spans is empty.

@@ -21,8 +21,8 @@ use crate::{
 use distri_parsers::{StreamParseResult, ToolCallParser};
 use distri_types::{LlmDefinition, ModelProvider, ToolCallFormat};
 use futures::StreamExt;
-use tracing::Instrument as _;
 use serde_json::Value;
+use tracing::Instrument as _;
 
 /// Default max_output_tokens for the Responses API
 const DEFAULT_MAX_OUTPUT_TOKENS: u32 = 8192;
@@ -367,7 +367,8 @@ impl OpenAIResponsesLLMExecutor {
             workspace_id: self.context.workspace_id.as_deref(),
             channel_id: self.context.channel_id.as_deref(),
         };
-        let inf_attrs = llm_gateway::observability::GenAiInferenceSpan::from_model_settings(&ms, &ctx_fields);
+        let inf_attrs =
+            llm_gateway::observability::GenAiInferenceSpan::from_model_settings(&ms, &ctx_fields);
         let span = llm_gateway::observability::builder::inference_span(&inf_attrs);
         let start = std::time::Instant::now();
 
@@ -428,7 +429,10 @@ impl OpenAIResponsesLLMExecutor {
                     Some(ms.model.as_str()),
                     None,
                     &["error".to_string()],
-                    None, None, None, None,
+                    None,
+                    None,
+                    None,
+                    None,
                     elapsed,
                     None,
                 );
@@ -522,8 +526,16 @@ impl OpenAIResponsesLLMExecutor {
             Some(ms.model.as_str()),
             None,
             &[format!("{:?}", finish_reason)],
-            if input_tokens > 0 { Some(input_tokens as i64) } else { None },
-            if output_tokens > 0 { Some(output_tokens as i64) } else { None },
+            if input_tokens > 0 {
+                Some(input_tokens as i64)
+            } else {
+                None
+            },
+            if output_tokens > 0 {
+                Some(output_tokens as i64)
+            } else {
+                None
+            },
             None,
             None,
             elapsed,
@@ -596,7 +608,8 @@ impl OpenAIResponsesLLMExecutor {
             workspace_id: self.context.workspace_id.as_deref(),
             channel_id: self.context.channel_id.as_deref(),
         };
-        let inf_attrs = llm_gateway::observability::GenAiInferenceSpan::from_model_settings(&ms, &ctx_fields);
+        let inf_attrs =
+            llm_gateway::observability::GenAiInferenceSpan::from_model_settings(&ms, &ctx_fields);
         let span = llm_gateway::observability::builder::inference_span(&inf_attrs);
         let start = std::time::Instant::now();
 
@@ -646,7 +659,11 @@ impl OpenAIResponsesLLMExecutor {
         };
 
         let client = self.build_client().await?;
-        let stream = match client.create_response_stream(&request).instrument(span.clone()).await {
+        let stream = match client
+            .create_response_stream(&request)
+            .instrument(span.clone())
+            .await
+        {
             Ok(s) => s,
             Err(e) => {
                 let error_msg = format!("OpenAI Responses stream request failed: {}", e);
@@ -916,14 +933,27 @@ impl OpenAIResponsesLLMExecutor {
         };
 
         let elapsed = start.elapsed().as_millis() as u64;
-        let cost = crate::agent::pricing::estimate_cost(&ms.model, stream_input_tokens, stream_output_tokens, 0);
+        let cost = crate::agent::pricing::estimate_cost(
+            &ms.model,
+            stream_input_tokens,
+            stream_output_tokens,
+            0,
+        );
         llm_gateway::observability::recorder::record_inference_response(
             &span,
             Some(ms.model.as_str()),
             None,
             &[format!("{:?}", finish_reason)],
-            if stream_input_tokens > 0 { Some(stream_input_tokens as i64) } else { None },
-            if stream_output_tokens > 0 { Some(stream_output_tokens as i64) } else { None },
+            if stream_input_tokens > 0 {
+                Some(stream_input_tokens as i64)
+            } else {
+                None
+            },
+            if stream_output_tokens > 0 {
+                Some(stream_output_tokens as i64)
+            } else {
+                None
+            },
             None,
             None,
             elapsed,

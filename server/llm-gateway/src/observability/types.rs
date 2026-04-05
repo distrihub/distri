@@ -210,5 +210,4 @@ mod tests {
         };
         assert_eq!(step.span_name(), "step 3");
     }
-
 }

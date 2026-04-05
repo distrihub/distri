@@ -26,9 +26,9 @@ use async_openai::{
 use distri_parsers::{StreamParseResult, ToolCallParser};
 use distri_types::{LlmDefinition, ToolCallFormat};
 use futures::{Stream, StreamExt};
-use tracing::Instrument as _;
 use serde_json::{Map, Value};
 use tokio::sync::RwLock;
+use tracing::Instrument as _;
 
 #[derive(Debug)]
 pub struct StreamResult {
@@ -172,7 +172,8 @@ impl LLMExecutor {
             workspace_id: self.context.workspace_id.as_deref(),
             channel_id: self.context.channel_id.as_deref(),
         };
-        let inf_attrs = llm_gateway::observability::GenAiInferenceSpan::from_model_settings(&ms, &ctx_fields);
+        let inf_attrs =
+            llm_gateway::observability::GenAiInferenceSpan::from_model_settings(&ms, &ctx_fields);
         let span = llm_gateway::observability::builder::inference_span(&inf_attrs);
         let start = std::time::Instant::now();
 
@@ -235,7 +236,10 @@ impl LLMExecutor {
                 Some(ms.model.as_str()),
                 None,
                 &["error".to_string()],
-                None, None, None, None,
+                None,
+                None,
+                None,
+                None,
                 elapsed,
                 None,
             );
@@ -353,7 +357,8 @@ impl LLMExecutor {
             .await;
 
         let elapsed = start.elapsed().as_millis() as u64;
-        let (inp, out) = usage.as_ref()
+        let (inp, out) = usage
+            .as_ref()
             .map(|u| (u.input_tokens, u.output_tokens))
             .unwrap_or((0, 0));
         let cost = crate::agent::pricing::estimate_cost(&ms.model, inp, out, 0);
@@ -397,7 +402,8 @@ impl LLMExecutor {
             workspace_id: self.context.workspace_id.as_deref(),
             channel_id: self.context.channel_id.as_deref(),
         };
-        let inf_attrs = llm_gateway::observability::GenAiInferenceSpan::from_model_settings(&ms, &ctx_fields);
+        let inf_attrs =
+            llm_gateway::observability::GenAiInferenceSpan::from_model_settings(&ms, &ctx_fields);
         let span = llm_gateway::observability::builder::inference_span(&inf_attrs);
         let start = std::time::Instant::now();
 
@@ -724,14 +730,27 @@ impl LLMExecutor {
         } else {
             async_openai::types::chat::FinishReason::Stop
         };
-        let cost = crate::agent::pricing::estimate_cost(&ms.model, stream_input_tokens, stream_output_tokens, 0);
+        let cost = crate::agent::pricing::estimate_cost(
+            &ms.model,
+            stream_input_tokens,
+            stream_output_tokens,
+            0,
+        );
         llm_gateway::observability::recorder::record_inference_response(
             &span,
             Some(ms.model.as_str()),
             None,
             &[format!("{:?}", finish_reason)],
-            if stream_input_tokens > 0 { Some(stream_input_tokens as i64) } else { None },
-            if stream_output_tokens > 0 { Some(stream_output_tokens as i64) } else { None },
+            if stream_input_tokens > 0 {
+                Some(stream_input_tokens as i64)
+            } else {
+                None
+            },
+            if stream_output_tokens > 0 {
+                Some(stream_output_tokens as i64)
+            } else {
+                None
+            },
             None,
             None,
             elapsed,
