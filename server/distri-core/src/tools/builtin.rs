@@ -465,11 +465,7 @@ impl ExecutorContextTool for AgentTool {
         let use_remote = orchestrator.background_runner.is_some()
             && orchestrator.broadcaster.is_some()
             && {
-                let agent_def = orchestrator
-                    .stores
-                    .agent_store
-                    .get(&self.agent_name)
-                    .await;
+                let agent_def = orchestrator.stores.agent_store.get(&self.agent_name).await;
                 matches!(
                     agent_def,
                     Some(distri_types::configuration::AgentConfig::StandardAgent(ref def)) if def.deepagent
@@ -509,15 +505,9 @@ impl ExecutorContextTool for AgentTool {
                 })?;
 
             // Subscribe to sub-task events, relay to parent event channel
-            let mut stream = broadcaster
-                .subscribe(&sub_task_id)
-                .await
-                .map_err(|e| {
-                    AgentError::ToolExecution(format!(
-                        "Failed to subscribe to deepagent events: {}",
-                        e
-                    ))
-                })?;
+            let mut stream = broadcaster.subscribe(&sub_task_id).await.map_err(|e| {
+                AgentError::ToolExecution(format!("Failed to subscribe to deepagent events: {}", e))
+            })?;
 
             let mut final_result: Option<Value> = None;
 
@@ -559,9 +549,9 @@ impl ExecutorContextTool for AgentTool {
                 }
             }
 
-            Ok(vec![Part::Data(
-                final_result.unwrap_or_else(|| Value::String("Deepagent completed".to_string())),
-            )])
+            Ok(vec![Part::Data(final_result.unwrap_or_else(|| {
+                Value::String("Deepagent completed".to_string())
+            }))])
         } else {
             // Standard in-process path (existing behavior)
             // Create a new task context for the child agent (same thread, new task)

@@ -57,10 +57,7 @@ async fn test_publish_and_subscribe() {
     let ev2 = stream.next().await.unwrap();
     assert!(matches!(
         ev2.event,
-        AgentEventType::RunFinished {
-            success: true,
-            ..
-        }
+        AgentEventType::RunFinished { success: true, .. }
     ));
 }
 

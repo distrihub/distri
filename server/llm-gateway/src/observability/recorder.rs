@@ -41,7 +41,9 @@ struct InferenceOutput<'a> {
 /// raw bytes in the span.
 pub fn record_inference_input(span: &tracing::Span, messages: &[Message]) {
     match serde_json::to_string(messages) {
-        Ok(json) => { span.record("input.value", truncate(&json)); }
+        Ok(json) => {
+            span.record("input.value", truncate(&json));
+        }
         Err(e) => tracing::warn!("Failed to serialize inference input for span: {e}"),
     }
 }
@@ -87,11 +89,7 @@ pub fn record_inference_output(span: &tracing::Span, content: &str, tool_calls: 
 /// - `gen_ai.request.context_window`       — configured window size
 /// - `distri.context.remaining_tokens`     — window − input_tokens
 /// - `distri.context.utilization_pct`      — (input / window) × 100, integer
-pub fn record_context_window(
-    span: &tracing::Span,
-    context_window: u32,
-    input_tokens: u32,
-) {
+pub fn record_context_window(span: &tracing::Span, context_window: u32, input_tokens: u32) {
     if context_window == 0 {
         return;
     }
@@ -152,7 +150,11 @@ pub fn record_inference_response(
 
 /// Convert a raw u32 token count to `Some(i64)` when non-zero, `None` otherwise.
 pub fn nonzero_tokens(n: u32) -> Option<i64> {
-    if n > 0 { Some(n as i64) } else { None }
+    if n > 0 {
+        Some(n as i64)
+    } else {
+        None
+    }
 }
 
 // ─── Tool spans ──────────────────────────────────────────────────────────────
@@ -288,9 +290,15 @@ mod tests {
         // Verify the serialized envelope format directly
         let recorded: Vec<RecordedToolCall> = calls
             .iter()
-            .map(|c| RecordedToolCall { name: &c.tool_name, arguments: &c.input })
+            .map(|c| RecordedToolCall {
+                name: &c.tool_name,
+                arguments: &c.input,
+            })
             .collect();
-        let envelope = InferenceOutput { content: "", tool_calls: recorded };
+        let envelope = InferenceOutput {
+            content: "",
+            tool_calls: recorded,
+        };
         let json = serde_json::to_string_pretty(&envelope).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
 

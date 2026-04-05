@@ -300,9 +300,10 @@ impl A2AHandler {
                                 return Either::Right(JsonRpcResponse {
                                     jsonrpc: "2.0".to_string(),
                                     result: None,
-                                    error: Some(map_agent_error(AgentError::Validation(
-                                        format!("Invalid params: {}", e),
-                                    ))),
+                                    error: Some(map_agent_error(AgentError::Validation(format!(
+                                        "Invalid params: {}",
+                                        e
+                                    )))),
                                     id: req_id.clone(),
                                 });
                             }
@@ -315,9 +316,7 @@ impl A2AHandler {
                         .await;
                         Either::Left(Box::pin(res) as BoxedSseStream)
                     }
-                    None => {
-                        Either::Right(Err(unimplemented_error(&req.method)))
-                    }
+                    None => Either::Right(Err(unimplemented_error(&req.method))),
                 }
             }
             "agent/authenticatedExtendedCard"

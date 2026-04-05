@@ -23,8 +23,5 @@ pub trait AgentEventBroadcaster: Send + Sync + 'static {
     /// Subscribe to events for a task. Returns a stream that yields events
     /// as they are published. The stream closes when the task emits a final event
     /// or the broadcaster is dropped.
-    async fn subscribe(
-        &self,
-        task_id: &str,
-    ) -> anyhow::Result<BoxStream<'static, AgentEvent>>;
+    async fn subscribe(&self, task_id: &str) -> anyhow::Result<BoxStream<'static, AgentEvent>>;
 }

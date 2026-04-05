@@ -161,7 +161,8 @@ impl AgentHooks for OtelHooks {
                 // (ToolExecutionEnd only records success, not remove). Record output here and
                 // then drop the span so it exports with both input and output.
                 for response in results {
-                    if let Some((_, span)) = self.tool_spans.remove(response.tool_call_id.as_str()) {
+                    if let Some((_, span)) = self.tool_spans.remove(response.tool_call_id.as_str())
+                    {
                         // Extract data/text parts as the output value
                         let parts_json: Vec<serde_json::Value> = response
                             .parts
@@ -255,7 +256,10 @@ mod tests {
         base: &distri_types::AgentEvent,
         event: distri_types::AgentEventType,
     ) -> distri_types::AgentEvent {
-        distri_types::AgentEvent { event, ..base.clone() }
+        distri_types::AgentEvent {
+            event,
+            ..base.clone()
+        }
     }
 
     fn base_event() -> distri_types::AgentEvent {
@@ -294,8 +298,14 @@ mod tests {
             ..Default::default()
         };
         hooks.before_execute(&mut msg, ctx.clone()).await.unwrap();
-        assert!(ctx.take_otel_agent_span().is_some(), "agent span should be set");
-        assert!(hooks.agent_spans.contains_key("run-1"), "agent_spans should have run-1");
+        assert!(
+            ctx.take_otel_agent_span().is_some(),
+            "agent span should be set"
+        );
+        assert!(
+            hooks.agent_spans.contains_key("run-1"),
+            "agent_spans should have run-1"
+        );
     }
 
     #[tokio::test]
@@ -316,7 +326,10 @@ mod tests {
             ))
             .await
             .unwrap();
-        assert!(hooks.tool_spans.contains_key("tc-1"), "span created at Start");
+        assert!(
+            hooks.tool_spans.contains_key("tc-1"),
+            "span created at Start"
+        );
 
         // End: success recorded, span kept alive for ToolResults
         hooks
@@ -414,6 +427,9 @@ mod tests {
             ))
             .await
             .unwrap();
-        assert!(!hooks.tool_spans.contains_key("tc-err"), "span removed after ToolResults");
+        assert!(
+            !hooks.tool_spans.contains_key("tc-err"),
+            "span removed after ToolResults"
+        );
     }
 }

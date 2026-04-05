@@ -67,10 +67,7 @@ impl AgentEventBroadcaster for InProcessBroadcaster {
         Ok(())
     }
 
-    async fn subscribe(
-        &self,
-        task_id: &str,
-    ) -> anyhow::Result<BoxStream<'static, AgentEvent>> {
+    async fn subscribe(&self, task_id: &str) -> anyhow::Result<BoxStream<'static, AgentEvent>> {
         // Collect already-logged events for replay
         let replay: Vec<AgentEvent> = self
             .log
