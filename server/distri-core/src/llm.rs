@@ -180,6 +180,9 @@ impl LLMExecutor {
         tracing::debug!("Executing LLM call with {} messages", messages.len());
 
         let sanitized_messages = self.sanitize_messages(messages);
+
+        
+        llm_gateway::observability::recorder::record_inference_input(&span, &sanitized_messages);
         tracing::info!(
             target: "llm.execute",
             "LLM request (non-stream) model={}, provider={:?}, max_tokens={:?}, temperature={:?}, tool_format={:?}, tools={} messages={}",
@@ -362,18 +365,13 @@ impl LLMExecutor {
             .map(|u| (u.input_tokens, u.output_tokens))
             .unwrap_or((0, 0));
         let cost = crate::agent::pricing::estimate_cost(&ms.model, inp, out, 0);
-        llm_gateway::observability::recorder::record_inference_response(
-            &span,
-            Some(ms.model.as_str()),
-            None,
-            &[format!("{:?}", finish_reason)],
-            if inp > 0 { Some(inp as i64) } else { None },
-            if out > 0 { Some(out as i64) } else { None },
-            None,
-            None,
-            elapsed,
-            cost,
-        );
+
+        {
+            use llm_gateway::observability::recorder::{nonzero_tokens, record_context_window, record_inference_output, record_inference_response};
+            record_inference_output(&span, &content, &tool_calls);
+            record_context_window(&span, ms.inner.context_size, inp);
+            record_inference_response(&span, Some(ms.model.as_str()), None, &[format!("{:?}", finish_reason)], nonzero_tokens(inp), nonzero_tokens(out), None, None, elapsed, cost);
+        }
 
         Ok(LLMResponse {
             finish_reason,
@@ -413,6 +411,9 @@ impl LLMExecutor {
         );
 
         let sanitized_messages = self.sanitize_messages(messages);
+
+        
+        llm_gateway::observability::recorder::record_inference_input(&span, &sanitized_messages);
         tracing::info!(
             target: "llm.execute_stream",
             "LLM request (stream) model={}, provider={:?}, max_tokens={:?}, temperature={:?}, tool_format={:?}, tools={} messages={}",
@@ -707,6 +708,11 @@ impl LLMExecutor {
 
         let content = current_content.clone();
 
+        {
+            use llm_gateway::observability::recorder::record_inference_output;
+            record_inference_output(&span, &content, &aggregated_tool_calls);
+        }
+
         // Create and save assistant message for fallback case
         let mut assistant_msg = crate::types::Message::assistant(content.clone(), None);
         // Set agent_id to track which agent generated this message
@@ -736,26 +742,11 @@ impl LLMExecutor {
             stream_output_tokens,
             0,
         );
-        llm_gateway::observability::recorder::record_inference_response(
-            &span,
-            Some(ms.model.as_str()),
-            None,
-            &[format!("{:?}", finish_reason)],
-            if stream_input_tokens > 0 {
-                Some(stream_input_tokens as i64)
-            } else {
-                None
-            },
-            if stream_output_tokens > 0 {
-                Some(stream_output_tokens as i64)
-            } else {
-                None
-            },
-            None,
-            None,
-            elapsed,
-            cost,
-        );
+        {
+            use llm_gateway::observability::recorder::{nonzero_tokens, record_context_window, record_inference_response};
+            record_context_window(&span, ms.inner.context_size, stream_input_tokens);
+            record_inference_response(&span, Some(ms.model.as_str()), None, &[format!("{:?}", finish_reason)], nonzero_tokens(stream_input_tokens), nonzero_tokens(stream_output_tokens), None, None, elapsed, cost);
+        }
         Ok(StreamResult {
             finish_reason,
             tool_calls,

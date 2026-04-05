@@ -548,6 +548,9 @@ impl ClaudeLLMExecutor {
             messages.len()
         );
 
+        
+        llm_gateway::observability::recorder::record_inference_input(&span, messages);
+
         // Validate context size
         let context_manager = crate::agent::context_size_manager::ContextSizeManager::default();
         context_manager.validate_context_size(messages, ms.inner.context_size)?;
@@ -758,34 +761,13 @@ impl ClaudeLLMExecutor {
             output_tokens,
             cached_tokens,
         );
-        llm_gateway::observability::recorder::record_inference_response(
-            &span,
-            Some(ms.model.as_str()),
-            None,
-            &[format!("{:?}", finish_reason)],
-            if input_tokens > 0 {
-                Some(input_tokens as i64)
-            } else {
-                None
-            },
-            if output_tokens > 0 {
-                Some(output_tokens as i64)
-            } else {
-                None
-            },
-            if cached_tokens > 0 {
-                Some(cached_tokens as i64)
-            } else {
-                None
-            },
-            if cache_created > 0 {
-                Some(cache_created as i64)
-            } else {
-                None
-            },
-            elapsed,
-            cost,
-        );
+
+        {
+            use llm_gateway::observability::recorder::{nonzero_tokens, record_context_window, record_inference_output, record_inference_response};
+            record_inference_output(&span, &content, &tool_calls);
+            record_context_window(&span, ms.inner.context_size, input_tokens);
+            record_inference_response(&span, Some(ms.model.as_str()), None, &[format!("{:?}", finish_reason)], nonzero_tokens(input_tokens), nonzero_tokens(output_tokens), nonzero_tokens(cached_tokens), nonzero_tokens(cache_created), elapsed, cost);
+        }
 
         Ok(super::llm::LLMResponse {
             finish_reason,
@@ -827,6 +809,9 @@ impl ClaudeLLMExecutor {
             self.tools.len(),
             messages.len()
         );
+
+        
+        llm_gateway::observability::recorder::record_inference_input(&span, messages);
 
         // Validate context size
         let context_manager = crate::agent::context_size_manager::ContextSizeManager::default();
@@ -1148,34 +1133,13 @@ impl ClaudeLLMExecutor {
             stream_output_tokens,
             stream_cached_tokens,
         );
-        llm_gateway::observability::recorder::record_inference_response(
-            &span,
-            Some(ms.model.as_str()),
-            None,
-            &[format!("{:?}", finish_reason)],
-            if stream_input_tokens > 0 {
-                Some(stream_input_tokens as i64)
-            } else {
-                None
-            },
-            if stream_output_tokens > 0 {
-                Some(stream_output_tokens as i64)
-            } else {
-                None
-            },
-            if stream_cached_tokens > 0 {
-                Some(stream_cached_tokens as i64)
-            } else {
-                None
-            },
-            if stream_cache_created > 0 {
-                Some(stream_cache_created as i64)
-            } else {
-                None
-            },
-            elapsed,
-            cost,
-        );
+
+        {
+            use llm_gateway::observability::recorder::{nonzero_tokens, record_context_window, record_inference_output, record_inference_response};
+            record_inference_output(&span, &content, &tool_calls);
+            record_context_window(&span, ms.inner.context_size, stream_input_tokens);
+            record_inference_response(&span, Some(ms.model.as_str()), None, &[format!("{:?}", finish_reason)], nonzero_tokens(stream_input_tokens), nonzero_tokens(stream_output_tokens), nonzero_tokens(stream_cached_tokens), nonzero_tokens(stream_cache_created), elapsed, cost);
+        }
 
         Ok(super::llm::StreamResult {
             finish_reason,

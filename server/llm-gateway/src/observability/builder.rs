@@ -40,6 +40,9 @@ pub fn inference_span(attrs: &GenAiInferenceSpan) -> tracing::Span {
         "gen_ai.usage.cache_creation.input_tokens" = tracing::field::Empty,
         "gen_ai.conversation.id" = tracing::field::Empty,
         "distri.estimated_cost_usd" = tracing::field::Empty,
+        "gen_ai.usage.cost" = tracing::field::Empty,
+        "input.value" = tracing::field::Empty,
+        "output.value" = tracing::field::Empty,
         "distri.thread_id" = tracing::field::Empty,
         "distri.workspace_id" = tracing::field::Empty,
         "distri.task_id" = tracing::field::Empty,
@@ -48,6 +51,9 @@ pub fn inference_span(attrs: &GenAiInferenceSpan) -> tracing::Span {
         "distri.user_id" = tracing::field::Empty,
         "distri.channel_id" = tracing::field::Empty,
         "llm.duration_ms" = tracing::field::Empty,
+        "gen_ai.request.context_window" = tracing::field::Empty,
+        "distri.context.remaining_tokens" = tracing::field::Empty,
+        "distri.context.utilization_pct" = tracing::field::Empty,
     );
 
     // Record known-at-creation-time optional fields
@@ -108,6 +114,7 @@ pub fn agent_span(attrs: &GenAiAgentSpan) -> tracing::Span {
         "gen_ai.agent.parent_id" = tracing::field::Empty,
         "gen_ai.usage.input_tokens" = tracing::field::Empty,
         "gen_ai.usage.output_tokens" = tracing::field::Empty,
+        "gen_ai.usage.cost" = tracing::field::Empty,
         "distri.estimated_cost_usd" = tracing::field::Empty,
         "distri.thread_id" = tracing::field::Empty,
         "distri.workspace_id" = tracing::field::Empty,
@@ -256,6 +263,7 @@ pub fn tool_span(attrs: &GenAiToolSpan) -> tracing::Span {
         "gen_ai.tool.call.id" = tracing::field::Empty,
         "gen_ai.tool.description" = tracing::field::Empty,
         "gen_ai.tool.call.arguments" = tracing::field::Empty,
+        "output.value" = tracing::field::Empty,
         // gen_ai.tool.success is filled by recorder::record_tool_result() after execution completes
         "gen_ai.tool.success" = tracing::field::Empty,
         "distri.thread_id" = tracing::field::Empty,

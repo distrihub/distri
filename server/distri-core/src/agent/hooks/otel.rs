@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use dashmap::DashMap;
-use distri_types::AgentEventType;
+use distri_types::{AgentEventType, Part};
 
 use crate::{
     agent::{
@@ -129,14 +129,14 @@ impl AgentHooks for OtelHooks {
                     workspace_id: event.workspace_id.as_deref(),
                     channel_id: event.channel_id.as_deref(),
                 };
-                // Serialize input arguments, truncate to 2000 chars to avoid huge spans
+                // Serialize input arguments, truncate to 10KB to avoid huge spans
                 let input_str = serde_json::to_string(input).unwrap_or_default();
-                let tool_input = if input_str.is_empty() || input_str == "null" {
+                let tool_input_truncated = if input_str.is_empty() || input_str == "null" {
                     None
-                } else if input_str.len() > 2000 {
-                    Some(format!("{}…", &input_str[..2000]))
+                } else if input_str.len() > 500_000 {
+                    Some(format!("{}…", &input_str[..500_000]))
                 } else {
-                    Some(input_str)
+                    Some(input_str.clone())
                 };
                 let mut attrs = GenAiToolSpan::from_event_fields(
                     tool_call_name,
@@ -144,7 +144,9 @@ impl AgentHooks for OtelHooks {
                     step_id,
                     &ctx_fields,
                 );
-                attrs.tool_input = tool_input;
+                // Record as gen_ai.tool.call.arguments (OTel GenAI semantic convention).
+                // The UI reads this attribute directly for the In/Out tab on tool spans.
+                attrs.tool_input = tool_input_truncated;
                 // Create the tool span as a child of the active step span (if available),
                 // otherwise fall back to whatever span is current on this async task.
                 let span = if let Some(step_span) = self.step_spans.get(step_id.as_str()) {
@@ -153,6 +155,35 @@ impl AgentHooks for OtelHooks {
                     builder::tool_span(&attrs)
                 };
                 self.tool_spans.insert(tool_call_id.clone(), span);
+            }
+            AgentEventType::ToolResults { results, .. } => {
+                for response in results {
+                    if let Some(span_ref) = self.tool_spans.get(response.tool_call_id.as_str()) {
+                        // Extract data/text parts as the output value
+                        let parts_json: Vec<serde_json::Value> = response
+                            .parts
+                            .iter()
+                            .filter_map(|p| match p {
+                                Part::Data(v) => Some(v.clone()),
+                                Part::Text(s) => Some(serde_json::Value::String(s.clone())),
+                                _ => None,
+                            })
+                            .collect();
+                        if !parts_json.is_empty() {
+                            let output_str = if parts_json.len() == 1 {
+                                serde_json::to_string_pretty(&parts_json[0]).unwrap_or_default()
+                            } else {
+                                serde_json::to_string_pretty(&parts_json).unwrap_or_default()
+                            };
+                            let truncated = if output_str.len() > 500_000 {
+                                format!("{}…", &output_str[..500_000])
+                            } else {
+                                output_str
+                            };
+                            span_ref.record("output.value", truncated.as_str());
+                        }
+                    }
+                }
             }
             AgentEventType::ToolExecutionEnd {
                 tool_call_id,
