@@ -270,6 +270,32 @@ async fn test_follow_stream_task_isolation() {
     ));
 }
 
+// ── parent run mapping tests ───────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_parent_run_mapping_stored_and_retrieved() {
+    let broadcaster = InProcessBroadcaster::new();
+
+    broadcaster
+        .set_parent_run("inner-task-1", "outer-run-abc")
+        .await
+        .unwrap();
+
+    let result = broadcaster.get_parent_run("inner-task-1").await.unwrap();
+    assert_eq!(result, Some("outer-run-abc".to_string()));
+
+    let missing = broadcaster.get_parent_run("unknown-task").await.unwrap();
+    assert_eq!(missing, None);
+}
+
+#[tokio::test]
+async fn test_parent_run_not_found_for_unregistered_task() {
+    let broadcaster = InProcessBroadcaster::new();
+
+    let result = broadcaster.get_parent_run("some-task").await.unwrap();
+    assert_eq!(result, None);
+}
+
 /// follow_stream with no terminal event stays open until the broadcaster is
 /// used with a concurrent publisher.  This test verifies the stream does NOT
 /// terminate prematurely on non-terminal events.

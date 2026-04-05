@@ -94,6 +94,12 @@ pub trait AgentHooks: Send + Sync + std::fmt::Debug {
     async fn on_event(&self, _event: &AgentEvent) -> Result<(), AgentError> {
         Ok(())
     }
+
+    /// Mark a run as being handled by a RemoteAgent (i.e. the actual execution happens
+    /// in an inner container). OtelHooks uses this to suppress duplicate step/plan/tool
+    /// spans that would otherwise be created from forwarded events — the inner execution's
+    /// OtelHooks creates those spans directly, so the outer one should skip them.
+    fn mark_run_as_remote(&self, _run_id: &str) {}
 }
 
 /// Result of agent invocation

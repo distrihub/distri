@@ -164,6 +164,10 @@ pub struct ExecutorContext {
     pub parent_tx: Option<Arc<mpsc::Sender<AgentEvent>>>,
     /// Parent task_id for subagents to share session data with parent
     pub parent_task_id: Option<String>,
+    /// Outer run_id when this context was spawned by a RemoteAgent.
+    /// Set by AgentOrchestrator after looking up the parent run mapping in the broadcaster.
+    /// Used by OtelHooks to nest the inner invoke_agent span under the outer one.
+    pub parent_run_id: Option<String>,
 
     pub dynamic_tools: Option<Arc<RwLock<Vec<Arc<dyn Tool>>>>>,
     /// Names of tools that are deferred (name+description only in prompt).
@@ -237,6 +241,7 @@ impl Default for ExecutorContext {
             env_vars: Arc::new(RwLock::new(HashMap::new())),
             parent_tx: None,
             parent_task_id: None,
+            parent_run_id: None,
             dynamic_tools: None,
             deferred_tool_names: Arc::new(RwLock::new(HashSet::new())),
             hook_prompt_state: Arc::new(RwLock::new(HookPromptState::default())),
@@ -1051,6 +1056,7 @@ impl ExecutorContext {
 
             parent_tx: self.parent_tx.clone(),
             parent_task_id: self.parent_task_id.clone(),
+            parent_run_id: self.parent_run_id.clone(),
             dynamic_tools: self.dynamic_tools.clone(),
             deferred_tool_names: self.deferred_tool_names.clone(),
             hook_prompt_state: self.hook_prompt_state.clone(),

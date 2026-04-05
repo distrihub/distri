@@ -26,6 +26,20 @@ pub trait AgentEventBroadcaster: Send + Sync + 'static {
     /// or the channel is exhausted.
     async fn subscribe(&self, task_id: &str) -> anyhow::Result<BoxStream<'static, AgentEvent>>;
 
+    /// Record that inner_task_id was spawned by the run identified by outer_run_id.
+    /// Used by OtelHooks to parent inner invoke_agent spans under the outer one.
+    async fn set_parent_run(&self, inner_task_id: &str, outer_run_id: &str) -> anyhow::Result<()> {
+        let _ = (inner_task_id, outer_run_id);
+        Ok(())
+    }
+
+    /// Look up the outer run_id for a task spawned by a RemoteAgent.
+    /// Returns None if this task was not spawned as a subtask.
+    async fn get_parent_run(&self, task_id: &str) -> anyhow::Result<Option<String>> {
+        let _ = task_id;
+        Ok(None)
+    }
+
     /// Subscribe and follow a task to completion.
     ///
     /// Returns a stream that yields all events for the task — including the

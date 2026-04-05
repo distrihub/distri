@@ -49,6 +49,10 @@ pub struct OtelHooks {
     pub reflect_spans: DashMap<String, tracing::Span>,
     /// Tool spans keyed by tool_call_id. Created at ToolExecutionStart, dropped at End.
     pub tool_spans: DashMap<String, tracing::Span>,
+    /// Run IDs handled by RemoteAgent. These runs have an invoke_agent span but their
+    /// step/plan/tool events are forwarded from the inner execution — the inner OtelHooks
+    /// creates those spans directly. We suppress them here to avoid duplicates.
+    pub remote_run_ids: dashmap::DashSet<String>,
 }
 
 #[async_trait]
@@ -68,7 +72,15 @@ impl AgentHooks for OtelHooks {
             channel_id: context.channel_id.as_deref(),
         };
         let attrs = GenAiAgentSpan::from_context_fields(&context.agent_id, &ctx_fields, None);
-        let span = builder::agent_span(&attrs);
+        let span = if let Some(ref parent_run_id) = context.parent_run_id {
+            if let Some(outer_span) = self.agent_spans.get(parent_run_id.as_str()) {
+                outer_span.in_scope(|| builder::agent_span(&attrs))
+            } else {
+                builder::agent_span(&attrs)
+            }
+        } else {
+            builder::agent_span(&attrs)
+        };
 
         // Give StandardAgent a clone for .instrument() wrapping
         context.set_otel_agent_span(span.clone());
@@ -78,7 +90,25 @@ impl AgentHooks for OtelHooks {
         Ok(())
     }
 
+    fn mark_run_as_remote(&self, run_id: &str) {
+        self.remote_run_ids.insert(run_id.to_string());
+    }
+
     async fn on_event(&self, event: &AgentEvent) -> Result<(), AgentError> {
+        // For RemoteAgent runs the inner execution's OtelHooks creates step/plan/tool spans.
+        // Forwarded events arrive here with the outer run_id — skip span creation to avoid
+        // duplicates. RunFinished/RunError still need to run to record usage and clean up.
+        let is_remote = self.remote_run_ids.contains(event.run_id.as_str());
+        if is_remote {
+            match &event.event {
+                AgentEventType::RunFinished { .. } | AgentEventType::RunError { .. } => {
+                    self.remote_run_ids.remove(event.run_id.as_str());
+                    // fall through to record usage on the invoke_agent span
+                }
+                _ => return Ok(()),
+            }
+        }
+
         match &event.event {
             AgentEventType::PlanStarted { initial_plan } => {
                 let attrs = GenAiPlanSpan {
@@ -436,6 +466,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_inner_span_created_inside_outer_span() {
+        let hooks = OtelHooks::default();
+        let mut msg = crate::types::Message {
+            role: distri_types::MessageRole::User,
+            parts: vec![],
+            ..Default::default()
+        };
+
+        // Create outer context and call before_execute to register the outer agent span.
+        let outer_ctx = Arc::new(ExecutorContext {
+            run_id: "outer-run".to_string(),
+            agent_id: "outer-agent".to_string(),
+            thread_id: "t-outer".to_string(),
+            ..Default::default()
+        });
+        hooks
+            .before_execute(&mut msg, outer_ctx.clone())
+            .await
+            .unwrap();
+        assert!(
+            hooks.agent_spans.contains_key("outer-run"),
+            "outer agent span should be registered"
+        );
+
+        // Create inner context with parent_run_id pointing to the outer run.
+        let inner_ctx = Arc::new(ExecutorContext {
+            run_id: "inner-run".to_string(),
+            agent_id: "inner-agent".to_string(),
+            thread_id: "t-inner".to_string(),
+            parent_run_id: Some("outer-run".to_string()),
+            ..Default::default()
+        });
+        hooks
+            .before_execute(&mut msg, inner_ctx.clone())
+            .await
+            .unwrap();
+
+        // The inner span should be stored and the code path should not panic.
+        assert!(
+            hooks.agent_spans.contains_key("inner-run"),
+            "inner agent span should be registered"
+        );
+        // Both spans are stored independently.
+        assert_eq!(hooks.agent_spans.len(), 2);
+    }
+
+    #[tokio::test]
     async fn tool_span_stays_alive_even_when_tool_failed() {
         // When a tool errors, ToolExecutionEnd fires with success=false.
         // The span must still be kept alive so ToolResults can record the error output.
@@ -493,6 +570,65 @@ mod tests {
         assert!(
             !hooks.tool_spans.contains_key("tc-err"),
             "span removed after ToolResults"
+        );
+    }
+
+    /// Remote runs should only get an invoke_agent span. Forwarded step/plan/tool events
+    /// must be silently dropped — the inner execution's OtelHooks already created those spans.
+    #[tokio::test]
+    async fn remote_run_suppresses_step_and_plan_spans() {
+        let hooks = OtelHooks::default();
+        let base = base_event(); // run_id = "r1"
+
+        // Mark this run as remote BEFORE events arrive (same as RemoteAgent does).
+        hooks.mark_run_as_remote(&base.run_id);
+
+        // StepStarted — must be silently ignored.
+        hooks
+            .on_event(&make_event(
+                &base,
+                distri_types::AgentEventType::StepStarted {
+                    step_id: "s-remote".to_string(),
+                    step_index: 0,
+                },
+            ))
+            .await
+            .unwrap();
+        assert!(
+            !hooks.step_spans.contains_key("s-remote"),
+            "step span must NOT be created for remote run"
+        );
+
+        // PlanStarted — must be silently ignored.
+        hooks
+            .on_event(&make_event(
+                &base,
+                distri_types::AgentEventType::PlanStarted { initial_plan: true },
+            ))
+            .await
+            .unwrap();
+        assert!(
+            !hooks.plan_spans.contains_key(&base.run_id),
+            "plan span must NOT be created for remote run"
+        );
+
+        // RunFinished — must still process (cleans up remote flag + records usage).
+        hooks
+            .on_event(&make_event(
+                &base,
+                distri_types::AgentEventType::RunFinished {
+                    success: true,
+                    total_steps: 0,
+                    failed_steps: 0,
+                    usage: None,
+                    context_budget: None,
+                },
+            ))
+            .await
+            .unwrap();
+        assert!(
+            !hooks.remote_run_ids.contains(&base.run_id),
+            "remote_run_ids must be cleaned up after RunFinished"
         );
     }
 }

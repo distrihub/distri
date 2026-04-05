@@ -65,6 +65,9 @@ impl BaseAgent for RemoteAgent {
         self.hooks
             .before_execute(&mut message, context.clone())
             .await?;
+        // Suppress duplicate step/plan/tool spans: forwarded events will re-trigger on_event
+        // with the outer run_id. The inner execution's OtelHooks already creates those spans.
+        self.hooks.mark_run_as_remote(&context.run_id);
         let agent_span = context
             .take_otel_agent_span()
             .unwrap_or_else(tracing::Span::none);
@@ -134,6 +137,11 @@ impl RemoteAgent {
         // execution trace (tool calls, LLM output, final answer) exactly as in
         // local mode.
         let inner_task_id = uuid::Uuid::new_v4().to_string();
+
+        // Record the parent run mapping so OtelHooks can nest inner spans under outer invoke_agent.
+        if let Some(b) = context.orchestrator.as_ref().and_then(|o| o.broadcaster.as_ref()) {
+            let _ = b.set_parent_run(&inner_task_id, &context.run_id).await;
+        }
 
         tracing::info!(
             "RemoteAgent: spawning '{}' in sandbox (outer_task_id={}, inner_task_id={})",

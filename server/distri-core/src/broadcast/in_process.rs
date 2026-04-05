@@ -19,6 +19,9 @@ pub struct InProcessBroadcaster {
     channels: DashMap<String, broadcast::Sender<AgentEvent>>,
     /// Per-task event log for replay by late subscribers.
     log: DashMap<String, Vec<AgentEvent>>,
+    /// Maps inner_task_id → outer_run_id for OTel span parenting.
+    /// Set by RemoteAgent before spawning an inner container task.
+    parent_runs: DashMap<String, String>,
 }
 
 impl InProcessBroadcaster {
@@ -26,6 +29,7 @@ impl InProcessBroadcaster {
         Self {
             channels: DashMap::new(),
             log: DashMap::new(),
+            parent_runs: DashMap::new(),
         }
     }
 
@@ -98,5 +102,15 @@ impl AgentEventBroadcaster for InProcessBroadcaster {
         };
 
         Ok(Box::pin(stream))
+    }
+
+    async fn set_parent_run(&self, inner_task_id: &str, outer_run_id: &str) -> anyhow::Result<()> {
+        self.parent_runs
+            .insert(inner_task_id.to_string(), outer_run_id.to_string());
+        Ok(())
+    }
+
+    async fn get_parent_run(&self, task_id: &str) -> anyhow::Result<Option<String>> {
+        Ok(self.parent_runs.get(task_id).map(|v| v.clone()))
     }
 }
