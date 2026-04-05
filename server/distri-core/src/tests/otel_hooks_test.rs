@@ -92,9 +92,15 @@ async fn before_execute_then_run_finished_clears_span() {
     );
 }
 
-/// ToolExecutionStart stores a span; ToolExecutionEnd removes it.
+/// ToolExecutionStart stores a span; ToolExecutionEnd keeps it (waiting for
+/// ToolResults); ToolResults drops it with output recorded.
+///
+/// Design: ToolExecutionEnd fires *before* ToolResults. The span stays in
+/// tool_spans so ToolResults can record the output value, then drop it.
+/// See the comment in otel.rs ToolExecutionEnd handler for rationale.
 #[tokio::test]
 async fn tool_lifecycle_full_round_trip() {
+    use distri_types::ToolResponse;
     let hooks = OtelHooks::default();
 
     let start_event = distri_types::AgentEvent {
@@ -117,9 +123,10 @@ async fn tool_lifecycle_full_round_trip() {
     hooks.on_event(&start_event).await.unwrap();
     assert!(
         hooks.tool_spans.contains_key("tc-abc"),
-        "tool span should be stored on start"
+        "tool span should be stored on ToolExecutionStart"
     );
 
+    // ToolExecutionEnd records success but KEEPS the span — ToolResults drops it.
     let end_event = distri_types::AgentEvent {
         event: distri_types::AgentEventType::ToolExecutionEnd {
             step_id: "step-1".to_string(),
@@ -131,8 +138,28 @@ async fn tool_lifecycle_full_round_trip() {
     };
     hooks.on_event(&end_event).await.unwrap();
     assert!(
+        hooks.tool_spans.contains_key("tc-abc"),
+        "tool span should still be present after ToolExecutionEnd (waiting for ToolResults)"
+    );
+
+    // ToolResults fires after ToolExecutionEnd and drops the span.
+    let results_event = distri_types::AgentEvent {
+        event: distri_types::AgentEventType::ToolResults {
+            step_id: "step-1".to_string(),
+            parent_message_id: None,
+            results: vec![ToolResponse {
+                tool_call_id: "tc-abc".to_string(),
+                tool_name: "bash".to_string(),
+                parts: vec![distri_types::Part::Text("hello\n".to_string())],
+                parts_metadata: None,
+            }],
+        },
+        ..start_event.clone()
+    };
+    hooks.on_event(&results_event).await.unwrap();
+    assert!(
         !hooks.tool_spans.contains_key("tc-abc"),
-        "tool span should be removed on end"
+        "tool span should be removed after ToolResults"
     );
 }
 

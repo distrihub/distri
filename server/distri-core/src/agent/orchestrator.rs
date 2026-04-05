@@ -925,6 +925,30 @@ impl AgentOrchestrator {
         );
         Self::validate_agent_model(&agent_config)?;
 
+        // After the definition is fully built (overrides applied), check if this agent
+        // should run remotely. If so, dispatch via RemoteAgent instead of StandardAgent.
+        if let distri_types::configuration::AgentConfig::StandardAgent(ref definition) =
+            agent_config
+        {
+            if definition.remote {
+                match (&self.background_runner, &self.broadcaster) {
+                    (Some(runner), Some(broadcaster)) => {
+                        let agent = crate::agent::remote::RemoteAgent {
+                            definition: definition.clone(),
+                            runner: runner.clone(),
+                            broadcaster: broadcaster.clone(),
+                        };
+                        return agent.invoke_stream(message, context).await;
+                    }
+                    _ => {
+                        return Err(AgentError::Session(
+                            "Agent has remote=true but no background_runner or broadcaster configured".to_string(),
+                        ));
+                    }
+                }
+            }
+        }
+
         // Check if todos are enabled for this agent and initialize shared_todos if needed
         if let distri_types::configuration::AgentConfig::StandardAgent(definition) = &agent_config {
             if definition.should_use_browser() {
