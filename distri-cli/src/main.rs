@@ -88,6 +88,9 @@ enum Commands {
         /// Run the agent in a remote browsr sandbox (shorthand for --overrides '{"remote":true}').
         #[clap(long)]
         remote: bool,
+        /// W3C traceparent header for distributed tracing (passed by SandboxLauncher).
+        #[clap(long)]
+        traceparent: Option<String>,
     },
 
     /// Agent-related commands
@@ -395,6 +398,7 @@ async fn main() -> Result<()> {
             task_id,
             thread_id,
             remote,
+            traceparent,
         } => {
             let extra_tools = parse_cli_overrides(overrides.as_deref());
             let agent_name = agent.unwrap_or_else(|| "distri_runner".to_string());
@@ -485,7 +489,8 @@ async fn main() -> Result<()> {
             println!("Streaming agent '{}' via {}", agent_name, base_url);
             let registry = app.registry();
             register_approval_handler(&registry);
-            let stream_config = config.clone().with_timeout(600);
+            let mut stream_config = config.clone().with_timeout(600);
+            stream_config.traceparent = traceparent;
             let http_client = stream_config.build_http_client()?;
             // For remote runs the container handles all tool execution — don't register
             // external tools on the client side or the CLI will try to execute them too.

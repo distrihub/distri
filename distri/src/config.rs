@@ -49,6 +49,14 @@ impl BuildHttpClient for DistriConfig {
             );
         }
 
+        // Propagate W3C Trace Context when a traceparent is provided.
+        // Set via --traceparent CLI flag (SandboxLauncher passes it to distri run).
+        if let Some(ref traceparent) = self.traceparent {
+            if let Ok(val) = reqwest::header::HeaderValue::from_str(traceparent) {
+                headers.insert("traceparent", val);
+            }
+        }
+
         if !headers.is_empty() {
             builder = builder.default_headers(headers);
         }
