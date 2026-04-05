@@ -157,8 +157,11 @@ impl AgentHooks for OtelHooks {
                 self.tool_spans.insert(tool_call_id.clone(), span);
             }
             AgentEventType::ToolResults { results, .. } => {
+                // ToolResults fires AFTER ToolExecutionEnd. The span is still in tool_spans
+                // (ToolExecutionEnd only records success, not remove). Record output here and
+                // then drop the span so it exports with both input and output.
                 for response in results {
-                    if let Some(span_ref) = self.tool_spans.get(response.tool_call_id.as_str()) {
+                    if let Some((_, span)) = self.tool_spans.remove(response.tool_call_id.as_str()) {
                         // Extract data/text parts as the output value
                         let parts_json: Vec<serde_json::Value> = response
                             .parts
@@ -180,8 +183,9 @@ impl AgentHooks for OtelHooks {
                             } else {
                                 output_str
                             };
-                            span_ref.record("output.value", truncated.as_str());
+                            span.record("output.value", truncated.as_str());
                         }
+                        drop(span); // exports with both input and output recorded
                     }
                 }
             }
@@ -190,9 +194,12 @@ impl AgentHooks for OtelHooks {
                 success,
                 ..
             } => {
-                if let Some((_, span)) = self.tool_spans.remove(tool_call_id.as_str()) {
-                    recorder::record_tool_result(&span, *success, None);
-                    // span drops here → exports
+                // Record success/failure on the span but keep it in tool_spans.
+                // ToolResults fires after this event and will record the output, then drop the span.
+                // For tools that never produce a ToolResults (e.g. timeouts, skipped), the span
+                // will be cleaned up when the agent run finishes (RunFinished/RunError).
+                if let Some(span_ref) = self.tool_spans.get(tool_call_id.as_str()) {
+                    recorder::record_tool_result(&span_ref, *success, None);
                 }
             }
             AgentEventType::RunError { message, code, .. } => {
@@ -244,8 +251,36 @@ mod tests {
 
     use crate::agent::context::ExecutorContext;
 
-    #[test]
-    fn before_execute_stores_agent_span_in_context() {
+    fn make_event(
+        base: &distri_types::AgentEvent,
+        event: distri_types::AgentEventType,
+    ) -> distri_types::AgentEvent {
+        distri_types::AgentEvent { event, ..base.clone() }
+    }
+
+    fn base_event() -> distri_types::AgentEvent {
+        distri_types::AgentEvent {
+            timestamp: chrono::Utc::now(),
+            thread_id: "t1".to_string(),
+            run_id: "r1".to_string(),
+            task_id: "task1".to_string(),
+            agent_id: "coder".to_string(),
+            user_id: None,
+            identifier_id: None,
+            workspace_id: None,
+            channel_id: None,
+            event: distri_types::AgentEventType::RunFinished {
+                success: true,
+                total_steps: 0,
+                failed_steps: 0,
+                usage: None,
+                context_budget: None,
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn before_execute_stores_agent_span_in_context() {
         let hooks = OtelHooks::default();
         let ctx = Arc::new(ExecutorContext {
             run_id: "run-1".to_string(),
@@ -258,71 +293,127 @@ mod tests {
             parts: vec![],
             ..Default::default()
         };
-        tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap()
-            .block_on(hooks.before_execute(&mut msg, ctx.clone()))
-            .unwrap();
-        assert!(
-            ctx.take_otel_agent_span().is_some(),
-            "agent span should be set"
-        );
-        assert!(
-            hooks.agent_spans.contains_key("run-1"),
-            "agent_spans should have run-1"
-        );
+        hooks.before_execute(&mut msg, ctx.clone()).await.unwrap();
+        assert!(ctx.take_otel_agent_span().is_some(), "agent span should be set");
+        assert!(hooks.agent_spans.contains_key("run-1"), "agent_spans should have run-1");
     }
 
-    #[test]
-    fn on_event_tool_start_end() {
+    #[tokio::test]
+    async fn tool_span_stays_alive_after_execution_end_removed_on_results() {
         let hooks = OtelHooks::default();
-        let start = distri_types::AgentEvent {
-            timestamp: chrono::Utc::now(),
-            thread_id: "t1".to_string(),
-            run_id: "r1".to_string(),
-            task_id: "task1".to_string(),
-            agent_id: "coder".to_string(),
-            user_id: None,
-            identifier_id: None,
-            workspace_id: None,
-            channel_id: None,
-            event: distri_types::AgentEventType::ToolExecutionStart {
-                step_id: "s1".to_string(),
-                tool_call_id: "tc-1".to_string(),
-                tool_call_name: "bash".to_string(),
-                input: serde_json::json!({}),
-            },
-        };
-        tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap()
-            .block_on(hooks.on_event(&start))
+        let base = base_event();
+
+        // Start: span created
+        hooks
+            .on_event(&make_event(
+                &base,
+                distri_types::AgentEventType::ToolExecutionStart {
+                    step_id: "s1".to_string(),
+                    tool_call_id: "tc-1".to_string(),
+                    tool_call_name: "bash".to_string(),
+                    input: serde_json::json!({"cmd": "ls"}),
+                },
+            ))
+            .await
+            .unwrap();
+        assert!(hooks.tool_spans.contains_key("tc-1"), "span created at Start");
+
+        // End: success recorded, span kept alive for ToolResults
+        hooks
+            .on_event(&make_event(
+                &base,
+                distri_types::AgentEventType::ToolExecutionEnd {
+                    step_id: "s1".to_string(),
+                    tool_call_id: "tc-1".to_string(),
+                    tool_call_name: "bash".to_string(),
+                    success: true,
+                },
+            ))
+            .await
             .unwrap();
         assert!(
             hooks.tool_spans.contains_key("tc-1"),
-            "tool span should be stored"
+            "span must stay in tool_spans after End so ToolResults can record output"
         );
 
-        let end = distri_types::AgentEvent {
-            event: distri_types::AgentEventType::ToolExecutionEnd {
-                step_id: "s1".to_string(),
-                tool_call_id: "tc-1".to_string(),
-                tool_call_name: "bash".to_string(),
-                success: true,
-            },
-            ..start.clone()
-        };
-        tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap()
-            .block_on(hooks.on_event(&end))
+        // Results: output recorded, span removed and exported
+        hooks
+            .on_event(&make_event(
+                &base,
+                distri_types::AgentEventType::ToolResults {
+                    step_id: "s1".to_string(),
+                    parent_message_id: None,
+                    results: vec![distri_types::ToolResponse {
+                        tool_call_id: "tc-1".to_string(),
+                        tool_name: "bash".to_string(),
+                        parts: vec![distri_types::Part::Text("hello".to_string())],
+                        parts_metadata: None,
+                    }],
+                },
+            ))
+            .await
             .unwrap();
         assert!(
             !hooks.tool_spans.contains_key("tc-1"),
-            "tool span should be removed after end"
+            "span removed after ToolResults"
         );
+    }
+
+    #[tokio::test]
+    async fn tool_span_stays_alive_even_when_tool_failed() {
+        // When a tool errors, ToolExecutionEnd fires with success=false.
+        // The span must still be kept alive so ToolResults can record the error output.
+        let hooks = OtelHooks::default();
+        let base = base_event();
+
+        hooks
+            .on_event(&make_event(
+                &base,
+                distri_types::AgentEventType::ToolExecutionStart {
+                    step_id: "s1".to_string(),
+                    tool_call_id: "tc-err".to_string(),
+                    tool_call_name: "bash".to_string(),
+                    input: serde_json::json!({"cmd": "bad_cmd"}),
+                },
+            ))
+            .await
+            .unwrap();
+
+        hooks
+            .on_event(&make_event(
+                &base,
+                distri_types::AgentEventType::ToolExecutionEnd {
+                    step_id: "s1".to_string(),
+                    tool_call_id: "tc-err".to_string(),
+                    tool_call_name: "bash".to_string(),
+                    success: false,
+                },
+            ))
+            .await
+            .unwrap();
+
+        assert!(
+            hooks.tool_spans.contains_key("tc-err"),
+            "span must survive failed ToolExecutionEnd so output can still be recorded"
+        );
+
+        // ToolResults cleans it up
+        hooks
+            .on_event(&make_event(
+                &base,
+                distri_types::AgentEventType::ToolResults {
+                    step_id: "s1".to_string(),
+                    parent_message_id: None,
+                    results: vec![distri_types::ToolResponse {
+                        tool_call_id: "tc-err".to_string(),
+                        tool_name: "bash".to_string(),
+                        parts: vec![distri_types::Part::Text("command not found".to_string())],
+                        parts_metadata: None,
+                    }],
+                },
+            ))
+            .await
+            .unwrap();
+        assert!(!hooks.tool_spans.contains_key("tc-err"), "span removed after ToolResults");
     }
 }

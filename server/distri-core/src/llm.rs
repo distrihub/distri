@@ -710,7 +710,7 @@ impl LLMExecutor {
 
         {
             use llm_gateway::observability::recorder::record_inference_output;
-            record_inference_output(&span, &content, &aggregated_tool_calls);
+            record_inference_output(&span, &content, &tool_calls);
         }
 
         // Create and save assistant message for fallback case
