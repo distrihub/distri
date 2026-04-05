@@ -10,14 +10,14 @@ use distri::{
     DistriClientApp, DistriConfig,
 };
 use distri_types::configuration::AgentConfig;
-use inquire::{Select, Text};
+use inquire::Select;
 use rustyline::error::ReadlineError;
 use rustyline::{Config, Editor, EventHandler, KeyEvent};
 use tokio::sync::RwLock;
 
 use crate::config::{load_last_model, save_last_model};
 use crate::input::{DistriHelper, ToggleToolsHandler};
-use crate::message::{build_chat_message_params, build_connections_context};
+use crate::message::{build_connections_context, build_message_params};
 use crate::threads::{
     load_last_thread, print_thread_history, resolve_resume_arg, save_last_thread,
 };
@@ -142,8 +142,8 @@ pub fn print_help_message() {
     println!("SLASH COMMANDS:");
     println!("  /agents             - Show agent picker");
     println!("  /agent <name>       - Switch to an agent by name");
-    println!("  /models             - Set model override (prompts for name)");
-    println!("  /model <name>       - Set model override directly");
+    println!("  /models             - List available models");
+    println!("  /model <name>       - Set model override (use 'auto' to reset)");
     println!("  /context  (/ctx)    - Show context window breakdown by component");
     println!("  /available-tools    - List tools available to the client");
     println!("  /resume             - Pick from recent threads to resume");
@@ -266,37 +266,51 @@ pub async fn handle_slash_command(
             }
             Ok(SlashCommandResult::Continue)
         }
-        "/model" | "/models" => {
-            let mut updated = false;
-            if let Some(model) = arg {
-                *current_model = Some(model.to_string());
-                updated = true;
-            } else {
-                match Text::new("Model name (empty to reset to Auto): ").prompt() {
-                    Ok(model) => {
-                        let model = model.trim();
-                        if model.is_empty() {
-                            *current_model = None;
-                            updated = true;
-                        } else {
-                            *current_model = Some(model.to_string());
-                            updated = true;
+        "/models" => {
+            let client = distri::Distri::from_config(config.clone());
+            match client.list_models().await {
+                Ok(providers) => {
+                    let current = current_model.as_deref().unwrap_or("Auto");
+                    println!("{}Available models{} (current: {}{}{})", COLOR_BRIGHT_GREEN, COLOR_RESET, COLOR_BRIGHT_GREEN, current, COLOR_RESET);
+                    for provider in &providers {
+                        if provider.models.is_empty() {
+                            continue;
+                        }
+                        let status = if provider.configured { "✓" } else { "✗" };
+                        println!("\n  {} {} {}{}{}",
+                            status,
+                            provider.provider_label,
+                            if provider.configured { COLOR_BRIGHT_GREEN } else { "\x1b[90m" },
+                            if provider.configured { "" } else { "(not configured)" },
+                            COLOR_RESET,
+                        );
+                        for model in &provider.models {
+                            let marker = if current_model.as_deref() == Some(&model.id) { " ◀" } else { "" };
+                            println!("      {}{}", model.id, marker);
                         }
                     }
-                    Err(inquire::InquireError::OperationCanceled)
-                    | Err(inquire::InquireError::OperationInterrupted) => {}
-                    Err(err) => {
-                        eprintln!("Error reading model: {}", err);
-                    }
                 }
+                Err(e) => eprintln!("Failed to list models: {}", e),
+            }
+            Ok(SlashCommandResult::Continue)
+        }
+        "/model" => {
+            let mut updated = false;
+            if let Some(model) = arg {
+                if model == "auto" || model == "Auto" {
+                    *current_model = None;
+                } else {
+                    *current_model = Some(model.to_string());
+                }
+                updated = true;
+            } else {
+                println!("Usage: /model <name>  or  /model auto");
+                println!("Use /models to list available models.");
             }
             if updated {
                 let display = current_model.as_deref().unwrap_or("Auto");
                 save_last_model(current_model.as_deref());
-                println!(
-                    "{}Model set to:{} {}",
-                    COLOR_BRIGHT_GREEN, COLOR_RESET, display
-                );
+                println!("{}Model set to:{} {}", COLOR_BRIGHT_GREEN, COLOR_RESET, display);
             }
             Ok(SlashCommandResult::Continue)
         }
@@ -582,9 +596,10 @@ pub async fn run_interactive_chat(
         // Fetch connections context for agent prompt (lightweight, only connected providers)
         let distri_client = Distri::from_config(config.clone());
         let connections_context = build_connections_context(&distri_client).await;
-        let mut params = build_chat_message_params(
+        let mut params = build_message_params(
             input.to_string(),
-            &thread_id,
+            Some(&thread_id),
+            None,
             current_model.as_deref(),
             connections_context,
         );

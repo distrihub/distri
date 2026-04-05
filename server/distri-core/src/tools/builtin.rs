@@ -468,7 +468,7 @@ impl ExecutorContextTool for AgentTool {
                 let agent_def = orchestrator.stores.agent_store.get(&self.agent_name).await;
                 matches!(
                     agent_def,
-                    Some(distri_types::configuration::AgentConfig::StandardAgent(ref def)) if def.deepagent
+                    Some(distri_types::configuration::AgentConfig::StandardAgent(ref def)) if def.remote
                 )
             };
 

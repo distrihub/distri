@@ -35,34 +35,8 @@ pub async fn build_connections_context(client: &Distri) -> Option<String> {
 
 pub fn build_message_params(
     content: String,
-    connections_context: Option<String>,
-) -> MessageSendParams {
-    let mut meta = serde_json::json!({});
-    if let Some(conn_ctx) = connections_context {
-        meta["dynamic_values"] = serde_json::json!({
-            "available_connections": conn_ctx
-        });
-    }
-    MessageSendParams {
-        message: A2aMessage {
-            kind: EventKind::Message,
-            message_id: uuid::Uuid::new_v4().to_string(),
-            role: Role::User,
-            parts: vec![A2aPart::Text(TextPart { text: content })],
-            context_id: None,
-            task_id: None,
-            reference_task_ids: vec![],
-            extensions: vec![],
-            metadata: None,
-        },
-        configuration: None,
-        metadata: Some(meta),
-    }
-}
-
-pub fn build_chat_message_params(
-    content: String,
-    thread_id: &str,
+    thread_id: Option<&str>,
+    task_id: Option<&str>,
     model: Option<&str>,
     connections_context: Option<String>,
 ) -> MessageSendParams {
@@ -89,8 +63,16 @@ pub fn build_chat_message_params(
             message_id: uuid::Uuid::new_v4().to_string(),
             role: Role::User,
             parts: vec![A2aPart::Text(TextPart { text: content })],
-            context_id: Some(thread_id.to_string()),
-            task_id: None,
+            context_id: Some(
+                thread_id
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+            ),
+            task_id: Some(
+                task_id
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+            ),
             reference_task_ids: vec![],
             extensions: vec![],
             metadata: None,

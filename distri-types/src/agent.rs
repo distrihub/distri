@@ -540,8 +540,9 @@ pub struct StandardDefinition {
     /// When true and a sandbox runner is available, this agent runs in an isolated
     /// browsr container with full local tool access (Read, Write, Grep, Bash, etc.)
     /// instead of running in-process. Used for sub-agents that need filesystem access.
-    #[serde(default)]
-    pub deepagent: bool,
+    /// Also settable via `--remote` CLI flag or `--overrides '{"remote":true}'`.
+    #[serde(default, alias = "deepagent")]
+    pub remote: bool,
 }
 fn default_append_default_instructions() -> Option<bool> {
     Some(true)
@@ -667,6 +668,10 @@ impl StandardDefinition {
         // Override instructions
         if let Some(instructions) = overrides.instructions {
             self.instructions = instructions;
+        }
+
+        if let Some(remote) = overrides.remote {
+            self.remote = remote;
         }
 
         if let Some(use_browser) = overrides.use_browser {
