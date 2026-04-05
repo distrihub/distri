@@ -12,28 +12,29 @@ use crate::{
     },
     broadcast::AgentEventBroadcaster,
     runner::BackgroundRunner,
+    tools::FinalTool,
     types::StandardDefinition,
     AgentError,
 };
 
-/// RemoteAgent dispatches execution to a browsr sandbox container and follows
-/// the event stream via the broadcaster until the run completes.
-///
-/// It implements the same `BaseAgent` interface as `StandardAgent`, so the
-/// orchestrator can dispatch to it uniformly after the agent definition has
-/// been fully built and resolved.
+/// RemoteAgent dispatches execution to a browsr sandbox container and forwards
+/// all events to the outer SSE stream so the CLI output is identical to a local run.
 ///
 /// # Echo-loop safety
 ///
-/// Intermediate events are intentionally NOT forwarded through `context.emit()`
-/// while following the stream. Doing so would route them back through the outer
-/// `completion_task`, which re-publishes every emitted event to the broadcaster
-/// under the same `task_id`, creating an infinite echo loop.
+/// All inner events are forwarded via `context.emit()`, which sends them to the
+/// outer `completion_task`. The completion_task re-publishes every received event
+/// to the broadcaster under `outer_task_id`. This is safe because:
 ///
-/// Only the terminal event (`RunFinished` / `RunError`) is re-emitted via
-/// `context.emit()` after `follow_stream` has closed. By that point no
-/// subscriber remains, so the re-publish is safe and allows the outer
-/// `completion_task` to close the SSE stream cleanly.
+/// - The container is spawned with a distinct `inner_task_id` (a fresh UUID).
+/// - `follow_stream` subscribes to `inner_task_id`.
+/// - Re-published events land under `outer_task_id`, which `follow_stream` does
+///   not subscribe to → no echo loop.
+///
+/// # Final content
+///
+/// The `final` tool call's input text is captured and returned as `InvokeResult.content`
+/// so the CLI prints the agent's final answer exactly as it does for local runs.
 #[derive(Clone)]
 pub struct RemoteAgent {
     pub definition: StandardDefinition,
@@ -56,18 +57,34 @@ impl BaseAgent for RemoteAgent {
         message: crate::types::Message,
         context: Arc<ExecutorContext>,
     ) -> Result<InvokeResult, AgentError> {
-        let task_id = context.task_id.clone();
+        let outer_task_id = context.task_id.clone();
         let task_text = message.as_text().unwrap_or_default();
 
+        // Use a distinct task_id for the container so that events it publishes to the
+        // broadcaster don't echo back through the outer completion_task.
+        //
+        // Echo-loop mechanism (why separate IDs are required):
+        //   inner event → broadcaster[inner_id]
+        //   → follow_stream yields it
+        //   → context.emit() sends it to outer completion_task (outer_id)
+        //   → outer completion_task publishes to broadcaster[outer_id]
+        //   follow_stream is subscribed to inner_id, NOT outer_id → no echo ✓
+        //
+        // All events are forwarded via context.emit() so the CLI sees the full
+        // execution trace (tool calls, LLM output, final answer) exactly as in
+        // local mode.
+        let inner_task_id = uuid::Uuid::new_v4().to_string();
+
         tracing::info!(
-            "RemoteAgent: spawning '{}' in sandbox (task_id={})",
+            "RemoteAgent: spawning '{}' in sandbox (outer_task_id={}, inner_task_id={})",
             self.definition.name,
-            task_id
+            outer_task_id,
+            inner_task_id,
         );
 
         self.runner
             .spawn(
-                task_id.clone(),
+                inner_task_id.clone(),
                 self.definition.name.clone(),
                 task_text,
                 context.user_id.clone(),
@@ -78,33 +95,46 @@ impl BaseAgent for RemoteAgent {
             .map_err(|e| AgentError::Session(format!("Remote spawn failed: {}", e)))?;
 
         tracing::info!(
-            "RemoteAgent: following broadcaster stream (task_id={})",
-            task_id
+            "RemoteAgent: following broadcaster stream (inner_task_id={})",
+            inner_task_id
         );
 
-        // follow_stream yields all events up to and including RunFinished/RunError, then closes.
+        // follow_stream yields all events including the terminal RunFinished/RunError,
+        // then closes. We forward every event to the outer context so the client sees
+        // the full execution trace. Because inner_task_id != outer_task_id there is no
+        // echo loop.
         let mut stream = self
             .broadcaster
-            .follow_stream(&task_id)
+            .follow_stream(&inner_task_id)
             .await
             .map_err(|e| AgentError::Session(format!("Broadcaster follow failed: {}", e)))?;
 
-        let mut terminal_event: Option<AgentEventType> = None;
+        let mut received_terminal = false;
+
         while let Some(event) = stream.next().await {
+            // Mirror the final tool's result onto the outer context so InvokeResult
+            // is assembled the same way StandardAgent does it via agent_loop.
+            if let AgentEventType::ToolCalls { ref tool_calls, .. } = event.event {
+                for call in tool_calls {
+                    if call.tool_name == "final" {
+                        let result = FinalTool::extract_result(&call.input).unwrap_or_else(|e| {
+                            tracing::warn!("RemoteAgent: {e}");
+                            call.input.clone()
+                        });
+                        context.set_final_result(Some(result)).await;
+                    }
+                }
+            }
             if matches!(
                 &event.event,
                 AgentEventType::RunFinished { .. } | AgentEventType::RunError { .. }
             ) {
-                terminal_event = Some(event.event.clone());
+                received_terminal = true;
             }
+            context.emit(event.event).await;
         }
 
-        // Re-emit the terminal event so the outer completion_task can close cleanly.
-        // follow_stream has already terminated at this point, so the re-publish from
-        // the outer completion_task has no subscriber and cannot echo.
-        if let Some(event) = terminal_event {
-            context.emit(event).await;
-        } else {
+        if !received_terminal {
             context
                 .emit(AgentEventType::RunError {
                     message: "Remote task stream ended without a terminal event".to_string(),
@@ -114,9 +144,20 @@ impl BaseAgent for RemoteAgent {
                 .await;
         }
 
-        tracing::info!("RemoteAgent: task completed (task_id={})", task_id);
+        tracing::info!(
+            "RemoteAgent: task completed (outer_task_id={})",
+            outer_task_id
+        );
+
+        // Same as StandardAgent: read final_result from context and convert to string.
+        let final_result = context.get_final_result().await;
+        let content = match final_result {
+            Some(serde_json::Value::String(s)) => Some(s),
+            Some(v) => Some(v.to_string()),
+            None => None,
+        };
         Ok(InvokeResult {
-            content: None,
+            content,
             tool_calls: vec![],
         })
     }

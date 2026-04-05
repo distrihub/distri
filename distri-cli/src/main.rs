@@ -487,10 +487,17 @@ async fn main() -> Result<()> {
             register_approval_handler(&registry);
             let stream_config = config.clone().with_timeout(600);
             let http_client = stream_config.build_http_client()?;
-            let mut client = AgentStreamClient::from_config(config.clone())
-                .with_http_client(http_client)
-                .with_tool_registry(registry)
-                .with_external_tool_names(external_tool_names);
+            // For remote runs the container handles all tool execution — don't register
+            // external tools on the client side or the CLI will try to execute them too.
+            let mut client = if remote {
+                AgentStreamClient::from_config(config.clone())
+                    .with_http_client(http_client)
+            } else {
+                AgentStreamClient::from_config(config.clone())
+                    .with_http_client(http_client)
+                    .with_tool_registry(registry)
+                    .with_external_tool_names(external_tool_names)
+            };
             for tool in extra_tools {
                 client.register_dynamic_tool(tool);
             }

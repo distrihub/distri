@@ -37,9 +37,37 @@ pub fn get_builtin_tools() -> Vec<Arc<dyn Tool>> {
     ]
 }
 
+/// Typed representation of the `final` tool's input.
+/// The LLM may pass the result as a bare string or wrapped as `{"input": ...}`.
+#[derive(Debug, serde::Deserialize)]
+struct FinalInput {
+    input: serde_json::Value,
+}
+
 /// Final tool for code execution mode with state management
 #[derive(Debug)]
 pub struct FinalTool;
+
+impl FinalTool {
+    /// Extract the final result value from the raw JSON input of a `final` tool call.
+    ///
+    /// Handles two forms:
+    /// - Wrapped: `{"input": <value>}` → returns the inner value
+    /// - Direct: any other JSON value → returned as-is
+    ///
+    /// Returns `Err(String)` if the input looks like a wrapped object but cannot
+    /// be deserialized into `FinalInput`.
+    pub fn extract_result(raw: &serde_json::Value) -> Result<serde_json::Value, String> {
+        match raw {
+            serde_json::Value::Object(_) => {
+                serde_json::from_value::<FinalInput>(raw.clone())
+                    .map(|fi| fi.input)
+                    .map_err(|e| format!("final tool input is malformed: {e}"))
+            }
+            other => Ok(other.clone()),
+        }
+    }
+}
 
 #[async_trait::async_trait]
 impl Tool for FinalTool {
