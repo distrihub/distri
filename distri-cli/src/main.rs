@@ -77,6 +77,20 @@ enum Commands {
         /// JSON definition overrides: {"dynamic_tools": [...], "model": "..."}
         #[clap(long)]
         overrides: Option<String>,
+        /// Explicit task ID for this execution (used by deepagent containers).
+        /// Falls back to DISTRI_TASK_ID env var, then auto-generated.
+        #[clap(long)]
+        task_id: Option<String>,
+        /// Explicit thread ID (alias for --resume, used by deepagent containers).
+        /// Falls back to DISTRI_THREAD_ID env var.
+        #[clap(long)]
+        thread_id: Option<String>,
+        /// Run the agent in a remote browsr sandbox (shorthand for --overrides '{"remote":true}').
+        #[clap(long)]
+        remote: bool,
+        /// W3C traceparent header for distributed tracing (passed by SandboxLauncher).
+        #[clap(long)]
+        traceparent: Option<String>,
     },
 
     /// Agent-related commands
@@ -381,6 +395,10 @@ async fn main() -> Result<()> {
             context,
             resume,
             overrides,
+            task_id,
+            thread_id,
+            remote,
+            traceparent,
         } => {
             let extra_tools = parse_cli_overrides(overrides.as_deref());
             let agent_name = agent.unwrap_or_else(|| "distri_runner".to_string());
@@ -420,13 +438,34 @@ async fn main() -> Result<()> {
             // Fetch connections to inject into agent context
             let distri_client = Distri::from_config(config.clone());
             let connections_context = build_connections_context(&distri_client).await;
-            let mut params = build_message_params(task, connections_context);
+            // Set thread_id/context_id: --thread-id > --resume > DISTRI_THREAD_ID env
+            let effective_thread = thread_id
+                .or_else(|| std::env::var("DISTRI_THREAD_ID").ok())
+                .or_else(|| resume.as_ref().map(|r| resolve_resume_arg(r)));
+            // Set task_id: --task-id flag > DISTRI_TASK_ID env > auto-generated
+            let effective_task = task_id.or_else(|| std::env::var("DISTRI_TASK_ID").ok());
+
+            let mut params = build_message_params(
+                task,
+                effective_thread.as_deref(),
+                effective_task.as_deref(),
+                None,
+                connections_context,
+            );
             app.inject_external_tools(&mut params);
 
-            // Set thread_id from --resume
-            if let Some(ref resume_arg) = resume {
-                let tid = resolve_resume_arg(resume_arg);
-                params.message.context_id = Some(tid);
+            // --remote: shorthand for --overrides '{"remote":true}'
+            if remote {
+                let meta = params.metadata.get_or_insert(serde_json::json!({}));
+                let overrides_entry = meta
+                    .get_mut("definition_overrides")
+                    .and_then(|v| v.as_object_mut())
+                    .map(|obj| {
+                        obj.insert("remote".to_string(), serde_json::Value::Bool(true));
+                    });
+                if overrides_entry.is_none() {
+                    meta["definition_overrides"] = serde_json::json!({ "remote": true });
+                }
             }
 
             // Merge --context into metadata.env_vars for the server
@@ -450,12 +489,19 @@ async fn main() -> Result<()> {
             println!("Streaming agent '{}' via {}", agent_name, base_url);
             let registry = app.registry();
             register_approval_handler(&registry);
-            let stream_config = config.clone().with_timeout(600);
+            let mut stream_config = config.clone().with_timeout(600);
+            stream_config.traceparent = traceparent;
             let http_client = stream_config.build_http_client()?;
-            let mut client = AgentStreamClient::from_config(config.clone())
-                .with_http_client(http_client)
-                .with_tool_registry(registry)
-                .with_external_tool_names(external_tool_names);
+            // For remote runs the container handles all tool execution — don't register
+            // external tools on the client side or the CLI will try to execute them too.
+            let mut client = if remote {
+                AgentStreamClient::from_config(config.clone()).with_http_client(http_client)
+            } else {
+                AgentStreamClient::from_config(config.clone())
+                    .with_http_client(http_client)
+                    .with_tool_registry(registry)
+                    .with_external_tool_names(external_tool_names)
+            };
             for tool in extra_tools {
                 client.register_dynamic_tool(tool);
             }

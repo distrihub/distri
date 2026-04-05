@@ -185,6 +185,51 @@ pub async fn init_thread_get_message(
     Ok((thread_id, message))
 }
 
+/// Subscribe to events for an existing task via the broadcaster.
+/// Used by the `tasks/resubscribe` A2A method.
+pub async fn handle_resubscribe_sse(
+    req_id: Option<serde_json::Value>,
+    task_id: String,
+    broadcaster: std::sync::Arc<dyn crate::broadcast::AgentEventBroadcaster>,
+) -> impl futures_util::stream::Stream<Item = Result<SseMessage, std::convert::Infallible>> {
+    async_stream::stream! {
+        match broadcaster.subscribe(&task_id).await {
+            Ok(event_stream) => {
+                futures_util::pin_mut!(event_stream);
+                while let Some(event) = futures_util::StreamExt::next(&mut event_stream).await {
+                    let msg = map_agent_event(&event);
+                    let response = distri_a2a::JsonRpcResponse {
+                        jsonrpc: "2.0".to_string(),
+                        result: Some(serde_json::to_value(&msg).unwrap_or_default()),
+                        error: None,
+                        id: req_id.clone(),
+                    };
+                    yield Ok::<_, std::convert::Infallible>(SseMessage {
+                        event: None,
+                        data: serde_json::to_string(&response).unwrap_or_default(),
+                    });
+                }
+            }
+            Err(e) => {
+                let error = distri_a2a::JsonRpcResponse {
+                    jsonrpc: "2.0".to_string(),
+                    result: None,
+                    error: Some(distri_a2a::JsonRpcError {
+                        code: -32603,
+                        message: format!("Failed to subscribe: {}", e),
+                        data: None,
+                    }),
+                    id: req_id.clone(),
+                };
+                yield Ok::<_, std::convert::Infallible>(SseMessage {
+                    event: None,
+                    data: serde_json::to_string(&error).unwrap_or_default(),
+                });
+            }
+        }
+    }
+}
+
 pub async fn handle_message_send_streaming_sse(
     req_id: Option<serde_json::Value>,
     agent_id: String,
@@ -398,6 +443,7 @@ pub async fn handle_message_send_streaming_sse(
         let main_task_id = executor_context.task_id.clone();
         let main_task_id_for_completion = main_task_id.clone();
         let task_store = executor.stores.task_store.clone();
+        let broadcaster_for_completion = executor.broadcaster.clone();
         let cancel_token = CancellationToken::new();
         // Ensure the token is cancelled when the stream is dropped
         let _guard = TaskGuard {
@@ -441,6 +487,11 @@ pub async fn handle_message_send_streaming_sse(
                     }
                     _ => {}
                 };
+                // Tee events to broadcaster for tasks/resubscribe and deepagent relay
+                if let Some(ref broadcaster) = broadcaster_for_completion {
+                    let _ = broadcaster.publish(&event.task_id, event.clone()).await;
+                }
+
                 let msg = map_agent_event(&event);
 
                 let _ = sse_tx.send(Ok(msg)).await;

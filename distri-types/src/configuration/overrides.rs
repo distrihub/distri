@@ -18,6 +18,9 @@ pub struct DefinitionOverrides {
     /// Override browser usage flag
     pub use_browser: Option<bool>,
 
+    /// When true, run this agent in a remote browsr sandbox (shorthand for `remote: true` on the definition).
+    pub remote: Option<bool>,
+
     /// Additional dynamic tool factories to inject into the agent's tool config
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dynamic_tools: Option<Vec<DynamicToolFactory>>,

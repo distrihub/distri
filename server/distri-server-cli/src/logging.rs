@@ -55,8 +55,7 @@ pub fn init_logging(level: &str) {
 /// Configure the endpoint with `OTEL_EXPORTER_OTLP_ENDPOINT` env var (default: `http://localhost:4317`).
 /// Compatible with Jaeger, Langfuse, SigNoz, and any OTLP-compatible backend.
 #[cfg(feature = "otel")]
-fn init_otel_layer(
-) -> tracing_opentelemetry::OpenTelemetryLayer<
+fn init_otel_layer() -> tracing_opentelemetry::OpenTelemetryLayer<
     tracing_subscriber::Registry,
     opentelemetry_sdk::trace::SdkTracer,
 > {
@@ -76,7 +75,11 @@ fn init_otel_layer(
         .expect("Failed to create OTLP span exporter");
 
     let provider = SdkTracerProvider::builder()
-        .with_resource(Resource::builder().with_service_name("distri-server").build())
+        .with_resource(
+            Resource::builder()
+                .with_service_name("distri-server")
+                .build(),
+        )
         .with_batch_exporter(exporter)
         .build();
 

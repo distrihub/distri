@@ -6,6 +6,14 @@ use crate::types::default_agent_version;
 use crate::AgentError;
 use distri_a2a::{AgentCard, Task};
 
+/// Boxed SSE stream type for A2A handler responses.
+type BoxedSseStream = std::pin::Pin<
+    Box<
+        dyn futures_util::stream::Stream<Item = Result<SseMessage, std::convert::Infallible>>
+            + Send,
+    >,
+>;
+
 use distri_a2a::{JsonRpcError, JsonRpcRequest, JsonRpcResponse, MessageSendParams, TaskIdParams};
 use distri_types::configuration::DefinitionOverrides;
 use futures::future::Either;
@@ -205,10 +213,7 @@ impl A2AHandler {
         executor_context: Option<ExecutorContext>,
         verbose: bool,
         workspace_model_settings: Option<distri_types::ModelSettings>,
-    ) -> Either<
-        impl futures_util::stream::Stream<Item = Result<SseMessage, std::convert::Infallible>>,
-        JsonRpcResponse,
-    > {
+    ) -> Either<BoxedSseStream, JsonRpcResponse> {
         let req_id = req.id.clone();
 
         let result = match req.method.as_str() {
@@ -244,7 +249,7 @@ impl A2AHandler {
                         )
                         .await;
 
-                        Either::Left(res)
+                        Either::Left(Box::pin(res) as BoxedSseStream)
                     }
                     Err(e) => Either::Right(Err(e)),
                 }
@@ -285,13 +290,41 @@ impl A2AHandler {
 
             "tasks/get" => Either::Right(self.handle_task_get(req.params).await),
             "tasks/cancel" => Either::Right(self.handle_task_cancel(req.params).await),
+            "tasks/resubscribe" => {
+                // Subscribe to live events for an existing task via the broadcaster
+                match self.executor.broadcaster.as_ref() {
+                    Some(broadcaster) => {
+                        let params: TaskIdParams = match serde_json::from_value(req.params) {
+                            Ok(p) => p,
+                            Err(e) => {
+                                return Either::Right(JsonRpcResponse {
+                                    jsonrpc: "2.0".to_string(),
+                                    result: None,
+                                    error: Some(map_agent_error(AgentError::Validation(format!(
+                                        "Invalid params: {}",
+                                        e
+                                    )))),
+                                    id: req_id.clone(),
+                                });
+                            }
+                        };
+                        let res = crate::a2a::stream::handle_resubscribe_sse(
+                            req_id.clone(),
+                            params.id,
+                            broadcaster.clone(),
+                        )
+                        .await;
+                        Either::Left(Box::pin(res) as BoxedSseStream)
+                    }
+                    None => Either::Right(Err(unimplemented_error(&req.method))),
+                }
+            }
             "agent/authenticatedExtendedCard"
-            | "tasks/resubscribe"
-            | "tasks/tasks/pushNotificationConfig/set"
-            | "tasks/tasks/pushNotificationConfig/get"
-            | "tasks/tasks/pushNotificationConfig/delete"
-            | "tasks/tasks/pushNotificationConfig/list"
-            | "tasks/tasks/pushNotificationConfig/test" => {
+            | "tasks/pushNotificationConfig/set"
+            | "tasks/pushNotificationConfig/get"
+            | "tasks/pushNotificationConfig/delete"
+            | "tasks/pushNotificationConfig/list"
+            | "tasks/pushNotificationConfig/test" => {
                 Either::Right(Err(unimplemented_error(&req.method)))
             }
             _ => Either::Right(Err(unimplemented_error(&req.method))),

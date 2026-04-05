@@ -447,19 +447,10 @@ pub async fn emit_final(
     tool_call: ToolCall,
     context: Arc<ExecutorContext>,
 ) -> Result<(), AgentError> {
-    let result = match tool_call.input {
-        serde_json::Value::Object(mut obj) => {
-            if let Some(value) = obj.remove("input") {
-                match value {
-                    serde_json::Value::String(s) => serde_json::Value::String(s),
-                    other => other,
-                }
-            } else {
-                serde_json::Value::Object(obj)
-            }
-        }
-        other => other,
-    };
+    let result = FinalTool::extract_result(&tool_call.input).unwrap_or_else(|e| {
+        tracing::warn!("emit_final: {e}");
+        tool_call.input.clone()
+    });
 
     // Mark the state as completed with final result
     context.set_final_result(Some(result)).await;

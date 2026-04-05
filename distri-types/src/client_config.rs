@@ -39,6 +39,12 @@ pub struct DistriConfig {
     /// Number of retry attempts for failed requests (default: 3)
     #[serde(default = "default_retries")]
     pub retry_attempts: u32,
+
+    /// W3C traceparent header value for distributed tracing.
+    /// Not serialized — set at runtime via CLI flag or programmatically.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub traceparent: Option<String>,
 }
 
 fn default_timeout() -> u64 {
@@ -87,6 +93,7 @@ impl Default for DistriConfig {
             workspace_id: None,
             timeout_secs: default_timeout(),
             retry_attempts: default_retries(),
+            traceparent: None,
         }
     }
 }

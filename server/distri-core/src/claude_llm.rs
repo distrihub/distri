@@ -548,7 +548,6 @@ impl ClaudeLLMExecutor {
             messages.len()
         );
 
-        
         llm_gateway::observability::recorder::record_inference_input(&span, messages);
 
         // Validate context size
@@ -763,10 +762,24 @@ impl ClaudeLLMExecutor {
         );
 
         {
-            use llm_gateway::observability::recorder::{nonzero_tokens, record_context_window, record_inference_output, record_inference_response};
+            use llm_gateway::observability::recorder::{
+                nonzero_tokens, record_context_window, record_inference_output,
+                record_inference_response,
+            };
             record_inference_output(&span, &content, &tool_calls);
             record_context_window(&span, ms.inner.context_size, input_tokens);
-            record_inference_response(&span, Some(ms.model.as_str()), None, &[format!("{:?}", finish_reason)], nonzero_tokens(input_tokens), nonzero_tokens(output_tokens), nonzero_tokens(cached_tokens), nonzero_tokens(cache_created), elapsed, cost);
+            record_inference_response(
+                &span,
+                Some(ms.model.as_str()),
+                None,
+                &[format!("{:?}", finish_reason)],
+                nonzero_tokens(input_tokens),
+                nonzero_tokens(output_tokens),
+                nonzero_tokens(cached_tokens),
+                nonzero_tokens(cache_created),
+                elapsed,
+                cost,
+            );
         }
 
         Ok(super::llm::LLMResponse {
@@ -810,7 +823,6 @@ impl ClaudeLLMExecutor {
             messages.len()
         );
 
-        
         llm_gateway::observability::recorder::record_inference_input(&span, messages);
 
         // Validate context size
@@ -1135,10 +1147,24 @@ impl ClaudeLLMExecutor {
         );
 
         {
-            use llm_gateway::observability::recorder::{nonzero_tokens, record_context_window, record_inference_output, record_inference_response};
+            use llm_gateway::observability::recorder::{
+                nonzero_tokens, record_context_window, record_inference_output,
+                record_inference_response,
+            };
             record_inference_output(&span, &content, &tool_calls);
             record_context_window(&span, ms.inner.context_size, stream_input_tokens);
-            record_inference_response(&span, Some(ms.model.as_str()), None, &[format!("{:?}", finish_reason)], nonzero_tokens(stream_input_tokens), nonzero_tokens(stream_output_tokens), nonzero_tokens(stream_cached_tokens), nonzero_tokens(stream_cache_created), elapsed, cost);
+            record_inference_response(
+                &span,
+                Some(ms.model.as_str()),
+                None,
+                &[format!("{:?}", finish_reason)],
+                nonzero_tokens(stream_input_tokens),
+                nonzero_tokens(stream_output_tokens),
+                nonzero_tokens(stream_cached_tokens),
+                nonzero_tokens(stream_cache_created),
+                elapsed,
+                cost,
+            );
         }
 
         Ok(super::llm::StreamResult {

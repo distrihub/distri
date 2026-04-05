@@ -86,4 +86,10 @@ impl AgentHooks for CombinedHooks {
         }
         Ok(())
     }
+
+    fn mark_run_as_remote(&self, run_id: &str) {
+        for hook in &self.hooks {
+            hook.mark_run_as_remote(run_id);
+        }
+    }
 }

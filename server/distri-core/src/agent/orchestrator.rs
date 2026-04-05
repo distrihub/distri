@@ -54,6 +54,10 @@ pub struct AgentOrchestrator {
     pub inline_hooks: Arc<dashmap::DashMap<String, tokio::sync::oneshot::Sender<HookMutation>>>,
     pub hook_registry: HookRegistry,
     pub system_hooks: Vec<Arc<dyn crate::agent::types::AgentHooks>>,
+    /// Optional event broadcaster for A2A tasks/resubscribe and deepagent event relay.
+    pub broadcaster: Option<Arc<dyn crate::broadcast::AgentEventBroadcaster>>,
+    /// Optional background runner for async agent execution (deepagent containers).
+    pub background_runner: Option<Arc<dyn crate::runner::BackgroundRunner>>,
 }
 
 impl std::fmt::Debug for AgentOrchestrator {
@@ -84,6 +88,8 @@ pub struct AgentOrchestratorBuilder {
     configuration: Option<Arc<RwLock<DistriServerConfig>>>,
     hooks: Option<HashMap<String, Arc<dyn crate::agent::types::AgentHooks>>>,
     system_hooks: Vec<Arc<dyn crate::agent::types::AgentHooks>>,
+    broadcaster: Option<Arc<dyn crate::broadcast::AgentEventBroadcaster>>,
+    background_runner: Option<Arc<dyn crate::runner::BackgroundRunner>>,
 }
 
 impl AgentOrchestratorBuilder {
@@ -176,6 +182,21 @@ impl AgentOrchestratorBuilder {
         self.system_hooks = hooks;
         self
     }
+    pub fn with_broadcaster(
+        mut self,
+        broadcaster: Arc<dyn crate::broadcast::AgentEventBroadcaster>,
+    ) -> Self {
+        self.broadcaster = Some(broadcaster);
+        self
+    }
+
+    pub fn with_background_runner(
+        mut self,
+        runner: Arc<dyn crate::runner::BackgroundRunner>,
+    ) -> Self {
+        self.background_runner = Some(runner);
+        self
+    }
 
     pub async fn build(self) -> anyhow::Result<AgentOrchestrator> {
         let (coordinator_tx, coordinator_rx) = mpsc::channel(10000);
@@ -251,6 +272,8 @@ impl AgentOrchestratorBuilder {
             hooks: hooks.clone(),
             inline_hooks: Arc::new(dashmap::DashMap::new()),
             hook_registry: HookRegistry::new(),
+            broadcaster: self.broadcaster,
+            background_runner: self.background_runner,
         };
 
         // Sync system prompts to the store
@@ -902,6 +925,34 @@ impl AgentOrchestrator {
         );
         Self::validate_agent_model(&agent_config)?;
 
+        // After the definition is fully built (overrides applied), check if this agent
+        // should run remotely. If so, dispatch via RemoteAgent instead of StandardAgent.
+        if let distri_types::configuration::AgentConfig::StandardAgent(ref definition) =
+            agent_config
+        {
+            if definition.remote {
+                match (&self.background_runner, &self.broadcaster) {
+                    (Some(runner), Some(broadcaster)) => {
+                        let hooks: Arc<dyn crate::agent::types::AgentHooks> = Arc::new(
+                            crate::agent::hooks::CombinedHooks::new(self.system_hooks.clone()),
+                        );
+                        let agent = crate::agent::remote::RemoteAgent {
+                            definition: definition.clone(),
+                            runner: runner.clone(),
+                            broadcaster: broadcaster.clone(),
+                            hooks,
+                        };
+                        return agent.invoke_stream(message, context).await;
+                    }
+                    _ => {
+                        return Err(AgentError::Session(
+                            "Agent has remote=true but no background_runner or broadcaster configured".to_string(),
+                        ));
+                    }
+                }
+            }
+        }
+
         // Check if todos are enabled for this agent and initialize shared_todos if needed
         if let distri_types::configuration::AgentConfig::StandardAgent(definition) = &agent_config {
             if definition.should_use_browser() {
@@ -1120,6 +1171,23 @@ impl AgentOrchestrator {
                 .await;
         }
 
+        // Look up parent run for OTel span nesting (set by RemoteAgent before spawning inner task).
+        let context = if context.parent_run_id.is_none() {
+            if let Some(broadcaster) = &self.broadcaster {
+                if let Ok(Some(parent_run_id)) = broadcaster.get_parent_run(&context.task_id).await {
+                    let mut ctx = (*context).clone();
+                    ctx.parent_run_id = Some(parent_run_id);
+                    Arc::new(ctx)
+                } else {
+                    context
+                }
+            } else {
+                context
+            }
+        } else {
+            context
+        };
+
         self.validate_user_message(&message)?;
 
         self.call_agent(agent_name, message, context, definition_overrides)
@@ -1163,6 +1231,23 @@ impl AgentOrchestrator {
                 .update_parent_task(&context.task_id, Some(parent))
                 .await;
         }
+
+        // Look up parent run for OTel span nesting (set by RemoteAgent before spawning inner task).
+        let context = if context.parent_run_id.is_none() {
+            if let Some(broadcaster) = &self.broadcaster {
+                if let Ok(Some(parent_run_id)) = broadcaster.get_parent_run(&context.task_id).await {
+                    let mut ctx = (*context).clone();
+                    ctx.parent_run_id = Some(parent_run_id);
+                    Arc::new(ctx)
+                } else {
+                    context
+                }
+            } else {
+                context
+            }
+        } else {
+            context
+        };
 
         self.validate_user_message(&message)?;
 

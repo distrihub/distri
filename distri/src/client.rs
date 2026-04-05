@@ -2225,6 +2225,19 @@ impl Distri {
         }
     }
 
+    /// List all available models grouped by provider, with configuration status.
+    pub async fn list_models(
+        &self,
+    ) -> Result<Vec<distri_types::ProviderModelsStatus>, ClientError> {
+        let url = format!("{}/models", self.base_url);
+        let resp = self.http.get(&url).send().await?;
+        if resp.status().is_success() {
+            Ok(resp.json().await?)
+        } else {
+            Ok(vec![])
+        }
+    }
+
     /// Get the workspace default model name (if configured).
     pub async fn get_default_model(&self) -> Result<Option<String>, ClientError> {
         let url = format!("{}/providers/default-model", self.base_url);

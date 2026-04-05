@@ -15,6 +15,7 @@ pub mod prompt_registry {
 }
 pub mod prompt_validation;
 pub mod reflection;
+pub mod remote;
 pub mod server;
 pub mod standard;
 pub mod strategy;

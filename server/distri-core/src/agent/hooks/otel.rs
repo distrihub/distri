@@ -42,8 +42,17 @@ pub struct OtelHooks {
     /// Step spans keyed by step_id. Created at StepStarted, dropped at StepCompleted.
     /// Tool spans are created as children of the active step span.
     pub step_spans: DashMap<String, tracing::Span>,
+    /// Currently active step_id per run_id. Used to parent plan spans under the
+    /// current step span when planning happens after StepStarted.
+    pub current_step_id: DashMap<String, String>,
+    /// Reflect spans keyed by run_id. Created at ReflectStarted, dropped at ReflectFinished.
+    pub reflect_spans: DashMap<String, tracing::Span>,
     /// Tool spans keyed by tool_call_id. Created at ToolExecutionStart, dropped at End.
     pub tool_spans: DashMap<String, tracing::Span>,
+    /// Run IDs handled by RemoteAgent. These runs have an invoke_agent span but their
+    /// step/plan/tool events are forwarded from the inner execution — the inner OtelHooks
+    /// creates those spans directly. We suppress them here to avoid duplicates.
+    pub remote_run_ids: dashmap::DashSet<String>,
 }
 
 #[async_trait]
@@ -63,7 +72,15 @@ impl AgentHooks for OtelHooks {
             channel_id: context.channel_id.as_deref(),
         };
         let attrs = GenAiAgentSpan::from_context_fields(&context.agent_id, &ctx_fields, None);
-        let span = builder::agent_span(&attrs);
+        let span = if let Some(ref parent_run_id) = context.parent_run_id {
+            if let Some(outer_span) = self.agent_spans.get(parent_run_id.as_str()) {
+                outer_span.in_scope(|| builder::agent_span(&attrs))
+            } else {
+                builder::agent_span(&attrs)
+            }
+        } else {
+            builder::agent_span(&attrs)
+        };
 
         // Give StandardAgent a clone for .instrument() wrapping
         context.set_otel_agent_span(span.clone());
@@ -73,10 +90,28 @@ impl AgentHooks for OtelHooks {
         Ok(())
     }
 
+    fn mark_run_as_remote(&self, run_id: &str) {
+        self.remote_run_ids.insert(run_id.to_string());
+    }
+
     async fn on_event(&self, event: &AgentEvent) -> Result<(), AgentError> {
+        // For RemoteAgent runs the inner execution's OtelHooks creates step/plan/tool spans.
+        // Forwarded events arrive here with the outer run_id — skip span creation to avoid
+        // duplicates. RunFinished/RunError still need to run to record usage and clean up.
+        let is_remote = self.remote_run_ids.contains(event.run_id.as_str());
+        if is_remote {
+            match &event.event {
+                AgentEventType::RunFinished { .. } | AgentEventType::RunError { .. } => {
+                    self.remote_run_ids.remove(event.run_id.as_str());
+                    // fall through to record usage on the invoke_agent span
+                }
+                _ => return Ok(()),
+            }
+        }
+
         match &event.event {
             AgentEventType::PlanStarted { initial_plan } => {
-                let span = builder::plan_span(&GenAiPlanSpan {
+                let attrs = GenAiPlanSpan {
                     initial_plan: *initial_plan,
                     distri_thread_id: Some(event.thread_id.clone()),
                     distri_workspace_id: event.workspace_id.clone(),
@@ -84,7 +119,18 @@ impl AgentHooks for OtelHooks {
                     distri_run_id: Some(event.run_id.clone()),
                     distri_agent_id: Some(event.agent_id.clone()),
                     distri_user_id: event.user_id.clone(),
-                });
+                };
+                // Parent the plan span under the current step span (if StepStarted already
+                // fired this iteration). This puts planning inside the step in the trace tree.
+                let span = if let Some(step_id) = self.current_step_id.get(event.run_id.as_str()) {
+                    if let Some(step_span) = self.step_spans.get(step_id.as_str()) {
+                        step_span.in_scope(|| builder::plan_span(&attrs))
+                    } else {
+                        builder::plan_span(&attrs)
+                    }
+                } else {
+                    builder::plan_span(&attrs)
+                };
                 self.plan_spans.insert(event.run_id.clone(), span);
             }
             AgentEventType::PlanFinished { total_steps } => {
@@ -108,10 +154,57 @@ impl AgentHooks for OtelHooks {
                     distri_user_id: event.user_id.clone(),
                 });
                 self.step_spans.insert(step_id.clone(), span);
+                // Track the active step_id for this run so PlanStarted can parent under it
+                self.current_step_id
+                    .insert(event.run_id.clone(), step_id.clone());
             }
             AgentEventType::StepCompleted { step_id, .. } => {
                 if let Some((_, span)) = self.step_spans.remove(step_id.as_str()) {
                     drop(span); // closing exports the step span
+                }
+                self.current_step_id.remove(event.run_id.as_str());
+            }
+            AgentEventType::ReflectStarted {} => {
+                // Create a reflect span as a child of the current step span (if any),
+                // otherwise as a child of the agent span (via current tracing context).
+                let span = if let Some(step_id) = self.current_step_id.get(event.run_id.as_str()) {
+                    if let Some(step_span) = self.step_spans.get(step_id.as_str()) {
+                        step_span.in_scope(|| {
+                            tracing::info_span!(
+                                target: "gen_ai",
+                                "gen_ai.reflect",
+                                "otel.name" = "reflect",
+                                "gen_ai.operation.name" = "reflect",
+                            )
+                        })
+                    } else {
+                        tracing::info_span!(
+                            target: "gen_ai",
+                            "gen_ai.reflect",
+                            "otel.name" = "reflect",
+                            "gen_ai.operation.name" = "reflect",
+                        )
+                    }
+                } else {
+                    tracing::info_span!(
+                        target: "gen_ai",
+                        "gen_ai.reflect",
+                        "otel.name" = "reflect",
+                        "gen_ai.operation.name" = "reflect",
+                    )
+                };
+                self.reflect_spans.insert(event.run_id.clone(), span);
+            }
+            AgentEventType::ReflectFinished {
+                should_retry,
+                reason,
+            } => {
+                if let Some((_, span)) = self.reflect_spans.remove(event.run_id.as_str()) {
+                    span.record("gen_ai.reflect.should_retry", *should_retry);
+                    if let Some(r) = reason {
+                        span.record("gen_ai.reflect.reason", r.as_str());
+                    }
+                    drop(span);
                 }
             }
             AgentEventType::ToolExecutionStart {
@@ -161,7 +254,8 @@ impl AgentHooks for OtelHooks {
                 // (ToolExecutionEnd only records success, not remove). Record output here and
                 // then drop the span so it exports with both input and output.
                 for response in results {
-                    if let Some((_, span)) = self.tool_spans.remove(response.tool_call_id.as_str()) {
+                    if let Some((_, span)) = self.tool_spans.remove(response.tool_call_id.as_str())
+                    {
                         // Extract data/text parts as the output value
                         let parts_json: Vec<serde_json::Value> = response
                             .parts
@@ -255,7 +349,10 @@ mod tests {
         base: &distri_types::AgentEvent,
         event: distri_types::AgentEventType,
     ) -> distri_types::AgentEvent {
-        distri_types::AgentEvent { event, ..base.clone() }
+        distri_types::AgentEvent {
+            event,
+            ..base.clone()
+        }
     }
 
     fn base_event() -> distri_types::AgentEvent {
@@ -294,8 +391,14 @@ mod tests {
             ..Default::default()
         };
         hooks.before_execute(&mut msg, ctx.clone()).await.unwrap();
-        assert!(ctx.take_otel_agent_span().is_some(), "agent span should be set");
-        assert!(hooks.agent_spans.contains_key("run-1"), "agent_spans should have run-1");
+        assert!(
+            ctx.take_otel_agent_span().is_some(),
+            "agent span should be set"
+        );
+        assert!(
+            hooks.agent_spans.contains_key("run-1"),
+            "agent_spans should have run-1"
+        );
     }
 
     #[tokio::test]
@@ -316,7 +419,10 @@ mod tests {
             ))
             .await
             .unwrap();
-        assert!(hooks.tool_spans.contains_key("tc-1"), "span created at Start");
+        assert!(
+            hooks.tool_spans.contains_key("tc-1"),
+            "span created at Start"
+        );
 
         // End: success recorded, span kept alive for ToolResults
         hooks
@@ -357,6 +463,53 @@ mod tests {
             !hooks.tool_spans.contains_key("tc-1"),
             "span removed after ToolResults"
         );
+    }
+
+    #[tokio::test]
+    async fn test_inner_span_created_inside_outer_span() {
+        let hooks = OtelHooks::default();
+        let mut msg = crate::types::Message {
+            role: distri_types::MessageRole::User,
+            parts: vec![],
+            ..Default::default()
+        };
+
+        // Create outer context and call before_execute to register the outer agent span.
+        let outer_ctx = Arc::new(ExecutorContext {
+            run_id: "outer-run".to_string(),
+            agent_id: "outer-agent".to_string(),
+            thread_id: "t-outer".to_string(),
+            ..Default::default()
+        });
+        hooks
+            .before_execute(&mut msg, outer_ctx.clone())
+            .await
+            .unwrap();
+        assert!(
+            hooks.agent_spans.contains_key("outer-run"),
+            "outer agent span should be registered"
+        );
+
+        // Create inner context with parent_run_id pointing to the outer run.
+        let inner_ctx = Arc::new(ExecutorContext {
+            run_id: "inner-run".to_string(),
+            agent_id: "inner-agent".to_string(),
+            thread_id: "t-inner".to_string(),
+            parent_run_id: Some("outer-run".to_string()),
+            ..Default::default()
+        });
+        hooks
+            .before_execute(&mut msg, inner_ctx.clone())
+            .await
+            .unwrap();
+
+        // The inner span should be stored and the code path should not panic.
+        assert!(
+            hooks.agent_spans.contains_key("inner-run"),
+            "inner agent span should be registered"
+        );
+        // Both spans are stored independently.
+        assert_eq!(hooks.agent_spans.len(), 2);
     }
 
     #[tokio::test]
@@ -414,6 +567,68 @@ mod tests {
             ))
             .await
             .unwrap();
-        assert!(!hooks.tool_spans.contains_key("tc-err"), "span removed after ToolResults");
+        assert!(
+            !hooks.tool_spans.contains_key("tc-err"),
+            "span removed after ToolResults"
+        );
+    }
+
+    /// Remote runs should only get an invoke_agent span. Forwarded step/plan/tool events
+    /// must be silently dropped — the inner execution's OtelHooks already created those spans.
+    #[tokio::test]
+    async fn remote_run_suppresses_step_and_plan_spans() {
+        let hooks = OtelHooks::default();
+        let base = base_event(); // run_id = "r1"
+
+        // Mark this run as remote BEFORE events arrive (same as RemoteAgent does).
+        hooks.mark_run_as_remote(&base.run_id);
+
+        // StepStarted — must be silently ignored.
+        hooks
+            .on_event(&make_event(
+                &base,
+                distri_types::AgentEventType::StepStarted {
+                    step_id: "s-remote".to_string(),
+                    step_index: 0,
+                },
+            ))
+            .await
+            .unwrap();
+        assert!(
+            !hooks.step_spans.contains_key("s-remote"),
+            "step span must NOT be created for remote run"
+        );
+
+        // PlanStarted — must be silently ignored.
+        hooks
+            .on_event(&make_event(
+                &base,
+                distri_types::AgentEventType::PlanStarted { initial_plan: true },
+            ))
+            .await
+            .unwrap();
+        assert!(
+            !hooks.plan_spans.contains_key(&base.run_id),
+            "plan span must NOT be created for remote run"
+        );
+
+        // RunFinished — must still process (cleans up remote flag + records usage).
+        hooks
+            .on_event(&make_event(
+                &base,
+                distri_types::AgentEventType::RunFinished {
+                    success: true,
+                    total_steps: 0,
+                    failed_steps: 0,
+                    usage: None,
+                    context_budget: None,
+                },
+            ))
+            .await
+            .unwrap();
+        assert!(
+            !hooks.remote_run_ids.contains(&base.run_id),
+            "remote_run_ids must be cleaned up after RunFinished"
+        );
     }
 }

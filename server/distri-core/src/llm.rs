@@ -181,7 +181,6 @@ impl LLMExecutor {
 
         let sanitized_messages = self.sanitize_messages(messages);
 
-        
         llm_gateway::observability::recorder::record_inference_input(&span, &sanitized_messages);
         tracing::info!(
             target: "llm.execute",
@@ -367,10 +366,24 @@ impl LLMExecutor {
         let cost = crate::agent::pricing::estimate_cost(&ms.model, inp, out, 0);
 
         {
-            use llm_gateway::observability::recorder::{nonzero_tokens, record_context_window, record_inference_output, record_inference_response};
+            use llm_gateway::observability::recorder::{
+                nonzero_tokens, record_context_window, record_inference_output,
+                record_inference_response,
+            };
             record_inference_output(&span, &content, &tool_calls);
             record_context_window(&span, ms.inner.context_size, inp);
-            record_inference_response(&span, Some(ms.model.as_str()), None, &[format!("{:?}", finish_reason)], nonzero_tokens(inp), nonzero_tokens(out), None, None, elapsed, cost);
+            record_inference_response(
+                &span,
+                Some(ms.model.as_str()),
+                None,
+                &[format!("{:?}", finish_reason)],
+                nonzero_tokens(inp),
+                nonzero_tokens(out),
+                None,
+                None,
+                elapsed,
+                cost,
+            );
         }
 
         Ok(LLMResponse {
@@ -412,7 +425,6 @@ impl LLMExecutor {
 
         let sanitized_messages = self.sanitize_messages(messages);
 
-        
         llm_gateway::observability::recorder::record_inference_input(&span, &sanitized_messages);
         tracing::info!(
             target: "llm.execute_stream",
@@ -743,9 +755,22 @@ impl LLMExecutor {
             0,
         );
         {
-            use llm_gateway::observability::recorder::{nonzero_tokens, record_context_window, record_inference_response};
+            use llm_gateway::observability::recorder::{
+                nonzero_tokens, record_context_window, record_inference_response,
+            };
             record_context_window(&span, ms.inner.context_size, stream_input_tokens);
-            record_inference_response(&span, Some(ms.model.as_str()), None, &[format!("{:?}", finish_reason)], nonzero_tokens(stream_input_tokens), nonzero_tokens(stream_output_tokens), None, None, elapsed, cost);
+            record_inference_response(
+                &span,
+                Some(ms.model.as_str()),
+                None,
+                &[format!("{:?}", finish_reason)],
+                nonzero_tokens(stream_input_tokens),
+                nonzero_tokens(stream_output_tokens),
+                None,
+                None,
+                elapsed,
+                cost,
+            );
         }
         Ok(StreamResult {
             finish_reason,
