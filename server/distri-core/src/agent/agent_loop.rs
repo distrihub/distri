@@ -216,6 +216,22 @@ impl AgentLoop {
                 tracing::error!("Too many errors. Exiting...");
                 break;
             }
+
+            // Emit StepStarted BEFORE planning so the plan span nests under the step span
+            // in the OTel trace hierarchy. Use the global iteration count as the step index
+            // so it reflects overall progress rather than local-plan position.
+            let global_step_index = context.get_usage().await.current_iteration;
+            let iteration_step_id = uuid::Uuid::new_v4().to_string();
+            context
+                .set_current_step_id(Some(iteration_step_id.clone()))
+                .await;
+            context
+                .emit(AgentEventType::StepStarted {
+                    step_id: iteration_step_id.clone(),
+                    step_index: global_step_index,
+                })
+                .await;
+
             if current_plan.is_none()
                 || step_index >= current_plan.as_ref().map(|p| p.steps.len()).unwrap_or(0)
             {
@@ -248,13 +264,22 @@ impl AgentLoop {
                             .await;
 
                         let result = ExecutionResult {
-                            step_id: uuid::Uuid::new_v4().to_string(),
+                            step_id: iteration_step_id.clone(),
                             status: ExecutionStatus::Failed,
                             parts: vec![],
                             timestamp: chrono::Utc::now().timestamp_millis(),
                             reason: Some(format!("Planning failed: {}", e)),
                         };
                         context.store_execution_result(&result).await?;
+                        // Close the step span we opened before continuing
+                        context
+                            .emit(AgentEventType::StepCompleted {
+                                step_id: iteration_step_id.clone(),
+                                success: false,
+                                context_budget: None,
+                                usage: Some(context.get_step_usage().await),
+                            })
+                            .await;
                         continue;
                     }
                 }
@@ -277,6 +302,15 @@ impl AgentLoop {
             // If so, allow completion; otherwise enforce the limit
             if step_index >= max_iterations {
                 let has_final_call = context.get_final_result().await.is_some();
+                // Close the step span we opened before breaking
+                context
+                    .emit(AgentEventType::StepCompleted {
+                        step_id: iteration_step_id.clone(),
+                        success: has_final_call,
+                        context_budget: None,
+                        usage: Some(context.get_step_usage().await),
+                    })
+                    .await;
                 if has_final_call {
                     verbose_log!(
                         context.verbose,
@@ -308,21 +342,20 @@ impl AgentLoop {
                 context.set_current_plan(None).await;
                 current_plan = None;
                 step_index = 0;
+                // Close the step span before retrying
+                context
+                    .emit(AgentEventType::StepCompleted {
+                        step_id: iteration_step_id.clone(),
+                        success: false,
+                        context_budget: None,
+                        usage: None,
+                    })
+                    .await;
                 continue;
             }
             let step = step.unwrap();
-            let step_id = step.id.clone();
-
-            // Set the current step id for the step
-            context.set_current_step_id(Some(step_id.clone())).await;
 
             self.hooks.on_step_start(&step).await?;
-            context
-                .emit(AgentEventType::StepStarted {
-                    step_id: step_id.clone(),
-                    step_index,
-                })
-                .await;
 
             let result = match self
                 .executor
@@ -343,6 +376,15 @@ impl AgentLoop {
                             usage: Some(context.get_step_usage().await),
                         })
                         .await;
+                    // Close the step span before returning
+                    context
+                        .emit(AgentEventType::StepCompleted {
+                            step_id: iteration_step_id.clone(),
+                            success: false,
+                            context_budget: None,
+                            usage: Some(context.get_step_usage().await),
+                        })
+                        .await;
 
                     return Err(e);
                 }
@@ -360,6 +402,14 @@ impl AgentLoop {
                 verbose_log!(context.verbose, "Input required, stopping execution");
                 context
                     .update_status(crate::types::TaskStatus::InputRequired)
+                    .await;
+                context
+                    .emit(AgentEventType::StepCompleted {
+                        step_id: iteration_step_id.clone(),
+                        success: true,
+                        context_budget: Some(context.get_usage().await.context_budget.clone()),
+                        usage: Some(context.get_step_usage().await),
+                    })
                     .await;
                 break;
             }
@@ -383,12 +433,12 @@ impl AgentLoop {
                 "Step completed: agent_id: {}, task_id: {}, step_id: {}, success: {}",
                 context.agent_id,
                 context.task_id,
-                step_id,
+                iteration_step_id,
                 result.is_success()
             );
             context
                 .emit(AgentEventType::StepCompleted {
-                    step_id: step_id.clone(),
+                    step_id: iteration_step_id.clone(),
                     success: result.is_success(),
                     context_budget: Some(context.get_usage().await.context_budget.clone()),
                     usage: Some(context.get_step_usage().await),
@@ -450,11 +500,24 @@ impl AgentLoop {
                     if !reflection_completed {
                         verbose_log!(
                             context.verbose,
-                            "agent_id: {}, task_id: {}, 🤔 Starting reflection analysis (reflection enabled)",
+                            "agent_id: {}, task_id: {}, Starting reflection analysis (reflection enabled)",
                             context.agent_id,
                             context.task_id
                         );
-                        if let Ok(true) = self.reflect(&message, &context).await {
+                        context.emit(AgentEventType::ReflectStarted {}).await;
+                        let should_retry = self.reflect(&message, &context).await;
+                        let (retry, reason) = match should_retry {
+                            Ok(true) => (true, None),
+                            Ok(false) => (false, None),
+                            Err(ref e) => (false, Some(e.to_string())),
+                        };
+                        context
+                            .emit(AgentEventType::ReflectFinished {
+                                should_retry: retry,
+                                reason,
+                            })
+                            .await;
+                        if let Ok(true) = should_retry {
                             continue;
                         }
                     }

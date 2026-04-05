@@ -117,6 +117,14 @@ pub enum AgentEventType {
         usage: Option<RunUsage>,
     },
 
+    // Reflection events (emitted when is_reflection_enabled() and reflection runs)
+    ReflectStarted {},
+    ReflectFinished {
+        should_retry: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
+
     // Tool execution events
     ToolExecutionStart {
         step_id: String,

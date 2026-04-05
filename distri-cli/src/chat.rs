@@ -271,21 +271,37 @@ pub async fn handle_slash_command(
             match client.list_models().await {
                 Ok(providers) => {
                     let current = current_model.as_deref().unwrap_or("Auto");
-                    println!("{}Available models{} (current: {}{}{})", COLOR_BRIGHT_GREEN, COLOR_RESET, COLOR_BRIGHT_GREEN, current, COLOR_RESET);
+                    println!(
+                        "{}Available models{} (current: {}{}{})",
+                        COLOR_BRIGHT_GREEN, COLOR_RESET, COLOR_BRIGHT_GREEN, current, COLOR_RESET
+                    );
                     for provider in &providers {
                         if provider.models.is_empty() {
                             continue;
                         }
                         let status = if provider.configured { "✓" } else { "✗" };
-                        println!("\n  {} {} {}{}{}",
+                        println!(
+                            "\n  {} {} {}{}{}",
                             status,
                             provider.provider_label,
-                            if provider.configured { COLOR_BRIGHT_GREEN } else { "\x1b[90m" },
-                            if provider.configured { "" } else { "(not configured)" },
+                            if provider.configured {
+                                COLOR_BRIGHT_GREEN
+                            } else {
+                                "\x1b[90m"
+                            },
+                            if provider.configured {
+                                ""
+                            } else {
+                                "(not configured)"
+                            },
                             COLOR_RESET,
                         );
                         for model in &provider.models {
-                            let marker = if current_model.as_deref() == Some(&model.id) { " ◀" } else { "" };
+                            let marker = if current_model.as_deref() == Some(&model.id) {
+                                " ◀"
+                            } else {
+                                ""
+                            };
                             println!("      {}{}", model.id, marker);
                         }
                     }
@@ -310,7 +326,10 @@ pub async fn handle_slash_command(
             if updated {
                 let display = current_model.as_deref().unwrap_or("Auto");
                 save_last_model(current_model.as_deref());
-                println!("{}Model set to:{} {}", COLOR_BRIGHT_GREEN, COLOR_RESET, display);
+                println!(
+                    "{}Model set to:{} {}",
+                    COLOR_BRIGHT_GREEN, COLOR_RESET, display
+                );
             }
             Ok(SlashCommandResult::Continue)
         }

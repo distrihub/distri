@@ -59,11 +59,9 @@ impl FinalTool {
     /// be deserialized into `FinalInput`.
     pub fn extract_result(raw: &serde_json::Value) -> Result<serde_json::Value, String> {
         match raw {
-            serde_json::Value::Object(_) => {
-                serde_json::from_value::<FinalInput>(raw.clone())
-                    .map(|fi| fi.input)
-                    .map_err(|e| format!("final tool input is malformed: {e}"))
-            }
+            serde_json::Value::Object(_) => serde_json::from_value::<FinalInput>(raw.clone())
+                .map(|fi| fi.input)
+                .map_err(|e| format!("final tool input is malformed: {e}")),
             other => Ok(other.clone()),
         }
     }

@@ -490,8 +490,7 @@ async fn main() -> Result<()> {
             // For remote runs the container handles all tool execution — don't register
             // external tools on the client side or the CLI will try to execute them too.
             let mut client = if remote {
-                AgentStreamClient::from_config(config.clone())
-                    .with_http_client(http_client)
+                AgentStreamClient::from_config(config.clone()).with_http_client(http_client)
             } else {
                 AgentStreamClient::from_config(config.clone())
                     .with_http_client(http_client)

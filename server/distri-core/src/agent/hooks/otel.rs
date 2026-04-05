@@ -42,6 +42,11 @@ pub struct OtelHooks {
     /// Step spans keyed by step_id. Created at StepStarted, dropped at StepCompleted.
     /// Tool spans are created as children of the active step span.
     pub step_spans: DashMap<String, tracing::Span>,
+    /// Currently active step_id per run_id. Used to parent plan spans under the
+    /// current step span when planning happens after StepStarted.
+    pub current_step_id: DashMap<String, String>,
+    /// Reflect spans keyed by run_id. Created at ReflectStarted, dropped at ReflectFinished.
+    pub reflect_spans: DashMap<String, tracing::Span>,
     /// Tool spans keyed by tool_call_id. Created at ToolExecutionStart, dropped at End.
     pub tool_spans: DashMap<String, tracing::Span>,
 }
@@ -76,7 +81,7 @@ impl AgentHooks for OtelHooks {
     async fn on_event(&self, event: &AgentEvent) -> Result<(), AgentError> {
         match &event.event {
             AgentEventType::PlanStarted { initial_plan } => {
-                let span = builder::plan_span(&GenAiPlanSpan {
+                let attrs = GenAiPlanSpan {
                     initial_plan: *initial_plan,
                     distri_thread_id: Some(event.thread_id.clone()),
                     distri_workspace_id: event.workspace_id.clone(),
@@ -84,7 +89,18 @@ impl AgentHooks for OtelHooks {
                     distri_run_id: Some(event.run_id.clone()),
                     distri_agent_id: Some(event.agent_id.clone()),
                     distri_user_id: event.user_id.clone(),
-                });
+                };
+                // Parent the plan span under the current step span (if StepStarted already
+                // fired this iteration). This puts planning inside the step in the trace tree.
+                let span = if let Some(step_id) = self.current_step_id.get(event.run_id.as_str()) {
+                    if let Some(step_span) = self.step_spans.get(step_id.as_str()) {
+                        step_span.in_scope(|| builder::plan_span(&attrs))
+                    } else {
+                        builder::plan_span(&attrs)
+                    }
+                } else {
+                    builder::plan_span(&attrs)
+                };
                 self.plan_spans.insert(event.run_id.clone(), span);
             }
             AgentEventType::PlanFinished { total_steps } => {
@@ -108,10 +124,57 @@ impl AgentHooks for OtelHooks {
                     distri_user_id: event.user_id.clone(),
                 });
                 self.step_spans.insert(step_id.clone(), span);
+                // Track the active step_id for this run so PlanStarted can parent under it
+                self.current_step_id
+                    .insert(event.run_id.clone(), step_id.clone());
             }
             AgentEventType::StepCompleted { step_id, .. } => {
                 if let Some((_, span)) = self.step_spans.remove(step_id.as_str()) {
                     drop(span); // closing exports the step span
+                }
+                self.current_step_id.remove(event.run_id.as_str());
+            }
+            AgentEventType::ReflectStarted {} => {
+                // Create a reflect span as a child of the current step span (if any),
+                // otherwise as a child of the agent span (via current tracing context).
+                let span = if let Some(step_id) = self.current_step_id.get(event.run_id.as_str()) {
+                    if let Some(step_span) = self.step_spans.get(step_id.as_str()) {
+                        step_span.in_scope(|| {
+                            tracing::info_span!(
+                                target: "gen_ai",
+                                "gen_ai.reflect",
+                                "otel.name" = "reflect",
+                                "gen_ai.operation.name" = "reflect",
+                            )
+                        })
+                    } else {
+                        tracing::info_span!(
+                            target: "gen_ai",
+                            "gen_ai.reflect",
+                            "otel.name" = "reflect",
+                            "gen_ai.operation.name" = "reflect",
+                        )
+                    }
+                } else {
+                    tracing::info_span!(
+                        target: "gen_ai",
+                        "gen_ai.reflect",
+                        "otel.name" = "reflect",
+                        "gen_ai.operation.name" = "reflect",
+                    )
+                };
+                self.reflect_spans.insert(event.run_id.clone(), span);
+            }
+            AgentEventType::ReflectFinished {
+                should_retry,
+                reason,
+            } => {
+                if let Some((_, span)) = self.reflect_spans.remove(event.run_id.as_str()) {
+                    span.record("gen_ai.reflect.should_retry", *should_retry);
+                    if let Some(r) = reason {
+                        span.record("gen_ai.reflect.reason", r.as_str());
+                    }
+                    drop(span);
                 }
             }
             AgentEventType::ToolExecutionStart {

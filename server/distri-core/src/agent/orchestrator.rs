@@ -933,10 +933,14 @@ impl AgentOrchestrator {
             if definition.remote {
                 match (&self.background_runner, &self.broadcaster) {
                     (Some(runner), Some(broadcaster)) => {
+                        let hooks: Arc<dyn crate::agent::types::AgentHooks> = Arc::new(
+                            crate::agent::hooks::CombinedHooks::new(self.system_hooks.clone()),
+                        );
                         let agent = crate::agent::remote::RemoteAgent {
                             definition: definition.clone(),
                             runner: runner.clone(),
                             broadcaster: broadcaster.clone(),
+                            hooks,
                         };
                         return agent.invoke_stream(message, context).await;
                     }
