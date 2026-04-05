@@ -14,7 +14,7 @@ postgres_vendored = [
   "distri-stores/postgres_vendored",
   "dep:openssl",
 ]
-otel = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp"]
+otel = []  # kept for backward compatibility; OTEL is now initialized in binary crates
 
 [dependencies]
 distri-a2a = { path = "../../distri-a2a", version = "0.3.7" }
@@ -27,6 +27,7 @@ distri-stores = { path = "../distri-stores", version = "0.3.7", default-features
 distri-filesystem = { path = "../../distri-filesystem", version = "0.3.7" }
 distri-auth = { path = "../distri-auth", version = "0.3.7" }
 distri-workflow = { path = "../../distri-workflow", version = "0.3.7" }
+llm-gateway = { path = "../llm-gateway", version = "0.3.7" }
 
 async-trait = { workspace = true }
 serde = { workspace = true }

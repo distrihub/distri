@@ -54,23 +54,3 @@ macro_rules! verbose_log {
         }
     };
 }
-
-#[cfg(feature = "otel")]
-pub fn init_tracer_provider() {
-    use opentelemetry::global;
-    use opentelemetry_otlp::SpanExporter;
-
-    use opentelemetry_sdk::{
-        propagation::TraceContextPropagator, trace::SdkTracerProvider, Resource,
-    };
-    let exporter = SpanExporter::builder()
-        .with_tonic()
-        .build()
-        .expect("Failed to create span exporter");
-    let provider = SdkTracerProvider::builder()
-        .with_resource(Resource::builder().with_service_name("distri").build())
-        .with_batch_exporter(exporter)
-        .build();
-    global::set_text_map_propagator(TraceContextPropagator::new());
-    global::set_tracer_provider(provider);
-}

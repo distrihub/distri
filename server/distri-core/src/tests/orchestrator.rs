@@ -5,10 +5,7 @@ use distri_types::configuration::{
 };
 use distri_types::{Message, ModelSettings};
 
-use crate::{
-    agent::parse_agent_markdown_content,
-    AgentOrchestrator, AgentOrchestratorBuilder,
-};
+use crate::{agent::parse_agent_markdown_content, AgentOrchestrator, AgentOrchestratorBuilder};
 
 /// Creates a StoreConfig that uses a temporary in-memory SQLite database
 /// so tests don't depend on the filesystem having a `.distri/` directory.

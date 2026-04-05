@@ -1,15 +1,17 @@
 pub mod a2a;
 pub mod agent;
-pub mod claude_client;
 pub mod claude_llm;
-pub mod gateway_config;
 pub mod llm;
 pub mod llm_service;
 pub mod logging;
-pub mod openai_responses_client;
 pub mod openai_responses_llm;
-pub mod provider_config;
 pub mod secrets;
+
+// Re-export modules moved to llm-gateway
+pub use llm_gateway::claude_client;
+pub use llm_gateway::gateway_config;
+pub use llm_gateway::openai_responses_client;
+pub use llm_gateway::provider_config;
 pub mod servers;
 pub mod tools;
 pub mod types {

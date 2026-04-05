@@ -34,6 +34,7 @@ use distri_parsers::{StreamParseResult, ToolCallParser};
 use distri_types::{LlmDefinition, ToolCallFormat};
 use futures::StreamExt;
 use serde_json::Value;
+use tracing::Instrument as _;
 
 /// How many messages from the end to place the conversation cache breakpoint
 const CACHE_CONVERSATION_BREAKPOINT_OFFSET: usize = 4;
@@ -524,6 +525,20 @@ impl ClaudeLLMExecutor {
             .llm_def
             .ms()
             .map_err(AgentError::InvalidConfiguration)?;
+        let ctx_fields = llm_gateway::observability::ContextFields {
+            thread_id: &self.context.thread_id,
+            task_id: &self.context.task_id,
+            run_id: &self.context.run_id,
+            agent_id: &self.context.agent_id,
+            user_id: &self.context.user_id,
+            workspace_id: self.context.workspace_id.as_deref(),
+            channel_id: self.context.channel_id.as_deref(),
+        };
+        let inf_attrs =
+            llm_gateway::observability::GenAiInferenceSpan::from_model_settings(&ms, &ctx_fields);
+        let span = llm_gateway::observability::builder::inference_span(&inf_attrs);
+        let start = std::time::Instant::now();
+
         tracing::info!(
             target: "claude_llm.execute",
             "Claude LLM request model={}, max_tokens={:?}, tools={}, messages={}",
@@ -532,6 +547,9 @@ impl ClaudeLLMExecutor {
             self.tools.len(),
             messages.len()
         );
+
+        
+        llm_gateway::observability::recorder::record_inference_input(&span, messages);
 
         // Validate context size
         let context_manager = crate::agent::context_size_manager::ContextSizeManager::default();
@@ -574,7 +592,27 @@ impl ClaudeLLMExecutor {
         };
 
         let client = self.build_client().await?;
-        let response = client.create_message(&request).await?;
+        let response = client
+            .create_message(&request)
+            .instrument(span.clone())
+            .await
+            .map_err(|e| {
+                tracing::error!("LLM request failed: {}", e);
+                let elapsed = start.elapsed().as_millis() as u64;
+                llm_gateway::observability::recorder::record_inference_response(
+                    &span,
+                    Some(ms.model.as_str()),
+                    None,
+                    &["error".to_string()],
+                    None,
+                    None,
+                    None,
+                    None,
+                    elapsed,
+                    None,
+                );
+                e
+            })?;
 
         // Log cache usage
         if let Some(cache_created) = response.usage.cache_creation_input_tokens {
@@ -716,6 +754,21 @@ impl ClaudeLLMExecutor {
             _ => async_openai::types::chat::FinishReason::Stop,
         };
 
+        let elapsed = start.elapsed().as_millis() as u64;
+        let cost = crate::agent::pricing::estimate_cost(
+            &ms.model,
+            input_tokens,
+            output_tokens,
+            cached_tokens,
+        );
+
+        {
+            use llm_gateway::observability::recorder::{nonzero_tokens, record_context_window, record_inference_output, record_inference_response};
+            record_inference_output(&span, &content, &tool_calls);
+            record_context_window(&span, ms.inner.context_size, input_tokens);
+            record_inference_response(&span, Some(ms.model.as_str()), None, &[format!("{:?}", finish_reason)], nonzero_tokens(input_tokens), nonzero_tokens(output_tokens), nonzero_tokens(cached_tokens), nonzero_tokens(cache_created), elapsed, cost);
+        }
+
         Ok(super::llm::LLMResponse {
             finish_reason,
             tool_calls,
@@ -734,6 +787,20 @@ impl ClaudeLLMExecutor {
             .llm_def
             .ms()
             .map_err(AgentError::InvalidConfiguration)?;
+        let ctx_fields = llm_gateway::observability::ContextFields {
+            thread_id: &self.context.thread_id,
+            task_id: &self.context.task_id,
+            run_id: &self.context.run_id,
+            agent_id: &self.context.agent_id,
+            user_id: &self.context.user_id,
+            workspace_id: self.context.workspace_id.as_deref(),
+            channel_id: self.context.channel_id.as_deref(),
+        };
+        let inf_attrs =
+            llm_gateway::observability::GenAiInferenceSpan::from_model_settings(&ms, &ctx_fields);
+        let span = llm_gateway::observability::builder::inference_span(&inf_attrs);
+        let start = std::time::Instant::now();
+
         tracing::info!(
             target: "claude_llm.execute_stream",
             "Claude LLM stream request model={}, max_tokens={:?}, tools={}, messages={}",
@@ -742,6 +809,9 @@ impl ClaudeLLMExecutor {
             self.tools.len(),
             messages.len()
         );
+
+        
+        llm_gateway::observability::recorder::record_inference_input(&span, messages);
 
         // Validate context size
         let context_manager = crate::agent::context_size_manager::ContextSizeManager::default();
@@ -785,7 +855,10 @@ impl ClaudeLLMExecutor {
         };
 
         let client = self.build_client().await?;
-        let stream = client.create_message_stream(&request).await?;
+        let stream = client
+            .create_message_stream(&request)
+            .instrument(span.clone())
+            .await?;
 
         let message_id = uuid::Uuid::new_v4().to_string();
         let mut current_content = String::new();
@@ -1052,6 +1125,21 @@ impl ClaudeLLMExecutor {
         } else {
             async_openai::types::chat::FinishReason::Stop
         };
+
+        let elapsed = start.elapsed().as_millis() as u64;
+        let cost = crate::agent::pricing::estimate_cost(
+            &ms.model,
+            stream_input_tokens,
+            stream_output_tokens,
+            stream_cached_tokens,
+        );
+
+        {
+            use llm_gateway::observability::recorder::{nonzero_tokens, record_context_window, record_inference_output, record_inference_response};
+            record_inference_output(&span, &content, &tool_calls);
+            record_context_window(&span, ms.inner.context_size, stream_input_tokens);
+            record_inference_response(&span, Some(ms.model.as_str()), None, &[format!("{:?}", finish_reason)], nonzero_tokens(stream_input_tokens), nonzero_tokens(stream_output_tokens), nonzero_tokens(stream_cached_tokens), nonzero_tokens(stream_cache_created), elapsed, cost);
+        }
 
         Ok(super::llm::StreamResult {
             finish_reason,

@@ -1,13 +1,19 @@
-use std::{collections::HashMap, str::FromStr, sync::Arc};
+use std::{collections::HashMap, str::FromStr};
 
 use async_openai::config::Config;
 use reqwest::header::{HeaderMap, HeaderName, AUTHORIZATION};
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
 
-use crate::agent::ExecutorContext;
 /// Project header
 pub const GATEWAY_PROJECT_HEADER: &str = "X-Project-Id";
+
+/// Lightweight context for injecting tracing headers into LLM requests.
+#[derive(Clone, Debug, Default)]
+pub struct GatewayContext {
+    pub thread_id: Option<String>,
+    pub run_id: Option<String>,
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
@@ -17,7 +23,7 @@ pub struct GatewayConfig {
     api_key: SecretString,
     project_id: String,
     #[serde(skip)]
-    context: Option<Arc<ExecutorContext>>,
+    context: Option<GatewayContext>,
     additional_headers: Option<HashMap<String, String>>,
     #[serde(skip)]
     query_params: Vec<(String, String)>,
@@ -62,7 +68,7 @@ impl GatewayConfig {
         self
     }
 
-    pub fn with_context(mut self, context: Arc<ExecutorContext>) -> Self {
+    pub fn with_context(mut self, context: GatewayContext) -> Self {
         self.context = Some(context);
         self
     }
@@ -98,8 +104,12 @@ impl Config for GatewayConfig {
         }
 
         if let Some(context) = &self.context {
-            headers.insert("X-Thread-Id", context.thread_id.clone().parse().unwrap());
-            headers.insert("X-Run-Id", context.run_id.clone().parse().unwrap());
+            if let Some(ref thread_id) = context.thread_id {
+                headers.insert("X-Thread-Id", thread_id.clone().parse().unwrap());
+            }
+            if let Some(ref run_id) = context.run_id {
+                headers.insert("X-Run-Id", run_id.clone().parse().unwrap());
+            }
         }
 
         if let Some(additional_headers) = &self.additional_headers {

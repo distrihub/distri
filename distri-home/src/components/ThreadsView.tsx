@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useThreads, useAgentsByUsage } from '@distri/react';
 import { useDistriHomeNavigate } from '../DistriHomeProvider';
 import {
+  Activity,
   AlertTriangle,
   ArrowRight,
   ChevronDown,
@@ -193,6 +194,7 @@ export interface ThreadsViewProps {
   className?: string;
   initialAgentId?: string;
   initialExternalId?: string;
+  onShowTrace?: (threadId: string) => void;
 }
 
 type QuickTimeFilter = '5m' | '1h' | '24h' | '7d' | null;
@@ -214,7 +216,7 @@ function getTimeFilterDate(filter: QuickTimeFilter): string | undefined {
   }
 }
 
-export function ThreadsView({ className, initialAgentId, initialExternalId }: ThreadsViewProps) {
+export function ThreadsView({ className, initialAgentId, initialExternalId, onShowTrace }: ThreadsViewProps) {
   const navigate = useDistriHomeNavigate();
   const [showFilterDialog, setShowFilterDialog] = useState(false);
   const [searchInput, setSearchInput] = useState('');
@@ -622,6 +624,20 @@ export function ThreadsView({ className, initialAgentId, initialExternalId }: Th
                       )}
                     </div>
                     <div className="flex items-center gap-1">
+                      {/* View traces */}
+                      {onShowTrace && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onShowTrace(thread.id);
+                          }}
+                          className="flex items-center gap-2 rounded-full p-2 text-muted-foreground opacity-0 transition hover:text-primary group-hover:opacity-100"
+                          title="View traces"
+                        >
+                          <Activity className="h-4 w-4" />
+                        </button>
+                      )}
                       {/* New chat with this agent */}
                       {thread.agent_id && (
                         <button

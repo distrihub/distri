@@ -138,7 +138,18 @@ impl BaseAgent for StandardAgent {
         self.hooks
             .before_execute(&mut message, context.clone())
             .await?;
-        let content = self.loop_engine.run(message, context.clone()).await?;
+
+        // If OtelHooks (or any hook) set an agent span on the context, use it to
+        // instrument the entire run so LLM and tool spans are correctly nested beneath it.
+        use tracing::Instrument as _;
+        let agent_span = context
+            .take_otel_agent_span()
+            .unwrap_or_else(tracing::Span::none);
+        let content = self
+            .loop_engine
+            .run(message, context.clone())
+            .instrument(agent_span)
+            .await?;
         let content = match content {
             Some(Value::String(c)) => Some(c),
             Some(v) => Some(v.to_string()),

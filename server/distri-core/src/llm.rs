@@ -28,6 +28,7 @@ use distri_types::{LlmDefinition, ToolCallFormat};
 use futures::{Stream, StreamExt};
 use serde_json::{Map, Value};
 use tokio::sync::RwLock;
+use tracing::Instrument as _;
 
 #[derive(Debug)]
 pub struct StreamResult {
@@ -158,13 +159,30 @@ impl LLMExecutor {
 
     /// Execute with optional format override
     pub async fn execute(&self, messages: &[Message]) -> Result<LLMResponse, AgentError> {
-        tracing::debug!("Executing LLM call with {} messages", messages.len());
-
-        let sanitized_messages = self.sanitize_messages(messages);
         let ms = self
             .llm_def
             .ms()
             .map_err(AgentError::InvalidConfiguration)?;
+        let ctx_fields = llm_gateway::observability::ContextFields {
+            thread_id: &self.context.thread_id,
+            task_id: &self.context.task_id,
+            run_id: &self.context.run_id,
+            agent_id: &self.context.agent_id,
+            user_id: &self.context.user_id,
+            workspace_id: self.context.workspace_id.as_deref(),
+            channel_id: self.context.channel_id.as_deref(),
+        };
+        let inf_attrs =
+            llm_gateway::observability::GenAiInferenceSpan::from_model_settings(&ms, &ctx_fields);
+        let span = llm_gateway::observability::builder::inference_span(&inf_attrs);
+        let start = std::time::Instant::now();
+
+        tracing::debug!("Executing LLM call with {} messages", messages.len());
+
+        let sanitized_messages = self.sanitize_messages(messages);
+
+        
+        llm_gateway::observability::recorder::record_inference_input(&span, &sanitized_messages);
         tracing::info!(
             target: "llm.execute",
             "LLM request (non-stream) model={}, provider={:?}, max_tokens={:?}, temperature={:?}, tool_format={:?}, tools={} messages={}",
@@ -211,10 +229,24 @@ impl LLMExecutor {
             self.additional_headers.clone(),
             self.label.clone(),
         )
+        .instrument(span.clone())
         .await
         .map_err(|e| {
             tracing::error!("LLM request failed: {}", e);
-            AgentError::LLMError(e.to_string())
+            let elapsed = start.elapsed().as_millis() as u64;
+            llm_gateway::observability::recorder::record_inference_response(
+                &span,
+                Some(ms.model.as_str()),
+                None,
+                &["error".to_string()],
+                None,
+                None,
+                None,
+                None,
+                elapsed,
+                None,
+            );
+            e
         })?;
 
         let usage = response.usage.as_ref().map(|u| distri_types::TokenUsage {
@@ -327,6 +359,20 @@ impl LLMExecutor {
             .set_current_message_id(Some(assistant_msg.id.clone()))
             .await;
 
+        let elapsed = start.elapsed().as_millis() as u64;
+        let (inp, out) = usage
+            .as_ref()
+            .map(|u| (u.input_tokens, u.output_tokens))
+            .unwrap_or((0, 0));
+        let cost = crate::agent::pricing::estimate_cost(&ms.model, inp, out, 0);
+
+        {
+            use llm_gateway::observability::recorder::{nonzero_tokens, record_context_window, record_inference_output, record_inference_response};
+            record_inference_output(&span, &content, &tool_calls);
+            record_context_window(&span, ms.inner.context_size, inp);
+            record_inference_response(&span, Some(ms.model.as_str()), None, &[format!("{:?}", finish_reason)], nonzero_tokens(inp), nonzero_tokens(out), None, None, elapsed, cost);
+        }
+
         Ok(LLMResponse {
             finish_reason,
             tool_calls,
@@ -341,16 +387,33 @@ impl LLMExecutor {
         messages: &[Message],
         context: Arc<ExecutorContext>,
     ) -> Result<StreamResult, AgentError> {
+        let ms = self
+            .llm_def
+            .ms()
+            .map_err(AgentError::InvalidConfiguration)?;
+        let ctx_fields = llm_gateway::observability::ContextFields {
+            thread_id: &self.context.thread_id,
+            task_id: &self.context.task_id,
+            run_id: &self.context.run_id,
+            agent_id: &self.context.agent_id,
+            user_id: &self.context.user_id,
+            workspace_id: self.context.workspace_id.as_deref(),
+            channel_id: self.context.channel_id.as_deref(),
+        };
+        let inf_attrs =
+            llm_gateway::observability::GenAiInferenceSpan::from_model_settings(&ms, &ctx_fields);
+        let span = llm_gateway::observability::builder::inference_span(&inf_attrs);
+        let start = std::time::Instant::now();
+
         tracing::debug!(
             "Executing streaming LLM call with {} messages",
             messages.len()
         );
 
         let sanitized_messages = self.sanitize_messages(messages);
-        let ms = self
-            .llm_def
-            .ms()
-            .map_err(AgentError::InvalidConfiguration)?;
+
+        
+        llm_gateway::observability::recorder::record_inference_input(&span, &sanitized_messages);
         tracing::info!(
             target: "llm.execute_stream",
             "LLM request (stream) model={}, provider={:?}, max_tokens={:?}, temperature={:?}, tool_format={:?}, tools={} messages={}",
@@ -405,6 +468,7 @@ impl LLMExecutor {
             self.additional_headers.clone(),
             self.label.clone(),
         )
+        .instrument(span.clone())
         .await;
 
         // If stream creation fails, emit error event and return
@@ -644,6 +708,11 @@ impl LLMExecutor {
 
         let content = current_content.clone();
 
+        {
+            use llm_gateway::observability::recorder::record_inference_output;
+            record_inference_output(&span, &content, &tool_calls);
+        }
+
         // Create and save assistant message for fallback case
         let mut assistant_msg = crate::types::Message::assistant(content.clone(), None);
         // Set agent_id to track which agent generated this message
@@ -658,20 +727,31 @@ impl LLMExecutor {
             .set_current_message_id(Some(assistant_msg.id.clone()))
             .await;
 
+        let elapsed = start.elapsed().as_millis() as u64;
         if !tool_calls.is_empty() {
             Self::ensure_tool_call_ids(&mut tool_calls);
-            Ok(StreamResult {
-                finish_reason: async_openai::types::chat::FinishReason::ToolCalls,
-                tool_calls,
-                content,
-            })
-        } else {
-            Ok(StreamResult {
-                finish_reason: async_openai::types::chat::FinishReason::Stop,
-                tool_calls: tool_calls,
-                content,
-            })
         }
+        let finish_reason = if !tool_calls.is_empty() {
+            async_openai::types::chat::FinishReason::ToolCalls
+        } else {
+            async_openai::types::chat::FinishReason::Stop
+        };
+        let cost = crate::agent::pricing::estimate_cost(
+            &ms.model,
+            stream_input_tokens,
+            stream_output_tokens,
+            0,
+        );
+        {
+            use llm_gateway::observability::recorder::{nonzero_tokens, record_context_window, record_inference_response};
+            record_context_window(&span, ms.inner.context_size, stream_input_tokens);
+            record_inference_response(&span, Some(ms.model.as_str()), None, &[format!("{:?}", finish_reason)], nonzero_tokens(stream_input_tokens), nonzero_tokens(stream_output_tokens), None, None, elapsed, cost);
+        }
+        Ok(StreamResult {
+            finish_reason,
+            tool_calls,
+            content,
+        })
     }
     pub fn map_tools(&self) -> Vec<async_openai::types::chat::ChatCompletionTools> {
         self.tools
@@ -1330,10 +1410,14 @@ async fn get_client_with_context(
         headers.insert(k.clone(), v.clone());
     }
 
+    let gw_context = llm_gateway::GatewayContext {
+        thread_id: Some(context.thread_id.clone()),
+        run_id: Some(context.run_id.clone()),
+    };
     let mut config = GatewayConfig::default()
         .with_api_base(pcc.base_url)
         .with_api_key(api_key)
-        .with_context(context)
+        .with_context(gw_context)
         .with_additional_headers(headers);
 
     if let Some(pid) = &pcc.project_id {

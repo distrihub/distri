@@ -348,7 +348,7 @@ impl ClaudeClient {
     pub async fn create_message(
         &self,
         request: &CreateMessageRequest,
-    ) -> Result<CreateMessageResponse, crate::AgentError> {
+    ) -> Result<CreateMessageResponse, distri_types::AgentError> {
         let url = format!("{}/v1/messages", self.base_url);
         let headers = self.build_headers();
 
@@ -360,21 +360,21 @@ impl ClaudeClient {
             .send()
             .await
             .map_err(|e| {
-                crate::AgentError::LLMError(format!("Claude API request failed: {}", e))
+                distri_types::AgentError::LLMError(format!("Claude API request failed: {}", e))
             })?;
 
         let status = response.status();
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
             tracing::error!("Claude API error ({}): {}", status, body);
-            return Err(crate::AgentError::LLMError(format!(
+            return Err(distri_types::AgentError::LLMError(format!(
                 "Claude API error ({}): {}",
                 status, body
             )));
         }
 
         let body = response.text().await.map_err(|e| {
-            crate::AgentError::LLMError(format!("Failed to read Claude response: {}", e))
+            distri_types::AgentError::LLMError(format!("Failed to read Claude response: {}", e))
         })?;
 
         serde_json::from_str(&body).map_err(|e| {
@@ -383,7 +383,7 @@ impl ClaudeClient {
                 e,
                 &body[..body.len().min(500)]
             );
-            crate::AgentError::LLMError(format!("Failed to parse Claude response: {}", e))
+            distri_types::AgentError::LLMError(format!("Failed to parse Claude response: {}", e))
         })
     }
 
@@ -392,8 +392,8 @@ impl ClaudeClient {
         &self,
         request: &CreateMessageRequest,
     ) -> Result<
-        Pin<Box<dyn Stream<Item = Result<StreamEvent, crate::AgentError>> + Send>>,
-        crate::AgentError,
+        Pin<Box<dyn Stream<Item = Result<StreamEvent, distri_types::AgentError>> + Send>>,
+        distri_types::AgentError,
     > {
         let url = format!("{}/v1/messages", self.base_url);
         let headers = self.build_headers();
@@ -410,14 +410,14 @@ impl ClaudeClient {
             .send()
             .await
             .map_err(|e| {
-                crate::AgentError::LLMError(format!("Claude stream request failed: {}", e))
+                distri_types::AgentError::LLMError(format!("Claude stream request failed: {}", e))
             })?;
 
         let status = response.status();
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
             tracing::error!("Claude API stream error ({}): {}", status, body);
-            return Err(crate::AgentError::LLMError(format!(
+            return Err(distri_types::AgentError::LLMError(format!(
                 "Claude API error ({}): {}",
                 status, body
             )));
@@ -430,7 +430,7 @@ impl ClaudeClient {
     /// Parse SSE stream from the HTTP response into typed StreamEvents
     fn parse_sse_stream(
         response: reqwest::Response,
-    ) -> Pin<Box<dyn Stream<Item = Result<StreamEvent, crate::AgentError>> + Send>> {
+    ) -> Pin<Box<dyn Stream<Item = Result<StreamEvent, distri_types::AgentError>> + Send>> {
         use futures::StreamExt;
 
         let byte_stream = response.bytes_stream();
@@ -446,7 +446,7 @@ impl ClaudeClient {
                 let chunk = match chunk_result {
                     Ok(c) => c,
                     Err(e) => {
-                        yield Err(crate::AgentError::LLMError(format!("Stream read error: {}", e)));
+                        yield Err(distri_types::AgentError::LLMError(format!("Stream read error: {}", e)));
                         return;
                     }
                 };
