@@ -27,7 +27,6 @@ flate2 = "1.0"
 distri-types = { path = "../distri-types", version = "0.3.7" }
 distri-formatter = { path = "../distri-formatter", version = "0.3.7" }
 distri-a2a = { path = "../distri-a2a", version = "0.3.7" }
-distri-filesystem = { path = "../distri-filesystem", version = "0.3.7" }
 distri-workflow = { path = "../distri-workflow", version = "0.3.7" }
 base64 = "0.22"
 image = { version = "0.24.9", default-features = false, features = [

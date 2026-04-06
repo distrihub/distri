@@ -6,11 +6,12 @@ members = [
   "distri-a2a",
   "distri-types",
   "distri-workflow",
-  "distri-filesystem",
+
   "distri-formatter",
   "distri",
   # server
   "server/distri-core",
+  "server/distri-filesystem",
   "server/distri-stores",
   "server/distri-server",
   "server/distri-server-cli",
