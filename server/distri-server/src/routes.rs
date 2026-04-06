@@ -16,8 +16,10 @@ use distri_types::stores::{VoteMessageRequest, VoteType};
 use distri_types::StandardDefinition;
 use distri_types::{ExternalTool, InlineHookResponse, Message, ModelSettings};
 use futures_util::StreamExt;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use utoipa::ToSchema;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -28,17 +30,17 @@ use crate::agent_server::VerboseLog;
 use crate::auth_routes;
 use crate::context::UserContext;
 
-mod artifacts;
+pub mod artifacts;
 mod files;
 mod llm_helpers;
-mod models;
-mod prompt_templates;
+pub mod models;
+pub mod prompt_templates;
 pub mod providers;
-mod secrets;
-mod session;
-mod skills;
-mod tools;
-mod workflows;
+pub mod secrets;
+pub mod session;
+pub mod skills;
+pub mod tools;
+pub mod workflows;
 
 pub fn all(cfg: &mut web::ServiceConfig) {
     cfg.configure(distri);
@@ -133,14 +135,21 @@ pub fn distri(cfg: &mut web::ServiceConfig) {
 }
 
 /// Agent with stats response
-#[derive(Debug, Serialize)]
-struct AgentWithStats {
+#[derive(Debug, Serialize, ToSchema)]
+pub struct AgentWithStats {
     #[serde(flatten)]
+    #[schema(value_type = Object)]
     config: distri_types::configuration::AgentConfig,
     #[serde(skip_serializing_if = "Option::is_none")]
     stats: Option<distri_types::stores::AgentStatsInfo>,
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/agents",
+    tag = "Agents",
+    responses((status = 200, description = "List all agents with stats", body = Vec<AgentWithStats>))
+)]
 async fn list_agents(executor: web::Data<Arc<AgentOrchestrator>>) -> HttpResponse {
     let (agents, _) = executor.stores.agent_store.list(None, None).await;
 
@@ -164,19 +173,26 @@ async fn list_agents(executor: web::Data<Arc<AgentOrchestrator>>) -> HttpRespons
     HttpResponse::Ok().json(agents_with_stats)
 }
 
-#[derive(Debug, Serialize)]
-struct ConfigurationMeta {
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ConfigurationMeta {
+    #[schema(value_type = Object)]
     configuration: DistriServerConfig,
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/configuration",
+    tag = "Configuration",
+    responses((status = 200, description = "Get server configuration", body = ConfigurationMeta))
+)]
 async fn get_configuration(executor: web::Data<Arc<AgentOrchestrator>>) -> HttpResponse {
     // Use the orchestrator's in-memory configuration snapshot
     let cfg = executor.configuration.read().await.clone();
     HttpResponse::Ok().json(ConfigurationMeta { configuration: cfg })
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-struct DeviceMetadata {
+#[derive(Debug, Serialize, Deserialize, Clone, ToSchema, JsonSchema)]
+pub struct DeviceMetadata {
     #[serde(default = "new_device_id")]
     device_id: String,
     #[serde(default = "default_device_type")]
@@ -193,21 +209,27 @@ struct DeviceMetadata {
     updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Serialize)]
-struct DeviceResponse {
+#[derive(Debug, Serialize, ToSchema, JsonSchema)]
+pub struct DeviceResponse {
     #[serde(flatten)]
     device: DeviceMetadata,
     storage_path: String,
     storage_scope: DeviceStorageScope,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-enum DeviceStorageScope {
+pub enum DeviceStorageScope {
     Home,
     Workspace,
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/device",
+    tag = "Configuration",
+    responses((status = 200, description = "Get device info", body = DeviceResponse))
+)]
 async fn get_device_info() -> HttpResponse {
     match load_device_profile().await {
         Ok(device) => HttpResponse::Ok().json(device),
@@ -359,15 +381,15 @@ fn utc_now() -> DateTime<Utc> {
     Utc::now()
 }
 
-#[derive(Debug, Serialize)]
-struct ToolListItem {
+#[derive(Debug, Serialize, ToSchema, JsonSchema)]
+pub struct ToolListItem {
     tool_name: String,
     description: String,
     input_schema: serde_json::Value,
 }
 
-#[derive(Debug, Deserialize)]
-struct ToolSearchQuery {
+#[derive(Debug, Deserialize, ToSchema, JsonSchema)]
+pub struct ToolSearchQuery {
     search: Option<String>,
 }
 
@@ -385,6 +407,12 @@ fn canonical_tool_name(tool: &Arc<dyn distri_core::tools::Tool>) -> String {
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/tools",
+    tag = "Tools",
+    responses((status = 200, description = "List available tools", body = Vec<ToolListItem>))
+)]
 async fn list_tools(
     query: web::Query<ToolSearchQuery>,
     executor: web::Data<Arc<AgentOrchestrator>>,
@@ -440,6 +468,13 @@ async fn build_workspace(_executor: web::Data<Arc<AgentOrchestrator>>) -> HttpRe
     HttpResponse::Ok().json(json!({ "status": "built" }))
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/agents/{id}",
+    tag = "Agents",
+    params(("id" = String, Path, description = "Agent ID")),
+    responses((status = 200, description = "Get agent definition"))
+)]
 async fn get_agent_definition(
     id: web::Path<String>,
     executor: web::Data<Arc<AgentOrchestrator>>,
@@ -513,6 +548,13 @@ struct AgentValidationResponse {
 }
 
 /// Validate an agent's configuration and return any warnings
+#[utoipa::path(
+    get,
+    path = "/v1/agents/{id}/validate",
+    tag = "Agents",
+    params(("id" = String, Path, description = "Agent ID")),
+    responses((status = 200, description = "Validation result"))
+)]
 async fn validate_agent_handler(
     id: web::Path<String>,
     executor: web::Data<Arc<AgentOrchestrator>>,
@@ -973,6 +1015,12 @@ struct ListThreadsQuery {
     filter: Option<serde_json::Value>, // Attributes filter
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/threads",
+    tag = "Threads",
+    responses((status = 200, description = "List threads"))
+)]
 async fn list_threads_handler(
     query: web::Query<ListThreadsQuery>,
     coordinator: web::Data<Arc<AgentOrchestrator>>,
@@ -1016,6 +1064,12 @@ async fn list_threads_handler(
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/threads/agents",
+    tag = "Threads",
+    responses((status = 200, description = "List agents by usage"))
+)]
 async fn list_agents_by_usage(
     coordinator: web::Data<Arc<AgentOrchestrator>>,
     query: web::Query<std::collections::HashMap<String, String>>,
@@ -1031,6 +1085,13 @@ async fn list_agents_by_usage(
 
 // create_thread_handler removed - threads are now auto-created from first messages
 
+#[utoipa::path(
+    get,
+    path = "/v1/threads/{thread_id}",
+    tag = "Threads",
+    params(("thread_id" = String, Path, description = "Thread ID")),
+    responses((status = 200, description = "Get thread"))
+)]
 async fn get_thread_handler(
     path: web::Path<String>,
     coordinator: web::Data<Arc<AgentOrchestrator>>,
@@ -1047,6 +1108,13 @@ async fn get_thread_handler(
     }
 }
 
+#[utoipa::path(
+    put,
+    path = "/v1/threads/{thread_id}",
+    tag = "Threads",
+    params(("thread_id" = String, Path, description = "Thread ID")),
+    responses((status = 200, description = "Update thread"))
+)]
 async fn update_thread_handler(
     path: web::Path<String>,
     request: web::Json<UpdateThreadRequest>,
@@ -1064,6 +1132,13 @@ async fn update_thread_handler(
     }
 }
 
+#[utoipa::path(
+    delete,
+    path = "/v1/threads/{thread_id}",
+    tag = "Threads",
+    params(("thread_id" = String, Path, description = "Thread ID")),
+    responses((status = 204, description = "Thread deleted"))
+)]
 async fn delete_thread_handler(
     path: web::Path<String>,
     coordinator: web::Data<Arc<AgentOrchestrator>>,
@@ -1079,6 +1154,16 @@ async fn delete_thread_handler(
 
 // ========== Message Read Status Handlers ==========
 
+#[utoipa::path(
+    post,
+    path = "/v1/threads/{thread_id}/messages/{message_id}/read",
+    tag = "Threads",
+    params(
+        ("thread_id" = String, Path, description = "Thread ID"),
+        ("message_id" = String, Path, description = "Message ID"),
+    ),
+    responses((status = 200, description = "Message marked as read"))
+)]
 async fn mark_message_read_handler(
     path: web::Path<(String, String)>,
     executor: web::Data<Arc<AgentOrchestrator>>,
@@ -1097,6 +1182,16 @@ async fn mark_message_read_handler(
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/threads/{thread_id}/messages/{message_id}/read",
+    tag = "Threads",
+    params(
+        ("thread_id" = String, Path, description = "Thread ID"),
+        ("message_id" = String, Path, description = "Message ID"),
+    ),
+    responses((status = 200, description = "Get message read status"))
+)]
 async fn get_message_read_status_handler(
     path: web::Path<(String, String)>,
     executor: web::Data<Arc<AgentOrchestrator>>,
@@ -1118,6 +1213,13 @@ async fn get_message_read_status_handler(
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/threads/{thread_id}/read-status",
+    tag = "Threads",
+    params(("thread_id" = String, Path, description = "Thread ID")),
+    responses((status = 200, description = "Get thread read status"))
+)]
 async fn get_thread_read_status_handler(
     path: web::Path<String>,
     executor: web::Data<Arc<AgentOrchestrator>>,
@@ -1138,12 +1240,22 @@ async fn get_thread_read_status_handler(
 
 // ========== Message Voting Handlers ==========
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 struct VoteRequest {
     vote_type: VoteType,
     comment: Option<String>,
 }
 
+#[utoipa::path(
+    post,
+    path = "/v1/threads/{thread_id}/messages/{message_id}/vote",
+    tag = "Threads",
+    params(
+        ("thread_id" = String, Path, description = "Thread ID"),
+        ("message_id" = String, Path, description = "Message ID"),
+    ),
+    responses((status = 200, description = "Vote on message"))
+)]
 async fn vote_message_handler(
     path: web::Path<(String, String)>,
     request: web::Json<VoteRequest>,
@@ -1179,6 +1291,16 @@ async fn vote_message_handler(
     }
 }
 
+#[utoipa::path(
+    delete,
+    path = "/v1/threads/{thread_id}/messages/{message_id}/vote",
+    tag = "Threads",
+    params(
+        ("thread_id" = String, Path, description = "Thread ID"),
+        ("message_id" = String, Path, description = "Message ID"),
+    ),
+    responses((status = 204, description = "Vote removed"))
+)]
 async fn remove_vote_handler(
     path: web::Path<(String, String)>,
     executor: web::Data<Arc<AgentOrchestrator>>,
@@ -1197,6 +1319,16 @@ async fn remove_vote_handler(
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/threads/{thread_id}/messages/{message_id}/vote",
+    tag = "Threads",
+    params(
+        ("thread_id" = String, Path, description = "Thread ID"),
+        ("message_id" = String, Path, description = "Message ID"),
+    ),
+    responses((status = 200, description = "Get vote summary"))
+)]
 async fn get_message_vote_summary_handler(
     path: web::Path<(String, String)>,
     executor: web::Data<Arc<AgentOrchestrator>>,
@@ -1215,6 +1347,16 @@ async fn get_message_vote_summary_handler(
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/threads/{thread_id}/messages/{message_id}/votes",
+    tag = "Threads",
+    params(
+        ("thread_id" = String, Path, description = "Thread ID"),
+        ("message_id" = String, Path, description = "Message ID"),
+    ),
+    responses((status = 200, description = "Get message votes"))
+)]
 async fn get_message_votes_handler(
     path: web::Path<(String, String)>,
     executor: web::Data<Arc<AgentOrchestrator>>,
@@ -1242,6 +1384,12 @@ struct ListTasksQuery {
     offset: Option<u32>,
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/tasks",
+    tag = "Agents",
+    responses((status = 200, description = "List tasks"))
+)]
 async fn list_tasks(
     query: web::Query<ListTasksQuery>,
     executor: web::Data<Arc<AgentOrchestrator>>,
@@ -1274,6 +1422,13 @@ async fn list_tasks(
 }
 
 // Thread messages endpoint
+#[utoipa::path(
+    get,
+    path = "/v1/threads/{thread_id}/messages",
+    tag = "Threads",
+    params(("thread_id" = String, Path, description = "Thread ID")),
+    responses((status = 200, description = "Get thread messages"))
+)]
 async fn get_thread_messages(
     path: web::Path<String>,
     executor: web::Data<Arc<AgentOrchestrator>>,
@@ -1290,6 +1445,12 @@ async fn get_thread_messages(
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/home/stats",
+    tag = "Configuration",
+    responses((status = 200, description = "Get home stats"))
+)]
 async fn get_home_stats(executor: web::Data<Arc<AgentOrchestrator>>) -> HttpResponse {
     match executor.stores.thread_store.get_home_stats().await {
         Ok(stats) => HttpResponse::Ok().json(stats),
@@ -1302,6 +1463,13 @@ async fn get_home_stats(executor: web::Data<Arc<AgentOrchestrator>>) -> HttpResp
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/v1/agents",
+    tag = "Agents",
+    request_body(content = String, content_type = "text/markdown", description = "Agent definition in markdown with TOML frontmatter"),
+    responses((status = 200, description = "Create a new agent"))
+)]
 async fn create_agent(
     req: actix_web::HttpRequest,
     body: web::Bytes,
@@ -1372,6 +1540,14 @@ enum UpdateAgentRequest {
     Full(StandardDefinition),
 }
 
+#[utoipa::path(
+    put,
+    path = "/v1/agents/{id}",
+    tag = "Agents",
+    params(("id" = String, Path, description = "Agent ID")),
+    request_body(content = String, content_type = "text/markdown", description = "Agent definition in markdown with TOML frontmatter"),
+    responses((status = 200, description = "Update an agent"))
+)]
 async fn update_agent(
     id: web::Path<String>,
     req: actix_web::HttpRequest,
@@ -1477,6 +1653,13 @@ async fn proxy_request_handler(
     }
 }
 
+#[utoipa::path(
+    delete,
+    path = "/v1/agents/{id}",
+    tag = "Agents",
+    params(("id" = String, Path, description = "Agent ID")),
+    responses((status = 204, description = "Agent deleted"))
+)]
 async fn delete_agent(
     executor: web::Data<Arc<AgentOrchestrator>>,
     path: web::Path<String>,
@@ -1491,6 +1674,12 @@ async fn delete_agent(
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/schema/agent",
+    tag = "Agents",
+    responses((status = 200, description = "Get agent JSON schema"))
+)]
 async fn get_agent_schema() -> HttpResponse {
     use schemars::schema_for;
     let schema = schema_for!(StandardDefinition);
@@ -1498,6 +1687,13 @@ async fn get_agent_schema() -> HttpResponse {
 }
 
 /// Get DAG representation for an agent
+#[utoipa::path(
+    get,
+    path = "/v1/agents/{id}/dag",
+    tag = "Agents",
+    params(("id" = String, Path, description = "Agent ID")),
+    responses((status = 200, description = "Get agent DAG"))
+)]
 async fn get_agent_dag(
     id: web::Path<String>,
     executor: web::Data<Arc<AgentOrchestrator>>,

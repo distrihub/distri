@@ -29,6 +29,7 @@ anyhow = { workspace = true }
 futures = { workspace = true }
 jsonschema = { workspace = true }
 schemars = { workspace = true }
+utoipa = { workspace = true }
 secrecy = { version = "0.10.3", features = ["serde"] }
 uuid = { version = "1.13.1", features = ["serde"] }
 chrono = { version = "0.4", features = ["serde"] }

@@ -11,6 +11,17 @@ pub fn configure_provider_routes(cfg: &mut web::ServiceConfig) {
         );
 }
 
+#[utoipa::path(
+    post,
+    path = "/v1/providers",
+    tag = "Providers",
+    request_body = UpsertProviderRequest,
+    responses(
+        (status = 200, description = "Provider upserted"),
+        (status = 400, description = "Bad request"),
+        (status = 500, description = "Internal server error")
+    )
+)]
 async fn upsert_provider(
     store: web::Data<Arc<dyn ProviderStore>>,
     payload: web::Json<UpsertProviderRequest>,
@@ -32,6 +43,18 @@ async fn upsert_provider(
     }
 }
 
+#[utoipa::path(
+    delete,
+    path = "/v1/providers/{provider_id}",
+    tag = "Providers",
+    params(
+        ("provider_id" = String, Path, description = "Provider ID"),
+    ),
+    responses(
+        (status = 200, description = "Provider deleted"),
+        (status = 500, description = "Internal server error")
+    )
+)]
 async fn delete_provider(
     store: web::Data<Arc<dyn ProviderStore>>,
     path: web::Path<String>,
@@ -46,6 +69,15 @@ async fn delete_provider(
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/providers/default-model",
+    tag = "Providers",
+    responses(
+        (status = 200, description = "Default model retrieved"),
+        (status = 500, description = "Internal server error")
+    )
+)]
 async fn get_default_model(store: web::Data<Arc<dyn ProviderStore>>) -> HttpResponse {
     match store.get_default_model().await {
         Ok(dm) => HttpResponse::Ok().json(json!({"default_model": dm})),

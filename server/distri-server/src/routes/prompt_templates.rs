@@ -1,18 +1,20 @@
 use actix_web::{web, HttpResponse};
 use distri_core::agent::AgentOrchestrator;
 use distri_types::stores::{NewPromptTemplate, UpdatePromptTemplate};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::Arc;
+use utoipa::ToSchema;
 
 /// Request to sync multiple templates at once
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema, JsonSchema)]
 pub struct SyncPromptTemplatesRequest {
     pub templates: Vec<NewPromptTemplate>,
 }
 
 /// Response from syncing templates
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema, JsonSchema)]
 pub struct SyncPromptTemplatesResponse {
     pub created: usize,
     pub updated: usize,
@@ -49,6 +51,15 @@ pub fn configure_prompt_template_routes(cfg: &mut web::ServiceConfig) {
     );
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/prompt-templates",
+    tag = "Prompt Templates",
+    responses(
+        (status = 200, description = "List prompt templates"),
+        (status = 500, description = "Internal server error")
+    )
+)]
 async fn list_prompt_templates(executor: web::Data<Arc<AgentOrchestrator>>) -> HttpResponse {
     let store = match &executor.stores.prompt_template_store {
         Some(s) => s,
@@ -64,6 +75,19 @@ async fn list_prompt_templates(executor: web::Data<Arc<AgentOrchestrator>>) -> H
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/prompt-templates/{id}",
+    tag = "Prompt Templates",
+    params(
+        ("id" = String, Path, description = "Prompt template ID"),
+    ),
+    responses(
+        (status = 200, description = "Prompt template retrieved"),
+        (status = 404, description = "Prompt template not found"),
+        (status = 500, description = "Internal server error")
+    )
+)]
 async fn get_prompt_template(
     id: web::Path<String>,
     executor: web::Data<Arc<AgentOrchestrator>>,
@@ -83,6 +107,16 @@ async fn get_prompt_template(
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/v1/prompt-templates",
+    tag = "Prompt Templates",
+    request_body = NewPromptTemplate,
+    responses(
+        (status = 200, description = "Prompt template created"),
+        (status = 500, description = "Internal server error")
+    )
+)]
 async fn create_prompt_template(
     executor: web::Data<Arc<AgentOrchestrator>>,
     payload: web::Json<NewPromptTemplate>,
@@ -101,6 +135,19 @@ async fn create_prompt_template(
     }
 }
 
+#[utoipa::path(
+    put,
+    path = "/v1/prompt-templates/{id}",
+    tag = "Prompt Templates",
+    params(
+        ("id" = String, Path, description = "Prompt template ID"),
+    ),
+    request_body = UpdatePromptTemplate,
+    responses(
+        (status = 200, description = "Prompt template updated"),
+        (status = 500, description = "Internal server error")
+    )
+)]
 async fn update_prompt_template(
     id: web::Path<String>,
     executor: web::Data<Arc<AgentOrchestrator>>,
@@ -120,6 +167,18 @@ async fn update_prompt_template(
     }
 }
 
+#[utoipa::path(
+    delete,
+    path = "/v1/prompt-templates/{id}",
+    tag = "Prompt Templates",
+    params(
+        ("id" = String, Path, description = "Prompt template ID"),
+    ),
+    responses(
+        (status = 204, description = "Prompt template deleted"),
+        (status = 500, description = "Internal server error")
+    )
+)]
 async fn delete_prompt_template(
     id: web::Path<String>,
     executor: web::Data<Arc<AgentOrchestrator>>,

@@ -55,6 +55,9 @@ browsr-client = { workspace = true }
 browsr-types = { workspace = true }
 
 schemars = { workspace = true }
+utoipa = { workspace = true }
+utoipa-actix-web = { workspace = true }
+utoipa-scalar = { workspace = true }
 async-openai = { workspace = true }
 reqwest = { workspace = true }
 bytes = "1.0"
@@ -68,3 +71,7 @@ static-files = "0.3"
 
 [dev-dependencies]
 tempfile = "3.12"
+actix-web = { workspace = true, features = ["macros"] }
+actix-rt = { workspace = true }
+reqwest = { workspace = true }
+uuid = { workspace = true }

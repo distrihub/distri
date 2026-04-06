@@ -3,9 +3,10 @@ use crate::agent::StandardDefinition;
 use crate::configuration::manifest::DistriServerConfig;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use utoipa::ToSchema;
 
 /// Tool definition ready for DAP registration with runtime info
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct PluginToolDefinition {
     pub name: String,
     pub package_name: String,
@@ -13,11 +14,12 @@ pub struct PluginToolDefinition {
     #[serde(default)]
     pub parameters: serde_json::Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<Object>)]
     pub auth: Option<crate::auth::AuthRequirement>,
 }
 
 /// Cloud-specific metadata for agents (optional, only present in cloud responses)
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, ToSchema)]
 pub struct AgentCloudMetadata {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<uuid::Uuid>,
@@ -29,9 +31,10 @@ pub struct AgentCloudMetadata {
     pub is_owner: Option<bool>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct AgentConfigWithTools {
     #[serde(flatten)]
+    #[schema(value_type = Object)]
     pub agent: AgentConfig,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub resolved_tools: Vec<ToolDefinition>,
@@ -43,10 +46,11 @@ pub struct AgentConfigWithTools {
 }
 
 /// Unified agent configuration enum
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "agent_type", rename_all = "snake_case")]
 pub enum AgentConfig {
     /// Standard markdown-based agent
+    #[schema(value_type = Object)]
     StandardAgent(StandardDefinition),
     /// Workflow-based agent — executes a workflow DAG instead of an LLM loop
     WorkflowAgent(WorkflowAgentDefinition),
@@ -55,7 +59,7 @@ pub enum AgentConfig {
 /// Definition for a workflow-based agent.
 /// The workflow definition is stored as JSON to avoid crate dependency on distri-workflow.
 /// Deserialize to `distri_workflow::WorkflowDefinition` at execution time.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct WorkflowAgentDefinition {
     pub name: String,
     pub description: String,
@@ -136,20 +140,23 @@ impl AgentConfig {
 }
 
 /// Agent definition ready for DAP registration with runtime info
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct PluginAgentDefinition {
     pub name: String,
     pub package_name: String,
     pub description: String,
+    #[schema(value_type = String)]
     pub file_path: PathBuf,
     /// The full agent configuration (supports all agent types)
+    #[schema(value_type = Object)]
     pub agent_config: AgentConfig,
 }
 
 /// Built DAP package artifact ready for registration in distri
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct PluginArtifact {
     pub name: String,
+    #[schema(value_type = String)]
     pub path: PathBuf,
     pub configuration: crate::configuration::manifest::DistriServerConfig,
     pub tools: Vec<PluginToolDefinition>,

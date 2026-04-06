@@ -1,6 +1,7 @@
 use anyhow::Context;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 use serde_json::{self, Value, json};
 use std::default::Default;
 use std::{collections::HashMap, time::SystemTime};
@@ -10,7 +11,7 @@ use crate::filesystem::FileMetadata;
 use crate::events::AgentEventType;
 
 /// Token usage breakdown from an LLM call.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema, ToSchema)]
 pub struct TokenUsage {
     #[serde(default)]
     pub input_tokens: u32,
@@ -21,7 +22,7 @@ pub struct TokenUsage {
 }
 
 /// External tool that delegates execution to the frontend
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, ToSchema)]
 pub struct ExternalTool {
     pub name: String,
     pub description: String,
@@ -72,7 +73,7 @@ impl crate::Tool for ExternalTool {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, ToSchema)]
 pub struct ToolDefinition {
     pub name: String,
     pub description: String,
@@ -102,7 +103,7 @@ impl From<ToolDefinition> for async_openai::types::chat::ChatCompletionTools {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, PartialEq, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MessageRole {
     /// Represents a system message.
@@ -159,7 +160,7 @@ impl Part {
 }
 
 /// Instruction for how to handle additional parts
-#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, PartialEq, Eq, ToSchema)]
 #[serde(rename_all = "snake_case")]
 #[derive(Default)]
 pub enum AdditionalPartsInstruction {
@@ -172,9 +173,10 @@ pub enum AdditionalPartsInstruction {
 
 /// Structure for managing additional user message parts
 /// This allows control over how parts are added and whether artifacts should be expanded
-#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, Default)]
+#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, Default, ToSchema)]
 pub struct AdditionalParts {
     /// The parts to include in the user message
+    #[schema(value_type = Vec<Object>)]
     pub parts: Vec<Part>,
     /// Whether to replace or append to existing parts
     #[serde(default)]
@@ -186,7 +188,7 @@ pub struct AdditionalParts {
 
 /// Metadata for individual message parts.
 /// Used to control part behavior such as persistence.
-#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, Default, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, Default, PartialEq, ToSchema)]
 pub struct PartMetadata {
     /// If false, this part will be filtered out before saving to the database.
     /// Useful for ephemeral/dynamic content that should only be sent in the current turn.
@@ -203,11 +205,12 @@ fn default_save() -> bool {
 /// Used in message metadata to specify per-part behavior.
 pub type PartsMetadata = std::collections::HashMap<usize, PartMetadata>;
 
-#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, ToSchema)]
 pub struct Message {
     pub id: String,
     pub name: Option<String>,
     pub role: MessageRole,
+    #[schema(value_type = Vec<Object>)]
     pub parts: Vec<Part>,
     pub created_at: i64,
     /// The ID of the agent that generated this message (for Assistant messages)
@@ -374,7 +377,7 @@ impl TaskMessage {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, Default)]
+#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, Default, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum ToolCallStatus {
     #[default]
@@ -390,7 +393,7 @@ pub struct TaskEvent {
     pub created_at: i64,
     pub is_final: bool,
 }
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema, ToSchema)]
 pub struct AgentPlan {
     pub steps: Vec<PlanStep>,
     pub reasoning: Option<String>,
@@ -405,7 +408,7 @@ impl AgentPlan {
 }
 
 /// Plan step for execution
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct PlanStep {
     pub id: String,
@@ -414,18 +417,19 @@ pub struct PlanStep {
 }
 
 /// Action can be either a tool call or an LLM call
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
 #[serde(untagged)]
 pub enum Action {
     ToolCalls { tool_calls: Vec<ToolCall> },
     Code { code: String, language: String },
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, PartialEq, ToSchema)]
 pub struct ToolResponse {
     pub tool_call_id: String,
     pub tool_name: String,
     /// Content as parts - automatically converts large content to Part::Artifact
+    #[schema(value_type = Vec<Object>)]
     pub parts: Vec<Part>,
     /// Metadata for parts (e.g., which parts to save)
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -525,7 +529,7 @@ impl ToolResponse {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, Default)]
+#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, Default, ToSchema)]
 pub struct Task {
     pub id: String,
     pub thread_id: String,
@@ -535,7 +539,7 @@ pub struct Task {
     pub updated_at: i64,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, PartialEq, Default)]
+#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, PartialEq, Default, ToSchema)]
 pub enum TaskStatus {
     #[default]
     Pending,
@@ -546,16 +550,17 @@ pub enum TaskStatus {
     Canceled,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct McpSession {
     /// The token for the MCP session.
     pub token: String,
     /// The expiry time of the session, if specified.
+    #[schema(value_type = Option<String>)]
     pub expiry: Option<SystemTime>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, PartialEq, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ToolCall {
     pub tool_call_id: String,
@@ -596,7 +601,7 @@ pub fn validate_parameters(
     Ok(())
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
 pub struct Thread {
     pub id: String,
     pub title: String,
@@ -672,7 +677,7 @@ impl Thread {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
 pub struct ThreadSummary {
     pub id: String,
     pub title: String,
@@ -705,7 +710,7 @@ pub struct ThreadSummary {
 
 // CreateThreadRequest removed - threads are now auto-created from first messages
 // Thread creation is handled internally when a message is sent with a context_id
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
 pub struct CreateThreadRequest {
     pub agent_id: String,
     pub title: Option<String>,
@@ -719,15 +724,16 @@ pub struct CreateThreadRequest {
     pub channel_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct UpdateThreadRequest {
     pub title: Option<String>,
+    #[schema(value_type = Option<Object>)]
     pub metadata: Option<HashMap<String, serde_json::Value>>,
     pub attributes: Option<serde_json::Value>,
     pub user_id: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, PartialEq, ToSchema)]
 #[serde(rename_all = "snake_case", tag = "type")]
 pub enum FileType {
     Bytes {

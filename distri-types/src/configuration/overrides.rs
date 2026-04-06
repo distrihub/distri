@@ -1,8 +1,9 @@
 use crate::dynamic_tool::DynamicToolFactory;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 /// Overrides for agent definition - only the most commonly overridden fields
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
 pub struct DefinitionOverrides {
     /// Override the model (e.g., "gpt-4o", "gpt-4.1-mini")
     pub model: Option<String>,

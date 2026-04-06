@@ -2,9 +2,11 @@ use crate::connections::{Connection, ConnectionStatus, ConnectionToken, NewConne
 use crate::{ScratchpadEntry, ToolAuthStore, ToolResponse};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::{collections::HashMap, sync::Arc};
+use utoipa::ToSchema;
 use tokio::sync::oneshot;
 use uuid::Uuid;
 
@@ -16,7 +18,7 @@ use crate::{
 // Redis and PostgreSQL stores moved to distri-stores crate
 
 /// Filter for listing threads
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema, JsonSchema)]
 pub struct ThreadListFilter {
     /// Filter by agent ID
     pub agent_id: Option<String>,
@@ -36,7 +38,7 @@ pub struct ThreadListFilter {
 }
 
 /// Paginated response for thread listing
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
 pub struct ThreadListResponse {
     pub threads: Vec<crate::ThreadSummary>,
     pub total: i64,
@@ -45,7 +47,7 @@ pub struct ThreadListResponse {
 }
 
 /// Agent usage information for sorting agents by thread count
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
 pub struct AgentUsageInfo {
     pub agent_id: String,
     pub agent_name: String,
@@ -107,7 +109,7 @@ impl std::fmt::Debug for InitializedStores {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, ToSchema, JsonSchema)]
 pub struct SessionSummary {
     pub session_id: String,
     pub keys: Vec<String>,
@@ -211,7 +213,7 @@ pub struct SessionMemory {
     pub important_facts: Vec<String>,
     pub timestamp: chrono::DateTime<chrono::Utc>,
 }
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum FilterMessageType {
     Events,
@@ -219,7 +221,7 @@ pub enum FilterMessageType {
     Artifacts,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
 pub struct MessageFilter {
     pub filter: Option<Vec<FilterMessageType>>,
     pub limit: Option<usize>,
@@ -384,7 +386,7 @@ pub trait ThreadStore: Send + Sync {
 }
 
 /// Home statistics for dashboard
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, ToSchema, JsonSchema)]
 pub struct HomeStats {
     pub total_agents: i64,
     pub total_threads: i64,
@@ -409,7 +411,7 @@ pub struct HomeStats {
 }
 
 /// A custom metric for display in the stats overview
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, ToSchema, JsonSchema)]
 pub struct CustomMetric {
     /// Display label (e.g., "Monthly Calls")
     pub label: String,
@@ -429,7 +431,7 @@ pub struct CustomMetric {
     pub raw_limit: Option<i64>,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, ToSchema, JsonSchema)]
 pub struct MostActiveAgent {
     pub id: String,
     pub name: String,
@@ -437,7 +439,7 @@ pub struct MostActiveAgent {
 }
 
 /// Agent that was recently used (based on thread activity)
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, ToSchema, JsonSchema)]
 pub struct RecentlyUsedAgent {
     pub id: String,
     pub name: String,
@@ -445,7 +447,7 @@ pub struct RecentlyUsedAgent {
     pub last_used_at: chrono::DateTime<chrono::Utc>,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, ToSchema, JsonSchema)]
 pub struct LatestThreadInfo {
     pub id: String,
     pub title: String,
@@ -455,7 +457,7 @@ pub struct LatestThreadInfo {
 }
 
 /// Agent statistics for display
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, ToSchema, JsonSchema)]
 pub struct AgentStatsInfo {
     pub thread_count: i64,
     pub sub_agent_usage_count: i64,
@@ -510,7 +512,7 @@ pub trait ScratchpadStore: Send + Sync + std::fmt::Debug {
 }
 
 /// Web crawl result data
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
 pub struct CrawlResult {
     pub id: String,
     pub url: String,
@@ -564,7 +566,7 @@ pub trait CrawlStore: Send + Sync {
 // ========== Message Read & Voting Types ==========
 
 /// Vote type for message feedback
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum VoteType {
     Upvote,
@@ -572,7 +574,7 @@ pub enum VoteType {
 }
 
 /// Record of a message being read
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
 pub struct MessageReadStatus {
     pub thread_id: String,
     pub message_id: String,
@@ -581,14 +583,14 @@ pub struct MessageReadStatus {
 }
 
 /// Request to mark a message as read
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
 pub struct MarkMessageReadRequest {
     pub thread_id: String,
     pub message_id: String,
 }
 
 /// A vote on a message with optional feedback comment
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
 pub struct MessageVote {
     pub id: String,
     pub thread_id: String,
@@ -602,7 +604,8 @@ pub struct MessageVote {
 }
 
 /// Request to vote on a message
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
+#[schema(example = json!({"vote_type": "up"}))]
 pub struct VoteMessageRequest {
     pub thread_id: String,
     pub message_id: String,
@@ -612,7 +615,7 @@ pub struct VoteMessageRequest {
 }
 
 /// Summary of votes for a message
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, ToSchema, JsonSchema)]
 pub struct MessageVoteSummary {
     pub message_id: String,
     pub upvotes: i64,
@@ -646,7 +649,7 @@ pub trait ExternalToolCallsStore: Send + Sync + std::fmt::Debug {
 
 // ========== Prompt Template Store ==========
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
 pub struct PromptTemplateRecord {
     pub id: String,
     pub name: String,
@@ -658,7 +661,8 @@ pub struct PromptTemplateRecord {
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
+#[schema(example = json!({"name": "greeting", "content": "Hello {{name}}, welcome to {{service}}!", "description": "A greeting template"}))]
 pub struct NewPromptTemplate {
     pub name: String,
     pub template: String,
@@ -668,7 +672,7 @@ pub struct NewPromptTemplate {
     pub is_system: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
 pub struct UpdatePromptTemplate {
     pub name: String,
     pub template: String,
@@ -694,7 +698,7 @@ pub trait PromptTemplateStore: Send + Sync {
 
 // ========== Secret Store ==========
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
 pub struct SecretRecord {
     pub id: String,
     pub key: String,
@@ -703,7 +707,8 @@ pub struct SecretRecord {
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
+#[schema(example = json!({"key": "OPENAI_API_KEY", "value": "sk-..."}))]
 pub struct NewSecret {
     pub key: String,
     pub value: String,
@@ -720,7 +725,7 @@ pub trait SecretStore: Send + Sync {
 
 // ========== Provider Store ==========
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
 pub struct CustomProviderConfig {
     pub id: String,
     pub name: String,
@@ -729,7 +734,7 @@ pub struct CustomProviderConfig {
     pub project_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
 pub struct CustomModelEntry {
     pub provider: String,
     pub model: String,
@@ -743,7 +748,7 @@ fn default_completion() -> String {
 }
 
 /// A custom connection provider (OAuth integration) stored in workspace settings.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
 pub struct ConnectionProviderConfig {
     /// Unique identifier (e.g., "linear", "figma", "custom_crm")
     pub id: String,
@@ -768,7 +773,7 @@ pub struct ConnectionProviderConfig {
 }
 
 /// Request payload for upserting a provider configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
 pub struct UpsertProviderRequest {
     pub provider_id: String,
     #[serde(default)]
@@ -786,7 +791,7 @@ pub struct UpsertProviderRequest {
 }
 
 /// Response after upserting a provider.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
 pub struct UpsertProviderResponse {
     pub provider_id: String,
     pub secrets_saved: usize,
@@ -809,7 +814,7 @@ pub trait ProviderStore: Send + Sync {
 
 /// How a skill is executed relative to the calling agent's context.
 /// Mirrors the `context` field in claude-code's prompt command spec.
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, ToSchema, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum ContextExecutionType {
     /// Inject the full skill content into the current agent's context window.
@@ -849,7 +854,7 @@ pub const SKILL_DESCRIPTION_CAP: usize = 250;
 pub const DEFAULT_SKILL_MAX_TOKENS: u32 = 8000;
 
 /// Parsed frontmatter from a skill markdown file.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, ToSchema, JsonSchema)]
 pub struct SkillFrontmatter {
     pub name: String,
     #[serde(default)]
@@ -919,14 +924,14 @@ pub fn format_skill_listing(skills: &[SkillFrontmatter], budget_tokens: usize) -
 }
 
 /// API response wrapper for skill list endpoints.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
 pub struct SkillsListResponse {
     pub skills: Vec<SkillListItem>,
 }
 
 /// Lighter skill record for list endpoints — no content or scripts.
 /// Used by both distri-server (OSS) and distri-cloud.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
 pub struct SkillListItem {
     pub id: String,
     #[serde(default)]
@@ -954,7 +959,7 @@ pub struct SkillListItem {
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
 pub struct SkillRecord {
     pub id: String,
     pub name: String,
@@ -975,7 +980,8 @@ pub struct SkillRecord {
     pub context: ContextExecutionType,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
+#[schema(example = json!({"name": "my-skill", "content": "# My Skill\nA helpful utility skill", "description": "A utility skill", "tags": ["utility"], "is_public": false}))]
 pub struct NewSkill {
     pub name: String,
     pub description: Option<String>,
@@ -990,7 +996,7 @@ pub struct NewSkill {
     pub context: ContextExecutionType,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
 pub struct UpdateSkill {
     pub name: Option<String>,
     pub description: Option<String>,
@@ -1022,14 +1028,14 @@ pub trait SkillStore: Send + Sync {
 // ========== Workflow Store ==========
 
 /// API response wrapper for workflow list endpoints.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
 pub struct WorkflowsListResponse {
     pub workflows: Vec<WorkflowListItem>,
     pub total: i64,
 }
 
 /// Lightweight workflow record for list endpoints — no definition payload.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
 pub struct WorkflowListItem {
     pub id: String,
     pub name: String,
@@ -1058,7 +1064,7 @@ pub struct WorkflowListItem {
 /// Full workflow record with definition payload.
 /// `definition` is `serde_json::Value` to avoid crate dependency on distri-workflow.
 /// Deserialize to `WorkflowDefinition` on demand.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
 pub struct WorkflowRecord {
     pub id: String,
     pub name: String,
@@ -1076,7 +1082,7 @@ pub struct WorkflowRecord {
 }
 
 /// Request to create a new workflow.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
 pub struct NewWorkflow {
     pub name: String,
     pub description: Option<String>,
@@ -1091,7 +1097,7 @@ pub struct NewWorkflow {
 }
 
 /// Partial update for a workflow.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
 pub struct UpdateWorkflow {
     pub name: Option<String>,
     pub description: Option<String>,
@@ -1101,7 +1107,7 @@ pub struct UpdateWorkflow {
 }
 
 /// Filter for listing workflows.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema, JsonSchema)]
 pub struct WorkflowFilter {
     pub is_public: Option<bool>,
     pub is_template: Option<bool>,
@@ -1134,7 +1140,7 @@ pub trait WorkflowStore: Send + Sync {
 // ─── Usage Service ──────────────────────────────────────────────────────────
 
 /// Current usage snapshot for a workspace/user.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema, JsonSchema)]
 pub struct UsageSnapshot {
     pub day_tokens: i64,
     pub week_tokens: i64,
@@ -1142,7 +1148,7 @@ pub struct UsageSnapshot {
 }
 
 /// Configured token limits for a workspace.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema, JsonSchema)]
 pub struct UsageLimits {
     pub daily_tokens: Option<i64>,
     pub weekly_tokens: Option<i64>,
