@@ -4,12 +4,14 @@
 //!   orchestrator.add_hook(Arc::new(OtelHooks::default()));
 //!
 //! Span lifecycle:
-//! 1. before_execute() → create invoke_agent span, store in context.otel_agent_span + agent_spans DashMap
+//! 1. before_execute() → create execute span (named "execute {agent}"), record input.value,
+//!    store in context.otel_agent_span + agent_spans DashMap; also stash context.final_result Arc
 //! 2. StandardAgent::invoke_stream() → take span from context, wrap loop_engine.run().instrument(span)
-//! 3. LLM executor → creates chat span as child (Task 10)
+//! 3. LLM executor → creates chat span as child
 //! 4. on_event(ToolExecutionStart) → create execute_tool span
 //! 5. on_event(ToolExecutionEnd) → record result, drop tool span
-//! 6. on_event(RunFinished) → record aggregate usage, drop agent span clone
+//! 6. on_event(RunFinished) → read final_result from stashed context, record output.value,
+//!    record aggregate usage, drop agent span clone
 
 use std::sync::Arc;
 
@@ -35,8 +37,11 @@ use llm_gateway::observability::{
 pub struct OtelHooks {
     /// Agent spans keyed by run_id.
     /// StandardAgent gets a clone via context.otel_agent_span for .instrument().
-    /// We keep our own clone here to record aggregate usage at RunFinished.
+    /// We keep our own clone here to record aggregate usage and output at RunFinished.
     pub agent_spans: DashMap<String, tracing::Span>,
+    /// Shared final_result Arcs keyed by run_id, cloned from ExecutorContext at before_execute.
+    /// Used at RunFinished to record output.value without storing the full context (avoids ref cycles).
+    pub agent_final_results: DashMap<String, Arc<tokio::sync::RwLock<Option<serde_json::Value>>>>,
     /// Plan spans keyed by run_id. Created at PlanStarted, dropped at PlanFinished.
     pub plan_spans: DashMap<String, tracing::Span>,
     /// Step spans keyed by step_id. Created at StepStarted, dropped at StepCompleted.
@@ -49,7 +54,7 @@ pub struct OtelHooks {
     pub reflect_spans: DashMap<String, tracing::Span>,
     /// Tool spans keyed by tool_call_id. Created at ToolExecutionStart, dropped at End.
     pub tool_spans: DashMap<String, tracing::Span>,
-    /// Run IDs handled by RemoteAgent. These runs have an invoke_agent span but their
+    /// Run IDs handled by RemoteAgent. These runs have an execute span but their
     /// step/plan/tool events are forwarded from the inner execution — the inner OtelHooks
     /// creates those spans directly. We suppress them here to avoid duplicates.
     pub remote_run_ids: dashmap::DashSet<String>,
@@ -59,7 +64,7 @@ pub struct OtelHooks {
 impl AgentHooks for OtelHooks {
     async fn before_execute(
         &self,
-        _message: &mut Message,
+        message: &mut Message,
         context: Arc<ExecutorContext>,
     ) -> Result<(), AgentError> {
         let ctx_fields = ContextFields {
@@ -71,7 +76,35 @@ impl AgentHooks for OtelHooks {
             workspace_id: context.workspace_id.as_deref(),
             channel_id: context.channel_id.as_deref(),
         };
-        let attrs = GenAiAgentSpan::from_context_fields(&context.agent_id, &ctx_fields, None);
+
+        // Serialize input message as text for the span's input.value attribute.
+        // Include external tool names if any are present so the span shows overrides.
+        let input_value = {
+            let text = message.as_text().unwrap_or_default();
+            let extra = {
+                // Try to append external tool names (non-blocking: use try_read).
+                let tools_lock = context.dynamic_tools.as_ref()
+                    .and_then(|arc| arc.try_read().ok());
+                if let Some(tools) = tools_lock {
+                    if !tools.is_empty() {
+                        let names: Vec<String> = tools.iter()
+                            .map(|t| t.get_name())
+                            .collect();
+                        format!("\n[external_tools: {}]", names.join(", "))
+                    } else {
+                        String::new()
+                    }
+                } else {
+                    String::new()
+                }
+            };
+            let combined = format!("{}{}", text, extra);
+            if combined.is_empty() { None } else { Some(combined) }
+        };
+
+        let mut attrs = GenAiAgentSpan::from_context_fields(&context.agent_id, &ctx_fields, None);
+        attrs.input_value = input_value;
+
         let span = if let Some(ref parent_run_id) = context.parent_run_id {
             if let Some(outer_span) = self.agent_spans.get(parent_run_id.as_str()) {
                 outer_span.in_scope(|| builder::agent_span(&attrs))
@@ -84,14 +117,30 @@ impl AgentHooks for OtelHooks {
 
         // Give StandardAgent a clone for .instrument() wrapping
         context.set_otel_agent_span(span.clone());
-        // Keep our own clone for recording aggregate usage at RunFinished
+        // Keep our own clone for recording aggregate usage + output at RunFinished
         self.agent_spans.insert(context.run_id.clone(), span);
+        // Default execution type; RemoteAgent will override via mark_run_as_remote
+        if let Some(span) = self.agent_spans.get(context.run_id.as_str()) {
+            span.record("distri.agent.execution_type", "standard");
+        }
+        // Stash the final_result Arc so RunFinished can record output.value
+        self.agent_final_results
+            .insert(context.run_id.clone(), context.final_result.clone());
 
         Ok(())
     }
 
     fn mark_run_as_remote(&self, run_id: &str) {
         self.remote_run_ids.insert(run_id.to_string());
+        if let Some(span) = self.agent_spans.get(run_id) {
+            span.record("distri.agent.execution_type", "remote");
+        }
+    }
+
+    fn mark_run_as_workflow(&self, run_id: &str) {
+        if let Some(span) = self.agent_spans.get(run_id) {
+            span.record("distri.agent.execution_type", "workflow");
+        }
     }
 
     async fn on_event(&self, event: &AgentEvent) -> Result<(), AgentError> {
@@ -103,7 +152,7 @@ impl AgentHooks for OtelHooks {
             match &event.event {
                 AgentEventType::RunFinished { .. } | AgentEventType::RunError { .. } => {
                     self.remote_run_ids.remove(event.run_id.as_str());
-                    // fall through to record usage on the invoke_agent span
+                    // fall through to record usage on the execute span
                 }
                 _ => return Ok(()),
             }
@@ -297,6 +346,7 @@ impl AgentHooks for OtelHooks {
                 }
             }
             AgentEventType::RunError { message, code, .. } => {
+                self.agent_final_results.remove(event.run_id.as_str());
                 if let Some((_, span)) = self.agent_spans.remove(event.run_id.as_str()) {
                     span.record("otel.status_code", "ERROR");
                     span.record("otel.status_description", message.as_str());
@@ -308,7 +358,33 @@ impl AgentHooks for OtelHooks {
                 }
             }
             AgentEventType::RunFinished { usage, .. } => {
+                // Read the final output before removing the span so we can record output.value.
+                let output_str = {
+                    let arc = self.agent_final_results.remove(event.run_id.as_str())
+                        .map(|(_, a)| a);
+                    if let Some(arc) = arc {
+                        let val = arc.read().await;
+                        val.as_ref().map(|v| match v {
+                            serde_json::Value::String(s) => s.clone(),
+                            other => other.to_string(),
+                        })
+                    } else {
+                        None
+                    }
+                };
+
                 if let Some((_, span)) = self.agent_spans.remove(event.run_id.as_str()) {
+                    // Record final agent output
+                    if let Some(out) = output_str {
+                        if !out.is_empty() {
+                            let truncated = if out.len() > 500_000 {
+                                format!("{}…", &out[..500_000])
+                            } else {
+                                out
+                            };
+                            span.record("output.value", truncated.as_str());
+                        }
+                    }
                     if let Some(u) = usage {
                         let cost = crate::agent::pricing::estimate_cost(
                             u.model.as_deref().unwrap_or(""),
@@ -573,7 +649,7 @@ mod tests {
         );
     }
 
-    /// Remote runs should only get an invoke_agent span. Forwarded step/plan/tool events
+    /// Remote runs should only get an execute span. Forwarded step/plan/tool events
     /// must be silently dropped — the inner execution's OtelHooks already created those spans.
     #[tokio::test]
     async fn remote_run_suppresses_step_and_plan_spans() {
@@ -629,6 +705,99 @@ mod tests {
         assert!(
             !hooks.remote_run_ids.contains(&base.run_id),
             "remote_run_ids must be cleaned up after RunFinished"
+        );
+    }
+
+    /// before_execute stores the final_result Arc; RunFinished reads output.value from it.
+    #[tokio::test]
+    async fn before_execute_stashes_final_result_removed_on_run_finished() {
+        let hooks = OtelHooks::default();
+        let ctx = Arc::new(ExecutorContext {
+            run_id: "run-out".to_string(),
+            agent_id: "coder".to_string(),
+            thread_id: "t1".to_string(),
+            ..Default::default()
+        });
+        let mut msg = crate::types::Message {
+            role: distri_types::MessageRole::User,
+            parts: vec![distri_types::Part::Text("hello world".to_string())],
+            ..Default::default()
+        };
+        hooks.before_execute(&mut msg, ctx.clone()).await.unwrap();
+        assert!(
+            hooks.agent_final_results.contains_key("run-out"),
+            "final_result arc should be stashed after before_execute"
+        );
+
+        // Simulate the agent producing a final answer
+        ctx.set_final_result(Some(serde_json::Value::String("done!".to_string()))).await;
+
+        // RunFinished should read the output and clean up
+        let run_out_event = distri_types::AgentEvent {
+            timestamp: chrono::Utc::now(),
+            thread_id: "t1".to_string(),
+            run_id: "run-out".to_string(),
+            task_id: "task1".to_string(),
+            agent_id: "coder".to_string(),
+            user_id: None,
+            identifier_id: None,
+            workspace_id: None,
+            channel_id: None,
+            event: distri_types::AgentEventType::RunFinished {
+                success: true,
+                total_steps: 1,
+                failed_steps: 0,
+                usage: None,
+                context_budget: None,
+            },
+        };
+        hooks.on_event(&run_out_event).await.unwrap();
+        assert!(
+            !hooks.agent_final_results.contains_key("run-out"),
+            "final_result arc must be removed after RunFinished"
+        );
+    }
+
+    /// RunError must also clean up agent_final_results to avoid memory leaks.
+    #[tokio::test]
+    async fn run_error_cleans_up_final_result() {
+        let hooks = OtelHooks::default();
+        let ctx = Arc::new(ExecutorContext {
+            run_id: "run-err".to_string(),
+            agent_id: "coder".to_string(),
+            thread_id: "t1".to_string(),
+            ..Default::default()
+        });
+        let mut msg = crate::types::Message {
+            role: distri_types::MessageRole::User,
+            parts: vec![],
+            ..Default::default()
+        };
+        hooks.before_execute(&mut msg, ctx.clone()).await.unwrap();
+        assert!(hooks.agent_final_results.contains_key("run-err"));
+
+        hooks
+            .on_event(&distri_types::AgentEvent {
+                timestamp: chrono::Utc::now(),
+                thread_id: "t1".to_string(),
+                run_id: "run-err".to_string(),
+                task_id: "task1".to_string(),
+                agent_id: "coder".to_string(),
+                user_id: None,
+                identifier_id: None,
+                workspace_id: None,
+                channel_id: None,
+                event: distri_types::AgentEventType::RunError {
+                    message: "something broke".to_string(),
+                    code: Some("ERR".to_string()),
+                    usage: None,
+                },
+            })
+            .await
+            .unwrap();
+        assert!(
+            !hooks.agent_final_results.contains_key("run-err"),
+            "final_result arc must be removed after RunError"
         );
     }
 }

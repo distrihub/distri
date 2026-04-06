@@ -90,6 +90,10 @@ async fn before_execute_then_run_finished_clears_span() {
         !hooks.agent_spans.contains_key("r1"),
         "agent span should be removed after RunFinished"
     );
+    assert!(
+        !hooks.agent_final_results.contains_key("r1"),
+        "agent final_result should be removed after RunFinished"
+    );
 }
 
 /// ToolExecutionStart stores a span; ToolExecutionEnd keeps it (waiting for

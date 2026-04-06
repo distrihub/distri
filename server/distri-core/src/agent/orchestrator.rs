@@ -874,7 +874,10 @@ impl AgentOrchestrator {
                 Ok(Box::new(agent))
             }
             distri_types::configuration::AgentConfig::WorkflowAgent(definition) => {
-                let agent = crate::agent::WorkflowAgent::new(definition);
+                let hooks: Arc<dyn crate::agent::types::AgentHooks> = Arc::new(
+                    crate::agent::hooks::CombinedHooks::new(self.system_hooks.clone()),
+                );
+                let agent = crate::agent::WorkflowAgent::new(definition, hooks);
                 Ok(Box::new(agent))
             }
         }
