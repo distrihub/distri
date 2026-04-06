@@ -1,17 +1,17 @@
 use anyhow::{Result, anyhow};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 use tokio::fs;
 use utoipa::ToSchema;
 
-
 // Import config types
 use crate::agent::ModelSettings;
 use crate::configuration::config::{ExternalMcpServer, ServerConfig, StoreConfig};
 
 /// User configuration from distri.toml file
-#[derive(Debug, Clone, Serialize, Deserialize, Default, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, ToSchema, JsonSchema)]
 pub struct DistriServerConfig {
     pub name: String,
     pub version: String,
@@ -58,7 +58,7 @@ pub struct DistriServerConfig {
 }
 
 /// Build configuration for custom build commands
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
 pub struct BuildConfig {
     /// Build command to execute
     pub command: String,
@@ -76,7 +76,7 @@ impl DistriServerConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
 #[serde(tag = "type")]
 #[serde(rename_all = "lowercase")]
 pub struct EntryPoints {
@@ -94,22 +94,22 @@ impl EntryPoints {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
 pub struct EngineConfig {
     pub engine: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
 pub struct AuthorsConfig {
     pub primary: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
 pub struct RegistryConfig {
     pub url: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
 pub struct LockFile {
     pub packages: HashMap<String, String>,
     pub sources: HashMap<String, String>,

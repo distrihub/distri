@@ -4,10 +4,10 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};
-use utoipa::ToSchema;
 use tokio::sync::oneshot;
+use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::{
@@ -72,6 +72,7 @@ pub struct InitializedStores {
     pub workflow_store: Option<Arc<dyn WorkflowStore>>,
     pub connection_store: Option<Arc<dyn ConnectionStore>>,
     pub connection_token_store: Option<Arc<dyn ConnectionTokenStore>>,
+    pub provider_registry: Option<Arc<dyn crate::auth::ProviderRegistry>>,
 }
 impl InitializedStores {
     pub fn set_tool_auth_store(&mut self, tool_auth_store: Arc<dyn ToolAuthStore>) {

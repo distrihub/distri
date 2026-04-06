@@ -128,12 +128,10 @@ impl DistriAgentServer {
                     "/openapi.json",
                     web::get().to(crate::openapi::serve_openapi),
                 )
-                .service(
-                    utoipa_scalar::Scalar::with_url(
-                        "/docs",
-                        crate::openapi::ServerApiDoc::openapi(),
-                    ),
-                )
+                .service(utoipa_scalar::Scalar::with_url(
+                    "/docs",
+                    crate::openapi::ServerApiDoc::openapi(),
+                ))
                 .configure(|cfg| {
                     cfg.app_data(web::Data::new(executor))
                         .app_data(web::Data::new(verbose))

@@ -92,4 +92,10 @@ impl AgentHooks for CombinedHooks {
             hook.mark_run_as_remote(run_id);
         }
     }
+
+    fn mark_run_as_workflow(&self, run_id: &str) {
+        for hook in &self.hooks {
+            hook.mark_run_as_workflow(run_id);
+        }
+    }
 }

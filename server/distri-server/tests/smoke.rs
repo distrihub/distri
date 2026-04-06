@@ -97,9 +97,7 @@ async fn smoke_all_route_groups_have_app_data() {
                 cfg.app_data(web::Data::new(executor))
                     .app_data(web::Data::new(verbose.clone()))
                     .configure(|cfg| {
-                        cfg.service(
-                            web::scope("/v1").configure(distri_server::routes::distri),
-                        );
+                        cfg.service(web::scope("/v1").configure(distri_server::routes::distri));
                     });
             })
     });

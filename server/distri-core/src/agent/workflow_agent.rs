@@ -5,7 +5,7 @@
 
 use crate::{
     agent::{
-        types::{AgentDag, BaseAgent, DagNode},
+        types::{AgentDag, AgentHooks, BaseAgent, DagNode},
         ExecutorContext, InvokeResult,
     },
     types::Message,
@@ -20,11 +20,12 @@ use std::sync::Arc;
 #[derive(Clone, Debug)]
 pub struct WorkflowAgent {
     pub definition: WorkflowAgentDefinition,
+    pub hooks: Arc<dyn AgentHooks>,
 }
 
 impl WorkflowAgent {
-    pub fn new(definition: WorkflowAgentDefinition) -> Self {
-        Self { definition }
+    pub fn new(definition: WorkflowAgentDefinition, hooks: Arc<dyn AgentHooks>) -> Self {
+        Self { definition, hooks }
     }
 
     fn emit_text(text: &str) -> distri_types::AgentEventType {
@@ -275,6 +276,110 @@ impl StepExecutor for ContextStepExecutor {
 impl BaseAgent for WorkflowAgent {
     async fn invoke_stream(
         &self,
+        mut message: Message,
+        context: Arc<ExecutorContext>,
+    ) -> Result<InvokeResult, AgentError> {
+        // Create OTel span for this workflow execution
+        self.hooks
+            .before_execute(&mut message, context.clone())
+            .await
+            .map_err(|e| AgentError::Execution(e.to_string()))?;
+        // Mark as workflow execution so the span gets the right execution_type label
+        self.hooks.mark_run_as_workflow(&context.run_id);
+        let agent_span = context
+            .take_otel_agent_span()
+            .unwrap_or_else(tracing::Span::none);
+
+        use tracing::Instrument as _;
+        let result = self
+            .run_workflow(message, context.clone())
+            .instrument(agent_span)
+            .await;
+
+        // Emit RunFinished so OtelHooks records output.value and usage
+        let usage = context.get_total_usage().await;
+        context
+            .emit(distri_types::AgentEventType::RunFinished {
+                success: result.is_ok(),
+                total_steps: 0,
+                failed_steps: 0,
+                usage: Some(usage),
+                context_budget: None,
+            })
+            .await;
+
+        result
+    }
+
+    fn clone_box(&self) -> Box<dyn BaseAgent> {
+        Box::new(self.clone())
+    }
+
+    fn get_name(&self) -> &str {
+        &self.definition.name
+    }
+
+    fn get_description(&self) -> &str {
+        &self.definition.description
+    }
+
+    fn get_definition(&self) -> distri_types::configuration::AgentConfig {
+        distri_types::configuration::AgentConfig::WorkflowAgent(self.definition.clone())
+    }
+
+    fn get_tools(&self) -> Vec<Arc<dyn distri_types::Tool>> {
+        vec![]
+    }
+
+    fn get_dag(&self) -> AgentDag {
+        let steps: Vec<serde_json::Value> = self
+            .definition
+            .definition
+            .get("steps")
+            .and_then(|s| s.as_array())
+            .cloned()
+            .unwrap_or_default();
+
+        let nodes = steps
+            .iter()
+            .map(|step| {
+                let id = step["id"].as_str().unwrap_or("unknown").to_string();
+                let label = step["label"].as_str().unwrap_or(&id).to_string();
+                let kind = step["kind"]["type"]
+                    .as_str()
+                    .unwrap_or("unknown")
+                    .to_string();
+                let deps: Vec<String> = step["depends_on"]
+                    .as_array()
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                DagNode {
+                    id,
+                    name: label,
+                    node_type: format!("workflow_{}", kind),
+                    dependencies: deps,
+                    metadata: step.clone(),
+                }
+            })
+            .collect();
+
+        AgentDag {
+            nodes,
+            agent_name: self.definition.name.clone(),
+            description: self.definition.description.clone(),
+        }
+    }
+}
+
+impl WorkflowAgent {
+    /// Core workflow execution logic, instrumented under the OTel agent span.
+    async fn run_workflow(
+        &self,
         message: Message,
         context: Arc<ExecutorContext>,
     ) -> Result<InvokeResult, AgentError> {
@@ -374,70 +479,6 @@ impl BaseAgent for WorkflowAgent {
             content: Some(summary_text),
             tool_calls: vec![],
         })
-    }
-
-    fn clone_box(&self) -> Box<dyn BaseAgent> {
-        Box::new(self.clone())
-    }
-
-    fn get_name(&self) -> &str {
-        &self.definition.name
-    }
-
-    fn get_description(&self) -> &str {
-        &self.definition.description
-    }
-
-    fn get_definition(&self) -> distri_types::configuration::AgentConfig {
-        distri_types::configuration::AgentConfig::WorkflowAgent(self.definition.clone())
-    }
-
-    fn get_tools(&self) -> Vec<Arc<dyn distri_types::Tool>> {
-        vec![]
-    }
-
-    fn get_dag(&self) -> AgentDag {
-        let steps: Vec<serde_json::Value> = self
-            .definition
-            .definition
-            .get("steps")
-            .and_then(|s| s.as_array())
-            .cloned()
-            .unwrap_or_default();
-
-        let nodes = steps
-            .iter()
-            .map(|step| {
-                let id = step["id"].as_str().unwrap_or("unknown").to_string();
-                let label = step["label"].as_str().unwrap_or(&id).to_string();
-                let kind = step["kind"]["type"]
-                    .as_str()
-                    .unwrap_or("unknown")
-                    .to_string();
-                let deps: Vec<String> = step["depends_on"]
-                    .as_array()
-                    .map(|a| {
-                        a.iter()
-                            .filter_map(|v| v.as_str().map(String::from))
-                            .collect()
-                    })
-                    .unwrap_or_default();
-
-                DagNode {
-                    id,
-                    name: label,
-                    node_type: format!("workflow_{}", kind),
-                    dependencies: deps,
-                    metadata: step.clone(),
-                }
-            })
-            .collect();
-
-        AgentDag {
-            nodes,
-            agent_name: self.definition.name.clone(),
-            description: self.definition.description.clone(),
-        }
     }
 }
 

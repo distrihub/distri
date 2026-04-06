@@ -100,18 +100,19 @@ pub fn inference_span(attrs: &GenAiInferenceSpan) -> tracing::Span {
     span
 }
 
-/// Create a tracing span for an agent invocation.
+/// Create a tracing span for an agent execution.
 pub fn agent_span(attrs: &GenAiAgentSpan) -> tracing::Span {
     let name = attrs.span_name();
     let span = tracing::info_span!(
         target: "gen_ai",
-        "gen_ai.invoke_agent",
+        "gen_ai.execute",
         "otel.name" = name,
-        "gen_ai.operation.name" = "invoke_agent",
+        "gen_ai.operation.name" = "execute",
         "gen_ai.agent.id" = tracing::field::Empty,
         "gen_ai.agent.name" = attrs.agent_name.as_str(),
         "gen_ai.conversation.id" = tracing::field::Empty,
         "gen_ai.agent.parent_id" = tracing::field::Empty,
+        "distri.agent.execution_type" = tracing::field::Empty,
         "gen_ai.usage.input_tokens" = tracing::field::Empty,
         "gen_ai.usage.output_tokens" = tracing::field::Empty,
         "gen_ai.usage.cost" = tracing::field::Empty,
@@ -122,6 +123,8 @@ pub fn agent_span(attrs: &GenAiAgentSpan) -> tracing::Span {
         "distri.run_id" = tracing::field::Empty,
         "distri.user_id" = tracing::field::Empty,
         "distri.channel_id" = tracing::field::Empty,
+        "input.value" = tracing::field::Empty,
+        "output.value" = tracing::field::Empty,
         "error.message" = tracing::field::Empty,
         "error.code" = tracing::field::Empty,
         "otel.status_code" = tracing::field::Empty,
@@ -155,6 +158,14 @@ pub fn agent_span(attrs: &GenAiAgentSpan) -> tracing::Span {
     }
     if let Some(v) = &attrs.distri_channel_id {
         span.record("distri.channel_id", v.as_str());
+    }
+    if let Some(v) = &attrs.input_value {
+        let truncated = if v.len() > 500_000 {
+            format!("{}…", &v[..500_000])
+        } else {
+            v.clone()
+        };
+        span.record("input.value", truncated.as_str());
     }
 
     span

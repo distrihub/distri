@@ -18,7 +18,9 @@ pub struct StoreConfig {
     #[serde(default)]
     pub session: SessionStoreConfig,
 }
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default, PartialEq, Eq, Hash, ToSchema)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, JsonSchema, Default, PartialEq, Eq, Hash, ToSchema,
+)]
 #[serde(tag = "type", content = "config", rename_all = "lowercase")]
 pub enum StoreType {
     #[default]

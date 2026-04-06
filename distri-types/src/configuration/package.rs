@@ -1,12 +1,13 @@
 use crate::ToolDefinition;
 use crate::agent::StandardDefinition;
 use crate::configuration::manifest::DistriServerConfig;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use utoipa::ToSchema;
 
 /// Tool definition ready for DAP registration with runtime info
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
 pub struct PluginToolDefinition {
     pub name: String,
     pub package_name: String,
@@ -19,7 +20,7 @@ pub struct PluginToolDefinition {
 }
 
 /// Cloud-specific metadata for agents (optional, only present in cloud responses)
-#[derive(Debug, Clone, Serialize, Deserialize, Default, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, ToSchema, JsonSchema)]
 pub struct AgentCloudMetadata {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<uuid::Uuid>,
@@ -31,7 +32,7 @@ pub struct AgentCloudMetadata {
     pub is_owner: Option<bool>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
 pub struct AgentConfigWithTools {
     #[serde(flatten)]
     #[schema(value_type = Object)]
@@ -46,7 +47,7 @@ pub struct AgentConfigWithTools {
 }
 
 /// Unified agent configuration enum
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
 #[serde(tag = "agent_type", rename_all = "snake_case")]
 pub enum AgentConfig {
     /// Standard markdown-based agent
@@ -59,7 +60,7 @@ pub enum AgentConfig {
 /// Definition for a workflow-based agent.
 /// The workflow definition is stored as JSON to avoid crate dependency on distri-workflow.
 /// Deserialize to `distri_workflow::WorkflowDefinition` at execution time.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
 pub struct WorkflowAgentDefinition {
     pub name: String,
     pub description: String,
@@ -140,7 +141,7 @@ impl AgentConfig {
 }
 
 /// Agent definition ready for DAP registration with runtime info
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
 pub struct PluginAgentDefinition {
     pub name: String,
     pub package_name: String,
@@ -153,7 +154,7 @@ pub struct PluginAgentDefinition {
 }
 
 /// Built DAP package artifact ready for registration in distri
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
 pub struct PluginArtifact {
     pub name: String,
     #[schema(value_type = String)]

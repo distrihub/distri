@@ -100,6 +100,9 @@ pub trait AgentHooks: Send + Sync + std::fmt::Debug {
     /// spans that would otherwise be created from forwarded events — the inner execution's
     /// OtelHooks creates those spans directly, so the outer one should skip them.
     fn mark_run_as_remote(&self, _run_id: &str) {}
+
+    /// Mark this run as a workflow execution (for OTel span labeling).
+    fn mark_run_as_workflow(&self, _run_id: &str) {}
 }
 
 /// Result of agent invocation

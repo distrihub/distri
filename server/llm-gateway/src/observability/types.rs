@@ -83,7 +83,7 @@ impl GenAiInferenceSpan {
 }
 
 /// All attributes for an agent lifecycle span.
-/// Span name: "invoke_agent {agent_name}"
+/// Span name: "execute {agent_name}"
 #[derive(Debug, Default, Clone)]
 pub struct GenAiAgentSpan {
     pub agent_id: Option<String>,
@@ -99,11 +99,13 @@ pub struct GenAiAgentSpan {
     pub distri_run_id: Option<String>,
     pub distri_user_id: Option<String>,
     pub distri_channel_id: Option<String>,
+    /// Optional input message text — recorded as input.value on the span.
+    pub input_value: Option<String>,
 }
 
 impl GenAiAgentSpan {
     pub fn span_name(&self) -> String {
-        format!("invoke_agent {}", self.agent_name)
+        format!("execute {}", self.agent_name)
     }
 }
 
@@ -195,7 +197,7 @@ mod tests {
             agent_name: "coder".into(),
             ..Default::default()
         };
-        assert_eq!(agent.span_name(), "invoke_agent coder");
+        assert_eq!(agent.span_name(), "execute coder");
 
         let tool = GenAiToolSpan {
             tool_name: "bash".into(),

@@ -367,8 +367,7 @@ async fn main() -> Result<()> {
     let client = Distri::from_config(config.clone());
     let workspace = resolve_workspace(&cli.config);
 
-    let mut app =
-        DistriClientApp::from_config(config.clone()).with_workspace_path(workspace.clone());
+    let mut app = DistriClientApp::from_config(config.clone());
 
     match command {
         Commands::Tui {
@@ -407,8 +406,6 @@ async fn main() -> Result<()> {
             let mut stream_agent_id = agent_name.clone();
             let mut external_tool_names = std::collections::HashSet::new();
             if let Some(agent_cfg) = app.fetch_agent(&agent_name).await? {
-                app.ensure_local_tools(&agent_name, &agent_cfg.agent)
-                    .await?;
                 if let Some(uuid) = agent_cfg.cloud.id {
                     stream_agent_id = uuid.to_string();
                 }
@@ -580,9 +577,7 @@ async fn main() -> Result<()> {
         Commands::Tools { command } => match command {
             ToolsCommands::List { filter, agent } => {
                 if let Some(agent_id) = agent {
-                    if let Some(agent_cfg) = app.fetch_agent(&agent_id).await? {
-                        app.ensure_local_tools(&agent_id, &agent_cfg.agent).await?;
-                    }
+                    app.fetch_agent(&agent_id).await?;
                 }
                 let mut tools = app.list_tools().await?;
                 if let Some(term) = filter {

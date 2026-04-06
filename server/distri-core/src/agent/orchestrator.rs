@@ -726,6 +726,85 @@ impl AgentOrchestrator {
                     }
                 }
 
+                // Inject connection context for connection-aware agents
+                {
+                    let is_connection_aware = definition.available_skills.iter().any(|s| {
+                        s.name.contains("connections_manager")
+                            || s.name.starts_with("connection:")
+                            || s.name == "*"
+                    });
+
+                    if is_connection_aware {
+                        if let Some(ws_id) = &context.workspace_id {
+                            let mut dv = std::collections::HashMap::new();
+
+                            // Build connected services list
+                            if let Some(conn_store) = &self.stores.connection_store {
+                                if let Ok(connections) = conn_store.list_by_workspace(ws_id).await {
+                                    let connected_names: std::collections::HashSet<String> =
+                                        connections.iter().map(|c| c.name.clone()).collect();
+
+                                    let connected_lines: Vec<String> = connections
+                                        .iter()
+                                        .filter(|c| {
+                                            c.status
+                                                == distri_types::connections::ConnectionStatus::Connected
+                                        })
+                                        .map(|c| {
+                                            format!(
+                                                "- **{}** (id: `{}`, status: connected)",
+                                                c.name, c.id
+                                            )
+                                        })
+                                        .collect();
+
+                                    if !connected_lines.is_empty() {
+                                        dv.insert(
+                                            "available_connections".to_string(),
+                                            serde_json::Value::String(connected_lines.join("\n")),
+                                        );
+                                    }
+
+                                    // Build available-but-not-connected providers list
+                                    if let Some(registry) = &self.stores.provider_registry {
+                                        let all_providers = registry.list_providers().await;
+                                        let mut available_lines = Vec::new();
+                                        for provider in &all_providers {
+                                            if !connected_names.contains(provider)
+                                                && registry.is_provider_available(provider).await
+                                            {
+                                                available_lines.push(format!(
+                                                    "- **{}** — ready to connect via OAuth",
+                                                    provider
+                                                ));
+                                            }
+                                        }
+                                        if !available_lines.is_empty() {
+                                            dv.insert(
+                                                "available_providers".to_string(),
+                                                serde_json::Value::String(
+                                                    available_lines.join("\n"),
+                                                ),
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+
+                            if !dv.is_empty() {
+                                context
+                                    .merge_hook_prompt_state(
+                                        crate::agent::context::HookPromptState {
+                                            dynamic_values: dv,
+                                            ..Default::default()
+                                        },
+                                    )
+                                    .await;
+                            }
+                        }
+                    }
+                }
+
                 // Inject available sub-agents into prompt context if any are configured
                 if !definition.sub_agents.is_empty() {
                     let mut sub_agent_lines = Vec::new();
@@ -795,7 +874,10 @@ impl AgentOrchestrator {
                 Ok(Box::new(agent))
             }
             distri_types::configuration::AgentConfig::WorkflowAgent(definition) => {
-                let agent = crate::agent::WorkflowAgent::new(definition);
+                let hooks: Arc<dyn crate::agent::types::AgentHooks> = Arc::new(
+                    crate::agent::hooks::CombinedHooks::new(self.system_hooks.clone()),
+                );
+                let agent = crate::agent::WorkflowAgent::new(definition, hooks);
                 Ok(Box::new(agent))
             }
         }
@@ -1174,7 +1256,8 @@ impl AgentOrchestrator {
         // Look up parent run for OTel span nesting (set by RemoteAgent before spawning inner task).
         let context = if context.parent_run_id.is_none() {
             if let Some(broadcaster) = &self.broadcaster {
-                if let Ok(Some(parent_run_id)) = broadcaster.get_parent_run(&context.task_id).await {
+                if let Ok(Some(parent_run_id)) = broadcaster.get_parent_run(&context.task_id).await
+                {
                     let mut ctx = (*context).clone();
                     ctx.parent_run_id = Some(parent_run_id);
                     Arc::new(ctx)
@@ -1235,7 +1318,8 @@ impl AgentOrchestrator {
         // Look up parent run for OTel span nesting (set by RemoteAgent before spawning inner task).
         let context = if context.parent_run_id.is_none() {
             if let Some(broadcaster) = &self.broadcaster {
-                if let Ok(Some(parent_run_id)) = broadcaster.get_parent_run(&context.task_id).await {
+                if let Ok(Some(parent_run_id)) = broadcaster.get_parent_run(&context.task_id).await
+                {
                     let mut ctx = (*context).clone();
                     ctx.parent_run_id = Some(parent_run_id);
                     Arc::new(ctx)
