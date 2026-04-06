@@ -1,4 +1,4 @@
-use std::{collections::HashSet, path::PathBuf};
+use std::collections::HashSet;
 
 use anyhow::Result;
 use distri_a2a::MessageSendParams;
@@ -8,7 +8,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     AgentStreamClient, ClientError, ExternalToolRegistry, StreamError, print_stream,
-    register_local_filesystem_tools,
 };
 // Import config module to bring the BuildHttpClient trait into scope
 use crate::config::{self, BuildHttpClient};
@@ -30,8 +29,6 @@ pub struct DistriClientApp {
     config: config::DistriConfig,
     registry: ExternalToolRegistry,
     local_tool_definitions: Vec<ToolDefinition>,
-    registered_local_agents: HashSet<String>,
-    workspace_path: Option<PathBuf>,
 }
 
 impl DistriClientApp {
@@ -55,8 +52,6 @@ impl DistriClientApp {
             config: cfg,
             registry: ExternalToolRegistry::default(),
             local_tool_definitions: Vec::new(),
-            registered_local_agents: HashSet::new(),
-            workspace_path: None,
         }
     }
 
@@ -65,12 +60,7 @@ impl DistriClientApp {
         self
     }
 
-    pub fn with_workspace_path(mut self, workspace: impl Into<PathBuf>) -> Self {
-        self.workspace_path = Some(workspace.into());
-        self
-    }
-
-    fn base(&self) -> String {
+fn base(&self) -> String {
         self.base_url.trim_end_matches('/').to_string()
     }
 
@@ -198,10 +188,6 @@ impl DistriClientApp {
         agent_id: &str,
         params: MessageSendParams,
     ) -> Result<(), AppError> {
-        if let Some(agent) = self.fetch_agent(agent_id).await? {
-            self.ensure_local_tools(agent_id, &agent.agent).await?;
-        }
-
         // Use the config to create AgentStreamClient to preserve API keys
         let client = AgentStreamClient::from_config(self.config.clone())
             .with_http_client(self.http.clone())
@@ -211,44 +197,7 @@ impl DistriClientApp {
         Ok(())
     }
 
-    pub async fn ensure_local_tools(
-        &mut self,
-        agent_id: &str,
-        config: &AgentConfig,
-    ) -> Result<(), AppError> {
-        if self.registered_local_agents.contains(agent_id) {
-            return Ok(());
-        }
-
-        let Some(workspace_path) = &self.workspace_path else {
-            return Ok(());
-        };
-
-        let def = match config {
-            AgentConfig::StandardAgent(def) => def,
-            _ => return Ok(()), // Workflow agents don't need local filesystem tools
-        };
-        if def.file_system.include_server_tools() {
-            return Ok(());
-        }
-
-        let defs =
-            register_local_filesystem_tools(&self.registry, agent_id, workspace_path).await?;
-        for def in defs {
-            if !self
-                .local_tool_definitions
-                .iter()
-                .any(|d| d.name == def.name)
-            {
-                self.local_tool_definitions.push(def);
-            }
-        }
-        self.registered_local_agents.insert(agent_id.to_string());
-
-        Ok(())
-    }
-
-    async fn fetch_remote_tools(&self) -> Result<Vec<ToolListItem>, ClientError> {
+async fn fetch_remote_tools(&self) -> Result<Vec<ToolListItem>, ClientError> {
         let url = format!("{}/tools", self.base());
         let resp = self.http.get(url).send().await?;
         let status = resp.status();

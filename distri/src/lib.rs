@@ -2,7 +2,6 @@ mod client;
 mod client_app;
 mod client_stream;
 pub mod config;
-mod local_tools;
 mod printer;
 mod renderers;
 
@@ -38,7 +37,6 @@ pub use distri_types::{
     HookContext, HookKind, HookMutation, InlineHookRequest, InlineHookResponse, Model,
     ModelProviderDefinition, ProviderKeyDefinition, ProviderType, TokenResponse, TtsVoiceInfo,
 };
-pub use local_tools::register_local_filesystem_tools;
 pub use printer::{
     ContextHealth, EventPrinter, print_stream, print_stream_verbose, print_stream_with_health,
 };

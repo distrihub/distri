@@ -74,9 +74,7 @@ pub fn required_external_tools(agent: &AgentConfig) -> Vec<String> {
 }
 
 pub async fn print_available_tools(app: &mut DistriClientApp, agent: &str) -> Result<()> {
-    if let Some(agent_cfg) = app.fetch_agent(agent).await? {
-        app.ensure_local_tools(agent, &agent_cfg.agent).await?;
-    }
+    app.fetch_agent(agent).await?;
 
     let tools = app.list_tools().await?;
     if tools.is_empty() {
@@ -178,8 +176,6 @@ pub async fn select_agent_menu(app: &mut DistriClientApp) -> Result<Option<Strin
     for agent in agents {
         let name = agent.get_name().to_string();
         let description = agent.get_description().to_string();
-
-        app.ensure_local_tools(&name, &agent).await?;
 
         let req_tools = required_external_tools(&agent);
         let missing_tools = req_tools
@@ -577,8 +573,6 @@ pub async fn run_interactive_chat(
         // Resolve agent name to UUID for cloud compatibility
         let (stream_agent_id, external_tool_names) = match app.fetch_agent(&current_agent).await? {
             Some(agent_cfg) => {
-                app.ensure_local_tools(&current_agent, &agent_cfg.agent)
-                    .await?;
                 let id = agent_cfg
                     .cloud
                     .id
