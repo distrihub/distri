@@ -410,6 +410,13 @@ impl WorkflowAgent {
             .with_input(input.clone())
             .map_err(|e| AgentError::Validation(e))?;
 
+        // Apply entry point if specified in input (e.g. {"_entry_point": "grade_only"})
+        if let Some(entry_id) = input.get("_entry_point").and_then(|v| v.as_str()) {
+            workflow = workflow
+                .apply_entry_point(entry_id)
+                .map_err(|e| AgentError::Validation(e))?;
+        }
+
         // Populate env namespace from executor context env vars
         if let Some(ctx_obj) = workflow.context.as_object_mut() {
             let env = ctx_obj
