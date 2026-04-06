@@ -6,7 +6,6 @@ use std::path::Path;
 use tokio::fs;
 use utoipa::ToSchema;
 
-
 // Import config types
 use crate::agent::ModelSettings;
 use crate::configuration::config::{ExternalMcpServer, ServerConfig, StoreConfig};

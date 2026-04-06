@@ -26,6 +26,7 @@ mod tests {
                 attributes: None,
                 user_id: None,
                 external_id: None,
+                channel_id: None,
             })
             .await
             .expect("Failed to create thread");
@@ -48,6 +49,7 @@ mod tests {
                 attributes: None,
                 user_id: None,
                 external_id: None,
+                channel_id: None,
             })
             .await
             .expect("Failed to create thread");
@@ -77,6 +79,7 @@ mod tests {
                 attributes: None,
                 user_id: None,
                 external_id: None,
+                channel_id: None,
             })
             .await
             .expect("Failed to create thread");

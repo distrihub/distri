@@ -1256,7 +1256,8 @@ impl AgentOrchestrator {
         // Look up parent run for OTel span nesting (set by RemoteAgent before spawning inner task).
         let context = if context.parent_run_id.is_none() {
             if let Some(broadcaster) = &self.broadcaster {
-                if let Ok(Some(parent_run_id)) = broadcaster.get_parent_run(&context.task_id).await {
+                if let Ok(Some(parent_run_id)) = broadcaster.get_parent_run(&context.task_id).await
+                {
                     let mut ctx = (*context).clone();
                     ctx.parent_run_id = Some(parent_run_id);
                     Arc::new(ctx)
@@ -1317,7 +1318,8 @@ impl AgentOrchestrator {
         // Look up parent run for OTel span nesting (set by RemoteAgent before spawning inner task).
         let context = if context.parent_run_id.is_none() {
             if let Some(broadcaster) = &self.broadcaster {
-                if let Ok(Some(parent_run_id)) = broadcaster.get_parent_run(&context.task_id).await {
+                if let Ok(Some(parent_run_id)) = broadcaster.get_parent_run(&context.task_id).await
+                {
                     let mut ctx = (*context).clone();
                     ctx.parent_run_id = Some(parent_run_id);
                     Arc::new(ctx)

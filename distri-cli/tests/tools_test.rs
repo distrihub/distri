@@ -24,6 +24,7 @@ fn make_event() -> AgentEvent {
             total_steps: 0,
             failed_steps: 0,
             usage: None,
+            context_budget: None,
         },
     }
 }

@@ -6,9 +6,7 @@ use distri_types::configuration::AgentConfigWithTools;
 use distri_types::{ToolDefinition, configuration::AgentConfig};
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    AgentStreamClient, ClientError, ExternalToolRegistry, StreamError, print_stream,
-};
+use crate::{AgentStreamClient, ClientError, ExternalToolRegistry, StreamError, print_stream};
 // Import config module to bring the BuildHttpClient trait into scope
 use crate::config::{self, BuildHttpClient};
 
@@ -60,7 +58,7 @@ impl DistriClientApp {
         self
     }
 
-fn base(&self) -> String {
+    fn base(&self) -> String {
         self.base_url.trim_end_matches('/').to_string()
     }
 
@@ -197,7 +195,7 @@ fn base(&self) -> String {
         Ok(())
     }
 
-async fn fetch_remote_tools(&self) -> Result<Vec<ToolListItem>, ClientError> {
+    async fn fetch_remote_tools(&self) -> Result<Vec<ToolListItem>, ClientError> {
         let url = format!("{}/tools", self.base());
         let resp = self.http.get(url).send().await?;
         let status = resp.status();

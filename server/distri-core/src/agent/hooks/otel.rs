@@ -83,13 +83,13 @@ impl AgentHooks for OtelHooks {
             let text = message.as_text().unwrap_or_default();
             let extra = {
                 // Try to append external tool names (non-blocking: use try_read).
-                let tools_lock = context.dynamic_tools.as_ref()
+                let tools_lock = context
+                    .dynamic_tools
+                    .as_ref()
                     .and_then(|arc| arc.try_read().ok());
                 if let Some(tools) = tools_lock {
                     if !tools.is_empty() {
-                        let names: Vec<String> = tools.iter()
-                            .map(|t| t.get_name())
-                            .collect();
+                        let names: Vec<String> = tools.iter().map(|t| t.get_name()).collect();
                         format!("\n[external_tools: {}]", names.join(", "))
                     } else {
                         String::new()
@@ -99,7 +99,11 @@ impl AgentHooks for OtelHooks {
                 }
             };
             let combined = format!("{}{}", text, extra);
-            if combined.is_empty() { None } else { Some(combined) }
+            if combined.is_empty() {
+                None
+            } else {
+                Some(combined)
+            }
         };
 
         let mut attrs = GenAiAgentSpan::from_context_fields(&context.agent_id, &ctx_fields, None);
@@ -360,7 +364,9 @@ impl AgentHooks for OtelHooks {
             AgentEventType::RunFinished { usage, .. } => {
                 // Read the final output before removing the span so we can record output.value.
                 let output_str = {
-                    let arc = self.agent_final_results.remove(event.run_id.as_str())
+                    let arc = self
+                        .agent_final_results
+                        .remove(event.run_id.as_str())
                         .map(|(_, a)| a);
                     if let Some(arc) = arc {
                         let val = arc.read().await;
@@ -730,7 +736,8 @@ mod tests {
         );
 
         // Simulate the agent producing a final answer
-        ctx.set_final_result(Some(serde_json::Value::String("done!".to_string()))).await;
+        ctx.set_final_result(Some(serde_json::Value::String("done!".to_string())))
+            .await;
 
         // RunFinished should read the output and clean up
         let run_out_event = distri_types::AgentEvent {

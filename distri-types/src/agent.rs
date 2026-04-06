@@ -75,14 +75,8 @@ pub enum CodeLanguage {
 
 impl std::fmt::Display for CodeLanguage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.to_string())
-    }
-}
-
-impl CodeLanguage {
-    pub fn to_string(&self) -> String {
         match self {
-            CodeLanguage::Typescript => "typescript".to_string(),
+            CodeLanguage::Typescript => write!(f, "typescript"),
         }
     }
 }
@@ -478,7 +472,7 @@ pub struct StandardDefinition {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tools: Option<ToolsConfig>,
 
-/// Custom handlebars partials (name -> template path) for use in custom prompts
+    /// Custom handlebars partials (name -> template path) for use in custom prompts
     #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
     pub partials: std::collections::HashMap<String, String>,
 
