@@ -7,6 +7,8 @@ use actix_web::{web, App, HttpResponse, HttpServer, Result as ActixResult};
 use actix_web_static_files::ResourceFiles;
 use anyhow::Result;
 use distri_core::agent::AgentOrchestrator;
+use utoipa::OpenApi;
+use utoipa_scalar::Servable;
 
 use distri_types::configuration::ServerConfig;
 use serde_json::json;
@@ -121,6 +123,16 @@ impl DistriAgentServer {
                             async move { default_health_check(&service_name).await }
                         }
                     }),
+                )
+                .route(
+                    "/openapi.json",
+                    web::get().to(crate::openapi::serve_openapi),
+                )
+                .service(
+                    utoipa_scalar::Scalar::with_url(
+                        "/docs",
+                        crate::openapi::ServerApiDoc::openapi(),
+                    ),
                 )
                 .configure(|cfg| {
                     cfg.app_data(web::Data::new(executor))

@@ -2,8 +2,9 @@ use crate::a2a::{AgentCapabilities, AgentProvider, SecurityScheme};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use utoipa::ToSchema;
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default, ToSchema)]
 pub struct StoreConfig {
     /// Metadata store (agent_config, tool_auth) - persistent across sessions
     #[serde(default)]
@@ -17,7 +18,7 @@ pub struct StoreConfig {
     #[serde(default)]
     pub session: SessionStoreConfig,
 }
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default, PartialEq, Eq, Hash, ToSchema)]
 #[serde(tag = "type", content = "config", rename_all = "lowercase")]
 pub enum StoreType {
     #[default]
@@ -38,7 +39,7 @@ impl StoreType {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
 pub struct MetadataStoreConfig {
     #[serde(default)]
     pub store_type: StoreType,
@@ -55,7 +56,7 @@ impl Default for MetadataStoreConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
 pub struct MemoryStoreConfig {
     #[serde(default)]
     pub store_type: StoreType,
@@ -83,7 +84,7 @@ impl Default for MemoryStoreConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
 pub struct SessionStoreConfig {
     /// If true, creates a new ephemeral in-memory SQLite connection for each thread execution
     /// When ephemeral, store_type and db_config are ignored (always uses in-memory SQLite)
@@ -111,7 +112,7 @@ impl Default for SessionStoreConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
 pub struct PostgresConfig {
     pub database_url: String,
     #[serde(default = "default_postgres_max_connections")]
@@ -140,7 +141,7 @@ fn default_postgres_idle_timeout() -> u64 {
     600
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
 pub struct DbConnectionConfig {
     #[serde(default = "default_database_url")]
     pub database_url: String,
@@ -166,7 +167,7 @@ fn default_connections() -> u32 {
     3
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
 #[serde(tag = "type", content = "config", rename_all = "lowercase")]
 pub enum ObjectStorageConfig {
     /// Local filesystem storage
@@ -219,7 +220,7 @@ fn default_max_results() -> usize {
     10
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
 pub struct ServerConfig {
     #[serde(default = "default_server_url")]
     pub base_url: String,
@@ -228,16 +229,19 @@ pub struct ServerConfig {
     #[serde(default)]
     pub host: Option<String>,
     #[serde(default = "default_agent_provider")]
+    #[schema(value_type = Object)]
     pub agent_provider: AgentProvider,
     #[serde(default)]
     pub default_input_modes: Vec<String>,
     #[serde(default)]
     pub default_output_modes: Vec<String>,
     #[serde(default)]
+    #[schema(value_type = Object)]
     pub security_schemes: HashMap<String, SecurityScheme>,
     #[serde(default)]
     pub security: Vec<HashMap<String, Vec<String>>>,
     #[serde(default = "default_capabilities")]
+    #[schema(value_type = Object)]
     pub capabilities: AgentCapabilities,
     #[serde(default = "default_preferred_transport")]
     pub preferred_transport: Option<String>,
@@ -291,9 +295,10 @@ fn default_preferred_transport() -> Option<String> {
     Some("JSONRPC".to_string())
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, ToSchema)]
 pub struct ExternalMcpServer {
     pub name: String,
     #[serde(default, flatten)]
+    #[schema(value_type = Object)]
     pub config: crate::McpServerMetadata,
 }

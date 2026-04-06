@@ -1,8 +1,9 @@
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 use uuid::Uuid;
 
 /// Registry package download response
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct RegistryPackageResponse {
     pub package: String,
     pub version: String,
@@ -14,14 +15,14 @@ pub struct RegistryPackageResponse {
 }
 
 /// Registry package metadata
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct RegistryPackageMetadata {
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub is_yanked: bool,
 }
 
 /// Registry package version information
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct RegistryPackageVersion {
     pub id: Uuid,
     pub package_id: Uuid,
@@ -35,7 +36,7 @@ pub struct RegistryPackageVersion {
 }
 
 /// Registry package information
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct RegistryPackage {
     pub id: Uuid,
     pub name: String,
@@ -46,7 +47,7 @@ pub struct RegistryPackage {
 }
 
 /// Registry package detail with versions
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct RegistryPackageDetail {
     pub id: Uuid,
     pub name: String,
@@ -59,7 +60,7 @@ pub struct RegistryPackageDetail {
 }
 
 /// Registry search query parameters
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct RegistrySearchQuery {
     pub q: Option<String>,
     pub page: Option<i64>,
@@ -68,7 +69,7 @@ pub struct RegistrySearchQuery {
 }
 
 /// Registry search results
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct RegistrySearchResults {
     pub packages: Vec<RegistryPackage>,
     pub total: i64,
@@ -78,7 +79,7 @@ pub struct RegistrySearchResults {
 }
 
 /// Registry publish request
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct RegistryPublishRequest {
     pub name: String,
     pub version: String,
@@ -87,7 +88,7 @@ pub struct RegistryPublishRequest {
 }
 
 /// Registry publish response
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct RegistryPublishResponse {
     pub message: String,
     pub package_id: Uuid,
@@ -95,13 +96,13 @@ pub struct RegistryPublishResponse {
 }
 
 /// Registry yank request
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct RegistryYankRequest {
     pub yanked: bool,
 }
 
 /// Registry yank response
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct RegistryYankResponse {
     pub message: String,
     pub version: String,
@@ -109,14 +110,14 @@ pub struct RegistryYankResponse {
 }
 
 /// Registry API error response
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct RegistryApiError {
     pub error: String,
     pub message: String,
 }
 
 /// Registry user information
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct RegistryUserInfo {
     pub id: Uuid,
     pub email: String,
@@ -125,14 +126,14 @@ pub struct RegistryUserInfo {
 }
 
 /// Registry login request
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct RegistryLoginRequest {
     pub email: String,
     pub password: String,
 }
 
 /// Registry login response
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct RegistryLoginResponse {
     pub message: String,
     pub token: String,
@@ -140,7 +141,7 @@ pub struct RegistryLoginResponse {
 }
 
 /// Registry register request
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct RegistryRegisterRequest {
     pub email: String,
     pub password: String,

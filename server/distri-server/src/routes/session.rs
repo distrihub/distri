@@ -6,10 +6,13 @@ use actix_web::{web, HttpRequest, HttpResponse};
 use chrono::{DateTime, Utc};
 use distri_core::agent::AgentOrchestrator;
 use flate2::read::GzDecoder;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use utoipa::ToSchema;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema, JsonSchema)]
+#[schema(example = json!({"key": "user_preference", "value": {"theme": "dark"}}))]
 pub struct SetValueRequest {
     pub key: String,
     pub value: Value,
@@ -17,12 +20,12 @@ pub struct SetValueRequest {
     pub expiry: Option<DateTime<Utc>>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema, JsonSchema)]
 pub struct GetValueResponse {
     pub value: Option<Value>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema, JsonSchema)]
 pub struct GetAllValuesResponse {
     pub values: HashMap<String, Value>,
 }
@@ -42,7 +45,7 @@ pub fn configure_session_routes(cfg: &mut web::ServiceConfig) {
         .service(web::resource("/{session_id}").route(web::delete().to(clear_session)));
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema, JsonSchema)]
 pub struct ListSessionsQuery {
     pub thread_id: Option<String>,
     pub task_id: Option<String>,
@@ -50,7 +53,7 @@ pub struct ListSessionsQuery {
     pub offset: Option<usize>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema, JsonSchema)]
 pub struct SessionListItem {
     pub session_id: String,
     pub thread_id: String,
@@ -60,6 +63,21 @@ pub struct SessionListItem {
     pub task_ids: Vec<String>,
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/sessions",
+    tag = "Sessions",
+    params(
+        ("thread_id" = Option<String>, Query, description = "Filter by thread ID"),
+        ("task_id" = Option<String>, Query, description = "Filter by task ID"),
+        ("limit" = Option<usize>, Query, description = "Maximum number of sessions to return"),
+        ("offset" = Option<usize>, Query, description = "Offset for pagination"),
+    ),
+    responses(
+        (status = 200, description = "List sessions", body = Vec<SessionListItem>),
+        (status = 500, description = "Internal server error")
+    )
+)]
 async fn list_sessions(
     query: web::Query<ListSessionsQuery>,
     executor: web::Data<Arc<AgentOrchestrator>>,
@@ -109,6 +127,19 @@ async fn list_sessions(
     HttpResponse::Ok().json(items)
 }
 
+#[utoipa::path(
+    post,
+    path = "/v1/sessions/{session_id}/values",
+    tag = "Sessions",
+    params(
+        ("session_id" = String, Path, description = "Session ID"),
+    ),
+    request_body = SetValueRequest,
+    responses(
+        (status = 204, description = "Value set successfully"),
+        (status = 400, description = "Bad request")
+    )
+)]
 /// Set a session value. Supports gzip-compressed requests for large payloads.
 async fn set_value(
     req: HttpRequest,
@@ -181,6 +212,19 @@ async fn set_value(
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/sessions/{session_id}/values/{key}",
+    tag = "Sessions",
+    params(
+        ("session_id" = String, Path, description = "Session ID"),
+        ("key" = String, Path, description = "Value key"),
+    ),
+    responses(
+        (status = 200, description = "Value retrieved", body = GetValueResponse),
+        (status = 400, description = "Bad request")
+    )
+)]
 async fn get_value(
     path: web::Path<(String, String)>,
     executor: web::Data<Arc<AgentOrchestrator>>,
@@ -199,6 +243,18 @@ async fn get_value(
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/sessions/{session_id}/values",
+    tag = "Sessions",
+    params(
+        ("session_id" = String, Path, description = "Session ID"),
+    ),
+    responses(
+        (status = 200, description = "All values retrieved", body = GetAllValuesResponse),
+        (status = 400, description = "Bad request")
+    )
+)]
 async fn get_all_values(
     path: web::Path<String>,
     executor: web::Data<Arc<AgentOrchestrator>>,
@@ -217,6 +273,19 @@ async fn get_all_values(
     }
 }
 
+#[utoipa::path(
+    delete,
+    path = "/v1/sessions/{session_id}/values/{key}",
+    tag = "Sessions",
+    params(
+        ("session_id" = String, Path, description = "Session ID"),
+        ("key" = String, Path, description = "Value key"),
+    ),
+    responses(
+        (status = 204, description = "Value deleted"),
+        (status = 400, description = "Bad request")
+    )
+)]
 async fn delete_value(
     path: web::Path<(String, String)>,
     executor: web::Data<Arc<AgentOrchestrator>>,
@@ -235,6 +304,18 @@ async fn delete_value(
     }
 }
 
+#[utoipa::path(
+    delete,
+    path = "/v1/sessions/{session_id}",
+    tag = "Sessions",
+    params(
+        ("session_id" = String, Path, description = "Session ID"),
+    ),
+    responses(
+        (status = 204, description = "Session cleared"),
+        (status = 400, description = "Bad request")
+    )
+)]
 async fn clear_session(
     path: web::Path<String>,
     executor: web::Data<Arc<AgentOrchestrator>>,

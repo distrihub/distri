@@ -18,6 +18,15 @@ pub fn configure_skill_routes(cfg: &mut web::ServiceConfig) {
     );
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/skills",
+    tag = "Skills",
+    responses(
+        (status = 200, description = "List skills"),
+        (status = 500, description = "Internal server error")
+    )
+)]
 async fn list_skills(executor: web::Data<Arc<AgentOrchestrator>>) -> HttpResponse {
     let store = match &executor.stores.skill_store {
         Some(s) => s,
@@ -57,6 +66,19 @@ async fn list_skills(executor: web::Data<Arc<AgentOrchestrator>>) -> HttpRespons
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/skills/{id}",
+    tag = "Skills",
+    params(
+        ("id" = String, Path, description = "Skill ID"),
+    ),
+    responses(
+        (status = 200, description = "Skill retrieved"),
+        (status = 404, description = "Skill not found"),
+        (status = 500, description = "Internal server error")
+    )
+)]
 async fn get_skill(
     id: web::Path<String>,
     executor: web::Data<Arc<AgentOrchestrator>>,
@@ -76,6 +98,16 @@ async fn get_skill(
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/v1/skills",
+    tag = "Skills",
+    request_body = NewSkill,
+    responses(
+        (status = 200, description = "Skill created"),
+        (status = 500, description = "Internal server error")
+    )
+)]
 async fn create_skill(
     executor: web::Data<Arc<AgentOrchestrator>>,
     payload: web::Json<NewSkill>,
@@ -94,6 +126,19 @@ async fn create_skill(
     }
 }
 
+#[utoipa::path(
+    put,
+    path = "/v1/skills/{id}",
+    tag = "Skills",
+    params(
+        ("id" = String, Path, description = "Skill ID"),
+    ),
+    request_body = UpdateSkill,
+    responses(
+        (status = 200, description = "Skill updated"),
+        (status = 500, description = "Internal server error")
+    )
+)]
 async fn update_skill(
     id: web::Path<String>,
     executor: web::Data<Arc<AgentOrchestrator>>,
@@ -113,6 +158,18 @@ async fn update_skill(
     }
 }
 
+#[utoipa::path(
+    delete,
+    path = "/v1/skills/{id}",
+    tag = "Skills",
+    params(
+        ("id" = String, Path, description = "Skill ID"),
+    ),
+    responses(
+        (status = 204, description = "Skill deleted"),
+        (status = 500, description = "Internal server error")
+    )
+)]
 async fn delete_skill(
     id: web::Path<String>,
     executor: web::Data<Arc<AgentOrchestrator>>,

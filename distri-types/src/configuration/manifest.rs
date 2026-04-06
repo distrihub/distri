@@ -3,13 +3,15 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 use tokio::fs;
+use utoipa::ToSchema;
+
 
 // Import config types
 use crate::agent::ModelSettings;
 use crate::configuration::config::{ExternalMcpServer, ServerConfig, StoreConfig};
 
 /// User configuration from distri.toml file
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, ToSchema)]
 pub struct DistriServerConfig {
     pub name: String,
     pub version: String,
@@ -39,8 +41,10 @@ pub struct DistriServerConfig {
     pub server: Option<ServerConfig>,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<Object>)]
     pub model_settings: Option<ModelSettings>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<Object>)]
     pub analysis_model_settings: Option<ModelSettings>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -54,7 +58,7 @@ pub struct DistriServerConfig {
 }
 
 /// Build configuration for custom build commands
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct BuildConfig {
     /// Build command to execute
     pub command: String,
@@ -72,7 +76,7 @@ impl DistriServerConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "type")]
 #[serde(rename_all = "lowercase")]
 pub struct EntryPoints {
@@ -90,22 +94,22 @@ impl EntryPoints {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct EngineConfig {
     pub engine: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct AuthorsConfig {
     pub primary: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct RegistryConfig {
     pub url: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct LockFile {
     pub packages: HashMap<String, String>,
     pub sources: HashMap<String, String>,

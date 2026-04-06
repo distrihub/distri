@@ -1,9 +1,11 @@
 use actix_web::{web, HttpResponse};
 use distri_core::agent::AgentOrchestrator;
 use distri_types::stores::{NewWorkflow, UpdateWorkflow, WorkflowFilter};
+use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::json;
 use std::sync::Arc;
+use utoipa::ToSchema;
 
 pub fn configure_workflow_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(
@@ -19,14 +21,29 @@ pub fn configure_workflow_routes(cfg: &mut web::ServiceConfig) {
     );
 }
 
-#[derive(Debug, Deserialize)]
-struct ListWorkflowsQuery {
+#[derive(Debug, Deserialize, ToSchema, JsonSchema)]
+pub struct ListWorkflowsQuery {
     is_template: Option<bool>,
     search: Option<String>,
     limit: Option<i64>,
     offset: Option<i64>,
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/workflows",
+    tag = "Workflows",
+    params(
+        ("is_template" = Option<bool>, Query, description = "Filter by template status"),
+        ("search" = Option<String>, Query, description = "Search term"),
+        ("limit" = Option<i64>, Query, description = "Maximum number of workflows to return"),
+        ("offset" = Option<i64>, Query, description = "Offset for pagination"),
+    ),
+    responses(
+        (status = 200, description = "List workflows"),
+        (status = 500, description = "Internal server error")
+    )
+)]
 async fn list_workflows(
     executor: web::Data<Arc<AgentOrchestrator>>,
     query: web::Query<ListWorkflowsQuery>,
@@ -92,6 +109,19 @@ async fn list_workflows(
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/workflows/{id}",
+    tag = "Workflows",
+    params(
+        ("id" = String, Path, description = "Workflow ID"),
+    ),
+    responses(
+        (status = 200, description = "Workflow retrieved"),
+        (status = 404, description = "Workflow not found"),
+        (status = 500, description = "Internal server error")
+    )
+)]
 async fn get_workflow(
     id: web::Path<String>,
     executor: web::Data<Arc<AgentOrchestrator>>,
@@ -111,6 +141,16 @@ async fn get_workflow(
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/v1/workflows",
+    tag = "Workflows",
+    request_body = NewWorkflow,
+    responses(
+        (status = 200, description = "Workflow created"),
+        (status = 500, description = "Internal server error")
+    )
+)]
 async fn create_workflow(
     executor: web::Data<Arc<AgentOrchestrator>>,
     payload: web::Json<NewWorkflow>,
@@ -129,6 +169,19 @@ async fn create_workflow(
     }
 }
 
+#[utoipa::path(
+    put,
+    path = "/v1/workflows/{id}",
+    tag = "Workflows",
+    params(
+        ("id" = String, Path, description = "Workflow ID"),
+    ),
+    request_body = UpdateWorkflow,
+    responses(
+        (status = 200, description = "Workflow updated"),
+        (status = 500, description = "Internal server error")
+    )
+)]
 async fn update_workflow(
     id: web::Path<String>,
     executor: web::Data<Arc<AgentOrchestrator>>,
@@ -148,6 +201,18 @@ async fn update_workflow(
     }
 }
 
+#[utoipa::path(
+    delete,
+    path = "/v1/workflows/{id}",
+    tag = "Workflows",
+    params(
+        ("id" = String, Path, description = "Workflow ID"),
+    ),
+    responses(
+        (status = 204, description = "Workflow deleted"),
+        (status = 500, description = "Internal server error")
+    )
+)]
 async fn delete_workflow(
     id: web::Path<String>,
     executor: web::Data<Arc<AgentOrchestrator>>,

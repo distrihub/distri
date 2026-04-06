@@ -1,15 +1,17 @@
 use chrono::{DateTime, Utc};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 use uuid::Uuid;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ConnectionAuthType {
     OAuth2,
     Secret,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ConnectionStatus {
     Connected,
@@ -52,7 +54,7 @@ impl std::str::FromStr for ConnectionStatus {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
 pub struct Connection {
     pub id: Uuid,
     pub workspace_id: Uuid,
@@ -65,7 +67,7 @@ pub struct Connection {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
 pub struct NewConnection {
     pub workspace_id: Uuid,
     pub skill_id: Uuid,
@@ -76,7 +78,7 @@ pub struct NewConnection {
 }
 
 /// Typed OAuth token — replaces raw serde_json::Value.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
 pub struct ConnectionToken {
     pub access_token: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]

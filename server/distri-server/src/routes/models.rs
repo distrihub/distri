@@ -8,6 +8,14 @@ pub fn configure_model_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(web::resource("/models").route(web::get().to(list_models)));
 }
 
+#[utoipa::path(
+    get,
+    path = "/v1/models",
+    tag = "Models",
+    responses(
+        (status = 200, description = "List models grouped by provider")
+    )
+)]
 /// Returns all supported models grouped by provider, with configuration status.
 /// Each provider group includes `configured: bool` indicating whether the
 /// provider's required API key(s) are set in secrets or environment.
