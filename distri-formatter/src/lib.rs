@@ -150,6 +150,23 @@ pub trait SurfaceRenderer: Send + Sync {
     fn supports_rich_text(&self) -> bool;
     fn max_message_length(&self) -> Option<usize>;
 
+    // --- Structured content ---
+    /// Structured content rendering hook for downstream crates.
+    ///
+    /// Receives the tool name (e.g. `render_card`, `ask_follow_up`) and its
+    /// JSON input. Downstream crates override this to produce channel-specific
+    /// rich output (inline keyboards, interactive messages, etc.).
+    ///
+    /// Returns `RendererOutput::None` by default — plain-text surfaces ignore
+    /// structured content and let the agent's text response serve as fallback.
+    fn render_structured(
+        &mut self,
+        _tool_name: &str,
+        _data: &serde_json::Value,
+    ) -> RendererOutput {
+        RendererOutput::None
+    }
+
     // --- Output ---
     /// Take any pending output. Returns `RendererOutput::None` if nothing is ready.
     fn take_output(&mut self) -> RendererOutput;
