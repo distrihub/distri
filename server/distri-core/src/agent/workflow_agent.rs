@@ -246,20 +246,158 @@ impl StepExecutor for ContextStepExecutor {
                 Ok(StepResult::done(serde_json::json!({"message": message})))
             }
 
-            StepKind::Script { command, .. } => Ok(StepResult::done(serde_json::json!({
-                "deferred": true,
-                "command": command,
-                "message": "Script execution not yet wired to shell"
-            }))),
+            StepKind::Script {
+                command,
+                args,
+                cwd,
+                env,
+                timeout_secs,
+                shell,
+                ..
+            } => {
+                // Resolve templates in command and args
+                let resolved_command = resolve_template(command, wf_context);
+                let resolved_args: Vec<String> =
+                    args.iter().map(|a| resolve_template(a, wf_context)).collect();
+
+                // Build process: use shell wrapper or direct command
+                let mut cmd = match shell {
+                    Some(ShellType::Bash) | None => {
+                        let mut c = tokio::process::Command::new("bash");
+                        c.arg("-c");
+                        if resolved_args.is_empty() {
+                            c.arg(&resolved_command);
+                        } else {
+                            c.arg(format!(
+                                "{} {}",
+                                resolved_command,
+                                resolved_args.join(" ")
+                            ));
+                        }
+                        c
+                    }
+                    Some(ShellType::Sh) => {
+                        let mut c = tokio::process::Command::new("sh");
+                        c.arg("-c");
+                        c.arg(&resolved_command);
+                        c
+                    }
+                    Some(ShellType::Zsh) => {
+                        let mut c = tokio::process::Command::new("zsh");
+                        c.arg("-c");
+                        c.arg(&resolved_command);
+                        c
+                    }
+                };
+
+                if let Some(dir) = cwd {
+                    cmd.current_dir(resolve_template(dir, wf_context));
+                }
+                if let Some(envs) = env {
+                    for (k, v) in envs {
+                        cmd.env(k, resolve_template(v, wf_context));
+                    }
+                }
+
+                // Inject workflow context as WORKFLOW_CONTEXT env var so scripts can read it
+                cmd.env(
+                    "WORKFLOW_CONTEXT",
+                    serde_json::to_string(wf_context).unwrap_or_default(),
+                );
+
+                let timeout = std::time::Duration::from_secs(timeout_secs.unwrap_or(60));
+                let output = tokio::time::timeout(timeout, cmd.output())
+                    .await
+                    .map_err(|_| {
+                        format!(
+                            "Script '{}' timed out after {}s",
+                            step.id,
+                            timeout.as_secs()
+                        )
+                    })?
+                    .map_err(|e| format!("Script '{}' failed to start: {}", step.id, e))?;
+
+                let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+                let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+                // Emit stdout/stderr as text events for observability
+                if !stdout.is_empty() {
+                    self.context
+                        .emit(WorkflowAgent::emit_text(&format!(
+                            "```\n{}\n```\n",
+                            stdout.trim()
+                        )))
+                        .await;
+                }
+                if !stderr.is_empty() {
+                    self.context
+                        .emit(WorkflowAgent::emit_text(&format!(
+                            "⚠ stderr: {}\n",
+                            stderr.trim()
+                        )))
+                        .await;
+                }
+
+                if output.status.success() {
+                    // Try parsing stdout as JSON for structured results
+                    let result = serde_json::from_str::<serde_json::Value>(stdout.trim())
+                        .unwrap_or_else(|_| serde_json::json!({"output": stdout.trim()}));
+                    Ok(StepResult::done(result))
+                } else {
+                    let code = output.status.code().unwrap_or(-1);
+                    Ok(StepResult::failed(&format!(
+                        "Exit code {}: {}",
+                        code,
+                        if stderr.is_empty() {
+                            stdout.trim().to_string()
+                        } else {
+                            stderr.trim().to_string()
+                        }
+                    )))
+                }
+            }
 
             StepKind::AgentRun {
                 agent_id, prompt, ..
-            } => Ok(StepResult::done(serde_json::json!({
-                "deferred": true,
-                "agent_id": agent_id,
-                "prompt": prompt,
-                "message": "Agent delegation not yet wired"
-            }))),
+            } => {
+                let resolved_prompt = resolve_template(prompt, wf_context);
+
+                let sub_message = crate::types::Message {
+                    role: distri_types::MessageRole::User,
+                    parts: vec![distri_types::Part::Text(resolved_prompt.clone())],
+                    ..Default::default()
+                };
+
+                let Some(orchestrator) = self.context.orchestrator.as_ref() else {
+                    return Ok(StepResult::failed(
+                        "No orchestrator available for agent delegation",
+                    ));
+                };
+
+                // Create a child context with its own event channel so sub-agent
+                // events don't interleave with workflow events.
+                let (tx, mut rx) = tokio::sync::mpsc::channel(10000);
+                let sub_ctx = Arc::new(self.context.clone_with_tx(tx));
+                let drain = tokio::spawn(async move { while rx.recv().await.is_some() {} });
+
+                let result = orchestrator
+                    .execute_stream(agent_id, sub_message, sub_ctx, None)
+                    .await;
+                let _ = drain.await;
+
+                match result {
+                    Ok(invoke_result) => {
+                        let output = invoke_result.content.unwrap_or_default();
+                        let result = serde_json::from_str::<serde_json::Value>(&output)
+                            .unwrap_or_else(|_| serde_json::json!({"output": output}));
+                        Ok(StepResult::done(result))
+                    }
+                    Err(e) => Ok(StepResult::failed(&format!(
+                        "Agent '{}' failed: {}",
+                        agent_id, e
+                    ))),
+                }
+            }
 
             StepKind::Condition { expression, .. } => Ok(StepResult::done(serde_json::json!({
                 "expression": expression,
@@ -284,7 +422,10 @@ impl StepExecutor for ContextStepExecutor {
     }
 
     fn supports(&self, requirement: &StepRequirement) -> bool {
-        matches!(requirement.skill.as_str(), "native:network" | "native:tool")
+        matches!(
+            requirement.skill.as_str(),
+            "native:network" | "native:tool" | "native:shell" | "native:agent"
+        )
     }
 }
 
