@@ -6,25 +6,13 @@ use anyhow::{Context, Result};
 use distri::{CreateSkillRequest, Distri};
 use tokio::fs;
 
-use crate::config::set_client_config_value;
 use crate::{
-    ConfigCommands, ConnectionsCommands, PromptsCommands, SecretsCommands, SkillsCommands,
+    ConnectionsCommands, ProfileCommands, PromptsCommands, SecretsCommands, SkillsCommands,
     WorkflowCommands, COLOR_BRIGHT_GREEN, COLOR_GRAY, COLOR_RESET,
 };
 
-pub fn handle_config_command(command: ConfigCommands) -> Result<()> {
-    match command {
-        ConfigCommands::Set { key, value } => {
-            let raw_value = value
-                .into_iter()
-                .filter(|part| part != "=")
-                .collect::<Vec<_>>()
-                .join(" ");
-            let path = set_client_config_value(&key, &raw_value)?;
-            println!("Updated {} in {}", key, path.display());
-        }
-    }
-    Ok(())
+pub fn handle_profile_command(_command: ProfileCommands) -> Result<()> {
+    anyhow::bail!("Profile command not yet implemented (Task 4)")
 }
 
 pub async fn handle_prompts_command(client: &Distri, command: PromptsCommands) -> Result<()> {
