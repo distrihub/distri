@@ -4,7 +4,7 @@ use std::process::Command;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use distri::{
-    print_stream_verbose, AgentStreamClient, BuildHttpClient, Distri, DistriClientApp, DistriConfig,
+    print_stream_verbose, AgentStreamClient, BuildHttpClient, Distri, DistriClientApp,
 };
 use tokio::fs;
 
@@ -383,7 +383,9 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    let mut config = DistriConfig::from_env();
+    // Run one-time migration of legacy ~/.distri/config keys to ~/.distri/credentials
+    let _ = crate::credentials::migrate_legacy_config();
+    let mut config = crate::credentials::load_config_with_profile();
     if let Some(base_url) = cli.base_url.as_deref() {
         config.base_url = base_url.trim_end_matches('/').to_string();
     }
