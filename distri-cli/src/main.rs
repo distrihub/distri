@@ -11,6 +11,7 @@ use tokio::fs;
 mod chat;
 mod commands;
 mod config;
+mod credentials;
 mod input;
 mod logging;
 mod login;
