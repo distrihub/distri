@@ -192,8 +192,18 @@ impl Distri {
     }
 
     pub async fn register_agent(&self, definition: &StandardDefinition) -> Result<(), ClientError> {
+        let config =
+            distri_types::configuration::AgentConfig::StandardAgent(definition.clone());
+        self.register_agent_config(&config).await
+    }
+
+    /// Register any agent type (standard or workflow) from a typed `AgentConfig`.
+    pub async fn register_agent_config(
+        &self,
+        config: &distri_types::configuration::AgentConfig,
+    ) -> Result<(), ClientError> {
         let create_url = format!("{}/agents", self.base_url);
-        let resp = self.http.post(&create_url).json(definition).send().await?;
+        let resp = self.http.post(&create_url).json(config).send().await?;
         if resp.status().is_success() {
             return Ok(());
         }
