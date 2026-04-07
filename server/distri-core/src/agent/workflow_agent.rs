@@ -14,7 +14,23 @@ use crate::{
 use async_trait::async_trait;
 use distri_types::configuration::WorkflowAgentDefinition;
 use distri_workflow::*;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+
+/// Typed input envelope for workflow agent invocation.
+///
+/// Workflow-control fields (entry_point) are parsed explicitly;
+/// everything else is forwarded as the workflow's user input via `#[serde(flatten)]`.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct WorkflowInput {
+    /// Optional entry point ID to start the workflow from a specific step.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry_point: Option<String>,
+
+    /// All remaining fields are forwarded as workflow user input.
+    #[serde(flatten)]
+    pub data: serde_json::Value,
+}
 
 /// A workflow-based agent that executes a workflow DAG.
 #[derive(Clone, Debug)]
@@ -389,26 +405,33 @@ impl WorkflowAgent {
                 AgentError::Execution(format!("Invalid workflow definition: {}", e))
             })?;
 
-        // Extract input from message (first text part as JSON, or empty)
-        let input = message
+        // Parse typed input from message (first text part as JSON, or defaults)
+        let workflow_input: WorkflowInput = message
             .parts
             .iter()
             .find_map(|p| {
                 if let distri_types::Part::Text(text) = p {
-                    serde_json::from_str::<serde_json::Value>(text).ok()
+                    serde_json::from_str::<WorkflowInput>(text).ok()
                 } else {
                     None
                 }
             })
-            .unwrap_or(serde_json::json!({}));
+            .unwrap_or_default();
 
         // Save user message to thread (like StandardAgent does)
         context.save_message(&message).await;
 
-        // Validate and merge input
+        // Validate and merge the user data (everything except workflow control fields)
         workflow = workflow
-            .with_input(input.clone())
+            .with_input(workflow_input.data)
             .map_err(|e| AgentError::Validation(e))?;
+
+        // Apply entry point if specified
+        if let Some(entry_id) = workflow_input.entry_point {
+            workflow = workflow
+                .apply_entry_point(&entry_id)
+                .map_err(|e| AgentError::Validation(e))?;
+        }
 
         // Populate env namespace from executor context env vars
         if let Some(ctx_obj) = workflow.context.as_object_mut() {
