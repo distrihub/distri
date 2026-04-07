@@ -89,28 +89,28 @@ pub trait Formatter: Send + Sync {
         if message.role != distri_types::MessageRole::Assistant {
             return;
         }
-        if let Some(text) = message.as_text() {
-            if !text.is_empty() {
-                // Replace accumulated content with the final answer.
-                self.clear_content();
-                self.handle_event(&distri_types::AgentEvent {
-                    timestamp: chrono::Utc::now(),
-                    thread_id: String::new(),
-                    run_id: String::new(),
-                    event: distri_types::AgentEventType::TextMessageContent {
-                        message_id: message.id.clone(),
-                        step_id: String::new(),
-                        delta: text,
-                        stripped_content: None,
-                    },
-                    task_id: String::new(),
-                    agent_id: String::new(),
-                    user_id: None,
-                    identifier_id: None,
-                    workspace_id: None,
-                    channel_id: None,
-                });
-            }
+        if let Some(text) = message.as_text()
+            && !text.is_empty()
+        {
+            // Replace accumulated content with the final answer.
+            self.clear_content();
+            self.handle_event(&distri_types::AgentEvent {
+                timestamp: chrono::Utc::now(),
+                thread_id: String::new(),
+                run_id: String::new(),
+                event: distri_types::AgentEventType::TextMessageContent {
+                    message_id: message.id.clone(),
+                    step_id: String::new(),
+                    delta: text,
+                    stripped_content: None,
+                },
+                task_id: String::new(),
+                agent_id: String::new(),
+                user_id: None,
+                identifier_id: None,
+                workspace_id: None,
+                channel_id: None,
+            });
         }
     }
 }

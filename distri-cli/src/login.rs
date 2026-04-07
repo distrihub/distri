@@ -21,7 +21,11 @@ struct CallbackQuery {
 /// 4. User logs in on the web and selects a workspace
 /// 5. Web redirects back to localhost with credentials
 /// 6. Saves the API key and workspace_id to ~/.distri/credentials
-pub async fn handle_login_command(_email: Option<String>, _skip_workspace: bool, profile: Option<String>) -> Result<()> {
+pub async fn handle_login_command(
+    _email: Option<String>,
+    _skip_workspace: bool,
+    profile: Option<String>,
+) -> Result<()> {
     // Get the login URL from the API server first
     println!("Connecting to Distri Cloud...");
     let client = Distri::from_env();
@@ -118,7 +122,12 @@ pub async fn handle_login_command(_email: Option<String>, _skip_workspace: bool,
 
     // Save credentials to profile
     let profile_name = profile.as_deref().unwrap_or("default");
-    save_credentials(profile_name, &api_key, &workspace_id, &login_url_response.login_url)?;
+    save_credentials(
+        profile_name,
+        &api_key,
+        &workspace_id,
+        &login_url_response.login_url,
+    )?;
 
     println!("\n✓ Successfully authenticated!");
     println!("  Profile:      {}", profile_name);

@@ -101,7 +101,7 @@ pub fn list_profiles() -> Result<Vec<(String, ProfileValues)>> {
 pub fn load_profile(name: &str) -> Result<Option<ProfileValues>> {
     let path = credentials_path().context("Unable to resolve home directory")?;
     let data = read_ini(&path);
-    Ok(data.get(name).map(|s| section_to_profile(s)))
+    Ok(data.get(name).map(section_to_profile))
 }
 
 /// Merge-save: only updates keys that are Some in `values`, leaves others untouched.
@@ -362,7 +362,10 @@ mod tests {
 
         assert_eq!(loaded.api_key, Some("my-api-key".to_string()));
         assert_eq!(loaded.workspace_id, Some("ws-123".to_string()));
-        assert_eq!(loaded.api_url, Some("https://api.example.com/v1".to_string()));
+        assert_eq!(
+            loaded.api_url,
+            Some("https://api.example.com/v1".to_string())
+        );
     }
 
     #[test]
@@ -376,7 +379,10 @@ mod tests {
             let section = data.entry("myprofile".to_string()).or_default();
             section.insert("api_key".to_string(), "original-key".to_string());
             section.insert("workspace_id".to_string(), "original-ws".to_string());
-            section.insert("api_url".to_string(), "https://original.example.com/v1".to_string());
+            section.insert(
+                "api_url".to_string(),
+                "https://original.example.com/v1".to_string(),
+            );
         }
         write_ini(&creds_path, &data).unwrap();
 
@@ -392,7 +398,10 @@ mod tests {
 
         assert_eq!(profile.api_key, Some("new-key".to_string()));
         assert_eq!(profile.workspace_id, Some("original-ws".to_string()));
-        assert_eq!(profile.api_url, Some("https://original.example.com/v1".to_string()));
+        assert_eq!(
+            profile.api_url,
+            Some("https://original.example.com/v1".to_string())
+        );
     }
 
     #[test]
@@ -419,12 +428,15 @@ mod tests {
 
         // Verify "default" still exists but "staging" is gone
         let result = read_ini(&creds_path);
-        assert!(result.contains_key("default"), "default profile should still exist");
-        assert!(!result.contains_key("staging"), "staging profile should be deleted");
-        assert_eq!(
-            result["default"]["api_key"],
-            "key-default"
+        assert!(
+            result.contains_key("default"),
+            "default profile should still exist"
         );
+        assert!(
+            !result.contains_key("staging"),
+            "staging profile should be deleted"
+        );
+        assert_eq!(result["default"]["api_key"], "key-default");
     }
 
     #[test]
@@ -494,19 +506,35 @@ active_profile = "default"
         let profile = section_to_profile(creds_data.get("default").unwrap());
         assert_eq!(profile.api_key, Some("legacy-key".to_string()));
         assert_eq!(profile.workspace_id, Some("legacy-ws".to_string()));
-        assert_eq!(profile.api_url, Some("https://legacy.example.com/v1".to_string()));
+        assert_eq!(
+            profile.api_url,
+            Some("https://legacy.example.com/v1".to_string())
+        );
 
         // Verify config file no longer contains legacy keys but still has active_profile
         let remaining_config = std::fs::read_to_string(&config_path).unwrap();
-        assert!(!remaining_config.contains("api_key"), "api_key should be removed from config");
-        assert!(!remaining_config.contains("workspace_id"), "workspace_id should be removed from config");
-        assert!(!remaining_config.contains("base_url"), "base_url should be removed from config");
-        assert!(remaining_config.contains("active_profile"), "active_profile should remain in config");
+        assert!(
+            !remaining_config.contains("api_key"),
+            "api_key should be removed from config"
+        );
+        assert!(
+            !remaining_config.contains("workspace_id"),
+            "workspace_id should be removed from config"
+        );
+        assert!(
+            !remaining_config.contains("base_url"),
+            "base_url should be removed from config"
+        );
+        assert!(
+            remaining_config.contains("active_profile"),
+            "active_profile should remain in config"
+        );
     }
 
     #[test]
     fn test_parse_ini_ignores_comments_and_blank_lines() {
-        let content = "# This is a comment\n\n[section]\n; another comment\nkey = value\n\nkey2 = value2\n";
+        let content =
+            "# This is a comment\n\n[section]\n; another comment\nkey = value\n\nkey2 = value2\n";
         let data = parse_ini(content);
         assert_eq!(data["section"]["key"], "value");
         assert_eq!(data["section"]["key2"], "value2");

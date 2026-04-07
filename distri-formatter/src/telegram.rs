@@ -147,10 +147,10 @@ impl SurfaceRenderer for TelegramRenderer {
                     })
                     .collect();
                 // Attach media to last chunk.
-                if !media.is_empty() {
-                    if let Some(RendererOutput::RichText { media: m, .. }) = parts.last_mut() {
-                        *m = media;
-                    }
+                if !media.is_empty()
+                    && let Some(RendererOutput::RichText { media: m, .. }) = parts.last_mut()
+                {
+                    *m = media;
                 }
                 return RendererOutput::Chunks(parts);
             }

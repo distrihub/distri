@@ -87,27 +87,27 @@ pub fn render_tool_output(result: &ToolResponse, verbose: bool) {
 fn render_todos(result: &ToolResponse) {
     use distri_types::Part;
     for part in &result.parts {
-        if let Part::Data(value) = part {
-            if let Some(todos) = value.get("todos").and_then(|v| v.as_array()) {
-                println!("{}{}Updated Plan{}", COLOR_GRAY, RESULT_PREFIX, COLOR_RESET);
-                for todo in todos {
-                    let content = todo
-                        .get("content")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("(missing)");
-                    let status = todo
-                        .get("status")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("pending");
-                    let icon = match status {
-                        "completed" | "done" => "■",
-                        "in_progress" => "◐",
-                        _ => "□",
-                    };
-                    println!("{}  {} {}{}", COLOR_GRAY, icon, content, COLOR_RESET);
-                }
-                return;
+        if let Part::Data(value) = part
+            && let Some(todos) = value.get("todos").and_then(|v| v.as_array())
+        {
+            println!("{}{}Updated Plan{}", COLOR_GRAY, RESULT_PREFIX, COLOR_RESET);
+            for todo in todos {
+                let content = todo
+                    .get("content")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("(missing)");
+                let status = todo
+                    .get("status")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("pending");
+                let icon = match status {
+                    "completed" | "done" => "■",
+                    "in_progress" => "◐",
+                    _ => "□",
+                };
+                println!("{}  {} {}{}", COLOR_GRAY, icon, content, COLOR_RESET);
             }
+            return;
         }
     }
     render_tool_result(result);

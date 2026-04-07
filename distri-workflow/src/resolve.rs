@@ -205,7 +205,7 @@ fn is_truthy(value: &Option<Value>) -> bool {
         Some(Value::Null) => false,
         Some(Value::Bool(b)) => *b,
         Some(Value::String(s)) => !s.is_empty(),
-        Some(Value::Number(n)) => n.as_f64().map_or(false, |f| f != 0.0),
+        Some(Value::Number(n)) => n.as_f64().is_some_and(|f| f != 0.0),
         Some(Value::Array(a)) => !a.is_empty(),
         Some(Value::Object(o)) => !o.is_empty(),
     }

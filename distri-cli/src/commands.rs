@@ -41,7 +41,10 @@ pub fn handle_profile_command(command: ProfileCommands) -> Result<()> {
                     .map(mask_api_key)
                     .unwrap_or_else(|| "(none)".to_string());
                 let ws_str = values.workspace_id.as_deref().unwrap_or("(none)");
-                let url_str = values.api_url.as_deref().unwrap_or("https://api.distri.dev/v1");
+                let url_str = values
+                    .api_url
+                    .as_deref()
+                    .unwrap_or("https://api.distri.dev/v1");
                 println!(
                     "{} {:<12}  api_key={:<20}  workspace={:<36}  url={}",
                     marker, name, key_str, ws_str, url_str

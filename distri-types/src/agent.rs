@@ -803,8 +803,8 @@ impl ToolsConfig {
     }
 }
 
-/// Where filesystem and artifact tools should execute.
-/// Deprecated: filesystem tools are no longer included as server builtins.
+// Where filesystem and artifact tools should execute.
+// Deprecated: filesystem tools are no longer included as server builtins.
 
 /// Configuration for tools from an MCP server
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

@@ -36,4 +36,3 @@ pub fn load_last_model() -> Option<String> {
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
 }
-

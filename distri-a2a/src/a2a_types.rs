@@ -124,7 +124,7 @@ pub struct AgentSkill {
 pub enum SecurityScheme {
     ApiKey(APIKeySecurityScheme),
     Http(HTTPAuthSecurityScheme),
-    Oauth2(OAuth2SecurityScheme),
+    Oauth2(Box<OAuth2SecurityScheme>),
     OpenIdConnect(OpenIdConnectSecurityScheme),
 }
 
