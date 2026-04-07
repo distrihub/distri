@@ -165,15 +165,19 @@ impl DistriConfig {
         self
     }
 
-    /// Set the API key if Some.
+    /// Set the API key if Some. Does not change the value when None.
     pub fn with_maybe_api_key(mut self, api_key: Option<String>) -> Self {
-        self.api_key = api_key;
+        if api_key.is_some() {
+            self.api_key = api_key;
+        }
         self
     }
 
-    /// Set the workspace ID if Some.
+    /// Set the workspace ID if Some. Does not change the value when None.
     pub fn with_maybe_workspace_id(mut self, workspace_id: Option<String>) -> Self {
-        self.workspace_id = workspace_id;
+        if workspace_id.is_some() {
+            self.workspace_id = workspace_id;
+        }
         self
     }
 

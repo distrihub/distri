@@ -271,7 +271,39 @@ pub fn load_config_with_profile() -> distri_types::DistriConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
     use tempfile::TempDir;
+
+    static HOME_LOCK: Mutex<()> = Mutex::new(());
+
+    struct TempHomeGuard {
+        original: Option<std::ffi::OsString>,
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl Drop for TempHomeGuard {
+        fn drop(&mut self) {
+            match &self.original {
+                #[allow(unsafe_code)]
+                Some(v) => unsafe { std::env::set_var("HOME", v) },
+                #[allow(unsafe_code)]
+                None => unsafe { std::env::remove_var("HOME") },
+            }
+        }
+    }
+
+    fn temp_home(path: &std::path::Path) -> TempHomeGuard {
+        let lock = HOME_LOCK.lock().unwrap();
+        let original = std::env::var_os("HOME");
+        #[allow(unsafe_code)]
+        unsafe {
+            std::env::set_var("HOME", path);
+        }
+        TempHomeGuard {
+            original,
+            _lock: lock,
+        }
+    }
 
     fn make_temp_credentials(dir: &TempDir) -> PathBuf {
         dir.path().join("credentials")
@@ -497,5 +529,124 @@ active_profile = "default"
             .insert("api_key".to_string(), "test".to_string());
         write_ini(&nested_path, &data).unwrap();
         assert!(nested_path.exists());
+    }
+
+    #[test]
+    fn test_public_api_save_and_load() {
+        let dir = TempDir::new().unwrap();
+        // Temporarily redirect HOME so credentials_path() and config_path() point to temp dir
+        let _guard = temp_home(dir.path());
+
+        let values = ProfileValues {
+            api_key: Some("dak_integration_test".to_string()),
+            workspace_id: Some("00000000-0000-0000-0000-000000000001".to_string()),
+            api_url: Some("https://api.distri.dev/v1".to_string()),
+        };
+        save_profile("default", &values).unwrap();
+
+        let loaded = load_profile("default").unwrap().unwrap();
+        assert_eq!(loaded.api_key.as_deref(), Some("dak_integration_test"));
+        assert_eq!(
+            loaded.workspace_id.as_deref(),
+            Some("00000000-0000-0000-0000-000000000001")
+        );
+
+        let profiles = list_profiles().unwrap();
+        assert_eq!(profiles.len(), 1);
+        assert_eq!(profiles[0].0, "default");
+    }
+
+    #[test]
+    fn test_public_api_merge_save() {
+        let dir = TempDir::new().unwrap();
+        let _guard = temp_home(dir.path());
+
+        // Write initial profile
+        save_profile(
+            "default",
+            &ProfileValues {
+                api_key: Some("original_key".to_string()),
+                workspace_id: Some("ws-original".to_string()),
+                api_url: None,
+            },
+        )
+        .unwrap();
+
+        // Update only api_key
+        save_profile(
+            "default",
+            &ProfileValues {
+                api_key: Some("new_key".to_string()),
+                workspace_id: None,
+                api_url: None,
+            },
+        )
+        .unwrap();
+
+        let loaded = load_profile("default").unwrap().unwrap();
+        assert_eq!(loaded.api_key.as_deref(), Some("new_key"));
+        assert_eq!(loaded.workspace_id.as_deref(), Some("ws-original")); // preserved
+    }
+
+    #[test]
+    fn test_public_api_delete_profile() {
+        let dir = TempDir::new().unwrap();
+        let _guard = temp_home(dir.path());
+
+        save_profile(
+            "keep",
+            &ProfileValues {
+                api_key: Some("k1".to_string()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        save_profile(
+            "remove",
+            &ProfileValues {
+                api_key: Some("k2".to_string()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        delete_profile("remove").unwrap();
+
+        let profiles = list_profiles().unwrap();
+        assert_eq!(profiles.len(), 1);
+        assert_eq!(profiles[0].0, "keep");
+    }
+
+    #[test]
+    fn test_public_api_migrate_legacy_config() {
+        let dir = TempDir::new().unwrap();
+        let _guard = temp_home(dir.path());
+
+        // Write a legacy-style config
+        let config_dir = dir.path().join(".distri");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::write(
+            config_dir.join("config"),
+            "api_key = \"dak_legacy\"\nworkspace_id = \"legacy-ws-id\"\n",
+        )
+        .unwrap();
+
+        // Run migration
+        migrate_legacy_config().unwrap();
+
+        // Credentials file should now exist with [default] section
+        let creds = load_profile("default").unwrap().unwrap();
+        assert_eq!(creds.api_key.as_deref(), Some("dak_legacy"));
+        assert_eq!(creds.workspace_id.as_deref(), Some("legacy-ws-id"));
+
+        // Config file should no longer have api_key or workspace_id
+        let config_content = std::fs::read_to_string(config_dir.join("config")).unwrap();
+        assert!(!config_content.contains("api_key"));
+        assert!(!config_content.contains("workspace_id"));
+
+        // Running migration again should be a no-op (credentials file already exists)
+        migrate_legacy_config().unwrap();
+        let creds_again = load_profile("default").unwrap().unwrap();
+        assert_eq!(creds_again.api_key.as_deref(), Some("dak_legacy")); // unchanged
     }
 }
