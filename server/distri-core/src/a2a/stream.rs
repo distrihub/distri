@@ -464,9 +464,6 @@ pub async fn handle_message_send_streaming_sse(
             let cancel_token = cancel_token_for_completion;
             let mut completed = false;
             while let Some(event) = event_rx.recv().await {
-                if cancel_token.is_cancelled() {
-                    break;
-                }
                 // Check for completion events - only complete when main task finishes
                 match &event.event {
                     AgentEventType::RunError { .. } => {
@@ -517,7 +514,19 @@ pub async fn handle_message_send_streaming_sse(
                 definition_overrides_clone,
             );
             let result = tokio::select! {
-                _ = cancel_token_for_exec.cancelled() => Err(anyhow!("stream cancelled")),
+                _ = cancel_token_for_exec.cancelled() => {
+                    executor_context_clone
+                        .update_status(crate::types::TaskStatus::Canceled)
+                        .await;
+                    executor_context_clone
+                        .emit(AgentEventType::RunError {
+                            message: "stream cancelled".to_string(),
+                            code: Some("CANCELLED".to_string()),
+                            usage: Some(executor_context_clone.get_step_usage().await),
+                        })
+                        .await;
+                    Err(anyhow!("stream cancelled"))
+                },
                 res = exec_fut => res.map_err(|e: AgentError| anyhow!(e)),
             };
             match result {
