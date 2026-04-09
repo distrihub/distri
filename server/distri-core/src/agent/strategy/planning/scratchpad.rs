@@ -21,10 +21,11 @@ pub fn format_scratchpad_with_task_filter(
                     ScratchpadEntryType::Execution(exec_entry) => {
                         exec_entry.task_id == filter_task_id
                     }
-                    // Include plan steps, tasks, and summaries for all agents for context
+                    // Include plan steps, tasks, summaries, and skill context for all agents for context
                     ScratchpadEntryType::PlanStep(_)
                     | ScratchpadEntryType::Task(_)
-                    | ScratchpadEntryType::Summary(_) => true,
+                    | ScratchpadEntryType::Summary(_)
+                    | ScratchpadEntryType::SkillContext(_) => true,
                 }
             })
             .collect()
@@ -114,6 +115,12 @@ pub fn format_scratchpad_with_task_filter(
                 scratchpad.push_str(&format!(
                     "Summary (compacted {} entries): {}\n",
                     summary.entries_summarized, summary.summary_text
+                ));
+            }
+            ScratchpadEntryType::SkillContext(skill_ctx) => {
+                scratchpad.push_str(&format!(
+                    "--- Skill: {} (re-injected) ---\n{}\n",
+                    skill_ctx.skill_id, skill_ctx.content
                 ));
             }
         }
