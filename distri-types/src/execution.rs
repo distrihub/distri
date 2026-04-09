@@ -445,6 +445,20 @@ pub enum ScratchpadEntryType {
     /// Compressed summary produced by Tier 2 (semantic) compaction
     #[serde(rename = "summary")]
     Summary(CompactionSummary),
+    /// Skill content re-injected after compaction
+    #[serde(rename = "skill_context")]
+    SkillContext(SkillContextEntry),
+}
+
+/// Skill content re-injected after compaction to preserve agent instructions
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillContextEntry {
+    /// Skill identifier
+    pub skill_id: String,
+    /// Full skill content (markdown)
+    pub content: String,
+    /// Timestamp when this was re-injected
+    pub reinjected_at: i64,
 }
 
 /// Summary produced by semantic compaction of older scratchpad entries
