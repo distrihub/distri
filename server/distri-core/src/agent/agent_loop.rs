@@ -189,7 +189,10 @@ impl AgentLoop {
             tracing::warn!("Failed to calculate context size: {}", e);
         }
 
-        // Auto-compact before planning if context is getting large
+        // Auto-compact before planning if context is getting large.
+        // evaluate_compaction() handles skill re-injection after compaction.
+        // Note: Tier 2 LLM-powered summarization is detected but deferred —
+        // the summarization LLM call requires wiring an LLMExecutor into the loop.
         if let Err(e) = context.evaluate_compaction().await {
             tracing::warn!("Failed to evaluate compaction: {}", e);
         }

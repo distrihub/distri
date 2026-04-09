@@ -1287,8 +1287,27 @@ impl ExecutorContext {
             crate::agent::context_size_manager::ContextSizeManager::with_max_tokens(max_tokens);
         let result = manager.evaluate_and_compact(&entries);
 
-        // If compaction was applied, emit the event
+        // If compaction was applied, re-inject skills and emit the event
         if let Some(ref tier) = result.tier {
+            // Re-inject tracked skill content after compaction
+            let reinjected_skills = match self.reinject_skills().await {
+                Ok(ids) => {
+                    if !ids.is_empty() {
+                        tracing::info!(
+                            "Re-injected {} skills after {:?} compaction: {:?}",
+                            ids.len(),
+                            tier,
+                            ids
+                        );
+                    }
+                    ids
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to re-inject skills after compaction: {}", e);
+                    vec![]
+                }
+            };
+
             self.emit(AgentEventType::ContextCompaction {
                 tier: tier.clone(),
                 tokens_before: result.tokens_before,
@@ -1297,7 +1316,7 @@ impl ExecutorContext {
                 context_limit: max_tokens,
                 usage_ratio: result.usage_ratio,
                 summary: None,
-                reinjected_skills: vec![],
+                reinjected_skills,
                 context_budget: Some(self.get_usage().await.context_budget.clone()),
             })
             .await;
