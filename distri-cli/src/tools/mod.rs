@@ -20,19 +20,28 @@ use crate::{
     COLOR_BRIGHT_GREEN, COLOR_BRIGHT_MAGENTA, COLOR_BRIGHT_YELLOW, COLOR_GRAY, COLOR_RESET,
 };
 
+/// Names of all tools the CLI registers locally.
+/// Used to ensure the stream client intercepts these tool calls
+/// regardless of which agent is running.
+pub const LOCAL_TOOL_NAMES: &[&str] = &[
+    "Bash", "Read", "Write", "Edit", "Glob", "Grep", "execute_command",
+];
+
 /// Register all local CLI tools and return their definitions (with prompts).
 pub fn register_all(
     registry: &ExternalToolRegistry,
-    agent_id: &str,
+    _agent_id: &str,
     workspace_root: &Path,
 ) -> Vec<ToolDefinition> {
-    bash::register(registry, agent_id, workspace_root);
-    read::register(registry, agent_id, workspace_root);
-    write::register(registry, agent_id, workspace_root);
-    edit::register(registry, agent_id, workspace_root);
-    glob::register(registry, agent_id, workspace_root);
-    grep::register(registry, agent_id, workspace_root);
-    register_execute_command(registry, agent_id, workspace_root);
+    // Register under "*" so handlers are available to ALL agents,
+    // not just the initially-launched one.
+    bash::register(registry, "*", workspace_root);
+    read::register(registry, "*", workspace_root);
+    write::register(registry, "*", workspace_root);
+    edit::register(registry, "*", workspace_root);
+    glob::register(registry, "*", workspace_root);
+    grep::register(registry, "*", workspace_root);
+    register_execute_command(registry, "*", workspace_root);
 
     tool_definitions()
 }
