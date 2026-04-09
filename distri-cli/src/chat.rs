@@ -147,6 +147,8 @@ pub fn print_help_message() {
     println!("  /resume             - Pick from recent threads to resume");
     println!("  /resume last        - Resume the last thread from previous session");
     println!("  /resume <id>        - Resume a specific thread by ID");
+    println!("  /traces             - List recent traces");
+    println!("  /traces <id>        - Show trace detail with Gantt chart");
     println!("  /clear              - Clear the current session context");
     println!("  /help               - Show this help message");
     println!("  /exit               - Exit the chat");
@@ -396,6 +398,15 @@ pub async fn handle_slash_command(
                     Ok(SlashCommandResult::Continue)
                 }
             }
+        }
+        "/traces" => {
+            let client = Distri::from_config(config.clone());
+            if let Some(trace_id) = arg {
+                crate::traces::print_trace_detail(&client, trace_id, None).await;
+            } else {
+                crate::traces::print_trace_list(&client, 20).await;
+            }
+            Ok(SlashCommandResult::Continue)
         }
         _ => {
             println!("Unknown command. Type /help for commands.");
