@@ -526,6 +526,17 @@ impl<'a> MessageFormatter<'a> {
                     ))];
                     vec![msg]
                 }
+                ScratchpadEntryType::SkillContext(skill_ctx) => {
+                    // Re-injected skill content — render as a system-like assistant message
+                    let mut msg = crate::types::Message::default();
+                    msg.role = MessageRole::Assistant;
+                    msg.created_at = entry.timestamp;
+                    msg.parts = vec![Part::Text(format!(
+                        "[Skill context re-injected: {}]\n{}",
+                        skill_ctx.skill_id, skill_ctx.content
+                    ))];
+                    vec![msg]
+                }
             })
             .collect()
     }
