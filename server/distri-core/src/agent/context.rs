@@ -423,12 +423,13 @@ impl ExecutorContext {
     }
 
     /// Emit a verbose diagnostic message to the client (no-op when not verbose).
-    /// Also logs via tracing so it appears in the server terminal.
+    /// This is a client-side diagnostic only — server observability comes from
+    /// the gen_ai OTel spans (see otel.rs) which flow to pg-traces.
     pub async fn emit_verbose(&self, message: String) {
         if !self.verbose {
             return;
         }
-        tracing::info!("{}", message);
+        tracing::debug!("{}", message);
         self.emit(AgentEventType::DiagnosticLog { message }).await;
     }
 
