@@ -17,6 +17,7 @@ mod login;
 mod message;
 mod threads;
 mod tools;
+mod traces;
 
 use chat::run_interactive_chat;
 use commands::{
@@ -131,6 +132,12 @@ enum Commands {
     Threads {
         #[clap(subcommand)]
         command: ThreadsCommands,
+    },
+
+    /// Trace inspection commands
+    Traces {
+        #[clap(subcommand)]
+        command: TracesCommands,
     },
 
     /// Manage local client configuration
@@ -276,6 +283,24 @@ pub(crate) enum SecretsCommands {
 pub(crate) enum ThreadsCommands {
     /// List all threads
     List,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub(crate) enum TracesCommands {
+    /// List recent traces
+    List {
+        #[clap(long, default_value = "20")]
+        limit: i64,
+    },
+    /// Show trace detail with Gantt chart
+    Show {
+        /// Trace ID, span ID, or thread ID
+        #[clap(help = "Trace ID, span ID, or thread ID")]
+        id: String,
+        /// Filter by span name or ID
+        #[clap(long)]
+        span: Option<String>,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -634,6 +659,9 @@ async fn main() -> Result<()> {
         }
         Commands::Threads { command } => {
             threads::handle_threads_command(&client, command).await?;
+        }
+        Commands::Traces { command } => {
+            traces::handle_traces_command(&client, command).await?;
         }
         Commands::Workflows { command } => {
             handle_workflow_command(&client, command).await?;

@@ -2054,6 +2054,30 @@ pub struct NewSecretRequest {
     pub value: String,
 }
 
+// ========== Traces API ==========
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TraceSummary {
+    pub trace_id: String,
+    pub name: String,
+    pub start_time_ns: i64,
+    pub end_time_ns: i64,
+    pub span_count: i64,
+    #[serde(default)]
+    pub thread_id: Option<String>,
+    #[serde(default)]
+    pub input_tokens: i64,
+    #[serde(default)]
+    pub total_cost: f64,
+    #[serde(default)]
+    pub step_count: i64,
+    #[serde(default)]
+    pub models: Vec<Option<String>>,
+    #[serde(default)]
+    pub input_preview: Option<String>,
+}
+
 // ========== Threads API ==========
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -2585,6 +2609,63 @@ impl Distri {
             .collect();
 
         Ok(items)
+    }
+
+    // ========== Traces API ==========
+
+    pub async fn list_traces(
+        &self,
+        limit: Option<i64>,
+    ) -> Result<Vec<TraceSummary>, ClientError> {
+        let mut url = format!("{}/traces", self.base_url);
+        if let Some(limit) = limit {
+            url = format!("{}?limit={}", url, limit);
+        }
+        let resp = self.http.get(&url).send().await?;
+        if !resp.status().is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            return Err(ClientError::InvalidResponse(format!(
+                "failed to list traces: {}",
+                text
+            )));
+        }
+        let body: serde_json::Value = resp.json().await?;
+        let arr = if let Some(traces) = body.get("traces") {
+            traces.clone()
+        } else {
+            body
+        };
+        serde_json::from_value(arr)
+            .map_err(|e| ClientError::InvalidResponse(format!("failed to parse traces: {}", e)))
+    }
+
+    pub async fn get_spans(
+        &self,
+        trace_id: Option<&str>,
+        thread_id: Option<&str>,
+    ) -> Result<serde_json::Value, ClientError> {
+        let mut params = vec![];
+        if let Some(tid) = trace_id {
+            params.push(format!("trace_id={}", tid));
+        }
+        if let Some(tid) = thread_id {
+            params.push(format!("thread_id={}", tid));
+        }
+        let url = if params.is_empty() {
+            format!("{}/spans", self.base_url)
+        } else {
+            format!("{}/spans?{}", self.base_url, params.join("&"))
+        };
+        let resp = self.http.get(&url).send().await?;
+        if resp.status().is_success() {
+            Ok(resp.json().await?)
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!(
+                "failed to get spans: {}",
+                text
+            )))
+        }
     }
 
     // ========== Workflows API ==========

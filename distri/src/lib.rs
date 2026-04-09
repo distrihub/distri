@@ -24,7 +24,8 @@ pub use client::{
     Distri, InvokeOptions, LlmExecuteOptions, LlmExecuteResponse, LoginUrlResponse,
     NewPromptTemplateRequest, NewSecretRequest, PluginResponse, PluginsListResponse,
     PromptTemplateResponse, ProviderInfo, SecretEntry, SkillListItemResponse, SkillResponse,
-    SyncPromptTemplatesResponse, TaskNamespaceResponse, ThreadSummary, TtsModelsResponse,
+    SyncPromptTemplatesResponse, TaskNamespaceResponse, ThreadSummary, TraceSummary,
+    TtsModelsResponse,
     TtsSpeechRequest, TtsSpeechResponse, UpdatePluginRequest, UpdateSkillRequest,
     ValidatePluginResponse, WorkspaceResponse,
 };
