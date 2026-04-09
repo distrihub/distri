@@ -222,10 +222,10 @@ fn extract_generic(response: &ToolResponse) -> ToolFields {
 fn generic_text(response: &ToolResponse) -> String {
     // 1. Prefer Part::Text
     for part in &response.parts {
-        if let Part::Text(t) = part {
-            if !t.is_empty() {
-                return t.clone();
-            }
+        if let Part::Text(t) = part
+            && !t.is_empty()
+        {
+            return t.clone();
         }
     }
     // 2. Walk Part::Data for known text-bearing keys
@@ -233,17 +233,18 @@ fn generic_text(response: &ToolResponse) -> String {
     for part in &response.parts {
         if let Part::Data(v) = part {
             for key in TEXT_KEYS {
-                if let Some(s) = v.get(key).and_then(|x| x.as_str()) {
-                    if !s.is_empty() {
-                        return s.to_owned();
-                    }
+                if let Some(s) = v.get(key).and_then(|x| x.as_str())
+                    && !s.is_empty()
+                {
+                    return s.to_owned();
                 }
             }
             // Fall back to the whole JSON serialised
-            if let Ok(s) = serde_json::to_string(v) {
-                if s != "null" && s != "{}" {
-                    return s;
-                }
+            if let Ok(s) = serde_json::to_string(v)
+                && s != "null"
+                && s != "{}"
+            {
+                return s;
             }
         }
     }

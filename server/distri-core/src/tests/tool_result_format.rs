@@ -94,10 +94,7 @@ async fn large_bash_result_extracts_and_formats() {
         formatted.contains("[Bash] exit_code="),
         "should contain Bash header"
     );
-    assert!(
-        formatted.contains("<stdout>"),
-        "should contain stdout tag"
-    );
+    assert!(formatted.contains("<stdout>"), "should contain stdout tag");
     assert!(
         formatted.contains("truncated"),
         "should contain truncation marker"
@@ -223,23 +220,17 @@ async fn artifact_wrapper_save_and_read_round_trip() {
         .await
         .unwrap();
 
-    let content = "This is a large tool result that would normally be persisted to disk.\n"
-        .repeat(100);
+    let content =
+        "This is a large tool result that would normally be persisted to disk.\n".repeat(100);
 
     wrapper
         .save_artifact("tool_output.txt", &content)
         .await
         .unwrap();
 
-    let loaded = wrapper
-        .read_artifact_raw("tool_output.txt")
-        .await
-        .unwrap();
+    let loaded = wrapper.read_artifact_raw("tool_output.txt").await.unwrap();
 
-    assert_eq!(
-        loaded, content,
-        "round-trip content must match original"
-    );
+    assert_eq!(loaded, content, "round-trip content must match original");
 }
 
 // ── Test 6: Formatted result appears clean in scratchpad ─────────────────────

@@ -21,7 +21,9 @@ use crate::message::{build_connections_context, build_message_params};
 use crate::threads::{
     load_last_thread, print_thread_history, resolve_resume_arg, save_last_thread,
 };
-use crate::tools::{register_all, register_approval_handler, validate_external_tools, LOCAL_TOOL_NAMES};
+use crate::tools::{
+    register_all, register_approval_handler, validate_external_tools, LOCAL_TOOL_NAMES,
+};
 use crate::{COLOR_BRIGHT_GREEN, COLOR_GRAY, COLOR_RESET};
 
 #[derive(Debug, Clone)]

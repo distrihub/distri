@@ -238,7 +238,6 @@ impl ExecutionResult {
     pub fn compact_for_storage(&self) -> Self {
         self.compact_for_history().with_empty_guard()
     }
-
 }
 
 #[derive(Debug, Clone, JsonSchema, Serialize, Deserialize, PartialEq, Eq)]

@@ -24,7 +24,13 @@ use crate::{
 /// Used to ensure the stream client intercepts these tool calls
 /// regardless of which agent is running.
 pub const LOCAL_TOOL_NAMES: &[&str] = &[
-    "Bash", "Read", "Write", "Edit", "Glob", "Grep", "execute_command",
+    "Bash",
+    "Read",
+    "Write",
+    "Edit",
+    "Glob",
+    "Grep",
+    "execute_command",
 ];
 
 /// Register all local CLI tools and return their definitions (with prompts).

@@ -198,8 +198,7 @@ impl Distri {
     }
 
     pub async fn register_agent(&self, definition: &StandardDefinition) -> Result<(), ClientError> {
-        let config =
-            distri_types::configuration::AgentConfig::StandardAgent(definition.clone());
+        let config = distri_types::configuration::AgentConfig::StandardAgent(definition.clone());
         self.register_agent_config(&config).await
     }
 
@@ -2619,10 +2618,7 @@ impl Distri {
 
     // ========== Traces API ==========
 
-    pub async fn list_traces(
-        &self,
-        limit: Option<i64>,
-    ) -> Result<Vec<TraceSummary>, ClientError> {
+    pub async fn list_traces(&self, limit: Option<i64>) -> Result<Vec<TraceSummary>, ClientError> {
         let mut url = format!("{}/traces", self.base_url);
         if let Some(limit) = limit {
             url = format!("{}?limit={}", url, limit);
