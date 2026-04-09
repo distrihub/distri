@@ -6,7 +6,6 @@ append_default_instructions = false
 sub_agents = ["inline_search"]
 max_iterations = 60
 tool_format = "provider"
-write_large_tool_responses_to_fs = true
 
 [tools]
 builtin = [

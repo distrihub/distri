@@ -172,13 +172,13 @@ fn preview_persisted_notice_format() {
 #[test]
 fn should_persist_small_content() {
     assert!(!should_persist("small"));
-    assert!(!should_persist(&"x".repeat(7999)));
+    assert!(!should_persist(&"x".repeat(49_999)));
 }
 
 #[test]
 fn should_persist_large_content() {
-    assert!(should_persist(&"x".repeat(8000)));
     assert!(should_persist(&"x".repeat(50_000)));
+    assert!(should_persist(&"x".repeat(100_000)));
 }
 
 // ── File Read Cache ──────────────────────────────────────────────────────────

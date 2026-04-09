@@ -476,10 +476,6 @@ pub struct StandardDefinition {
     #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
     pub partials: std::collections::HashMap<String, String>,
 
-    /// Whether to write large tool responses to filesystem as artifacts (default: false)
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub write_large_tool_responses_to_fs: Option<bool>,
-
     /// Reflection configuration for post-execution analysis using a subagent
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reflection: Option<ReflectionConfig>,
@@ -547,11 +543,6 @@ fn is_true(v: &bool) -> bool {
     *v
 }
 impl StandardDefinition {
-    /// Check if large tool responses should be written to filesystem (default: false)
-    pub fn should_write_large_tool_responses_to_fs(&self) -> bool {
-        self.write_large_tool_responses_to_fs.unwrap_or(false)
-    }
-
     /// Check if browser should be initialized automatically in orchestrator (default: false)
     pub fn should_use_browser(&self) -> bool {
         self.browser_config

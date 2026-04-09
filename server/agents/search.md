@@ -1,7 +1,6 @@
 ---
 name = "search"
 description = "Search agent for web information retrieval with scraping support."
-write_large_tool_responses_to_fs = true
 max_iterations = 4
 context_size = 50000
 tool_format = "provider"

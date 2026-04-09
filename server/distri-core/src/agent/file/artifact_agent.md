@@ -2,7 +2,6 @@
 name = "artifact_agent"
 description = "Specialized agent for managing and working with artifacts"
 max_iterations = 8
-write_large_tool_responses_to_fs = false
 context_size = 128000
 
 [model_settings]

@@ -1,6 +1,5 @@
 use crate::{
     agent::{
-        file::process_large_tool_responses,
         strategy::execution::{ExecutionResult, ExecutionStrategy},
         AgentEventType, ExecutorContext, InvokeResult,
     },
@@ -147,48 +146,19 @@ impl AgentExecutor {
         tool_results: &[ToolResultWithSkip],
         context: Arc<ExecutorContext>,
         step_id: &str,
-        step: &PlanStep,
+        _step: &PlanStep,
     ) -> Result<ToolResultResponse, AgentError> {
         if tool_results.is_empty() {
             return Ok(ToolResultResponse::default());
         }
 
         let mut processed_tool_results: Vec<crate::types::ToolResponse> = Vec::new();
-        let orchestrator = context.get_orchestrator()?;
 
         let mut input_required = false;
         for result in tool_results {
             match result {
                 ToolResultWithSkip::ToolResult(tool_result) => {
-                    let should_process_artifacts = self
-                        .agent_definition
-                        .as_ref()
-                        .map(|def| def.should_write_large_tool_responses_to_fs())
-                        .unwrap_or(false);
-
-                    let processed_response = if should_process_artifacts {
-                        // Get the original task from the current step's thought
-                        let original_task = step
-                            .thought
-                            .clone()
-                            .unwrap_or_else(|| "Analyze the content".to_string());
-
-                        // Process tool response through filesystem's artifact wrapper to handle large content
-                        process_large_tool_responses(
-                            tool_result.clone(),
-                            &context.thread_id,
-                            &context.task_id,
-                            &orchestrator,
-                            &original_task,
-                        )
-                        .await
-                        .map_err(|e| AgentError::ToolResponseProcessing(e.to_string()))?
-                    } else {
-                        // Return the tool response as-is without artifact processing
-                        tool_result.clone()
-                    };
-
-                    processed_tool_results.push(processed_response);
+                    processed_tool_results.push(tool_result.clone());
                 }
                 ToolResultWithSkip::Skip { .. } => {
                     input_required = true;

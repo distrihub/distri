@@ -20,7 +20,7 @@ use std::hash::{Hash, Hasher};
 pub const PREVIEW_SIZE_BYTES: usize = 2_000;
 
 /// Threshold above which tool results are persisted to disk
-pub const PERSIST_THRESHOLD_BYTES: usize = 8_000;
+pub const PERSIST_THRESHOLD_BYTES: usize = 50_000;
 
 /// Hard cap for any single tool result before forced persistence
 pub const MAX_TOOL_RESULT_CHARS: usize = 50_000;
