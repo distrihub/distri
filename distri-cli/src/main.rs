@@ -26,7 +26,7 @@ use commands::{
 use config::resolve_workspace;
 use message::{build_connections_context, build_message_params};
 use threads::resolve_resume_arg;
-use tools::{register_all, register_approval_handler, validate_external_tools};
+use tools::{register_all, register_approval_handler, validate_external_tools, LOCAL_TOOL_NAMES};
 
 #[derive(Parser, Debug, Clone)]
 #[clap(author, version, about)]
@@ -423,6 +423,11 @@ async fn main() -> Result<()> {
                         }
                     }
                 }
+            }
+            // Always include locally-registered CLI tools so the stream
+            // client intercepts them regardless of agent definition.
+            for name in LOCAL_TOOL_NAMES {
+                external_tool_names.insert(name.to_string());
             }
             let tool_defs = register_all(&app.registry(), &agent_name, &workspace);
             app.add_tool_definitions(tool_defs);

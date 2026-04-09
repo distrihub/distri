@@ -21,7 +21,7 @@ use crate::message::{build_connections_context, build_message_params};
 use crate::threads::{
     load_last_thread, print_thread_history, resolve_resume_arg, save_last_thread,
 };
-use crate::tools::{register_all, register_approval_handler, validate_external_tools};
+use crate::tools::{register_all, register_approval_handler, validate_external_tools, LOCAL_TOOL_NAMES};
 use crate::{COLOR_BRIGHT_GREEN, COLOR_GRAY, COLOR_RESET};
 
 #[derive(Debug, Clone)]
@@ -484,9 +484,13 @@ pub async fn run_interactive_chat(
 
     let stream_config = config.clone().with_timeout(60);
     let http_client = stream_config.build_http_client()?;
+    // Seed external tool names with locally-registered tools
+    let initial_external: std::collections::HashSet<String> =
+        LOCAL_TOOL_NAMES.iter().map(|s| s.to_string()).collect();
     let mut stream_client = AgentStreamClient::from_config(config.clone())
         .with_http_client(http_client)
-        .with_tool_registry(registry);
+        .with_tool_registry(registry)
+        .with_external_tool_names(initial_external);
     for tool in extra_tools {
         stream_client.register_dynamic_tool(tool);
     }
@@ -590,6 +594,10 @@ pub async fn run_interactive_chat(
                             }
                         }
                     }
+                }
+                // Always include locally-registered CLI tools
+                for name in LOCAL_TOOL_NAMES {
+                    ext_names.insert(name.to_string());
                 }
                 if let Err(e) =
                     validate_external_tools(&app.registry(), &current_agent, &ext_names, verbose)
