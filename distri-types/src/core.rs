@@ -136,6 +136,7 @@ impl From<async_openai::types::chat::Role> for MessageRole {
 
 #[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, PartialEq)]
 #[serde(rename_all = "snake_case", tag = "part_type", content = "data")]
+#[allow(clippy::large_enum_variant)]
 pub enum Part {
     Text(String),
     ToolCall(ToolCall),
@@ -363,6 +364,7 @@ impl Message {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum TaskMessage {
     Message(Message),
     Event(TaskEvent),

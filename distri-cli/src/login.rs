@@ -1,7 +1,6 @@
 use anyhow::{Context, Result};
-use distri::{Distri, DistriConfig};
+use distri::Distri;
 use serde::Deserialize;
-use std::path::PathBuf;
 use tokio::sync::oneshot;
 use warp::Filter;
 
@@ -21,8 +20,12 @@ struct CallbackQuery {
 /// 3. Opens the browser to the Distri Cloud login page
 /// 4. User logs in on the web and selects a workspace
 /// 5. Web redirects back to localhost with credentials
-/// 6. Saves the API key and workspace_id to ~/.distri/config
-pub async fn handle_login_command(_email: Option<String>, _skip_workspace: bool) -> Result<()> {
+/// 6. Saves the API key and workspace_id to ~/.distri/credentials
+pub async fn handle_login_command(
+    _email: Option<String>,
+    _skip_workspace: bool,
+    profile: Option<String>,
+) -> Result<()> {
     // Get the login URL from the API server first
     println!("Connecting to Distri Cloud...");
     let client = Distri::from_env();
@@ -117,12 +120,19 @@ pub async fn handle_login_command(_email: Option<String>, _skip_workspace: bool)
     });
     let (api_key, workspace_id) = creds?;
 
-    // Save config
-    save_config(&api_key, &workspace_id)?;
+    // Save credentials to profile
+    let profile_name = profile.as_deref().unwrap_or("default");
+    save_credentials(
+        profile_name,
+        &api_key,
+        &workspace_id,
+        &login_url_response.login_url,
+    )?;
 
     println!("\n✓ Successfully authenticated!");
+    println!("  Profile:      {}", profile_name);
     println!(
-        "  API Key: {}...{}",
+        "  API Key:      {}...{}",
         &api_key[..10],
         &api_key[api_key.len() - 4..]
     );
@@ -154,41 +164,26 @@ fn open_browser(url: &str) -> Result<()> {
     Ok(())
 }
 
-/// Save the API key and workspace_id to ~/.distri/config.
-fn save_config(api_key: &str, workspace_id: &str) -> Result<()> {
-    let path = DistriConfig::config_path().context("Unable to resolve ~/.distri/config path")?;
+fn save_credentials(
+    profile_name: &str,
+    api_key: &str,
+    workspace_id: &str,
+    login_url: &str,
+) -> Result<()> {
+    // Extract the api_url from the login_url (strip the /cli-login path)
+    let api_url = login_url
+        .split("/cli-login")
+        .next()
+        .unwrap_or("https://api.distri.dev")
+        .trim_end_matches('/')
+        .to_string()
+        + "/v1";
 
-    // Create parent directory
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-
-    // Load existing config or create new
-    let mut config = load_config_toml(&path);
-
-    // Update values
-    if let toml::Value::Table(ref mut table) = config {
-        table.insert(
-            "api_key".to_string(),
-            toml::Value::String(api_key.to_string()),
-        );
-        table.insert(
-            "workspace_id".to_string(),
-            toml::Value::String(workspace_id.to_string()),
-        );
-    }
-
-    // Write to file
-    let contents = toml::to_string_pretty(&config)?;
-    std::fs::write(&path, contents)?;
-
+    let values = crate::credentials::ProfileValues {
+        api_key: Some(api_key.to_string()),
+        workspace_id: Some(workspace_id.to_string()),
+        api_url: Some(api_url),
+    };
+    crate::credentials::save_profile(profile_name, &values)?;
     Ok(())
-}
-
-/// Load the existing config file as a TOML value, or create an empty table.
-fn load_config_toml(path: &PathBuf) -> toml::Value {
-    std::fs::read_to_string(path)
-        .ok()
-        .and_then(|contents| contents.parse::<toml::Value>().ok())
-        .unwrap_or_else(|| toml::Value::Table(toml::map::Map::new()))
 }

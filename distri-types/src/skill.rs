@@ -33,6 +33,7 @@ pub struct Skill {
 }
 
 impl Skill {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         id: String,
         name: String,

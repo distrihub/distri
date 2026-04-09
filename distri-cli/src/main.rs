@@ -3,14 +3,13 @@ use std::process::Command;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use distri::{
-    print_stream_verbose, AgentStreamClient, BuildHttpClient, Distri, DistriClientApp, DistriConfig,
-};
+use distri::{AgentStreamClient, BuildHttpClient, Distri, DistriClientApp, print_stream_verbose};
 use tokio::fs;
 
 mod chat;
 mod commands;
 mod config;
+mod credentials;
 mod input;
 mod logging;
 mod login;
@@ -21,13 +20,13 @@ mod traces;
 
 use chat::run_interactive_chat;
 use commands::{
-    handle_config_command, handle_connections_command, handle_prompts_command,
+    handle_connections_command, handle_profile_command, handle_prompts_command,
     handle_secrets_command, handle_skills_command, handle_workflow_command, push_file,
 };
 use config::resolve_workspace;
 use message::{build_connections_context, build_message_params};
 use threads::resolve_resume_arg;
-use tools::{register_all, register_approval_handler, validate_external_tools, LOCAL_TOOL_NAMES};
+use tools::{LOCAL_TOOL_NAMES, register_all, register_approval_handler, validate_external_tools};
 
 #[derive(Parser, Debug, Clone)]
 #[clap(author, version, about)]
@@ -140,10 +139,10 @@ enum Commands {
         command: TracesCommands,
     },
 
-    /// Manage local client configuration
-    Config {
+    /// Manage authentication profiles
+    Profile {
         #[clap(subcommand)]
-        command: ConfigCommands,
+        command: ProfileCommands,
     },
 
     /// Workflow execution commands
@@ -158,6 +157,11 @@ enum Commands {
         email: Option<String>,
         #[clap(long, help = "Skip workspace selection (use default)")]
         skip_workspace: bool,
+        #[clap(
+            long,
+            help = "Profile name to save credentials into (default: \"default\")"
+        )]
+        profile: Option<String>,
     },
 
     /// Start the local server (delegates to distri-server)
@@ -215,13 +219,56 @@ enum ToolsCommands {
 }
 
 #[derive(Subcommand, Debug, Clone)]
-pub(crate) enum ConfigCommands {
-    /// Set a config value in ~/.distri/config
+pub(crate) enum ProfileCommands {
+    /// List all profiles
+    List,
+    /// Set the active profile
+    Use {
+        #[clap(help = "Profile name")]
+        name: String,
+    },
+    /// Show profile values (active profile if no name given)
+    Show {
+        #[clap(help = "Profile name (defaults to active)")]
+        name: Option<String>,
+    },
+    /// Delete a profile
+    Delete {
+        #[clap(help = "Profile name")]
+        name: String,
+        #[clap(long, short, help = "Skip confirmation prompt")]
+        yes: bool,
+    },
+    /// Manage credential keys within a profile
+    Config {
+        #[clap(subcommand)]
+        command: ProfileConfigCommands,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub(crate) enum ProfileConfigCommands {
+    /// Set one or more credential keys on a profile
     Set {
-        #[clap(help = "Config key (api_key, base_url, workspace_id)")]
-        key: String,
-        #[clap(help = "Value to set (empty clears the key)", num_args = 1..)]
-        value: Vec<String>,
+        #[clap(long, help = "Target profile (defaults to active)")]
+        profile: Option<String>,
+        #[clap(long, help = "API key")]
+        api_key: Option<String>,
+        #[clap(long, help = "Workspace ID (UUID)")]
+        workspace_id: Option<String>,
+        #[clap(long, help = "API URL")]
+        api_url: Option<String>,
+    },
+    /// Remove one or more credential keys from a profile
+    Unset {
+        #[clap(long, help = "Target profile (defaults to active)")]
+        profile: Option<String>,
+        #[clap(long, help = "Remove api_key")]
+        api_key: bool,
+        #[clap(long, help = "Remove workspace_id")]
+        workspace_id: bool,
+        #[clap(long, help = "Remove api_url")]
+        api_url: bool,
     },
 }
 
@@ -382,7 +429,9 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    let mut config = DistriConfig::from_env();
+    // Run one-time migration of legacy ~/.distri/config keys to ~/.distri/credentials
+    let _ = crate::credentials::migrate_legacy_config();
+    let mut config = crate::credentials::load_config_with_profile();
     if let Some(base_url) = cli.base_url.as_deref() {
         config.base_url = base_url.trim_end_matches('/').to_string();
     }
@@ -639,14 +688,15 @@ async fn main() -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             }
         },
-        Commands::Config { command } => {
-            handle_config_command(command)?;
+        Commands::Profile { command } => {
+            handle_profile_command(command)?;
         }
         Commands::Login {
             email,
             skip_workspace,
+            profile,
         } => {
-            login::handle_login_command(email, skip_workspace).await?;
+            login::handle_login_command(email, skip_workspace, profile).await?;
         }
         Commands::Prompts { command } => {
             handle_prompts_command(&client, command).await?;

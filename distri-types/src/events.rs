@@ -69,6 +69,7 @@ impl AgentEvent {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "snake_case", tag = "type")]
+#[allow(clippy::large_enum_variant)]
 pub enum AgentEventType {
     /// Verbose diagnostic message streamed from server to client (only emitted when verbose=true).
     DiagnosticLog {

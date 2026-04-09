@@ -54,6 +54,12 @@ pub struct OrchestratorRef {
     inner: std::sync::RwLock<Option<Arc<dyn OrchestratorTrait>>>,
 }
 
+impl Default for OrchestratorRef {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl OrchestratorRef {
     /// Create a new orchestrator reference without an actual orchestrator
     pub fn new() -> Self {

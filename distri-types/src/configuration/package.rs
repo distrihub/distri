@@ -49,6 +49,7 @@ pub struct AgentConfigWithTools {
 /// Unified agent configuration enum
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
 #[serde(tag = "agent_type", rename_all = "snake_case")]
+#[allow(clippy::large_enum_variant)]
 pub enum AgentConfig {
     /// Standard markdown-based agent
     #[schema(value_type = Object)]

@@ -637,7 +637,7 @@ fn compute_hash(content: &str) -> String {
 /// Standalone function for use outside of distri-core's TokenEstimator.
 #[inline]
 pub fn rough_token_count(text: &str) -> usize {
-    (text.len() + 3) / 4
+    text.len().div_ceil(4)
 }
 
 /// Result of rendering a template with budget tracking.
@@ -709,10 +709,10 @@ pub async fn build_prompt_messages_with_budget<'a>(
     let system_msg = Message::system(system_result.content, None);
 
     let mut user_msg = user_message.clone();
-    if user_msg.parts.is_empty() {
-        if let Some(text) = user_message.as_text() {
-            user_msg.parts.push(Part::Text(text));
-        }
+    if user_msg.parts.is_empty()
+        && let Some(text) = user_message.as_text()
+    {
+        user_msg.parts.push(Part::Text(text));
     }
     if !user_result.content.is_empty() {
         user_msg.parts.push(Part::Text(user_result.content));
@@ -744,7 +744,7 @@ pub async fn build_prompt_messages_with_budget<'a>(
         if let Some(todos) = &template_data.todos {
             dynamic_chars += todos.len();
         }
-        (dynamic_chars + 3) / 4
+        dynamic_chars.div_ceil(4)
     };
     let static_tokens = prompt_only_tokens.saturating_sub(dynamic_content_tokens);
 

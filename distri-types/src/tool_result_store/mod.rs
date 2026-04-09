@@ -74,12 +74,11 @@ impl ContentFormat {
 
         // Try JSON
         let trimmed = content.trim();
-        if (trimmed.starts_with('{') && trimmed.ends_with('}'))
-            || (trimmed.starts_with('[') && trimmed.ends_with(']'))
+        if ((trimmed.starts_with('{') && trimmed.ends_with('}'))
+            || (trimmed.starts_with('[') && trimmed.ends_with(']')))
+            && serde_json::from_str::<serde_json::Value>(trimmed).is_ok()
         {
-            if serde_json::from_str::<serde_json::Value>(trimmed).is_ok() {
-                return Self::Json;
-            }
+            return Self::Json;
         }
 
         // Markdown heuristic: has headings or frontmatter
@@ -276,12 +275,13 @@ fn generate_markdown_preview(content: &str, max_bytes: usize) -> String {
             content_lines = 0;
             result.push_str(line);
             result.push('\n');
-        } else if in_content && content_lines < max_content_lines_per_section {
-            if !line.trim().is_empty() {
-                content_lines += 1;
-                result.push_str(line);
-                result.push('\n');
-            }
+        } else if in_content
+            && content_lines < max_content_lines_per_section
+            && !line.trim().is_empty()
+        {
+            content_lines += 1;
+            result.push_str(line);
+            result.push('\n');
         }
 
         // If we've seen enough headings and content, stop

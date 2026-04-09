@@ -76,6 +76,12 @@ pub struct Distri {
     config: DistriConfig,
 }
 
+impl Default for Distri {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Distri {
     /// Create a new client using the default base URL (https://api.distri.dev/v1).
     pub fn new() -> Self {

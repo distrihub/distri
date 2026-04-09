@@ -6,23 +6,164 @@ use anyhow::{Context, Result};
 use distri::{CreateSkillRequest, Distri};
 use tokio::fs;
 
-use crate::config::set_client_config_value;
 use crate::{
-    ConfigCommands, ConnectionsCommands, PromptsCommands, SecretsCommands, SkillsCommands,
-    WorkflowCommands, COLOR_BRIGHT_GREEN, COLOR_GRAY, COLOR_RESET,
+    ConnectionsCommands, ProfileCommands, ProfileConfigCommands, PromptsCommands, SecretsCommands,
+    SkillsCommands, WorkflowCommands, COLOR_BRIGHT_GREEN, COLOR_GRAY, COLOR_RESET,
 };
 
-pub fn handle_config_command(command: ConfigCommands) -> Result<()> {
+fn mask_api_key(key: &str) -> String {
+    if key.len() > 14 {
+        format!("{}...{}", &key[..10], &key[key.len() - 4..])
+    } else {
+        "***".to_string()
+    }
+}
+
+pub fn handle_profile_command(command: ProfileCommands) -> Result<()> {
+    use crate::credentials::{
+        delete_profile, get_active_profile, list_profiles, load_profile, save_profile,
+        set_active_profile, unset_profile_keys, ProfileValues,
+    };
+
     match command {
-        ConfigCommands::Set { key, value } => {
-            let raw_value = value
-                .into_iter()
-                .filter(|part| part != "=")
-                .collect::<Vec<_>>()
-                .join(" ");
-            let path = set_client_config_value(&key, &raw_value)?;
-            println!("Updated {} in {}", key, path.display());
+        ProfileCommands::List => {
+            let active = get_active_profile();
+            let profiles = list_profiles()?;
+            if profiles.is_empty() {
+                println!("No profiles found. Run `distri login` or `distri profile config set` to create one.");
+                return Ok(());
+            }
+            for (name, values) in &profiles {
+                let marker = if name == &active { "*" } else { " " };
+                let key_str = values
+                    .api_key
+                    .as_deref()
+                    .map(mask_api_key)
+                    .unwrap_or_else(|| "(none)".to_string());
+                let ws_str = values.workspace_id.as_deref().unwrap_or("(none)");
+                let url_str = values
+                    .api_url
+                    .as_deref()
+                    .unwrap_or("https://api.distri.dev/v1");
+                println!(
+                    "{} {:<12}  api_key={:<20}  workspace={:<36}  url={}",
+                    marker, name, key_str, ws_str, url_str
+                );
+            }
         }
+
+        ProfileCommands::Use { name } => {
+            let profiles = list_profiles()?;
+            let exists = profiles.iter().any(|(n, _)| n == &name);
+            if !exists {
+                anyhow::bail!(
+                    "Profile '{}' not found. Run `distri profile list` to see available profiles.",
+                    name
+                );
+            }
+            set_active_profile(&name)?;
+            println!("Active profile set to '{}'.", name);
+        }
+
+        ProfileCommands::Show { name } => {
+            let profile_name = name.unwrap_or_else(get_active_profile);
+            match load_profile(&profile_name)? {
+                None => {
+                    anyhow::bail!(
+                        "Profile '{}' not found. Run `distri profile list` to see available profiles.",
+                        profile_name
+                    );
+                }
+                Some(values) => {
+                    println!("Profile: {}", profile_name);
+                    println!(
+                        "  api_key      = {}",
+                        values
+                            .api_key
+                            .as_deref()
+                            .map(mask_api_key)
+                            .unwrap_or_else(|| "(not set)".to_string())
+                    );
+                    println!(
+                        "  workspace_id = {}",
+                        values.workspace_id.as_deref().unwrap_or("(not set)")
+                    );
+                    println!(
+                        "  api_url      = {}",
+                        values
+                            .api_url
+                            .as_deref()
+                            .unwrap_or("https://api.distri.dev/v1 (default)")
+                    );
+                }
+            }
+        }
+
+        ProfileCommands::Delete { name, yes } => {
+            let active = get_active_profile();
+            if name == active {
+                anyhow::bail!(
+                    "Cannot delete the active profile '{}'. Run `distri profile use <other>` first.",
+                    name
+                );
+            }
+            if !yes {
+                print!("Delete profile '{}'? [y/N] ", name);
+                std::io::stdout().flush().ok();
+                let mut input = String::new();
+                std::io::stdin().read_line(&mut input).ok();
+                if !input.trim().eq_ignore_ascii_case("y") {
+                    println!("Aborted.");
+                    return Ok(());
+                }
+            }
+            delete_profile(&name)?;
+            println!("Profile '{}' deleted.", name);
+        }
+
+        ProfileCommands::Config { command } => match command {
+            ProfileConfigCommands::Set {
+                profile,
+                api_key,
+                workspace_id,
+                api_url,
+            } => {
+                if api_key.is_none() && workspace_id.is_none() && api_url.is_none() {
+                    anyhow::bail!(
+                        "At least one of --api-key, --workspace-id, or --api-url is required."
+                    );
+                }
+                if let Some(ref ws) = workspace_id {
+                    uuid::Uuid::parse_str(ws).with_context(|| {
+                        format!("Invalid workspace_id: '{}' is not a valid UUID", ws)
+                    })?;
+                }
+                let profile_name = profile.unwrap_or_else(get_active_profile);
+                let values = ProfileValues {
+                    api_key,
+                    workspace_id,
+                    api_url,
+                };
+                save_profile(&profile_name, &values)?;
+                println!("Updated profile '{}'.", profile_name);
+            }
+
+            ProfileConfigCommands::Unset {
+                profile,
+                api_key,
+                workspace_id,
+                api_url,
+            } => {
+                if !api_key && !workspace_id && !api_url {
+                    anyhow::bail!(
+                        "At least one of --api-key, --workspace-id, or --api-url is required."
+                    );
+                }
+                let profile_name = profile.unwrap_or_else(get_active_profile);
+                unset_profile_keys(&profile_name, api_key, workspace_id, api_url)?;
+                println!("Unset keys from profile '{}'.", profile_name);
+            }
+        },
     }
     Ok(())
 }
