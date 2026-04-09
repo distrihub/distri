@@ -300,6 +300,9 @@ pub(crate) enum TracesCommands {
         /// Filter by span name or ID
         #[clap(long)]
         span: Option<String>,
+        /// Verbose: show span IDs and input/output summaries
+        #[clap(short, long)]
+        verbose: bool,
     },
 }
 

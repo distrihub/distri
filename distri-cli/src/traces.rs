@@ -1,4 +1,5 @@
 use anyhow::Result;
+use chrono::Utc;
 use crossterm::terminal;
 use distri::{Distri, TraceSummary};
 
@@ -458,6 +459,56 @@ fn format_cost(c: f64) -> String {
     }
 }
 
+fn format_relative_time(start_time_ns: i64) -> String {
+    let now_ns = Utc::now().timestamp_nanos_opt().unwrap_or(0);
+    let diff_secs = (now_ns - start_time_ns) / 1_000_000_000;
+    if diff_secs < 0 {
+        return "just now".to_string();
+    }
+    let diff_secs = diff_secs as u64;
+    if diff_secs < 60 {
+        return "just now".to_string();
+    }
+    if diff_secs < 3600 {
+        let mins = diff_secs / 60;
+        return if mins == 1 {
+            "1 min ago".to_string()
+        } else {
+            format!("{} mins ago", mins)
+        };
+    }
+    if diff_secs < 86400 {
+        let hours = diff_secs / 3600;
+        return if hours == 1 {
+            "1 hour ago".to_string()
+        } else {
+            format!("{} hours ago", hours)
+        };
+    }
+    if diff_secs < 86400 * 30 {
+        let days = diff_secs / 86400;
+        return if days == 1 {
+            "1 day ago".to_string()
+        } else {
+            format!("{} days ago", days)
+        };
+    }
+    if diff_secs < 86400 * 365 {
+        let months = diff_secs / (86400 * 30);
+        return if months == 1 {
+            "1 month ago".to_string()
+        } else {
+            format!("{} months ago", months)
+        };
+    }
+    let years = diff_secs / (86400 * 365);
+    if years == 1 {
+        "1 year ago".to_string()
+    } else {
+        format!("{} years ago", years)
+    }
+}
+
 fn term_width() -> usize {
     terminal::size().map(|(w, _)| w as usize).unwrap_or(100)
 }
@@ -472,11 +523,14 @@ fn separator(width: usize) -> String {
 
 pub async fn print_trace_list(client: &Distri, limit: i64) {
     match client.list_traces(Some(limit)).await {
-        Ok(traces) => {
+        Ok(mut traces) => {
             if traces.is_empty() {
                 println!("No traces found.");
                 return;
             }
+            // Sort oldest first so most recent appears at the bottom
+            traces.sort_by_key(|t| t.start_time_ns);
+
             let width = term_width().min(90);
             println!();
             println!(
@@ -530,14 +584,12 @@ fn print_trace_summary(trace: &TraceSummary, _width: usize) {
     };
 
     // Line 1: name + stats
-    let trace_id_short = if trace.trace_id.len() > 10 {
-        &trace.trace_id[..10]
-    } else {
-        &trace.trace_id
-    };
+    let trace_id_short = &trace.trace_id;
+
+    let relative_time = format_relative_time(trace.start_time_ns);
 
     println!(
-        "  {}{}{} {}  {}{}  {}{}  {}{}",
+        "  {}{}{} {}  {}{}  {}{}  {}{}{}",
         COLOR_BOLD,
         trace.name,
         COLOR_RESET,
@@ -549,7 +601,8 @@ fn print_trace_summary(trace: &TraceSummary, _width: usize) {
         duration,
         COLOR_BRIGHT_YELLOW,
         cost,
-        COLOR_GRAY,
+        COLOR_DIM,
+        relative_time,
         COLOR_RESET,
     );
 
@@ -595,7 +648,7 @@ fn print_trace_summary(trace: &TraceSummary, _width: usize) {
 // Trace detail (Gantt chart)
 // ─────────────────────────────────────────────────────────────────────────────
 
-pub async fn print_trace_detail(client: &Distri, id: &str, span_filter: Option<&str>) {
+pub async fn print_trace_detail(client: &Distri, id: &str, span_filter: Option<&str>, verbose: bool) {
     // Try as trace_id first, then as thread_id
     let otlp = match client.get_spans(Some(id), None).await {
         Ok(v) => {
@@ -665,7 +718,7 @@ pub async fn print_trace_detail(client: &Distri, id: &str, span_filter: Option<&
 
     // Render Gantt chart
     for root in &roots {
-        render_span_row(root, 0, min_start, max_end, bar_width, span_filter);
+        render_span_row(root, 0, min_start, max_end, bar_width, span_filter, verbose);
     }
 
     println!("  {}{}{}", COLOR_GRAY, separator(width - 2), COLOR_RESET);
@@ -680,25 +733,35 @@ pub async fn print_trace_detail(client: &Distri, id: &str, span_filter: Option<&
         }
 
         if let Some(inp) = input {
-            let display = truncate_text(inp, 300);
             println!(
                 "  {}{}INPUT:{}",
                 COLOR_BOLD, COLOR_BRIGHT_BLUE, COLOR_RESET
             );
-            for line in display.lines() {
-                println!("  {}{}{}", COLOR_DIM, line, COLOR_RESET);
+            if verbose {
+                let display = format_value_pretty(inp);
+                for line in display.lines() {
+                    println!("  {}{}{}", COLOR_DIM, line, COLOR_RESET);
+                }
+            } else {
+                let summary = extract_readable_summary(inp, 200);
+                println!("  {}{}{}", COLOR_DIM, summary, COLOR_RESET);
             }
             println!();
         }
 
         if let Some(out) = output {
-            let display = truncate_text(out, 300);
             println!(
                 "  {}{}OUTPUT:{}",
                 COLOR_BOLD, COLOR_BRIGHT_GREEN, COLOR_RESET
             );
-            for line in display.lines() {
-                println!("  {}{}{}", COLOR_DIM, line, COLOR_RESET);
+            if verbose {
+                let display = format_value_pretty(out);
+                for line in display.lines() {
+                    println!("  {}{}{}", COLOR_DIM, line, COLOR_RESET);
+                }
+            } else {
+                let summary = extract_readable_summary(out, 200);
+                println!("  {}{}{}", COLOR_DIM, summary, COLOR_RESET);
             }
             println!();
         }
@@ -712,6 +775,7 @@ fn render_span_row(
     max_end: i64,
     bar_width: usize,
     span_filter: Option<&str>,
+    verbose: bool,
 ) {
     // If filtering, check if this span matches
     if let Some(filter) = span_filter {
@@ -722,7 +786,7 @@ fn render_span_row(
         if !matches {
             // Still recurse into children
             for child in &span.children {
-                render_span_row(child, depth, min_start, max_end, bar_width, span_filter);
+                render_span_row(child, depth, min_start, max_end, bar_width, span_filter, verbose);
             }
             return;
         }
@@ -758,6 +822,8 @@ fn render_span_row(
         format!("  {}", info_parts.join("  "))
     };
 
+    let span_id_display = &span.span_id;
+
     // Category badge
     let badge = format!(
         "{}[{}]{}",
@@ -766,11 +832,47 @@ fn render_span_row(
         COLOR_RESET
     );
 
-    // Span row: indent + badge + title + info + duration
+    // Span row: indent + badge + title + span_id + info
     println!(
-        "{}{} {}{}{}  {}{}{}",
-        indent, badge, COLOR_BOLD, title, COLOR_RESET, info_str, COLOR_BRIGHT_CYAN, "",
+        "{}{} {}{}{}  {}{}{}  {}",
+        indent, badge, COLOR_BOLD, title, COLOR_RESET, COLOR_GRAY, span_id_display, COLOR_RESET, info_str,
     );
+
+    // Show input/output: short summary by default, full with -v
+    let extra_indent = "  ".repeat(depth + 2);
+    if verbose {
+        if let Some(inp) = span.input_value() {
+            let formatted = format_value_pretty(inp);
+            if !formatted.is_empty() {
+                println!("{}{}→ in:{}", extra_indent, COLOR_DIM, COLOR_RESET);
+                for line in formatted.lines() {
+                    println!("{}{}{}{}", extra_indent, COLOR_DIM, line, COLOR_RESET);
+                }
+            }
+        }
+        if let Some(out) = span.output_value() {
+            let formatted = format_value_pretty(out);
+            if !formatted.is_empty() {
+                println!("{}{}← out:{}", extra_indent, COLOR_DIM, COLOR_RESET);
+                for line in formatted.lines() {
+                    println!("{}{}{}{}", extra_indent, COLOR_DIM, line, COLOR_RESET);
+                }
+            }
+        }
+    } else {
+        if let Some(inp) = span.input_value() {
+            let summary = extract_readable_summary(inp, 100);
+            if !summary.is_empty() {
+                println!("{}{}→ {}{}", extra_indent, COLOR_DIM, summary, COLOR_RESET);
+            }
+        }
+        if let Some(out) = span.output_value() {
+            let summary = extract_readable_summary(out, 100);
+            if !summary.is_empty() {
+                println!("{}{}← {}{}", extra_indent, COLOR_DIM, summary, COLOR_RESET);
+            }
+        }
+    }
 
     // Right-align duration on same conceptual line - print on next sub-line with bar
     // Calculate timeline bar
@@ -806,7 +908,7 @@ fn render_span_row(
 
     // Recurse into children
     for child in &span.children {
-        render_span_row(child, depth + 1, min_start, max_end, bar_width, span_filter);
+        render_span_row(child, depth + 1, min_start, max_end, bar_width, span_filter, verbose);
     }
 }
 
@@ -865,20 +967,114 @@ fn aggregate_stats(spans: &[CliSpan]) -> (i64, f64) {
     (tokens, cost)
 }
 
-fn truncate_text(text: &str, max_len: usize) -> String {
-    // Clean up whitespace and strip [external_tools: ...] suffix
-    let cleaned = text
-        .trim()
-        .lines()
-        .take(10)
-        .collect::<Vec<_>>()
-        .join("\n");
 
-    if cleaned.len() > max_len {
-        format!("{}...", &cleaned[..max_len])
-    } else {
-        cleaned
+/// Extract a human-readable one-line summary from a value.
+/// If it's JSON, pull out the first text/content field. Otherwise treat as plain text.
+fn extract_readable_summary(text: &str, max_len: usize) -> String {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return String::new();
     }
+
+    // Try parsing as JSON and extract something readable
+    if let Ok(val) = serde_json::from_str::<serde_json::Value>(trimmed) {
+        if let Some(s) = extract_text_from_json(&val) {
+            let oneline = s.lines().next().unwrap_or("").trim().to_string();
+            if oneline.len() > max_len {
+                return format!("{}...", &oneline[..max_len]);
+            }
+            return oneline;
+        }
+    }
+
+    // Plain text: take first non-empty line
+    let line = trimmed.lines().find(|l| !l.trim().is_empty()).unwrap_or("").trim();
+    if line.len() > max_len {
+        format!("{}...", &line[..max_len])
+    } else {
+        line.to_string()
+    }
+}
+
+/// Walk JSON to find the first human-readable text string.
+fn extract_text_from_json(val: &serde_json::Value) -> Option<String> {
+    match val {
+        serde_json::Value::String(s) => {
+            let trimmed = s.trim();
+            if !trimmed.is_empty() {
+                // If it's nested JSON, recurse
+                if let Ok(inner) = serde_json::from_str::<serde_json::Value>(trimmed) {
+                    return extract_text_from_json(&inner);
+                }
+                return Some(trimmed.to_string());
+            }
+            None
+        }
+        serde_json::Value::Array(arr) => {
+            for item in arr {
+                // Look for message-like objects with content/text/parts
+                if let Some(obj) = item.as_object() {
+                    // Skip system messages, prefer user/assistant
+                    let role = obj.get("role").and_then(|r| r.as_str()).unwrap_or("");
+                    if role == "system" {
+                        continue;
+                    }
+                    // Try common content fields
+                    for key in &["content", "text", "parts", "value"] {
+                        if let Some(v) = obj.get(*key) {
+                            if let Some(s) = extract_text_from_json(v) {
+                                return Some(s);
+                            }
+                        }
+                    }
+                }
+                if let Some(s) = extract_text_from_json(item) {
+                    return Some(s);
+                }
+            }
+            None
+        }
+        serde_json::Value::Object(obj) => {
+            // Try common content fields first
+            for key in &["content", "text", "message", "output", "input", "value", "parts"] {
+                if let Some(v) = obj.get(*key) {
+                    if let Some(s) = extract_text_from_json(v) {
+                        return Some(s);
+                    }
+                }
+            }
+            // Fall back to any string field
+            for (_, v) in obj {
+                if let Some(s) = extract_text_from_json(v) {
+                    return Some(s);
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+/// Format a value for verbose output. Pretty-print JSON, show text as-is.
+fn format_value_pretty(text: &str) -> String {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+
+    // Try JSON pretty-print
+    if let Ok(val) = serde_json::from_str::<serde_json::Value>(trimmed) {
+        // If it's a string containing JSON, unwrap one level
+        if let serde_json::Value::String(inner) = &val {
+            if let Ok(inner_val) = serde_json::from_str::<serde_json::Value>(inner.trim()) {
+                return serde_json::to_string_pretty(&inner_val).unwrap_or_else(|_| inner.clone());
+            }
+            return inner.clone();
+        }
+        return serde_json::to_string_pretty(&val).unwrap_or_else(|_| trimmed.to_string());
+    }
+
+    trimmed.to_string()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -890,8 +1086,8 @@ pub async fn handle_traces_command(client: &Distri, command: TracesCommands) -> 
         TracesCommands::List { limit } => {
             print_trace_list(client, limit).await;
         }
-        TracesCommands::Show { id, span } => {
-            print_trace_detail(client, &id, span.as_deref()).await;
+        TracesCommands::Show { id, span, verbose } => {
+            print_trace_detail(client, &id, span.as_deref(), verbose).await;
         }
     }
     Ok(())

@@ -402,7 +402,7 @@ pub async fn handle_slash_command(
         "/traces" => {
             let client = Distri::from_config(config.clone());
             if let Some(trace_id) = arg {
-                crate::traces::print_trace_detail(&client, trace_id, None).await;
+                crate::traces::print_trace_detail(&client, trace_id, None, false).await;
             } else {
                 crate::traces::print_trace_list(&client, 20).await;
             }
