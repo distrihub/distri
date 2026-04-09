@@ -22,6 +22,12 @@ pub struct ContextSizeConfig {
     pub reset_threshold: f64,
     /// Target usage ratio after compaction (default: 0.4)
     pub post_compaction_target: f64,
+    /// Maximum tokens for re-injected skill content (default: 25_000)
+    pub max_skill_reinjection_tokens: usize,
+    /// Maximum tokens for the Tier 2 summary output (default: 2_000)
+    pub max_summary_tokens: usize,
+    /// Model to use for Tier 2 summarization (None = use agent's model)
+    pub summary_model: Option<String>,
 }
 
 impl Default for ContextSizeConfig {
@@ -35,6 +41,9 @@ impl Default for ContextSizeConfig {
             summarize_threshold: 0.8,
             reset_threshold: 0.95,
             post_compaction_target: 0.4,
+            max_skill_reinjection_tokens: 25_000,
+            max_summary_tokens: 2_000,
+            summary_model: None,
         }
     }
 }
@@ -90,6 +99,7 @@ impl ContextSizeManager {
 
         // Find the user task entry (should be first, but let's be safe)
         let mut user_task_entry = None;
+        let mut skill_context_entries = Vec::new();
         let mut other_entries = Vec::new();
 
         for entry in entries {
@@ -98,6 +108,9 @@ impl ContextSizeManager {
                     if user_task_entry.is_none() {
                         user_task_entry = Some(entry.clone());
                     }
+                }
+                ScratchpadEntryType::SkillContext(_) => {
+                    skill_context_entries.push(entry.clone());
                 }
                 _ => {
                     other_entries.push(entry.clone());
@@ -110,6 +123,8 @@ impl ContextSizeManager {
         if let Some(task_entry) = &user_task_entry {
             result.push(task_entry.clone());
         }
+        // Always preserve skill context entries
+        result.extend(skill_context_entries);
 
         // If we have very few entries, just return them all
         if other_entries.len() <= self.config.min_entries {
@@ -382,7 +397,7 @@ impl ContextSizeManager {
         }
     }
 
-    /// Emergency reset: keep only user task + last 2 non-task entries
+    /// Emergency reset: keep only user task + skill context + last 2 non-task, non-skill entries
     fn emergency_reset(&self, entries: &[ScratchpadEntry]) -> Vec<ScratchpadEntry> {
         let mut result = Vec::new();
 
@@ -396,13 +411,25 @@ impl ContextSizeManager {
             }
         }
 
-        // Keep last 2 non-task entries
-        let non_task: Vec<_> = entries
+        // Preserve skill context entries
+        for entry in entries {
+            if matches!(entry.entry_type, ScratchpadEntryType::SkillContext(_)) {
+                result.push(entry.clone());
+            }
+        }
+
+        // Keep last 2 non-task, non-skill entries
+        let non_preserved: Vec<_> = entries
             .iter()
-            .filter(|e| !matches!(e.entry_type, ScratchpadEntryType::Task(_)))
+            .filter(|e| {
+                !matches!(
+                    e.entry_type,
+                    ScratchpadEntryType::Task(_) | ScratchpadEntryType::SkillContext(_)
+                )
+            })
             .collect();
-        let keep_count = std::cmp::min(2, non_task.len());
-        for entry in non_task.iter().rev().take(keep_count).rev() {
+        let keep_count = std::cmp::min(2, non_preserved.len());
+        for entry in non_preserved.iter().rev().take(keep_count).rev() {
             result.push((*entry).clone());
         }
 
@@ -700,6 +727,73 @@ mod tests {
         // Last two entries should be the most recent (timestamps 7, 8)
         assert_eq!(result[1].timestamp, 7);
         assert_eq!(result[2].timestamp, 8);
+    }
+
+    fn create_skill_context_entry(timestamp: i64, task_id: &str) -> ScratchpadEntry {
+        ScratchpadEntry {
+            timestamp,
+            entry_type: ScratchpadEntryType::SkillContext(distri_types::SkillContextEntry {
+                skill_id: "rubric".to_string(),
+                content: "# Rubric Skill\nJSON examples and format spec...".to_string(),
+                reinjected_at: timestamp,
+            }),
+            task_id: task_id.to_string(),
+            parent_task_id: None,
+            entry_kind: Some("skill_context".to_string()),
+        }
+    }
+
+    #[test]
+    fn test_skill_context_preserved_during_trim() {
+        let config = ContextSizeConfig {
+            max_tokens: 500,
+            min_entries: 1,
+            ..Default::default()
+        };
+        let manager = ContextSizeManager::new(config);
+
+        let entries = vec![
+            create_test_task_entry(),
+            create_skill_context_entry(2, "task_1"),
+            create_test_execution_entry(3, "task_1"),
+            create_test_execution_entry(4, "task_1"),
+            create_test_execution_entry(5, "task_1"),
+        ];
+
+        let trimmed = manager.trim_scratchpad_entries(&entries);
+
+        let has_skill = trimmed
+            .iter()
+            .any(|e| matches!(e.entry_type, ScratchpadEntryType::SkillContext(_)));
+        assert!(has_skill, "SkillContext entry must survive trimming");
+    }
+
+    #[test]
+    fn test_skill_context_preserved_during_emergency_reset() {
+        let config = ContextSizeConfig {
+            max_tokens: 10,
+            ..Default::default()
+        };
+        let manager = ContextSizeManager::new(config);
+
+        let entries = vec![
+            create_test_task_entry(),
+            create_skill_context_entry(2, "task_1"),
+            create_test_execution_entry(3, "task_1"),
+            create_test_execution_entry(4, "task_1"),
+            create_test_execution_entry(5, "task_1"),
+            create_test_execution_entry(6, "task_1"),
+            create_test_execution_entry(7, "task_1"),
+            create_test_execution_entry(8, "task_1"),
+        ];
+
+        let result = manager.emergency_reset(&entries);
+
+        let has_skill = result
+            .iter()
+            .any(|e| matches!(e.entry_type, ScratchpadEntryType::SkillContext(_)));
+        assert!(has_skill, "SkillContext entry must survive emergency reset");
+        assert!(result.len() <= 4); // Task + SkillContext + last 2 executions
     }
 
     #[test]
