@@ -134,9 +134,7 @@ impl OpenAIResponsesLLMExecutor {
                 let key = if let Some(key) = api_key {
                     key.clone()
                 } else {
-                    secret_resolver
-                        .resolve_or_empty("DASHSCOPE_API_KEY")
-                        .await
+                    secret_resolver.resolve_or_empty("DASHSCOPE_API_KEY").await
                 };
                 (base_url.clone(), key)
             }

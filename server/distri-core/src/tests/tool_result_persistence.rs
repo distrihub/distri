@@ -1,20 +1,17 @@
-//! Integration tests for two-level tool result persistence.
+//! Tests for tool result persistence via store_execution_result + format_agent_scratchpad.
 //!
-//! Covers three scenarios:
+//! The old two-level persistence path (parts_to_persist / replace_with_preview /
+//! persist_large_parts / load_persisted_result) was removed in Task 2.
+//! The PERSIST_THRESHOLD_BYTES constant was raised from 8,000 to 50,000 at the same time.
 //!
-//! **Group A — session store only** (no orchestrator required):
-//!   - `persist_large_parts` writes content to the session store
-//!   - `load_persisted_result` reads it back
-//!   - Small results are not persisted
-//!   - Bad/missing keys produce clear errors
-//!
-//! **Group B — full round-trip with scratchpad** (full orchestrator):
-//!   - After `store_execution_result`, the scratchpad contains a compact preview
-//!   - The session-store ref embedded in the preview can be used to retrieve the original content
+//! These tests cover:
+//! - `store_execution_result` writes a compacted entry to the scratchpad store
+//! - `format_agent_scratchpad` returns an Observation containing tool output
+//! - Small results and large results are both stored (threshold only affects inline
+//!   truncation in `compact_for_history`, not whether the entry is stored)
 
 use std::sync::Arc;
 
-use distri_stores::initialize_stores;
 use distri_types::{
     configuration::{DbConnectionConfig, MetadataStoreConfig, StoreConfig},
     tool_result_store::PERSIST_THRESHOLD_BYTES,
@@ -38,13 +35,6 @@ fn test_store_config() -> StoreConfig {
         },
         ..Default::default()
     }
-}
-
-/// Minimal context: session store only, no orchestrator.
-/// Sufficient for testing persist_large_parts / load_persisted_result.
-async fn make_session_only_context() -> Arc<ExecutorContext> {
-    let stores = initialize_stores(&test_store_config()).await.unwrap();
-    Arc::new(ExecutorContext::new_minimal_for_test(stores))
 }
 
 /// Full context with orchestrator — needed for store_execution_result and format_agent_scratchpad.
@@ -102,134 +92,81 @@ fn small_result(step_id: &str) -> ExecutionResult {
     }
 }
 
-// ── Group A: session store only ───────────────────────────────────────────────
+// ── Tests: store_execution_result + format_agent_scratchpad ──────────────────
 
+/// After store_execution_result, the scratchpad contains an Observation section.
 #[tokio::test]
-async fn large_result_persisted_to_session_store() {
-    let ctx = make_session_only_context().await;
-    let mut result = large_result("step-a1");
-    let parts = result.parts_to_persist();
-    assert!(!parts.is_empty());
-    let original = parts[0].1.clone();
+async fn scratchpad_contains_observation_after_store() {
+    let ctx = make_full_context().await;
+    let result = small_result("step-obs1");
 
-    ctx.persist_large_parts(&mut result, &parts).await.unwrap();
+    ctx.store_execution_result(&result).await.unwrap();
 
-    // Content is stored under tool-results:{thread_id} / {step_id}_{part_index}
-    let namespace = format!("tool-results:{}", ctx.thread_id);
-    let stored = ctx
-        .get_session_store()
-        .unwrap()
-        .get_value(&namespace, "step-a1_1")
+    let scratchpad = ctx.format_agent_scratchpad(None).await.unwrap();
+    assert!(
+        scratchpad.contains("Observation:"),
+        "scratchpad should contain 'Observation:', got:\n{}",
+        scratchpad
+    );
+    // No legacy persistence markers should appear
+    assert!(
+        !scratchpad.contains("<persisted-output>"),
+        "scratchpad must not contain <persisted-output>"
+    );
+    assert!(
+        !scratchpad.contains("session-store:"),
+        "scratchpad must not contain session-store: refs"
+    );
+}
+
+/// Large results are stored and appear in the scratchpad (possibly truncated by compact_for_history).
+#[tokio::test]
+async fn large_result_stored_and_appears_in_scratchpad() {
+    let ctx = make_full_context().await;
+    let result = large_result("step-large1");
+
+    ctx.store_execution_result(&result).await.unwrap();
+
+    let scratchpad = ctx.format_agent_scratchpad(None).await.unwrap();
+    assert!(
+        scratchpad.contains("Observation:"),
+        "scratchpad should contain 'Observation:' even for large results"
+    );
+    assert!(
+        !scratchpad.contains("session-store:"),
+        "new code must not embed session-store refs"
+    );
+}
+
+/// Multiple results accumulate in the scratchpad.
+#[tokio::test]
+async fn multiple_results_accumulate_in_scratchpad() {
+    let ctx = make_full_context().await;
+
+    ctx.store_execution_result(&small_result("step-m1"))
+        .await
+        .unwrap();
+    ctx.store_execution_result(&small_result("step-m2"))
         .await
         .unwrap();
 
-    assert!(stored.is_some(), "content should be in session store");
-    assert_eq!(stored.unwrap().as_str().unwrap(), original);
-}
-
-#[tokio::test]
-async fn small_result_not_persisted() {
-    let result = small_result("step-a2");
-
-    assert!(
-        result.parts_to_persist().is_empty(),
-        "small result should have no parts to persist"
-    );
-}
-
-#[tokio::test]
-async fn load_persisted_result_returns_full_content() {
-    let ctx = make_session_only_context().await;
-    let mut result = large_result("step-a3");
-    let parts = result.parts_to_persist();
-    let original = parts[0].1.clone();
-
-    ctx.persist_large_parts(&mut result, &parts).await.unwrap();
-
-    let namespace = format!("tool-results:{}", ctx.thread_id);
-    let store_ref = format!("session-store:{}/step-a3_1", namespace);
-    let loaded = ctx.load_persisted_result(&store_ref).await.unwrap();
-    assert_eq!(loaded, original);
-}
-
-#[tokio::test]
-async fn load_persisted_result_errors_on_missing_key() {
-    let ctx = make_session_only_context().await;
-    let store_ref = format!(
-        "session-store:tool-results:{}/nonexistent_step_0",
-        ctx.thread_id
-    );
-    let err = ctx.load_persisted_result(&store_ref).await.unwrap_err();
-    assert!(
-        err.to_string().contains("not found"),
-        "error should mention 'not found', got: {}",
-        err
-    );
-}
-
-#[tokio::test]
-async fn load_persisted_result_rejects_bad_store_ref() {
-    let ctx = make_session_only_context().await;
-    // Old-style filesystem path — should be rejected
-    let err = ctx
-        .load_persisted_result("tool-results/abc/def/step1_0.txt")
-        .await
-        .unwrap_err();
-    assert!(
-        err.to_string().contains("Invalid store ref"),
-        "got: {}",
-        err
-    );
-}
-
-// ── Group B: full round-trip with scratchpad ──────────────────────────────────
-
-#[tokio::test]
-async fn scratchpad_contains_compact_preview_after_persist() {
-    let ctx = make_full_context().await;
-    let result = large_result("step-b1");
-    let original_size: usize = result.parts_to_persist().iter().map(|(_, c)| c.len()).sum();
-
-    ctx.store_execution_result(&result).await.unwrap();
-
     let scratchpad = ctx.format_agent_scratchpad(None).await.unwrap();
+    // Two Observation sections should appear
+    let count = scratchpad.matches("Observation:").count();
     assert!(
-        scratchpad.contains("<persisted-output>"),
-        "scratchpad should contain persisted-output notice"
-    );
-    assert!(
-        scratchpad.contains("session-store:"),
-        "scratchpad should contain a session-store ref"
-    );
-    assert!(
-        scratchpad.len() < original_size,
-        "scratchpad ({} bytes) should be smaller than original ({} bytes)",
-        scratchpad.len(),
-        original_size
+        count >= 2,
+        "expected at least 2 Observation blocks, got {}:\n{}",
+        count,
+        scratchpad
     );
 }
 
-#[tokio::test]
-async fn full_round_trip_persist_then_load_via_scratchpad_ref() {
-    let ctx = make_full_context().await;
-    let result = large_result("step-b2");
-    let original = result.parts_to_persist()[0].1.clone();
-
-    // 1. Persist via normal execution path
-    ctx.store_execution_result(&result).await.unwrap();
-
-    // 2. Find the session-store ref embedded in the scratchpad preview
-    let scratchpad = ctx.format_agent_scratchpad(None).await.unwrap();
-    let ref_start = scratchpad
-        .find("session-store:")
-        .expect("session-store ref must appear in scratchpad");
-    let ref_end = scratchpad[ref_start..]
-        .find('\n')
-        .map(|n| ref_start + n)
-        .unwrap_or(scratchpad.len());
-    let store_ref = scratchpad[ref_start..ref_end].trim().to_string();
-
-    // 3. Load full content using the embedded ref — this is what an agent would do
-    let loaded = ctx.load_persisted_result(&store_ref).await.unwrap();
-    assert_eq!(loaded, original, "round-trip content must match original");
+/// PERSIST_THRESHOLD_BYTES is at least 50,000 (Task 2 raised it from 8,000).
+#[test]
+fn persist_threshold_is_at_least_50k() {
+    assert!(
+        PERSIST_THRESHOLD_BYTES >= 50_000,
+        "PERSIST_THRESHOLD_BYTES should be >= 50_000, got {}",
+        PERSIST_THRESHOLD_BYTES
+    );
 }

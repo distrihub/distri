@@ -3,30 +3,17 @@
 
 use super::{RESULT_PREFIX, truncate_str};
 use crate::colors::{COLOR_GRAY, COLOR_GREEN, COLOR_RED, COLOR_RESET};
-use distri_types::{Part, ToolResponse};
+use crate::extract::{ToolFields, extract_fields};
+use distri_types::ToolResponse;
 
 pub fn render_local_tool(result: &ToolResponse) {
-    match result.tool_name.as_str() {
-        "Bash" => render_bash(result),
-        "Read" => render_read(result),
-        "Write" => render_write(result),
-        "Edit" => render_edit(result),
-        "Glob" => render_glob(result),
-        "Grep" => render_grep(result),
-        _ => super::tool_result::render_tool_result(result),
-    }
-}
-
-fn render_bash(result: &ToolResponse) {
-    for part in &result.parts {
-        if let Part::Data(value) = part {
-            let exit_code = value
-                .get("exit_code")
-                .and_then(|v| v.as_i64())
-                .unwrap_or(-1);
-            let stdout = value.get("stdout").and_then(|v| v.as_str()).unwrap_or("");
-            let stderr = value.get("stderr").and_then(|v| v.as_str()).unwrap_or("");
-
+    let fields = extract_fields(result);
+    match fields {
+        ToolFields::Bash {
+            stdout,
+            stderr,
+            exit_code,
+        } => {
             // Show stdout (first 5 lines)
             if !stdout.trim().is_empty() {
                 let lines: Vec<&str> = stdout.lines().collect();
@@ -58,27 +45,13 @@ fn render_bash(result: &ToolResponse) {
                     COLOR_RED, RESULT_PREFIX, exit_code, COLOR_RESET
                 );
             }
-            return;
         }
-    }
-}
-
-fn render_read(result: &ToolResponse) {
-    for part in &result.parts {
-        if let Part::Data(value) = part {
-            let lines_read = value
-                .get("lines_read")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0);
-            let total = value
-                .get("total_lines")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0);
-            let truncated = value
-                .get("truncated")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-
+        ToolFields::Read {
+            lines_read,
+            total,
+            truncated,
+            ..
+        } => {
             if truncated {
                 println!(
                     "{}{}Read {} lines (of {} total){}",
@@ -90,68 +63,37 @@ fn render_read(result: &ToolResponse) {
                     COLOR_GRAY, RESULT_PREFIX, lines_read, COLOR_RESET
                 );
             }
-            return;
         }
-    }
-}
-
-fn render_write(result: &ToolResponse) {
-    for part in &result.parts {
-        if let Part::Data(value) = part {
-            let path = value
-                .get("file_path")
-                .and_then(|v| v.as_str())
-                .unwrap_or("?");
-            let bytes = value
-                .get("bytes_written")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0);
+        ToolFields::Write {
+            file_path,
+            bytes_written,
+        } => {
             println!(
                 "{}{}Wrote {} bytes to {}{}",
-                COLOR_GREEN, RESULT_PREFIX, bytes, path, COLOR_RESET
+                COLOR_GREEN, RESULT_PREFIX, bytes_written, file_path, COLOR_RESET
             );
-            return;
         }
-    }
-}
-
-fn render_edit(result: &ToolResponse) {
-    for part in &result.parts {
-        if let Part::Data(value) = part {
-            let path = value
-                .get("file_path")
-                .and_then(|v| v.as_str())
-                .unwrap_or("?");
-            let replacements = value
-                .get("replacements")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(1);
+        ToolFields::Edit {
+            file_path,
+            replacements,
+        } => {
             if replacements == 1 {
                 println!(
                     "{}{}Updated {}{}",
-                    COLOR_GREEN, RESULT_PREFIX, path, COLOR_RESET
+                    COLOR_GREEN, RESULT_PREFIX, file_path, COLOR_RESET
                 );
             } else {
                 println!(
                     "{}{}Updated {} ({} replacements){}",
-                    COLOR_GREEN, RESULT_PREFIX, path, replacements, COLOR_RESET
+                    COLOR_GREEN, RESULT_PREFIX, file_path, replacements, COLOR_RESET
                 );
             }
-            return;
         }
-    }
-}
-
-fn render_glob(result: &ToolResponse) {
-    for part in &result.parts {
-        if let Part::Data(value) = part {
-            let num_files = value.get("num_files").and_then(|v| v.as_u64()).unwrap_or(0);
-            let truncated = value
-                .get("truncated")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-            let filenames = value.get("filenames").and_then(|v| v.as_array());
-
+        ToolFields::Glob {
+            filenames,
+            num_files,
+            truncated,
+        } => {
             let suffix = if truncated { " (truncated)" } else { "" };
             println!(
                 "{}{}{} files{}{}",
@@ -159,39 +101,23 @@ fn render_glob(result: &ToolResponse) {
             );
 
             // Show first few filenames
-            if let Some(files) = filenames {
-                for f in files.iter().take(5) {
-                    if let Some(name) = f.as_str() {
-                        println!("{}  {}{}", COLOR_GRAY, name, COLOR_RESET);
-                    }
-                }
-                if files.len() > 5 {
-                    println!(
-                        "{}  … and {} more{}",
-                        COLOR_GRAY,
-                        files.len() - 5,
-                        COLOR_RESET
-                    );
-                }
+            for name in filenames.iter().take(5) {
+                println!("{}  {}{}", COLOR_GRAY, name, COLOR_RESET);
             }
-            return;
+            if filenames.len() > 5 {
+                println!(
+                    "{}  … and {} more{}",
+                    COLOR_GRAY,
+                    filenames.len() - 5,
+                    COLOR_RESET
+                );
+            }
         }
-    }
-}
-
-fn render_grep(result: &ToolResponse) {
-    for part in &result.parts {
-        if let Part::Data(value) = part {
-            let total_lines = value
-                .get("total_lines")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0);
-            let truncated = value
-                .get("truncated")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-            let output = value.get("output").and_then(|v| v.as_str()).unwrap_or("");
-
+        ToolFields::Grep {
+            output,
+            total_lines,
+            truncated,
+        } => {
             let suffix = if truncated { " (truncated)" } else { "" };
             println!(
                 "{}{}{} results{}{}",
@@ -213,7 +139,7 @@ fn render_grep(result: &ToolResponse) {
                     );
                 }
             }
-            return;
         }
+        _ => super::tool_result::render_tool_result(result),
     }
 }

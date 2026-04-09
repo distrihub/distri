@@ -152,7 +152,9 @@ impl AgentStreamClient {
     /// Returns true if this tool name is declared external (client-handled).
     fn is_external_tool(&self, tool_name: &str) -> bool {
         self.external_tool_names.contains(tool_name)
-            || self.tool_registry.as_ref()
+            || self
+                .tool_registry
+                .as_ref()
                 .map_or(false, |r| r.has_tool("*", tool_name))
     }
 

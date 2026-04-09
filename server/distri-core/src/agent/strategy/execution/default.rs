@@ -1,6 +1,5 @@
 use crate::{
     agent::{
-        file::process_large_tool_responses,
         strategy::execution::{ExecutionResult, ExecutionStrategy},
         AgentEventType, ExecutorContext, InvokeResult,
     },
@@ -147,44 +146,42 @@ impl AgentExecutor {
         tool_results: &[ToolResultWithSkip],
         context: Arc<ExecutorContext>,
         step_id: &str,
-        step: &PlanStep,
+        _step: &PlanStep,
     ) -> Result<ToolResultResponse, AgentError> {
         if tool_results.is_empty() {
             return Ok(ToolResultResponse::default());
         }
 
         let mut processed_tool_results: Vec<crate::types::ToolResponse> = Vec::new();
-        let orchestrator = context.get_orchestrator()?;
 
         let mut input_required = false;
         for result in tool_results {
             match result {
                 ToolResultWithSkip::ToolResult(tool_result) => {
-                    let should_process_artifacts = self
-                        .agent_definition
-                        .as_ref()
-                        .map(|def| def.should_write_large_tool_responses_to_fs())
-                        .unwrap_or(false);
+                    let fields = distri_formatter::extract::extract_fields(tool_result);
+                    let content_size = fields.content_size();
 
-                    let processed_response = if should_process_artifacts {
-                        // Get the original task from the current step's thought
-                        let original_task = step
-                            .thought
-                            .clone()
-                            .unwrap_or_else(|| "Analyze the content".to_string());
+                    let processed_response = if content_size
+                        > distri_types::tool_result_store::PERSIST_THRESHOLD_BYTES
+                    {
+                        let file_ref = self
+                            .persist_large_result(tool_result, &fields, &context)
+                            .await;
 
-                        // Process tool response through filesystem's artifact wrapper to handle large content
-                        process_large_tool_responses(
-                            tool_result.clone(),
-                            &context.thread_id,
-                            &context.task_id,
-                            &orchestrator,
-                            &original_task,
+                        let file_ref_tuple =
+                            file_ref.as_deref().map(|path| (path, content_size / 1024));
+                        let formatted = fields.format_plain(
+                            distri_types::tool_result_store::PREVIEW_SIZE_BYTES,
+                            file_ref_tuple,
+                        );
+
+                        crate::types::ToolResponse::from_parts(
+                            tool_result.tool_call_id.clone(),
+                            tool_result.tool_name.clone(),
+                            vec![Part::Text(formatted)],
                         )
-                        .await
-                        .map_err(|e| AgentError::ToolResponseProcessing(e.to_string()))?
                     } else {
-                        // Return the tool response as-is without artifact processing
+                        // Small result: keep raw parts for provider compatibility
                         tool_result.clone()
                     };
 
@@ -216,6 +213,88 @@ impl AgentExecutor {
             tool_responses: processed_tool_results,
             input_required,
         })
+    }
+
+    /// Persist a large tool result to disk via Write tool or artifact storage fallback.
+    /// Returns the file path/reference if persistence succeeded.
+    async fn persist_large_result(
+        &self,
+        tool_result: &crate::types::ToolResponse,
+        fields: &distri_formatter::extract::ToolFields,
+        context: &Arc<ExecutorContext>,
+    ) -> Option<String> {
+        let content = fields.large_content();
+        if content.is_empty() {
+            return None;
+        }
+
+        let file_path = format!(".distri/tool-results/{}.txt", tool_result.tool_call_id);
+
+        // Try Write tool first
+        let tools = context.get_tools().await;
+        let write_tool = crate::agent::tool_lookup::find_tool_by_name(&tools, "Write");
+
+        if let Some(tool) = write_tool {
+            let write_call = crate::types::ToolCall {
+                tool_call_id: format!("sys_{}", tool_result.tool_call_id),
+                tool_name: "Write".to_string(),
+                input: serde_json::json!({
+                    "file_path": file_path,
+                    "content": content,
+                }),
+            };
+
+            let tool_context = crate::tools::context::to_tool_context(context.as_ref());
+            match tool
+                .execute(write_call, std::sync::Arc::new(tool_context))
+                .await
+            {
+                Ok(_) => {
+                    tracing::debug!(
+                        path = %file_path,
+                        size = content.len(),
+                        "Large tool result persisted via Write"
+                    );
+                    return Some(file_path);
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "Write tool failed, falling back to artifact storage"
+                    );
+                }
+            }
+        }
+
+        // Fallback: artifact storage
+        if let Ok(orchestrator) = context.get_orchestrator() {
+            let base_path = distri_filesystem::ArtifactWrapper::task_namespace(
+                &context.thread_id,
+                &context.task_id,
+            );
+            if let Ok(wrapper) = orchestrator
+                .session_filesystem
+                .create_artifact_wrapper(base_path)
+                .await
+            {
+                let filename = format!("{}.txt", tool_result.tool_call_id);
+                match wrapper.save_artifact(&filename, &content).await {
+                    Ok(()) => {
+                        tracing::debug!(
+                            filename = %filename,
+                            "Large tool result persisted to artifacts"
+                        );
+                        return Some(format!("artifact:{}", filename));
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "Artifact storage also failed");
+                    }
+                }
+            }
+        }
+
+        tracing::warn!("Could not persist large tool result");
+        None
     }
 }
 

@@ -1,5 +1,6 @@
 use super::RESULT_PREFIX;
 use crate::colors::{COLOR_GRAY, COLOR_GREEN, COLOR_RED, COLOR_RESET};
+use crate::extract::{ToolFields, extract_fields};
 use distri_types::{Part, ToolResponse};
 
 /// Render shell tool results (start_shell, execute_shell, stop_shell).
@@ -20,36 +21,43 @@ pub fn render_shell(result: &ToolResponse) {
             );
         }
         "execute_shell" | "execute_command" => {
-            for part in &result.parts {
-                match part {
-                    Part::Text(text) => {
-                        let lines: Vec<&str> = text.lines().collect();
-                        let total = lines.len();
-                        for line in lines.iter().take(5) {
-                            println!("{}  {}{}", COLOR_GRAY, line, COLOR_RESET);
-                        }
-                        if total > 5 {
-                            println!("{}  … ({} lines total){}", COLOR_GRAY, total, COLOR_RESET);
-                        }
+            let has_data = result.parts.iter().any(|p| matches!(p, Part::Data(_)));
+            let fields = extract_fields(result);
+            if let ToolFields::Shell {
+                stdout,
+                stderr,
+                exit_code,
+            } = fields
+            {
+                if !stdout.trim().is_empty() {
+                    let lines: Vec<&str> = stdout.lines().collect();
+                    let total = lines.len();
+                    for line in lines.iter().take(5) {
+                        println!("{}  {}{}", COLOR_GRAY, line, COLOR_RESET);
                     }
-                    Part::Data(value) => {
-                        if let Some(obj) = value.as_object() {
-                            if let Some(code) = obj.get("exit_code").and_then(|c| c.as_i64()) {
-                                let color = if code == 0 { COLOR_GREEN } else { COLOR_RED };
-                                println!("{}{}exit: {}{}", color, RESULT_PREFIX, code, COLOR_RESET);
-                            }
-                            if let Some(stderr) = obj.get("stderr").and_then(|s| s.as_str())
-                                && !stderr.trim().is_empty()
-                            {
-                                let first = stderr.lines().next().unwrap_or("");
-                                println!(
-                                    "{}{}stderr: {}{}",
-                                    COLOR_RED, RESULT_PREFIX, first, COLOR_RESET
-                                );
-                            }
-                        }
+                    if total > 5 {
+                        println!("{}  … ({} lines total){}", COLOR_GRAY, total, COLOR_RESET);
                     }
-                    _ => {}
+                }
+
+                if has_data {
+                    if !stderr.trim().is_empty() {
+                        let first = stderr.lines().next().unwrap_or("");
+                        println!(
+                            "{}{}stderr: {}{}",
+                            COLOR_RED, RESULT_PREFIX, first, COLOR_RESET
+                        );
+                    }
+
+                    let color = if exit_code == 0 {
+                        COLOR_GREEN
+                    } else {
+                        COLOR_RED
+                    };
+                    println!(
+                        "{}{}exit: {}{}",
+                        color, RESULT_PREFIX, exit_code, COLOR_RESET
+                    );
                 }
             }
         }

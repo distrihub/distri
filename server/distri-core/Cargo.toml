@@ -28,6 +28,7 @@ distri-stores = { path = "../distri-stores", version = "0.3.7", default-features
 distri-filesystem = { path = "../distri-filesystem", version = "0.3.7" }
 distri-auth = { path = "../distri-auth", version = "0.3.7" }
 distri-workflow = { path = "../../distri-workflow", version = "0.3.7" }
+distri-formatter = { path = "../../distri-formatter", version = "0.3.7" }
 llm-gateway = { path = "../llm-gateway", version = "0.3.7" }
 
 async-trait = { workspace = true }

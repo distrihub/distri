@@ -4,7 +4,6 @@ description = "Unified code execution, web research, and file operations agent"
 max_iterations = 25
 context_size = 80000
 include_scratchpad = true
-write_large_tool_responses_to_fs = true
 tool_format = "provider"
 
 [strategy]

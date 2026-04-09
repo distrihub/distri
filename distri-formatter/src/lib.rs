@@ -1,4 +1,5 @@
 pub mod colors;
+pub mod extract;
 pub mod renderers;
 pub mod state;
 pub mod status;
@@ -159,11 +160,7 @@ pub trait SurfaceRenderer: Send + Sync {
     ///
     /// Returns `RendererOutput::None` by default — plain-text surfaces ignore
     /// structured content and let the agent's text response serve as fallback.
-    fn render_structured(
-        &mut self,
-        _tool_name: &str,
-        _data: &serde_json::Value,
-    ) -> RendererOutput {
+    fn render_structured(&mut self, _tool_name: &str, _data: &serde_json::Value) -> RendererOutput {
         RendererOutput::None
     }
 

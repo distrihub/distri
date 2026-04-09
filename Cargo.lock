@@ -1757,6 +1757,7 @@ dependencies = [
  "distri-a2a",
  "distri-auth",
  "distri-filesystem",
+ "distri-formatter",
  "distri-parsers",
  "distri-stores",
  "distri-types",

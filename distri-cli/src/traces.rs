@@ -260,10 +260,7 @@ fn parse_otlp_spans(otlp: &serde_json::Value) -> Vec<CliSpan> {
 
 fn parse_single_span(v: &serde_json::Value) -> Option<CliSpan> {
     let span_id = v.get("spanId")?.as_str()?.to_string();
-    let parent_raw = v
-        .get("parentSpanId")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let parent_raw = v.get("parentSpanId").and_then(|v| v.as_str()).unwrap_or("");
     let parent_span_id = if parent_raw.is_empty() {
         None
     } else {
@@ -298,10 +295,9 @@ fn parse_single_span(v: &serde_json::Value) -> Option<CliSpan> {
     let mut attributes = Vec::new();
     if let Some(attrs) = v.get("attributes").and_then(|v| v.as_array()) {
         for attr in attrs {
-            if let (Some(key), Some(value)) = (
-                attr.get("key").and_then(|v| v.as_str()),
-                attr.get("value"),
-            ) {
+            if let (Some(key), Some(value)) =
+                (attr.get("key").and_then(|v| v.as_str()), attr.get("value"))
+            {
                 let val_str = extract_otlp_value(value);
                 attributes.push((key.to_string(), val_str));
             }
@@ -546,12 +542,7 @@ pub async fn print_trace_list(client: &Distri, limit: i64) {
             for trace in &traces {
                 print_trace_summary(trace, width);
             }
-            println!(
-                "  {}{}{}\n",
-                COLOR_GRAY,
-                separator(width - 2),
-                COLOR_RESET
-            );
+            println!("  {}{}{}\n", COLOR_GRAY, separator(width - 2), COLOR_RESET);
             println!(
                 "  {}Use `distri traces show <trace-id>` to view details{}",
                 COLOR_GRAY, COLOR_RESET
@@ -572,11 +563,7 @@ fn print_trace_summary(trace: &TraceSummary, _width: usize) {
     } else {
         String::new()
     };
-    let models: Vec<&str> = trace
-        .models
-        .iter()
-        .filter_map(|m| m.as_deref())
-        .collect();
+    let models: Vec<&str> = trace.models.iter().filter_map(|m| m.as_deref()).collect();
     let model_str = if models.is_empty() {
         String::new()
     } else {
@@ -593,10 +580,7 @@ fn print_trace_summary(trace: &TraceSummary, _width: usize) {
         COLOR_BOLD,
         trace.name,
         COLOR_RESET,
-        format!(
-            "{}{} spans{}",
-            COLOR_GRAY, trace.span_count, COLOR_RESET
-        ),
+        format!("{}{} spans{}", COLOR_GRAY, trace.span_count, COLOR_RESET),
         COLOR_BRIGHT_CYAN,
         duration,
         COLOR_BRIGHT_YELLOW,
@@ -648,7 +632,12 @@ fn print_trace_summary(trace: &TraceSummary, _width: usize) {
 // Trace detail (Gantt chart)
 // ─────────────────────────────────────────────────────────────────────────────
 
-pub async fn print_trace_detail(client: &Distri, id: &str, span_filter: Option<&str>, verbose: bool) {
+pub async fn print_trace_detail(
+    client: &Distri,
+    id: &str,
+    span_filter: Option<&str>,
+    verbose: bool,
+) {
     // Try as trace_id first, then as thread_id
     let otlp = match client.get_spans(Some(id), None).await {
         Ok(v) => {
@@ -733,10 +722,7 @@ pub async fn print_trace_detail(client: &Distri, id: &str, span_filter: Option<&
         }
 
         if let Some(inp) = input {
-            println!(
-                "  {}{}INPUT:{}",
-                COLOR_BOLD, COLOR_BRIGHT_BLUE, COLOR_RESET
-            );
+            println!("  {}{}INPUT:{}", COLOR_BOLD, COLOR_BRIGHT_BLUE, COLOR_RESET);
             if verbose {
                 let display = format_value_pretty(inp);
                 for line in display.lines() {
@@ -786,7 +772,15 @@ fn render_span_row(
         if !matches {
             // Still recurse into children
             for child in &span.children {
-                render_span_row(child, depth, min_start, max_end, bar_width, span_filter, verbose);
+                render_span_row(
+                    child,
+                    depth,
+                    min_start,
+                    max_end,
+                    bar_width,
+                    span_filter,
+                    verbose,
+                );
             }
             return;
         }
@@ -802,7 +796,12 @@ fn render_span_row(
 
     if let Some(tokens) = span.input_tokens() {
         if tokens > 0 {
-            info_parts.push(format!("{}{}↑{}", COLOR_GRAY, format_tokens(tokens), COLOR_RESET));
+            info_parts.push(format!(
+                "{}{}↑{}",
+                COLOR_GRAY,
+                format_tokens(tokens),
+                COLOR_RESET
+            ));
         }
     }
     if let Some(cost) = span.cost() {
@@ -825,17 +824,20 @@ fn render_span_row(
     let span_id_display = &span.span_id;
 
     // Category badge
-    let badge = format!(
-        "{}[{}]{}",
-        cat.color(),
-        cat.label(),
-        COLOR_RESET
-    );
+    let badge = format!("{}[{}]{}", cat.color(), cat.label(), COLOR_RESET);
 
     // Span row: indent + badge + title + span_id + info
     println!(
         "{}{} {}{}{}  {}{}{}  {}",
-        indent, badge, COLOR_BOLD, title, COLOR_RESET, COLOR_GRAY, span_id_display, COLOR_RESET, info_str,
+        indent,
+        badge,
+        COLOR_BOLD,
+        title,
+        COLOR_RESET,
+        COLOR_GRAY,
+        span_id_display,
+        COLOR_RESET,
+        info_str,
     );
 
     // Show input/output: short summary by default, full with -v
@@ -908,7 +910,15 @@ fn render_span_row(
 
     // Recurse into children
     for child in &span.children {
-        render_span_row(child, depth + 1, min_start, max_end, bar_width, span_filter, verbose);
+        render_span_row(
+            child,
+            depth + 1,
+            min_start,
+            max_end,
+            bar_width,
+            span_filter,
+            verbose,
+        );
     }
 }
 
@@ -967,7 +977,6 @@ fn aggregate_stats(spans: &[CliSpan]) -> (i64, f64) {
     (tokens, cost)
 }
 
-
 /// Extract a human-readable one-line summary from a value.
 /// If it's JSON, pull out the first text/content field. Otherwise treat as plain text.
 fn extract_readable_summary(text: &str, max_len: usize) -> String {
@@ -988,7 +997,11 @@ fn extract_readable_summary(text: &str, max_len: usize) -> String {
     }
 
     // Plain text: take first non-empty line
-    let line = trimmed.lines().find(|l| !l.trim().is_empty()).unwrap_or("").trim();
+    let line = trimmed
+        .lines()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or("")
+        .trim();
     if line.len() > max_len {
         format!("{}...", &line[..max_len])
     } else {
@@ -1036,7 +1049,9 @@ fn extract_text_from_json(val: &serde_json::Value) -> Option<String> {
         }
         serde_json::Value::Object(obj) => {
             // Try common content fields first
-            for key in &["content", "text", "message", "output", "input", "value", "parts"] {
+            for key in &[
+                "content", "text", "message", "output", "input", "value", "parts",
+            ] {
                 if let Some(v) = obj.get(*key) {
                     if let Some(s) = extract_text_from_json(v) {
                         return Some(s);

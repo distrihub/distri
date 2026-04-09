@@ -2,7 +2,6 @@
 name = "test_parent_artifact"
 description = "Testing artifact system with large tool responses"
 max_iterations = 5
-write_large_tool_responses_to_fs = true
 
 [model_settings]
 model = "gpt-4.1-mini"

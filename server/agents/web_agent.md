@@ -1,7 +1,6 @@
 ---
 name = "web"
 description = "Web browsing and automation agent for comprehensive web interaction."
-write_large_tool_responses_to_fs = true
 context_size = 100000
 max_iterations = 20
 tool_format = "provider"

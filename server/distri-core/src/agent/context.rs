@@ -1124,35 +1124,11 @@ impl ExecutorContext {
         }
     }
 
-    /// Two-level tool result persistence:
-    /// 1. Persist full results to disk for parts exceeding the threshold
-    /// 2. Store compact version (with previews) in the scratchpad
-    ///
-    /// This mirrors Claude Code's approach: full results always available on disk,
-    /// only compact previews consume context window tokens.
+    /// Store execution result compacted in the scratchpad.
     pub async fn store_execution_result(&self, result: &ExecutionResult) -> Result<(), AgentError> {
         tracing::debug!("Storing execution result for task_id: {}", self.task_id);
 
-        // Level 1: Persist large parts to disk
-        let mut result_with_previews = result.clone();
-        let parts_to_persist = result.parts_to_persist();
-
-        if !parts_to_persist.is_empty() {
-            if let Err(e) = self
-                .persist_large_parts(&mut result_with_previews, &parts_to_persist)
-                .await
-            {
-                tracing::warn!(
-                    "Failed to persist large tool result parts to disk: {}. Falling back to compact.",
-                    e
-                );
-                // Fall back to regular compaction if disk persistence fails
-                result_with_previews = result.clone();
-            }
-        }
-
-        // Level 2: Compact and store in scratchpad (now with preview references for large parts)
-        let compacted = result_with_previews.compact_for_storage();
+        let compacted = result.compact_for_storage();
         let exec_entry = ExecutionHistoryEntry {
             thread_id: self.thread_id.clone(),
             task_id: self.task_id.clone(),
@@ -1175,103 +1151,6 @@ impl ExecutorContext {
         let scratchpad_store = orchestrator.stores.scratchpad_store.clone();
         scratchpad_store.add_entry(&self.thread_id, entry).await?;
         Ok(())
-    }
-
-    /// Persist large result parts to the session store (Postgres).
-    ///
-    /// For each (part_index, content) pair, writes full content under the key:
-    /// `tool-results:{thread_id}` / `{step_id}_{part_index}`
-    ///
-    /// Then replaces the corresponding part in `result` with a preview notice.
-    ///
-    /// NOTE: This uses the session store (Postgres) rather than the local filesystem so that
-    /// persisted results survive pod restarts and are accessible across replicas.
-    /// TODO(roadmap): Switch to Azure Blob Storage for very large results (>1MB) — see roadmap.md.
-    pub(crate) async fn persist_large_parts(
-        &self,
-        result: &mut ExecutionResult,
-        parts_to_persist: &[(usize, String)],
-    ) -> Result<(), AgentError> {
-        let session_store = self
-            .stores
-            .as_ref()
-            .map(|s| &s.session_store)
-            .or_else(|| self.orchestrator.as_ref().map(|o| &o.stores.session_store))
-            .ok_or(AgentError::Session("Session store not found".to_string()))?;
-
-        let namespace = format!("tool-results:{}", self.thread_id);
-
-        for (part_index, content) in parts_to_persist {
-            let key = format!("{}_{}", result.step_id, part_index);
-
-            if let Err(e) = session_store
-                .set_value(
-                    &namespace,
-                    &key,
-                    &serde_json::Value::String(content.clone()),
-                )
-                .await
-            {
-                tracing::warn!(
-                    "Failed to persist tool result to session store ({}): {}",
-                    key,
-                    e
-                );
-                continue;
-            }
-
-            // Replace in-memory part with a preview (path encodes the lookup key)
-            let store_ref = format!("session-store:{}/{}", namespace, key);
-            result.replace_with_preview(*part_index, &store_ref, None);
-
-            // Update content replacement state for prompt cache stability
-            let mut state = self.content_replacement_state.write().await;
-            let notice = match &result.parts[*part_index] {
-                distri_types::Part::Text(t) => t.clone(),
-                _ => continue,
-            };
-            state.mark_replaced(&format!("{}:{}", result.step_id, part_index), notice);
-
-            tracing::info!(
-                "Persisted large tool result ({} bytes) to session store key {}",
-                content.len(),
-                key
-            );
-        }
-
-        Ok(())
-    }
-
-    /// Load a persisted tool result from the session store.
-    ///
-    /// `store_ref` is the value embedded in the `<persisted-output>` notice, formatted as
-    /// `session-store:{namespace}/{key}`.
-    pub async fn load_persisted_result(&self, store_ref: &str) -> Result<String, AgentError> {
-        let rest = store_ref
-            .strip_prefix("session-store:")
-            .ok_or_else(|| AgentError::Execution(format!("Invalid store ref: {}", store_ref)))?;
-
-        let (namespace, key) = rest
-            .split_once('/')
-            .ok_or_else(|| AgentError::Execution(format!("Malformed store ref: {}", store_ref)))?;
-
-        let session_store = self
-            .stores
-            .as_ref()
-            .map(|s| &s.session_store)
-            .or_else(|| self.orchestrator.as_ref().map(|o| &o.stores.session_store))
-            .ok_or(AgentError::Session("Session store not found".to_string()))?;
-
-        let value = session_store
-            .get_value(namespace, key)
-            .await
-            .map_err(|e| AgentError::Execution(format!("Failed to load persisted result: {}", e)))?
-            .ok_or_else(|| AgentError::Execution(format!("Persisted result not found: {}", key)))?;
-
-        match value {
-            serde_json::Value::String(s) => Ok(s),
-            other => Ok(other.to_string()),
-        }
     }
 
     /// Check file read cache and return FILE_UNCHANGED_STUB if file hasn't changed.
