@@ -44,6 +44,20 @@ pub fn build_message_params(
     if let Some(model) = model {
         meta["definition_overrides"] = serde_json::json!({ "model": model });
     }
+    // Auto-inject distri.Environment so templates can detect the client source
+    {
+        let dv = meta
+            .get("dynamic_values")
+            .and_then(|v| v.as_object().cloned())
+            .unwrap_or_default();
+        let mut dv = dv;
+        dv.insert(
+            "distri".to_string(),
+            serde_json::json!({ "Environment": "distri-cli" }),
+        );
+        meta["dynamic_values"] = serde_json::Value::Object(dv);
+    }
+
     if let Some(conn_ctx) = connections_context {
         let dv = meta
             .get("dynamic_values")
