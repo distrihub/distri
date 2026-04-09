@@ -18,7 +18,9 @@
     "gemini-2.5-flash": { "input": 0.15, "output": 0.60, "cached_input": 0.0375 },
     "gemini-2.0-flash": { "input": 0.10, "output": 0.40, "cached_input": 0.025 },
     "deepseek-chat": { "input": 0.27, "output": 1.10, "cached_input": 0.07 },
-    "deepseek-reasoner": { "input": 0.55, "output": 2.19, "cached_input": 0.14 }
+    "deepseek-reasoner": { "input": 0.55, "output": 2.19, "cached_input": 0.14 },
+    "qwen3.6-plus": { "input": 0.276, "output": 1.651, "cached_input": 0.028 },
+    "qwen3.5-35b-a3b": { "input": 0.16, "output": 1.30, "cached_input": 0.016 }
   },
   "_comment": "Prices in USD per 1M tokens. cached_input is the price for cache-read input tokens."
 }

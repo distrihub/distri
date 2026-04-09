@@ -16,6 +16,7 @@ pub enum ProviderType {
     AzureAiFoundry,
     AwsBedrock,
     GoogleVertex,
+    AlibabaCloud,
     #[serde(rename = "elevenlabs")]
     ElevenLabs,
     /// User-defined provider (LangDB-compatible / OpenAI-compatible)
@@ -33,6 +34,7 @@ impl ProviderType {
             Self::AzureAiFoundry => "azure_ai_foundry",
             Self::AwsBedrock => "aws_bedrock",
             Self::GoogleVertex => "google_vertex",
+            Self::AlibabaCloud => "alibaba_cloud",
             Self::ElevenLabs => "elevenlabs",
             Self::Custom(id) => id.as_str(),
         }
@@ -47,6 +49,7 @@ impl ProviderType {
             Self::AzureAiFoundry => "Azure AI Foundry",
             Self::AwsBedrock => "AWS Bedrock",
             Self::GoogleVertex => "Google Vertex AI",
+            Self::AlibabaCloud => "Alibaba Cloud",
             Self::ElevenLabs => "ElevenLabs",
             Self::Custom(id) => id.as_str(),
         }
@@ -61,6 +64,7 @@ impl ProviderType {
             "azure_ai_foundry" => Self::AzureAiFoundry,
             "aws_bedrock" => Self::AwsBedrock,
             "google_vertex" => Self::GoogleVertex,
+            "alibaba_cloud" => Self::AlibabaCloud,
             "elevenlabs" => Self::ElevenLabs,
             other => Self::Custom(other.to_string()),
         }

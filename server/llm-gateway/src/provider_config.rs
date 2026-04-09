@@ -114,6 +114,15 @@ impl From<&ModelProvider> for ProviderClientConfig {
                 query_params: vec![],
                 send_api_key_header: true,
             },
+            ModelProvider::AlibabaCloud { base_url, api_key } => Self {
+                base_url: base_url.clone(),
+                api_key_secret: "DASHSCOPE_API_KEY",
+                inline_api_key: api_key.clone(),
+                project_id: None,
+                extra_headers: HashMap::new(),
+                query_params: vec![],
+                send_api_key_header: false,
+            },
         }
     }
 }
@@ -255,6 +264,7 @@ mod tests {
             ("azure_ai_foundry", "AZURE_AI_FOUNDRY_API_KEY"),
             ("aws_bedrock", "AWS_ACCESS_KEY_ID"),
             ("google_vertex", "GOOGLE_VERTEX_API_KEY"),
+            ("alibaba_cloud", "DASHSCOPE_API_KEY"),
         ];
         for (provider_str, expected_secret) in cases {
             let ms = distri_types::ModelSettings::from_provider_model_str(&format!(

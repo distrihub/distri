@@ -752,6 +752,45 @@
         }
       ],
       "models": []
+    },
+    {
+      "id": "alibaba_cloud",
+      "label": "Alibaba Cloud",
+      "keys": [
+        {
+          "key": "DASHSCOPE_API_KEY",
+          "label": "API key",
+          "placeholder": "sk-...",
+          "required": true,
+          "sensitive": true
+        }
+      ],
+      "models": [
+        {
+          "id": "qwen3.6-plus",
+          "name": "Qwen3.6 Plus",
+          "capability": "completion",
+          "context_window": 1000000,
+          "pricing": {
+            "type": "completion",
+            "input": 0.276,
+            "output": 1.651,
+            "cached_input": 0.028
+          }
+        },
+        {
+          "id": "qwen3.5-35b-a3b",
+          "name": "Qwen3.5 35B A3B",
+          "capability": "completion",
+          "context_window": 262144,
+          "pricing": {
+            "type": "completion",
+            "input": 0.16,
+            "output": 1.30,
+            "cached_input": 0.016
+          }
+        }
+      ]
     }
   ]
 }
