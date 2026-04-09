@@ -1551,7 +1551,8 @@ pub fn create_llm_executor(
         | ModelProvider::Gemini { .. }
         | ModelProvider::AzureAiFoundry { .. }
         | ModelProvider::AwsBedrock { .. }
-        | ModelProvider::GoogleVertex { .. } => {
+        | ModelProvider::GoogleVertex { .. }
+        | ModelProvider::AlibabaCloud { .. } => {
             let resolved = ms.inner.api_format.resolve(&ms.model);
             if resolved == distri_types::ResolvedOpenAiApiFormat::Responses {
                 Ok(Box::new(

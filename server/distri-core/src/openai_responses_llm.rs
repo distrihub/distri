@@ -130,6 +130,16 @@ impl OpenAIResponsesLLMExecutor {
                 let url_with_version = format!("{}?api-version={}", azure_base, api_version);
                 (url_with_version, String::new()) // Empty api_key since we use header
             }
+            ModelProvider::AlibabaCloud { base_url, api_key } => {
+                let key = if let Some(key) = api_key {
+                    key.clone()
+                } else {
+                    secret_resolver
+                        .resolve_or_empty("DASHSCOPE_API_KEY")
+                        .await
+                };
+                (base_url.clone(), key)
+            }
             other => {
                 return Err(AgentError::InvalidConfiguration(format!(
                     "OpenAI Responses API format is not supported for {:?} provider",
