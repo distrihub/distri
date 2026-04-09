@@ -3,7 +3,7 @@
 
 use super::{RESULT_PREFIX, truncate_str};
 use crate::colors::{COLOR_GRAY, COLOR_GREEN, COLOR_RED, COLOR_RESET};
-use crate::extract::{extract_fields, ToolFields};
+use crate::extract::{ToolFields, extract_fields};
 use distri_types::ToolResponse;
 
 pub fn render_local_tool(result: &ToolResponse) {

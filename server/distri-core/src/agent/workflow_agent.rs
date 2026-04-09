@@ -257,8 +257,10 @@ impl StepExecutor for ContextStepExecutor {
             } => {
                 // Resolve templates in command and args
                 let resolved_command = resolve_template(command, wf_context);
-                let resolved_args: Vec<String> =
-                    args.iter().map(|a| resolve_template(a, wf_context)).collect();
+                let resolved_args: Vec<String> = args
+                    .iter()
+                    .map(|a| resolve_template(a, wf_context))
+                    .collect();
 
                 // Build process: use shell wrapper or direct command
                 let mut cmd = match shell {
@@ -268,11 +270,7 @@ impl StepExecutor for ContextStepExecutor {
                         if resolved_args.is_empty() {
                             c.arg(&resolved_command);
                         } else {
-                            c.arg(format!(
-                                "{} {}",
-                                resolved_command,
-                                resolved_args.join(" ")
-                            ));
+                            c.arg(format!("{} {}", resolved_command, resolved_args.join(" ")));
                         }
                         c
                     }

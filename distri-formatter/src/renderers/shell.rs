@@ -1,6 +1,6 @@
 use super::RESULT_PREFIX;
 use crate::colors::{COLOR_GRAY, COLOR_GREEN, COLOR_RED, COLOR_RESET};
-use crate::extract::{extract_fields, ToolFields};
+use crate::extract::{ToolFields, extract_fields};
 use distri_types::{Part, ToolResponse};
 
 /// Render shell tool results (start_shell, execute_shell, stop_shell).
@@ -49,8 +49,15 @@ pub fn render_shell(result: &ToolResponse) {
                         );
                     }
 
-                    let color = if exit_code == 0 { COLOR_GREEN } else { COLOR_RED };
-                    println!("{}{}exit: {}{}", color, RESULT_PREFIX, exit_code, COLOR_RESET);
+                    let color = if exit_code == 0 {
+                        COLOR_GREEN
+                    } else {
+                        COLOR_RED
+                    };
+                    println!(
+                        "{}{}exit: {}{}",
+                        color, RESULT_PREFIX, exit_code, COLOR_RESET
+                    );
                 }
             }
         }

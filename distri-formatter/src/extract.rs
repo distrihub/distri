@@ -171,10 +171,7 @@ fn extract_edit(response: &ToolResponse) -> ToolFields {
     if let Some(v) = first_data(response) {
         ToolFields::Edit {
             file_path: str_field(v, "file_path"),
-            replacements: v
-                .get("replacements")
-                .and_then(|x| x.as_u64())
-                .unwrap_or(1),
+            replacements: v.get("replacements").and_then(|x| x.as_u64()).unwrap_or(1),
         }
     } else {
         ToolFields::Edit {
@@ -188,10 +185,7 @@ fn extract_write(response: &ToolResponse) -> ToolFields {
     if let Some(v) = first_data(response) {
         ToolFields::Write {
             file_path: str_field(v, "file_path"),
-            bytes_written: v
-                .get("bytes_written")
-                .and_then(|x| x.as_u64())
-                .unwrap_or(0),
+            bytes_written: v.get("bytes_written").and_then(|x| x.as_u64()).unwrap_or(0),
         }
     } else {
         ToolFields::Write {
@@ -257,10 +251,7 @@ fn generic_text(response: &ToolResponse) -> String {
 }
 
 fn str_field(v: &serde_json::Value, key: &str) -> String {
-    v.get(key)
-        .and_then(|x| x.as_str())
-        .unwrap_or("")
-        .to_owned()
+    v.get(key).and_then(|x| x.as_str()).unwrap_or("").to_owned()
 }
 
 // ---------------------------------------------------------------------------
@@ -268,6 +259,30 @@ fn str_field(v: &serde_json::Value, key: &str) -> String {
 // ---------------------------------------------------------------------------
 
 impl ToolFields {
+    /// Extract the main content string for persistence (used when content exceeds threshold).
+    pub fn large_content(&self) -> String {
+        match self {
+            ToolFields::Bash { stdout, stderr, .. } => {
+                if stderr.is_empty() {
+                    stdout.clone()
+                } else {
+                    format!("{}\n--- stderr ---\n{}", stdout, stderr)
+                }
+            }
+            ToolFields::Read { content, .. } => content.clone(),
+            ToolFields::Grep { output, .. } => output.clone(),
+            ToolFields::Shell { stdout, stderr, .. } => {
+                if stderr.is_empty() {
+                    stdout.clone()
+                } else {
+                    format!("{}\n--- stderr ---\n{}", stdout, stderr)
+                }
+            }
+            ToolFields::Generic { text } => text.clone(),
+            _ => String::new(), // Edit/Write/Glob don't have large content
+        }
+    }
+
     /// Total byte size of the primary content fields.
     /// Used for threshold checks (decide whether to persist to disk).
     pub fn content_size(&self) -> usize {
@@ -370,9 +385,7 @@ impl ToolFields {
 
         // Append file-ref hint
         if let Some((path, size_kb)) = file_ref {
-            format!(
-                "{body}\n[Full output saved — Read(\"{path}\") for {size_kb}KB]"
-            )
+            format!("{body}\n[Full output saved — Read(\"{path}\") for {size_kb}KB]")
         } else {
             body
         }
@@ -409,11 +422,7 @@ mod tests {
     use serde_json::json;
 
     fn make_data_response(tool_name: &str, data: serde_json::Value) -> ToolResponse {
-        ToolResponse::direct(
-            "call-1".to_owned(),
-            tool_name.to_owned(),
-            data,
-        )
+        ToolResponse::direct("call-1".to_owned(), tool_name.to_owned(), data)
     }
 
     fn make_text_response(tool_name: &str, text: &str) -> ToolResponse {
@@ -486,10 +495,7 @@ mod tests {
 
     #[test]
     fn test_extract_edit() {
-        let r = make_data_response(
-            "Edit",
-            json!({"file_path": "/bar.rs", "replacements": 3}),
-        );
+        let r = make_data_response("Edit", json!({"file_path": "/bar.rs", "replacements": 3}));
         let f = extract_fields(&r);
         assert!(matches!(
             f,
@@ -514,11 +520,13 @@ mod tests {
 
     #[test]
     fn test_extract_shell() {
-        for name in &["execute_shell", "execute_command", "start_shell", "stop_shell"] {
-            let r = make_data_response(
-                name,
-                json!({"stdout": "ok", "stderr": "", "exit_code": 0}),
-            );
+        for name in &[
+            "execute_shell",
+            "execute_command",
+            "start_shell",
+            "stop_shell",
+        ] {
+            let r = make_data_response(name, json!({"stdout": "ok", "stderr": "", "exit_code": 0}));
             let f = extract_fields(&r);
             assert!(
                 matches!(f, ToolFields::Shell { .. }),
@@ -533,10 +541,7 @@ mod tests {
 
     #[test]
     fn test_extract_unknown_data_tool() {
-        let r = make_data_response(
-            "SomeFancyTool",
-            json!({"output": "fancy result"}),
-        );
+        let r = make_data_response("SomeFancyTool", json!({"output": "fancy result"}));
         let f = extract_fields(&r);
         assert!(matches!(
             f,
