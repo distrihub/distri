@@ -191,6 +191,8 @@ pub struct ExecutorContext {
     /// take_otel_agent_span() on inner contexts created by create_inner_context() — those share
     /// this Arc and would silently steal the span from the outer context.
     pub otel_agent_span: Arc<StdMutex<Option<tracing::Span>>>,
+    /// Tracks skills loaded inline for re-injection after context compaction
+    pub skill_tracker: Arc<RwLock<crate::agent::skill_tracker::ActiveSkillTracker>>,
 }
 
 impl std::fmt::Debug for ExecutorContext {
@@ -253,6 +255,7 @@ impl Default for ExecutorContext {
                 distri_types::ContentReplacementState::default(),
             )),
             otel_agent_span: Arc::new(StdMutex::new(None)),
+            skill_tracker: Arc::new(RwLock::new(crate::agent::skill_tracker::ActiveSkillTracker::default())),
         }
     }
 }
@@ -939,6 +942,9 @@ impl ExecutorContext {
             tool_metadata: self.tool_metadata.clone(),
             default_model_settings: self.default_model_settings.clone(),
             env_vars: self.env_vars.clone(),
+            skill_tracker: Arc::new(RwLock::new(
+                self.skill_tracker.read().await.clone()
+            )),
 
             ..Default::default()
         }
@@ -1067,6 +1073,7 @@ impl ExecutorContext {
             file_read_cache: self.file_read_cache.clone(),
             content_replacement_state: self.content_replacement_state.clone(),
             otel_agent_span: self.otel_agent_span.clone(),
+            skill_tracker: self.skill_tracker.clone(),
         };
 
         (inner_context, inner_rx)
@@ -1363,6 +1370,87 @@ impl ExecutorContext {
         let scratchpad_store = orchestrator.stores.scratchpad_store.clone();
         scratchpad_store.add_entry(&self.thread_id, entry).await?;
         Ok(())
+    }
+
+    /// Re-inject tracked skill content as SkillContext scratchpad entries.
+    /// Called after compaction to ensure skill content survives.
+    /// Returns the list of skill IDs that were re-injected.
+    pub async fn reinject_skills(&self) -> Result<Vec<String>, AgentError> {
+        let tracker = self.skill_tracker.read().await;
+        let candidates = tracker.get_reinjection_candidates();
+
+        if candidates.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let orchestrator = self.orchestrator.as_ref().ok_or(AgentError::Execution(
+            "Orchestrator not initialized".to_string(),
+        ))?;
+        let scratchpad_store = orchestrator.stores.scratchpad_store.clone();
+
+        let mut reinjected_ids = vec![];
+        let now = chrono::Utc::now().timestamp_millis();
+
+        for candidate in &candidates {
+            let entry = distri_types::ScratchpadEntry {
+                timestamp: now,
+                entry_type: distri_types::ScratchpadEntryType::SkillContext(
+                    distri_types::SkillContextEntry {
+                        skill_id: candidate.skill_id.clone(),
+                        content: candidate.content.clone(),
+                        reinjected_at: now,
+                    },
+                ),
+                task_id: self.task_id.clone(),
+                parent_task_id: self.parent_task_id.clone(),
+                entry_kind: Some("skill_context".to_string()),
+            };
+
+            scratchpad_store
+                .add_entry(&self.thread_id, entry)
+                .await?;
+
+            reinjected_ids.push(candidate.skill_id.clone());
+        }
+
+        Ok(reinjected_ids)
+    }
+
+    /// Store a CompactionSummary as a scratchpad entry
+    pub async fn store_summary_entry(
+        &self,
+        summary: &distri_types::CompactionSummary,
+    ) -> Result<(), AgentError> {
+        let orchestrator = self.orchestrator.as_ref().ok_or(AgentError::Execution(
+            "Orchestrator not initialized".to_string(),
+        ))?;
+        let scratchpad_store = orchestrator.stores.scratchpad_store.clone();
+
+        let entry = distri_types::ScratchpadEntry {
+            timestamp: chrono::Utc::now().timestamp_millis(),
+            entry_type: distri_types::ScratchpadEntryType::Summary(summary.clone()),
+            task_id: self.task_id.clone(),
+            parent_task_id: self.parent_task_id.clone(),
+            entry_kind: Some("summary".to_string()),
+        };
+
+        scratchpad_store
+            .add_entry(&self.thread_id, entry)
+            .await?;
+        Ok(())
+    }
+
+    /// Get raw scratchpad entries for the current task
+    pub async fn get_scratchpad_entries(&self) -> Result<Vec<distri_types::ScratchpadEntry>, AgentError> {
+        let orchestrator = self.orchestrator.as_ref().ok_or(AgentError::Execution(
+            "Orchestrator not initialized".to_string(),
+        ))?;
+        let scratchpad_store = orchestrator.stores.scratchpad_store.clone();
+        let entries = scratchpad_store
+            .get_entries(&self.thread_id, &self.task_id, None)
+            .await
+            .unwrap_or_default();
+        Ok(entries)
     }
 
     /// Set agent_id - for context switching in multi-agent scenarios
