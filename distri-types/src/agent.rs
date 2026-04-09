@@ -894,6 +894,12 @@ pub enum ModelProvider {
         api_key: Option<String>,
         project_id: Option<String>,
     },
+    #[serde(rename = "alibaba_cloud")]
+    AlibabaCloud {
+        #[serde(default = "ModelProvider::alibaba_cloud_base_url")]
+        base_url: String,
+        api_key: Option<String>,
+    },
 }
 /// Defines the secret requirements for a provider
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1014,6 +1020,10 @@ impl ModelProvider {
         "2024-06-01".to_string()
     }
 
+    pub fn alibaba_cloud_base_url() -> String {
+        "https://dashscope-intl.aliyuncs.com/compatible-mode/v1".to_string()
+    }
+
     /// Returns the provider type enum for this provider.
     pub fn provider_type(&self) -> crate::models::ProviderType {
         match self {
@@ -1027,6 +1037,7 @@ impl ModelProvider {
             ModelProvider::AzureAiFoundry { .. } => crate::models::ProviderType::AzureAiFoundry,
             ModelProvider::AwsBedrock { .. } => crate::models::ProviderType::AwsBedrock,
             ModelProvider::GoogleVertex { .. } => crate::models::ProviderType::GoogleVertex,
+            ModelProvider::AlibabaCloud { .. } => crate::models::ProviderType::AlibabaCloud,
         }
     }
 
@@ -1041,6 +1052,7 @@ impl ModelProvider {
             ModelProvider::AzureAiFoundry { .. } => "azure_ai_foundry",
             ModelProvider::AwsBedrock { .. } => "aws_bedrock",
             ModelProvider::GoogleVertex { .. } => "google_vertex",
+            ModelProvider::AlibabaCloud { .. } => "alibaba_cloud",
         }
     }
 
@@ -1097,6 +1109,13 @@ impl ModelProvider {
                     vec!["GOOGLE_VERTEX_API_KEY"]
                 }
             }
+            ModelProvider::AlibabaCloud { api_key, .. } => {
+                if api_key.is_some() {
+                    vec![]
+                } else {
+                    vec!["DASHSCOPE_API_KEY"]
+                }
+            }
         }
     }
 
@@ -1136,6 +1155,7 @@ impl ModelProvider {
             ModelProvider::AzureAiFoundry { .. } => "Azure AI Foundry",
             ModelProvider::AwsBedrock { .. } => "AWS Bedrock",
             ModelProvider::GoogleVertex { .. } => "Google Vertex AI",
+            ModelProvider::AlibabaCloud { .. } => "Alibaba Cloud",
         }
     }
 
@@ -1151,6 +1171,7 @@ impl ModelProvider {
             ModelProvider::AzureAiFoundry { .. } => "azure.ai.inference",
             ModelProvider::AwsBedrock { .. } => "aws.bedrock",
             ModelProvider::GoogleVertex { .. } => "gcp.vertex_ai",
+            ModelProvider::AlibabaCloud { .. } => "alibaba_cloud",
         }
     }
 }
@@ -1247,6 +1268,10 @@ impl ModelSettings {
                 base_url: String::new(),
                 api_key: None,
                 project_id: None,
+            },
+            "alibaba_cloud" => ModelProvider::AlibabaCloud {
+                base_url: ModelProvider::alibaba_cloud_base_url(),
+                api_key: None,
             },
             _ if provider_str.starts_with("custom_") => ModelProvider::OpenAICompatible {
                 base_url: String::new(),
