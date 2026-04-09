@@ -1,5 +1,6 @@
 pub mod agent_loop;
 pub mod browser_sessions;
+pub mod compaction;
 pub mod context;
 pub mod context_size_manager;
 pub mod debug;
