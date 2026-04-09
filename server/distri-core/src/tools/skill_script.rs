@@ -107,6 +107,15 @@ impl ExecutorContextTool for LoadSkillTool {
                 } else {
                     skill.content.clone()
                 };
+                // Track skill for post-compaction re-injection
+                {
+                    let mut tracker = context.skill_tracker.write().await;
+                    tracker.track(
+                        skill_id.to_string(),
+                        content.clone(),
+                        chrono::Utc::now().timestamp_millis(),
+                    );
+                }
                 Ok(vec![Part::Text(content)])
             }
 
