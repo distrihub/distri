@@ -65,6 +65,7 @@ fn compaction_event_carries_budget() {
         context_limit: 8000,
         usage_ratio: 0.65,
         summary: None,
+        reinjected_skills: vec![],
         context_budget: Some(ContextBudget {
             conversation_tokens: 3200,
             context_window_size: 200_000,
@@ -119,6 +120,7 @@ fn event_types_exhaustive_match() {
             context_limit: 0,
             usage_ratio: 0.0,
             summary: None,
+            reinjected_skills: vec![],
             context_budget: None,
         },
     ];

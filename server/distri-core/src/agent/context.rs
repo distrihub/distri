@@ -1290,6 +1290,7 @@ impl ExecutorContext {
                 context_limit: max_tokens,
                 usage_ratio: result.usage_ratio,
                 summary: None,
+                reinjected_skills: vec![],
                 context_budget: Some(self.get_usage().await.context_budget.clone()),
             })
             .await;

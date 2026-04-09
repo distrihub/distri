@@ -211,6 +211,9 @@ pub enum AgentEventType {
         context_limit: usize,
         usage_ratio: f64,
         summary: Option<String>,
+        /// Skill IDs re-injected after compaction
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        reinjected_skills: Vec<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         context_budget: Option<ContextBudget>,
     },
