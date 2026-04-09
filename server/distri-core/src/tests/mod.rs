@@ -1,4 +1,5 @@
 mod agent_loop;
+mod compaction_integration;
 mod deferred_tools_integration;
 mod definition;
 mod llm;
