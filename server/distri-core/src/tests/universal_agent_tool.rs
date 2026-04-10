@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use serde_json::json;
 
-use crate::agent::{load_agents_from_dir, ExecutorContext};
+use crate::agent::{load_builtin_agents, ExecutorContext};
 use crate::tools::builtin::{
     is_agent_accessible, normalize_builtin_name, resolve_coder_name, CallAgentInput,
     ALWAYS_AVAILABLE_BUILTINS, OPT_IN_BUILTINS,
@@ -325,38 +325,65 @@ async fn test_no_call_name_tools_registered() {
     );
 }
 
-// ── Integration test: built-in agents loadable from _builtin/ ──────
+// ── Integration test: built-in agents ────────────────────────────────
 
 #[tokio::test]
-async fn test_builtin_agents_loadable_from_directory() {
-    // Scan only _builtin/ subdirectory to avoid README.md and other non-agent files
-    let builtin_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("agents")
-        .join("_builtin");
-
-    let agents = load_agents_from_dir(&builtin_dir).await.unwrap();
+async fn test_builtin_agents_embedded_and_parseable() {
+    let agents = load_builtin_agents().await.unwrap();
     let agent_names: Vec<&str> = agents.iter().map(|a| a.name.as_str()).collect();
 
     assert!(
         agent_names.contains(&"_builtin/plan"),
-        "should find _builtin/plan, got: {:?}",
+        "should have plan, got: {:?}",
         agent_names
     );
     assert!(
         agent_names.contains(&"_builtin/coder"),
-        "should find _builtin/coder, got: {:?}",
+        "should have coder, got: {:?}",
         agent_names
     );
     assert!(
         agent_names.contains(&"_builtin/coder_lite"),
-        "should find _builtin/coder_lite, got: {:?}",
+        "should have coder_lite, got: {:?}",
         agent_names
     );
     assert!(
         agent_names.contains(&"_builtin/explore"),
-        "should find _builtin/explore, got: {:?}",
+        "should have explore, got: {:?}",
         agent_names
+    );
+    assert_eq!(agents.len(), 4);
+}
+
+#[tokio::test]
+async fn test_builtin_agents_registered_on_orchestrator_build() {
+    let orchestrator = Arc::new(
+        AgentOrchestratorBuilder::default()
+            .with_store_config(test_store_config())
+            .build()
+            .await
+            .unwrap(),
+    );
+
+    // Built-in agents should be auto-registered during build()
+    assert!(
+        orchestrator.get_agent("_builtin/plan").await.is_some(),
+        "_builtin/plan should be registered on build"
+    );
+    assert!(
+        orchestrator.get_agent("_builtin/coder").await.is_some(),
+        "_builtin/coder should be registered on build"
+    );
+    assert!(
+        orchestrator
+            .get_agent("_builtin/coder_lite")
+            .await
+            .is_some(),
+        "_builtin/coder_lite should be registered on build"
+    );
+    assert!(
+        orchestrator.get_agent("_builtin/explore").await.is_some(),
+        "_builtin/explore should be registered on build"
     );
 }
 
