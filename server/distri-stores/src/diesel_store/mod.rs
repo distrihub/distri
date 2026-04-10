@@ -3628,12 +3628,26 @@ where
     async fn get_skill(&self, skill_id_val: &str) -> Result<Option<SkillRecord>> {
         use crate::schema::skills::dsl::*;
         let mut conn = self.conn().await?;
+        // Try by ID first, then by name
         let result = skills
             .filter(id.eq(skill_id_val))
             .select(SkillModel::as_select())
             .first::<SkillModel>(&mut conn)
             .await
             .optional()?;
+
+        let result = match result {
+            Some(r) => Some(r),
+            None => {
+                // Fallback: look up by name
+                skills
+                    .filter(name.eq(skill_id_val))
+                    .select(SkillModel::as_select())
+                    .first::<SkillModel>(&mut conn)
+                    .await
+                    .optional()?
+            }
+        };
 
         match result {
             Some(skill_model) => Ok(Some(to_skill_record(skill_model))),
