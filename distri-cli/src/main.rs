@@ -537,6 +537,12 @@ async fn main() -> Result<()> {
             );
             app.inject_external_tools(&mut params);
 
+            // Set runtime_mode so the server knows this is a CLI execution
+            {
+                let meta = params.metadata.get_or_insert(serde_json::json!({}));
+                meta["runtime_mode"] = serde_json::json!("cli");
+            }
+
             // --remote: shorthand for --overrides '{"remote":true}'
             if remote {
                 let meta = params.metadata.get_or_insert(serde_json::json!({}));
