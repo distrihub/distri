@@ -297,9 +297,9 @@ pub async fn load_template_file(path: &Path) -> Result<distri::NewPromptTemplate
 
 pub async fn handle_skills_command(client: &Distri, command: SkillsCommands) -> Result<()> {
     match command {
-        SkillsCommands::List => {
+        SkillsCommands::List { all } => {
             println!("Listing skills...");
-            let skills = client.list_skills().await?;
+            let skills = client.list_skills_filtered(all).await?;
             if skills.is_empty() {
                 println!("No skills found.");
             } else {

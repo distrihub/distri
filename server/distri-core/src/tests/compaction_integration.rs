@@ -7,8 +7,8 @@ use std::sync::{Arc, Mutex};
 
 use distri_types::{
     configuration::{DbConnectionConfig, MetadataStoreConfig, StoreConfig},
-    ExecutionResult, ExecutionStatus, Part, SkillContextEntry,
-    ScratchpadEntry, ScratchpadEntryType, ExecutionHistoryEntry,
+    ExecutionHistoryEntry, ExecutionResult, ExecutionStatus, Part, ScratchpadEntry,
+    ScratchpadEntryType, SkillContextEntry,
 };
 
 use crate::agent::compaction::perform_tier2_summarization;
@@ -146,7 +146,10 @@ async fn skill_content_survives_tier2_summarize() {
         .await
         .unwrap();
 
-    assert!(summary.entries_summarized > 0, "should have summarized entries");
+    assert!(
+        summary.entries_summarized > 0,
+        "should have summarized entries"
+    );
 
     // Store the summary
     ctx.store_summary_entry(&summary).await.unwrap();
@@ -174,7 +177,12 @@ async fn skill_content_survives_tier3_emergency_reset() {
     let ctx = make_test_context().await;
 
     // Track a skill
-    track_skill(&ctx, "rubric", "# Rubric\nCritical evaluation criteria that must survive").await;
+    track_skill(
+        &ctx,
+        "rubric",
+        "# Rubric\nCritical evaluation criteria that must survive",
+    )
+    .await;
 
     // Store many large execution results
     for i in 1..=10 {
@@ -193,7 +201,10 @@ async fn skill_content_survives_tier3_emergency_reset() {
     let result = manager.evaluate_and_compact(&entries);
 
     assert!(
-        matches!(result.tier, Some(distri_types::events::CompactionTier::Reset)),
+        matches!(
+            result.tier,
+            Some(distri_types::events::CompactionTier::Reset)
+        ),
         "Expected Tier 3 Reset, got {:?}",
         result.tier
     );
@@ -206,7 +217,11 @@ async fn skill_content_survives_tier3_emergency_reset() {
     assert!(
         has_skill,
         "SkillContext must survive emergency reset. Entries: {:?}",
-        result.entries.iter().map(|e| &e.entry_kind).collect::<Vec<_>>()
+        result
+            .entries
+            .iter()
+            .map(|e| &e.entry_kind)
+            .collect::<Vec<_>>()
     );
 }
 

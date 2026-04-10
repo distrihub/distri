@@ -255,7 +255,9 @@ impl Default for ExecutorContext {
                 distri_types::ContentReplacementState::default(),
             )),
             otel_agent_span: Arc::new(StdMutex::new(None)),
-            skill_tracker: Arc::new(RwLock::new(crate::agent::skill_tracker::ActiveSkillTracker::default())),
+            skill_tracker: Arc::new(RwLock::new(
+                crate::agent::skill_tracker::ActiveSkillTracker::default(),
+            )),
         }
     }
 }
@@ -942,9 +944,7 @@ impl ExecutorContext {
             tool_metadata: self.tool_metadata.clone(),
             default_model_settings: self.default_model_settings.clone(),
             env_vars: self.env_vars.clone(),
-            skill_tracker: Arc::new(RwLock::new(
-                self.skill_tracker.read().await.clone()
-            )),
+            skill_tracker: Arc::new(RwLock::new(self.skill_tracker.read().await.clone())),
 
             ..Default::default()
         }
@@ -1425,9 +1425,7 @@ impl ExecutorContext {
                 entry_kind: Some("skill_context".to_string()),
             };
 
-            scratchpad_store
-                .add_entry(&self.thread_id, entry)
-                .await?;
+            scratchpad_store.add_entry(&self.thread_id, entry).await?;
 
             reinjected_ids.push(candidate.skill_id.clone());
         }
@@ -1453,14 +1451,14 @@ impl ExecutorContext {
             entry_kind: Some("summary".to_string()),
         };
 
-        scratchpad_store
-            .add_entry(&self.thread_id, entry)
-            .await?;
+        scratchpad_store.add_entry(&self.thread_id, entry).await?;
         Ok(())
     }
 
     /// Get raw scratchpad entries for the current task
-    pub async fn get_scratchpad_entries(&self) -> Result<Vec<distri_types::ScratchpadEntry>, AgentError> {
+    pub async fn get_scratchpad_entries(
+        &self,
+    ) -> Result<Vec<distri_types::ScratchpadEntry>, AgentError> {
         let orchestrator = self.orchestrator.as_ref().ok_or(AgentError::Execution(
             "Orchestrator not initialized".to_string(),
         ))?;

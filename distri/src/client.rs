@@ -1866,9 +1866,17 @@ pub struct UpdateSkillRequest {
 impl Distri {
     // ========== Skill API ==========
 
-    /// List all skills owned by the current user.
+    /// List skills. When `include_public` is true, also returns public and system skills.
     pub async fn list_skills(&self) -> Result<Vec<SkillListItemResponse>, ClientError> {
-        let url = format!("{}/skills", self.base_url);
+        self.list_skills_filtered(false).await
+    }
+
+    /// List skills with optional public/system filter.
+    pub async fn list_skills_filtered(
+        &self,
+        include_public: bool,
+    ) -> Result<Vec<SkillListItemResponse>, ClientError> {
+        let url = format!("{}/skills?include_public={}", self.base_url, include_public);
         let resp = self.http.get(&url).send().await?;
 
         if resp.status().is_success() {

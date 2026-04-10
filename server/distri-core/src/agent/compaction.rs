@@ -173,7 +173,9 @@ mod tests {
             make_execution_entry(200, "Step 2: searched for files"),
             make_execution_entry(300, "Step 3: found the answer"),
         ];
-        let executor = make_mock_executor("The agent analyzed the problem, searched for files, and found the answer.");
+        let executor = make_mock_executor(
+            "The agent analyzed the problem, searched for files, and found the answer.",
+        );
         let config = make_config();
 
         let result = perform_tier2_summarization(&entries, &executor, &config)

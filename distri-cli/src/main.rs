@@ -286,7 +286,11 @@ pub(crate) enum PromptsCommands {
 #[derive(Subcommand, Debug, Clone)]
 pub(crate) enum SkillsCommands {
     /// List skills from the server
-    List,
+    List {
+        /// Show all skills (including public and system)
+        #[clap(short, long, help = "Show all skills including public and system")]
+        all: bool,
+    },
     /// Push skill(s) to the server from a file or directory
     Push {
         #[clap(help = "Path to a skill .md file or directory containing skill files")]

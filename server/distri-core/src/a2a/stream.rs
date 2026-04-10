@@ -461,7 +461,7 @@ pub async fn handle_message_send_streaming_sse(
             .and_then(|s| uuid::Uuid::parse_str(s).ok());
         let workspace_id_for_completion = workspace_id;
         let completion_task = tokio::spawn(with_user_and_workspace(user_id_for_completion, workspace_id_for_completion, async move {
-            let cancel_token = cancel_token_for_completion;
+            let _cancel_token = cancel_token_for_completion;
             let mut completed = false;
             while let Some(event) = event_rx.recv().await {
                 // Check for completion events - only complete when main task finishes
