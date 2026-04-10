@@ -645,16 +645,29 @@ pub(crate) fn normalize_builtin_name(name: &str) -> String {
 /// Check whether an agent is accessible from the calling agent's context.
 ///
 /// An agent is accessible if:
-/// - It is in `ALWAYS_AVAILABLE_BUILTINS`, OR
-/// - It is explicitly listed in the calling agent's `sub_agents`, OR
-/// - It exists in the agent store (for ad-hoc created agents)
+/// - It is in `ALWAYS_AVAILABLE_BUILTINS` (including short-name matches), OR
+/// - The calling agent's `sub_agents` contains `"*"` (wildcard), OR
+/// - It is explicitly listed in the calling agent's `sub_agents`
+///
+/// The `_runtime_mode` and `_use_coder_lite` parameters are accepted for
+/// future use but do not currently affect access control decisions.
 pub(crate) fn is_agent_accessible(
     agent_name: &str,
     sub_agents: &[String],
-    _all_agent_names: &[String],
+    _runtime_mode: &RuntimeMode,
+    _use_coder_lite: bool,
 ) -> bool {
-    // Always-available builtins are accessible regardless
-    if ALWAYS_AVAILABLE_BUILTINS.contains(&agent_name) {
+    let canonical = normalize_builtin_name(agent_name);
+
+    // Always-available builtins are accessible regardless (check both forms)
+    if ALWAYS_AVAILABLE_BUILTINS.contains(&agent_name)
+        || ALWAYS_AVAILABLE_BUILTINS.contains(&canonical.as_str())
+    {
+        return true;
+    }
+
+    // Wildcard grants access to everything
+    if sub_agents.iter().any(|sa| sa == "*") {
         return true;
     }
 
@@ -662,14 +675,8 @@ pub(crate) fn is_agent_accessible(
     if sub_agents.iter().any(|sa| {
         sa == agent_name
             || normalize_builtin_name(sa) == agent_name
-            || sa == &normalize_builtin_name(agent_name)
+            || sa == &canonical
     }) {
-        return true;
-    }
-
-    // Non-builtin agents that exist in the store are accessible
-    // (the caller should verify existence separately)
-    if !agent_name.starts_with("_builtin/") {
         return true;
     }
 
@@ -892,7 +899,7 @@ impl ExecutorContextTool for UniversalAgentTool {
             })
             .unwrap_or_default();
 
-        if !is_agent_accessible(&agent_name, &calling_agent_sub_agents, &[]) {
+        if !is_agent_accessible(&agent_name, &calling_agent_sub_agents, &context.runtime_mode, false) {
             return Err(AgentError::ToolExecution(format!(
                 "Agent '{}' is not accessible from '{}'. Add it to sub_agents or use an always-available builtin.",
                 agent_name, context.agent_id

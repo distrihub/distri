@@ -21,7 +21,7 @@ pub mod shell;
 mod state;
 pub use code::execute_code_with_tools;
 pub use context::to_tool_context;
-mod builtin;
+pub(crate) mod builtin;
 pub mod dynamic_factory;
 pub mod inject_env;
 pub mod request;

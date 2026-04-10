@@ -9,4 +9,5 @@ pub mod otel_hooks_test;
 mod request_tool;
 mod tool_result_format;
 mod tool_result_persistence;
+mod universal_agent_tool;
 mod usage_tracking;
