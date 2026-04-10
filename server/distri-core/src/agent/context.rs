@@ -79,6 +79,11 @@ pub struct ExecutorContextMetadata {
     /// Set by the eval simulator to test agent behavior without side effects.
     #[serde(default)]
     pub dry_run: Option<bool>,
+
+    /// Runtime environment. Determines which built-in agent variants to use.
+    /// Set by the client: "cli" for distri-cli, "browser" for JS SDK, defaults to "cloud".
+    #[serde(default)]
+    pub runtime_mode: distri_types::RuntimeMode,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -180,6 +185,9 @@ pub struct ExecutorContext {
     /// When true, unsafe tools are simulated via LLM instead of executed.
     /// Safe tools (tool_search, load_skill, final, write_todos) still execute normally.
     pub dry_run: bool,
+    /// Runtime mode determines built-in agent tool selection.
+    /// Set from metadata at context creation, inherited by child contexts.
+    pub runtime_mode: distri_types::RuntimeMode,
     /// LRU cache for file read deduplication (returns FILE_UNCHANGED_STUB for unchanged files)
     pub file_read_cache: Arc<RwLock<distri_types::FileReadCache>>,
     /// Tracks which tool results have been replaced with persisted previews (for prompt cache stability)
@@ -250,6 +258,7 @@ impl Default for ExecutorContext {
             hook_registry: Arc::new(RwLock::new(None)),
             default_model_settings: None,
             dry_run: false,
+            runtime_mode: distri_types::RuntimeMode::default(),
             file_read_cache: Arc::new(RwLock::new(distri_types::FileReadCache::new(200))),
             content_replacement_state: Arc::new(RwLock::new(
                 distri_types::ContentReplacementState::default(),
@@ -944,6 +953,7 @@ impl ExecutorContext {
             tool_metadata: self.tool_metadata.clone(),
             default_model_settings: self.default_model_settings.clone(),
             env_vars: self.env_vars.clone(),
+            runtime_mode: self.runtime_mode.clone(),
             skill_tracker: Arc::new(RwLock::new(self.skill_tracker.read().await.clone())),
 
             ..Default::default()
@@ -979,6 +989,7 @@ impl ExecutorContext {
             tool_metadata: self.tool_metadata.clone(),
             default_model_settings: self.default_model_settings.clone(),
             env_vars: self.env_vars.clone(),
+            runtime_mode: self.runtime_mode.clone(),
 
             ..Default::default()
         }
@@ -1070,6 +1081,7 @@ impl ExecutorContext {
             hook_registry: self.hook_registry.clone(),
             default_model_settings: self.default_model_settings.clone(),
             dry_run: self.dry_run,
+            runtime_mode: self.runtime_mode.clone(),
             file_read_cache: self.file_read_cache.clone(),
             content_replacement_state: self.content_replacement_state.clone(),
             otel_agent_span: self.otel_agent_span.clone(),
