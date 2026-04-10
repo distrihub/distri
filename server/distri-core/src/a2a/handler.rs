@@ -196,6 +196,7 @@ impl A2AHandler {
             hook_prompt_state,
             env_vars,
             dry_run,
+            runtime_mode: metadata.runtime_mode,
             ..Default::default()
         };
 
