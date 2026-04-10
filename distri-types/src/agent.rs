@@ -1450,11 +1450,11 @@ pub async fn parse_agent_markdown_content(content: &str) -> Result<StandardDefin
         )));
     }
 
-    // Validate that agent name is a valid JavaScript identifier
+    // Validate that agent name characters are valid (alphanumeric, underscore, or '/' for namespacing)
     if !agent_def
         .name
         .chars()
-        .all(|c| c.is_alphanumeric() || c == '_')
+        .all(|c| c.is_alphanumeric() || c == '_' || c == '/')
         || agent_def
             .name
             .chars()
@@ -1462,8 +1462,7 @@ pub async fn parse_agent_markdown_content(content: &str) -> Result<StandardDefin
             .is_some_and(|c| c.is_numeric())
     {
         return Err(AgentError::Validation(format!(
-            "Invalid agent name '{}': Agent names must be valid JavaScript identifiers (alphanumeric + underscores, cannot start with number). \
-                Reason: Agent names become function names in TypeScript runtime.",
+            "Invalid agent name '{}': Agent names must be alphanumeric with underscores or '/' for namespacing (e.g. '_builtin/plan'), cannot start with number.",
             agent_def.name
         )));
     }
@@ -1502,11 +1501,11 @@ pub fn validate_plugin_name(name: &str) -> Result<(), String> {
         ));
     }
 
-    // Check if all characters are valid for JavaScript identifier
+    // Check if all characters are valid (alphanumeric, underscore, or '/' for namespacing)
     for ch in name.chars() {
-        if !ch.is_ascii_alphanumeric() && ch != '_' {
+        if !ch.is_ascii_alphanumeric() && ch != '_' && ch != '/' {
             return Err(format!(
-                "Plugin name '{}' can only contain letters, numbers, and underscores",
+                "Plugin name '{}' can only contain letters, numbers, underscores, and '/' for namespacing",
                 name
             ));
         }
