@@ -699,27 +699,27 @@ pub(crate) fn resolve_coder_name(runtime_mode: &RuntimeMode, use_coder_lite: boo
 
 /// Input struct for the `call_agent` tool.
 #[derive(Debug, serde::Deserialize)]
-struct CallAgentInput {
+pub(crate) struct CallAgentInput {
     /// Name of the agent to call. If omitted, an ad-hoc agent is created from system_prompt.
     #[serde(default)]
-    agent: Option<String>,
+    pub(crate) agent: Option<String>,
     /// The task/prompt to send to the agent.
-    prompt: String,
+    pub(crate) prompt: String,
     /// System prompt for ad-hoc agent creation. When set without `agent`, creates a temporary agent.
     #[serde(default)]
-    system_prompt: Option<String>,
+    pub(crate) system_prompt: Option<String>,
     /// Tool names to give the ad-hoc agent (only used with system_prompt).
     #[serde(default)]
-    tools: Option<Vec<String>>,
+    pub(crate) tools: Option<Vec<String>>,
     /// Model override for the ad-hoc agent.
     #[serde(default)]
-    model: Option<String>,
+    pub(crate) model: Option<String>,
     /// When true, fork the current context (copy history) instead of creating a clean sub-task.
     #[serde(default)]
-    fork: bool,
+    pub(crate) fork: bool,
     /// Description for the ad-hoc agent.
     #[serde(default)]
-    description: Option<String>,
+    pub(crate) description: Option<String>,
 }
 
 /// Universal agent tool that replaces per-agent `call_<name>` tools with a single
