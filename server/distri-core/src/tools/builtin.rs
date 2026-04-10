@@ -339,7 +339,7 @@ impl ExecutorContextTool for TransferToAgentTool {
             Ok(invoke_result) => {
                 let child_final = child_context_clone.get_final_result().await;
                 child_final
-                    .or(invoke_result.content.map(|c| Value::String(c)))
+                    .or(invoke_result.content.map(Value::String))
                     .unwrap_or_else(|| Value::String("Agent completed without response".into()))
             }
             Err(e) => {
@@ -610,7 +610,7 @@ impl ExecutorContextTool for AgentTool {
                 Ok(invoke_result) => {
                     let final_result = child_context_clone.get_final_result().await;
                     let response_text = final_result
-                        .or(invoke_result.content.map(|c| Value::String(c)))
+                        .or(invoke_result.content.map(Value::String))
                         .unwrap_or_else(|| {
                             "Child agent completed without response".to_string().into()
                         });
@@ -629,6 +629,7 @@ impl ExecutorContextTool for AgentTool {
 pub(crate) const ALWAYS_AVAILABLE_BUILTINS: &[&str] = &["_builtin/plan", "_builtin/coder"];
 
 /// Built-in agents that are only available when explicitly listed in sub_agents.
+#[allow(dead_code)] // Used by tests
 pub(crate) const OPT_IN_BUILTINS: &[&str] = &["_builtin/explore"];
 
 /// Normalize a short builtin name to its canonical `_builtin/` prefixed form.
@@ -672,11 +673,10 @@ pub(crate) fn is_agent_accessible(
     }
 
     // Check if explicitly in sub_agents (exact match or short name match)
-    if sub_agents.iter().any(|sa| {
-        sa == agent_name
-            || normalize_builtin_name(sa) == agent_name
-            || sa == &canonical
-    }) {
+    if sub_agents
+        .iter()
+        .any(|sa| sa == agent_name || normalize_builtin_name(sa) == agent_name || sa == &canonical)
+    {
         return true;
     }
 
@@ -842,7 +842,7 @@ impl ExecutorContextTool for UniversalAgentTool {
         } else if input.system_prompt.is_some() {
             // Ad-hoc mode: create a temporary agent from system_prompt
             let adhoc_name = format!("_adhoc/{}", uuid::Uuid::new_v4());
-            let system_prompt = input.system_prompt.as_ref().unwrap();
+            let system_prompt = input.system_prompt.as_deref().unwrap_or_default();
 
             let mut definition = distri_types::StandardDefinition {
                 name: adhoc_name.clone(),
@@ -850,7 +850,7 @@ impl ExecutorContextTool for UniversalAgentTool {
                     .description
                     .clone()
                     .unwrap_or_else(|| "Ad-hoc agent".to_string()),
-                instructions: system_prompt.clone(),
+                instructions: system_prompt.to_string(),
                 ..Default::default()
             };
 
@@ -899,7 +899,12 @@ impl ExecutorContextTool for UniversalAgentTool {
             })
             .unwrap_or_default();
 
-        if !is_agent_accessible(&agent_name, &calling_agent_sub_agents, &context.runtime_mode, false) {
+        if !is_agent_accessible(
+            &agent_name,
+            &calling_agent_sub_agents,
+            &context.runtime_mode,
+            false,
+        ) {
             return Err(AgentError::ToolExecution(format!(
                 "Agent '{}' is not accessible from '{}'. Add it to sub_agents or use an always-available builtin.",
                 agent_name, context.agent_id
@@ -1080,7 +1085,7 @@ impl ExecutorContextTool for UniversalAgentTool {
                 Ok(invoke_result) => {
                     let final_result = forked_context_clone.get_final_result().await;
                     let response_text = final_result
-                        .or(invoke_result.content.map(|c| Value::String(c)))
+                        .or(invoke_result.content.map(Value::String))
                         .unwrap_or_else(|| {
                             Value::String("Forked agent completed without response".to_string())
                         });
@@ -1113,7 +1118,7 @@ impl ExecutorContextTool for UniversalAgentTool {
                 Ok(invoke_result) => {
                     let final_result = child_context_clone.get_final_result().await;
                     let response_text = final_result
-                        .or(invoke_result.content.map(|c| Value::String(c)))
+                        .or(invoke_result.content.map(Value::String))
                         .unwrap_or_else(|| {
                             Value::String("Child agent completed without response".to_string())
                         });

@@ -805,10 +805,16 @@ impl AgentOrchestrator {
                     for builtin_name in &["_builtin/plan", "_builtin/coder"] {
                         if let Some(agent_cfg) = self.get_agent(builtin_name).await {
                             let desc = match agent_cfg {
-                                distri_types::configuration::AgentConfig::StandardAgent(def) => def.description.clone(),
-                                distri_types::configuration::AgentConfig::WorkflowAgent(def) => def.description.clone(),
+                                distri_types::configuration::AgentConfig::StandardAgent(def) => {
+                                    def.description.clone()
+                                }
+                                distri_types::configuration::AgentConfig::WorkflowAgent(def) => {
+                                    def.description.clone()
+                                }
                             };
-                            let short_name = builtin_name.strip_prefix("_builtin/").unwrap_or(builtin_name);
+                            let short_name = builtin_name
+                                .strip_prefix("_builtin/")
+                                .unwrap_or(builtin_name);
                             sub_agent_lines.push(format!(
                                 "- **{}** — {} *(always available)*",
                                 short_name, desc
@@ -819,13 +825,19 @@ impl AgentOrchestrator {
                     // Declared sub_agents (store agents + opt-in built-ins)
                     for name in &definition.sub_agents {
                         if name == "*" {
-                            sub_agent_lines.push("- **\\*** — all agents in the workspace are available".to_string());
+                            sub_agent_lines.push(
+                                "- **\\*** — all agents in the workspace are available".to_string(),
+                            );
                             continue;
                         }
                         let desc = if let Some(agent_cfg) = self.get_agent(name).await {
                             match agent_cfg {
-                                distri_types::configuration::AgentConfig::StandardAgent(def) => def.description.clone(),
-                                distri_types::configuration::AgentConfig::WorkflowAgent(def) => def.description.clone(),
+                                distri_types::configuration::AgentConfig::StandardAgent(def) => {
+                                    def.description.clone()
+                                }
+                                distri_types::configuration::AgentConfig::WorkflowAgent(def) => {
+                                    def.description.clone()
+                                }
                             }
                         } else {
                             "Sub-agent".to_string()
