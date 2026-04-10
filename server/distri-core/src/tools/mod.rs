@@ -31,7 +31,7 @@ pub mod skill_script;
 pub mod tool_search;
 pub use builtin::{
     get_builtin_tools, AgentTool, ConsoleLogTool, DistriExecuteCodeTool, FinalTool,
-    TransferToAgentTool,
+    TransferToAgentTool, UniversalAgentTool,
 };
 pub use inject_env::InjectConnectionEnvTool;
 pub use tool_search::ToolSearchTool;
@@ -132,6 +132,8 @@ pub fn cast_to_executor_context_tool(
         "tool_search" => Ok(Box::new(tool_search::ToolSearchTool)),
         // Connection env injection
         "inject_connection_env" => Ok(Box::new(inject_env::InjectConnectionEnvTool)),
+        // Universal agent tool
+        "call_agent" => Ok(Box::new(UniversalAgentTool)),
         name if name.starts_with("call_") => {
             let safe_agent_name = name.strip_prefix("call_").unwrap_or(name);
             // Convert double underscores back to slashes for package/agent names
