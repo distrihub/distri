@@ -404,6 +404,20 @@ impl LlmDefinition {
     }
 }
 
+/// Runtime environment in which the agent is executing.
+/// Determines which built-in agent variants and tools are available.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeMode {
+    /// Running from distri-cli with local filesystem access
+    Cli,
+    /// Running on distri-cloud server (browsr sandbox for code execution)
+    #[default]
+    Cloud,
+    /// Running in browser with IndexedDB filesystem
+    Browser,
+}
+
 /// Agent definition - complete configuration for an agent
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 pub struct StandardDefinition {
@@ -529,6 +543,12 @@ pub struct StandardDefinition {
     /// Also settable via `--remote` CLI flag or `--overrides '{"remote":true}'`.
     #[serde(default, alias = "deepagent")]
     pub remote: bool,
+
+    /// When true, the built-in coder subagent uses CoderLite (browsr shell tools
+    /// directly) instead of the full Coder (distri-cli in browsr container).
+    /// Only relevant in cloud runtime mode. CLI and browser always use Coder.
+    #[serde(default)]
+    pub use_coder_lite: bool,
 }
 fn default_append_default_instructions() -> Option<bool> {
     Some(true)
@@ -1799,5 +1819,18 @@ mod tests {
             config.effective_delivery_mode(15),
             ToolDeliveryMode::Deferred
         );
+    }
+
+    #[test]
+    fn test_runtime_mode_serde() {
+        let mode: RuntimeMode = serde_json::from_str("\"cloud\"").unwrap();
+        assert_eq!(mode, RuntimeMode::Cloud);
+        let mode: RuntimeMode = serde_json::from_str("\"cli\"").unwrap();
+        assert_eq!(mode, RuntimeMode::Cli);
+        let mode: RuntimeMode = serde_json::from_str("\"browser\"").unwrap();
+        assert_eq!(mode, RuntimeMode::Browser);
+        assert_eq!(RuntimeMode::default(), RuntimeMode::Cloud);
+        let json = serde_json::to_string(&RuntimeMode::Cli).unwrap();
+        assert_eq!(json, "\"cli\"");
     }
 }
