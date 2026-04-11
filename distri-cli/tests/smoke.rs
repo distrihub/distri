@@ -11,8 +11,8 @@ use std::sync::Mutex;
 /// Without this, concurrent streams exhaust server worker threads.
 static STREAM_LOCK: Mutex<()> = Mutex::new(());
 
-fn smoke_base_url() -> Option<String> {
-    env::var("DISTRI_SMOKE_BASE_URL").ok()
+fn base_url() -> Option<String> {
+    env::var("DISTRI_BASE_URL").ok()
 }
 
 fn repo_root() -> PathBuf {
@@ -43,12 +43,12 @@ fn run_cli(base_url: &str, args: &[&str]) -> Result<()> {
     Ok(())
 }
 
-fn ensure_smoke_base_url() -> Result<Option<String>> {
-    let base_url = smoke_base_url();
-    if base_url.is_none() {
-        eprintln!("Skipping smoke test; set DISTRI_SMOKE_BASE_URL to enable.");
+fn ensure_base_url() -> Result<Option<String>> {
+    let url = base_url();
+    if url.is_none() {
+        eprintln!("Skipping smoke test; set DISTRI_BASE_URL to enable.");
     }
-    Ok(base_url)
+    Ok(url)
 }
 
 fn write_agent_fixture(dest: &Path, source_name: &str) -> Result<()> {
@@ -61,7 +61,7 @@ fn write_agent_fixture(dest: &Path, source_name: &str) -> Result<()> {
 
 #[test]
 fn smoke_agents_list() -> Result<()> {
-    let Some(base_url) = ensure_smoke_base_url()? else {
+    let Some(base_url) = ensure_base_url()? else {
         return Ok(());
     };
     run_cli(&base_url, &["agents", "list"])
@@ -69,7 +69,7 @@ fn smoke_agents_list() -> Result<()> {
 
 #[test]
 fn smoke_agents_push_single() -> Result<()> {
-    let Some(base_url) = ensure_smoke_base_url()? else {
+    let Some(base_url) = ensure_base_url()? else {
         return Ok(());
     };
     let agent_path = repo_root().join("agents").join("cli_agent.md");
@@ -87,7 +87,7 @@ fn smoke_agents_push_single() -> Result<()> {
 
 #[test]
 fn smoke_agents_push_all() -> Result<()> {
-    let Some(base_url) = ensure_smoke_base_url()? else {
+    let Some(base_url) = ensure_base_url()? else {
         return Ok(());
     };
     let dir = tempfile::tempdir().context("creating temp dir")?;
@@ -110,7 +110,7 @@ fn smoke_agents_push_all() -> Result<()> {
 
 #[test]
 fn smoke_tools_list() -> Result<()> {
-    let Some(base_url) = ensure_smoke_base_url()? else {
+    let Some(base_url) = ensure_base_url()? else {
         return Ok(());
     };
     run_cli(&base_url, &["tools", "list"])
@@ -118,7 +118,7 @@ fn smoke_tools_list() -> Result<()> {
 
 #[test]
 fn smoke_tools_invoke() -> Result<()> {
-    let Some(base_url) = ensure_smoke_base_url()? else {
+    let Some(base_url) = ensure_base_url()? else {
         return Ok(());
     };
     let tool_name = match env::var("DISTRI_SMOKE_TOOL_NAME") {
@@ -137,7 +137,7 @@ fn smoke_tools_invoke() -> Result<()> {
 
 #[test]
 fn smoke_run_browser_agent_task() -> Result<()> {
-    let Some(base_url) = ensure_smoke_base_url()? else {
+    let Some(base_url) = ensure_base_url()? else {
         return Ok(());
     };
     run_cli(
@@ -156,7 +156,7 @@ fn smoke_run_browser_agent_task() -> Result<()> {
 
 #[test]
 fn smoke_connections_list() -> Result<()> {
-    let Some(base_url) = ensure_smoke_base_url()? else {
+    let Some(base_url) = ensure_base_url()? else {
         return Ok(());
     };
     run_cli(&base_url, &["connections", "list"])
@@ -164,7 +164,7 @@ fn smoke_connections_list() -> Result<()> {
 
 #[test]
 fn smoke_secrets_list() -> Result<()> {
-    let Some(base_url) = ensure_smoke_base_url()? else {
+    let Some(base_url) = ensure_base_url()? else {
         return Ok(());
     };
     run_cli(&base_url, &["secrets", "list"])
@@ -172,7 +172,7 @@ fn smoke_secrets_list() -> Result<()> {
 
 #[test]
 fn smoke_threads_list() -> Result<()> {
-    let Some(base_url) = ensure_smoke_base_url()? else {
+    let Some(base_url) = ensure_base_url()? else {
         return Ok(());
     };
     run_cli(&base_url, &["threads", "list"])
@@ -209,7 +209,7 @@ fn run_cli_capture(base_url: &str, args: &[&str]) -> Result<String> {
 #[test]
 fn smoke_platform_list_connections() -> Result<()> {
     let _lock = STREAM_LOCK.lock().unwrap();
-    let Some(base_url) = ensure_smoke_base_url()? else {
+    let Some(base_url) = ensure_base_url()? else {
         return Ok(());
     };
     let output = run_cli_capture(
@@ -234,7 +234,7 @@ fn smoke_platform_list_connections() -> Result<()> {
 #[test]
 fn smoke_platform_list_agents() -> Result<()> {
     let _lock = STREAM_LOCK.lock().unwrap();
-    let Some(base_url) = ensure_smoke_base_url()? else {
+    let Some(base_url) = ensure_base_url()? else {
         return Ok(());
     };
     let output = run_cli_capture(
@@ -253,7 +253,7 @@ fn smoke_platform_list_agents() -> Result<()> {
 #[test]
 fn smoke_platform_list_secrets() -> Result<()> {
     let _lock = STREAM_LOCK.lock().unwrap();
-    let Some(base_url) = ensure_smoke_base_url()? else {
+    let Some(base_url) = ensure_base_url()? else {
         return Ok(());
     };
     let output = run_cli_capture(
@@ -275,7 +275,7 @@ fn smoke_platform_list_secrets() -> Result<()> {
 #[test]
 fn smoke_platform_list_skills() -> Result<()> {
     let _lock = STREAM_LOCK.lock().unwrap();
-    let Some(base_url) = ensure_smoke_base_url()? else {
+    let Some(base_url) = ensure_base_url()? else {
         return Ok(());
     };
     let output = run_cli_capture(

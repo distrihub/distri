@@ -4,7 +4,7 @@
 /// to a running distri-cloud instance. They test the full round-trip:
 /// CLI → orchestrator → agent → tool calls → local execution → result.
 ///
-/// Enable with: DISTRI_CODING_TEST=1 DISTRI_SMOKE_BASE_URL=http://localhost:8081/v1
+/// Enable with: DISTRI_CODING_TEST=1 DISTRI_BASE_URL=http://localhost:8081/v1
 ///
 /// The tests use the `coder` agent which delegates coding tasks to a shell.
 /// distri-cli registers local filesystem tools + execute_command as external
@@ -23,7 +23,7 @@ fn coding_base_url() -> Option<String> {
         return None;
     }
     Some(
-        env::var("DISTRI_SMOKE_BASE_URL")
+        env::var("DISTRI_BASE_URL")
             .unwrap_or_else(|_| "http://localhost:8081/v1".to_string()),
     )
 }

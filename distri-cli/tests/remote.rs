@@ -9,11 +9,8 @@
 ///   cargo test -p distri-cli --test remote -- --ignored --test-threads=1
 ///
 /// Required env vars:
-///   DISTRI_SMOKE_BASE_URL  — e.g. http://localhost:1341
-///   DISTRI_API_KEY         — valid API key for the server
-///
-/// Optional env vars:
-///   DISTRI_WORKSPACE_ID    — workspace ID (defaults to server's default)
+///   DISTRI_BASE_URL  — e.g. http://localhost:1341/v1
+///   DISTRI_API_KEY   — valid API key for the server
 use anyhow::{Context, Result};
 use std::env;
 use std::process::Command;
@@ -22,8 +19,8 @@ use std::sync::Mutex;
 /// Serialize tests — concurrent SSE streams exhaust server worker threads.
 static STREAM_LOCK: Mutex<()> = Mutex::new(());
 
-fn smoke_base_url() -> Option<String> {
-    env::var("DISTRI_SMOKE_BASE_URL").ok()
+fn base_url() -> Option<String> {
+    env::var("DISTRI_BASE_URL").ok()
 }
 
 fn run_cli(base_url: &str, args: &[&str]) -> Result<String> {
@@ -59,8 +56,8 @@ fn run_cli(base_url: &str, args: &[&str]) -> Result<String> {
 #[ignore]
 fn remote_smoke_say_hello() -> Result<()> {
     let _lock = STREAM_LOCK.lock().unwrap();
-    let Some(base_url) = smoke_base_url() else {
-        eprintln!("Skipping; set DISTRI_SMOKE_BASE_URL");
+    let Some(base_url) = base_url() else {
+        eprintln!("Skipping; set DISTRI_BASE_URL");
         return Ok(());
     };
     run_cli(
@@ -75,8 +72,8 @@ fn remote_smoke_say_hello() -> Result<()> {
 #[ignore]
 fn remote_smoke_overrides_flag() -> Result<()> {
     let _lock = STREAM_LOCK.lock().unwrap();
-    let Some(base_url) = smoke_base_url() else {
-        eprintln!("Skipping; set DISTRI_SMOKE_BASE_URL");
+    let Some(base_url) = base_url() else {
+        eprintln!("Skipping; set DISTRI_BASE_URL");
         return Ok(());
     };
     run_cli(
@@ -103,8 +100,8 @@ fn remote_smoke_overrides_flag() -> Result<()> {
 #[ignore]
 fn remote_python_pandas_task() -> Result<()> {
     let _lock = STREAM_LOCK.lock().unwrap();
-    let Some(base_url) = smoke_base_url() else {
-        eprintln!("Skipping; set DISTRI_SMOKE_BASE_URL");
+    let Some(base_url) = base_url() else {
+        eprintln!("Skipping; set DISTRI_BASE_URL");
         return Ok(());
     };
     run_cli(
@@ -132,8 +129,8 @@ fn remote_python_pandas_task() -> Result<()> {
 #[ignore]
 fn remote_shell_command() -> Result<()> {
     let _lock = STREAM_LOCK.lock().unwrap();
-    let Some(base_url) = smoke_base_url() else {
-        eprintln!("Skipping; set DISTRI_SMOKE_BASE_URL");
+    let Some(base_url) = base_url() else {
+        eprintln!("Skipping; set DISTRI_BASE_URL");
         return Ok(());
     };
     let output = run_cli(
@@ -161,8 +158,8 @@ fn remote_shell_command() -> Result<()> {
 #[ignore]
 fn remote_simple_arithmetic() -> Result<()> {
     let _lock = STREAM_LOCK.lock().unwrap();
-    let Some(base_url) = smoke_base_url() else {
-        eprintln!("Skipping; set DISTRI_SMOKE_BASE_URL");
+    let Some(base_url) = base_url() else {
+        eprintln!("Skipping; set DISTRI_BASE_URL");
         return Ok(());
     };
     run_cli(

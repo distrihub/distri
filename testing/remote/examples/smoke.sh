@@ -14,14 +14,11 @@
 
 set -euo pipefail
 
-BASE_URL="${DISTRI_SMOKE_BASE_URL:-http://localhost:1341}"
-
 echo "=== Remote smoke test ==="
-echo "Server: $BASE_URL"
+echo "Server: $DISTRI_BASE_URL"
 echo ""
 
 distri run \
-  --base-url "$BASE_URL" \
   --agent distri_runner \
   --task "say hello" \
   --remote

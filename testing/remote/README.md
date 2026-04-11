@@ -70,7 +70,7 @@ cargo test -p distri-cli --test remote remote_smoke_say_hello -- --ignored
 ```
 
 Required env vars:
-- `DISTRI_SMOKE_BASE_URL` — server URL (e.g. `http://localhost:1341`)
+- `DISTRI_BASE_URL` — server URL (e.g. `http://localhost:1341/v1`)
 - `DISTRI_API_KEY` — valid API key
 
 ## Unit Tests (no server required)
