@@ -2,6 +2,7 @@ pub mod a2a;
 pub mod agent;
 pub mod broadcast;
 pub mod runner;
+pub mod worker;
 
 pub mod claude_llm;
 pub mod llm;

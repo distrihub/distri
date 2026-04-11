@@ -53,6 +53,9 @@ pub struct AgentOrchestrator {
     pub broadcaster: Option<Arc<dyn crate::broadcast::AgentEventBroadcaster>>,
     /// Optional background runner for async agent execution (deepagent containers).
     pub background_runner: Option<Arc<dyn crate::runner::BackgroundRunner>>,
+    /// Optional worker pool for background-first agent execution.
+    /// When present, A2A handlers submit jobs and subscribe to events instead of blocking.
+    pub worker_pool: Option<Arc<dyn crate::worker::WorkerPool>>,
 }
 
 impl std::fmt::Debug for AgentOrchestrator {
@@ -84,6 +87,7 @@ pub struct AgentOrchestratorBuilder {
     system_hooks: Vec<Arc<dyn crate::agent::types::AgentHooks>>,
     broadcaster: Option<Arc<dyn crate::broadcast::AgentEventBroadcaster>>,
     background_runner: Option<Arc<dyn crate::runner::BackgroundRunner>>,
+    worker_pool: Option<Arc<dyn crate::worker::WorkerPool>>,
 }
 
 impl AgentOrchestratorBuilder {
@@ -187,6 +191,14 @@ impl AgentOrchestratorBuilder {
         self
     }
 
+    pub fn with_worker_pool(
+        mut self,
+        worker_pool: Arc<dyn crate::worker::WorkerPool>,
+    ) -> Self {
+        self.worker_pool = Some(worker_pool);
+        self
+    }
+
     pub async fn build(self) -> anyhow::Result<AgentOrchestrator> {
         let (coordinator_tx, coordinator_rx) = mpsc::channel(10000);
         let browser_config = self.browser_config.unwrap_or_default();
@@ -258,6 +270,7 @@ impl AgentOrchestratorBuilder {
             hook_registry: HookRegistry::new(),
             broadcaster: self.broadcaster,
             background_runner: self.background_runner,
+            worker_pool: self.worker_pool,
         };
 
         // Sync system prompts to the store

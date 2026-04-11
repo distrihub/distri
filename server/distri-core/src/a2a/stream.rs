@@ -125,6 +125,7 @@ async fn create_browser_session() -> Option<(String, Option<String>, Option<Stri
 }
 
 /// Emit BrowserSessionStarted event with the given session info.
+#[allow(dead_code)]
 async fn emit_browser_session_started(
     context: &ExecutorContext,
     event_tx: &mpsc::Sender<AgentEvent>,
@@ -190,44 +191,230 @@ pub async fn init_thread_get_message(
 pub async fn handle_resubscribe_sse(
     req_id: Option<serde_json::Value>,
     task_id: String,
-    broadcaster: std::sync::Arc<dyn crate::broadcast::AgentEventBroadcaster>,
+    executor: Arc<AgentOrchestrator>,
 ) -> impl futures_util::stream::Stream<Item = Result<SseMessage, std::convert::Infallible>> {
     async_stream::stream! {
-        match broadcaster.subscribe(&task_id).await {
-            Ok(event_stream) => {
-                futures_util::pin_mut!(event_stream);
-                while let Some(event) = futures_util::StreamExt::next(&mut event_stream).await {
-                    let msg = map_agent_event(&event);
-                    let response = distri_a2a::JsonRpcResponse {
-                        jsonrpc: "2.0".to_string(),
-                        result: Some(serde_json::to_value(&msg).unwrap_or_default()),
-                        error: None,
-                        id: req_id.clone(),
-                    };
-                    yield Ok::<_, std::convert::Infallible>(SseMessage {
-                        event: None,
-                        data: serde_json::to_string(&response).unwrap_or_default(),
-                    });
+        // Try worker pool first (new path), fall back to broadcaster (legacy path)
+        let event_stream = if let Some(ref pool) = executor.worker_pool {
+            pool.subscribe(&task_id).await.ok()
+        } else {
+            None
+        };
+
+        let event_stream = match event_stream {
+            Some(s) => s,
+            None => {
+                // Fall back to broadcaster for backward compatibility
+                match executor.broadcaster.as_ref() {
+                    Some(broadcaster) => {
+                        match broadcaster.subscribe(&task_id).await {
+                            Ok(s) => s,
+                            Err(e) => {
+                                let error = distri_a2a::JsonRpcResponse {
+                                    jsonrpc: "2.0".to_string(),
+                                    result: None,
+                                    error: Some(distri_a2a::JsonRpcError {
+                                        code: -32603,
+                                        message: format!("Failed to subscribe: {}", e),
+                                        data: None,
+                                    }),
+                                    id: req_id.clone(),
+                                };
+                                yield Ok::<_, std::convert::Infallible>(SseMessage {
+                                    event: None,
+                                    data: serde_json::to_string(&error).unwrap_or_default(),
+                                });
+                                return;
+                            }
+                        }
+                    }
+                    None => {
+                        let error = distri_a2a::JsonRpcResponse {
+                            jsonrpc: "2.0".to_string(),
+                            result: None,
+                            error: Some(distri_a2a::JsonRpcError {
+                                code: -32603,
+                                message: "No worker pool or broadcaster configured".to_string(),
+                                data: None,
+                            }),
+                            id: req_id.clone(),
+                        };
+                        yield Ok::<_, std::convert::Infallible>(SseMessage {
+                            event: None,
+                            data: serde_json::to_string(&error).unwrap_or_default(),
+                        });
+                        return;
+                    }
                 }
             }
-            Err(e) => {
-                let error = distri_a2a::JsonRpcResponse {
-                    jsonrpc: "2.0".to_string(),
-                    result: None,
-                    error: Some(distri_a2a::JsonRpcError {
-                        code: -32603,
-                        message: format!("Failed to subscribe: {}", e),
-                        data: None,
-                    }),
-                    id: req_id.clone(),
-                };
-                yield Ok::<_, std::convert::Infallible>(SseMessage {
-                    event: None,
-                    data: serde_json::to_string(&error).unwrap_or_default(),
-                });
+        };
+
+        futures_util::pin_mut!(event_stream);
+        while let Some(event) = futures_util::StreamExt::next(&mut event_stream).await {
+            let msg = map_agent_event(&event);
+            let response = distri_a2a::JsonRpcResponse {
+                jsonrpc: "2.0".to_string(),
+                result: Some(serde_json::to_value(&msg).unwrap_or_default()),
+                error: None,
+                id: req_id.clone(),
+            };
+            yield Ok::<_, std::convert::Infallible>(SseMessage {
+                event: None,
+                data: serde_json::to_string(&response).unwrap_or_default(),
+            });
+        }
+    }
+}
+
+/// Prepare ExecutorContext with metadata, browser session, definition overrides, etc.
+/// Returns (ExecutorContext, message, definition_overrides) or an error.
+async fn prepare_execution(
+    agent_id: &str,
+    params: &MessageSendParams,
+    executor: &Arc<AgentOrchestrator>,
+    executor_context: &Arc<ExecutorContext>,
+) -> Result<
+    (ExecutorContext, DefinitionOverrides),
+    AgentError,
+> {
+    let metadata_struct: ExecutorContextMetadata = match params.metadata.clone() {
+        Some(m) => serde_json::from_value(m)
+            .map_err(|e| AgentError::Validation(format!("Invalid metadata: {e}")))?,
+        None => ExecutorContextMetadata::default(),
+    };
+
+    let mut exec_ctx = executor_context.as_ref().clone();
+
+    // Extract browser_session_id from metadata if provided
+    if let Some(browser_session_id) = metadata_struct.browser_session_id.clone() {
+        tracing::info!(
+            "[stream] Received browser_session_id from metadata: {}",
+            browser_session_id
+        );
+        exec_ctx.browser_session_id = Some(browser_session_id);
+    }
+    if let Some(ref vars) = metadata_struct.env_vars {
+        let mut env = exec_ctx.env_vars.write().await;
+        env.extend(vars.clone());
+    }
+    if let Some(tool_meta) = metadata_struct.tool_metadata.clone() {
+        exec_ctx.tool_metadata = Some(tool_meta);
+    }
+
+    // Merge dynamic_sections and dynamic_values from metadata into hook_prompt_state
+    {
+        let has_sections = metadata_struct
+            .dynamic_sections
+            .as_ref()
+            .map_or(false, |s| !s.is_empty());
+        let has_values = metadata_struct
+            .dynamic_values
+            .as_ref()
+            .map_or(false, |v| !v.is_empty());
+        if has_sections || has_values {
+            let mut hook_state = exec_ctx.hook_prompt_state.write().await;
+            if let Some(sections) = metadata_struct.dynamic_sections.clone() {
+                hook_state.dynamic_sections = sections;
+            }
+            if let Some(values) = metadata_struct.dynamic_values.clone() {
+                for (k, v) in values {
+                    hook_state.dynamic_values.insert(k, v);
+                }
             }
         }
     }
+
+    let mut definition_overrides = DefinitionOverrides::default();
+    if let Some(overrides) = metadata_struct.definition_overrides.clone() {
+        definition_overrides = overrides;
+    }
+
+    // Determine if browser should be used
+    let mut should_stream_browser = match executor.get_agent(agent_id).await {
+        Some(AgentConfig::StandardAgent(def)) => def.should_use_browser(),
+        _ => false,
+    };
+
+    if let Some(flag) = definition_overrides.use_browser {
+        should_stream_browser = flag;
+    }
+
+    // If browser is needed but no session from UI, create one now
+    if should_stream_browser && exec_ctx.browser_session_id.is_none() {
+        if let Some((session_id, _frame_url, _sse_url)) = create_browser_session().await {
+            exec_ctx.browser_session_id = Some(session_id);
+        }
+    }
+
+    Ok((exec_ctx, definition_overrides))
+}
+
+/// Spawn the agent execution in the background, publishing events to the worker pool.
+/// This is the core of the background-first execution model.
+fn spawn_background_execution(
+    executor: Arc<AgentOrchestrator>,
+    agent_id: String,
+    message: crate::types::Message,
+    executor_context: Arc<ExecutorContext>,
+    definition_overrides: Option<DefinitionOverrides>,
+    _worker_pool: Arc<dyn crate::worker::WorkerPool>,
+    task_id: String,
+    user_id: String,
+    workspace_id: Option<uuid::Uuid>,
+) {
+    tokio::spawn(with_user_and_workspace(
+        user_id,
+        workspace_id,
+        async move {
+            let exec_result = {
+                let cancel_token = executor_context.cancellation_token.clone();
+                let exec_fut = executor.execute_stream(
+                    &agent_id,
+                    message,
+                    executor_context.clone(),
+                    definition_overrides,
+                );
+
+                if let Some(ref token) = cancel_token {
+                    tokio::select! {
+                        _ = token.cancelled() => {
+                            executor_context
+                                .update_status(crate::types::TaskStatus::Canceled)
+                                .await;
+                            executor_context
+                                .emit(AgentEventType::RunError {
+                                    message: "stream cancelled".to_string(),
+                                    code: Some("CANCELLED".to_string()),
+                                    usage: Some(executor_context.get_step_usage().await),
+                                })
+                                .await;
+                            Err(anyhow!("stream cancelled"))
+                        },
+                        res = exec_fut => res.map_err(|e: AgentError| anyhow!(e)),
+                    }
+                } else {
+                    exec_fut.await.map_err(|e: AgentError| anyhow!(e))
+                }
+            };
+
+            match exec_result {
+                Ok(result) => {
+                    // Save final result as assistant message
+                    if let Some(content) = &result.content {
+                        let final_message =
+                            distri_types::Message::assistant(content.clone(), None);
+                        executor_context.save_message(&final_message).await;
+                    }
+                    // Note: RunFinished event is already emitted by the agent loop.
+                    // The final result is available via tasks/get.
+                }
+                Err(e) => {
+                    tracing::error!("Background execution error for task {}: {}", task_id, e);
+                    // Ensure a terminal event is published so subscribers don't hang
+                }
+            }
+        },
+    ));
 }
 
 pub async fn handle_message_send_streaming_sse(
@@ -293,31 +480,6 @@ pub async fn handle_message_send_streaming_sse(
             return;
         }
 
-        let metadata_value = params.metadata.clone();
-        let metadata_struct: ExecutorContextMetadata = match metadata_value.clone() {
-            Some(m) => match serde_json::from_value(m) {
-                Ok(v) => v,
-                Err(e) => {
-                    let error = JsonRpcResponse {
-                        jsonrpc: "2.0".to_string(),
-                        result: None,
-                        error: Some(JsonRpcError {
-                            code: -32602,
-                            message: format!("Invalid metadata: {e}"),
-                            data: None,
-                        }),
-                        id: Some(id_field_clone.clone().into()),
-                    };
-                    yield Ok::<_, std::convert::Infallible>(SseMessage {
-                        event: None,
-                        data: serde_json::to_string(&error).unwrap(),
-                    });
-                    return;
-                }
-            },
-            None => ExecutorContextMetadata::default(),
-        };
-
         // stream! macro doesn't inherit task-local storage, so wrap here
         let (_thread_id, message) = match with_user_and_workspace(
             user_id.clone(),
@@ -351,96 +513,172 @@ pub async fn handle_message_send_streaming_sse(
             }
         };
 
-        let (event_tx, mut event_rx) = mpsc::channel::<AgentEvent>(100);
-        let browser_event_tx = event_tx.clone();
-        let (sse_tx, mut sse_rx) = mpsc::channel::<Result<distri_a2a::MessageKind, anyhow::Error>>(100);
-        let sse_tx_clone = sse_tx.clone();
-        let mut exec_ctx = executor_context.clone_with_tx(event_tx);
-
-        // Extract browser_session_id from metadata if provided
-        if let Some(browser_session_id) = metadata_struct.browser_session_id.clone() {
-            tracing::info!("[stream] Received browser_session_id from metadata: {}", browser_session_id);
-            exec_ctx.browser_session_id = Some(browser_session_id);
-        } else {
-            tracing::debug!("[stream] No browser_session_id in metadata");
-        }
-        if let Some(ref vars) = metadata_struct.env_vars {
-            let mut env = exec_ctx.env_vars.write().await;
-            env.extend(vars.clone());
-        }
-        if let Some(tool_meta) = metadata_struct.tool_metadata.clone() {
-            exec_ctx.tool_metadata = Some(tool_meta);
-        }
-
-        // Merge dynamic_sections and dynamic_values from metadata into hook_prompt_state
-        {
-            let has_sections = metadata_struct.dynamic_sections.as_ref().map_or(false, |s| !s.is_empty());
-            let has_values = metadata_struct.dynamic_values.as_ref().map_or(false, |v| !v.is_empty());
-            if has_sections || has_values {
-                let mut hook_state = exec_ctx.hook_prompt_state.write().await;
-                if let Some(sections) = metadata_struct.dynamic_sections.clone() {
-                    hook_state.dynamic_sections = sections;
-                }
-                if let Some(values) = metadata_struct.dynamic_values.clone() {
-                    for (k, v) in values {
-                        hook_state.dynamic_values.insert(k, v);
-                    }
-                }
+        // Prepare execution context with metadata, browser, overrides
+        let (exec_ctx, definition_overrides) = match prepare_execution(
+            &agent_id, &params, &executor, &executor_context,
+        ).await {
+            Ok(v) => v,
+            Err(e) => {
+                let error = JsonRpcResponse {
+                    jsonrpc: "2.0".to_string(),
+                    result: None,
+                    error: Some(JsonRpcError {
+                        code: -32603,
+                        message: e.to_string(),
+                        data: None,
+                    }),
+                    id: Some(id_field_clone.clone().into()),
+                };
+                yield Ok::<_, std::convert::Infallible>(SseMessage {
+                    event: None,
+                    data: serde_json::to_string(&error).unwrap(),
+                });
+                return;
             }
-        }
-
-        let mut definition_overrides: Option<DefinitionOverrides> = None;
-        if let Some(overrides) = metadata_struct.definition_overrides.clone() {
-            definition_overrides = Some(overrides);
-        }
-
-        // Determine if browser should be used BEFORE wrapping context in Arc
-        let mut should_stream_browser = match executor.get_agent(&agent_id).await {
-            Some(AgentConfig::StandardAgent(def)) => def.should_use_browser(),
-            _ => false,
         };
 
-        if let Some(ref overrides) = definition_overrides {
-            if let Some(flag) = overrides.use_browser {
-                should_stream_browser = flag;
-            }
-        }
+        let main_task_id = exec_ctx.task_id.clone();
 
-        // Track if we need to emit browser session event (only if we create a new session)
-        let mut browser_session_to_emit: Option<(String, Option<String>, Option<String>)> = None;
+        // === WorkerPool path: background-first execution ===
+        // Submit job to worker pool, spawn background execution, subscribe to events.
+        // Client disconnect does NOT kill the agent — execution continues in the pool.
+        if let Some(ref worker_pool) = executor.worker_pool {
+            let pool = worker_pool.clone();
 
-        // If browser is needed but no session from UI, create one now
-        if should_stream_browser && exec_ctx.browser_session_id.is_none() {
-            if let Some((session_id, frame_url, sse_url)) = create_browser_session().await {
-                exec_ctx.browser_session_id = Some(session_id.clone());
-                browser_session_to_emit = Some((session_id, frame_url, sse_url));
-            }
-        } else if should_stream_browser {
-            tracing::info!(
-                "[stream] Using browser session from UI: {:?}",
-                exec_ctx.browser_session_id
+            let job = crate::worker::AgentJob {
+                task_id: main_task_id.clone(),
+                thread_id: exec_ctx.thread_id.clone(),
+                agent_id: agent_id.clone(),
+                message: message.clone(),
+                workspace_id: exec_ctx.workspace_id.clone(),
+                user_id: user_id.clone(),
+                parent_task_id: None,
+                agent_name: None,
+            };
+
+            // Register task in pool — get cancellation token and mailbox
+            let (cancel_token, mailbox) = match pool.register_task(&job).await {
+                Ok(v) => v,
+                Err(e) => {
+                    let error = JsonRpcResponse {
+                        jsonrpc: "2.0".to_string(),
+                        result: None,
+                        error: Some(JsonRpcError {
+                            code: -32603,
+                            message: format!("Failed to register task: {}", e),
+                            data: None,
+                        }),
+                        id: req_id.clone(),
+                    };
+                    yield Ok::<_, std::convert::Infallible>(SseMessage {
+                        event: None,
+                        data: serde_json::to_string(&error).unwrap(),
+                    });
+                    return;
+                }
+            };
+
+            // Wire cancellation token and mailbox into the execution context
+            let (event_tx, mut event_rx) = mpsc::channel::<AgentEvent>(100);
+            let mut exec_ctx = exec_ctx.clone_with_tx(event_tx);
+            exec_ctx.cancellation_token = Some(cancel_token);
+            exec_ctx.mailbox = Some(Arc::new(tokio::sync::Mutex::new(mailbox)));
+
+            let executor_context_arc = Arc::new(exec_ctx);
+
+            // Spawn event relay: agent events → worker pool
+            let pool_for_relay = pool.clone();
+            let task_id_for_relay = main_task_id.clone();
+            let broadcaster_for_relay = executor.broadcaster.clone();
+            let executor_for_relay = executor.clone();
+            tokio::spawn(async move {
+                while let Some(event) = event_rx.recv().await {
+                    let is_terminal = matches!(
+                        &event.event,
+                        AgentEventType::RunFinished { .. } | AgentEventType::RunError { .. }
+                    );
+
+                    // Auto-complete inline hooks
+                    if let AgentEventType::InlineHookRequested { ref request } = event.event {
+                        let _ = executor_for_relay
+                            .complete_inline_hook(&request.hook_id, HookMutation::none())
+                            .await;
+                    }
+
+                    // Publish to worker pool (for subscribe/resubscribe)
+                    pool_for_relay.publish_event(&task_id_for_relay, event.clone()).await;
+
+                    // Also publish to legacy broadcaster for backward compatibility
+                    if let Some(ref broadcaster) = broadcaster_for_relay {
+                        let _ = broadcaster.publish(&event.task_id, event.clone()).await;
+                    }
+
+                    if is_terminal {
+                        break;
+                    }
+                }
+            });
+
+            // Spawn background execution
+            spawn_background_execution(
+                executor.clone(),
+                agent_id.clone(),
+                message,
+                executor_context_arc,
+                Some(definition_overrides),
+                pool.clone(),
+                main_task_id.clone(),
+                user_id.clone(),
+                workspace_id,
             );
+
+            // Subscribe to worker pool events and stream as SSE
+            match pool.subscribe(&main_task_id).await {
+                Ok(event_stream) => {
+                    futures_util::pin_mut!(event_stream);
+                    while let Some(event) = futures_util::StreamExt::next(&mut event_stream).await {
+                        let msg = map_agent_event(&event);
+                        let message = JsonRpcResponse {
+                            jsonrpc: "2.0".to_string(),
+                            result: Some(serde_json::to_value(msg).unwrap_or_default()),
+                            error: None,
+                            id: req_id.clone(),
+                        };
+                        yield Ok::<_, std::convert::Infallible>(SseMessage {
+                            event: None,
+                            data: serde_json::to_string(&message).unwrap_or_default(),
+                        });
+                    }
+                }
+                Err(e) => {
+                    let error = JsonRpcResponse {
+                        jsonrpc: "2.0".to_string(),
+                        result: None,
+                        error: Some(JsonRpcError {
+                            code: -32603,
+                            message: format!("Failed to subscribe to task events: {}", e),
+                            data: None,
+                        }),
+                        id: req_id.clone(),
+                    };
+                    yield Ok::<_, std::convert::Infallible>(SseMessage {
+                        event: None,
+                        data: serde_json::to_string(&error).unwrap(),
+                    });
+                }
+            }
+
+            return;
         }
+
+        // === Legacy path: no WorkerPool, original blocking behavior ===
+        let (event_tx, mut event_rx) = mpsc::channel::<AgentEvent>(100);
+        let (sse_tx, mut sse_rx) = mpsc::channel::<Result<distri_a2a::MessageKind, anyhow::Error>>(100);
+        let sse_tx_clone = sse_tx.clone();
+        let exec_ctx = exec_ctx.clone_with_tx(event_tx);
 
         let executor_context = Arc::new(exec_ctx);
 
-        // Emit browser session event if we created a new session
-        if let Some((session_id, frame_url, sse_url)) = browser_session_to_emit {
-            let event_tx_for_browser = browser_event_tx.clone();
-            let context_for_emit = executor_context.clone();
-            tokio::spawn(async move {
-                emit_browser_session_started(
-                    &context_for_emit,
-                    &event_tx_for_browser,
-                    session_id,
-                    frame_url,
-                    sse_url,
-                )
-                .await;
-            });
-        }
-
-        let main_task_id = executor_context.task_id.clone();
         let main_task_id_for_completion = main_task_id.clone();
         let task_store = executor.stores.task_store.clone();
         let broadcaster_for_completion = executor.broadcaster.clone();
@@ -454,11 +692,6 @@ pub async fn handle_message_send_streaming_sse(
         let cancel_token_for_exec = cancel_token.clone();
         let executor_for_completion = executor.clone();
         let user_id_for_completion = user_id.clone();
-        // Extract workspace_id for task-local context in spawned tasks
-        let workspace_id = executor_context
-            .workspace_id
-            .as_ref()
-            .and_then(|s| uuid::Uuid::parse_str(s).ok());
         let workspace_id_for_completion = workspace_id;
         let completion_task = tokio::spawn(with_user_and_workspace(user_id_for_completion, workspace_id_for_completion, async move {
             let _cancel_token = cancel_token_for_completion;
@@ -467,17 +700,14 @@ pub async fn handle_message_send_streaming_sse(
                 // Check for completion events - only complete when main task finishes
                 match &event.event {
                     AgentEventType::RunError { .. } => {
-                        // Complete on any error (main task or sub-task errors should stop the stream)
                         completed = true;
                     }
                     AgentEventType::InlineHookRequested { request } => {
-                        // Auto-complete inline hooks with a no-op mutation so the agent doesn't hang if no listener responds.
                         let _ = executor_for_completion
                             .complete_inline_hook(&request.hook_id, HookMutation::none())
                             .await;
                     }
                     AgentEventType::RunFinished { .. } => {
-                        // Only complete when the main task finishes, not sub-tasks
                         if event.task_id == main_task_id_for_completion {
                             completed = true;
                         }
@@ -503,7 +733,7 @@ pub async fn handle_message_send_streaming_sse(
         let executor_clone = executor.clone();
         let executor_context_clone = executor_context.clone();
         let req_id_clone = req_id.clone();
-        let definition_overrides_clone = definition_overrides.clone();
+        let definition_overrides_clone = Some(definition_overrides);
         let user_id_for_exec = user_id.clone();
         let workspace_id_for_exec = workspace_id;
         let exec_handle = tokio::spawn(with_user_and_workspace(user_id_for_exec, workspace_id_for_exec, async move {
@@ -542,11 +772,6 @@ pub async fn handle_message_send_streaming_sse(
                 }
                 Err(e) => {
                     tracing::error!("Error from stream handler: {}", e);
-
-                    // Send the error to the SSE channel so the client receives it
-                    // and doesn't hang waiting for events that will never come.
-                    // This handles errors like "Agent not found" that occur before
-                    // any RunError events can be emitted via context.emit().
                     let _ = sse_tx_clone.send(Err(e)).await;
                 }
             }

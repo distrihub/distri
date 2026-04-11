@@ -54,4 +54,6 @@ pub enum AgentError {
     InvalidWorkflowStep(String),
     #[error("Initialization error: {0}")]
     Initialization(String),
+    #[error("Task canceled")]
+    Canceled,
 }
