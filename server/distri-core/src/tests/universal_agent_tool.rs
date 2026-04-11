@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use serde_json::json;
 
-use crate::agent::{load_builtin_agents, ExecutorContext};
+use crate::agent::{load_system_agents, ExecutorContext};
 use crate::tools::builtin::{
-    is_agent_accessible, normalize_builtin_name, resolve_coder_name, CallAgentInput,
+    is_agent_accessible, normalize_system_agent_name, resolve_coder_name, CallAgentInput,
     ALWAYS_AVAILABLE_BUILTINS, OPT_IN_BUILTINS,
 };
 use crate::tools::UniversalAgentTool;
@@ -31,14 +31,14 @@ fn test_store_config() -> StoreConfig {
 // ── Existing unit tests ────────────────────────────────────────────
 
 #[test]
-fn test_normalize_builtin_name() {
-    assert_eq!(normalize_builtin_name("plan"), "_builtin/plan");
-    assert_eq!(normalize_builtin_name("coder"), "_builtin/coder");
-    assert_eq!(normalize_builtin_name("explore"), "_builtin/explore");
-    assert_eq!(normalize_builtin_name("_builtin/plan"), "_builtin/plan");
+fn test_normalize_system_agent_name() {
+    assert_eq!(normalize_system_agent_name("plan"), "_system/plan");
+    assert_eq!(normalize_system_agent_name("coder"), "_system/coder");
+    assert_eq!(normalize_system_agent_name("explore"), "_system/explore");
+    assert_eq!(normalize_system_agent_name("_system/plan"), "_system/plan");
     assert_eq!(
-        normalize_builtin_name("my_custom_agent"),
-        "_builtin/my_custom_agent"
+        normalize_system_agent_name("my_custom_agent"),
+        "_system/my_custom_agent"
     );
 }
 
@@ -58,13 +58,13 @@ fn test_always_available_builtins_accessible_with_empty_sub_agents() {
         false
     ));
     assert!(is_agent_accessible(
-        "_builtin/plan",
+        "_system/plan",
         &sub_agents,
         &RuntimeMode::Cloud,
         false
     ));
     assert!(is_agent_accessible(
-        "_builtin/coder",
+        "_system/coder",
         &sub_agents,
         &RuntimeMode::Cloud,
         false
@@ -81,7 +81,7 @@ fn test_opt_in_builtins_not_accessible_without_config() {
         false
     ));
     assert!(!is_agent_accessible(
-        "_builtin/explore",
+        "_system/explore",
         &sub_agents,
         &RuntimeMode::Cloud,
         false
@@ -98,7 +98,7 @@ fn test_opt_in_builtins_accessible_when_listed() {
         false
     ));
     assert!(is_agent_accessible(
-        "_builtin/explore",
+        "_system/explore",
         &sub_agents,
         &RuntimeMode::Cloud,
         false
@@ -166,11 +166,11 @@ fn test_wildcard_grants_access_to_everything() {
 fn test_resolve_coder_name_cli() {
     assert_eq!(
         resolve_coder_name(&RuntimeMode::Cli, false),
-        "_builtin/coder"
+        "_system/coder"
     );
     assert_eq!(
         resolve_coder_name(&RuntimeMode::Cli, true),
-        "_builtin/coder"
+        "_system/coder"
     );
 }
 
@@ -178,7 +178,7 @@ fn test_resolve_coder_name_cli() {
 fn test_resolve_coder_name_cloud_default() {
     assert_eq!(
         resolve_coder_name(&RuntimeMode::Cloud, false),
-        "_builtin/coder"
+        "_system/coder"
     );
 }
 
@@ -186,7 +186,7 @@ fn test_resolve_coder_name_cloud_default() {
 fn test_resolve_coder_name_cloud_lite() {
     assert_eq!(
         resolve_coder_name(&RuntimeMode::Cloud, true),
-        "_builtin/coder_lite"
+        "_system/coder_lite"
     );
 }
 
@@ -194,23 +194,23 @@ fn test_resolve_coder_name_cloud_lite() {
 fn test_resolve_coder_name_browser() {
     assert_eq!(
         resolve_coder_name(&RuntimeMode::Browser, false),
-        "_builtin/coder"
+        "_system/coder"
     );
     assert_eq!(
         resolve_coder_name(&RuntimeMode::Browser, true),
-        "_builtin/coder"
+        "_system/coder"
     );
 }
 
 #[test]
 fn test_always_available_builtins_list() {
-    assert!(ALWAYS_AVAILABLE_BUILTINS.contains(&"_builtin/plan"));
-    assert!(ALWAYS_AVAILABLE_BUILTINS.contains(&"_builtin/coder"));
+    assert!(ALWAYS_AVAILABLE_BUILTINS.contains(&"_system/plan"));
+    assert!(ALWAYS_AVAILABLE_BUILTINS.contains(&"_system/coder"));
 }
 
 #[test]
 fn test_opt_in_builtins_list() {
-    assert!(OPT_IN_BUILTINS.contains(&"_builtin/explore"));
+    assert!(OPT_IN_BUILTINS.contains(&"_system/explore"));
 }
 
 // ── Integration tests: get_agent_tools wiring ──────────────────────
@@ -329,26 +329,26 @@ async fn test_no_call_name_tools_registered() {
 
 #[tokio::test]
 async fn test_builtin_agents_embedded_and_parseable() {
-    let agents = load_builtin_agents().await.unwrap();
+    let agents = load_system_agents().await.unwrap();
     let agent_names: Vec<&str> = agents.iter().map(|a| a.name.as_str()).collect();
 
     assert!(
-        agent_names.contains(&"_builtin/plan"),
+        agent_names.contains(&"_system/plan"),
         "should have plan, got: {:?}",
         agent_names
     );
     assert!(
-        agent_names.contains(&"_builtin/coder"),
+        agent_names.contains(&"_system/coder"),
         "should have coder, got: {:?}",
         agent_names
     );
     assert!(
-        agent_names.contains(&"_builtin/coder_lite"),
+        agent_names.contains(&"_system/coder_lite"),
         "should have coder_lite, got: {:?}",
         agent_names
     );
     assert!(
-        agent_names.contains(&"_builtin/explore"),
+        agent_names.contains(&"_system/explore"),
         "should have explore, got: {:?}",
         agent_names
     );
@@ -367,23 +367,23 @@ async fn test_builtin_agents_registered_on_orchestrator_build() {
 
     // Built-in agents should be auto-registered during build()
     assert!(
-        orchestrator.get_agent("_builtin/plan").await.is_some(),
-        "_builtin/plan should be registered on build"
+        orchestrator.get_agent("_system/plan").await.is_some(),
+        "_system/plan should be registered on build"
     );
     assert!(
-        orchestrator.get_agent("_builtin/coder").await.is_some(),
-        "_builtin/coder should be registered on build"
+        orchestrator.get_agent("_system/coder").await.is_some(),
+        "_system/coder should be registered on build"
     );
     assert!(
         orchestrator
-            .get_agent("_builtin/coder_lite")
+            .get_agent("_system/coder_lite")
             .await
             .is_some(),
-        "_builtin/coder_lite should be registered on build"
+        "_system/coder_lite should be registered on build"
     );
     assert!(
-        orchestrator.get_agent("_builtin/explore").await.is_some(),
-        "_builtin/explore should be registered on build"
+        orchestrator.get_agent("_system/explore").await.is_some(),
+        "_system/explore should be registered on build"
     );
 }
 

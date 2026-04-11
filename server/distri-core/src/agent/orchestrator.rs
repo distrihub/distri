@@ -285,7 +285,7 @@ impl AgentOrchestratorBuilder {
         }
 
         // Register built-in agent definitions (plan, coder, coder_lite, explore)
-        match crate::agent::load_builtin_agents().await {
+        match crate::agent::load_system_agents().await {
             Ok(agents) => {
                 for def in agents {
                     if let Err(e) = orchestrator.register_agent_definition(def).await {
@@ -816,7 +816,7 @@ impl AgentOrchestrator {
                     let mut sub_agent_lines = Vec::new();
 
                     // Always-available built-ins
-                    for builtin_name in &["_builtin/plan", "_builtin/coder"] {
+                    for builtin_name in &["_system/plan", "_system/coder"] {
                         if let Some(agent_cfg) = self.get_agent(builtin_name).await {
                             let desc = match agent_cfg {
                                 distri_types::configuration::AgentConfig::StandardAgent(def) => {
@@ -827,7 +827,7 @@ impl AgentOrchestrator {
                                 }
                             };
                             let short_name = builtin_name
-                                .strip_prefix("_builtin/")
+                                .strip_prefix("_system/")
                                 .unwrap_or(builtin_name);
                             sub_agent_lines.push(format!(
                                 "- **{}** — {} *(always available)*",

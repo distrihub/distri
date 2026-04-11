@@ -626,20 +626,20 @@ impl ExecutorContextTool for AgentTool {
 // ── UniversalAgentTool ──────────────────────────────────────────────────────
 
 /// Built-in agent names that are always available regardless of sub_agents config.
-pub(crate) const ALWAYS_AVAILABLE_BUILTINS: &[&str] = &["_builtin/plan", "_builtin/coder"];
+pub(crate) const ALWAYS_AVAILABLE_BUILTINS: &[&str] = &["_system/plan", "_system/coder"];
 
 /// Built-in agents that are only available when explicitly listed in sub_agents.
 #[allow(dead_code)] // Used by tests
-pub(crate) const OPT_IN_BUILTINS: &[&str] = &["_builtin/explore"];
+pub(crate) const OPT_IN_BUILTINS: &[&str] = &["_system/explore"];
 
-/// Normalize a short builtin name to its canonical `_builtin/` prefixed form.
-/// e.g. "plan" → "_builtin/plan", "coder" → "_builtin/coder".
+/// Normalize a short builtin name to its canonical `_system/` prefixed form.
+/// e.g. "plan" → "_system/plan", "coder" → "_system/coder".
 /// If the name already has a prefix, return it unchanged.
-pub(crate) fn normalize_builtin_name(name: &str) -> String {
-    if name.starts_with("_builtin/") {
+pub(crate) fn normalize_system_agent_name(name: &str) -> String {
+    if name.starts_with("_system/") {
         name.to_string()
     } else {
-        format!("_builtin/{}", name)
+        format!("_system/{}", name)
     }
 }
 
@@ -658,7 +658,7 @@ pub(crate) fn is_agent_accessible(
     _runtime_mode: &RuntimeMode,
     _use_coder_lite: bool,
 ) -> bool {
-    let canonical = normalize_builtin_name(agent_name);
+    let canonical = normalize_system_agent_name(agent_name);
 
     // Always-available builtins are accessible regardless (check both forms)
     if ALWAYS_AVAILABLE_BUILTINS.contains(&agent_name)
@@ -675,7 +675,7 @@ pub(crate) fn is_agent_accessible(
     // Check if explicitly in sub_agents (exact match or short name match)
     if sub_agents
         .iter()
-        .any(|sa| sa == agent_name || normalize_builtin_name(sa) == agent_name || sa == &canonical)
+        .any(|sa| sa == agent_name || normalize_system_agent_name(sa) == agent_name || sa == &canonical)
     {
         return true;
     }
@@ -688,12 +688,12 @@ pub(crate) fn resolve_coder_name(runtime_mode: &RuntimeMode, use_coder_lite: boo
     match runtime_mode {
         RuntimeMode::Cloud => {
             if use_coder_lite {
-                "_builtin/coder_lite"
+                "_system/coder_lite"
             } else {
-                "_builtin/coder"
+                "_system/coder"
             }
         }
-        RuntimeMode::Cli | RuntimeMode::Browser => "_builtin/coder",
+        RuntimeMode::Cli | RuntimeMode::Browser => "_system/coder",
     }
 }
 
@@ -744,7 +744,7 @@ impl Tool for UniversalAgentTool {
             "properties": {
                 "agent": {
                     "type": "string",
-                    "description": "Name of the agent to call (e.g. 'coder', '_builtin/plan', 'my_package/my_agent'). Omit to create an ad-hoc agent using system_prompt."
+                    "description": "Name of the agent to call (e.g. 'coder', '_system/plan', 'my_package/my_agent'). Omit to create an ad-hoc agent using system_prompt."
                 },
                 "prompt": {
                     "type": "string",
@@ -808,9 +808,9 @@ impl ExecutorContextTool for UniversalAgentTool {
         // ── Resolve agent name ────────────────────────────────────────────
         let agent_name = if let Some(ref name) = input.agent {
             // Named agent: normalize builtin short names
-            let normalized = if !name.contains('/') && !name.starts_with("_builtin/") {
+            let normalized = if !name.contains('/') && !name.starts_with("_system/") {
                 // Could be a short builtin name like "plan" or "coder"
-                let candidate = normalize_builtin_name(name);
+                let candidate = normalize_system_agent_name(name);
                 // Check if it exists as a builtin, otherwise keep original
                 if orchestrator.get_agent(&candidate).await.is_some() {
                     candidate
@@ -821,8 +821,8 @@ impl ExecutorContextTool for UniversalAgentTool {
                 name.to_string()
             };
 
-            // Special handling: resolve "coder" / "_builtin/coder" based on runtime mode
-            let resolved = if normalized == "_builtin/coder" || normalized == "coder" {
+            // Special handling: resolve "coder" / "_system/coder" based on runtime mode
+            let resolved = if normalized == "_system/coder" || normalized == "coder" {
                 let use_coder_lite = orchestrator
                     .get_agent(&context.agent_id)
                     .await
@@ -920,7 +920,7 @@ impl ExecutorContextTool for UniversalAgentTool {
         }
 
         // ── Cloud coder override: set remote=true ─────────────────────────
-        if agent_name == "_builtin/coder" && context.runtime_mode == RuntimeMode::Cloud {
+        if agent_name == "_system/coder" && context.runtime_mode == RuntimeMode::Cloud {
             // Check if the definition needs remote=true
             if let Some(distri_types::configuration::AgentConfig::StandardAgent(mut def)) =
                 orchestrator.get_agent(&agent_name).await

@@ -1462,7 +1462,7 @@ pub async fn parse_agent_markdown_content(content: &str) -> Result<StandardDefin
             .is_some_and(|c| c.is_numeric())
     {
         return Err(AgentError::Validation(format!(
-            "Invalid agent name '{}': Agent names must be alphanumeric with underscores or '/' for namespacing (e.g. '_builtin/plan'), cannot start with number.",
+            "Invalid agent name '{}': Agent names must be alphanumeric with underscores or '/' for namespacing (e.g. '_system/plan'), cannot start with number.",
             agent_def.name
         )));
     }

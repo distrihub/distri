@@ -1,5 +1,5 @@
 ---
-name = "_builtin/coder"
+name = "_system/coder"
 description = "Code execution agent with file operations and web research. Adapts tools to the runtime environment (CLI local tools, cloud browsr container, browser IndexedDB)."
 max_iterations = 25
 tool_format = "provider"

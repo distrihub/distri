@@ -1,5 +1,5 @@
 ---
-name = "_builtin/coder_lite"
+name = "_system/coder_lite"
 description = "Lightweight code execution agent using browsr shell sessions directly. No container spawn — uses start_shell/execute_shell/stop_shell tools."
 max_iterations = 25
 tool_format = "provider"
