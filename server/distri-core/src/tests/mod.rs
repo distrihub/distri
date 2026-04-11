@@ -6,6 +6,7 @@ mod llm;
 pub mod mock_llm;
 mod orchestrator;
 pub mod otel_hooks_test;
+mod remote_agent;
 mod request_tool;
 mod tool_result_format;
 mod tool_result_persistence;
