@@ -1,7 +1,11 @@
 mod agent_loop;
+mod agent_loop_store_integration;
+mod compaction_in_loop;
 mod compaction_integration;
 mod deferred_tools_integration;
 mod definition;
+mod fixture_scenarios;
+pub mod helpers;
 mod llm;
 pub mod mock_llm;
 mod orchestrator;
@@ -9,5 +13,6 @@ pub mod otel_hooks_test;
 mod request_tool;
 mod tool_result_format;
 mod tool_result_persistence;
+pub mod trace_replay;
 mod universal_agent_tool;
 mod usage_tracking;

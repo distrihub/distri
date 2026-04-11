@@ -1,28 +1,10 @@
 use std::sync::Arc;
 
-use distri_types::configuration::{
-    AgentConfig, DbConnectionConfig, MetadataStoreConfig, StoreConfig,
-};
+use distri_types::configuration::AgentConfig;
 use distri_types::{Message, ModelSettings};
 
 use crate::{agent::parse_agent_markdown_content, AgentOrchestrator, AgentOrchestratorBuilder};
-
-/// Creates a StoreConfig that uses a temporary in-memory SQLite database
-/// so tests don't depend on the filesystem having a `.distri/` directory.
-fn test_store_config() -> StoreConfig {
-    let db_name = uuid::Uuid::new_v4();
-    let db_url = format!("file:{}?mode=memory&cache=shared", db_name);
-    StoreConfig {
-        metadata: MetadataStoreConfig {
-            db_config: Some(DbConnectionConfig {
-                database_url: db_url,
-                ..Default::default()
-            }),
-            ..Default::default()
-        },
-        ..Default::default()
-    }
-}
+use crate::tests::helpers::test_store_config;
 
 fn test_model_settings(model: &str) -> ModelSettings {
     ModelSettings::new(model)

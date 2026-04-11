@@ -358,6 +358,18 @@ pub(crate) enum TracesCommands {
         #[clap(short, long)]
         verbose: bool,
     },
+    /// Export trace as a replay fixture (JSON with LLM call pairs)
+    Export {
+        /// Trace ID to export
+        #[clap(help = "Trace ID to export")]
+        trace_id: Option<String>,
+        /// Export the most recent trace
+        #[clap(long)]
+        latest: bool,
+        /// Output file path (defaults to stdout)
+        #[clap(long, short)]
+        output: Option<String>,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
