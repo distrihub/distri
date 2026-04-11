@@ -273,6 +273,47 @@ impl Distri {
         )))
     }
 
+    /// Push a JSON agent config (e.g. workflow agent) to the server.
+    pub async fn register_agent_json(
+        &self,
+        json: &str,
+    ) -> Result<AgentRegistrationResponse, ClientError> {
+        // Validate that it parses as AgentConfig before sending.
+        let _config: distri_types::configuration::AgentConfig =
+            serde_json::from_str(json).map_err(|e| {
+                ClientError::InvalidResponse(format!("Invalid agent JSON: {e}"))
+            })?;
+
+        let create_url = format!("{}/agents", self.base_url);
+
+        if let Some(workspace_id) = self.workspace_id() {
+            tracing::info!("Pushing agent JSON to: {create_url} (workspace: {workspace_id})");
+        } else {
+            tracing::info!("Pushing agent JSON to: {create_url}");
+        }
+
+        let resp = self
+            .http
+            .post(&create_url)
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .body(json.to_string())
+            .send()
+            .await?;
+
+        if resp.status().is_success() {
+            let response: AgentRegistrationResponse = resp.json().await.map_err(|e| {
+                ClientError::InvalidResponse(format!("Failed to read response: {}", e))
+            })?;
+            return Ok(response);
+        }
+
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        Err(ClientError::InvalidResponse(format!(
+            "Agent registration failed (status {status}): {body}"
+        )))
+    }
+
     /// Complete a tool for a specific agent via /agents/{agent}/complete-tool (A2A flow).
     pub async fn complete_tool(
         &self,
@@ -2676,107 +2717,6 @@ impl Distri {
                 text
             )))
         }
-    }
-
-    // ========== Workflows API ==========
-
-    pub async fn list_workflows(
-        &self,
-    ) -> Result<distri_types::stores::WorkflowsListResponse, ClientError> {
-        let url = format!("{}/workflows", self.base_url);
-        let resp = self.http.get(&url).send().await?;
-        if resp.status().is_success() {
-            Ok(resp.json().await?)
-        } else {
-            let text = resp.text().await.unwrap_or_default();
-            Err(ClientError::InvalidResponse(format!(
-                "failed to list workflows: {}",
-                text
-            )))
-        }
-    }
-
-    pub async fn get_workflow(
-        &self,
-        id: &str,
-    ) -> Result<distri_types::stores::WorkflowRecord, ClientError> {
-        let url = format!("{}/workflows/{}", self.base_url, id);
-        let resp = self.http.get(&url).send().await?;
-        if resp.status().is_success() {
-            Ok(resp.json().await?)
-        } else {
-            let text = resp.text().await.unwrap_or_default();
-            Err(ClientError::InvalidResponse(format!(
-                "failed to get workflow: {}",
-                text
-            )))
-        }
-    }
-
-    pub async fn create_workflow(
-        &self,
-        workflow: distri_types::stores::NewWorkflow,
-    ) -> Result<distri_types::stores::WorkflowRecord, ClientError> {
-        let url = format!("{}/workflows", self.base_url);
-        let resp = self.http.post(&url).json(&workflow).send().await?;
-        if resp.status().is_success() {
-            Ok(resp.json().await?)
-        } else {
-            let text = resp.text().await.unwrap_or_default();
-            Err(ClientError::InvalidResponse(format!(
-                "failed to create workflow: {}",
-                text
-            )))
-        }
-    }
-
-    pub async fn update_workflow(
-        &self,
-        id: &str,
-        update: distri_types::stores::UpdateWorkflow,
-    ) -> Result<distri_types::stores::WorkflowRecord, ClientError> {
-        let url = format!("{}/workflows/{}", self.base_url, id);
-        let resp = self.http.put(&url).json(&update).send().await?;
-        if resp.status().is_success() {
-            Ok(resp.json().await?)
-        } else {
-            let text = resp.text().await.unwrap_or_default();
-            Err(ClientError::InvalidResponse(format!(
-                "failed to update workflow: {}",
-                text
-            )))
-        }
-    }
-
-    pub async fn delete_workflow(&self, id: &str) -> Result<(), ClientError> {
-        let url = format!("{}/workflows/{}", self.base_url, id);
-        let resp = self.http.delete(&url).send().await?;
-        if resp.status().is_success() || resp.status() == reqwest::StatusCode::NO_CONTENT {
-            Ok(())
-        } else {
-            let text = resp.text().await.unwrap_or_default();
-            Err(ClientError::InvalidResponse(format!(
-                "failed to delete workflow: {}",
-                text
-            )))
-        }
-    }
-
-    /// Push a workflow definition to the server. Creates or updates.
-    pub async fn push_workflow(
-        &self,
-        name: &str,
-        definition: serde_json::Value,
-    ) -> Result<distri_types::stores::WorkflowRecord, ClientError> {
-        let new = distri_types::stores::NewWorkflow {
-            name: name.to_string(),
-            description: None,
-            definition,
-            tags: vec![],
-            is_public: false,
-            is_template: false,
-        };
-        self.create_workflow(new).await
     }
 
     // ─────────────────────────────────────────────────────────────────────────

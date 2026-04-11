@@ -21,7 +21,7 @@ mod traces;
 use chat::run_interactive_chat;
 use commands::{
     handle_connections_command, handle_profile_command, handle_prompts_command,
-    handle_secrets_command, handle_skills_command, handle_workflow_command, push_file,
+    handle_secrets_command, handle_skills_command, push_file,
 };
 use config::resolve_workspace;
 use message::{build_connections_context, build_message_params_full};
@@ -145,12 +145,6 @@ enum Commands {
         command: ProfileCommands,
     },
 
-    /// Workflow execution commands (defaults to list)
-    Workflows {
-        #[clap(subcommand)]
-        command: Option<WorkflowCommands>,
-    },
-
     /// Login to Distri Cloud and configure workspace
     Login {
         #[clap(long, help = "Email address")]
@@ -190,10 +184,10 @@ enum AgentsCommands {
     },
     /// Push agent definition(s) to the server from a file or directory
     Push {
-        #[clap(help = "Path to an agent markdown file or directory of files")]
+        #[clap(help = "Path to an agent definition file (.md or .json) or directory")]
         path: PathBuf,
-        /// Push all markdown files in a directory (required when path is a directory)
-        #[clap(long, help = "Push all agent markdown files in the directory")]
+        /// Push all agent files in a directory (required when path is a directory)
+        #[clap(long, help = "Push all agent files (.md, .json) in the directory")]
         all: bool,
     },
 }
@@ -360,38 +354,6 @@ pub(crate) enum TracesCommands {
     },
 }
 
-#[derive(Subcommand, Debug, Clone)]
-pub(crate) enum WorkflowCommands {
-    /// Run a workflow (by name from server, or local JSON file)
-    Run {
-        #[clap(help = "Workflow name (from server) or path to JSON file")]
-        workflow: String,
-        /// Run one step at a time (interactive)
-        #[clap(long, help = "Run one step at a time")]
-        step: bool,
-        /// JSON input to pass to the workflow context
-        #[clap(long, help = "JSON input for workflow context")]
-        input: Option<String>,
-        /// Entry point ID to start from (skips earlier steps)
-        #[clap(long, help = "Entry point ID to start from")]
-        entry: Option<String>,
-    },
-    /// Show workflow status (from local file)
-    Status {
-        #[clap(help = "Path to workflow JSON file")]
-        path: PathBuf,
-    },
-    /// Push a workflow to the server
-    Push {
-        #[clap(help = "Path to workflow JSON file")]
-        path: PathBuf,
-        /// Name for the workflow (defaults to filename)
-        #[clap(long)]
-        name: Option<String>,
-    },
-    /// List workflows on the server
-    List,
-}
 
 /// Typed context passed via `--context` JSON.
 /// Accepts `envs`, `env_vars`, and `secrets` — all merge into env_vars.
@@ -615,7 +577,7 @@ async fn main() -> Result<()> {
             AgentsCommands::Push { path, all } => {
                 if path.is_dir() && !all {
                     eprintln!(
-                        "Path is a directory. Re-run with --all to push all markdown files inside."
+                        "Path is a directory. Re-run with --all to push all agent files inside."
                     );
                     std::process::exit(1);
                 }
@@ -631,18 +593,21 @@ async fn main() -> Result<()> {
                             continue;
                         }
                         let file_path = entry.path();
-                        if file_path
+                        let is_pushable = file_path
                             .extension()
                             .and_then(|s| s.to_str())
-                            .map(|ext| ext.eq_ignore_ascii_case("md"))
-                            .unwrap_or(false)
-                        {
+                            .map(|ext| {
+                                ext.eq_ignore_ascii_case("md")
+                                    || ext.eq_ignore_ascii_case("json")
+                            })
+                            .unwrap_or(false);
+                        if is_pushable {
                             push_file(&client, &file_path).await?;
                             pushed += 1;
                         }
                     }
                     if pushed == 0 {
-                        eprintln!("No markdown files found in {}", path.display());
+                        eprintln!("No agent files (.md, .json) found in {}", path.display());
                     }
                     // Individual push_file calls already print success messages
                 } else {
@@ -718,10 +683,6 @@ async fn main() -> Result<()> {
         Commands::Traces { command } => {
             let command = command.unwrap_or(TracesCommands::List { limit: 20 });
             traces::handle_traces_command(&client, command).await?;
-        }
-        Commands::Workflows { command } => {
-            let command = command.unwrap_or(WorkflowCommands::List);
-            handle_workflow_command(&client, command).await?;
         }
         Commands::Serve { .. } => unreachable!("serve handled earlier"),
     }

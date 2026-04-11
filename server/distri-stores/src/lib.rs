@@ -1,13 +1,11 @@
 mod auth;
 pub mod external_tool_calls;
 pub mod prompt;
-pub mod workflow_store;
 use std::collections::HashMap;
 
 pub use auth::*;
 // Re-export the main store traits and types
 pub use external_tool_calls::*;
-pub use workflow_store::InMemoryWorkflowStore;
 
 pub mod diesel_store;
 mod instrumentation;

@@ -26,7 +26,6 @@ use utoipa::OpenApi;
         (name = "Sessions", description = "Key-value session storage"),
         (name = "Secrets", description = "Secret/API key management"),
         (name = "Skills", description = "Skill management"),
-        (name = "Workflows", description = "Workflow definitions"),
         (name = "Providers", description = "LLM provider configuration"),
         (name = "Models", description = "Available LLM models"),
         (name = "Prompt Templates", description = "Reusable prompt templates"),
@@ -88,12 +87,6 @@ use utoipa::OpenApi;
         crate::routes::skills::get_skill,
         crate::routes::skills::update_skill,
         crate::routes::skills::delete_skill,
-        // Workflows
-        crate::routes::workflows::list_workflows,
-        crate::routes::workflows::create_workflow,
-        crate::routes::workflows::get_workflow,
-        crate::routes::workflows::update_workflow,
-        crate::routes::workflows::delete_workflow,
         // Providers
         crate::routes::providers::upsert_provider,
         crate::routes::providers::delete_provider,
