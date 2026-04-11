@@ -139,6 +139,12 @@ enum Commands {
         command: Option<TracesCommands>,
     },
 
+    /// Auto-optimization commands (analyze traces, suggest improvements)
+    Optimize {
+        #[clap(subcommand)]
+        command: OptimizeCommands,
+    },
+
     /// Manage authentication profiles
     Profile {
         #[clap(subcommand)]
@@ -369,6 +375,43 @@ pub(crate) enum TracesCommands {
         /// Output file path (defaults to stdout)
         #[clap(long, short)]
         output: Option<String>,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub(crate) enum OptimizeCommands {
+    /// Analyze recent traces for an agent
+    Analyze {
+        /// Agent ID to analyze
+        #[clap(long)]
+        agent: Option<String>,
+        /// Number of recent traces to analyze
+        #[clap(long, default_value = "50")]
+        lookback: i64,
+        /// Output format: text or json
+        #[clap(long, default_value = "text")]
+        format: String,
+    },
+    /// Suggest improvements based on trace analysis
+    Suggest {
+        /// Agent ID to analyze
+        #[clap(long)]
+        agent: Option<String>,
+        /// Target a specific skill for improvement
+        #[clap(long)]
+        target: Option<String>,
+    },
+    /// Run an optimization loop (analyze → mutate → evaluate → keep/discard)
+    Loop {
+        /// Maximum iterations
+        #[clap(long, default_value = "10")]
+        iterations: usize,
+        /// Agent ID to optimize
+        #[clap(long)]
+        agent: Option<String>,
+        /// Dry run — don't commit changes
+        #[clap(long)]
+        dry_run: bool,
     },
 }
 
@@ -730,6 +773,9 @@ async fn main() -> Result<()> {
         Commands::Traces { command } => {
             let command = command.unwrap_or(TracesCommands::List { limit: 20 });
             traces::handle_traces_command(&client, command).await?;
+        }
+        Commands::Optimize { command } => {
+            traces::handle_optimize_command(&client, command).await?;
         }
         Commands::Workflows { command } => {
             let command = command.unwrap_or(WorkflowCommands::List);

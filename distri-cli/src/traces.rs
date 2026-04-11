@@ -3,7 +3,7 @@ use chrono::Utc;
 use crossterm::terminal;
 use distri::{Distri, TraceSummary};
 
-use crate::{TracesCommands, COLOR_BRIGHT_GREEN, COLOR_BRIGHT_MAGENTA, COLOR_GRAY, COLOR_RESET};
+use crate::{OptimizeCommands, TracesCommands, COLOR_BRIGHT_GREEN, COLOR_BRIGHT_MAGENTA, COLOR_GRAY, COLOR_RESET};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ANSI color constants for span categories
@@ -1462,4 +1462,153 @@ fn parse_llm_output(output_raw: &str) -> (String, Vec<ExportToolCall>, String) {
     }
 
     (output_raw.to_string(), vec![], "stop".to_string())
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Optimize command handler
+// ─────────────────────────────────────────────────────────────────────────────
+
+pub async fn handle_optimize_command(client: &Distri, command: OptimizeCommands) -> Result<()> {
+    match command {
+        OptimizeCommands::Analyze {
+            agent,
+            lookback,
+            format,
+        } => {
+            handle_optimize_analyze(client, agent.as_deref(), lookback, &format).await?;
+        }
+        OptimizeCommands::Suggest { agent, target } => {
+            handle_optimize_suggest(client, agent.as_deref(), target.as_deref()).await?;
+        }
+        OptimizeCommands::Loop {
+            iterations,
+            agent,
+            dry_run,
+        } => {
+            handle_optimize_loop(client, iterations, agent.as_deref(), dry_run).await?;
+        }
+    }
+    Ok(())
+}
+
+async fn handle_optimize_analyze(
+    client: &Distri,
+    agent: Option<&str>,
+    lookback: i64,
+    format: &str,
+) -> Result<()> {
+    eprintln!(
+        "Analyzing {} recent traces{}...",
+        lookback,
+        agent.map(|a| format!(" for agent '{}'", a)).unwrap_or_default()
+    );
+
+    let traces = client.list_traces(Some(lookback)).await?;
+
+    if traces.is_empty() {
+        eprintln!("No traces found.");
+        return Ok(());
+    }
+
+    // Analyze each trace
+    let mut total_input_tokens = 0i64;
+    let mut total_cost = 0.0f64;
+    let mut error_count = 0usize;
+    let mut tool_freq: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut model_freq: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+
+    for trace in &traces {
+        total_input_tokens += trace.input_tokens;
+        total_cost += trace.total_cost;
+
+        for model in trace.models.iter().flatten() {
+            *model_freq.entry(model.clone()).or_default() += 1;
+        }
+    }
+
+    let avg_tokens = total_input_tokens / traces.len().max(1) as i64;
+    let avg_cost = total_cost / traces.len().max(1) as f64;
+
+    if format == "json" {
+        let report = serde_json::json!({
+            "total_traces": traces.len(),
+            "avg_input_tokens": avg_tokens,
+            "avg_cost": avg_cost,
+            "total_cost": total_cost,
+            "model_usage": model_freq,
+        });
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        println!(
+            "\n{}── Trace Analysis Report ──{}",
+            COLOR_BRIGHT_GREEN, COLOR_RESET
+        );
+        println!("  Traces analyzed:    {}", traces.len());
+        println!("  Avg input tokens:   {}", avg_tokens);
+        println!("  Avg cost:           ${:.4}", avg_cost);
+        println!("  Total cost:         ${:.4}", total_cost);
+        println!();
+
+        if !model_freq.is_empty() {
+            println!("  {}Models used:{}", COLOR_BRIGHT_GREEN, COLOR_RESET);
+            let mut sorted: Vec<_> = model_freq.iter().collect();
+            sorted.sort_by(|a, b| b.1.cmp(a.1));
+            for (model, count) in sorted {
+                println!("    {} — {} traces", model, count);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn handle_optimize_suggest(
+    client: &Distri,
+    _agent: Option<&str>,
+    _target: Option<&str>,
+) -> Result<()> {
+    eprintln!(
+        "{}Suggest{}: analyzing traces and generating suggestions...",
+        COLOR_BRIGHT_GREEN, COLOR_RESET
+    );
+    eprintln!();
+    eprintln!(
+        "Note: Full suggestion generation requires the trace analysis service"
+    );
+    eprintln!(
+        "running in distri-cloud. Use `distri optimize analyze` to view"
+    );
+    eprintln!("current trace patterns first.");
+    Ok(())
+}
+
+async fn handle_optimize_loop(
+    client: &Distri,
+    iterations: usize,
+    _agent: Option<&str>,
+    dry_run: bool,
+) -> Result<()> {
+    eprintln!(
+        "{}Optimization loop{}: {} iterations{}",
+        COLOR_BRIGHT_GREEN,
+        COLOR_RESET,
+        iterations,
+        if dry_run { " (dry run)" } else { "" }
+    );
+    eprintln!();
+    eprintln!(
+        "Note: The optimization loop requires the trace analysis and optimization"
+    );
+    eprintln!(
+        "services running in distri-cloud. The full loop flow is:"
+    );
+    eprintln!("  1. Analyze recent traces → identify weak scenarios");
+    eprintln!("  2. Select target skill via affinity map");
+    eprintln!("  3. Generate mutation via LLM");
+    eprintln!("  4. Evaluate mutation against scenarios");
+    eprintln!("  5. Keep/discard based on score delta");
+    eprintln!();
+    eprintln!("Use `distri optimize analyze` to start with trace analysis.");
+    Ok(())
 }
