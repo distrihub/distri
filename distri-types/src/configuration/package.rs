@@ -30,6 +30,8 @@ pub struct AgentCloudMetadata {
     pub published_at: Option<chrono::DateTime<chrono::Utc>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub is_owner: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_system: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
