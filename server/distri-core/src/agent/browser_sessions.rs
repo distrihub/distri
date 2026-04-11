@@ -26,6 +26,16 @@ impl BrowserSessions {
             client: BrowsrClient::from_config(default_transport()),
         }
     }
+
+    /// Create BrowserSessions with a custom BrowsrClient (for testing with wiremock).
+    #[cfg(test)]
+    pub(crate) fn new_with_client(client: BrowsrClient) -> Self {
+        Self {
+            sessions: Arc::new(DashMap::new()),
+            orchestrator_ref: Arc::new(OrchestratorRef::new()),
+            client,
+        }
+    }
     pub fn set_orchestrator(&self, orchestrator: Arc<dyn OrchestratorTrait>) {
         self.orchestrator_ref.set_orchestrator(orchestrator.clone());
     }
