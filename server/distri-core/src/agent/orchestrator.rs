@@ -815,8 +815,8 @@ impl AgentOrchestrator {
                 {
                     let mut sub_agent_lines = Vec::new();
 
-                    // Always-available built-ins
-                    for builtin_name in &["_system/plan", "_system/coder"] {
+                    // Always-available system agents
+                    for builtin_name in crate::tools::builtin::ALWAYS_AVAILABLE_BUILTINS {
                         if let Some(agent_cfg) = self.get_agent(builtin_name).await {
                             let desc = match agent_cfg {
                                 distri_types::configuration::AgentConfig::StandardAgent(def) => {
@@ -858,6 +858,11 @@ impl AgentOrchestrator {
                         };
                         sub_agent_lines.push(format!("- **{}** — {}", name, desc));
                     }
+
+                    // Always mention transfer_to_agent availability
+                    sub_agent_lines.push(
+                        "\n*Use `transfer_to_agent` to hand over control completely (your execution stops, target agent takes over with your history).*".to_string()
+                    );
 
                     context
                         .merge_hook_prompt_state(crate::agent::context::HookPromptState {
