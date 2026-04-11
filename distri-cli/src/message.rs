@@ -43,7 +43,15 @@ pub fn build_message_params(
     model: Option<&str>,
     connections_context: Option<String>,
 ) -> MessageSendParams {
-    build_message_params_full(content, thread_id, task_id, model, false, connections_context, None)
+    build_message_params_full(
+        content,
+        thread_id,
+        task_id,
+        model,
+        false,
+        connections_context,
+        None,
+    )
 }
 
 pub fn build_message_params_full(

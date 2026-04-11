@@ -93,50 +93,50 @@ enum Commands {
         traceparent: Option<String>,
     },
 
-    /// Agent-related commands
+    /// Agent-related commands (defaults to list)
     Agents {
         #[clap(subcommand)]
-        command: AgentsCommands,
+        command: Option<AgentsCommands>,
     },
 
-    /// Tool-related commands
+    /// Tool-related commands (defaults to list)
     Tools {
         #[clap(subcommand)]
-        command: ToolsCommands,
+        command: Option<ToolsCommands>,
     },
 
-    /// Prompt template related commands
+    /// Prompt template related commands (defaults to list)
     Prompts {
         #[clap(subcommand)]
-        command: PromptsCommands,
+        command: Option<PromptsCommands>,
     },
 
-    /// Skill related commands
+    /// Skill related commands (defaults to list)
     Skills {
         #[clap(subcommand)]
-        command: SkillsCommands,
+        command: Option<SkillsCommands>,
     },
 
-    /// Connection management commands
+    /// Connection management commands (defaults to list)
     Connections {
         #[clap(subcommand)]
-        command: ConnectionsCommands,
+        command: Option<ConnectionsCommands>,
     },
-    /// Secret management commands
+    /// Secret management commands (defaults to list)
     Secrets {
         #[clap(subcommand)]
-        command: SecretsCommands,
+        command: Option<SecretsCommands>,
     },
-    /// Thread management commands
+    /// Thread management commands (defaults to list)
     Threads {
         #[clap(subcommand)]
-        command: ThreadsCommands,
+        command: Option<ThreadsCommands>,
     },
 
-    /// Trace inspection commands
+    /// Trace inspection commands (defaults to list)
     Traces {
         #[clap(subcommand)]
-        command: TracesCommands,
+        command: Option<TracesCommands>,
     },
 
     /// Manage authentication profiles
@@ -145,10 +145,10 @@ enum Commands {
         command: ProfileCommands,
     },
 
-    /// Workflow execution commands
+    /// Workflow execution commands (defaults to list)
     Workflows {
         #[clap(subcommand)]
-        command: WorkflowCommands,
+        command: Option<WorkflowCommands>,
     },
 
     /// Login to Distri Cloud and configure workspace
@@ -345,9 +345,12 @@ pub(crate) enum TracesCommands {
     },
     /// Show trace detail with Gantt chart
     Show {
-        /// Trace ID, span ID, or thread ID
+        /// Trace ID, span ID, or thread ID (optional when --latest is used)
         #[clap(help = "Trace ID, span ID, or thread ID")]
-        id: String,
+        id: Option<String>,
+        /// Show the most recent trace
+        #[clap(long)]
+        latest: bool,
         /// Filter by span name or ID
         #[clap(long)]
         span: Option<String>,
@@ -538,7 +541,11 @@ async fn main() -> Result<()> {
                 all_vars.extend(ctx.envs);
                 all_vars.extend(ctx.env_vars);
                 all_vars.extend(ctx.secrets);
-                if all_vars.is_empty() { None } else { Some(all_vars) }
+                if all_vars.is_empty() {
+                    None
+                } else {
+                    Some(all_vars)
+                }
             });
 
             let mut params = build_message_params_full(
@@ -581,7 +588,7 @@ async fn main() -> Result<()> {
             )
             .await?;
         }
-        Commands::Agents { command } => match command {
+        Commands::Agents { command } => match command.unwrap_or(AgentsCommands::List) {
             AgentsCommands::List => {
                 for agent in app.list_agents().await? {
                     println!("{} - {}", agent.get_name(), agent.get_description());
@@ -643,7 +650,10 @@ async fn main() -> Result<()> {
                 }
             }
         },
-        Commands::Tools { command } => match command {
+        Commands::Tools { command } => match command.unwrap_or(ToolsCommands::List {
+            filter: None,
+            agent: None,
+        }) {
             ToolsCommands::List { filter, agent } => {
                 if let Some(agent_id) = agent {
                     app.fetch_agent(&agent_id).await?;
@@ -686,24 +696,31 @@ async fn main() -> Result<()> {
             login::handle_login_command(email, skip_workspace, profile).await?;
         }
         Commands::Prompts { command } => {
+            let command = command.unwrap_or(PromptsCommands::List);
             handle_prompts_command(&client, command).await?;
         }
         Commands::Skills { command } => {
+            let command = command.unwrap_or(SkillsCommands::List { all: false });
             handle_skills_command(&client, command).await?;
         }
         Commands::Connections { command } => {
+            let command = command.unwrap_or(ConnectionsCommands::List);
             handle_connections_command(&client, command).await?;
         }
         Commands::Secrets { command } => {
+            let command = command.unwrap_or(SecretsCommands::List);
             handle_secrets_command(&client, command).await?;
         }
         Commands::Threads { command } => {
+            let command = command.unwrap_or(ThreadsCommands::List);
             threads::handle_threads_command(&client, command).await?;
         }
         Commands::Traces { command } => {
+            let command = command.unwrap_or(TracesCommands::List { limit: 20 });
             traces::handle_traces_command(&client, command).await?;
         }
         Commands::Workflows { command } => {
+            let command = command.unwrap_or(WorkflowCommands::List);
             handle_workflow_command(&client, command).await?;
         }
         Commands::Serve { .. } => unreachable!("serve handled earlier"),

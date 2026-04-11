@@ -1101,9 +1101,44 @@ pub async fn handle_traces_command(client: &Distri, command: TracesCommands) -> 
         TracesCommands::List { limit } => {
             print_trace_list(client, limit).await;
         }
-        TracesCommands::Show { id, span, verbose } => {
-            print_trace_detail(client, &id, span.as_deref(), verbose).await;
+        TracesCommands::Show {
+            id,
+            latest,
+            span,
+            verbose,
+        } => {
+            let resolved_id = if latest {
+                match resolve_latest_trace_id(client).await {
+                    Some(id) => id,
+                    None => return Ok(()),
+                }
+            } else if let Some(id) = id {
+                id
+            } else {
+                eprintln!("Error: provide a trace ID or use --latest");
+                return Ok(());
+            };
+            print_trace_detail(client, &resolved_id, span.as_deref(), verbose).await;
         }
     }
     Ok(())
+}
+
+async fn resolve_latest_trace_id(client: &Distri) -> Option<String> {
+    match client.list_traces(Some(1)).await {
+        Ok(traces) => {
+            if traces.is_empty() {
+                eprintln!("No traces found.");
+                None
+            } else {
+                // The API returns most recent first with limit=1
+                let latest = traces.iter().max_by_key(|t| t.start_time_ns).unwrap();
+                Some(latest.trace_id.clone())
+            }
+        }
+        Err(e) => {
+            eprintln!("Failed to list traces: {}", e);
+            None
+        }
+    }
 }
