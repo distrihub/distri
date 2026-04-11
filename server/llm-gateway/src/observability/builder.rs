@@ -21,7 +21,7 @@ pub fn inference_span(attrs: &GenAiInferenceSpan) -> tracing::Span {
     // tracing::info_span! requires a string literal for the span name, but we need a
     // dynamic name. We use the `otel.name` field which tracing-opentelemetry uses
     // to override the exported span name.
-    let span = tracing::info_span!(
+    let span = tracing::trace_span!(
         target: "gen_ai",
         "gen_ai.chat",
         "otel.name" = name,
@@ -103,7 +103,7 @@ pub fn inference_span(attrs: &GenAiInferenceSpan) -> tracing::Span {
 /// Create a tracing span for an agent execution.
 pub fn agent_span(attrs: &GenAiAgentSpan) -> tracing::Span {
     let name = attrs.span_name();
-    let span = tracing::info_span!(
+    let span = tracing::trace_span!(
         target: "gen_ai",
         "gen_ai.execute",
         "otel.name" = name,
@@ -178,7 +178,7 @@ pub fn plan_span(attrs: &GenAiPlanSpan) -> tracing::Span {
     } else {
         "plan (replan)"
     };
-    let span = tracing::info_span!(
+    let span = tracing::trace_span!(
         target: "gen_ai",
         "gen_ai.plan",
         "otel.name" = tracing::field::Empty,
@@ -218,7 +218,7 @@ pub fn plan_span(attrs: &GenAiPlanSpan) -> tracing::Span {
 /// Create a tracing span for one agent execution step.
 pub fn step_span(attrs: &GenAiStepSpan) -> tracing::Span {
     let name = attrs.span_name();
-    let span = tracing::info_span!(
+    let span = tracing::trace_span!(
         target: "gen_ai",
         "gen_ai.step",
         "otel.name" = tracing::field::Empty,
@@ -264,7 +264,7 @@ pub fn tool_span(attrs: &GenAiToolSpan) -> tracing::Span {
         .as_ref()
         .map(|t| t.as_str())
         .unwrap_or("function");
-    let span = tracing::info_span!(
+    let span = tracing::trace_span!(
         target: "gen_ai",
         "gen_ai.execute_tool",
         "otel.name" = name,

@@ -223,7 +223,7 @@ impl AgentHooks for OtelHooks {
                 let span = if let Some(step_id) = self.current_step_id.get(event.run_id.as_str()) {
                     if let Some(step_span) = self.step_spans.get(step_id.as_str()) {
                         step_span.in_scope(|| {
-                            tracing::info_span!(
+                            tracing::trace_span!(
                                 target: "gen_ai",
                                 "gen_ai.reflect",
                                 "otel.name" = "reflect",
@@ -231,7 +231,7 @@ impl AgentHooks for OtelHooks {
                             )
                         })
                     } else {
-                        tracing::info_span!(
+                        tracing::trace_span!(
                             target: "gen_ai",
                             "gen_ai.reflect",
                             "otel.name" = "reflect",
@@ -239,7 +239,7 @@ impl AgentHooks for OtelHooks {
                         )
                     }
                 } else {
-                    tracing::info_span!(
+                    tracing::trace_span!(
                         target: "gen_ai",
                         "gen_ai.reflect",
                         "otel.name" = "reflect",
