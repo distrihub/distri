@@ -24,7 +24,7 @@ use commands::{
     handle_secrets_command, handle_skills_command, handle_workflow_command, push_file,
 };
 use config::resolve_workspace;
-use message::{build_connections_context, build_message_params};
+use message::{build_connections_context, build_message_params_full};
 use threads::resolve_resume_arg;
 use tools::{register_all, register_approval_handler, validate_external_tools, LOCAL_TOOL_NAMES};
 
@@ -528,46 +528,29 @@ async fn main() -> Result<()> {
             // Set task_id: --task-id flag > DISTRI_TASK_ID env > auto-generated
             let effective_task = task_id.or_else(|| std::env::var("DISTRI_TASK_ID").ok());
 
-            let mut params = build_message_params(
-                task,
-                effective_thread.as_deref(),
-                effective_task.as_deref(),
-                None,
-                connections_context,
-            );
-            app.inject_external_tools(&mut params);
-
-            // --remote: shorthand for --overrides '{"remote":true}'
-            if remote {
-                let meta = params.metadata.get_or_insert(serde_json::json!({}));
-                let overrides_entry = meta
-                    .get_mut("definition_overrides")
-                    .and_then(|v| v.as_object_mut())
-                    .map(|obj| {
-                        obj.insert("remote".to_string(), serde_json::Value::Bool(true));
-                    });
-                if overrides_entry.is_none() {
-                    meta["definition_overrides"] = serde_json::json!({ "remote": true });
-                }
-            }
-
-            // Merge --context into metadata.env_vars for the server
-            if let Some(ctx_json) = context {
+            // Parse --context env vars if provided
+            let env_vars = context.and_then(|ctx_json| {
                 let ctx: RunContext = serde_json::from_str(&ctx_json).unwrap_or_else(|e| {
                     eprintln!("Warning: failed to parse --context: {}", e);
                     RunContext::default()
                 });
-
                 let mut all_vars = std::collections::HashMap::<String, String>::new();
                 all_vars.extend(ctx.envs);
                 all_vars.extend(ctx.env_vars);
                 all_vars.extend(ctx.secrets);
+                if all_vars.is_empty() { None } else { Some(all_vars) }
+            });
 
-                if !all_vars.is_empty() {
-                    let meta = params.metadata.get_or_insert(serde_json::json!({}));
-                    meta["env_vars"] = serde_json::to_value(&all_vars).unwrap();
-                }
-            }
+            let mut params = build_message_params_full(
+                task,
+                effective_thread.as_deref(),
+                effective_task.as_deref(),
+                None,
+                remote,
+                connections_context,
+                env_vars,
+            );
+            app.inject_external_tools(&mut params);
 
             println!("Streaming agent '{}' via {}", agent_name, base_url);
             let registry = app.registry();

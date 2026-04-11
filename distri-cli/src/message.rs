@@ -2,6 +2,9 @@ use distri::Distri;
 use distri_a2a::{
     EventKind, Message as A2aMessage, MessageSendParams, Part as A2aPart, Role, TextPart,
 };
+use distri_types::RuntimeMode;
+use serde::Serialize;
+use std::collections::HashMap;
 
 /// Build a lightweight connections summary to inject into the agent's prompt context.
 pub async fn build_connections_context(client: &Distri) -> Option<String> {
@@ -33,6 +36,35 @@ pub async fn build_connections_context(client: &Distri) -> Option<String> {
     Some(lines.join("\n"))
 }
 
+/// Typed metadata for CLI requests. Serializes to the same JSON shape
+/// that the server's `ExecutorContextMetadata` expects.
+#[derive(Debug, Serialize, Default)]
+struct CliRequestMetadata {
+    /// Runtime mode — always "cli" for the CLI client.
+    runtime_mode: RuntimeMode,
+
+    /// Optional definition overrides (e.g. model override).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    definition_overrides: Option<DefinitionOverridesPartial>,
+
+    /// Dynamic key-value pairs available in prompt templates.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    dynamic_values: Option<HashMap<String, serde_json::Value>>,
+
+    /// Environment variables passed to the server for execution.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    env_vars: Option<HashMap<String, String>>,
+}
+
+/// Subset of definition overrides the CLI can set.
+#[derive(Debug, Serialize)]
+struct DefinitionOverridesPartial {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    remote: Option<bool>,
+}
+
 pub fn build_message_params(
     content: String,
     thread_id: Option<&str>,
@@ -40,24 +72,40 @@ pub fn build_message_params(
     model: Option<&str>,
     connections_context: Option<String>,
 ) -> MessageSendParams {
-    let mut meta = serde_json::json!({});
-    if let Some(model) = model {
-        meta["definition_overrides"] = serde_json::json!({ "model": model });
-    }
-    // Set runtime_mode so the server knows this is a CLI execution
-    meta["runtime_mode"] = serde_json::json!("cli");
+    build_message_params_full(content, thread_id, task_id, model, false, connections_context, None)
+}
+
+pub fn build_message_params_full(
+    content: String,
+    thread_id: Option<&str>,
+    task_id: Option<&str>,
+    model: Option<&str>,
+    remote: bool,
+    connections_context: Option<String>,
+    env_vars: Option<HashMap<String, String>>,
+) -> MessageSendParams {
+    let has_overrides = model.is_some() || remote;
+    let mut metadata = CliRequestMetadata {
+        runtime_mode: RuntimeMode::Cli,
+        definition_overrides: if has_overrides {
+            Some(DefinitionOverridesPartial {
+                model: model.map(|m| m.to_string()),
+                remote: if remote { Some(true) } else { None },
+            })
+        } else {
+            None
+        },
+        dynamic_values: None,
+        env_vars,
+    };
 
     if let Some(conn_ctx) = connections_context {
-        let dv = meta
-            .get("dynamic_values")
-            .and_then(|v| v.as_object().cloned())
-            .unwrap_or_default();
-        let mut dv = dv;
+        let mut dv = HashMap::new();
         dv.insert(
             "available_connections".to_string(),
             serde_json::Value::String(conn_ctx),
         );
-        meta["dynamic_values"] = serde_json::Value::Object(dv);
+        metadata.dynamic_values = Some(dv);
     }
 
     MessageSendParams {
@@ -81,6 +129,6 @@ pub fn build_message_params(
             metadata: None,
         },
         configuration: None,
-        metadata: Some(meta),
+        metadata: Some(serde_json::to_value(&metadata).unwrap_or_default()),
     }
 }
