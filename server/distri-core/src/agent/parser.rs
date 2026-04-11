@@ -67,3 +67,88 @@ pub async fn load_agents_from_dir<P: AsRef<Path>>(
 
     Ok(agents)
 }
+
+/// Built-in agent definitions embedded at compile time.
+/// These are always available and registered explicitly by the orchestrator.
+pub fn system_agent_definitions() -> Vec<(&'static str, &'static str)> {
+    vec![
+        (
+            "_system/plan",
+            include_str!("../../../agents/_system/plan.md"),
+        ),
+        (
+            "_system/coder",
+            include_str!("../../../agents/_system/coder.md"),
+        ),
+        (
+            "_system/coder_lite",
+            include_str!("../../../agents/_system/coder_lite.md"),
+        ),
+        (
+            "_system/explore",
+            include_str!("../../../agents/_system/explore.md"),
+        ),
+    ]
+}
+
+/// Parse and return all built-in agent definitions.
+pub async fn load_system_agents() -> Result<Vec<distri_types::StandardDefinition>, AgentError> {
+    let mut agents = Vec::new();
+    for (name, content) in system_agent_definitions() {
+        let definition = parse_agent_markdown_content(content).await.map_err(|e| {
+            AgentError::InvalidConfiguration(format!(
+                "Failed to parse built-in agent '{}': {}",
+                name, e
+            ))
+        })?;
+        agents.push(definition);
+    }
+    Ok(agents)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_load_system_agents() {
+        let agents = load_system_agents().await.unwrap();
+        let names: Vec<&str> = agents.iter().map(|a| a.name.as_str()).collect();
+        assert!(names.contains(&"_system/plan"), "should have plan");
+        assert!(names.contains(&"_system/coder"), "should have coder");
+        assert!(
+            names.contains(&"_system/coder_lite"),
+            "should have coder_lite"
+        );
+        assert!(names.contains(&"_system/explore"), "should have explore");
+        assert_eq!(agents.len(), 4);
+    }
+
+    #[tokio::test]
+    async fn test_load_agents_from_dir_skips_subdirs() {
+        let dir = tempfile::tempdir().unwrap();
+        let subdir = dir.path().join("_system");
+        std::fs::create_dir(&subdir).unwrap();
+
+        std::fs::write(
+            dir.path().join("root_agent.md"),
+            "---\nname = \"root_agent\"\ndescription = \"Root agent\"\n---\nHello",
+        )
+        .unwrap();
+
+        // Agent in subdir should NOT be found
+        std::fs::write(
+            subdir.join("plan.md"),
+            "---\nname = \"_system/plan\"\ndescription = \"Plan agent\"\n---\nPlan",
+        )
+        .unwrap();
+
+        let agents = load_agents_from_dir(dir.path()).await.unwrap();
+        let names: Vec<&str> = agents.iter().map(|a| a.name.as_str()).collect();
+        assert!(names.contains(&"root_agent"), "should find root agent");
+        assert!(
+            !names.contains(&"_system/plan"),
+            "should NOT find subdir agents"
+        );
+    }
+}

@@ -760,3 +760,58 @@ impl FileType {
         }
     }
 }
+
+/// Additional attributes for thread/task metadata.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AdditionalAttributes {
+    pub thread: Option<serde_json::Value>,
+    pub task: Option<serde_json::Value>,
+}
+
+/// Metadata sent by clients (CLI, browser SDK, etc.) alongside A2A messages.
+/// Deserialized by the server to configure execution context.
+/// This is the canonical schema — all clients should serialize this struct.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ExecutorContextMetadata {
+    /// Additional context for tools to use, passed as meta in tool calls
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_metadata: Option<std::collections::HashMap<String, serde_json::Value>>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<serde_json::Value>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub additional_attributes: Option<AdditionalAttributes>,
+
+    /// External tools that delegate execution to the client
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_tools: Option<Vec<ExternalTool>>,
+
+    /// Definition overrides supplied by the client
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub definition_overrides: Option<crate::configuration::DefinitionOverrides>,
+
+    /// Dynamic prompt sections to inject into the template per-call
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dynamic_sections: Option<Vec<crate::prompt::PromptSection>>,
+
+    /// Dynamic key-value pairs available in templates per-call
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dynamic_values: Option<HashMap<String, serde_json::Value>>,
+
+    /// Browser session ID for browser tool integration
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub browser_session_id: Option<String>,
+
+    /// Environment variables passed from the client for execution
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env_vars: Option<HashMap<String, String>>,
+
+    /// When true, unsafe tools are simulated via LLM instead of executed
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dry_run: Option<bool>,
+
+    /// Runtime environment. Determines which system agent variants to use.
+    #[serde(default)]
+    pub runtime_mode: crate::RuntimeMode,
+}

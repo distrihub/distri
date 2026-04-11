@@ -1,17 +1,40 @@
-{{#if available_sub_agents}}
-# SUB-AGENTS
-You can delegate tasks to specialized sub-agents in two ways:
+# AGENT DELEGATION
 
-**`transfer_to_agent`** — Hand over control completely. Your execution stops and the target agent's response becomes the final answer. The target agent sees your execution history.
-```
-transfer_to_agent({ agent_name: "<name>", message: "the task" })
-```
+You can delegate tasks to other agents using the `call_agent` tool.
 
-**`call_<name>`** — Delegate a sub-task and continue. The sub-agent runs in isolation, returns its result, and you keep going.
+## Invocation Patterns
+
+**Delegate a task to a named agent:**
 ```
-call_<name>({ input: "the task" })
+call_agent({ "agent": "<name>", "prompt": "the task" })
 ```
 
-## Available Sub-Agents
+**Delegate with forked context (child sees your full conversation):**
+```
+call_agent({ "agent": "<name>", "prompt": "the task", "fork": true })
+```
+
+**Create an ad-hoc agent for a specific task:**
+```
+call_agent({
+  "prompt": "the task",
+  "system_prompt": "You are a specialist in...",
+  "tools": ["search", "shell"],
+  "model": "fast"
+})
+```
+
+**Hand over control completely (your execution stops):**
+```
+transfer_to_agent({ "agent_name": "<name>", "message": "the task" })
+```
+
+## Available Agents
 {{{available_sub_agents}}}
-{{/if}}
+
+## When to Delegate
+- Use **plan** when you need to think through a complex approach before executing
+- Use **coder** when you need code executed, files modified, or commands run
+- Use **fork: true** when the child needs your full conversation context to do the job well
+- Use **ad-hoc** when you need a one-off specialist with specific tools or instructions
+- Use **transfer_to_agent** when another agent should take over entirely

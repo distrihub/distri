@@ -2,6 +2,9 @@ use distri::Distri;
 use distri_a2a::{
     EventKind, Message as A2aMessage, MessageSendParams, Part as A2aPart, Role, TextPart,
 };
+use distri_types::configuration::DefinitionOverrides;
+use distri_types::{ExecutorContextMetadata, RuntimeMode};
+use std::collections::HashMap;
 
 /// Build a lightweight connections summary to inject into the agent's prompt context.
 pub async fn build_connections_context(client: &Distri) -> Option<String> {
@@ -40,35 +43,41 @@ pub fn build_message_params(
     model: Option<&str>,
     connections_context: Option<String>,
 ) -> MessageSendParams {
-    let mut meta = serde_json::json!({});
-    if let Some(model) = model {
-        meta["definition_overrides"] = serde_json::json!({ "model": model });
-    }
-    // Auto-inject distri.Environment so templates can detect the client source
-    {
-        let dv = meta
-            .get("dynamic_values")
-            .and_then(|v| v.as_object().cloned())
-            .unwrap_or_default();
-        let mut dv = dv;
-        dv.insert(
-            "distri".to_string(),
-            serde_json::json!({ "Environment": "distri-cli" }),
-        );
-        meta["dynamic_values"] = serde_json::Value::Object(dv);
-    }
+    build_message_params_full(content, thread_id, task_id, model, false, connections_context, None)
+}
+
+pub fn build_message_params_full(
+    content: String,
+    thread_id: Option<&str>,
+    task_id: Option<&str>,
+    model: Option<&str>,
+    remote: bool,
+    connections_context: Option<String>,
+    env_vars: Option<HashMap<String, String>>,
+) -> MessageSendParams {
+    let has_overrides = model.is_some() || remote;
+    let mut metadata = ExecutorContextMetadata {
+        runtime_mode: RuntimeMode::Cli,
+        definition_overrides: if has_overrides {
+            Some(DefinitionOverrides {
+                model: model.map(|m| m.to_string()),
+                remote: if remote { Some(true) } else { None },
+                ..Default::default()
+            })
+        } else {
+            None
+        },
+        env_vars,
+        ..Default::default()
+    };
 
     if let Some(conn_ctx) = connections_context {
-        let dv = meta
-            .get("dynamic_values")
-            .and_then(|v| v.as_object().cloned())
-            .unwrap_or_default();
-        let mut dv = dv;
+        let mut dv = HashMap::new();
         dv.insert(
             "available_connections".to_string(),
             serde_json::Value::String(conn_ctx),
         );
-        meta["dynamic_values"] = serde_json::Value::Object(dv);
+        metadata.dynamic_values = Some(dv);
     }
 
     MessageSendParams {
@@ -92,6 +101,6 @@ pub fn build_message_params(
             metadata: None,
         },
         configuration: None,
-        metadata: Some(meta),
+        metadata: Some(serde_json::to_value(&metadata).unwrap_or_default()),
     }
 }

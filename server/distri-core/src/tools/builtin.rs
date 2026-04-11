@@ -1,4 +1,4 @@
-use distri_types::{MessageRole, Part, Tool, ToolContext};
+use distri_types::{MessageRole, Part, RuntimeMode, Tool, ToolContext};
 use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Arc};
 
@@ -8,7 +8,11 @@ use crate::tools::browser::{
 };
 use crate::tools::shell::{ExecuteShellTool, StartShellTool, StopShellTool};
 use crate::{
-    agent::{file::run_file_agent, ExecutorContext},
+    agent::{
+        context::{ForkOptions, ForkType},
+        file::run_file_agent,
+        ExecutorContext,
+    },
     tools::{emit_final, state::AgentExecutorState, ExecutorContextTool},
     types::{Message, ToolCall, ToolResponse},
     AgentError,
@@ -335,7 +339,7 @@ impl ExecutorContextTool for TransferToAgentTool {
             Ok(invoke_result) => {
                 let child_final = child_context_clone.get_final_result().await;
                 child_final
-                    .or(invoke_result.content.map(|c| Value::String(c)))
+                    .or(invoke_result.content.map(Value::String))
                     .unwrap_or_else(|| Value::String("Agent completed without response".into()))
             }
             Err(e) => {
@@ -606,11 +610,518 @@ impl ExecutorContextTool for AgentTool {
                 Ok(invoke_result) => {
                     let final_result = child_context_clone.get_final_result().await;
                     let response_text = final_result
-                        .or(invoke_result.content.map(|c| Value::String(c)))
+                        .or(invoke_result.content.map(Value::String))
                         .unwrap_or_else(|| {
                             "Child agent completed without response".to_string().into()
                         });
 
+                    Ok(vec![Part::Data(response_text)])
+                }
+                Err(e) => Ok(vec![Part::Data(Value::String(e.to_string()))]),
+            }
+        }
+    }
+}
+
+// ── UniversalAgentTool ──────────────────────────────────────────────────────
+
+/// Built-in agent names that are always available regardless of sub_agents config.
+pub(crate) const ALWAYS_AVAILABLE_BUILTINS: &[&str] = &["_system/plan", "_system/coder"];
+
+/// Built-in agents that are only available when explicitly listed in sub_agents.
+#[allow(dead_code)] // Used by tests
+pub(crate) const OPT_IN_BUILTINS: &[&str] = &["_system/explore"];
+
+/// Normalize a short builtin name to its canonical `_system/` prefixed form.
+/// e.g. "plan" → "_system/plan", "coder" → "_system/coder".
+/// If the name already has a prefix, return it unchanged.
+pub(crate) fn normalize_system_agent_name(name: &str) -> String {
+    if name.starts_with("_system/") {
+        name.to_string()
+    } else {
+        format!("_system/{}", name)
+    }
+}
+
+/// Check whether an agent is accessible from the calling agent's context.
+///
+/// An agent is accessible if:
+/// - It is in `ALWAYS_AVAILABLE_BUILTINS` (including short-name matches), OR
+/// - The calling agent's `sub_agents` contains `"*"` (wildcard), OR
+/// - It is explicitly listed in the calling agent's `sub_agents`
+///
+/// The `_runtime_mode` and `_use_coder_lite` parameters are accepted for
+/// future use but do not currently affect access control decisions.
+pub(crate) fn is_agent_accessible(
+    agent_name: &str,
+    sub_agents: &[String],
+    _runtime_mode: &RuntimeMode,
+    _use_coder_lite: bool,
+) -> bool {
+    let canonical = normalize_system_agent_name(agent_name);
+
+    // Always-available builtins are accessible regardless (check both forms)
+    if ALWAYS_AVAILABLE_BUILTINS.contains(&agent_name)
+        || ALWAYS_AVAILABLE_BUILTINS.contains(&canonical.as_str())
+    {
+        return true;
+    }
+
+    // Wildcard grants access to everything
+    if sub_agents.iter().any(|sa| sa == "*") {
+        return true;
+    }
+
+    // Check if explicitly in sub_agents (exact match or short name match)
+    if sub_agents
+        .iter()
+        .any(|sa| sa == agent_name || normalize_system_agent_name(sa) == agent_name || sa == &canonical)
+    {
+        return true;
+    }
+
+    false
+}
+
+/// Resolve which coder agent variant to use based on runtime mode and use_coder_lite flag.
+pub(crate) fn resolve_coder_name(runtime_mode: &RuntimeMode, use_coder_lite: bool) -> &'static str {
+    match runtime_mode {
+        RuntimeMode::Cloud => {
+            if use_coder_lite {
+                "_system/coder_lite"
+            } else {
+                "_system/coder"
+            }
+        }
+        RuntimeMode::Cli | RuntimeMode::Browser => "_system/coder",
+    }
+}
+
+/// Input struct for the `call_agent` tool.
+#[derive(Debug, serde::Deserialize)]
+pub(crate) struct CallAgentInput {
+    /// Name of the agent to call. If omitted, an ad-hoc agent is created from system_prompt.
+    #[serde(default)]
+    pub(crate) agent: Option<String>,
+    /// The task/prompt to send to the agent.
+    pub(crate) prompt: String,
+    /// System prompt for ad-hoc agent creation. When set without `agent`, creates a temporary agent.
+    #[serde(default)]
+    pub(crate) system_prompt: Option<String>,
+    /// Tool names to give the ad-hoc agent (only used with system_prompt).
+    #[serde(default)]
+    pub(crate) tools: Option<Vec<String>>,
+    /// Model override for the ad-hoc agent.
+    #[serde(default)]
+    pub(crate) model: Option<String>,
+    /// When true, fork the current context (copy history) instead of creating a clean sub-task.
+    #[serde(default)]
+    pub(crate) fork: bool,
+    /// Description for the ad-hoc agent.
+    #[serde(default)]
+    pub(crate) description: Option<String>,
+}
+
+/// Universal agent tool that replaces per-agent `call_<name>` tools with a single
+/// `call_agent` tool. Handles resolution, access control, ad-hoc creation, fork,
+/// and remote execution internally.
+#[derive(Debug)]
+pub struct UniversalAgentTool;
+
+#[async_trait::async_trait]
+impl Tool for UniversalAgentTool {
+    fn get_name(&self) -> String {
+        "call_agent".to_string()
+    }
+
+    fn get_description(&self) -> String {
+        "Call another agent to perform a task. Can target a named agent, or create an ad-hoc agent with a custom system prompt. Supports forking (copying parent history) for continuity.".to_string()
+    }
+
+    fn get_parameters(&self) -> serde_json::Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "agent": {
+                    "type": "string",
+                    "description": "Name of the agent to call (e.g. 'coder', '_system/plan', 'my_package/my_agent'). Omit to create an ad-hoc agent using system_prompt."
+                },
+                "prompt": {
+                    "type": "string",
+                    "description": "The task or instruction to send to the agent."
+                },
+                "system_prompt": {
+                    "type": "string",
+                    "description": "System prompt for creating an ad-hoc agent. Only used when 'agent' is not specified."
+                },
+                "tools": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Tool names to give the ad-hoc agent (only with system_prompt)."
+                },
+                "model": {
+                    "type": "string",
+                    "description": "Model override for the agent (only with system_prompt)."
+                },
+                "fork": {
+                    "type": "boolean",
+                    "description": "When true, fork the current context so the child agent sees the parent's message history.",
+                    "default": false
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Description for the ad-hoc agent (only with system_prompt)."
+                }
+            },
+            "required": ["prompt"]
+        })
+    }
+
+    fn needs_executor_context(&self) -> bool {
+        true
+    }
+
+    async fn execute(
+        &self,
+        _tool_call: ToolCall,
+        _context: Arc<ToolContext>,
+    ) -> Result<Vec<Part>, anyhow::Error> {
+        Err(anyhow::anyhow!(
+            "UniversalAgentTool requires ExecutorContext, not ToolContext"
+        ))
+    }
+}
+
+#[async_trait::async_trait]
+impl ExecutorContextTool for UniversalAgentTool {
+    async fn execute_with_executor_context(
+        &self,
+        tool_call: ToolCall,
+        context: Arc<ExecutorContext>,
+    ) -> Result<Vec<Part>, AgentError> {
+        // Parse input
+        let input: CallAgentInput = serde_json::from_value(tool_call.input.clone())
+            .map_err(|e| AgentError::ToolExecution(format!("Invalid call_agent input: {}", e)))?;
+
+        let orchestrator = context.get_orchestrator()?;
+
+        // ── Resolve agent name ────────────────────────────────────────────
+        let agent_name = if let Some(ref name) = input.agent {
+            // Named agent: normalize builtin short names
+            let normalized = if !name.contains('/') && !name.starts_with("_system/") {
+                // Could be a short builtin name like "plan" or "coder"
+                let candidate = normalize_system_agent_name(name);
+                // Check if it exists as a builtin, otherwise keep original
+                if orchestrator.get_agent(&candidate).await.is_some() {
+                    candidate
+                } else {
+                    name.to_string()
+                }
+            } else {
+                name.to_string()
+            };
+
+            // Special handling: resolve "coder" / "_system/coder" based on runtime mode
+            let resolved = if normalized == "_system/coder" || normalized == "coder" {
+                let use_coder_lite = orchestrator
+                    .get_agent(&context.agent_id)
+                    .await
+                    .and_then(|cfg| match cfg {
+                        distri_types::configuration::AgentConfig::StandardAgent(def) => {
+                            Some(def.use_coder_lite)
+                        }
+                        _ => None,
+                    })
+                    .unwrap_or(false);
+                resolve_coder_name(&context.runtime_mode, use_coder_lite).to_string()
+            } else {
+                normalized
+            };
+
+            resolved
+        } else if input.system_prompt.is_some() {
+            // Ad-hoc mode: create a temporary agent from system_prompt
+            let adhoc_name = format!("_adhoc/{}", uuid::Uuid::new_v4());
+            let system_prompt = input.system_prompt.as_deref().unwrap_or_default();
+
+            let mut definition = distri_types::StandardDefinition {
+                name: adhoc_name.clone(),
+                description: input
+                    .description
+                    .clone()
+                    .unwrap_or_else(|| "Ad-hoc agent".to_string()),
+                instructions: system_prompt.to_string(),
+                ..Default::default()
+            };
+
+            // Set model if specified
+            if let Some(ref model) = input.model {
+                definition.model_settings = Some(distri_types::ModelSettings::new(model.clone()));
+            }
+
+            // Set tools if specified
+            if let Some(ref tool_names) = input.tools {
+                definition.tools = Some(distri_types::ToolsConfig {
+                    builtin: tool_names.clone(),
+                    ..Default::default()
+                });
+            }
+
+            // Register the ad-hoc agent
+            let agent_config = distri_types::configuration::AgentConfig::StandardAgent(definition);
+            orchestrator
+                .stores
+                .agent_store
+                .register(agent_config)
+                .await
+                .map_err(|e| {
+                    AgentError::ToolExecution(format!("Failed to register ad-hoc agent: {}", e))
+                })?;
+
+            adhoc_name
+        } else {
+            return Err(AgentError::ToolExecution(
+                "call_agent requires either 'agent' name or 'system_prompt' for ad-hoc creation"
+                    .to_string(),
+            ));
+        };
+
+        // ── Access control ────────────────────────────────────────────────
+        // Get the calling agent's sub_agents list
+        let calling_agent_sub_agents = orchestrator
+            .get_agent(&context.agent_id)
+            .await
+            .and_then(|cfg| match cfg {
+                distri_types::configuration::AgentConfig::StandardAgent(def) => {
+                    Some(def.sub_agents)
+                }
+                _ => None,
+            })
+            .unwrap_or_default();
+
+        if !is_agent_accessible(
+            &agent_name,
+            &calling_agent_sub_agents,
+            &context.runtime_mode,
+            false,
+        ) {
+            return Err(AgentError::ToolExecution(format!(
+                "Agent '{}' is not accessible from '{}'. Add it to sub_agents or use an always-available builtin.",
+                agent_name, context.agent_id
+            )));
+        }
+
+        // Verify agent exists
+        if orchestrator.get_agent(&agent_name).await.is_none() {
+            return Err(AgentError::ToolExecution(format!(
+                "Agent '{}' not found",
+                agent_name
+            )));
+        }
+
+        // ── Cloud coder override: set remote=true ─────────────────────────
+        if agent_name == "_system/coder" && context.runtime_mode == RuntimeMode::Cloud {
+            // Check if the definition needs remote=true
+            if let Some(distri_types::configuration::AgentConfig::StandardAgent(mut def)) =
+                orchestrator.get_agent(&agent_name).await
+            {
+                if !def.remote
+                    && orchestrator.background_runner.is_some()
+                    && orchestrator.broadcaster.is_some()
+                {
+                    def.remote = true;
+                    let agent_config = distri_types::configuration::AgentConfig::StandardAgent(def);
+                    let _ = orchestrator.stores.agent_store.update(agent_config).await;
+                }
+            }
+        }
+
+        // ── Check if remote execution is needed ───────────────────────────
+        let use_remote = orchestrator.background_runner.is_some()
+            && orchestrator.broadcaster.is_some()
+            && {
+                let agent_def = orchestrator.stores.agent_store.get(&agent_name).await;
+                matches!(
+                    agent_def,
+                    Some(distri_types::configuration::AgentConfig::StandardAgent(ref def)) if def.remote
+                )
+            };
+
+        if use_remote {
+            // ── Remote/DeepAgent path ─────────────────────────────────────
+            let runner = orchestrator.background_runner.as_ref().unwrap();
+            let broadcaster = orchestrator.broadcaster.as_ref().unwrap();
+            let sub_task_id = uuid::Uuid::new_v4().to_string();
+            let env_id = format!(
+                "{}-{}",
+                context.workspace_id.as_deref().unwrap_or("default"),
+                agent_name
+            );
+
+            tracing::info!(
+                "UniversalAgentTool: remote dispatch {} (task_id={})",
+                agent_name,
+                sub_task_id
+            );
+
+            runner
+                .spawn(
+                    sub_task_id.clone(),
+                    agent_name.clone(),
+                    input.prompt.clone(),
+                    context.user_id.clone(),
+                    context.workspace_id.clone(),
+                    Some(env_id),
+                )
+                .await
+                .map_err(|e| {
+                    AgentError::ToolExecution(format!("Failed to spawn remote agent: {}", e))
+                })?;
+
+            let mut stream = broadcaster.subscribe(&sub_task_id).await.map_err(|e| {
+                AgentError::ToolExecution(format!(
+                    "Failed to subscribe to remote agent events: {}",
+                    e
+                ))
+            })?;
+
+            let mut final_result: Option<Value> = None;
+
+            use futures_util::StreamExt;
+            while let Some(event) = stream.next().await {
+                context.emit(event.event.clone()).await;
+
+                match &event.event {
+                    distri_types::AgentEventType::RunFinished { .. } => {
+                        if let Ok(Some(task_data)) =
+                            orchestrator.stores.task_store.get_task(&sub_task_id).await
+                        {
+                            let a2a_task: distri_a2a::Task = task_data.into();
+                            if let Some(msg) = a2a_task.status.message {
+                                let text: String = msg
+                                    .parts
+                                    .iter()
+                                    .filter_map(|p| match p {
+                                        distri_a2a::Part::Text(t) => Some(t.text.clone()),
+                                        _ => None,
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .join("\n");
+                                if !text.is_empty() {
+                                    final_result = Some(Value::String(text));
+                                }
+                            }
+                        }
+                        break;
+                    }
+                    distri_types::AgentEventType::RunError { message, .. } => {
+                        final_result =
+                            Some(Value::String(format!("Remote agent error: {}", message)));
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+
+            Ok(vec![Part::Data(final_result.unwrap_or_else(|| {
+                Value::String("Remote agent completed".to_string())
+            }))])
+        } else if input.fork {
+            // ── Fork path: copy parent history into child ─────────────────
+            let forked_context = context
+                .fork(ForkOptions {
+                    fork_type: ForkType::NewTask,
+                    copy_history_limit: None,
+                })
+                .await;
+            let mut forked_context = forked_context;
+            forked_context.agent_id = agent_name.clone();
+
+            // Copy parent's message history to the forked task
+            let parent_history = context
+                .get_current_task_message_history()
+                .await
+                .unwrap_or_default();
+
+            for msg in &parent_history {
+                let store_msg = distri_types::Message {
+                    id: msg.id.clone(),
+                    name: msg.name.clone(),
+                    parts: msg.parts.clone(),
+                    role: msg.role.clone(),
+                    created_at: msg.created_at,
+                    agent_id: msg.agent_id.clone(),
+                    parts_metadata: msg.parts_metadata.clone(),
+                };
+                let _ = orchestrator
+                    .stores
+                    .task_store
+                    .add_message_to_task(&forked_context.task_id, &store_msg)
+                    .await;
+            }
+
+            // Add the fork directive message
+            let fork_message = Message {
+                id: uuid::Uuid::new_v4().to_string(),
+                name: None,
+                parts: vec![Part::Text(format!(
+                    "[Forked from parent agent '{}'. Continue with the following task:]\n\n{}",
+                    context.agent_id, input.prompt
+                ))],
+                role: MessageRole::User,
+                created_at: chrono::Utc::now().timestamp_millis(),
+                agent_id: None,
+                parts_metadata: None,
+            };
+
+            let forked_context_arc = Arc::new(forked_context);
+            let forked_context_clone = forked_context_arc.clone();
+
+            let result = orchestrator
+                .execute_stream(&agent_name, fork_message, forked_context_arc, None)
+                .await;
+
+            match result {
+                Ok(invoke_result) => {
+                    let final_result = forked_context_clone.get_final_result().await;
+                    let response_text = final_result
+                        .or(invoke_result.content.map(Value::String))
+                        .unwrap_or_else(|| {
+                            Value::String("Forked agent completed without response".to_string())
+                        });
+                    Ok(vec![Part::Data(response_text)])
+                }
+                Err(e) => Ok(vec![Part::Data(Value::String(e.to_string()))]),
+            }
+        } else {
+            // ── Standard in-process path ──────────────────────────────────
+            let child_context = context.new_task(&agent_name).await;
+
+            let message = Message {
+                id: uuid::Uuid::new_v4().to_string(),
+                name: None,
+                parts: vec![Part::Text(input.prompt.clone())],
+                role: MessageRole::User,
+                created_at: chrono::Utc::now().timestamp_millis(),
+                agent_id: None,
+                parts_metadata: None,
+            };
+
+            let child_context_arc = Arc::new(child_context);
+            let child_context_clone = child_context_arc.clone();
+
+            let result = orchestrator
+                .execute_stream(&agent_name, message, child_context_arc, None)
+                .await;
+
+            match result {
+                Ok(invoke_result) => {
+                    let final_result = child_context_clone.get_final_result().await;
+                    let response_text = final_result
+                        .or(invoke_result.content.map(Value::String))
+                        .unwrap_or_else(|| {
+                            Value::String("Child agent completed without response".to_string())
+                        });
                     Ok(vec![Part::Data(response_text)])
                 }
                 Err(e) => Ok(vec![Part::Data(Value::String(e.to_string()))]),

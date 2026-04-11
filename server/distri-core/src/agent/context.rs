@@ -2,11 +2,10 @@ use crate::agent::pricing;
 use crate::hooks_runtime::HookRegistry;
 use distri_stores::SessionStoreExt;
 use distri_types::{
-    configuration::DefinitionOverrides, AgentContextSize, AgentPlan, ContextBudget, ContextSize,
-    ContextUsage, ExecutionHistoryEntry, ExecutionResult, ModelSettings, Part, PlanStep, RunUsage,
+    AgentContextSize, AgentPlan, ContextBudget, ContextSize, ContextUsage,
+    ExecutionHistoryEntry, ExecutionResult, ModelSettings, Part, PlanStep, RunUsage,
     ScratchpadEntry, ScratchpadEntryType,
 };
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
     collections::{HashMap, HashSet},
@@ -18,7 +17,7 @@ use crate::agent::prompt_registry::PromptSection;
 use crate::{
     servers::registry::McpServerRegistry,
     tools::Tool,
-    types::{ExternalTool, Message},
+    types::Message,
     AgentError, AgentOrchestrator,
 };
 
@@ -42,50 +41,7 @@ pub enum ForkType {
     NewThread,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct ExecutorContextMetadata {
-    /// Add additional context for tools to use passed as meta in tool calls
-    pub tool_metadata: Option<std::collections::HashMap<String, serde_json::Value>>,
-    #[serde(default)]
-    pub metadata: Option<serde_json::Value>,
-    #[serde(default)]
-    pub additional_attributes: Option<AdditionalAttributes>,
-
-    /// Define additional tools to delegate to during execution
-    pub external_tools: Option<Vec<ExternalTool>>,
-
-    /// Optional definition overrides supplied by the client
-    #[serde(default)]
-    pub definition_overrides: Option<DefinitionOverrides>,
-
-    /// Dynamic prompt sections to inject into the template per-call
-    #[serde(default)]
-    pub dynamic_sections: Option<Vec<PromptSection>>,
-
-    /// Dynamic key-value pairs available in templates per-call
-    #[serde(default)]
-    pub dynamic_values: Option<HashMap<String, serde_json::Value>>,
-
-    /// Browser session ID for browser tool integration
-    #[serde(default)]
-    pub browser_session_id: Option<String>,
-
-    /// Environment variables passed from the client to be available during execution.
-    /// These are forwarded to skill scripts and plugin contexts alongside secrets.
-    #[serde(default)]
-    pub env_vars: Option<HashMap<String, String>>,
-
-    /// When true, unsafe tools are simulated via LLM instead of executed.
-    /// Set by the eval simulator to test agent behavior without side effects.
-    #[serde(default)]
-    pub dry_run: Option<bool>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct AdditionalAttributes {
-    pub thread: Option<serde_json::Value>,
-    pub task: Option<serde_json::Value>,
-}
+pub use distri_types::{AdditionalAttributes, ExecutorContextMetadata};
 
 #[derive(Debug, Clone, Default)]
 pub struct PromptTemplateOverride {
@@ -180,6 +136,9 @@ pub struct ExecutorContext {
     /// When true, unsafe tools are simulated via LLM instead of executed.
     /// Safe tools (tool_search, load_skill, final, write_todos) still execute normally.
     pub dry_run: bool,
+    /// Runtime mode determines built-in agent tool selection.
+    /// Set from metadata at context creation, inherited by child contexts.
+    pub runtime_mode: distri_types::RuntimeMode,
     /// LRU cache for file read deduplication (returns FILE_UNCHANGED_STUB for unchanged files)
     pub file_read_cache: Arc<RwLock<distri_types::FileReadCache>>,
     /// Tracks which tool results have been replaced with persisted previews (for prompt cache stability)
@@ -250,6 +209,7 @@ impl Default for ExecutorContext {
             hook_registry: Arc::new(RwLock::new(None)),
             default_model_settings: None,
             dry_run: false,
+            runtime_mode: distri_types::RuntimeMode::default(),
             file_read_cache: Arc::new(RwLock::new(distri_types::FileReadCache::new(200))),
             content_replacement_state: Arc::new(RwLock::new(
                 distri_types::ContentReplacementState::default(),
@@ -944,6 +904,7 @@ impl ExecutorContext {
             tool_metadata: self.tool_metadata.clone(),
             default_model_settings: self.default_model_settings.clone(),
             env_vars: self.env_vars.clone(),
+            runtime_mode: self.runtime_mode.clone(),
             skill_tracker: Arc::new(RwLock::new(self.skill_tracker.read().await.clone())),
 
             ..Default::default()
@@ -979,6 +940,7 @@ impl ExecutorContext {
             tool_metadata: self.tool_metadata.clone(),
             default_model_settings: self.default_model_settings.clone(),
             env_vars: self.env_vars.clone(),
+            runtime_mode: self.runtime_mode.clone(),
 
             ..Default::default()
         }
@@ -1070,6 +1032,7 @@ impl ExecutorContext {
             hook_registry: self.hook_registry.clone(),
             default_model_settings: self.default_model_settings.clone(),
             dry_run: self.dry_run,
+            runtime_mode: self.runtime_mode.clone(),
             file_read_cache: self.file_read_cache.clone(),
             content_replacement_state: self.content_replacement_state.clone(),
             otel_agent_span: self.otel_agent_span.clone(),

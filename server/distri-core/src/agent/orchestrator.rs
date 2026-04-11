@@ -284,6 +284,20 @@ impl AgentOrchestratorBuilder {
             }
         }
 
+        // Register built-in agent definitions (plan, coder, coder_lite, explore)
+        match crate::agent::load_system_agents().await {
+            Ok(agents) => {
+                for def in agents {
+                    if let Err(e) = orchestrator.register_agent_definition(def).await {
+                        tracing::warn!("Failed to register built-in agent: {}", e);
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Failed to load built-in agents: {}", e);
+            }
+        }
+
         Ok(orchestrator)
     }
 }
@@ -582,33 +596,25 @@ impl AgentOrchestrator {
             tools.push(final_tool);
         }
 
-        if definition.sub_agents.is_empty() {
-            tools.retain(|t| t.get_name() != "transfer_to_agent");
-        } else {
-            // Add AgentTool instances for each sub-agent
-            for sub_agent_name in &definition.sub_agents {
-                tools.push(Arc::new(crate::tools::AgentTool::new(
-                    sub_agent_name.clone(),
-                )));
-            }
+        // Always register UniversalAgentTool — every agent can delegate
+        let has_call_agent = tools.iter().any(|t| t.get_name() == "call_agent");
+        if !has_call_agent {
+            tools.push(Arc::new(crate::tools::UniversalAgentTool));
         }
 
-        // Auto-include browser_agent sub-agent when browser_config.enabled = true
-        // This allows any agent with browser enabled to delegate browser tasks to the specialized browser agent
-        // Skip if this agent IS browser_agent (don't add itself as a sub-agent)
+        // Always keep transfer_to_agent (access control checked at execution time)
+
         let is_browser_agent =
             definition.name == "browser_agent" || definition.name.ends_with("/browser_agent");
         if definition.should_use_browser() && !is_browser_agent {
             let browser_agent_name = "browser_agent".to_string();
-            // Check if browser_agent is not already in sub_agents
             let already_has_browser_agent = definition
                 .sub_agents
                 .iter()
                 .any(|name| name == &browser_agent_name || name.ends_with("/browser_agent"));
             if !already_has_browser_agent {
-                tools.push(Arc::new(crate::tools::AgentTool::new(browser_agent_name)));
                 tracing::debug!(
-                    "Auto-included browser_agent sub-agent for agent '{}' (browser_config.enabled = true)",
+                    "browser_agent available for '{}' via call_agent (browser_config.enabled = true)",
                     definition.name
                 );
             }
@@ -805,10 +811,39 @@ impl AgentOrchestrator {
                     }
                 }
 
-                // Inject available sub-agents into prompt context if any are configured
-                if !definition.sub_agents.is_empty() {
+                // Always inject agent delegation info into prompt context
+                {
                     let mut sub_agent_lines = Vec::new();
+
+                    // Always-available system agents
+                    for builtin_name in crate::tools::builtin::ALWAYS_AVAILABLE_BUILTINS {
+                        if let Some(agent_cfg) = self.get_agent(builtin_name).await {
+                            let desc = match agent_cfg {
+                                distri_types::configuration::AgentConfig::StandardAgent(def) => {
+                                    def.description.clone()
+                                }
+                                distri_types::configuration::AgentConfig::WorkflowAgent(def) => {
+                                    def.description.clone()
+                                }
+                            };
+                            let short_name = builtin_name
+                                .strip_prefix("_system/")
+                                .unwrap_or(builtin_name);
+                            sub_agent_lines.push(format!(
+                                "- **{}** — {} *(always available)*",
+                                short_name, desc
+                            ));
+                        }
+                    }
+
+                    // Declared sub_agents (store agents + opt-in built-ins)
                     for name in &definition.sub_agents {
+                        if name == "*" {
+                            sub_agent_lines.push(
+                                "- **\\*** — all agents in the workspace are available".to_string(),
+                            );
+                            continue;
+                        }
                         let desc = if let Some(agent_cfg) = self.get_agent(name).await {
                             match agent_cfg {
                                 distri_types::configuration::AgentConfig::StandardAgent(def) => {
@@ -821,12 +856,14 @@ impl AgentOrchestrator {
                         } else {
                             "Sub-agent".to_string()
                         };
-                        let safe_name = name.replace('/', "__");
-                        sub_agent_lines.push(format!(
-                            "- **{}** (`call_{}` / `transfer_to_agent(\"{}\")`) — {}",
-                            name, safe_name, name, desc
-                        ));
+                        sub_agent_lines.push(format!("- **{}** — {}", name, desc));
                     }
+
+                    // Always mention transfer_to_agent availability
+                    sub_agent_lines.push(
+                        "\n*Use `transfer_to_agent` to hand over control completely (your execution stops, target agent takes over with your history).*".to_string()
+                    );
+
                     context
                         .merge_hook_prompt_state(crate::agent::context::HookPromptState {
                             dynamic_values: std::collections::HashMap::from([(

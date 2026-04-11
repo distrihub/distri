@@ -404,6 +404,20 @@ impl LlmDefinition {
     }
 }
 
+/// Runtime environment in which the agent is executing.
+/// Determines which built-in agent variants and tools are available.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeMode {
+    /// Running from distri-cli with local filesystem access
+    Cli,
+    /// Running on distri-cloud server (browsr sandbox for code execution)
+    #[default]
+    Cloud,
+    /// Running in browser with IndexedDB filesystem
+    Browser,
+}
+
 /// Agent definition - complete configuration for an agent
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 pub struct StandardDefinition {
@@ -529,6 +543,12 @@ pub struct StandardDefinition {
     /// Also settable via `--remote` CLI flag or `--overrides '{"remote":true}'`.
     #[serde(default, alias = "deepagent")]
     pub remote: bool,
+
+    /// When true, the built-in coder subagent uses CoderLite (browsr shell tools
+    /// directly) instead of the full Coder (distri-cli in browsr container).
+    /// Only relevant in cloud runtime mode. CLI and browser always use Coder.
+    #[serde(default)]
+    pub use_coder_lite: bool,
 }
 fn default_append_default_instructions() -> Option<bool> {
     Some(true)
@@ -1430,11 +1450,11 @@ pub async fn parse_agent_markdown_content(content: &str) -> Result<StandardDefin
         )));
     }
 
-    // Validate that agent name is a valid JavaScript identifier
+    // Validate that agent name characters are valid (alphanumeric, underscore, or '/' for namespacing)
     if !agent_def
         .name
         .chars()
-        .all(|c| c.is_alphanumeric() || c == '_')
+        .all(|c| c.is_alphanumeric() || c == '_' || c == '/')
         || agent_def
             .name
             .chars()
@@ -1442,8 +1462,7 @@ pub async fn parse_agent_markdown_content(content: &str) -> Result<StandardDefin
             .is_some_and(|c| c.is_numeric())
     {
         return Err(AgentError::Validation(format!(
-            "Invalid agent name '{}': Agent names must be valid JavaScript identifiers (alphanumeric + underscores, cannot start with number). \
-                Reason: Agent names become function names in TypeScript runtime.",
+            "Invalid agent name '{}': Agent names must be alphanumeric with underscores or '/' for namespacing (e.g. '_system/plan'), cannot start with number.",
             agent_def.name
         )));
     }
@@ -1482,11 +1501,11 @@ pub fn validate_plugin_name(name: &str) -> Result<(), String> {
         ));
     }
 
-    // Check if all characters are valid for JavaScript identifier
+    // Check if all characters are valid (alphanumeric, underscore, or '/' for namespacing)
     for ch in name.chars() {
-        if !ch.is_ascii_alphanumeric() && ch != '_' {
+        if !ch.is_ascii_alphanumeric() && ch != '_' && ch != '/' {
             return Err(format!(
-                "Plugin name '{}' can only contain letters, numbers, and underscores",
+                "Plugin name '{}' can only contain letters, numbers, underscores, and '/' for namespacing",
                 name
             ));
         }
@@ -1799,5 +1818,18 @@ mod tests {
             config.effective_delivery_mode(15),
             ToolDeliveryMode::Deferred
         );
+    }
+
+    #[test]
+    fn test_runtime_mode_serde() {
+        let mode: RuntimeMode = serde_json::from_str("\"cloud\"").unwrap();
+        assert_eq!(mode, RuntimeMode::Cloud);
+        let mode: RuntimeMode = serde_json::from_str("\"cli\"").unwrap();
+        assert_eq!(mode, RuntimeMode::Cli);
+        let mode: RuntimeMode = serde_json::from_str("\"browser\"").unwrap();
+        assert_eq!(mode, RuntimeMode::Browser);
+        assert_eq!(RuntimeMode::default(), RuntimeMode::Cloud);
+        let json = serde_json::to_string(&RuntimeMode::Cli).unwrap();
+        assert_eq!(json, "\"cli\"");
     }
 }
