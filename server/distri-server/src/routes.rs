@@ -40,7 +40,6 @@ pub mod secrets;
 pub mod session;
 pub mod skills;
 pub mod tools;
-pub mod workflows;
 
 pub fn all(cfg: &mut web::ServiceConfig) {
     cfg.configure(distri);
@@ -128,7 +127,6 @@ pub fn distri(cfg: &mut web::ServiceConfig) {
     .configure(secrets::configure_secret_routes)
     .configure(providers::configure_provider_routes)
     .configure(skills::configure_skill_routes)
-    .configure(workflows::configure_workflow_routes)
     .configure(models::configure_model_routes)
     // Authentication endpoints
     .configure(auth_routes::configure_auth_routes);
