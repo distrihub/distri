@@ -423,9 +423,6 @@ pub enum RuntimeMode {
 pub struct StandardDefinition {
     /// The name of the agent.
     pub name: String,
-    /// Optional package name that registered this agent (workspace/plugin metadata)
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub package_name: Option<String>,
     /// A brief description of the agent's purpose.
     #[serde(default)]
     pub description: String,

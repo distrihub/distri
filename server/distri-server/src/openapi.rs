@@ -30,7 +30,7 @@ use utoipa::OpenApi;
         (name = "Models", description = "Available LLM models"),
         (name = "Prompt Templates", description = "Reusable prompt templates"),
         (name = "Artifacts", description = "Task artifact storage"),
-        (name = "Configuration", description = "Server configuration and device info"),
+        
         (name = "Health", description = "Health checks"),
     ),
     paths(
@@ -62,8 +62,7 @@ use utoipa::OpenApi;
         crate::routes::list_tasks,
         // Tools
         crate::routes::list_tools,
-        // Configuration
-        crate::routes::get_configuration,
+
         crate::routes::get_device_info,
         crate::routes::get_home_stats,
         // Sessions
@@ -103,7 +102,6 @@ use utoipa::OpenApi;
     components(schemas(
         // Route-level types
         crate::routes::AgentWithStats,
-        crate::routes::ConfigurationMeta,
         crate::routes::DeviceResponse,
         crate::routes::DeviceMetadata,
         crate::routes::DeviceStorageScope,

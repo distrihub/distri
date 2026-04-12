@@ -10,8 +10,8 @@ use distri_core::agent::{parse_agent_markdown_content, AgentOrchestrator};
 use distri_core::secrets::SecretResolver;
 use distri_core::types::UpdateThreadRequest;
 use distri_core::{AgentError, MessageFilter};
+use distri_types::configuration::AgentConfigWithTools;
 use distri_types::configuration::ServerConfig;
-use distri_types::configuration::{AgentConfigWithTools, DistriServerConfig};
 use distri_types::stores::{VoteMessageRequest, VoteType};
 use distri_types::StandardDefinition;
 use distri_types::{ExternalTool, InlineHookResponse, Message, ModelSettings};
@@ -56,9 +56,7 @@ pub fn distri(cfg: &mut web::ServiceConfig) {
             .route(web::get().to(list_agents))
             .route(web::post().to(create_agent)),
     )
-    .service(
-        web::resource("/agents/{id:.*}/validate").route(web::get().to(validate_agent_handler)),
-    )
+    .service(web::resource("/agents/{id:.*}/validate").route(web::get().to(validate_agent_handler)))
     .service(
         web::resource("/agents/{id:.*}/complete-tool").route(web::post().to(complete_tool_handler)),
     )
@@ -120,7 +118,6 @@ pub fn distri(cfg: &mut web::ServiceConfig) {
     // LLM execute
     .service(web::resource("/llm/execute").route(web::post().to(llm_execute)))
     // Configuration endpoints
-    .service(web::resource("/configuration").route(web::get().to(get_configuration)))
     .service(web::resource("/device").route(web::get().to(get_device_info)))
     .service(web::resource("/home/stats").route(web::get().to(get_home_stats)))
     .configure(prompt_templates::configure_prompt_template_routes)
@@ -182,24 +179,6 @@ async fn list_agents(executor: web::Data<Arc<AgentOrchestrator>>) -> HttpRespons
         .collect();
 
     HttpResponse::Ok().json(agents_with_stats)
-}
-
-#[derive(Debug, Serialize, ToSchema)]
-pub struct ConfigurationMeta {
-    #[schema(value_type = Object)]
-    configuration: DistriServerConfig,
-}
-
-#[utoipa::path(
-    get,
-    path = "/v1/configuration",
-    tag = "Configuration",
-    responses((status = 200, description = "Get server configuration", body = ConfigurationMeta))
-)]
-async fn get_configuration(executor: web::Data<Arc<AgentOrchestrator>>) -> HttpResponse {
-    // Use the orchestrator's in-memory configuration snapshot
-    let cfg = executor.configuration.read().await.clone();
-    HttpResponse::Ok().json(ConfigurationMeta { configuration: cfg })
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, ToSchema, JsonSchema)]

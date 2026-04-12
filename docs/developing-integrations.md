@@ -8,7 +8,7 @@ This guide packages the learnings from the main `distri` repository so an LLM pa
 
 - **Plugin shape** – export a default `DistriPlugin` with `integrations` and `workflows` arrays, matching `distri-plugin-executor/src/executors/ts_executor/modules/base.ts`.
 - **Tools** – create with `createTool({ name, description, parameters, execute })`. Each tool runs in an async context that mirrors the Rust executor (`context.session_id`, `context.secrets`, `context.auth_session`).
-- **Workflows** – define a `DapWorkflow` with `execute(params, context)` and optional `parameters`/`examples`. Runtime utilities inject `callAgent`/`callTool` just like the production executor.
+
 - **Call funnel** – in the Rust runtime, `callTool` and `callAgent` are registered on `globalThis.rustyscript`. The shared runtime module re-implements these entry points so you can test without Rust.
 
 > 🔎 Reference: [`notes/typescript-plugins.md`](../../distri/notes/typescript-plugins.md) explains the TypeScript loader, agent config rules, and example workflows.
@@ -47,7 +47,7 @@ Deliver: TypeScript implementation + README + distri.toml metadata.
 Goal: author a workflow that consumes tools X, Y.
 Requirements:
 - New package under plugins/<name>/
-- DapWorkflow with execute(params, context)
+
 - Use callTool/callAgent from https://distri.dev/base.ts
 - Add at least one example entry and document dependencies in README/distri.toml
 ```

@@ -1870,10 +1870,6 @@ pub struct SkillResponse {
     pub updated_at: String,
 }
 
-// Re-export from distri-types for backward compat
-pub type SkillListItemResponse = distri_types::stores::SkillListItem;
-pub type SkillsListResponse = distri_types::stores::SkillsListResponse;
-
 /// Request to create a new skill.
 #[derive(Debug, Clone, Serialize)]
 pub struct CreateSkillRequest {

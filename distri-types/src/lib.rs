@@ -11,7 +11,6 @@ pub use agent::*;
 pub mod prompt;
 pub use orchestrator::*;
 
-pub use configuration::DistriServerConfig;
 mod hooks;
 
 pub mod auth;

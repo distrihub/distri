@@ -16,11 +16,7 @@ use distri_stores::{initialize_stores, InitializedStores};
 pub use distri_stores::{AgentStore, ThreadStore};
 use distri_types::configuration::AgentConfig;
 use distri_types::stores::{PromptTemplateStore, SecretStore};
-use distri_types::{
-    browser::BrowsrClientConfig,
-    configuration::{DistriServerConfig, StoreConfig},
-    HookMutation,
-};
+use distri_types::{browser::BrowsrClientConfig, configuration::StoreConfig, HookMutation};
 use distri_types::{
     configuration::{DefinitionOverrides, ObjectStorageConfig},
     LLmContext, OrchestratorTrait,
@@ -49,7 +45,6 @@ pub struct AgentOrchestrator {
     pub store_config: StoreConfig,
     /// All stores - use this instead of individual store fields
     pub stores: InitializedStores,
-    pub configuration: Arc<RwLock<DistriServerConfig>>,
     pub hooks: Arc<RwLock<HashMap<String, Arc<dyn crate::agent::types::AgentHooks>>>>,
     pub inline_hooks: Arc<dashmap::DashMap<String, tokio::sync::oneshot::Sender<HookMutation>>>,
     pub hook_registry: HookRegistry,
@@ -85,7 +80,6 @@ pub struct AgentOrchestratorBuilder {
     stores: Option<InitializedStores>,
     prompt_registry: Option<Arc<PromptRegistry>>,
     store_config: Option<StoreConfig>,
-    configuration: Option<Arc<RwLock<DistriServerConfig>>>,
     hooks: Option<HashMap<String, Arc<dyn crate::agent::types::AgentHooks>>>,
     system_hooks: Vec<Arc<dyn crate::agent::types::AgentHooks>>,
     broadcaster: Option<Arc<dyn crate::broadcast::AgentEventBroadcaster>>,
@@ -157,11 +151,6 @@ impl AgentOrchestratorBuilder {
         self
     }
 
-    pub fn with_configuration(mut self, configuration: Arc<RwLock<DistriServerConfig>>) -> Self {
-        self.configuration = Some(configuration);
-        self
-    }
-
     pub fn with_browser_config(mut self, browser_config: BrowsrClientConfig) -> Self {
         self.browser_config = Some(browser_config);
         self
@@ -221,10 +210,6 @@ impl AgentOrchestratorBuilder {
         });
         let hooks = Arc::new(RwLock::new(hooks_map));
 
-        let configuration = self
-            .configuration
-            .unwrap_or_else(|| Arc::new(RwLock::new(DistriServerConfig::default())));
-
         // Create session filesystem for internal artifact/large-response processing.
         // This is independent of any workspace — it's purely for session-scoped storage.
         let session_filesystem = if let Some(fs) = self.session_filesystem {
@@ -267,7 +252,6 @@ impl AgentOrchestratorBuilder {
             prompt_registry,
             store_config,
             stores,
-            configuration,
             system_hooks: self.system_hooks,
             hooks: hooks.clone(),
             inline_hooks: Arc::new(dashmap::DashMap::new()),
@@ -401,19 +385,6 @@ impl AgentOrchestrator {
 
     pub fn cleanup(&self) {
         // No-op: plugin registry has been removed
-    }
-
-    pub async fn get_configuration(&self) -> DistriServerConfig {
-        self.configuration.read().await.clone()
-    }
-
-    pub fn configuration_handle(&self) -> Arc<RwLock<DistriServerConfig>> {
-        self.configuration.clone()
-    }
-
-    pub async fn update_configuration(&self, configuration: DistriServerConfig) {
-        let mut guard = self.configuration.write().await;
-        *guard = configuration;
     }
 
     /// Create ephemeral session stores for a single thread execution
@@ -1416,7 +1387,7 @@ impl AgentOrchestrator {
         Option<String>,
     ) {
         let (agents, next_cursor) = self.stores.agent_store.list(cursor, limit).await;
-        // Default agents are now loaded via DapRegistry
+
         (agents, next_cursor)
     }
 
@@ -1656,8 +1627,6 @@ impl AgentOrchestrator {
         Ok(value)
     }
 }
-
-// Default agents are now loaded from the default_agents directory via DapRegistry
 
 // Implement WorkflowRuntime trait for WorkflowExecutor
 #[async_trait::async_trait]

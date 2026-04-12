@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Chat, useAgent, useTheme, useDistri } from '@distri/react';
-import { useDistriHomeNavigate, useDistriHome } from '../DistriHomeProvider';
+import { useDistriHomeNavigate, useDistriHome, useDistriHomeClient } from '../DistriHomeProvider';
 import { useAgentValidation } from '../hooks/useAgentValidation';
 import Editor from '@monaco-editor/react';
 import {
@@ -78,6 +78,7 @@ export function AgentDetails({
 }: AgentDetailsProps) {
   const navigate = useDistriHomeNavigate();
   const { config } = useDistriHome();
+  const homeClient = useDistriHomeClient();
   const { client } = useDistri();
   const { agent, loading: agentLoading, error: agentError } = useAgent({ agentIdOrDef: agentId || '' });
   const { warnings, loading: validationLoading } = useAgentValidation({ agentId, enabled: !!agentId });
@@ -93,6 +94,7 @@ export function AgentDetails({
   const [copied, setCopied] = useState(false);
   const [definitionDraft, setDefinitionDraft] = useState<string>('');
   const [savingDefinition, setSavingDefinition] = useState(false);
+  const [cloning, setCloning] = useState(false);
   const [definitionSaved, setDefinitionSaved] = useState(false);
 
   const [threadId, setThreadId] = useState(() => {
@@ -343,13 +345,23 @@ export function AgentDetails({
             <div className="h-6 w-px bg-border/70" />
             <button
               type="button"
-              onClick={() => {
-                const cloneTarget = definition?.id ?? agentId ?? agentDefinition?.name ?? displayName;
-                navigate(`/home/new?clone_from_id=${encodeURIComponent(cloneTarget)}`);
+              disabled={cloning}
+              onClick={async () => {
+                if (!homeClient) return;
+                const name = agentDefinition?.name ?? agentId;
+                setCloning(true);
+                try {
+                  await homeClient.cloneAgent(name);
+                  navigate('/');
+                } catch {
+                  // silently fail — toast would be better but not available here
+                } finally {
+                  setCloning(false);
+                }
               }}
-              className="inline-flex items-center gap-2 rounded-md border border-border/70 bg-card px-3 py-1.5 text-sm font-medium text-foreground transition hover:border-primary/50 hover:text-primary"
+              className="inline-flex items-center gap-2 rounded-md border border-border/70 bg-card px-3 py-1.5 text-sm font-medium text-foreground transition hover:border-primary/50 hover:text-primary disabled:opacity-50"
             >
-              <Copy className="h-4 w-4" />
+              {cloning ? <Loader2 className="h-4 w-4 animate-spin" /> : <Copy className="h-4 w-4" />}
               Clone
             </button>
           </div>

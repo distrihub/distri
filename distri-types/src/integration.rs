@@ -193,14 +193,6 @@ pub struct IntegrationInfo {
     pub metadata: HashMap<String, serde_json::Value>,
 }
 
-/// Plugin data structure matching TypeScript format - uses existing types
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PluginData {
-    #[serde(default)]
-    pub package_name: String,
-    pub integrations: Vec<IntegrationData>,
-}
-
 /// Tool definition extended with auth and integration info
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IntegrationToolDefinition {

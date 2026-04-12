@@ -1,23 +1,8 @@
 use crate::ToolDefinition;
 use crate::agent::StandardDefinition;
-use crate::configuration::manifest::DistriServerConfig;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 use utoipa::ToSchema;
-
-/// Tool definition ready for DAP registration with runtime info
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
-pub struct PluginToolDefinition {
-    pub name: String,
-    pub package_name: String,
-    pub description: String,
-    #[serde(default)]
-    pub parameters: serde_json::Value,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schema(value_type = Option<Object>)]
-    pub auth: Option<crate::auth::AuthRequirement>,
-}
 
 /// Cloud-specific metadata for agents (optional, only present in cloud responses)
 #[derive(Debug, Clone, Serialize, Deserialize, Default, ToSchema, JsonSchema)]
@@ -30,6 +15,12 @@ pub struct AgentCloudMetadata {
     pub is_owner: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub is_system: Option<bool>,
+    /// True when the agent belongs to the current workspace (not from another workspace via publish)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_workspace: Option<bool>,
+    /// Workspace slug the agent belongs to (for display on cross-workspace agents)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_slug: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
@@ -119,48 +110,4 @@ impl AgentConfig {
             AgentConfig::WorkflowAgent(_def) => Ok(()), // Workflow validation happens at execution
         }
     }
-
-    /// Get the working directory with fallback chain: agent config -> package config -> DISTRI_HOME -> current_dir
-    pub fn get_working_directory(
-        &self,
-        package_config: Option<&DistriServerConfig>,
-    ) -> anyhow::Result<std::path::PathBuf> {
-        // Fall back to package configuration
-        if let Some(config) = package_config {
-            return config.get_working_directory();
-        }
-
-        // Try DISTRI_HOME environment variable
-        if let Ok(distri_home) = std::env::var("DISTRI_HOME") {
-            return Ok(std::path::PathBuf::from(distri_home));
-        }
-
-        // Fallback to current directory
-        std::env::current_dir()
-            .map_err(|e| anyhow::anyhow!("Failed to get current directory: {}", e))
-    }
-}
-
-/// Agent definition ready for DAP registration with runtime info
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
-pub struct PluginAgentDefinition {
-    pub name: String,
-    pub package_name: String,
-    pub description: String,
-    #[schema(value_type = String)]
-    pub file_path: PathBuf,
-    /// The full agent configuration (supports all agent types)
-    #[schema(value_type = Object)]
-    pub agent_config: AgentConfig,
-}
-
-/// Built DAP package artifact ready for registration in distri
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
-pub struct PluginArtifact {
-    pub name: String,
-    #[schema(value_type = String)]
-    pub path: PathBuf,
-    pub configuration: crate::configuration::manifest::DistriServerConfig,
-    pub tools: Vec<PluginToolDefinition>,
-    pub agents: Vec<PluginAgentDefinition>,
 }

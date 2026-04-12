@@ -293,6 +293,19 @@ export class DistriHomeClient {
     return await response.json();
   }
 
+  /**
+   * Clone an agent by name into the current workspace
+   */
+  async cloneAgent(agentName: string): Promise<void> {
+    const response = await this.client.fetch(`/agents/${agentName}/clone`, {
+      method: 'POST',
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to clone agent: ${response.statusText}`);
+    }
+  }
+
   // ---- Prompt Templates ----
 
   /**

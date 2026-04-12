@@ -320,38 +320,6 @@ pub struct NewExternalToolCallEventModel<'a> {
     pub created_at: NaiveDateTime,
 }
 
-#[derive(Debug, Clone, Queryable, Identifiable, Selectable)]
-#[diesel(table_name = plugin_catalog, primary_key(package_name))]
-pub struct PluginCatalogModel {
-    pub package_name: String,
-    pub version: Option<String>,
-    pub object_prefix: String,
-    pub entrypoint: Option<String>,
-    pub artifact_json: String,
-    pub updated_at: NaiveDateTime,
-}
-
-#[derive(Debug, Clone, Insertable)]
-#[diesel(table_name = plugin_catalog)]
-pub struct NewPluginCatalogModel<'a> {
-    pub package_name: &'a str,
-    pub version: Option<&'a str>,
-    pub object_prefix: &'a str,
-    pub entrypoint: Option<&'a str>,
-    pub artifact_json: &'a str,
-    pub updated_at: NaiveDateTime,
-}
-
-#[derive(Debug, Clone, AsChangeset)]
-#[diesel(table_name = plugin_catalog)]
-pub struct PluginCatalogChangeset<'a> {
-    pub version: Option<&'a str>,
-    pub object_prefix: &'a str,
-    pub entrypoint: Option<&'a str>,
-    pub artifact_json: &'a str,
-    pub updated_at: NaiveDateTime,
-}
-
 // ========== Prompt Templates ==========
 
 #[derive(Debug, Clone, Queryable, Identifiable, Selectable)]
