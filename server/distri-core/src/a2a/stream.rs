@@ -1,5 +1,6 @@
 use crate::a2a::handler::validate_message;
-use crate::a2a::mapper::map_agent_event;
+use crate::a2a::mapper::{map_agent_event, map_final_result};
+use crate::agent::InvokeResult;
 use crate::a2a::{extract_text_from_message, SseMessage};
 use crate::agent::{
     types::ExecutorContextMetadata, AgentEventType, AgentOrchestrator, ExecutorContext,
@@ -501,11 +502,19 @@ pub async fn handle_message_send_streaming_sse(
             workspace_id,
         );
 
-        // 4. Subscribe to broadcaster events and stream as SSE
+        // 4. Subscribe to broadcaster events and stream as SSE.
+        //    Break the loop when a terminal event is seen, then yield a final
+        //    MessageKind::Message constructed from the task's saved final message.
+        let executor_context_for_final = executor_context.clone();
         match executor.broadcaster().subscribe(&main_task_id).await {
             Ok(event_stream) => {
                 futures_util::pin_mut!(event_stream);
+                let mut saw_terminal = false;
                 while let Some(event) = futures_util::StreamExt::next(&mut event_stream).await {
+                    let is_terminal = matches!(
+                        &event.event,
+                        AgentEventType::RunFinished { .. } | AgentEventType::RunError { .. }
+                    );
                     let msg = map_agent_event(&event);
                     let message = JsonRpcResponse {
                         jsonrpc: "2.0".to_string(),
@@ -517,6 +526,42 @@ pub async fn handle_message_send_streaming_sse(
                         event: None,
                         data: serde_json::to_string(&message).unwrap_or_default(),
                     });
+                    if is_terminal {
+                        saw_terminal = true;
+                        break;
+                    }
+                }
+
+                // After terminal event: read the final result from the shared
+                // ExecutorContext (set by the `final` tool via set_final_result, and
+                // shared via Arc<RwLock>) and yield it as MessageKind::Message so
+                // clients render the final answer.
+                if saw_terminal {
+                    if let Some(final_value) =
+                        executor_context_for_final.get_final_result().await
+                    {
+                        let text = match final_value {
+                            serde_json::Value::String(s) => s,
+                            other => other.to_string(),
+                        };
+                        if !text.is_empty() {
+                            let result = InvokeResult {
+                                content: Some(text),
+                                ..Default::default()
+                            };
+                            let msg = map_final_result(&result, executor_context_for_final);
+                            let message = JsonRpcResponse {
+                                jsonrpc: "2.0".to_string(),
+                                result: Some(serde_json::to_value(msg).unwrap_or_default()),
+                                error: None,
+                                id: req_id.clone(),
+                            };
+                            yield Ok::<_, std::convert::Infallible>(SseMessage {
+                                event: None,
+                                data: serde_json::to_string(&message).unwrap_or_default(),
+                            });
+                        }
+                    }
                 }
             }
             Err(e) => {
