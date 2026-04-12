@@ -292,32 +292,28 @@ impl A2AHandler {
             "tasks/get" => Either::Right(self.handle_task_get(req.params).await),
             "tasks/cancel" => Either::Right(self.handle_task_cancel(req.params).await),
             "tasks/resubscribe" => {
-                // Subscribe to events for an existing task via broadcaster.
-                if self.executor.broadcaster.is_some() {
-                    let params: TaskIdParams = match serde_json::from_value(req.params) {
-                        Ok(p) => p,
-                        Err(e) => {
-                            return Either::Right(JsonRpcResponse {
-                                jsonrpc: "2.0".to_string(),
-                                result: None,
-                                error: Some(map_agent_error(AgentError::Validation(format!(
-                                    "Invalid params: {}",
-                                    e
-                                )))),
-                                id: req_id.clone(),
-                            });
-                        }
-                    };
-                    let res = crate::a2a::stream::handle_resubscribe_sse(
-                        req_id.clone(),
-                        params.id,
-                        self.executor.clone(),
-                    )
-                    .await;
-                    Either::Left(Box::pin(res) as BoxedSseStream)
-                } else {
-                    Either::Right(Err(unimplemented_error(&req.method)))
-                }
+                // Subscribe to events for an existing task via broadcaster (always available).
+                let params: TaskIdParams = match serde_json::from_value(req.params) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        return Either::Right(JsonRpcResponse {
+                            jsonrpc: "2.0".to_string(),
+                            result: None,
+                            error: Some(map_agent_error(AgentError::Validation(format!(
+                                "Invalid params: {}",
+                                e
+                            )))),
+                            id: req_id.clone(),
+                        });
+                    }
+                };
+                let res = crate::a2a::stream::handle_resubscribe_sse(
+                    req_id.clone(),
+                    params.id,
+                    self.executor.clone(),
+                )
+                .await;
+                Either::Left(Box::pin(res) as BoxedSseStream)
             }
             "agent/authenticatedExtendedCard"
             | "tasks/pushNotificationConfig/set"
@@ -432,11 +428,9 @@ impl A2AHandler {
     ) -> Result<serde_json::Value, AgentError> {
         let params: TaskIdParams = serde_json::from_value(params)?;
 
-        // Signal abort via coordinator (sends CancellationToken signal, works across nodes)
-        if let Some(ref coordinator) = self.executor.coordinator {
-            if let Err(e) = coordinator.cancel(&params.id).await {
-                tracing::warn!("Coordinator cancel failed for {}: {}", params.id, e);
-            }
+        // Signal abort via coordinator (sends CancellationSignal, works across nodes)
+        if let Err(e) = self.executor.runtime.coordinator().cancel(&params.id).await {
+            tracing::warn!("Coordinator cancel failed for {}: {}", params.id, e);
         }
 
         // Also update the task store record

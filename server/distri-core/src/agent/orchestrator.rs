@@ -1,7 +1,6 @@
 use crate::{
     agent::{
-        prompt_registry::PromptRegistry, todos::TodosTool, AgentEventType, BaseAgent,
-        CoordinatorMessage, InvokeResult,
+        prompt_registry::PromptRegistry, todos::TodosTool, AgentEventType, BaseAgent, InvokeResult,
     },
     servers::registry::McpServerRegistry,
     tools::{FinalTool, Tool},
@@ -25,15 +24,14 @@ use distri_types::{
     LlmDefinition, ModelSettings, Part, ServerMetadataWrapper, ToolCall, ToolsConfig,
 };
 use std::{collections::HashMap, sync::Arc};
-use tokio::sync::{mpsc, Mutex, RwLock};
+use tokio::sync::RwLock;
 
 pub const SKILL_STORAGE_ROOT: &str = "storage/skills";
 
 #[derive(Clone)]
 pub struct AgentOrchestrator {
     pub mcp_registry: Arc<RwLock<McpServerRegistry>>,
-    pub coordinator_rx: Arc<Mutex<mpsc::Receiver<CoordinatorMessage>>>,
-    pub coordinator_tx: mpsc::Sender<CoordinatorMessage>,
+
     pub session_filesystem: Arc<FileSystem>,
     /// Optional workspace filesystem for HTTP file routes (not used by agent tools).
     /// Set by the hosting application if workspace file APIs are needed.
@@ -49,19 +47,29 @@ pub struct AgentOrchestrator {
     pub inline_hooks: Arc<dashmap::DashMap<String, tokio::sync::oneshot::Sender<HookMutation>>>,
     pub hook_registry: HookRegistry,
     pub system_hooks: Vec<Arc<dyn crate::agent::types::AgentHooks>>,
-    /// Optional event broadcaster for A2A tasks/resubscribe and deepagent event relay.
-    pub broadcaster: Option<Arc<dyn crate::broadcast::AgentEventBroadcaster>>,
+
     /// Optional background runner for async agent execution (deepagent containers).
     pub background_runner: Option<Arc<dyn crate::runner::BackgroundRunner>>,
-    /// Optional task coordinator for background-first agent execution.
-    /// Manages cancellation, mailbox, and name resolution. Works with the broadcaster
-    /// for event streaming: coordinator handles lifecycle, broadcaster handles events.
-    pub coordinator: Option<Arc<dyn crate::broadcast::AgentTaskCoordinator>>,
+    /// Unified runtime for event broadcasting + task coordination.
+    /// Always initialized — InProcessRuntime by default, RedisRuntime for cloud.
+    pub runtime: Arc<dyn crate::broadcast::AgentRuntime>,
 }
 
 impl std::fmt::Debug for AgentOrchestrator {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AgentOrchestrator").finish()
+    }
+}
+
+impl AgentOrchestrator {
+    /// Shorthand for `self.runtime.broadcaster()`.
+    pub fn broadcaster(&self) -> &dyn crate::broadcast::AgentEventBroadcaster {
+        self.runtime.broadcaster()
+    }
+
+    /// Shorthand for `self.runtime.coordinator()`.
+    pub fn coordinator(&self) -> &dyn crate::broadcast::AgentTaskCoordinator {
+        self.runtime.coordinator()
     }
 }
 
@@ -86,9 +94,8 @@ pub struct AgentOrchestratorBuilder {
     store_config: Option<StoreConfig>,
     hooks: Option<HashMap<String, Arc<dyn crate::agent::types::AgentHooks>>>,
     system_hooks: Vec<Arc<dyn crate::agent::types::AgentHooks>>,
-    broadcaster: Option<Arc<dyn crate::broadcast::AgentEventBroadcaster>>,
+    runtime: Option<Arc<dyn crate::broadcast::AgentRuntime>>,
     background_runner: Option<Arc<dyn crate::runner::BackgroundRunner>>,
-    coordinator: Option<Arc<dyn crate::broadcast::AgentTaskCoordinator>>,
 }
 
 impl AgentOrchestratorBuilder {
@@ -176,11 +183,8 @@ impl AgentOrchestratorBuilder {
         self.system_hooks = hooks;
         self
     }
-    pub fn with_broadcaster(
-        mut self,
-        broadcaster: Arc<dyn crate::broadcast::AgentEventBroadcaster>,
-    ) -> Self {
-        self.broadcaster = Some(broadcaster);
+    pub fn with_runtime(mut self, runtime: Arc<dyn crate::broadcast::AgentRuntime>) -> Self {
+        self.runtime = Some(runtime);
         self
     }
 
@@ -192,16 +196,7 @@ impl AgentOrchestratorBuilder {
         self
     }
 
-    pub fn with_coordinator(
-        mut self,
-        coordinator: Arc<dyn crate::broadcast::AgentTaskCoordinator>,
-    ) -> Self {
-        self.coordinator = Some(coordinator);
-        self
-    }
-
     pub async fn build(self) -> anyhow::Result<AgentOrchestrator> {
-        let (coordinator_tx, coordinator_rx) = mpsc::channel(10000);
         let browser_config = self.browser_config.unwrap_or_default();
 
         let registry = self
@@ -254,10 +249,15 @@ impl AgentOrchestratorBuilder {
             })?)
         };
 
+        // Auto-create InProcessRuntime from TaskStore if no runtime was provided
+        let runtime = self.runtime.unwrap_or_else(|| {
+            Arc::new(crate::broadcast::in_process::InProcessRuntime::new(
+                stores.task_store.clone(),
+            ))
+        });
+
         let orchestrator = AgentOrchestrator {
             mcp_registry: registry,
-            coordinator_rx: Arc::new(Mutex::new(coordinator_rx)),
-            coordinator_tx,
             session_filesystem,
             workspace_filesystem: self.workspace_filesystem,
             browser_config,
@@ -269,9 +269,8 @@ impl AgentOrchestratorBuilder {
             hooks: hooks.clone(),
             inline_hooks: Arc::new(dashmap::DashMap::new()),
             hook_registry: HookRegistry::new(),
-            broadcaster: self.broadcaster,
+            runtime,
             background_runner: self.background_runner,
-            coordinator: self.coordinator,
         };
 
         // Sync system prompts to the store
@@ -926,62 +925,6 @@ impl AgentOrchestrator {
             .map_err(|e| anyhow::anyhow!(e))
     }
 
-    pub async fn run(&self) -> anyhow::Result<()> {
-        tracing::debug!("AgentCoordinator run loop started");
-
-        while let Some(msg) = self.coordinator_rx.lock().await.recv().await {
-            tracing::debug!("AgentCoordinator received a message: {:?}", msg);
-            match msg {
-                CoordinatorMessage::ExecuteStream {
-                    agent_id,
-                    message,
-                    context,
-                } => {
-                    tracing::debug!(
-                        "Handling ExecuteStream for agent: {} with message: {:?}",
-                        agent_id,
-                        message
-                    );
-                    let this = self.clone();
-                    tokio::spawn(async move {
-                        let result = async {
-                            this.call_agent_stream(&agent_id, message, context, None)
-                                .await
-                        }
-                        .await;
-
-                        if let Err(e) = result {
-                            tracing::error!("Error in Coordinator:ExecuteStream: {}", e);
-                        }
-                    });
-                }
-                CoordinatorMessage::HandoverAgent {
-                    from_agent,
-                    to_agent,
-                    reason,
-                    context,
-                } => {
-                    tracing::debug!(
-                        "Handling agent handover from {} to {}",
-                        from_agent,
-                        to_agent
-                    );
-
-                    // Emit the AgentHandover event if event_tx is available
-                    context
-                        .emit(AgentEventType::AgentHandover {
-                            from_agent: from_agent.clone(),
-                            to_agent: to_agent.clone(),
-                            reason,
-                        })
-                        .await;
-                }
-            }
-        }
-        tracing::info!("AgentCoordinator run loop exiting");
-        Ok(())
-    }
-
     async fn call_agent(
         &self,
         agent_id: &str,
@@ -1042,24 +985,21 @@ impl AgentOrchestrator {
             agent_config
         {
             if definition.remote {
-                match (&self.background_runner, &self.broadcaster) {
-                    (Some(runner), Some(broadcaster)) => {
-                        let hooks: Arc<dyn crate::agent::types::AgentHooks> = Arc::new(
-                            crate::agent::hooks::CombinedHooks::new(self.system_hooks.clone()),
-                        );
-                        let agent = crate::agent::remote::RemoteAgent {
-                            definition: definition.clone(),
-                            runner: runner.clone(),
-                            broadcaster: broadcaster.clone(),
-                            hooks,
-                        };
-                        return agent.invoke_stream(message, context).await;
-                    }
-                    _ => {
-                        return Err(AgentError::Session(
-                            "Agent has remote=true but no background_runner or broadcaster configured".to_string(),
-                        ));
-                    }
+                if let Some(runner) = &self.background_runner {
+                    let hooks: Arc<dyn crate::agent::types::AgentHooks> = Arc::new(
+                        crate::agent::hooks::CombinedHooks::new(self.system_hooks.clone()),
+                    );
+                    let agent = crate::agent::remote::RemoteAgent {
+                        definition: definition.clone(),
+                        runner: runner.clone(),
+                        broadcaster: self.runtime.broadcaster_arc(), // Arc needed for RemoteAgent ownership
+                        hooks,
+                    };
+                    return agent.invoke_stream(message, context).await;
+                } else {
+                    return Err(AgentError::Session(
+                        "Agent has remote=true but no background_runner configured".to_string(),
+                    ));
                 }
             }
         }
@@ -1284,15 +1224,12 @@ impl AgentOrchestrator {
 
         // Look up parent run for OTel span nesting (set by RemoteAgent before spawning inner task).
         let context = if context.parent_run_id.is_none() {
-            if let Some(broadcaster) = &self.broadcaster {
-                if let Ok(Some(parent_run_id)) = broadcaster.get_parent_run(&context.task_id).await
-                {
-                    let mut ctx = (*context).clone();
-                    ctx.parent_run_id = Some(parent_run_id);
-                    Arc::new(ctx)
-                } else {
-                    context
-                }
+            if let Ok(Some(parent_run_id)) =
+                self.broadcaster().get_parent_run(&context.task_id).await
+            {
+                let mut ctx = (*context).clone();
+                ctx.parent_run_id = Some(parent_run_id);
+                Arc::new(ctx)
             } else {
                 context
             }
@@ -1304,6 +1241,77 @@ impl AgentOrchestrator {
 
         self.call_agent(agent_name, message, context, definition_overrides)
             .await
+    }
+
+    // ── Background execution helpers ──────────────────────────────────
+
+    /// Register a task with the coordinator, wire cancellation signal and mailbox
+    /// into the execution context. Returns the wired context and task metadata.
+    ///
+    /// This is the first step in the background execution flow:
+    /// 1. `register_task()` — register + wire context (this method)
+    /// 2. `spawn_task_relay()` — spawn event relay to broadcaster
+    /// 3. `subscribe_to_task()` — subscribe to broadcaster events as SSE
+    pub async fn register_task(
+        &self,
+        task_id: &str,
+        thread_id: &str,
+        exec_ctx: ExecutorContext,
+    ) -> anyhow::Result<(
+        Arc<ExecutorContext>,
+        tokio::sync::mpsc::Receiver<distri_types::AgentEvent>,
+    )> {
+        let coordinator = self.coordinator();
+
+        let cancel_signal = coordinator.register_task(task_id, thread_id, None).await?;
+
+        let mailbox = coordinator.take_mailbox(task_id).await.ok();
+
+        let (event_tx, event_rx) = tokio::sync::mpsc::channel::<distri_types::AgentEvent>(100);
+        let mut wired_ctx = exec_ctx.clone_with_tx(event_tx);
+        wired_ctx.cancellation_signal = Some(cancel_signal);
+        if let Some(mb) = mailbox {
+            wired_ctx.mailbox = Some(Arc::new(tokio::sync::Mutex::new(mb)));
+        }
+
+        Ok((Arc::new(wired_ctx), event_rx))
+    }
+
+    /// Spawn the event relay task: receives events from the agent's event channel
+    /// and publishes them to the broadcaster. Completes the task in the coordinator
+    /// when a terminal event is received. Auto-completes inline hooks.
+    pub fn spawn_task_relay(
+        &self,
+        task_id: String,
+        mut event_rx: tokio::sync::mpsc::Receiver<distri_types::AgentEvent>,
+    ) {
+        let runtime = self.runtime.clone();
+        let executor = Arc::new(self.clone());
+
+        tokio::spawn(async move {
+            while let Some(event) = event_rx.recv().await {
+                let is_terminal = matches!(
+                    &event.event,
+                    AgentEventType::RunFinished { .. } | AgentEventType::RunError { .. }
+                );
+
+                // Auto-complete inline hooks
+                if let AgentEventType::InlineHookRequested { ref request } = event.event {
+                    let _ = executor
+                        .complete_inline_hook(&request.hook_id, HookMutation::none())
+                        .await;
+                }
+
+                // Publish to broadcaster
+                let event_task_id = event.task_id.clone();
+                let _ = runtime.broadcaster().publish(&event_task_id, event).await;
+
+                if is_terminal {
+                    let _ = runtime.coordinator().complete_task(&task_id).await;
+                    break;
+                }
+            }
+        });
     }
 
     pub async fn execute_stream(
@@ -1346,15 +1354,12 @@ impl AgentOrchestrator {
 
         // Look up parent run for OTel span nesting (set by RemoteAgent before spawning inner task).
         let context = if context.parent_run_id.is_none() {
-            if let Some(broadcaster) = &self.broadcaster {
-                if let Ok(Some(parent_run_id)) = broadcaster.get_parent_run(&context.task_id).await
-                {
-                    let mut ctx = (*context).clone();
-                    ctx.parent_run_id = Some(parent_run_id);
-                    Arc::new(ctx)
-                } else {
-                    context
-                }
+            if let Ok(Some(parent_run_id)) =
+                self.broadcaster().get_parent_run(&context.task_id).await
+            {
+                let mut ctx = (*context).clone();
+                ctx.parent_run_id = Some(parent_run_id);
+                Arc::new(ctx)
             } else {
                 context
             }

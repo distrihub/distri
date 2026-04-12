@@ -492,20 +492,18 @@ impl ExecutorContextTool for AgentTool {
         let orchestrator = context.get_orchestrator()?;
 
         // Check if this sub-agent should run in a remote sandbox (deepagent mode)
-        let use_remote = orchestrator.background_runner.is_some()
-            && orchestrator.broadcaster.is_some()
-            && {
-                let agent_def = orchestrator.stores.agent_store.get(&self.agent_name).await;
-                matches!(
-                    agent_def,
-                    Some(distri_types::configuration::AgentConfig::StandardAgent(ref def)) if def.remote
-                )
-            };
+        let use_remote = orchestrator.background_runner.is_some() && {
+            let agent_def = orchestrator.stores.agent_store.get(&self.agent_name).await;
+            matches!(
+                agent_def,
+                Some(distri_types::configuration::AgentConfig::StandardAgent(ref def)) if def.remote
+            )
+        };
 
         if use_remote {
             // DeepAgent path: spawn in sandbox, subscribe to events, relay to parent
             let runner = orchestrator.background_runner.as_ref().unwrap();
-            let broadcaster = orchestrator.broadcaster.as_ref().unwrap();
+            let broadcaster = orchestrator.broadcaster();
             let sub_task_id = uuid::Uuid::new_v4().to_string();
             let env_id = format!(
                 "{}-{}",
@@ -938,8 +936,7 @@ impl ExecutorContextTool for UniversalAgentTool {
         let agent_name = if agent_name == "_system/coder"
             && context.runtime_mode == RuntimeMode::Cloud
         {
-            let has_sandbox =
-                orchestrator.background_runner.is_some() && orchestrator.broadcaster.is_some();
+            let has_sandbox = orchestrator.background_runner.is_some();
             if has_sandbox {
                 // Sandbox available: run _system/coder remotely (distri-cli in browsr container)
                 agent_name
@@ -954,115 +951,108 @@ impl ExecutorContextTool for UniversalAgentTool {
 
         // ── Fire-and-forget path: run_in_background via coordinator + broadcaster ──
         if input.run_in_background {
-            if let Some(ref coordinator) = orchestrator.coordinator {
-                let child_task_id = uuid::Uuid::new_v4().to_string();
-                let child_message = Message::user(input.prompt.clone(), None);
+            let coordinator = orchestrator.coordinator();
+            let child_task_id = uuid::Uuid::new_v4().to_string();
+            let child_message = Message::user(input.prompt.clone(), None);
 
-                // Register task with coordinator
-                let cancel_token = coordinator
-                    .register_task(&child_task_id, input.name.as_deref())
-                    .await
-                    .map_err(|e| {
-                        AgentError::ToolExecution(format!(
-                            "Failed to register background task: {}",
-                            e
-                        ))
-                    })?;
+            // Register task with coordinator
+            let cancel_signal = coordinator
+                .register_task(&child_task_id, &context.thread_id, input.name.as_deref())
+                .await
+                .map_err(|e| {
+                    AgentError::ToolExecution(format!("Failed to register background task: {}", e))
+                })?;
 
-                // Take mailbox for inter-agent messaging
-                let mailbox = coordinator.take_mailbox(&child_task_id).await.ok();
+            // Take mailbox for inter-agent messaging
+            let mailbox = coordinator.take_mailbox(&child_task_id).await.ok();
 
-                // Create child execution context
-                let child_context = context.new_task(&agent_name).await;
-                let (event_tx, mut event_rx) =
-                    tokio::sync::mpsc::channel::<distri_types::AgentEvent>(100);
-                let mut child_ctx = child_context.clone_with_tx(event_tx);
-                child_ctx.task_id = child_task_id.clone();
-                child_ctx.cancellation_token = Some(cancel_token);
-                if let Some(mb) = mailbox {
-                    child_ctx.mailbox = Some(Arc::new(tokio::sync::Mutex::new(mb)));
+            // Create child execution context
+            let child_context = context.new_task(&agent_name).await;
+            let (event_tx, mut event_rx) =
+                tokio::sync::mpsc::channel::<distri_types::AgentEvent>(100);
+            let mut child_ctx = child_context.clone_with_tx(event_tx);
+            child_ctx.task_id = child_task_id.clone();
+            child_ctx.cancellation_signal = Some(cancel_signal);
+            if let Some(mb) = mailbox {
+                child_ctx.mailbox = Some(Arc::new(tokio::sync::Mutex::new(mb)));
+            }
+            child_ctx.parent_task_id = Some(context.task_id.clone());
+            let child_ctx_arc = Arc::new(child_ctx);
+
+            // Spawn event relay: child events → broadcaster
+            let runtime_for_relay = orchestrator.runtime.clone();
+            let task_id_for_relay = child_task_id.clone();
+            tokio::spawn(async move {
+                while let Some(event) = event_rx.recv().await {
+                    let is_terminal = matches!(
+                        &event.event,
+                        distri_types::AgentEventType::RunFinished { .. }
+                            | distri_types::AgentEventType::RunError { .. }
+                    );
+                    let task_id = event.task_id.clone();
+                    let _ = runtime_for_relay
+                        .broadcaster()
+                        .publish(&task_id, event)
+                        .await;
+                    if is_terminal {
+                        let _ = runtime_for_relay
+                            .coordinator()
+                            .complete_task(&task_id_for_relay)
+                            .await;
+                        break;
+                    }
                 }
-                child_ctx.parent_task_id = Some(context.task_id.clone());
-                let child_ctx_arc = Arc::new(child_ctx);
+            });
 
-                // Spawn event relay: child events → broadcaster
-                let broadcaster_for_relay = orchestrator.broadcaster.clone();
-                let coord_for_relay = coordinator.clone();
-                let task_id_for_relay = child_task_id.clone();
-                tokio::spawn(async move {
-                    while let Some(event) = event_rx.recv().await {
-                        let is_terminal = matches!(
-                            &event.event,
-                            distri_types::AgentEventType::RunFinished { .. }
-                                | distri_types::AgentEventType::RunError { .. }
-                        );
-                        if let Some(ref broadcaster) = broadcaster_for_relay {
-                            let task_id = event.task_id.clone();
-                            let _ = broadcaster.publish(&task_id, event).await;
-                        }
-                        if is_terminal {
-                            let _ = coord_for_relay.complete_task(&task_id_for_relay).await;
-                            break;
+            // Spawn the actual agent execution in background
+            let orchestrator_clone = orchestrator.clone();
+            let agent_name_clone = agent_name.clone();
+            let user_id = context.user_id.clone();
+            let workspace_id = context
+                .workspace_id
+                .as_ref()
+                .and_then(|s| uuid::Uuid::parse_str(s).ok());
+            tokio::spawn(distri_auth::context::with_user_and_workspace(
+                user_id,
+                workspace_id,
+                async move {
+                    let result = orchestrator_clone
+                        .execute_stream(
+                            &agent_name_clone,
+                            child_message,
+                            child_ctx_arc.clone(),
+                            None,
+                        )
+                        .await;
+                    if let Ok(invoke_result) = result {
+                        if let Some(content) = &invoke_result.content {
+                            let final_msg = distri_types::Message::assistant(content.clone(), None);
+                            child_ctx_arc.save_message(&final_msg).await;
                         }
                     }
-                });
+                },
+            ));
 
-                // Spawn the actual agent execution in background
-                let orchestrator_clone = orchestrator.clone();
-                let agent_name_clone = agent_name.clone();
-                let user_id = context.user_id.clone();
-                let workspace_id = context
-                    .workspace_id
-                    .as_ref()
-                    .and_then(|s| uuid::Uuid::parse_str(s).ok());
-                tokio::spawn(distri_auth::context::with_user_and_workspace(
-                    user_id,
-                    workspace_id,
-                    async move {
-                        let result = orchestrator_clone
-                            .execute_stream(
-                                &agent_name_clone,
-                                child_message,
-                                child_ctx_arc.clone(),
-                                None,
-                            )
-                            .await;
-                        if let Ok(invoke_result) = result {
-                            if let Some(content) = &invoke_result.content {
-                                let final_msg =
-                                    distri_types::Message::assistant(content.clone(), None);
-                                child_ctx_arc.save_message(&final_msg).await;
-                            }
-                        }
-                    },
-                ));
-
-                // Return immediately — parent continues executing
-                return Ok(vec![Part::Data(json!({
-                    "status": "async_launched",
-                    "task_id": child_task_id,
-                    "agent": agent_name,
-                    "message": "Agent launched in background. You will be notified when it completes."
-                }))]);
-            } else {
-                tracing::warn!(
-                    "run_in_background requested but no coordinator configured. Falling through to synchronous execution."
-                );
-            }
+            // Return immediately — parent continues executing
+            return Ok(vec![Part::Data(json!({
+                "status": "async_launched",
+                "task_id": child_task_id,
+                "agent": agent_name,
+                "message": "Agent launched in background. You will be notified when it completes."
+            }))]);
         }
 
         // ── Check if remote execution is needed ───────────────────────────
         // In Cloud mode, _system/coder always runs remotely via SandboxLauncher.
         // (coder_lite runs in-process with browsr shell tools.)
         let use_remote = orchestrator.background_runner.is_some()
-            && orchestrator.broadcaster.is_some()
             && agent_name == "_system/coder"
             && context.runtime_mode == RuntimeMode::Cloud;
 
         if use_remote {
             // ── Remote/DeepAgent path ─────────────────────────────────────
             let runner = orchestrator.background_runner.as_ref().unwrap();
-            let broadcaster = orchestrator.broadcaster.as_ref().unwrap();
+            let broadcaster = orchestrator.broadcaster();
             let sub_task_id = uuid::Uuid::new_v4().to_string();
             let env_id = format!(
                 "{}-{}",

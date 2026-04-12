@@ -1,3 +1,6 @@
 pub mod mailbox;
 
-pub use mailbox::{AgentMessage, Mailbox, MailboxSender};
+pub use mailbox::{
+    in_memory_mailbox, AgentMessage, InMemoryMailbox, InMemoryMailboxSender, Mailbox,
+    MailboxReceiver, MailboxSender,
+};

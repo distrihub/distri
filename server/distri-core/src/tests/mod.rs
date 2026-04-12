@@ -3,6 +3,7 @@ mod agent_loop_store_integration;
 mod browser_sessions;
 mod compaction_in_loop;
 mod compaction_integration;
+mod coordinator_integration;
 mod deferred_tools_integration;
 mod definition;
 mod fixture_scenarios;

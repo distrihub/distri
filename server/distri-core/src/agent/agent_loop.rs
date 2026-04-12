@@ -216,9 +216,9 @@ impl AgentLoop {
             // planning LLM call + any tools executed before the next plan cycle.
             context.snapshot_step_start().await;
 
-            // Check cancellation token between iterations for cooperative abort
-            if let Some(ref token) = context.cancellation_token {
-                if token.is_cancelled() {
+            // Check cancellation signal between iterations for cooperative abort
+            if let Some(ref signal) = context.cancellation_signal {
+                if signal.is_cancelled().await {
                     tracing::info!(
                         "Agent loop cancelled for task_id: {}, agent_id: {}",
                         context.task_id,
@@ -240,7 +240,7 @@ impl AgentLoop {
 
             // Drain mailbox for inter-agent messages and inject into context
             if let Some(ref mailbox) = context.mailbox {
-                let messages = mailbox.lock().await.try_recv_all();
+                let messages = mailbox.lock().await.drain().await;
                 for msg in messages {
                     tracing::info!(
                         "Agent {} received inter-agent message from {}",
@@ -248,7 +248,10 @@ impl AgentLoop {
                         msg.from
                     );
                     let injected = Message::user(
-                        format!("<agent-message from=\"{}\">\n{}\n</agent-message>", msg.from, msg.content),
+                        format!(
+                            "<agent-message from=\"{}\">\n{}\n</agent-message>",
+                            msg.from, msg.content
+                        ),
                         None,
                     );
                     context.save_message(&injected).await;

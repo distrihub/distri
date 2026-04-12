@@ -1,16 +1,14 @@
 use crate::a2a::handler::validate_message;
-use crate::a2a::mapper::{map_agent_event, map_final_result};
+use crate::a2a::mapper::map_agent_event;
 use crate::a2a::{extract_text_from_message, SseMessage};
 use crate::agent::{
-    types::ExecutorContextMetadata, AgentEvent, AgentEventType, AgentOrchestrator, ExecutorContext,
+    types::ExecutorContextMetadata, AgentEventType, AgentOrchestrator, ExecutorContext,
 };
 use crate::secrets::SecretResolver;
 use crate::AgentError;
 use distri_auth::context::{with_user_and_workspace, with_user_id};
 // Note: with_user_and_workspace IS needed for stream! macro and spawned tasks
 // because they don't inherit task-local storage from middleware
-use distri_types::HookMutation;
-
 use anyhow::anyhow;
 use distri_a2a::{JsonRpcError, JsonRpcResponse, MessageSendParams};
 use distri_types::configuration::{AgentConfig, DefinitionOverrides};
@@ -21,18 +19,6 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
-use tokio::sync::mpsc;
-use tokio_util::sync::CancellationToken;
-
-struct TaskGuard {
-    token: CancellationToken,
-}
-
-impl Drop for TaskGuard {
-    fn drop(&mut self) {
-        self.token.cancel();
-    }
-}
 
 /// Validates that required provider secrets are configured before execution starts.
 /// This provides an early, user-friendly error message instead of failing mid-stream.
@@ -124,32 +110,6 @@ async fn create_browser_session() -> Option<(String, Option<String>, Option<Stri
     }
 }
 
-/// Emit BrowserSessionStarted event with the given session info.
-#[allow(dead_code)]
-async fn emit_browser_session_started(
-    context: &ExecutorContext,
-    event_tx: &mpsc::Sender<AgentEvent>,
-    session_id: String,
-    frame_url: Option<String>,
-    sse_url: Option<String>,
-) {
-    let session_event = AgentEvent::with_context(
-        AgentEventType::BrowserSessionStarted {
-            session_id,
-            viewer_url: frame_url,
-            stream_url: sse_url,
-        },
-        context.thread_id.clone(),
-        context.run_id.clone(),
-        context.task_id.clone(),
-        context.agent_id.clone(),
-    );
-
-    if let Err(e) = event_tx.send(session_event).await {
-        tracing::warn!("[stream] Failed to send BrowserSessionStarted event: {}", e);
-    }
-}
-
 pub async fn init_thread_get_message(
     agent_id: String,
     executor: Arc<AgentOrchestrator>,
@@ -194,37 +154,16 @@ pub async fn handle_resubscribe_sse(
     executor: Arc<AgentOrchestrator>,
 ) -> impl futures_util::stream::Stream<Item = Result<SseMessage, std::convert::Infallible>> {
     async_stream::stream! {
-        // Subscribe via broadcaster
-        let event_stream = match executor.broadcaster.as_ref() {
-            Some(broadcaster) => {
-                match broadcaster.subscribe(&task_id).await {
-                    Ok(s) => s,
-                    Err(e) => {
-                        let error = distri_a2a::JsonRpcResponse {
-                            jsonrpc: "2.0".to_string(),
-                            result: None,
-                            error: Some(distri_a2a::JsonRpcError {
-                                code: -32603,
-                                message: format!("Failed to subscribe: {}", e),
-                                data: None,
-                            }),
-                            id: req_id.clone(),
-                        };
-                        yield Ok::<_, std::convert::Infallible>(SseMessage {
-                            event: None,
-                            data: serde_json::to_string(&error).unwrap_or_default(),
-                        });
-                        return;
-                    }
-                }
-            }
-            None => {
+        // Subscribe via broadcaster (always available via runtime)
+        let event_stream = match executor.broadcaster().subscribe(&task_id).await {
+            Ok(s) => s,
+            Err(e) => {
                 let error = distri_a2a::JsonRpcResponse {
                     jsonrpc: "2.0".to_string(),
                     result: None,
                     error: Some(distri_a2a::JsonRpcError {
                         code: -32603,
-                        message: "No broadcaster configured".to_string(),
+                        message: format!("Failed to subscribe: {}", e),
                         data: None,
                     }),
                     id: req_id.clone(),
@@ -261,10 +200,7 @@ async fn prepare_execution(
     params: &MessageSendParams,
     executor: &Arc<AgentOrchestrator>,
     executor_context: &Arc<ExecutorContext>,
-) -> Result<
-    (ExecutorContext, DefinitionOverrides),
-    AgentError,
-> {
+) -> Result<(ExecutorContext, DefinitionOverrides), AgentError> {
     let metadata_struct: ExecutorContextMetadata = match params.metadata.clone() {
         Some(m) => serde_json::from_value(m)
             .map_err(|e| AgentError::Validation(format!("Invalid metadata: {e}")))?,
@@ -349,59 +285,55 @@ fn spawn_background_execution(
     user_id: String,
     workspace_id: Option<uuid::Uuid>,
 ) {
-    tokio::spawn(with_user_and_workspace(
-        user_id,
-        workspace_id,
-        async move {
-            let exec_result = {
-                let cancel_token = executor_context.cancellation_token.clone();
-                let exec_fut = executor.execute_stream(
-                    &agent_id,
-                    message,
-                    executor_context.clone(),
-                    definition_overrides,
-                );
+    tokio::spawn(with_user_and_workspace(user_id, workspace_id, async move {
+        let exec_result = {
+            let cancel_signal = executor_context.cancellation_signal.clone();
+            let exec_fut = executor.execute_stream(
+                &agent_id,
+                message,
+                executor_context.clone(),
+                definition_overrides,
+            );
 
-                if let Some(ref token) = cancel_token {
-                    tokio::select! {
-                        _ = token.cancelled() => {
-                            executor_context
-                                .update_status(crate::types::TaskStatus::Canceled)
-                                .await;
-                            executor_context
-                                .emit(AgentEventType::RunError {
-                                    message: "stream cancelled".to_string(),
-                                    code: Some("CANCELLED".to_string()),
-                                    usage: Some(executor_context.get_step_usage().await),
-                                })
-                                .await;
-                            Err(anyhow!("stream cancelled"))
-                        },
-                        res = exec_fut => res.map_err(|e: AgentError| anyhow!(e)),
-                    }
-                } else {
-                    exec_fut.await.map_err(|e: AgentError| anyhow!(e))
+            if let Some(ref signal) = cancel_signal {
+                let signal = signal.clone();
+                tokio::select! {
+                    _ = signal.cancelled() => {
+                        executor_context
+                            .update_status(crate::types::TaskStatus::Canceled)
+                            .await;
+                        executor_context
+                            .emit(AgentEventType::RunError {
+                                message: "stream cancelled".to_string(),
+                                code: Some("CANCELLED".to_string()),
+                                usage: Some(executor_context.get_step_usage().await),
+                            })
+                            .await;
+                        Err(anyhow!("stream cancelled"))
+                    },
+                    res = exec_fut => res.map_err(|e: AgentError| anyhow!(e)),
                 }
-            };
-
-            match exec_result {
-                Ok(result) => {
-                    // Save final result as assistant message
-                    if let Some(content) = &result.content {
-                        let final_message =
-                            distri_types::Message::assistant(content.clone(), None);
-                        executor_context.save_message(&final_message).await;
-                    }
-                    // Note: RunFinished event is already emitted by the agent loop.
-                    // The final result is available via tasks/get.
-                }
-                Err(e) => {
-                    tracing::error!("Background execution error for task {}: {}", task_id, e);
-                    // Ensure a terminal event is published so subscribers don't hang
-                }
+            } else {
+                exec_fut.await.map_err(|e: AgentError| anyhow!(e))
             }
-        },
-    ));
+        };
+
+        match exec_result {
+            Ok(result) => {
+                // Save final result as assistant message
+                if let Some(content) = &result.content {
+                    let final_message = distri_types::Message::assistant(content.clone(), None);
+                    executor_context.save_message(&final_message).await;
+                }
+                // Note: RunFinished event is already emitted by the agent loop.
+                // The final result is available via tasks/get.
+            }
+            Err(e) => {
+                tracing::error!("Background execution error for task {}: {}", task_id, e);
+                // Ensure a terminal event is published so subscribers don't hang
+            }
+        }
+    }));
 }
 
 pub async fn handle_message_send_streaming_sse(
@@ -468,7 +400,7 @@ pub async fn handle_message_send_streaming_sse(
         }
 
         // stream! macro doesn't inherit task-local storage, so wrap here
-        let (_thread_id, message) = match with_user_and_workspace(
+        let (thread_id, message) = match with_user_and_workspace(
             user_id.clone(),
             stream_workspace_id,
             init_thread_get_message(
@@ -526,277 +458,83 @@ pub async fn handle_message_send_streaming_sse(
 
         let main_task_id = exec_ctx.task_id.clone();
 
-        // === Background execution path: coordinator + broadcaster ===
-        // Register task with coordinator, spawn background execution, subscribe via broadcaster.
+        // === Background execution: register → relay → spawn → subscribe ===
         // Client disconnect does NOT kill the agent — execution continues in background.
-        if let (Some(ref coordinator), Some(ref broadcaster)) = (&executor.coordinator, &executor.broadcaster) {
-            let coord = coordinator.clone();
-            let bcast = broadcaster.clone();
 
-            // Register task — get cancellation token
-            let cancel_token = match coord.register_task(&main_task_id, None).await {
-                Ok(v) => v,
-                Err(e) => {
-                    let error = JsonRpcResponse {
-                        jsonrpc: "2.0".to_string(),
-                        result: None,
-                        error: Some(JsonRpcError {
-                            code: -32603,
-                            message: format!("Failed to register task: {}", e),
-                            data: None,
-                        }),
-                        id: req_id.clone(),
-                    };
-                    yield Ok::<_, std::convert::Infallible>(SseMessage {
-                        event: None,
-                        data: serde_json::to_string(&error).unwrap(),
-                    });
-                    return;
-                }
-            };
-
-            // Take mailbox for inter-agent communication
-            let mailbox = coord.take_mailbox(&main_task_id).await.ok();
-
-            // Wire cancellation token and mailbox into the execution context
-            let (event_tx, mut event_rx) = mpsc::channel::<AgentEvent>(100);
-            let mut exec_ctx = exec_ctx.clone_with_tx(event_tx);
-            exec_ctx.cancellation_token = Some(cancel_token);
-            if let Some(mb) = mailbox {
-                exec_ctx.mailbox = Some(Arc::new(tokio::sync::Mutex::new(mb)));
-            }
-
-            let executor_context_arc = Arc::new(exec_ctx);
-
-            // Spawn event relay: agent events → broadcaster (single target)
-            let bcast_for_relay = bcast.clone();
-            let coord_for_relay = coord.clone();
-            let task_id_for_relay = main_task_id.clone();
-            let executor_for_relay = executor.clone();
-            tokio::spawn(async move {
-                while let Some(event) = event_rx.recv().await {
-                    let is_terminal = matches!(
-                        &event.event,
-                        AgentEventType::RunFinished { .. } | AgentEventType::RunError { .. }
-                    );
-
-                    // Auto-complete inline hooks
-                    if let AgentEventType::InlineHookRequested { ref request } = event.event {
-                        let _ = executor_for_relay
-                            .complete_inline_hook(&request.hook_id, HookMutation::none())
-                            .await;
-                    }
-
-                    // Publish to broadcaster (handles both subscribe and resubscribe)
-                    let task_id = event.task_id.clone();
-                    let _ = bcast_for_relay.publish(&task_id, event).await;
-
-                    if is_terminal {
-                        let _ = coord_for_relay.complete_task(&task_id_for_relay).await;
-                        break;
-                    }
-                }
-            });
-
-            // Spawn background execution
-            spawn_background_execution(
-                executor.clone(),
-                agent_id.clone(),
-                message,
-                executor_context_arc,
-                Some(definition_overrides),
-                main_task_id.clone(),
-                user_id.clone(),
-                workspace_id,
-            );
-
-            // Subscribe to broadcaster events and stream as SSE
-            match bcast.subscribe(&main_task_id).await {
-                Ok(event_stream) => {
-                    futures_util::pin_mut!(event_stream);
-                    while let Some(event) = futures_util::StreamExt::next(&mut event_stream).await {
-                        let msg = map_agent_event(&event);
-                        let message = JsonRpcResponse {
-                            jsonrpc: "2.0".to_string(),
-                            result: Some(serde_json::to_value(msg).unwrap_or_default()),
-                            error: None,
-                            id: req_id.clone(),
-                        };
-                        yield Ok::<_, std::convert::Infallible>(SseMessage {
-                            event: None,
-                            data: serde_json::to_string(&message).unwrap_or_default(),
-                        });
-                    }
-                }
-                Err(e) => {
-                    let error = JsonRpcResponse {
-                        jsonrpc: "2.0".to_string(),
-                        result: None,
-                        error: Some(JsonRpcError {
-                            code: -32603,
-                            message: format!("Failed to subscribe to task events: {}", e),
-                            data: None,
-                        }),
-                        id: req_id.clone(),
-                    };
-                    yield Ok::<_, std::convert::Infallible>(SseMessage {
-                        event: None,
-                        data: serde_json::to_string(&error).unwrap(),
-                    });
-                }
-            }
-
-            return;
-        }
-
-        // === Legacy path: no WorkerPool, original blocking behavior ===
-        let (event_tx, mut event_rx) = mpsc::channel::<AgentEvent>(100);
-        let (sse_tx, mut sse_rx) = mpsc::channel::<Result<distri_a2a::MessageKind, anyhow::Error>>(100);
-        let sse_tx_clone = sse_tx.clone();
-        let exec_ctx = exec_ctx.clone_with_tx(event_tx);
-
-        let executor_context = Arc::new(exec_ctx);
-
-        let main_task_id_for_completion = main_task_id.clone();
-        let task_store = executor.stores.task_store.clone();
-        let broadcaster_for_completion = executor.broadcaster.clone();
-        let cancel_token = CancellationToken::new();
-        // Ensure the token is cancelled when the stream is dropped
-        let _guard = TaskGuard {
-            token: cancel_token.clone(),
-        };
-
-        let cancel_token_for_completion = cancel_token.clone();
-        let cancel_token_for_exec = cancel_token.clone();
-        let executor_for_completion = executor.clone();
-        let user_id_for_completion = user_id.clone();
-        let workspace_id_for_completion = workspace_id;
-        let completion_task = tokio::spawn(with_user_and_workspace(user_id_for_completion, workspace_id_for_completion, async move {
-            let _cancel_token = cancel_token_for_completion;
-            let mut completed = false;
-            while let Some(event) = event_rx.recv().await {
-                // Check for completion events - only complete when main task finishes
-                match &event.event {
-                    AgentEventType::RunError { .. } => {
-                        completed = true;
-                    }
-                    AgentEventType::InlineHookRequested { request } => {
-                        let _ = executor_for_completion
-                            .complete_inline_hook(&request.hook_id, HookMutation::none())
-                            .await;
-                    }
-                    AgentEventType::RunFinished { .. } => {
-                        if event.task_id == main_task_id_for_completion {
-                            completed = true;
-                        }
-                    }
-                    _ => {}
-                };
-                // Tee events to broadcaster for tasks/resubscribe and deepagent relay
-                if let Some(ref broadcaster) = broadcaster_for_completion {
-                    let _ = broadcaster.publish(&event.task_id, event.clone()).await;
-                }
-
-                let msg = map_agent_event(&event);
-
-                let _ = sse_tx.send(Ok(msg)).await;
-                if completed {
-                    break;
-                }
-            }
-            completed
-        }));
-        // Spawn execute_stream in the background
-        let agent_id_clone = agent_id.clone();
-        let executor_clone = executor.clone();
-        let executor_context_clone = executor_context.clone();
-        let req_id_clone = req_id.clone();
-        let definition_overrides_clone = Some(definition_overrides);
-        let user_id_for_exec = user_id.clone();
-        let workspace_id_for_exec = workspace_id;
-        let exec_handle = tokio::spawn(with_user_and_workspace(user_id_for_exec, workspace_id_for_exec, async move {
-            let exec_fut = executor_clone.execute_stream(
-                &agent_id_clone,
-                message,
-                executor_context_clone.clone(),
-                definition_overrides_clone,
-            );
-            let result = tokio::select! {
-                _ = cancel_token_for_exec.cancelled() => {
-                    executor_context_clone
-                        .update_status(crate::types::TaskStatus::Canceled)
-                        .await;
-                    executor_context_clone
-                        .emit(AgentEventType::RunError {
-                            message: "stream cancelled".to_string(),
-                            code: Some("CANCELLED".to_string()),
-                            usage: Some(executor_context_clone.get_step_usage().await),
-                        })
-                        .await;
-                    Err(anyhow!("stream cancelled"))
-                },
-                res = exec_fut => res.map_err(|e: AgentError| anyhow!(e)),
-            };
-            match result {
-                Ok(result) => {
-                    // Save final result as assistant message to persist in conversation history
-                    if let Some(content) = &result.content {
-                        let final_message = distri_types::Message::assistant(content.clone(), None);
-                        executor_context_clone.save_message(&final_message).await;
-                    }
-
-                    let msg = map_final_result(&result, executor_context_clone);
-                    let _ = sse_tx_clone.send(Ok(msg)).await;
-                }
-                Err(e) => {
-                    tracing::error!("Error from stream handler: {}", e);
-                    let _ = sse_tx_clone.send(Err(e)).await;
-                }
-            }
-        }));
-
-        while let Some(msg) = sse_rx.recv().await {
-            if let Err(e) = msg {
-                tracing::error!("Error from stream handler: {}", e);
+        // 1. Register task — wire cancellation signal + mailbox into context
+        let (executor_context_arc, event_rx) = match executor
+            .register_task(&main_task_id, &thread_id, exec_ctx)
+            .await
+        {
+            Ok(v) => v,
+            Err(e) => {
                 let error = JsonRpcResponse {
                     jsonrpc: "2.0".to_string(),
                     result: None,
                     error: Some(JsonRpcError {
                         code: -32603,
-                        message: format!("Failed to execute stream: {}", e),
+                        message: format!("Failed to register task: {}", e),
                         data: None,
                     }),
-                    id: req_id_clone,
+                    id: req_id.clone(),
                 };
                 yield Ok::<_, std::convert::Infallible>(SseMessage {
                     event: None,
                     data: serde_json::to_string(&error).unwrap(),
                 });
-                break;
+                return;
             }
+        };
 
-            let msg = msg.unwrap();
-            let message = JsonRpcResponse {
-                jsonrpc: "2.0".to_string(),
-                result: Some(serde_json::to_value(msg).unwrap_or_default()),
-                error: None,
-                id: req_id.clone(),
-            };
-            let data_json = serde_json::to_string(&message).unwrap_or_default();
+        // 2. Spawn event relay: agent events → broadcaster
+        executor.spawn_task_relay(main_task_id.clone(), event_rx);
 
-            yield Ok::<_, std::convert::Infallible>(SseMessage {
-                event: None,
-                data: data_json,
-            });
-        }
-        cancel_token.cancel();
+        // 3. Spawn background execution
+        spawn_background_execution(
+            executor.clone(),
+            agent_id.clone(),
+            message,
+            executor_context_arc,
+            Some(definition_overrides),
+            main_task_id.clone(),
+            user_id.clone(),
+            workspace_id,
+        );
 
-        let completed = completion_task.await.unwrap_or(false);
-        if completed {
-            let _ = exec_handle.await;
-        } else {
-            exec_handle.abort();
-            let _ = task_store.cancel_task(&main_task_id).await;
+        // 4. Subscribe to broadcaster events and stream as SSE
+        match executor.broadcaster().subscribe(&main_task_id).await {
+            Ok(event_stream) => {
+                futures_util::pin_mut!(event_stream);
+                while let Some(event) = futures_util::StreamExt::next(&mut event_stream).await {
+                    let msg = map_agent_event(&event);
+                    let message = JsonRpcResponse {
+                        jsonrpc: "2.0".to_string(),
+                        result: Some(serde_json::to_value(msg).unwrap_or_default()),
+                        error: None,
+                        id: req_id.clone(),
+                    };
+                    yield Ok::<_, std::convert::Infallible>(SseMessage {
+                        event: None,
+                        data: serde_json::to_string(&message).unwrap_or_default(),
+                    });
+                }
+            }
+            Err(e) => {
+                let error = JsonRpcResponse {
+                    jsonrpc: "2.0".to_string(),
+                    result: None,
+                    error: Some(JsonRpcError {
+                        code: -32603,
+                        message: format!("Failed to subscribe to task events: {}", e),
+                        data: None,
+                    }),
+                    id: req_id.clone(),
+                };
+                yield Ok::<_, std::convert::Infallible>(SseMessage {
+                    event: None,
+                    data: serde_json::to_string(&error).unwrap(),
+                });
+            }
         }
 
     };

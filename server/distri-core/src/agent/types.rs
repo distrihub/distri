@@ -112,21 +112,6 @@ pub struct InvokeResult {
     pub tool_calls: Vec<ToolCall>,
 }
 
-#[derive(Debug)]
-pub enum CoordinatorMessage {
-    ExecuteStream {
-        agent_id: String,
-        message: Message,
-        context: Arc<ExecutorContext>,
-    },
-    HandoverAgent {
-        from_agent: String,
-        to_agent: String,
-        reason: Option<String>,
-        context: Arc<ExecutorContext>,
-    },
-}
-
 impl Default for InvokeResult {
     fn default() -> Self {
         Self {

@@ -81,12 +81,7 @@ impl ExecutorContextTool for SendMessageTool {
 
         let orchestrator = context.get_orchestrator()?;
 
-        let coordinator = orchestrator.coordinator.as_ref().ok_or_else(|| {
-            AgentError::ToolExecution(
-                "send_message requires a coordinator (background execution must be enabled)"
-                    .to_string(),
-            )
-        })?;
+        let coordinator = orchestrator.runtime.coordinator();
 
         // Resolve target name to task_id
         let target_task_id = coordinator.resolve_name(&input.to).await.ok_or_else(|| {
@@ -108,14 +103,15 @@ impl ExecutorContextTool for SendMessageTool {
         let msg = crate::worker::AgentMessage {
             from: context.agent_id.clone(),
             content: input.message.clone(),
+            from_task_id: Some(context.task_id.clone()),
+            from_agent_id: Some(context.agent_id.clone()),
+            run_id: Some(context.run_id.clone()),
         };
 
         coordinator
             .deliver_message(&target_task_id, msg)
             .await
-            .map_err(|e| {
-                AgentError::ToolExecution(format!("Failed to deliver message: {}", e))
-            })?;
+            .map_err(|e| AgentError::ToolExecution(format!("Failed to deliver message: {}", e)))?;
 
         Ok(vec![Part::Data(json!({
             "status": "delivered",

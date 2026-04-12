@@ -139,12 +139,12 @@ impl RemoteAgent {
         let inner_task_id = uuid::Uuid::new_v4().to_string();
 
         // Record the parent run mapping so OtelHooks can nest inner spans under outer invoke_agent.
-        if let Some(b) = context
-            .orchestrator
-            .as_ref()
-            .and_then(|o| o.broadcaster.as_ref())
-        {
-            let _ = b.set_parent_run(&inner_task_id, &context.run_id).await;
+        if let Some(o) = context.orchestrator.as_ref() {
+            let _ = o
+                .runtime
+                .broadcaster()
+                .set_parent_run(&inner_task_id, &context.run_id)
+                .await;
         }
 
         tracing::info!(

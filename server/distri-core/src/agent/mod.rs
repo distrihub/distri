@@ -46,7 +46,7 @@ pub use orchestrator::AgentOrchestrator;
 pub use prompt_registry::{PromptRegistry, PromptSection, PromptTemplate, TemplateData};
 
 // Export types from types module
-pub use types::{AgentType, CoordinatorMessage};
+pub use types::AgentType;
 
 // Export strategy types
 pub use strategy::{
