@@ -3558,16 +3558,21 @@ where
 
 fn to_skill_record(model: SkillModel) -> SkillRecord {
     let tags: Vec<String> = serde_json::from_str(&model.tags).unwrap_or_default();
+    let full_name = format!("local/{}", model.name);
     SkillRecord {
         id: model.id,
+        workspace_slug: "local".to_string(),
         name: model.name,
+        full_name,
         description: model.description,
         content: model.content,
         tags,
         is_public: model.is_public != 0,
         is_system: model.is_system != 0,
+        is_owner: true,
         star_count: model.star_count,
         clone_count: model.clone_count,
+        is_starred: false,
         created_at: from_naive(model.created_at),
         updated_at: from_naive(model.updated_at),
         model: model.model,

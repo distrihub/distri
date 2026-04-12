@@ -1000,14 +1000,26 @@ pub struct SkillListItem {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
 pub struct SkillRecord {
     pub id: String,
+    /// Workspace slug (cloud: resolved from workspace_id, OSS: "local")
+    #[serde(default)]
+    pub workspace_slug: String,
     pub name: String,
+    /// Full qualified name: "{workspace_slug}/{name}"
+    #[serde(default)]
+    pub full_name: String,
     pub description: Option<String>,
     pub content: String,
     pub tags: Vec<String>,
     pub is_public: bool,
     pub is_system: bool,
+    /// Whether the current user owns this skill
+    #[serde(default)]
+    pub is_owner: bool,
     pub star_count: i32,
     pub clone_count: i32,
+    /// Whether the current user has starred this skill
+    #[serde(default)]
+    pub is_starred: bool,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
     /// Preferred model for skill execution (overrides agent default)

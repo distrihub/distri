@@ -918,33 +918,31 @@ impl ExecutorContextTool for UniversalAgentTool {
             )));
         }
 
-        // ── Cloud coder override: set remote=true ─────────────────────────
-        if agent_name == "_system/coder" && context.runtime_mode == RuntimeMode::Cloud {
-            // Check if the definition needs remote=true
-            if let Some(distri_types::configuration::AgentConfig::StandardAgent(mut def)) =
-                orchestrator.get_agent(&agent_name).await
-            {
-                if !def.remote
-                    && orchestrator.background_runner.is_some()
-                    && orchestrator.broadcaster.is_some()
-                {
-                    def.remote = true;
-                    let agent_config = distri_types::configuration::AgentConfig::StandardAgent(def);
-                    let _ = orchestrator.stores.agent_store.update(agent_config).await;
-                }
+        // ── Cloud coder: sandbox → remote, otherwise → coder_lite ─────────
+        let agent_name = if agent_name == "_system/coder"
+            && context.runtime_mode == RuntimeMode::Cloud
+        {
+            let has_sandbox =
+                orchestrator.background_runner.is_some() && orchestrator.broadcaster.is_some();
+            if has_sandbox {
+                // Sandbox available: run _system/coder remotely (distri-cli in browsr container)
+                agent_name
+            } else {
+                // No sandbox: fall back to coder_lite which has browsr shell tools built-in
+                tracing::info!("Cloud mode without sandbox: falling back to _system/coder_lite");
+                "_system/coder_lite".to_string()
             }
-        }
+        } else {
+            agent_name
+        };
 
         // ── Check if remote execution is needed ───────────────────────────
+        // In Cloud mode, _system/coder always runs remotely via SandboxLauncher.
+        // (coder_lite runs in-process with browsr shell tools.)
         let use_remote = orchestrator.background_runner.is_some()
             && orchestrator.broadcaster.is_some()
-            && {
-                let agent_def = orchestrator.stores.agent_store.get(&agent_name).await;
-                matches!(
-                    agent_def,
-                    Some(distri_types::configuration::AgentConfig::StandardAgent(ref def)) if def.remote
-                )
-            };
+            && agent_name == "_system/coder"
+            && context.runtime_mode == RuntimeMode::Cloud;
 
         if use_remote {
             // ── Remote/DeepAgent path ─────────────────────────────────────
