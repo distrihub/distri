@@ -1064,19 +1064,67 @@ pub struct UpdateSkill {
     pub context: Option<ContextExecutionType>,
 }
 
+/// Which slice of skills to return.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum SkillScope {
+    /// Skills belonging to the current workspace (not system)
+    #[default]
+    Workspace,
+    /// Starred skills
+    Starred,
+    /// System skills
+    System,
+    /// Public skills from other workspaces (excludes own + system)
+    Discover,
+    /// Everything the user can see (workspace + public + system)
+    All,
+}
+
+/// Filters for listing skills — one struct drives list, search, and pagination.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SkillFilter {
+    /// Which slice of skills to return
+    #[serde(default)]
+    pub scope: SkillScope,
+    /// Full-text search on name/description (empty = no search filter)
+    #[serde(default)]
+    pub search: Option<String>,
+    /// Page number (1-based, default 1)
+    #[serde(default = "default_page")]
+    pub page: i64,
+    /// Items per page (default 50)
+    #[serde(default = "default_per_page")]
+    pub per_page: i64,
+}
+
+fn default_page() -> i64 {
+    1
+}
+fn default_per_page() -> i64 {
+    50
+}
+
+/// Paginated skill list response.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
+pub struct SkillListResponse {
+    pub skills: Vec<SkillListItem>,
+    pub total: i64,
+    pub page: i64,
+    pub per_page: i64,
+    pub total_pages: i64,
+}
+
 #[async_trait]
 pub trait SkillStore: Send + Sync {
-    async fn list_skills(&self) -> anyhow::Result<Vec<SkillRecord>>;
-    async fn get_skill(&self, id: &str) -> anyhow::Result<Option<SkillRecord>>;
-    async fn create_skill(&self, skill: NewSkill) -> anyhow::Result<SkillRecord>;
-    async fn update_skill(&self, id: &str, update: UpdateSkill) -> anyhow::Result<SkillRecord>;
-    async fn delete_skill(&self, id: &str) -> anyhow::Result<()>;
-
-    // Discovery
-    async fn list_public_skills(&self) -> anyhow::Result<Vec<SkillRecord>>;
-    async fn star_skill(&self, skill_id: &str) -> anyhow::Result<()>;
-    async fn unstar_skill(&self, skill_id: &str) -> anyhow::Result<()>;
-    async fn list_starred_skills(&self) -> anyhow::Result<Vec<SkillRecord>>;
+    /// List skills — scope, search, and pagination all via SkillFilter.
+    async fn list(&self, filter: SkillFilter) -> anyhow::Result<SkillListResponse>;
+    async fn get(&self, id: &str) -> anyhow::Result<Option<SkillRecord>>;
+    async fn create(&self, skill: NewSkill) -> anyhow::Result<SkillRecord>;
+    async fn update(&self, id: &str, update: UpdateSkill) -> anyhow::Result<SkillRecord>;
+    async fn delete(&self, id: &str) -> anyhow::Result<()>;
+    async fn star(&self, skill_id: &str) -> anyhow::Result<()>;
+    async fn unstar(&self, skill_id: &str) -> anyhow::Result<()>;
     async fn clone_skill(&self, skill_id: &str) -> anyhow::Result<SkillRecord>;
 }
 

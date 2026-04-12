@@ -84,7 +84,7 @@ impl ExecutorContextTool for LoadSkillTool {
             })?;
 
         let skill = skill_store
-            .get_skill(skill_id)
+            .get(skill_id)
             .await
             .map_err(|e| AgentError::ToolExecution(format!("Failed to load skill: {}", e)))?
             .ok_or_else(|| AgentError::ToolExecution(format!("Skill '{}' not found", skill_id)))?;

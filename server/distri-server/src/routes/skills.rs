@@ -1,19 +1,24 @@
 use actix_web::{web, HttpResponse};
 use distri_core::agent::AgentOrchestrator;
-use distri_types::stores::{NewSkill, SkillListItem, SkillsListResponse, UpdateSkill};
+use distri_types::stores::{NewSkill, SkillFilter, SkillScope, UpdateSkill};
 use serde::Deserialize;
 use serde_json::json;
 use std::sync::Arc;
 
-/// Query parameters for `GET /skills` — unified list endpoint with filters.
 #[derive(Debug, Deserialize)]
 pub struct ListSkillsQuery {
-    /// Include public and system skills from other workspaces (default: false)
+    /// Scope: workspace, starred, system, discover, all
     #[serde(default)]
-    pub include_public: bool,
-    /// Only return skills the user has starred (default: false)
+    pub scope: Option<String>,
+    /// Search query on name/description
     #[serde(default)]
-    pub starred: bool,
+    pub search: Option<String>,
+    /// Page number (1-based)
+    #[serde(default)]
+    pub page: Option<i64>,
+    /// Items per page
+    #[serde(default)]
+    pub per_page: Option<i64>,
 }
 
 pub fn configure_skill_routes(cfg: &mut web::ServiceConfig) {
@@ -30,18 +35,15 @@ pub fn configure_skill_routes(cfg: &mut web::ServiceConfig) {
     );
 }
 
-/// List skills with optional filters.
-///
-/// Query params:
-/// - `include_public=true` — include public/system skills from other workspaces
-/// - `starred=true` — only return starred skills
 #[utoipa::path(
     get,
     path = "/v1/skills",
     tag = "Skills",
     params(
-        ("include_public" = bool, Query, description = "Include public and system skills"),
-        ("starred" = bool, Query, description = "Only return starred skills"),
+        ("scope" = String, Query, description = "Scope: workspace, starred, system, discover, all"),
+        ("search" = String, Query, description = "Search query"),
+        ("page" = i64, Query, description = "Page number (1-based)"),
+        ("per_page" = i64, Query, description = "Items per page"),
     ),
     responses(
         (status = 200, description = "List skills"),
@@ -60,41 +62,23 @@ async fn list_skills(
         }
     };
 
-    let result = if query.starred {
-        // Starred skills (OSS: returns empty, cloud: returns user's starred skills)
-        store.list_starred_skills().await
-    } else if query.include_public {
-        // All skills including public/system from other workspaces
-        store.list_public_skills().await
-    } else {
-        // Only workspace-owned skills
-        store.list_skills().await
+    let scope = match query.scope.as_deref() {
+        Some("starred") => SkillScope::Starred,
+        Some("system") => SkillScope::System,
+        Some("discover") => SkillScope::Discover,
+        Some("all") => SkillScope::All,
+        _ => SkillScope::Workspace,
     };
 
-    match result {
-        Ok(skills) => {
-            let items: Vec<SkillListItem> = skills
-                .into_iter()
-                .map(|s| SkillListItem {
-                    id: s.id,
-                    workspace_slug: s.workspace_slug,
-                    name: s.name,
-                    full_name: s.full_name,
-                    description: s.description,
-                    tags: s.tags,
-                    is_public: s.is_public,
-                    is_system: s.is_system,
-                    is_owner: s.is_owner,
-                    is_workspace: s.is_workspace,
-                    star_count: s.star_count,
-                    clone_count: s.clone_count,
-                    is_starred: s.is_starred,
-                    created_at: s.created_at,
-                    updated_at: s.updated_at,
-                })
-                .collect();
-            HttpResponse::Ok().json(SkillsListResponse { skills: items })
-        }
+    let filter = SkillFilter {
+        scope,
+        search: query.search.clone(),
+        page: query.page.unwrap_or(1),
+        per_page: query.per_page.unwrap_or(50),
+    };
+
+    match store.list(filter).await {
+        Ok(response) => HttpResponse::Ok().json(response),
         Err(e) => HttpResponse::InternalServerError().json(json!({"error": e.to_string()})),
     }
 }
@@ -103,9 +87,7 @@ async fn list_skills(
     get,
     path = "/v1/skills/{id}",
     tag = "Skills",
-    params(
-        ("id" = String, Path, description = "Skill ID"),
-    ),
+    params(("id" = String, Path, description = "Skill ID")),
     responses(
         (status = 200, description = "Skill retrieved"),
         (status = 404, description = "Skill not found"),
@@ -124,7 +106,7 @@ async fn get_skill(
         }
     };
 
-    match store.get_skill(&id).await {
+    match store.get(&id).await {
         Ok(Some(skill)) => HttpResponse::Ok().json(skill),
         Ok(None) => HttpResponse::NotFound().json(json!({"error": "Skill not found"})),
         Err(e) => HttpResponse::InternalServerError().json(json!({"error": e.to_string()})),
@@ -153,7 +135,7 @@ async fn create_skill(
         }
     };
 
-    match store.create_skill(payload.into_inner()).await {
+    match store.create(payload.into_inner()).await {
         Ok(skill) => HttpResponse::Ok().json(skill),
         Err(e) => HttpResponse::InternalServerError().json(json!({"error": e.to_string()})),
     }
@@ -163,9 +145,7 @@ async fn create_skill(
     put,
     path = "/v1/skills/{id}",
     tag = "Skills",
-    params(
-        ("id" = String, Path, description = "Skill ID"),
-    ),
+    params(("id" = String, Path, description = "Skill ID")),
     request_body = UpdateSkill,
     responses(
         (status = 200, description = "Skill updated"),
@@ -185,7 +165,7 @@ async fn update_skill(
         }
     };
 
-    match store.update_skill(&id, payload.into_inner()).await {
+    match store.update(&id, payload.into_inner()).await {
         Ok(skill) => HttpResponse::Ok().json(skill),
         Err(e) => HttpResponse::InternalServerError().json(json!({"error": e.to_string()})),
     }
@@ -195,9 +175,7 @@ async fn update_skill(
     delete,
     path = "/v1/skills/{id}",
     tag = "Skills",
-    params(
-        ("id" = String, Path, description = "Skill ID"),
-    ),
+    params(("id" = String, Path, description = "Skill ID")),
     responses(
         (status = 204, description = "Skill deleted"),
         (status = 500, description = "Internal server error")
@@ -215,7 +193,7 @@ async fn delete_skill(
         }
     };
 
-    match store.delete_skill(&id).await {
+    match store.delete(&id).await {
         Ok(_) => HttpResponse::NoContent().finish(),
         Err(e) => HttpResponse::InternalServerError().json(json!({"error": e.to_string()})),
     }

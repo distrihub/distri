@@ -669,8 +669,15 @@ impl AgentOrchestrator {
                     let resolved_skills = if has_wildcard {
                         // Wildcard: load all skills from store
                         if let Some(skill_store) = self.stores.skill_store.as_ref() {
-                            match skill_store.list_skills().await {
-                                Ok(skills) => skills
+                            match skill_store
+                                .list(distri_types::stores::SkillFilter {
+                                    scope: distri_types::stores::SkillScope::All,
+                                    ..Default::default()
+                                })
+                                .await
+                            {
+                                Ok(resp) => resp
+                                    .skills
                                     .into_iter()
                                     .map(|s| distri_types::AvailableSkill {
                                         id: s.id,

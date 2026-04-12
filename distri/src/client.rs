@@ -1905,22 +1905,30 @@ pub struct UpdateSkillRequest {
 impl Distri {
     // ========== Skill API ==========
 
-    /// List skills. When `include_public` is true, also returns public and system skills.
-    pub async fn list_skills(&self) -> Result<Vec<SkillListItemResponse>, ClientError> {
-        self.list_skills_filtered(false).await
-    }
-
-    /// List skills with optional public/system filter.
-    pub async fn list_skills_filtered(
+    /// List skills with filters (scope, search, pagination).
+    pub async fn list_skills(
         &self,
-        include_public: bool,
-    ) -> Result<Vec<SkillListItemResponse>, ClientError> {
-        let url = format!("{}/skills?include_public={}", self.base_url, include_public);
+        filter: &distri_types::stores::SkillFilter,
+    ) -> Result<distri_types::stores::SkillListResponse, ClientError> {
+        let mut params = vec![
+            format!(
+                "scope={}",
+                serde_json::to_value(&filter.scope)
+                    .unwrap()
+                    .as_str()
+                    .unwrap_or("workspace")
+            ),
+            format!("page={}", filter.page),
+            format!("per_page={}", filter.per_page),
+        ];
+        if let Some(ref q) = filter.search {
+            params.push(format!("search={}", urlencoding::encode(q)));
+        }
+        let url = format!("{}/skills?{}", self.base_url, params.join("&"));
         let resp = self.http.get(&url).send().await?;
 
         if resp.status().is_success() {
-            let wrapper: SkillsListResponse = resp.json().await?;
-            Ok(wrapper.skills)
+            Ok(resp.json().await?)
         } else {
             let text = resp.text().await.unwrap_or_default();
             Err(ClientError::InvalidResponse(format!(
@@ -2011,8 +2019,10 @@ impl Distri {
         request: &CreateSkillRequest,
     ) -> Result<SkillResponse, ClientError> {
         // Try to find existing skill to update, but don't fail if list_skills is broken
-        if let Ok(skills) = self.list_skills().await
-            && let Some(skill) = skills.iter().find(|s| s.name == request.name)
+        if let Ok(resp) = self
+            .list_skills(&distri_types::stores::SkillFilter::default())
+            .await
+            && let Some(skill) = resp.skills.iter().find(|s| s.name == request.name)
         {
             let update = UpdateSkillRequest {
                 name: Some(request.name.clone()),

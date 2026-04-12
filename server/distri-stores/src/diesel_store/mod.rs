@@ -3618,20 +3618,105 @@ where
     diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
     <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
 {
-    async fn list_skills(&self) -> Result<Vec<SkillRecord>> {
+    async fn list(
+        &self,
+        filter: distri_types::stores::SkillFilter,
+    ) -> Result<distri_types::stores::SkillListResponse> {
         use crate::schema::skills::dsl::*;
+        use distri_types::stores::SkillScope;
         let mut conn = self.conn().await?;
-        let results = skills
-            .select(SkillModel::as_select())
+
+        let mut query = skills.into_boxed();
+
+        // Scope filtering
+        match filter.scope {
+            SkillScope::Workspace => {
+                query = query.filter(is_system.eq(0));
+            }
+            SkillScope::Starred => {
+                // No star tracking in OSS
+                return Ok(distri_types::stores::SkillListResponse {
+                    skills: vec![],
+                    total: 0,
+                    page: filter.page,
+                    per_page: filter.per_page,
+                    total_pages: 0,
+                });
+            }
+            SkillScope::System => {
+                query = query.filter(is_system.eq(1));
+            }
+            SkillScope::Discover => {
+                query = query.filter(is_public.eq(1)).filter(is_system.eq(0));
+            }
+            SkillScope::All => {}
+        }
+
+        // Load all matching scope
+        let all_results: Vec<SkillModel> = query
             .order(updated_at.desc())
+            .select(SkillModel::as_select())
             .load::<SkillModel>(&mut conn)
             .await?;
 
-        let records = results.into_iter().map(to_skill_record).collect();
-        Ok(records)
+        // Apply search filter in-memory (SQLite doesn't support ILIKE)
+        let all_results: Vec<SkillModel> = if let Some(ref q) = filter.search {
+            let q = q.to_lowercase();
+            all_results
+                .into_iter()
+                .filter(|m| {
+                    m.name.to_lowercase().contains(&q)
+                        || m.description
+                            .as_ref()
+                            .is_some_and(|d| d.to_lowercase().contains(&q))
+                })
+                .collect()
+        } else {
+            all_results
+        };
+
+        let total = all_results.len() as i64;
+        let page = filter.page.max(1);
+        let per_page = filter.per_page.clamp(1, 100);
+        let total_pages = (total + per_page - 1) / per_page;
+        let offset = ((page - 1) * per_page) as usize;
+
+        let records: Vec<distri_types::stores::SkillListItem> = all_results
+            .into_iter()
+            .skip(offset)
+            .take(per_page as usize)
+            .map(|m| {
+                let r = to_skill_record(m);
+                distri_types::stores::SkillListItem {
+                    id: r.id,
+                    workspace_slug: r.workspace_slug,
+                    name: r.name,
+                    full_name: r.full_name,
+                    description: r.description,
+                    tags: r.tags,
+                    is_public: r.is_public,
+                    is_system: r.is_system,
+                    is_owner: r.is_owner,
+                    is_workspace: r.is_workspace,
+                    star_count: r.star_count,
+                    clone_count: r.clone_count,
+                    is_starred: r.is_starred,
+                    created_at: r.created_at,
+                    updated_at: r.updated_at,
+                }
+            })
+            .collect();
+
+        Ok(distri_types::stores::SkillListResponse {
+            skills: records,
+            total,
+            page,
+            per_page,
+            total_pages,
+        })
     }
 
-    async fn get_skill(&self, skill_id_val: &str) -> Result<Option<SkillRecord>> {
+    async fn get(&self, skill_id_val: &str) -> Result<Option<SkillRecord>> {
         use crate::schema::skills::dsl::*;
         let mut conn = self.conn().await?;
         // Try by ID first, then by name
@@ -3661,7 +3746,7 @@ where
         }
     }
 
-    async fn create_skill(&self, skill: NewSkill) -> Result<SkillRecord> {
+    async fn create(&self, skill: NewSkill) -> Result<SkillRecord> {
         use crate::schema::skills::dsl::*;
         let mut conn = self.conn().await?;
         let now = Utc::now().naive_utc();
@@ -3696,7 +3781,7 @@ where
         Ok(to_skill_record(result))
     }
 
-    async fn update_skill(&self, skill_id_val: &str, update: UpdateSkill) -> Result<SkillRecord> {
+    async fn update(&self, skill_id_val: &str, update: UpdateSkill) -> Result<SkillRecord> {
         use crate::schema::skills::dsl::*;
         let mut conn = self.conn().await?;
         let now = Utc::now().naive_utc();
@@ -3759,7 +3844,7 @@ where
         Ok(to_skill_record(result))
     }
 
-    async fn delete_skill(&self, skill_id_val: &str) -> Result<()> {
+    async fn delete(&self, skill_id_val: &str) -> Result<()> {
         use crate::schema::skills::dsl::*;
         let mut conn = self.conn().await?;
         // Scripts are deleted via ON DELETE CASCADE
@@ -3769,32 +3854,12 @@ where
         Ok(())
     }
 
-    async fn list_public_skills(&self) -> Result<Vec<SkillRecord>> {
-        use crate::schema::skills::dsl::*;
-        let mut conn = self.conn().await?;
-        let results = skills
-            .filter(is_public.eq(1))
-            .select(SkillModel::as_select())
-            .order(star_count.desc())
-            .load::<SkillModel>(&mut conn)
-            .await?;
-
-        let records = results.into_iter().map(to_skill_record).collect();
-        Ok(records)
+    async fn star(&self, _skill_id: &str) -> Result<()> {
+        anyhow::bail!("star not supported in OSS mode")
     }
 
-    async fn star_skill(&self, _skill_id: &str) -> Result<()> {
-        // Star tracking not implemented for OSS single-user mode
-        Ok(())
-    }
-
-    async fn unstar_skill(&self, _skill_id: &str) -> Result<()> {
-        Ok(())
-    }
-
-    async fn list_starred_skills(&self) -> Result<Vec<SkillRecord>> {
-        // No star tracking in OSS mode
-        Ok(vec![])
+    async fn unstar(&self, _skill_id: &str) -> Result<()> {
+        anyhow::bail!("unstar not supported in OSS mode")
     }
 
     async fn clone_skill(&self, skill_id_val: &str) -> Result<SkillRecord> {

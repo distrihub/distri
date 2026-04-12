@@ -1450,7 +1450,7 @@ pub async fn parse_agent_markdown_content(content: &str) -> Result<StandardDefin
         )));
     }
 
-    // Validate that agent name characters are valid (alphanumeric, underscore, or '/' for namespacing)
+    // Validate that agent name characters are valid (alphanumeric, underscore, or single '/' for namespacing)
     if !agent_def
         .name
         .chars()
@@ -1460,9 +1460,10 @@ pub async fn parse_agent_markdown_content(content: &str) -> Result<StandardDefin
             .chars()
             .next()
             .is_some_and(|c| c.is_numeric())
+        || agent_def.name.chars().filter(|&c| c == '/').count() > 1
     {
         return Err(AgentError::Validation(format!(
-            "Invalid agent name '{}': Agent names must be alphanumeric with underscores or '/' for namespacing (e.g. '_system/plan'), cannot start with number.",
+            "Invalid agent name '{}': Agent names must be alphanumeric with underscores, at most one '/' for namespacing (e.g. '_system/plan'), cannot start with number.",
             agent_def.name
         )));
     }
@@ -1477,8 +1478,12 @@ pub async fn parse_agent_markdown_content(content: &str) -> Result<StandardDefin
 }
 
 /// Validate plugin name follows naming conventions
-/// Plugin names must be valid JavaScript identifiers (no hyphens)
+/// Plugin names must be valid identifiers. At most one '/' is allowed for workspace namespacing (e.g. 'workspace/agent').
 pub fn validate_plugin_name(name: &str) -> Result<(), String> {
+    if name.is_empty() {
+        return Err("Plugin name cannot be empty".to_string());
+    }
+
     if name.contains('-') {
         return Err(format!(
             "Plugin name '{}' cannot contain hyphens. Use underscores instead.",
@@ -1486,28 +1491,41 @@ pub fn validate_plugin_name(name: &str) -> Result<(), String> {
         ));
     }
 
-    if name.is_empty() {
-        return Err("Plugin name cannot be empty".to_string());
-    }
-
-    // Check if first character is valid for JavaScript identifier
-    if let Some(first_char) = name.chars().next()
-        && !first_char.is_ascii_alphabetic()
-        && first_char != '_'
-    {
+    let slash_count = name.chars().filter(|&c| c == '/').count();
+    if slash_count > 1 {
         return Err(format!(
-            "Plugin name '{}' must start with a letter or underscore",
+            "Plugin name '{}' can contain at most one '/' for workspace namespacing (e.g. 'workspace/agent')",
             name
         ));
     }
 
-    // Check if all characters are valid (alphanumeric, underscore, or '/' for namespacing)
-    for ch in name.chars() {
-        if !ch.is_ascii_alphanumeric() && ch != '_' && ch != '/' {
+    // Validate each segment (split by optional slash)
+    let segments: Vec<&str> = name.split('/').collect();
+    for segment in &segments {
+        if segment.is_empty() {
             return Err(format!(
-                "Plugin name '{}' can only contain letters, numbers, underscores, and '/' for namespacing",
+                "Plugin name '{}' has an empty segment around '/'",
                 name
             ));
+        }
+
+        if let Some(first_char) = segment.chars().next()
+            && !first_char.is_ascii_alphabetic()
+            && first_char != '_'
+        {
+            return Err(format!(
+                "Each segment in '{}' must start with a letter or underscore",
+                name
+            ));
+        }
+
+        for ch in segment.chars() {
+            if !ch.is_ascii_alphanumeric() && ch != '_' {
+                return Err(format!(
+                    "Plugin name '{}' can only contain letters, numbers, underscores, and at most one '/' for namespacing",
+                    name
+                ));
+            }
         }
     }
 

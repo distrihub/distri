@@ -57,18 +57,20 @@ pub fn distri(cfg: &mut web::ServiceConfig) {
             .route(web::post().to(create_agent)),
     )
     .service(
-        web::resource("/agents/{id}")
+        web::resource("/agents/{id:.*}/validate").route(web::get().to(validate_agent_handler)),
+    )
+    .service(
+        web::resource("/agents/{id:.*}/complete-tool").route(web::post().to(complete_tool_handler)),
+    )
+    .service(web::resource("/agents/{id:.*}/dag").route(web::get().to(get_agent_dag)))
+    .service(
+        web::resource("/agents/{id:.*}")
             .route(web::get().to(get_agent_definition))
             .route(web::post().to(a2a_handler))
             .route(web::put().to(update_agent))
             .route(web::delete().to(delete_agent)),
     )
-    .service(web::resource("/agents/{id}/validate").route(web::get().to(validate_agent_handler)))
-    .service(
-        web::resource("/agents/{id}/complete-tool").route(web::post().to(complete_tool_handler)),
-    )
     .service(web::resource("/event/hooks").route(web::post().to(complete_hook_handler)))
-    .service(web::resource("/agents/{id}/dag").route(web::get().to(get_agent_dag)))
     .service(web::resource("/tasks").route(web::get().to(list_tasks)))
     .service(web::resource("/tools").route(web::get().to(list_tools)))
     // Webhook endpoint for triggering agents

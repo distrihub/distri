@@ -24,7 +24,7 @@ mod tests {
         let store = make_skill_store().await;
 
         let skill = store
-            .create_skill(NewSkill {
+            .create(NewSkill {
                 name: "test_skill".to_string(),
                 description: Some("A test skill".to_string()),
                 content: "# Test\nDoes things.".to_string(),
@@ -46,7 +46,7 @@ mod tests {
         let store = make_skill_store().await;
 
         let skill = store
-            .create_skill(NewSkill {
+            .create(NewSkill {
                 name: "default_context".to_string(),
                 description: None,
                 content: "content".to_string(),
@@ -69,7 +69,7 @@ mod tests {
         let store = make_skill_store().await;
 
         let skill = store
-            .create_skill(NewSkill {
+            .create(NewSkill {
                 name: "fork_skill".to_string(),
                 description: Some("Runs in isolation".to_string()),
                 content: "# Fork skill\nDo deep work.".to_string(),
@@ -87,7 +87,7 @@ mod tests {
 
         // Verify round-trip: fetch from store and check context survives
         let fetched = store
-            .get_skill(&skill.id)
+            .get(&skill.id)
             .await
             .expect("get_skill")
             .expect("skill exists");
@@ -101,7 +101,7 @@ mod tests {
         let store = make_skill_store().await;
 
         let created = store
-            .create_skill(NewSkill {
+            .create(NewSkill {
                 name: "context_update_test".to_string(),
                 description: None,
                 content: "content".to_string(),
@@ -117,7 +117,7 @@ mod tests {
         assert_eq!(created.context, ContextExecutionType::Inline);
 
         let updated = store
-            .update_skill(
+            .update(
                 &created.id,
                 UpdateSkill {
                     name: None,
@@ -141,7 +141,7 @@ mod tests {
         let store = make_skill_store().await;
 
         let created = store
-            .create_skill(NewSkill {
+            .create(NewSkill {
                 name: "preserve_context".to_string(),
                 description: None,
                 content: "content".to_string(),
@@ -156,7 +156,7 @@ mod tests {
 
         // Update only the model — context should stay Fork
         let updated = store
-            .update_skill(
+            .update(
                 &created.id,
                 UpdateSkill {
                     name: None,

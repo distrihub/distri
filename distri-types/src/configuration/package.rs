@@ -23,8 +23,6 @@ pub struct PluginToolDefinition {
 #[derive(Debug, Clone, Serialize, Deserialize, Default, ToSchema, JsonSchema)]
 pub struct AgentCloudMetadata {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub id: Option<uuid::Uuid>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub published: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub published_at: Option<chrono::DateTime<chrono::Utc>>,
