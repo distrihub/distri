@@ -26,6 +26,7 @@ pub mod dynamic_factory;
 pub mod inject_env;
 pub mod request;
 pub mod resolve;
+pub mod send_message;
 pub mod simulator;
 pub mod skill_script;
 pub mod tool_search;
@@ -34,6 +35,7 @@ pub use builtin::{
     TransferToAgentTool, UniversalAgentTool,
 };
 pub use inject_env::InjectConnectionEnvTool;
+pub use send_message::SendMessageTool;
 pub use tool_search::ToolSearchTool;
 
 #[derive(Debug, Clone)]
@@ -134,6 +136,8 @@ pub fn cast_to_executor_context_tool(
         "inject_connection_env" => Ok(Box::new(inject_env::InjectConnectionEnvTool)),
         // Universal agent tool
         "call_agent" => Ok(Box::new(UniversalAgentTool)),
+        // Inter-agent communication
+        "send_message" => Ok(Box::new(SendMessageTool)),
         name if name.starts_with("call_") => {
             let safe_agent_name = name.strip_prefix("call_").unwrap_or(name);
             // Convert double underscores back to slashes for package/agent names

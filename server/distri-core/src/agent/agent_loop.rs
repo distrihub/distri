@@ -215,6 +215,49 @@ impl AgentLoop {
             // Snapshot at the top of each iteration so per-step deltas cover the
             // planning LLM call + any tools executed before the next plan cycle.
             context.snapshot_step_start().await;
+
+            // Check cancellation signal between iterations for cooperative abort
+            if let Some(ref signal) = context.cancellation_signal {
+                if signal.is_cancelled().await {
+                    tracing::info!(
+                        "Agent loop cancelled for task_id: {}, agent_id: {}",
+                        context.task_id,
+                        context.agent_id
+                    );
+                    context
+                        .update_status(crate::types::TaskStatus::Canceled)
+                        .await;
+                    context
+                        .emit(AgentEventType::RunError {
+                            message: "Task cancelled".to_string(),
+                            code: Some("CANCELLED".to_string()),
+                            usage: Some(context.get_step_usage().await),
+                        })
+                        .await;
+                    return Err(AgentError::Canceled);
+                }
+            }
+
+            // Drain mailbox for inter-agent messages and inject into context
+            if let Some(ref mailbox) = context.mailbox {
+                let messages = mailbox.lock().await.drain().await;
+                for msg in messages {
+                    tracing::info!(
+                        "Agent {} received inter-agent message from {}",
+                        context.agent_id,
+                        msg.from
+                    );
+                    let injected = Message::user(
+                        format!(
+                            "<agent-message from=\"{}\">\n{}\n</agent-message>",
+                            msg.from, msg.content
+                        ),
+                        None,
+                    );
+                    context.save_message(&injected).await;
+                }
+            }
+
             if error_iterations > 2 {
                 tracing::error!("Too many errors. Exiting...");
                 break;

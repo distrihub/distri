@@ -492,20 +492,18 @@ impl ExecutorContextTool for AgentTool {
         let orchestrator = context.get_orchestrator()?;
 
         // Check if this sub-agent should run in a remote sandbox (deepagent mode)
-        let use_remote = orchestrator.background_runner.is_some()
-            && orchestrator.broadcaster.is_some()
-            && {
-                let agent_def = orchestrator.stores.agent_store.get(&self.agent_name).await;
-                matches!(
-                    agent_def,
-                    Some(distri_types::configuration::AgentConfig::StandardAgent(ref def)) if def.remote
-                )
-            };
+        let use_remote = orchestrator.background_runner.is_some() && {
+            let agent_def = orchestrator.stores.agent_store.get(&self.agent_name).await;
+            matches!(
+                agent_def,
+                Some(distri_types::configuration::AgentConfig::StandardAgent(ref def)) if def.remote
+            )
+        };
 
         if use_remote {
             // DeepAgent path: spawn in sandbox, subscribe to events, relay to parent
             let runner = orchestrator.background_runner.as_ref().unwrap();
-            let broadcaster = orchestrator.broadcaster.as_ref().unwrap();
+            let broadcaster = orchestrator.broadcaster();
             let sub_task_id = uuid::Uuid::new_v4().to_string();
             let env_id = format!(
                 "{}-{}",
@@ -719,6 +717,13 @@ pub(crate) struct CallAgentInput {
     /// Description for the ad-hoc agent.
     #[serde(default)]
     pub(crate) description: Option<String>,
+    /// When true, launch the agent in the background and return immediately.
+    /// The parent will be notified when the child completes.
+    #[serde(default)]
+    pub(crate) run_in_background: bool,
+    /// Optional name for the background agent (used by SendMessage for routing).
+    #[serde(default)]
+    pub(crate) name: Option<String>,
 }
 
 /// Universal agent tool that replaces per-agent `call_<name>` tools with a single
@@ -770,6 +775,15 @@ impl Tool for UniversalAgentTool {
                 "description": {
                     "type": "string",
                     "description": "Description for the ad-hoc agent (only with system_prompt)."
+                },
+                "run_in_background": {
+                    "type": "boolean",
+                    "description": "When true, launch the agent in the background and return immediately. You will be notified when it completes.",
+                    "default": false
+                },
+                "name": {
+                    "type": "string",
+                    "description": "Optional name for the background agent (used for inter-agent messaging via send_message)."
                 }
             },
             "required": ["prompt"]
@@ -922,8 +936,7 @@ impl ExecutorContextTool for UniversalAgentTool {
         let agent_name = if agent_name == "_system/coder"
             && context.runtime_mode == RuntimeMode::Cloud
         {
-            let has_sandbox =
-                orchestrator.background_runner.is_some() && orchestrator.broadcaster.is_some();
+            let has_sandbox = orchestrator.background_runner.is_some();
             if has_sandbox {
                 // Sandbox available: run _system/coder remotely (distri-cli in browsr container)
                 agent_name
@@ -936,18 +949,110 @@ impl ExecutorContextTool for UniversalAgentTool {
             agent_name
         };
 
+        // ── Fire-and-forget path: run_in_background via coordinator + broadcaster ──
+        if input.run_in_background {
+            let coordinator = orchestrator.coordinator();
+            let child_task_id = uuid::Uuid::new_v4().to_string();
+            let child_message = Message::user(input.prompt.clone(), None);
+
+            // Register task with coordinator
+            let cancel_signal = coordinator
+                .register_task(&child_task_id, &context.thread_id, input.name.as_deref())
+                .await
+                .map_err(|e| {
+                    AgentError::ToolExecution(format!("Failed to register background task: {}", e))
+                })?;
+
+            // Take mailbox for inter-agent messaging
+            let mailbox = coordinator.take_mailbox(&child_task_id).await.ok();
+
+            // Create child execution context
+            let child_context = context.new_task(&agent_name).await;
+            let (event_tx, mut event_rx) =
+                tokio::sync::mpsc::channel::<distri_types::AgentEvent>(100);
+            let mut child_ctx = child_context.clone_with_tx(event_tx);
+            child_ctx.task_id = child_task_id.clone();
+            child_ctx.cancellation_signal = Some(cancel_signal);
+            if let Some(mb) = mailbox {
+                child_ctx.mailbox = Some(Arc::new(tokio::sync::Mutex::new(mb)));
+            }
+            child_ctx.parent_task_id = Some(context.task_id.clone());
+            let child_ctx_arc = Arc::new(child_ctx);
+
+            // Spawn event relay: child events → broadcaster
+            let runtime_for_relay = orchestrator.runtime.clone();
+            let task_id_for_relay = child_task_id.clone();
+            tokio::spawn(async move {
+                while let Some(event) = event_rx.recv().await {
+                    let is_terminal = matches!(
+                        &event.event,
+                        distri_types::AgentEventType::RunFinished { .. }
+                            | distri_types::AgentEventType::RunError { .. }
+                    );
+                    let task_id = event.task_id.clone();
+                    let _ = runtime_for_relay
+                        .broadcaster()
+                        .publish(&task_id, event)
+                        .await;
+                    if is_terminal {
+                        let _ = runtime_for_relay
+                            .coordinator()
+                            .complete_task(&task_id_for_relay)
+                            .await;
+                        break;
+                    }
+                }
+            });
+
+            // Spawn the actual agent execution in background
+            let orchestrator_clone = orchestrator.clone();
+            let agent_name_clone = agent_name.clone();
+            let user_id = context.user_id.clone();
+            let workspace_id = context
+                .workspace_id
+                .as_ref()
+                .and_then(|s| uuid::Uuid::parse_str(s).ok());
+            tokio::spawn(distri_auth::context::with_user_and_workspace(
+                user_id,
+                workspace_id,
+                async move {
+                    let result = orchestrator_clone
+                        .execute_stream(
+                            &agent_name_clone,
+                            child_message,
+                            child_ctx_arc.clone(),
+                            None,
+                        )
+                        .await;
+                    if let Ok(invoke_result) = result {
+                        if let Some(content) = &invoke_result.content {
+                            let final_msg = distri_types::Message::assistant(content.clone(), None);
+                            child_ctx_arc.save_message(&final_msg).await;
+                        }
+                    }
+                },
+            ));
+
+            // Return immediately — parent continues executing
+            return Ok(vec![Part::Data(json!({
+                "status": "async_launched",
+                "task_id": child_task_id,
+                "agent": agent_name,
+                "message": "Agent launched in background. You will be notified when it completes."
+            }))]);
+        }
+
         // ── Check if remote execution is needed ───────────────────────────
         // In Cloud mode, _system/coder always runs remotely via SandboxLauncher.
         // (coder_lite runs in-process with browsr shell tools.)
         let use_remote = orchestrator.background_runner.is_some()
-            && orchestrator.broadcaster.is_some()
             && agent_name == "_system/coder"
             && context.runtime_mode == RuntimeMode::Cloud;
 
         if use_remote {
             // ── Remote/DeepAgent path ─────────────────────────────────────
             let runner = orchestrator.background_runner.as_ref().unwrap();
-            let broadcaster = orchestrator.broadcaster.as_ref().unwrap();
+            let broadcaster = orchestrator.broadcaster();
             let sub_task_id = uuid::Uuid::new_v4().to_string();
             let env_id = format!(
                 "{}-{}",

@@ -149,6 +149,12 @@ pub struct ExecutorContext {
     pub otel_agent_span: Arc<StdMutex<Option<tracing::Span>>>,
     /// Tracks skills loaded inline for re-injection after context compaction
     pub skill_tracker: Arc<RwLock<crate::agent::skill_tracker::ActiveSkillTracker>>,
+    /// Cancellation signal for cooperative abort signaling from coordinator.
+    /// The agent loop checks this between iterations and exits gracefully.
+    pub cancellation_signal: Option<Arc<dyn crate::broadcast::CancellationSignal>>,
+    /// Mailbox for receiving inter-agent messages (from SendMessage tool).
+    /// The agent loop drains this between iterations.
+    pub mailbox: Option<Arc<tokio::sync::Mutex<Box<dyn crate::worker::MailboxReceiver>>>>,
 }
 
 impl std::fmt::Debug for ExecutorContext {
@@ -215,6 +221,8 @@ impl Default for ExecutorContext {
             skill_tracker: Arc::new(RwLock::new(
                 crate::agent::skill_tracker::ActiveSkillTracker::default(),
             )),
+            cancellation_signal: None,
+            mailbox: None,
         }
     }
 }
@@ -1034,6 +1042,8 @@ impl ExecutorContext {
             content_replacement_state: self.content_replacement_state.clone(),
             otel_agent_span: self.otel_agent_span.clone(),
             skill_tracker: self.skill_tracker.clone(),
+            cancellation_signal: self.cancellation_signal.clone(),
+            mailbox: self.mailbox.clone(),
         };
 
         (inner_context, inner_rx)
