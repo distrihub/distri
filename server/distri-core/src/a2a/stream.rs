@@ -1,9 +1,9 @@
 use crate::a2a::handler::validate_message;
 use crate::a2a::mapper::{map_agent_event, map_final_result};
-use crate::agent::InvokeResult;
 use crate::a2a::{extract_text_from_message, SseMessage};
+use crate::agent::InvokeResult;
 use crate::agent::{
-    types::ExecutorContextMetadata, AgentEventType, AgentOrchestrator, ExecutorContext,
+    types::ExecutorContextMetadata, AgentEvent, AgentEventType, AgentOrchestrator, ExecutorContext,
 };
 use crate::secrets::SecretResolver;
 use crate::AgentError;
@@ -11,10 +11,11 @@ use distri_auth::context::{with_user_and_workspace, with_user_id};
 // Note: with_user_and_workspace IS needed for stream! macro and spawned tasks
 // because they don't inherit task-local storage from middleware
 use anyhow::anyhow;
-use distri_a2a::{JsonRpcError, JsonRpcResponse, MessageSendParams};
+use distri_a2a::MessageSendParams;
 use distri_types::configuration::{AgentConfig, DefinitionOverrides};
 
 use futures_util::future::poll_fn;
+use futures_util::stream::BoxStream;
 use futures_util::Stream;
 use std::future::Future;
 use std::pin::Pin;
@@ -149,47 +150,32 @@ pub async fn init_thread_get_message(
 
 /// Subscribe to events for an existing task via the broadcaster.
 /// Used by the `tasks/resubscribe` A2A method.
-pub async fn handle_resubscribe_sse(
-    req_id: Option<serde_json::Value>,
+///
+/// Returns the event stream on success; the caller is responsible for converting
+/// errors into a JSON-RPC response (see `handler.rs`).
+pub async fn prepare_resubscribe(
     task_id: String,
     executor: Arc<AgentOrchestrator>,
+) -> Result<BoxStream<'static, AgentEvent>, AgentError> {
+    executor
+        .broadcaster()
+        .subscribe(&task_id)
+        .await
+        .map_err(|e| AgentError::Session(format!("Failed to subscribe: {e}")))
+}
+
+/// Run the broadcaster event loop for a `tasks/resubscribe` session.
+pub fn run_resubscribe_stream(
+    req_id: Option<serde_json::Value>,
+    event_stream: BoxStream<'static, AgentEvent>,
 ) -> impl futures_util::stream::Stream<Item = Result<SseMessage, std::convert::Infallible>> {
     async_stream::stream! {
-        // Subscribe via broadcaster (always available via runtime)
-        let event_stream = match executor.broadcaster().subscribe(&task_id).await {
-            Ok(s) => s,
-            Err(e) => {
-                let error = distri_a2a::JsonRpcResponse {
-                    jsonrpc: "2.0".to_string(),
-                    result: None,
-                    error: Some(distri_a2a::JsonRpcError {
-                        code: -32603,
-                        message: format!("Failed to subscribe: {}", e),
-                        data: None,
-                    }),
-                    id: req_id.clone(),
-                };
-                yield Ok::<_, std::convert::Infallible>(SseMessage {
-                    event: None,
-                    data: serde_json::to_string(&error).unwrap_or_default(),
-                });
-                return;
-            }
-        };
-
         futures_util::pin_mut!(event_stream);
         while let Some(event) = futures_util::StreamExt::next(&mut event_stream).await {
             let msg = map_agent_event(&event);
-            let response = distri_a2a::JsonRpcResponse {
-                jsonrpc: "2.0".to_string(),
-                result: Some(serde_json::to_value(&msg).unwrap_or_default()),
-                error: None,
-                id: req_id.clone(),
-            };
-            yield Ok::<_, std::convert::Infallible>(SseMessage {
-                event: None,
-                data: serde_json::to_string(&response).unwrap_or_default(),
-            });
+            yield Ok::<_, std::convert::Infallible>(
+                SseMessage::success_frame(req_id.clone(), msg),
+            );
         }
     }
 }
@@ -337,251 +323,147 @@ fn spawn_background_execution(
     }));
 }
 
-pub async fn handle_message_send_streaming_sse(
+/// A fully-prepared streaming session: background execution has been spawned
+/// and the broadcaster has been subscribed. Yielding from the event stream is
+/// now infallible from the handler's perspective.
+pub struct StreamingSession {
+    pub req_id: Option<serde_json::Value>,
+    pub user_id: String,
+    pub executor_context: Arc<ExecutorContext>,
+    pub event_stream: BoxStream<'static, AgentEvent>,
+}
+
+/// Prepare a `message/stream` session end-to-end:
+/// parse params → validate secrets → init thread → prepare execution context →
+/// register task → spawn relay → spawn background execution → subscribe.
+///
+/// All fallible work happens here so the caller can render a single JSON-RPC
+/// error frame instead of weaving error branches through the event loop.
+pub async fn prepare_streaming_session(
     req_id: Option<serde_json::Value>,
     agent_id: String,
     params: serde_json::Value,
     executor: Arc<AgentOrchestrator>,
     executor_context: Arc<ExecutorContext>,
-) -> impl futures_util::stream::Stream<Item = Result<SseMessage, std::convert::Infallible>> {
+) -> Result<StreamingSession, AgentError> {
     let user_id = executor_context.user_id.clone();
-    let stream_user_id = user_id.clone();
     let workspace_id = executor_context
         .workspace_id
         .as_ref()
         .and_then(|s| uuid::Uuid::parse_str(s).ok());
-    let stream_workspace_id = workspace_id;
-    let id_field_clone = executor_context.session_id.clone();
 
-    // Validate provider secrets BEFORE entering the stream! macro,
-    // because stream! doesn't inherit task-local storage (user/workspace context)
-    // needed by TenantSecretStore.
-    let secret_validation = validate_provider_secrets(&executor, &agent_id).await;
+    let params: MessageSendParams = serde_json::from_value(params)
+        .map_err(|e| AgentError::Validation(format!("Invalid params: {e}")))?;
+
+    // Validate provider secrets before we touch anything else. This runs in the
+    // caller's task-local context (user/workspace) so TenantSecretStore works.
+    validate_provider_secrets(&executor, &agent_id).await?;
+
+    // init_thread_get_message and prepare_execution are called from the calling
+    // task, which already has user/workspace task-locals from the HTTP middleware.
+    let (thread_id, message) = init_thread_get_message(
+        agent_id.clone(),
+        executor.clone(),
+        &params,
+        executor_context.clone(),
+    )
+    .await?;
+
+    let (exec_ctx, definition_overrides) =
+        prepare_execution(&agent_id, &params, &executor, &executor_context).await?;
+
+    let main_task_id = exec_ctx.task_id.clone();
+
+    // Register task — wire cancellation signal + mailbox into context.
+    let (executor_context_arc, event_rx) = executor
+        .register_task(&main_task_id, &thread_id, exec_ctx)
+        .await
+        .map_err(|e| AgentError::Session(format!("Failed to register task: {e}")))?;
+
+    // Spawn event relay: agent events → broadcaster.
+    executor.spawn_task_relay(main_task_id.clone(), event_rx);
+
+    // Spawn background execution. Client disconnect does NOT kill the agent —
+    // execution continues in the background.
+    spawn_background_execution(
+        executor.clone(),
+        agent_id.clone(),
+        message,
+        executor_context_arc,
+        Some(definition_overrides),
+        main_task_id.clone(),
+        user_id.clone(),
+        workspace_id,
+    );
+
+    // Subscribe to broadcaster events — the event stream the caller will consume.
+    let event_stream = executor
+        .broadcaster()
+        .subscribe(&main_task_id)
+        .await
+        .map_err(|e| AgentError::Session(format!("Failed to subscribe to task events: {e}")))?;
+
+    Ok(StreamingSession {
+        req_id,
+        user_id,
+        executor_context,
+        event_stream,
+    })
+}
+
+/// Run a prepared streaming session: relay broadcaster events as SSE frames
+/// until a terminal event, then yield a final `MessageKind::Message` if the
+/// agent set a final result.
+pub fn run_streaming_session(
+    session: StreamingSession,
+) -> impl futures_util::stream::Stream<Item = Result<SseMessage, std::convert::Infallible>> {
+    let StreamingSession {
+        req_id,
+        user_id,
+        executor_context,
+        event_stream,
+    } = session;
 
     let stream = async_stream::stream! {
-        let user_id = stream_user_id.clone();
-        let params: MessageSendParams = match serde_json::from_value(params) {
-            Ok(p) => p,
-            Err(e) => {
-                let error = JsonRpcResponse {
-                    jsonrpc: "2.0".to_string(),
-                    result: None,
-                    error: Some(JsonRpcError {
-                        code: -32602,
-                        message: e.to_string(),
-                        data: None,
-                    }),
-                    id: Some(id_field_clone.clone().into()),
-                };
-                yield Ok::<_, std::convert::Infallible>(SseMessage {
-                    event: None,
-                    data: serde_json::to_string(&error).unwrap(),
-                });
-                return;
+        futures_util::pin_mut!(event_stream);
+        let mut saw_terminal = false;
+        while let Some(event) = futures_util::StreamExt::next(&mut event_stream).await {
+            let is_terminal = matches!(
+                &event.event,
+                AgentEventType::RunFinished { .. } | AgentEventType::RunError { .. }
+            );
+            let msg = map_agent_event(&event);
+            yield Ok::<_, std::convert::Infallible>(
+                SseMessage::success_frame(req_id.clone(), msg),
+            );
+            if is_terminal {
+                saw_terminal = true;
+                break;
             }
-        };
-
-        // Check the pre-computed secret validation result
-        if let Err(e) = secret_validation {
-            let error = JsonRpcResponse {
-                jsonrpc: "2.0".to_string(),
-                result: None,
-                error: Some(JsonRpcError {
-                    code: -32603,
-                    message: e.to_string(),
-                    data: None,
-                }),
-                id: Some(id_field_clone.clone().into()),
-            };
-            yield Ok::<_, std::convert::Infallible>(SseMessage {
-                event: None,
-                data: serde_json::to_string(&error).unwrap(),
-            });
-            return;
         }
 
-        // stream! macro doesn't inherit task-local storage, so wrap here
-        let (thread_id, message) = match with_user_and_workspace(
-            user_id.clone(),
-            stream_workspace_id,
-            init_thread_get_message(
-                agent_id.clone(),
-                executor.clone(),
-                &params,
-                executor_context.clone(),
-            )
-        )
-        .await
-        {
-            Ok(t) => t,
-            Err(e) => {
-                let error = JsonRpcResponse {
-                    jsonrpc: "2.0".to_string(),
-                    result: None,
-                    error: Some(JsonRpcError {
-                        code: -32603,
-                        message: e.to_string(),
-                        data: None,
-                    }),
-                    id: Some(id_field_clone.clone().into()),
+        // After terminal event: read the final result from the shared
+        // ExecutorContext (set by the `final` tool via set_final_result, and
+        // shared via Arc<RwLock>) and yield it as MessageKind::Message so
+        // clients render the final answer.
+        if saw_terminal {
+            if let Some(final_value) = executor_context.get_final_result().await {
+                let text = match final_value {
+                    serde_json::Value::String(s) => s,
+                    other => other.to_string(),
                 };
-                yield Ok::<_, std::convert::Infallible>(SseMessage {
-                    event: None,
-                    data: serde_json::to_string(&error).unwrap(),
-                });
-                return;
-            }
-        };
-
-        // Prepare execution context with metadata, browser, overrides
-        let (exec_ctx, definition_overrides) = match prepare_execution(
-            &agent_id, &params, &executor, &executor_context,
-        ).await {
-            Ok(v) => v,
-            Err(e) => {
-                let error = JsonRpcResponse {
-                    jsonrpc: "2.0".to_string(),
-                    result: None,
-                    error: Some(JsonRpcError {
-                        code: -32603,
-                        message: e.to_string(),
-                        data: None,
-                    }),
-                    id: Some(id_field_clone.clone().into()),
-                };
-                yield Ok::<_, std::convert::Infallible>(SseMessage {
-                    event: None,
-                    data: serde_json::to_string(&error).unwrap(),
-                });
-                return;
-            }
-        };
-
-        let main_task_id = exec_ctx.task_id.clone();
-
-        // === Background execution: register → relay → spawn → subscribe ===
-        // Client disconnect does NOT kill the agent — execution continues in background.
-
-        // 1. Register task — wire cancellation signal + mailbox into context
-        let (executor_context_arc, event_rx) = match executor
-            .register_task(&main_task_id, &thread_id, exec_ctx)
-            .await
-        {
-            Ok(v) => v,
-            Err(e) => {
-                let error = JsonRpcResponse {
-                    jsonrpc: "2.0".to_string(),
-                    result: None,
-                    error: Some(JsonRpcError {
-                        code: -32603,
-                        message: format!("Failed to register task: {}", e),
-                        data: None,
-                    }),
-                    id: req_id.clone(),
-                };
-                yield Ok::<_, std::convert::Infallible>(SseMessage {
-                    event: None,
-                    data: serde_json::to_string(&error).unwrap(),
-                });
-                return;
-            }
-        };
-
-        // 2. Spawn event relay: agent events → broadcaster
-        executor.spawn_task_relay(main_task_id.clone(), event_rx);
-
-        // 3. Spawn background execution
-        spawn_background_execution(
-            executor.clone(),
-            agent_id.clone(),
-            message,
-            executor_context_arc,
-            Some(definition_overrides),
-            main_task_id.clone(),
-            user_id.clone(),
-            workspace_id,
-        );
-
-        // 4. Subscribe to broadcaster events and stream as SSE.
-        //    Break the loop when a terminal event is seen, then yield a final
-        //    MessageKind::Message constructed from the task's saved final message.
-        let executor_context_for_final = executor_context.clone();
-        match executor.broadcaster().subscribe(&main_task_id).await {
-            Ok(event_stream) => {
-                futures_util::pin_mut!(event_stream);
-                let mut saw_terminal = false;
-                while let Some(event) = futures_util::StreamExt::next(&mut event_stream).await {
-                    let is_terminal = matches!(
-                        &event.event,
-                        AgentEventType::RunFinished { .. } | AgentEventType::RunError { .. }
-                    );
-                    let msg = map_agent_event(&event);
-                    let message = JsonRpcResponse {
-                        jsonrpc: "2.0".to_string(),
-                        result: Some(serde_json::to_value(msg).unwrap_or_default()),
-                        error: None,
-                        id: req_id.clone(),
+                if !text.is_empty() {
+                    let result = InvokeResult {
+                        content: Some(text),
+                        ..Default::default()
                     };
-                    yield Ok::<_, std::convert::Infallible>(SseMessage {
-                        event: None,
-                        data: serde_json::to_string(&message).unwrap_or_default(),
-                    });
-                    if is_terminal {
-                        saw_terminal = true;
-                        break;
-                    }
+                    let msg = map_final_result(&result, executor_context.clone());
+                    yield Ok::<_, std::convert::Infallible>(
+                        SseMessage::success_frame(req_id.clone(), msg),
+                    );
                 }
-
-                // After terminal event: read the final result from the shared
-                // ExecutorContext (set by the `final` tool via set_final_result, and
-                // shared via Arc<RwLock>) and yield it as MessageKind::Message so
-                // clients render the final answer.
-                if saw_terminal {
-                    if let Some(final_value) =
-                        executor_context_for_final.get_final_result().await
-                    {
-                        let text = match final_value {
-                            serde_json::Value::String(s) => s,
-                            other => other.to_string(),
-                        };
-                        if !text.is_empty() {
-                            let result = InvokeResult {
-                                content: Some(text),
-                                ..Default::default()
-                            };
-                            let msg = map_final_result(&result, executor_context_for_final);
-                            let message = JsonRpcResponse {
-                                jsonrpc: "2.0".to_string(),
-                                result: Some(serde_json::to_value(msg).unwrap_or_default()),
-                                error: None,
-                                id: req_id.clone(),
-                            };
-                            yield Ok::<_, std::convert::Infallible>(SseMessage {
-                                event: None,
-                                data: serde_json::to_string(&message).unwrap_or_default(),
-                            });
-                        }
-                    }
-                }
-            }
-            Err(e) => {
-                let error = JsonRpcResponse {
-                    jsonrpc: "2.0".to_string(),
-                    result: None,
-                    error: Some(JsonRpcError {
-                        code: -32603,
-                        message: format!("Failed to subscribe to task events: {}", e),
-                        data: None,
-                    }),
-                    id: req_id.clone(),
-                };
-                yield Ok::<_, std::convert::Infallible>(SseMessage {
-                    event: None,
-                    data: serde_json::to_string(&error).unwrap(),
-                });
             }
         }
-
     };
 
     UserScopedStream::new(user_id, Box::pin(stream))

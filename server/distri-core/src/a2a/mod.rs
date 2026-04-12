@@ -1,6 +1,9 @@
 mod handler;
 pub mod stream;
-use distri_a2a::{EventKind, JsonRpcError, Message, Part, Role, TaskStatus, TaskStatusUpdateEvent};
+use distri_a2a::{
+    EventKind, JsonRpcError, JsonRpcResponse, Message, Part, Role, TaskStatus,
+    TaskStatusUpdateEvent,
+};
 use distri_types::{a2a_converters::MessageMetadata, AgentError};
 pub use handler::A2AHandler;
 use serde::{Deserialize, Serialize};
@@ -45,6 +48,46 @@ impl SseMessage {
             data: serde_json::to_string(&self).unwrap(),
         }
     }
+
+    /// Serialize a JSON-RPC response into an SSE `data:` frame.
+    pub fn from_jsonrpc(resp: &JsonRpcResponse) -> Self {
+        Self {
+            event: None,
+            data: serde_json::to_string(resp).unwrap_or_default(),
+        }
+    }
+
+    /// Convenience: build a success frame from a serializable result value.
+    pub fn success_frame(
+        id: Option<serde_json::Value>,
+        result: impl Serialize,
+    ) -> Self {
+        let result = serde_json::to_value(result).unwrap_or_default();
+        Self::from_jsonrpc(&JsonRpcResponse::success(id, result))
+    }
+
+    /// Convenience: build an error frame from a JSON-RPC error.
+    pub fn error_frame(id: Option<serde_json::Value>, err: JsonRpcError) -> Self {
+        Self::from_jsonrpc(&JsonRpcResponse::error(id, err))
+    }
+}
+
+impl From<&JsonRpcResponse> for SseMessage {
+    fn from(r: &JsonRpcResponse) -> Self {
+        Self::from_jsonrpc(r)
+    }
+}
+
+/// Map an `AgentError` into a JSON-RPC error, selecting an appropriate code
+/// based on the variant. (Can't be a `From` impl due to the orphan rule —
+/// both types live in foreign crates.)
+pub fn agent_error_to_jsonrpc(err: &AgentError) -> JsonRpcError {
+    let code = match err {
+        AgentError::Validation(_) => -32602,
+        AgentError::NotImplemented(_) => -32601,
+        _ => -32603,
+    };
+    JsonRpcError::new(code, err.to_string())
 }
 
 pub fn to_a2a_message(message: &distri_types::Message, task: &distri_types::Task) -> Message {

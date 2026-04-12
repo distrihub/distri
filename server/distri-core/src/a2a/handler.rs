@@ -1,5 +1,7 @@
-use crate::a2a::stream::handle_message_send_streaming_sse;
-use crate::a2a::{unimplemented_error, A2AError, SseMessage};
+use crate::a2a::stream::{
+    prepare_resubscribe, prepare_streaming_session, run_resubscribe_stream, run_streaming_session,
+};
+use crate::a2a::{agent_error_to_jsonrpc, unimplemented_error, A2AError, SseMessage};
 use crate::agent::types::ExecutorContextMetadata;
 use crate::agent::AgentOrchestrator;
 use crate::types::default_agent_version;
@@ -14,7 +16,7 @@ type BoxedSseStream = std::pin::Pin<
     >,
 >;
 
-use distri_a2a::{JsonRpcError, JsonRpcRequest, JsonRpcResponse, MessageSendParams, TaskIdParams};
+use distri_a2a::{JsonRpcRequest, JsonRpcResponse, MessageSendParams, TaskIdParams};
 use distri_types::configuration::DefinitionOverrides;
 use futures::future::Either;
 use serde_json::Value;
@@ -238,21 +240,29 @@ impl A2AHandler {
                 {
                     ctx.default_model_settings = Some(ms.clone());
                 }
-                let executor_context = executor_context;
-                match executor_context {
-                    Ok(executor_context) => {
-                        let res = handle_message_send_streaming_sse(
+
+                let prep = match executor_context {
+                    Ok(ctx) => {
+                        prepare_streaming_session(
                             req_id.clone(),
                             agent_id.clone(),
                             req.params,
                             self.executor.clone(),
-                            Arc::new(executor_context),
+                            Arc::new(ctx),
                         )
-                        .await;
-
-                        Either::Left(Box::pin(res) as BoxedSseStream)
+                        .await
                     }
-                    Err(e) => Either::Right(Err(e)),
+                    Err(e) => Err(e),
+                };
+
+                // Preflight errors for `message/stream` must come back as an SSE
+                // frame (the client opens `Accept: text/event-stream` and parses
+                // the response as SSE). Emit a one-shot error frame stream.
+                match prep {
+                    Ok(session) => {
+                        Either::Left(Box::pin(run_streaming_session(session)) as BoxedSseStream)
+                    }
+                    Err(e) => Either::Left(single_error_frame_stream(req_id.clone(), e)),
                 }
             }
             "message/send" => {
@@ -293,27 +303,20 @@ impl A2AHandler {
             "tasks/cancel" => Either::Right(self.handle_task_cancel(req.params).await),
             "tasks/resubscribe" => {
                 // Subscribe to events for an existing task via broadcaster (always available).
-                let params: TaskIdParams = match serde_json::from_value(req.params) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        return Either::Right(JsonRpcResponse {
-                            jsonrpc: "2.0".to_string(),
-                            result: None,
-                            error: Some(map_agent_error(AgentError::Validation(format!(
-                                "Invalid params: {}",
-                                e
-                            )))),
-                            id: req_id.clone(),
-                        });
-                    }
-                };
-                let res = crate::a2a::stream::handle_resubscribe_sse(
-                    req_id.clone(),
-                    params.id,
-                    self.executor.clone(),
-                )
+                let prep = async {
+                    let params: TaskIdParams = serde_json::from_value(req.params)
+                        .map_err(|e| AgentError::Validation(format!("Invalid params: {e}")))?;
+                    prepare_resubscribe(params.id, self.executor.clone()).await
+                }
                 .await;
-                Either::Left(Box::pin(res) as BoxedSseStream)
+
+                match prep {
+                    Ok(event_stream) => Either::Left(
+                        Box::pin(run_resubscribe_stream(req_id.clone(), event_stream))
+                            as BoxedSseStream,
+                    ),
+                    Err(e) => Either::Left(single_error_frame_stream(req_id.clone(), e)),
+                }
             }
             "agent/authenticatedExtendedCard"
             | "tasks/pushNotificationConfig/set"
@@ -328,18 +331,13 @@ impl A2AHandler {
 
         match result {
             Either::Left(res) => Either::Left(res),
-            Either::Right(Ok(res)) => Either::Right(JsonRpcResponse {
-                jsonrpc: "2.0".to_string(),
-                result: Some(res),
-                error: None,
-                id: req_id.clone(),
-            }),
-            Either::Right(Err(err)) => Either::Right(JsonRpcResponse {
-                jsonrpc: "2.0".to_string(),
-                result: None,
-                error: Some(map_agent_error(err)),
-                id: req_id.clone(),
-            }),
+            Either::Right(Ok(res)) => {
+                Either::Right(JsonRpcResponse::success(req_id.clone(), res))
+            }
+            Either::Right(Err(err)) => Either::Right(JsonRpcResponse::error(
+                req_id.clone(),
+                agent_error_to_jsonrpc(&err),
+            )),
         }
     }
 
@@ -446,13 +444,19 @@ impl A2AHandler {
     }
 }
 
-pub fn map_agent_error(e: AgentError) -> JsonRpcError {
-    JsonRpcError {
-        code: -32603,
-        message: e.to_string(),
-        data: None,
-    }
+/// Build a one-shot SSE stream that yields a single JSON-RPC error frame.
+/// Used for preflight failures on `message/stream` and `tasks/resubscribe`
+/// where the HTTP response has already committed to `text/event-stream`.
+fn single_error_frame_stream(
+    req_id: Option<serde_json::Value>,
+    err: AgentError,
+) -> BoxedSseStream {
+    let frame = SseMessage::error_frame(req_id, agent_error_to_jsonrpc(&err));
+    Box::pin(futures_util::stream::once(async move {
+        Ok::<_, std::convert::Infallible>(frame)
+    }))
 }
+
 
 pub fn validate_message(message: &crate::types::Message) -> Result<(), AgentError> {
     if message.parts.is_empty() {

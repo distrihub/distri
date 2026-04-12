@@ -256,6 +256,28 @@ pub struct JsonRpcResponse {
     pub id: Option<serde_json::Value>,
 }
 
+impl JsonRpcResponse {
+    /// Build a successful JSON-RPC response.
+    pub fn success(id: Option<serde_json::Value>, result: serde_json::Value) -> Self {
+        Self {
+            jsonrpc: "2.0".to_string(),
+            result: Some(result),
+            error: None,
+            id,
+        }
+    }
+
+    /// Build an error JSON-RPC response.
+    pub fn error(id: Option<serde_json::Value>, err: JsonRpcError) -> Self {
+        Self {
+            jsonrpc: "2.0".to_string(),
+            result: None,
+            error: Some(err),
+            id,
+        }
+    }
+}
+
 /// A JSON-RPC error object.
 #[derive(Serialize, Debug)]
 pub struct JsonRpcError {
@@ -263,6 +285,32 @@ pub struct JsonRpcError {
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<serde_json::Value>,
+}
+
+impl JsonRpcError {
+    /// Build a JSON-RPC error with just a code and message.
+    pub fn new(code: i32, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            message: message.into(),
+            data: None,
+        }
+    }
+
+    /// JSON-RPC "Invalid params" error (code -32602).
+    pub fn invalid_params(message: impl Into<String>) -> Self {
+        Self::new(-32602, message)
+    }
+
+    /// JSON-RPC "Method not found" error (code -32601).
+    pub fn method_not_found(message: impl Into<String>) -> Self {
+        Self::new(-32601, message)
+    }
+
+    /// JSON-RPC "Internal error" (code -32603).
+    pub fn internal(message: impl Into<String>) -> Self {
+        Self::new(-32603, message)
+    }
 }
 
 // A2A Method Params
