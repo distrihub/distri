@@ -87,9 +87,7 @@ pub fn make_mock_executor_with_scenario(scenario: MockLLMScenario) -> MockLLMExe
 /// Create a [`MockLLM`] (shared) plus an [`MockLLMExecutor`] wrapping it.
 ///
 /// Returns both so the caller can inspect `mock_llm.calls` after the test.
-pub fn make_mock_llm_and_executor(
-    scenario: MockLLMScenario,
-) -> (Arc<MockLLM>, MockLLMExecutor) {
+pub fn make_mock_llm_and_executor(scenario: MockLLMScenario) -> (Arc<MockLLM>, MockLLMExecutor) {
     let mock_llm = Arc::new(MockLLM {
         calls: Mutex::new(0),
         scenario,

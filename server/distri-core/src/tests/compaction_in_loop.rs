@@ -13,8 +13,7 @@
 use std::sync::Arc;
 
 use distri_types::{
-    events::CompactionTier, ExecutionResult, ExecutionStatus, Part,
-    ScratchpadEntryType,
+    events::CompactionTier, ExecutionResult, ExecutionStatus, Part, ScratchpadEntryType,
 };
 
 use crate::agent::context_size_manager::ContextSizeConfig;
@@ -88,7 +87,12 @@ async fn tier1_trim_triggers_on_large_context() {
 
     let compaction = result.unwrap();
     assert!(
-        matches!(compaction.tier, Some(CompactionTier::Trim) | Some(CompactionTier::Summarize) | Some(CompactionTier::Reset)),
+        matches!(
+            compaction.tier,
+            Some(CompactionTier::Trim)
+                | Some(CompactionTier::Summarize)
+                | Some(CompactionTier::Reset)
+        ),
         "Should apply a compaction tier, got {:?}",
         compaction.tier
     );

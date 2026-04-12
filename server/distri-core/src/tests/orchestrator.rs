@@ -3,8 +3,8 @@ use std::sync::Arc;
 use distri_types::configuration::AgentConfig;
 use distri_types::{Message, ModelSettings};
 
-use crate::{agent::parse_agent_markdown_content, AgentOrchestrator, AgentOrchestratorBuilder};
 use crate::tests::helpers::test_store_config;
+use crate::{agent::parse_agent_markdown_content, AgentOrchestrator, AgentOrchestratorBuilder};
 
 fn test_model_settings(model: &str) -> ModelSettings {
     ModelSettings::new(model)

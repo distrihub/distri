@@ -3,7 +3,10 @@ use chrono::Utc;
 use crossterm::terminal;
 use distri::{Distri, TraceSummary};
 
-use crate::{OptimizeCommands, TracesCommands, COLOR_BRIGHT_GREEN, COLOR_BRIGHT_MAGENTA, COLOR_GRAY, COLOR_RESET};
+use crate::{
+    OptimizeCommands, TracesCommands, COLOR_BRIGHT_GREEN, COLOR_BRIGHT_MAGENTA, COLOR_GRAY,
+    COLOR_RESET,
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ANSI color constants for span categories
@@ -1271,13 +1274,11 @@ fn parse_otlp_to_flat_json(otlp: &serde_json::Value) -> Vec<serde_json::Value> {
                 let mut attrs_map = serde_json::Map::new();
                 if let Some(attrs) = span_obj.get("attributes").and_then(|v| v.as_array()) {
                     for attr in attrs {
-                        if let (Some(key), Some(value)) = (
-                            attr.get("key").and_then(|k| k.as_str()),
-                            attr.get("value"),
-                        ) {
+                        if let (Some(key), Some(value)) =
+                            (attr.get("key").and_then(|k| k.as_str()), attr.get("value"))
+                        {
                             let val_str = extract_otlp_value(value);
-                            attrs_map
-                                .insert(key.to_string(), serde_json::Value::String(val_str));
+                            attrs_map.insert(key.to_string(), serde_json::Value::String(val_str));
                         }
                     }
                 }
@@ -1314,10 +1315,8 @@ fn parse_otlp_to_flat_json(otlp: &serde_json::Value) -> Vec<serde_json::Value> {
 
 /// Build an export fixture from flat span objects.
 fn build_export_fixture(trace_id: &str, spans: &[serde_json::Value]) -> ExportFixture {
-    let mut llm_spans: Vec<&serde_json::Value> = spans
-        .iter()
-        .filter(|span| is_llm_span(span))
-        .collect();
+    let mut llm_spans: Vec<&serde_json::Value> =
+        spans.iter().filter(|span| is_llm_span(span)).collect();
 
     llm_spans.sort_by_key(|span| {
         span.get("start_time_ns")
@@ -1394,7 +1393,10 @@ fn is_llm_span(span: &serde_json::Value) -> bool {
         None => return false,
     };
 
-    if let Some(kind) = attrs.get("openinference.span.kind").and_then(|v| v.as_str()) {
+    if let Some(kind) = attrs
+        .get("openinference.span.kind")
+        .and_then(|v| v.as_str())
+    {
         if kind.eq_ignore_ascii_case("LLM") {
             return true;
         }
@@ -1500,7 +1502,9 @@ async fn handle_optimize_analyze(
     eprintln!(
         "Analyzing {} recent traces{}...",
         lookback,
-        agent.map(|a| format!(" for agent '{}'", a)).unwrap_or_default()
+        agent
+            .map(|a| format!(" for agent '{}'", a))
+            .unwrap_or_default()
     );
 
     let traces = client.list_traces(Some(lookback)).await?;
@@ -1515,8 +1519,7 @@ async fn handle_optimize_analyze(
     let mut total_cost = 0.0f64;
     let mut error_count = 0usize;
     let mut tool_freq: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-    let mut model_freq: std::collections::HashMap<String, usize> =
-        std::collections::HashMap::new();
+    let mut model_freq: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
 
     for trace in &traces {
         total_input_tokens += trace.input_tokens;
@@ -1573,12 +1576,8 @@ async fn handle_optimize_suggest(
         COLOR_BRIGHT_GREEN, COLOR_RESET
     );
     eprintln!();
-    eprintln!(
-        "Note: Full suggestion generation requires the trace analysis service"
-    );
-    eprintln!(
-        "running in distri-cloud. Use `distri optimize analyze` to view"
-    );
+    eprintln!("Note: Full suggestion generation requires the trace analysis service");
+    eprintln!("running in distri-cloud. Use `distri optimize analyze` to view");
     eprintln!("current trace patterns first.");
     Ok(())
 }
@@ -1597,12 +1596,8 @@ async fn handle_optimize_loop(
         if dry_run { " (dry run)" } else { "" }
     );
     eprintln!();
-    eprintln!(
-        "Note: The optimization loop requires the trace analysis and optimization"
-    );
-    eprintln!(
-        "services running in distri-cloud. The full loop flow is:"
-    );
+    eprintln!("Note: The optimization loop requires the trace analysis and optimization");
+    eprintln!("services running in distri-cloud. The full loop flow is:");
     eprintln!("  1. Analyze recent traces → identify weak scenarios");
     eprintln!("  2. Select target skill via affinity map");
     eprintln!("  3. Generate mutation via LLM");

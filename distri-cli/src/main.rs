@@ -3,7 +3,7 @@ use std::process::Command;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use distri::{AgentStreamClient, BuildHttpClient, Distri, DistriClientApp, print_stream_verbose};
+use distri::{print_stream_verbose, AgentStreamClient, BuildHttpClient, Distri, DistriClientApp};
 use tokio::fs;
 
 mod chat;
@@ -26,7 +26,7 @@ use commands::{
 use config::resolve_workspace;
 use message::{build_connections_context, build_message_params_full};
 use threads::resolve_resume_arg;
-use tools::{LOCAL_TOOL_NAMES, register_all, register_approval_handler, validate_external_tools};
+use tools::{register_all, register_approval_handler, validate_external_tools, LOCAL_TOOL_NAMES};
 
 #[derive(Parser, Debug, Clone)]
 #[clap(author, version, about)]

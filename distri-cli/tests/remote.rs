@@ -62,7 +62,14 @@ fn remote_smoke_say_hello() -> Result<()> {
     };
     run_cli(
         &base_url,
-        &["run", "--agent", "distri_runner", "--task", "say hello", "--remote"],
+        &[
+            "run",
+            "--agent",
+            "distri_runner",
+            "--task",
+            "say hello",
+            "--remote",
+        ],
     )?;
     Ok(())
 }

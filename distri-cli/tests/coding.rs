@@ -22,10 +22,7 @@ fn coding_base_url() -> Option<String> {
     if env::var("DISTRI_CODING_TEST").unwrap_or_default() != "1" {
         return None;
     }
-    Some(
-        env::var("DISTRI_BASE_URL")
-            .unwrap_or_else(|_| "http://localhost:8081/v1".to_string()),
-    )
+    Some(env::var("DISTRI_BASE_URL").unwrap_or_else(|_| "http://localhost:8081/v1".to_string()))
 }
 
 fn distri_binary() -> PathBuf {

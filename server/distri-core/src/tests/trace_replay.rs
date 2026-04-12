@@ -112,10 +112,7 @@ impl TraceFixtureExtractor {
     /// `spans` should be raw span records (e.g., from SpanStore::list_spans).
     /// Each span is expected to be a JSON object with `attributes` containing
     /// the OpenInference standard fields.
-    pub fn extract_from_spans(
-        spans: &[serde_json::Value],
-        fixture_id: &str,
-    ) -> TraceFixture {
+    pub fn extract_from_spans(spans: &[serde_json::Value], fixture_id: &str) -> TraceFixture {
         let mut calls = Vec::new();
 
         // Filter to LLM spans and sort by start time
@@ -142,11 +139,9 @@ impl TraceFixtureExtractor {
                 .to_string();
 
             // Try to parse output as JSON to extract structured content
-            let (output_content, tool_calls, finish_reason) =
-                Self::parse_output(&output_raw);
+            let (output_content, tool_calls, finish_reason) = Self::parse_output(&output_raw);
 
-            let model = Self::get_attr_value(&attrs, "gen_ai.request.model")
-                .map(|s| s.to_string());
+            let model = Self::get_attr_value(&attrs, "gen_ai.request.model").map(|s| s.to_string());
             let input_tokens = Self::get_attr_value(&attrs, "gen_ai.usage.input_tokens")
                 .and_then(|v| v.parse().ok());
             let output_tokens = Self::get_attr_value(&attrs, "gen_ai.usage.output_tokens")
@@ -276,11 +271,7 @@ impl TraceFixtureExtractor {
                     .unwrap_or("")
                     .to_string();
 
-                return (
-                    content,
-                    tool_calls,
-                    "tool_calls".to_string(),
-                );
+                return (content, tool_calls, "tool_calls".to_string());
             }
 
             // Plain text content in JSON
@@ -319,13 +310,12 @@ impl TraceReplayExecutor {
             .calls
             .iter()
             .map(|call| {
-                let finish_reason = if call.finish_reason == "tool_calls"
-                    || !call.tool_calls.is_empty()
-                {
-                    async_openai::types::chat::FinishReason::ToolCalls
-                } else {
-                    async_openai::types::chat::FinishReason::Stop
-                };
+                let finish_reason =
+                    if call.finish_reason == "tool_calls" || !call.tool_calls.is_empty() {
+                        async_openai::types::chat::FinishReason::ToolCalls
+                    } else {
+                        async_openai::types::chat::FinishReason::Stop
+                    };
 
                 let tool_calls: Vec<ToolCall> = call
                     .tool_calls

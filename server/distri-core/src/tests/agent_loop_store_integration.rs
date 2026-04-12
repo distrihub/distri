@@ -9,9 +9,7 @@
 
 use std::sync::Arc;
 
-use distri_types::{
-    ExecutionResult, ExecutionStatus, Part, ScratchpadEntryType,
-};
+use distri_types::{ExecutionResult, ExecutionStatus, Part, ScratchpadEntryType};
 
 use crate::agent::ExecutorContext;
 use crate::tests::helpers::{make_test_context, test_store_config};
@@ -171,11 +169,7 @@ async fn multi_turn_history_order() {
         .filter(|e| matches!(e.entry_type, ScratchpadEntryType::Execution(_)))
         .collect();
 
-    assert_eq!(
-        exec_entries.len(),
-        5,
-        "Should have 5 execution entries"
-    );
+    assert_eq!(exec_entries.len(), 5, "Should have 5 execution entries");
 
     // Verify chronological order (timestamps ascending)
     let timestamps: Vec<i64> = exec_entries.iter().map(|e| e.timestamp).collect();

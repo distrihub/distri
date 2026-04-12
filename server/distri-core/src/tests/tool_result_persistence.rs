@@ -13,8 +13,8 @@
 use std::sync::Arc;
 
 use distri_types::{
-    tool_result_store::PERSIST_THRESHOLD_BYTES,
-    ExecutionResult, ExecutionStatus, Part, ToolCall, ToolResponse,
+    tool_result_store::PERSIST_THRESHOLD_BYTES, ExecutionResult, ExecutionStatus, Part, ToolCall,
+    ToolResponse,
 };
 
 use crate::agent::ExecutorContext;

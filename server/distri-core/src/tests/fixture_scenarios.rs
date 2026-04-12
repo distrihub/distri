@@ -25,7 +25,10 @@ async fn skill_loading_fixture_replays_correctly() {
     let executor = TraceReplayExecutor::from_fixture(&fixture);
 
     // Call 1: tool_search
-    let r1 = executor.execute(&Vec::<crate::types::Message>::new()).await.unwrap();
+    let r1 = executor
+        .execute(&Vec::<crate::types::Message>::new())
+        .await
+        .unwrap();
     assert!(r1.content.contains("search"));
     assert_eq!(r1.tool_calls.len(), 1);
     assert_eq!(r1.tool_calls[0].tool_name, "tool_search");
@@ -35,12 +38,18 @@ async fn skill_loading_fixture_replays_correctly() {
     );
 
     // Call 2: load_skill
-    let r2 = executor.execute(&Vec::<crate::types::Message>::new()).await.unwrap();
+    let r2 = executor
+        .execute(&Vec::<crate::types::Message>::new())
+        .await
+        .unwrap();
     assert_eq!(r2.tool_calls.len(), 1);
     assert_eq!(r2.tool_calls[0].tool_name, "load_skill");
 
     // Call 3: final response (no tool calls)
-    let r3 = executor.execute(&Vec::<crate::types::Message>::new()).await.unwrap();
+    let r3 = executor
+        .execute(&Vec::<crate::types::Message>::new())
+        .await
+        .unwrap();
     assert!(r3.tool_calls.is_empty());
     assert!(r3.content.contains("Slack"));
     assert_eq!(
@@ -91,12 +100,18 @@ async fn tool_deferral_fixture_replays_correctly() {
     let executor = TraceReplayExecutor::from_fixture(&fixture);
 
     // Call 1: deferred tool call
-    let r1 = executor.execute(&Vec::<crate::types::Message>::new()).await.unwrap();
+    let r1 = executor
+        .execute(&Vec::<crate::types::Message>::new())
+        .await
+        .unwrap();
     assert_eq!(r1.tool_calls.len(), 1);
     assert_eq!(r1.tool_calls[0].tool_name, "fs_read_file");
 
     // Call 2: final response after tool result
-    let r2 = executor.execute(&Vec::<crate::types::Message>::new()).await.unwrap();
+    let r2 = executor
+        .execute(&Vec::<crate::types::Message>::new())
+        .await
+        .unwrap();
     assert!(r2.tool_calls.is_empty());
     assert!(r2.content.contains("package.json"));
 }
@@ -166,17 +181,19 @@ async fn programmatic_fixture_works() {
 
     let executor = TraceReplayExecutor::from_fixture(&fixture);
 
-    let r1 = executor.execute(&Vec::<crate::types::Message>::new()).await.unwrap();
+    let r1 = executor
+        .execute(&Vec::<crate::types::Message>::new())
+        .await
+        .unwrap();
     assert_eq!(r1.tool_calls[0].tool_name, "call_agent");
 
-    let r2 = executor.execute(&Vec::<crate::types::Message>::new()).await.unwrap();
+    let r2 = executor
+        .execute(&Vec::<crate::types::Message>::new())
+        .await
+        .unwrap();
     assert!(r2.content.contains("deployed successfully"));
 
     // Total usage across fixture
-    let total_input: u32 = fixture
-        .calls
-        .iter()
-        .filter_map(|c| c.input_tokens)
-        .sum();
+    let total_input: u32 = fixture.calls.iter().filter_map(|c| c.input_tokens).sum();
     assert_eq!(total_input, 300);
 }

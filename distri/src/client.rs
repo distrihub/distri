@@ -279,10 +279,8 @@ impl Distri {
         json: &str,
     ) -> Result<AgentRegistrationResponse, ClientError> {
         // Validate that it parses as AgentConfig before sending.
-        let _config: distri_types::configuration::AgentConfig =
-            serde_json::from_str(json).map_err(|e| {
-                ClientError::InvalidResponse(format!("Invalid agent JSON: {e}"))
-            })?;
+        let _config: distri_types::configuration::AgentConfig = serde_json::from_str(json)
+            .map_err(|e| ClientError::InvalidResponse(format!("Invalid agent JSON: {e}")))?;
 
         let create_url = format!("{}/agents", self.base_url);
 
