@@ -168,10 +168,7 @@ fn test_resolve_coder_name_cli() {
         resolve_coder_name(&RuntimeMode::Cli, false),
         "_system/coder"
     );
-    assert_eq!(
-        resolve_coder_name(&RuntimeMode::Cli, true),
-        "_system/coder"
-    );
+    assert_eq!(resolve_coder_name(&RuntimeMode::Cli, true), "_system/coder");
 }
 
 #[test]
@@ -375,10 +372,7 @@ async fn test_builtin_agents_registered_on_orchestrator_build() {
         "_system/coder should be registered on build"
     );
     assert!(
-        orchestrator
-            .get_agent("_system/coder_lite")
-            .await
-            .is_some(),
+        orchestrator.get_agent("_system/coder_lite").await.is_some(),
         "_system/coder_lite should be registered on build"
     );
     assert!(

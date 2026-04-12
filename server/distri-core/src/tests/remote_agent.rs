@@ -187,10 +187,7 @@ async fn test_event_forwarding_basic() {
         3,
         "should forward RunStarted + DiagnosticLog + RunFinished"
     );
-    assert!(matches!(
-        forwarded[0].event,
-        AgentEventType::RunStarted {}
-    ));
+    assert!(matches!(forwarded[0].event, AgentEventType::RunStarted {}));
     assert!(matches!(
         forwarded[1].event,
         AgentEventType::DiagnosticLog { .. }
@@ -220,7 +217,10 @@ async fn test_final_tool_capture() {
     };
 
     let (ctx, _rx) = test_context();
-    let result = agent.invoke_stream(test_message("say hello"), ctx).await.unwrap();
+    let result = agent
+        .invoke_stream(test_message("say hello"), ctx)
+        .await
+        .unwrap();
 
     assert_eq!(
         result.content,
@@ -365,7 +365,10 @@ async fn test_no_final_tool_returns_none_content() {
     };
 
     let (ctx, _rx) = test_context();
-    let result = agent.invoke_stream(test_message("no final"), ctx).await.unwrap();
+    let result = agent
+        .invoke_stream(test_message("no final"), ctx)
+        .await
+        .unwrap();
 
     assert_eq!(result.content, None, "no final tool → None content");
 }
@@ -404,7 +407,10 @@ async fn test_final_tool_among_multiple_tool_calls() {
     };
 
     let (ctx, _rx) = test_context();
-    let result = agent.invoke_stream(test_message("multi-tool"), ctx).await.unwrap();
+    let result = agent
+        .invoke_stream(test_message("multi-tool"), ctx)
+        .await
+        .unwrap();
 
     assert_eq!(
         result.content,
@@ -431,7 +437,10 @@ async fn test_remote_agent_metadata() {
 
     assert_eq!(agent.get_name(), "my_remote_agent");
     assert_eq!(agent.get_description(), "Does remote things");
-    assert!(agent.get_tools().is_empty(), "remote agent has no local tools");
+    assert!(
+        agent.get_tools().is_empty(),
+        "remote agent has no local tools"
+    );
 }
 
 /// RemoteAgent DAG has the expected structure.
@@ -516,11 +525,7 @@ struct ClosingBroadcaster {
 
 #[async_trait]
 impl AgentEventBroadcaster for ClosingBroadcaster {
-    async fn publish(
-        &self,
-        task_id: &str,
-        event: distri_types::AgentEvent,
-    ) -> anyhow::Result<()> {
+    async fn publish(&self, task_id: &str, event: distri_types::AgentEvent) -> anyhow::Result<()> {
         self.inner.publish(task_id, event).await
     }
 

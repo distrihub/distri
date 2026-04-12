@@ -18,11 +18,9 @@ async fn setup() -> (MockServer, BrowserSessions) {
 async fn mock_create_session(server: &MockServer, session_id: &str) {
     Mock::given(method("POST"))
         .and(path("/sessions"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "session_id": session_id,
-            })),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "session_id": session_id,
+        })))
         .expect(1..)
         .mount(server)
         .await;
@@ -36,10 +34,16 @@ async fn test_create_stores_session() {
     let (server, sessions) = setup().await;
     mock_create_session(&server, "sess-001").await;
 
-    let (name, _lock) = sessions.create(Some("my-browser".to_string())).await.unwrap();
+    let (name, _lock) = sessions
+        .create(Some("my-browser".to_string()))
+        .await
+        .unwrap();
 
     assert_eq!(name, "my-browser");
-    assert_eq!(sessions.session_id_for("my-browser"), Some("sess-001".to_string()));
+    assert_eq!(
+        sessions.session_id_for("my-browser"),
+        Some("sess-001".to_string())
+    );
     assert_eq!(sessions.list().len(), 1);
 }
 
@@ -52,7 +56,10 @@ async fn test_create_with_no_name_uses_session_id() {
     let (name, _lock) = sessions.create(None).await.unwrap();
 
     assert_eq!(name, "auto-id-42");
-    assert_eq!(sessions.session_id_for("auto-id-42"), Some("auto-id-42".to_string()));
+    assert_eq!(
+        sessions.session_id_for("auto-id-42"),
+        Some("auto-id-42".to_string())
+    );
 }
 
 /// create() with empty/whitespace name falls back to session_id.
@@ -74,11 +81,9 @@ async fn test_create_duplicate_name_returns_existing() {
     // First create needs an HTTP call
     Mock::given(method("POST"))
         .and(path("/sessions"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "session_id": "original-sess",
-            })),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "session_id": "original-sess",
+        })))
         .expect(1..=2)
         .mount(&server)
         .await;
@@ -92,7 +97,10 @@ async fn test_create_duplicate_name_returns_existing() {
 
     // Still only one session in the map
     assert_eq!(sessions.list().len(), 1);
-    assert_eq!(sessions.session_id_for("dup"), Some("original-sess".to_string()));
+    assert_eq!(
+        sessions.session_id_for("dup"),
+        Some("original-sess".to_string())
+    );
 }
 
 /// ensure() with an existing session name returns it and updates last_used.
@@ -102,10 +110,16 @@ async fn test_ensure_existing_session_reuses() {
     mock_create_session(&server, "reuse-me").await;
 
     // First, create a session
-    sessions.create(Some("persistent".to_string())).await.unwrap();
+    sessions
+        .create(Some("persistent".to_string()))
+        .await
+        .unwrap();
 
     // ensure() with the same name should reuse it (no HTTP call)
-    let (name, _lock) = sessions.ensure(Some("persistent".to_string())).await.unwrap();
+    let (name, _lock) = sessions
+        .ensure(Some("persistent".to_string()))
+        .await
+        .unwrap();
     assert_eq!(name, "persistent");
     assert_eq!(sessions.list().len(), 1);
 }
@@ -211,7 +225,10 @@ async fn test_stop_nonexistent_returns_false() {
     let (_server, sessions) = setup().await;
 
     let removed = sessions.stop("nope");
-    assert!(!removed, "stop should return false for non-existent session");
+    assert!(
+        !removed,
+        "stop should return false for non-existent session"
+    );
 }
 
 /// session_id_for() returns None for unknown names.

@@ -482,6 +482,43 @@ pub trait AgentStore: Send + Sync {
 
     /// Delete an agent by name or ID
     async fn delete(&self, id: &str) -> anyhow::Result<()>;
+
+    /// Get an agent with cloud-specific metadata (id, published, is_owner, etc.)
+    /// Default impl returns empty metadata — override in cloud stores.
+    async fn get_with_cloud_metadata(
+        &self,
+        name: &str,
+    ) -> Option<(
+        crate::configuration::AgentConfig,
+        crate::configuration::AgentCloudMetadata,
+    )> {
+        self.get(name)
+            .await
+            .map(|c| (c, crate::configuration::AgentCloudMetadata::default()))
+    }
+
+    /// List agents with cloud-specific metadata.
+    /// Default impl returns empty metadata — override in cloud stores.
+    async fn list_with_cloud_metadata(
+        &self,
+        cursor: Option<String>,
+        limit: Option<usize>,
+    ) -> (
+        Vec<(
+            crate::configuration::AgentConfig,
+            crate::configuration::AgentCloudMetadata,
+        )>,
+        Option<String>,
+    ) {
+        let (configs, cursor) = self.list(cursor, limit).await;
+        (
+            configs
+                .into_iter()
+                .map(|c| (c, crate::configuration::AgentCloudMetadata::default()))
+                .collect(),
+            cursor,
+        )
+    }
 }
 
 /// Store for managing scratchpad entries across conversations

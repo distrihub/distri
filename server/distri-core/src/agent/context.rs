@@ -2,9 +2,8 @@ use crate::agent::pricing;
 use crate::hooks_runtime::HookRegistry;
 use distri_stores::SessionStoreExt;
 use distri_types::{
-    AgentContextSize, AgentPlan, ContextBudget, ContextSize, ContextUsage,
-    ExecutionHistoryEntry, ExecutionResult, ModelSettings, Part, PlanStep, RunUsage,
-    ScratchpadEntry, ScratchpadEntryType,
+    AgentContextSize, AgentPlan, ContextBudget, ContextSize, ContextUsage, ExecutionHistoryEntry,
+    ExecutionResult, ModelSettings, Part, PlanStep, RunUsage, ScratchpadEntry, ScratchpadEntryType,
 };
 use serde_json::Value;
 use std::{
@@ -15,10 +14,8 @@ use tokio::sync::{mpsc, RwLock};
 
 use crate::agent::prompt_registry::PromptSection;
 use crate::{
-    servers::registry::McpServerRegistry,
-    tools::Tool,
-    types::Message,
-    AgentError, AgentOrchestrator,
+    servers::registry::McpServerRegistry, tools::Tool, types::Message, AgentError,
+    AgentOrchestrator,
 };
 
 use super::types::{AgentEvent, AgentEventType};

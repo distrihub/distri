@@ -673,10 +673,9 @@ pub(crate) fn is_agent_accessible(
     }
 
     // Check if explicitly in sub_agents (exact match or short name match)
-    if sub_agents
-        .iter()
-        .any(|sa| sa == agent_name || normalize_system_agent_name(sa) == agent_name || sa == &canonical)
-    {
+    if sub_agents.iter().any(|sa| {
+        sa == agent_name || normalize_system_agent_name(sa) == agent_name || sa == &canonical
+    }) {
         return true;
     }
 

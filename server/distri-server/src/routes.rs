@@ -142,6 +142,9 @@ pub struct AgentWithStats {
     config: distri_types::configuration::AgentConfig,
     #[serde(skip_serializing_if = "Option::is_none")]
     stats: Option<distri_types::stores::AgentStatsInfo>,
+    /// Cloud-specific metadata (optional, only present in cloud responses)
+    #[serde(flatten, default)]
+    cloud: distri_types::configuration::AgentCloudMetadata,
 }
 
 #[utoipa::path(
@@ -151,7 +154,11 @@ pub struct AgentWithStats {
     responses((status = 200, description = "List all agents with stats", body = Vec<AgentWithStats>))
 )]
 async fn list_agents(executor: web::Data<Arc<AgentOrchestrator>>) -> HttpResponse {
-    let (agents, _) = executor.stores.agent_store.list(None, None).await;
+    let (agents_with_metadata, _) = executor
+        .stores
+        .agent_store
+        .list_with_cloud_metadata(None, None)
+        .await;
 
     // Get stats from thread store
     let stats_map = executor
@@ -161,12 +168,16 @@ async fn list_agents(executor: web::Data<Arc<AgentOrchestrator>>) -> HttpRespons
         .await
         .unwrap_or_default();
 
-    let agents_with_stats: Vec<AgentWithStats> = agents
+    let agents_with_stats: Vec<AgentWithStats> = agents_with_metadata
         .into_iter()
-        .map(|config| {
+        .map(|(config, cloud)| {
             let name = config.get_name().to_string();
             let stats = stats_map.get(&name).cloned();
-            AgentWithStats { config, stats }
+            AgentWithStats {
+                config,
+                stats,
+                cloud,
+            }
         })
         .collect();
 
@@ -481,7 +492,19 @@ async fn get_agent_definition(
 ) -> HttpResponse {
     let agent_id = id.into_inner();
 
-    let agent = executor.get_agent(&agent_id).await;
+    // Try store with cloud metadata first, then fall back to orchestrator resolution
+    let (agent, cloud_metadata) = if let Some((cfg, meta)) = executor
+        .stores
+        .agent_store
+        .get_with_cloud_metadata(&agent_id)
+        .await
+    {
+        (Some(cfg), meta)
+    } else if let Some(cfg) = executor.get_agent(&agent_id).await {
+        (Some(cfg), Default::default())
+    } else {
+        (None, Default::default())
+    };
 
     let context = Arc::default();
     match agent {
@@ -507,7 +530,7 @@ async fn get_agent_definition(
                 agent,
                 resolved_tools: tools,
                 markdown: Some(markdown),
-                cloud: Default::default(),
+                cloud: cloud_metadata,
             })
         }
         None => HttpResponse::NotFound().finish(),
@@ -1524,11 +1547,39 @@ async fn create_agent(
         }
     }
 
-    match executor.register_agent_definition(definition.clone()).await {
-        Ok(_) => HttpResponse::Ok().json(definition),
-        Err(e) => HttpResponse::BadRequest().json(json!({
+    if let Err(e) = executor.register_agent_definition(definition.clone()).await {
+        return HttpResponse::BadRequest().json(json!({
             "error": format!("Failed to create agent: {}", e)
-        })),
+        }));
+    }
+
+    // Return full response with cloud metadata if available
+    if let Some((agent, cloud)) = executor
+        .stores
+        .agent_store
+        .get_with_cloud_metadata(&definition.name)
+        .await
+    {
+        let markdown = build_markdown_from_definition(&definition);
+        let context = Arc::default();
+        let tools = executor
+            .get_agent_tools(&definition, &context)
+            .await
+            .map(|r| {
+                r.all_tools
+                    .into_iter()
+                    .map(|t| t.get_tool_definition())
+                    .collect()
+            })
+            .unwrap_or_default();
+        HttpResponse::Ok().json(AgentConfigWithTools {
+            agent,
+            resolved_tools: tools,
+            markdown: Some(markdown),
+            cloud,
+        })
+    } else {
+        HttpResponse::Ok().json(definition)
     }
 }
 
@@ -1617,11 +1668,39 @@ async fn update_agent(
         }
     }
 
-    match executor.update_agent_definition(definition.clone()).await {
-        Ok(_) => HttpResponse::Ok().json(definition),
-        Err(e) => HttpResponse::BadRequest().json(json!({
+    if let Err(e) = executor.update_agent_definition(definition.clone()).await {
+        return HttpResponse::BadRequest().json(json!({
             "error": format!("Failed to update agent: {}", e)
-        })),
+        }));
+    }
+
+    // Return full response with cloud metadata if available
+    if let Some((agent, cloud)) = executor
+        .stores
+        .agent_store
+        .get_with_cloud_metadata(&definition.name)
+        .await
+    {
+        let markdown = build_markdown_from_definition(&definition);
+        let context = Arc::default();
+        let tools = executor
+            .get_agent_tools(&definition, &context)
+            .await
+            .map(|r| {
+                r.all_tools
+                    .into_iter()
+                    .map(|t| t.get_tool_definition())
+                    .collect()
+            })
+            .unwrap_or_default();
+        HttpResponse::Ok().json(AgentConfigWithTools {
+            agent,
+            resolved_tools: tools,
+            markdown: Some(markdown),
+            cloud,
+        })
+    } else {
+        HttpResponse::Ok().json(definition)
     }
 }
 
