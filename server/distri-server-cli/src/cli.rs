@@ -1,5 +1,4 @@
 use clap::Parser;
-use std::path::PathBuf;
 
 #[derive(Parser, Debug, Clone)]
 #[clap(
@@ -8,10 +7,6 @@ use std::path::PathBuf;
     about = "Distri Server — open-source AI agent orchestrator"
 )]
 pub struct Cli {
-    /// Path to distri.toml configuration file
-    #[clap(long, short, help = "Path to the distri.toml configuration file")]
-    pub config: Option<PathBuf>,
-
     /// Verbose output
     #[clap(long, short, help = "Verbose output")]
     pub verbose: bool,

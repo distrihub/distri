@@ -501,14 +501,8 @@ async fn main() -> Result<()> {
         } => {
             let extra_tools = parse_cli_overrides(overrides.as_deref());
             let agent_name = agent.unwrap_or_else(|| "distri_runner".to_string());
-            // Resolve agent name to UUID for cloud compatibility.
-            // Cloud middleware requires UUID for proper workspace context (model settings, secrets).
-            let mut stream_agent_id = agent_name.clone();
             let mut external_tool_names = std::collections::HashSet::new();
             if let Some(agent_cfg) = app.fetch_agent(&agent_name).await? {
-                if let Some(uuid) = agent_cfg.cloud.id {
-                    stream_agent_id = uuid.to_string();
-                }
                 // Extract external tool names from agent definition
                 if let distri_types::configuration::AgentConfig::StandardAgent(def) =
                     &agent_cfg.agent
@@ -596,7 +590,7 @@ async fn main() -> Result<()> {
             }
             print_stream_verbose(
                 &client,
-                &stream_agent_id,
+                &agent_name,
                 params,
                 cli.verbose,
                 Some(agent_name.clone()),

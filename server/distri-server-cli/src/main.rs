@@ -16,18 +16,15 @@ async fn main() -> Result<()> {
         distri_core::logging::init_diesel_instrumentation();
     }
 
-    // Load configuration
-    let config = distri_server_cli::load_distri_config(&cli.config);
     let workspace_path = distri_server_cli::workspace::resolve_workspace_path();
 
     // Initialize orchestrator
-    let orchestrator = init_orchestrator(&workspace_path, &workspace_path, config.as_ref()).await?;
+    let orchestrator = init_orchestrator(&workspace_path, &workspace_path).await?;
 
-    // Build server config from workspace config
-    let server_config = config
-        .as_ref()
-        .and_then(|c| c.server.clone())
-        .unwrap_or_default();
+    let server_config = distri_types::configuration::ServerConfig {
+        base_url: format!("http://{}:{}/v1", cli.host, cli.port),
+        ..Default::default()
+    };
 
     tracing::info!(
         "Starting Distri server at http://{}:{}/",

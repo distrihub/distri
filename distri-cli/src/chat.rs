@@ -587,14 +587,10 @@ pub async fn run_interactive_chat(
             }
         }
 
-        // Resolve agent name to UUID for cloud compatibility
+        // Resolve agent config and extract tool names
         let (stream_agent_id, external_tool_names) = match app.fetch_agent(&current_agent).await? {
             Some(agent_cfg) => {
-                let id = agent_cfg
-                    .cloud
-                    .id
-                    .map(|u| u.to_string())
-                    .unwrap_or_else(|| current_agent.clone());
+                let id = agent_cfg.agent.get_name().to_string();
                 // Extract external tool names from agent definition
                 let mut ext_names = std::collections::HashSet::new();
                 if let AgentConfig::StandardAgent(def) = &agent_cfg.agent {

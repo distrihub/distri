@@ -30,7 +30,6 @@ use utoipa::OpenApi;
         (name = "Models", description = "Available LLM models"),
         (name = "Prompt Templates", description = "Reusable prompt templates"),
         (name = "Artifacts", description = "Task artifact storage"),
-        
         (name = "Health", description = "Health checks"),
     ),
     paths(

@@ -298,8 +298,17 @@ pub async fn handle_skills_command(client: &Distri, command: SkillsCommands) -> 
     match command {
         SkillsCommands::List { all } => {
             println!("Listing skills...");
-            let scope = if all { distri_types::stores::SkillScope::All } else { distri_types::stores::SkillScope::Workspace };
-            let response = client.list_skills(&distri_types::stores::SkillFilter { scope, ..Default::default() }).await?;
+            let scope = if all {
+                distri_types::stores::SkillScope::All
+            } else {
+                distri_types::stores::SkillScope::Workspace
+            };
+            let response = client
+                .list_skills(&distri_types::stores::SkillFilter {
+                    scope,
+                    ..Default::default()
+                })
+                .await?;
             if response.skills.is_empty() {
                 println!("No skills found.");
             } else {

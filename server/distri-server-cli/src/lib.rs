@@ -4,52 +4,19 @@ use distri_core::{
     AgentOrchestratorBuilder,
 };
 use distri_types::browser::BrowsrClientConfig;
-use distri_types::configuration::{AgentConfig, DistriServerConfig};
+use distri_types::configuration::AgentConfig;
 pub mod workspace;
-use std::{env, fs, path::Path, path::PathBuf, sync::Arc};
-use tokio::sync::RwLock;
-use tracing::debug;
+use std::{path::Path, sync::Arc};
 
 mod cli;
 pub mod logging;
 
 pub use cli::Cli;
 
-/// Load distri.toml file and use its directory as home directory.
-/// Returns (config, home_dir). Uses default configuration if no distri.toml is found.
-pub fn load_distri_config(config_path: &Option<PathBuf>) -> Option<DistriServerConfig> {
-    let toml_path = config_path.clone().or_else(|| {
-        let default = std::env::current_dir().ok()?.join("distri.toml");
-        default.exists().then_some(default)
-    })?;
-
-    let config_str = std::fs::read_to_string(&toml_path).ok()?;
-    let config_str = replace_env_vars(&config_str);
-    let config: DistriServerConfig = toml::from_str(&config_str).ok()?;
-
-    debug!("Config loaded from {}: {:?}", toml_path.display(), config);
-    Some(config)
-}
-
-/// Replace environment variables in config string ({{ENV_VAR}} format)
-pub fn replace_env_vars(content: &str) -> String {
-    let mut result = content.to_string();
-    let re = regex::Regex::new(r"\{\{(\w+)\}\}").unwrap();
-    for cap in re.captures_iter(content) {
-        let full_match = cap.get(0).unwrap().as_str();
-        let env_var_name = cap.get(1).unwrap().as_str();
-        if let Ok(env_value) = env::var(env_var_name) {
-            result = result.replace(full_match, &env_value);
-        }
-    }
-    result
-}
-
 /// Initialize the orchestrator for the OSS server.
 pub async fn init_orchestrator(
     home_dir: &Path,
     workspace_path: &Path,
-    workspace_config: Option<&DistriServerConfig>,
 ) -> Result<Arc<AgentOrchestrator>> {
     use distri_types::configuration::StoreConfig;
 
@@ -79,28 +46,6 @@ pub async fn init_orchestrator(
         }
     }
 
-    // Resolve workspace config
-    let mut resolved_config = workspace_config.cloned();
-    if resolved_config.is_none() {
-        let candidate = workspace_path.join("distri.toml");
-        if candidate.exists() {
-            if let Ok(content) = fs::read_to_string(&candidate) {
-                let content = replace_env_vars(&content);
-                if let Ok(cfg) = toml::from_str::<DistriServerConfig>(&content) {
-                    resolved_config = Some(cfg);
-                }
-            }
-        }
-    }
-
-    let configuration_handle = Arc::new(RwLock::new(
-        resolved_config
-            .clone()
-            .unwrap_or_else(DistriServerConfig::default),
-    ));
-
-    let merged_config = resolved_config.as_ref().or(workspace_config);
-
     // Create workspace filesystem for file routes (not for agent tools)
     let workspace_fs = {
         let fs_config = distri_filesystem::FileSystemConfig {
@@ -113,7 +58,6 @@ pub async fn init_orchestrator(
     };
 
     let orchestrator = AgentOrchestratorBuilder::default()
-        .with_configuration(configuration_handle)
         .with_browser_config(BrowsrClientConfig::default())
         .with_stores(stores)
         .with_prompt_registry(prompt_registry)
@@ -124,30 +68,19 @@ pub async fn init_orchestrator(
         .await?;
 
     let orchestrator = Arc::new(orchestrator);
-    register_workspace_assets(&orchestrator, workspace_path, merged_config).await?;
+    register_workspace_agents(&orchestrator, workspace_path).await?;
 
     Ok(orchestrator)
 }
 
-async fn register_workspace_assets(
+async fn register_workspace_agents(
     orchestrator: &Arc<AgentOrchestrator>,
     workspace_path: &Path,
-    workspace_config: Option<&DistriServerConfig>,
 ) -> Result<()> {
     let agents_dir = workspace_path.join("agents");
     if agents_dir.exists() {
-        let workspace_package = workspace_config.and_then(|config| {
-            let trimmed = config.name.trim();
-            if trimmed.is_empty() {
-                None
-            } else {
-                Some(trimmed.to_string())
-            }
-        });
-
         let local_agents = distri_core::agent::load_agents_from_dir(&agents_dir).await?;
-        for mut definition in local_agents {
-            definition.package_name = workspace_package.clone();
+        for definition in local_agents {
             orchestrator
                 .stores
                 .agent_store

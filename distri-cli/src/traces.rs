@@ -578,12 +578,13 @@ fn print_trace_summary(trace: &TraceSummary, _width: usize) {
 
     let relative_time = format_relative_time(trace.start_time_ns);
 
+    let spans_text = format!("{}{} spans{}", COLOR_GRAY, trace.span_count, COLOR_RESET);
     println!(
         "  {}{}{} {}  {}{}  {}{}  {}{}{}",
         COLOR_BOLD,
         trace.name,
         COLOR_RESET,
-        format!("{}{} spans{}", COLOR_GRAY, trace.span_count, COLOR_RESET),
+        spans_text,
         COLOR_BRIGHT_CYAN,
         duration,
         COLOR_BRIGHT_YELLOW,
@@ -1420,28 +1421,26 @@ fn parse_llm_output(output_raw: &str) -> (String, Vec<ExportToolCall>, String) {
         if let Some(tool_calls_arr) = val.get("tool_calls").and_then(|v| v.as_array()) {
             let tool_calls: Vec<ExportToolCall> = tool_calls_arr
                 .iter()
-                .filter_map(|tc| {
-                    Some(ExportToolCall {
-                        tool_call_id: tc
-                            .get("id")
-                            .or_else(|| tc.get("tool_call_id"))
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("unknown")
-                            .to_string(),
-                        tool_name: tc
-                            .get("function")
-                            .and_then(|f| f.get("name"))
-                            .or_else(|| tc.get("tool_name"))
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("unknown")
-                            .to_string(),
-                        input: tc
-                            .get("function")
-                            .and_then(|f| f.get("arguments"))
-                            .or_else(|| tc.get("input"))
-                            .cloned()
-                            .unwrap_or(serde_json::Value::Object(Default::default())),
-                    })
+                .map(|tc| ExportToolCall {
+                    tool_call_id: tc
+                        .get("id")
+                        .or_else(|| tc.get("tool_call_id"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown")
+                        .to_string(),
+                    tool_name: tc
+                        .get("function")
+                        .and_then(|f| f.get("name"))
+                        .or_else(|| tc.get("tool_name"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown")
+                        .to_string(),
+                    input: tc
+                        .get("function")
+                        .and_then(|f| f.get("arguments"))
+                        .or_else(|| tc.get("input"))
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Object(Default::default())),
                 })
                 .collect();
 
@@ -1517,8 +1516,8 @@ async fn handle_optimize_analyze(
     // Analyze each trace
     let mut total_input_tokens = 0i64;
     let mut total_cost = 0.0f64;
-    let mut error_count = 0usize;
-    let mut tool_freq: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let _error_count = 0usize;
+    let _tool_freq: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     let mut model_freq: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
 
     for trace in &traces {
@@ -1567,7 +1566,7 @@ async fn handle_optimize_analyze(
 }
 
 async fn handle_optimize_suggest(
-    client: &Distri,
+    _client: &Distri,
     _agent: Option<&str>,
     _target: Option<&str>,
 ) -> Result<()> {
@@ -1583,7 +1582,7 @@ async fn handle_optimize_suggest(
 }
 
 async fn handle_optimize_loop(
-    client: &Distri,
+    _client: &Distri,
     iterations: usize,
     _agent: Option<&str>,
     dry_run: bool,
