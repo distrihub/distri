@@ -177,6 +177,7 @@ fn to_thread(model: ThreadModel) -> Thread {
         input_tokens: model.input_tokens.max(0) as u64,
         output_tokens: model.output_tokens.max(0) as u64,
         total_tokens: model.total_tokens.max(0) as u64,
+        active_task_id: None,
     }
 }
 

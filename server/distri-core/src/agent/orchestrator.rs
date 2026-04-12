@@ -1056,11 +1056,39 @@ impl AgentOrchestrator {
     }
 
     pub async fn get_thread(&self, thread_id: &str) -> Result<Option<Thread>, AgentError> {
-        self.stores
+        let maybe_thread = self
+            .stores
             .thread_store
             .get_thread(thread_id)
             .await
-            .map_err(|e| AgentError::Session(e.to_string()))
+            .map_err(|e| AgentError::Session(e.to_string()))?;
+
+        // Enrich with active_task_id if a non-terminal task exists for
+        // this thread. This is what clients key off to decide whether
+        // to call `tasks/resubscribe` when reopening the thread.
+        if let Some(mut thread) = maybe_thread {
+            let tasks = self
+                .stores
+                .task_store
+                .list_tasks(Some(thread_id))
+                .await
+                .map_err(|e| AgentError::Session(e.to_string()))?;
+            thread.active_task_id = tasks
+                .into_iter()
+                .filter(|t| {
+                    matches!(
+                        t.status,
+                        distri_types::TaskStatus::Pending
+                            | distri_types::TaskStatus::Running
+                            | distri_types::TaskStatus::InputRequired
+                    )
+                })
+                .max_by_key(|t| t.updated_at)
+                .map(|t| t.id);
+            Ok(Some(thread))
+        } else {
+            Ok(None)
+        }
     }
 
     pub async fn update_thread(

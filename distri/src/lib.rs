@@ -38,7 +38,8 @@ pub use distri_types::{
     ModelProviderDefinition, ProviderKeyDefinition, ProviderType, TokenResponse, TtsVoiceInfo,
 };
 pub use printer::{
-    ContextHealth, EventPrinter, print_stream, print_stream_verbose, print_stream_with_health,
+    ContextHealth, EventPrinter, print_resubscribe_with_health, print_stream, print_stream_verbose,
+    print_stream_with_health, print_stream_with_health_ex,
 };
 
 #[cfg(test)]

@@ -162,6 +162,99 @@ impl AgentStreamClient {
         &self,
         agent_id: &str,
         params: MessageSendParams,
+        on_event: H,
+    ) -> Result<(), StreamError>
+    where
+        H: FnMut(StreamItem) -> Fut,
+        Fut: std::future::Future<Output = ()> + Send,
+    {
+        let params = self.merge_registered_tools(params);
+
+        let rpc = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::Value::String(Uuid::new_v4().to_string())),
+            method: "message/stream".to_string(),
+            params: serde_json::to_value(params)?,
+        };
+
+        self.run_sse(agent_id, rpc, on_event).await
+    }
+
+    /// Resubscribe to an existing task's event stream via
+    /// `tasks/resubscribe`. Used to reattach when a previous SSE
+    /// connection was dropped but the task is still running in the
+    /// background on the server.
+    ///
+    /// Returns when the task emits a final event (or the server
+    /// synthesizes one for already-terminal tasks).
+    pub async fn resubscribe_task<H, Fut>(
+        &self,
+        agent_id: &str,
+        task_id: &str,
+        on_event: H,
+    ) -> Result<(), StreamError>
+    where
+        H: FnMut(StreamItem) -> Fut,
+        Fut: std::future::Future<Output = ()> + Send,
+    {
+        let rpc = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::Value::String(Uuid::new_v4().to_string())),
+            method: "tasks/resubscribe".to_string(),
+            params: serde_json::json!({ "id": task_id }),
+        };
+
+        self.run_sse(agent_id, rpc, on_event).await
+    }
+
+    /// Cancel a running task via `tasks/cancel`. Idempotent on the
+    /// server: calling it on an already-terminal task returns the
+    /// current record without error.
+    pub async fn cancel_task(
+        &self,
+        agent_id: &str,
+        task_id: &str,
+    ) -> Result<(), StreamError> {
+        let url = format!(
+            "{}/agents/{}",
+            self.base_url.trim_end_matches('/'),
+            agent_id
+        );
+
+        let rpc = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::Value::String(Uuid::new_v4().to_string())),
+            method: "tasks/cancel".to_string(),
+            params: serde_json::json!({ "id": task_id }),
+        };
+
+        let resp = self
+            .http
+            .post(url)
+            .json(&rpc)
+            .send()
+            .await
+            .map_err(|e| StreamError::Event(format!("cancel request failed: {e}")))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(StreamError::Server(format!(
+                "tasks/cancel failed ({status}): {body}"
+            )));
+        }
+        // Ignore body; status 200 with an error object is also
+        // treated as success since we use this fire-and-forget.
+        Ok(())
+    }
+
+    /// Shared SSE consumer: POSTs a JSON-RPC request to the agent
+    /// endpoint and forwards parsed `StreamItem`s to `on_event`.
+    /// Used by both `stream_agent` and `resubscribe_task`.
+    async fn run_sse<H, Fut>(
+        &self,
+        agent_id: &str,
+        rpc: JsonRpcRequest,
         mut on_event: H,
     ) -> Result<(), StreamError>
     where
@@ -173,15 +266,6 @@ impl AgentStreamClient {
             self.base_url.trim_end_matches('/'),
             agent_id
         );
-
-        let params = self.merge_registered_tools(params);
-
-        let rpc = JsonRpcRequest {
-            jsonrpc: "2.0".to_string(),
-            id: Some(serde_json::Value::String(Uuid::new_v4().to_string())),
-            method: "message/stream".to_string(),
-            params: serde_json::to_value(params)?,
-        };
 
         let resp = self
             .http

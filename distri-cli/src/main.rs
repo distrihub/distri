@@ -91,6 +91,12 @@ enum Commands {
         /// W3C traceparent header for distributed tracing (passed by SandboxLauncher).
         #[clap(long)]
         traceparent: Option<String>,
+        /// Fire-and-forget: send the task, print the resulting
+        /// thread_id/task_id, and exit while the task keeps running on
+        /// the server. Reattach later with `distri tui --resume
+        /// <thread_id>`.
+        #[clap(long)]
+        background: bool,
     },
 
     /// Agent-related commands (defaults to list)
@@ -498,9 +504,25 @@ async fn main() -> Result<()> {
             thread_id,
             remote,
             traceparent,
+            background,
         } => {
             let extra_tools = parse_cli_overrides(overrides.as_deref());
             let agent_name = agent.unwrap_or_else(|| "distri_runner".to_string());
+
+            // --background: send the task, capture thread_id/task_id,
+            // and exit while execution keeps running on the server.
+            if background {
+                chat::run_background_send(
+                    &mut app,
+                    &config,
+                    agent_name,
+                    task,
+                    resume,
+                    extra_tools,
+                )
+                .await?;
+                return Ok(());
+            }
             let mut external_tool_names = std::collections::HashSet::new();
             if let Some(agent_cfg) = app.fetch_agent(&agent_name).await? {
                 // Extract external tool names from agent definition

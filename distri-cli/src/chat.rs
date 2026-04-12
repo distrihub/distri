@@ -6,8 +6,8 @@ use std::time::Instant;
 use anyhow::Result;
 use crossterm::terminal;
 use distri::{
-    print_stream_with_health, AgentStreamClient, BuildHttpClient, ContextHealth, Distri,
-    DistriClientApp, DistriConfig,
+    print_resubscribe_with_health, print_stream_with_health_ex, AgentStreamClient, BuildHttpClient,
+    ContextHealth, Distri, DistriClientApp, DistriConfig,
 };
 use distri_types::configuration::AgentConfig;
 use inquire::Select;
@@ -417,6 +417,304 @@ pub async fn handle_slash_command(
     }
 }
 
+/// Run a streaming agent call and handle Ctrl-C cancellation.
+///
+/// Semantics:
+/// - While the stream is active, Ctrl-C calls `tasks/cancel` on the
+///   current task (if its id has been observed) and waits for the
+///   stream to end naturally as the backend publishes the Canceled
+///   terminal event.
+/// - A second Ctrl-C force-returns (control flow falls back to the
+///   prompt, where rustyline handles double-tap to exit the CLI).
+async fn stream_with_ctrl_c_cancel(
+    stream_client: &AgentStreamClient,
+    stream_agent_id: &str,
+    params: distri_a2a::MessageSendParams,
+    verbose: bool,
+    agent_display_name: String,
+    show_tools: bool,
+    shared_health: Arc<RwLock<ContextHealth>>,
+) -> Result<()> {
+    let task_id_sink: Arc<tokio::sync::Mutex<Option<String>>> =
+        Arc::new(tokio::sync::Mutex::new(None));
+
+    let stream_fut = print_stream_with_health_ex(
+        stream_client,
+        stream_agent_id,
+        params,
+        verbose,
+        Some(agent_display_name),
+        show_tools,
+        Some(shared_health),
+        Some(task_id_sink.clone()),
+    );
+    tokio::pin!(stream_fut);
+
+    let mut cancel_sent = false;
+    loop {
+        tokio::select! {
+            result = &mut stream_fut => {
+                return match result {
+                    Ok((_, Ok(()))) => Ok(()),
+                    Ok((_, Err(err))) => Err(err.into()),
+                    Err(err) => Err(err.into()),
+                };
+            }
+            _ = tokio::signal::ctrl_c() => {
+                if !cancel_sent {
+                    cancel_sent = true;
+                    let tid = task_id_sink.lock().await.clone();
+                    if let Some(tid) = tid {
+                        println!(
+                            "\n{}Cancelling task {}...{}",
+                            COLOR_GRAY, tid, COLOR_RESET
+                        );
+                        if let Err(e) = stream_client.cancel_task(stream_agent_id, &tid).await {
+                            eprintln!("Cancel failed: {}", e);
+                        }
+                    } else {
+                        println!(
+                            "\n{}Interrupted before task started — press Ctrl+C again to bail out{}",
+                            COLOR_GRAY, COLOR_RESET
+                        );
+                    }
+                    // Keep awaiting the stream so the terminal event
+                    // from the backend closes things cleanly.
+                    continue;
+                }
+                // Second Ctrl-C: give up waiting and return control.
+                println!(
+                    "\n{}Detaching from stream; task may still be finishing in background{}",
+                    COLOR_GRAY, COLOR_RESET
+                );
+                return Ok(());
+            }
+        }
+    }
+}
+
+/// If the given thread has an active (non-terminal) task, resubscribe
+/// to its event stream and print remaining events. Used on `--resume`
+/// and `/resume` so reopening a thread mid-execution picks back up
+/// where the previous client left off.
+async fn reattach_if_active_task(
+    stream_client: &AgentStreamClient,
+    agent_id: &str,
+    thread_id: &str,
+    config: &DistriConfig,
+    verbose: bool,
+    agent_display_name: String,
+    show_tools: bool,
+    shared_health: Arc<RwLock<ContextHealth>>,
+) {
+    let distri = Distri::from_config(config.clone());
+    let thread = match distri.get_thread(thread_id).await {
+        Ok(Some(t)) => t,
+        Ok(None) => return,
+        Err(e) => {
+            tracing::debug!("get_thread({}) failed: {}", thread_id, e);
+            return;
+        }
+    };
+    let Some(task_id) = thread.active_task_id.clone() else {
+        return;
+    };
+    println!(
+        "{}Task {} still running — reattaching...{}",
+        COLOR_GRAY, task_id, COLOR_RESET
+    );
+
+    // Wrap with the same Ctrl-C cancel semantics so the user can stop
+    // a resumed background task with one Ctrl-C just like a fresh one.
+    let task_id_sink = Arc::new(tokio::sync::Mutex::new(Some(task_id.clone())));
+    let resubscribe_fut = print_resubscribe_with_health(
+        stream_client,
+        agent_id,
+        &task_id,
+        verbose,
+        Some(agent_display_name),
+        show_tools,
+        Some(shared_health),
+    );
+    tokio::pin!(resubscribe_fut);
+
+    let mut cancel_sent = false;
+    loop {
+        tokio::select! {
+            result = &mut resubscribe_fut => {
+                match result {
+                    Ok((_, Ok(()))) => {}
+                    Ok((_, Err(err))) => eprintln!("Resubscribe error: {}", err),
+                    Err(err) => eprintln!("Resubscribe error: {}", err),
+                }
+                return;
+            }
+            _ = tokio::signal::ctrl_c() => {
+                if !cancel_sent {
+                    cancel_sent = true;
+                    if let Some(tid) = task_id_sink.lock().await.clone() {
+                        println!(
+                            "\n{}Cancelling task {}...{}",
+                            COLOR_GRAY, tid, COLOR_RESET
+                        );
+                        if let Err(e) = stream_client.cancel_task(agent_id, &tid).await {
+                            eprintln!("Cancel failed: {}", e);
+                        }
+                    }
+                    continue;
+                }
+                println!(
+                    "\n{}Detaching; task may still be finishing in background{}",
+                    COLOR_GRAY, COLOR_RESET
+                );
+                return;
+            }
+        }
+    }
+}
+
+/// Send one message and exit as soon as we have a task_id, leaving the
+/// task running on the server. Used by `--background`.
+///
+/// Prints `thread_id=… task_id=…` to stdout so callers (scripts,
+/// shells, tests) can capture them and reattach later via
+/// `distri chat --resume <thread_id>`.
+pub async fn run_background_send(
+    app: &mut DistriClientApp,
+    config: &DistriConfig,
+    agent_name: String,
+    message: String,
+    resume: Option<String>,
+    extra_tools: Vec<distri_types::dynamic_tool::DynamicToolFactory>,
+) -> Result<()> {
+    let thread_id = if let Some(ref resume_arg) = resume {
+        resolve_resume_arg(resume_arg)
+    } else {
+        uuid::Uuid::new_v4().to_string()
+    };
+
+    // Resolve the agent so tool registries and external-tool lists are set up.
+    let registry = app.registry();
+    register_approval_handler(&registry);
+    let workspace_path = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let tool_defs = register_all(&registry, &agent_name, &workspace_path);
+    app.add_tool_definitions(tool_defs);
+
+    let stream_config = config.clone().with_timeout(60);
+    let http_client = stream_config.build_http_client()?;
+    let initial_external: std::collections::HashSet<String> =
+        LOCAL_TOOL_NAMES.iter().map(|s| s.to_string()).collect();
+    let mut stream_client = AgentStreamClient::from_config(config.clone())
+        .with_http_client(http_client)
+        .with_tool_registry(registry)
+        .with_external_tool_names(initial_external);
+    for tool in extra_tools {
+        stream_client.register_dynamic_tool(tool);
+    }
+
+    let (stream_agent_id, external_tool_names) = match app.fetch_agent(&agent_name).await? {
+        Some(agent_cfg) => {
+            let id = agent_cfg.agent.get_name().to_string();
+            let mut ext_names = std::collections::HashSet::new();
+            if let AgentConfig::StandardAgent(def) = &agent_cfg.agent {
+                if let Some(tools) = &def.tools {
+                    if let Some(ext) = &tools.external {
+                        for name in ext {
+                            if name != "*" {
+                                ext_names.insert(name.clone());
+                            }
+                        }
+                    }
+                }
+            }
+            for name in LOCAL_TOOL_NAMES {
+                ext_names.insert(name.to_string());
+            }
+            (id, ext_names)
+        }
+        None => {
+            anyhow::bail!("Agent '{}' not found", agent_name);
+        }
+    };
+    stream_client.set_external_tool_names(external_tool_names);
+
+    let distri_client = Distri::from_config(config.clone());
+    let connections_context = build_connections_context(&distri_client).await;
+    let mut params = build_message_params(
+        message,
+        Some(&thread_id),
+        None,
+        None,
+        connections_context,
+    );
+    app.inject_external_tools(&mut params);
+
+    // Fire the stream and stop as soon as we observe a task_id.
+    let task_id_cell: Arc<tokio::sync::Mutex<Option<String>>> =
+        Arc::new(tokio::sync::Mutex::new(None));
+    let task_id_cell_cb = task_id_cell.clone();
+
+    let stream_fut = stream_client.stream_agent(
+        &stream_agent_id,
+        params,
+        move |item: distri::StreamItem| {
+            let sink = task_id_cell_cb.clone();
+            async move {
+                if let Some(ev) = &item.agent_event {
+                    if !ev.task_id.is_empty() && ev.task_id != "unknown_task" {
+                        let mut g = sink.lock().await;
+                        if g.is_none() {
+                            *g = Some(ev.task_id.clone());
+                        }
+                    }
+                }
+            }
+        },
+    );
+    tokio::pin!(stream_fut);
+
+    // Poll the stream for up to 5 seconds, checking for a task_id.
+    let deadline = tokio::time::sleep(std::time::Duration::from_secs(5));
+    tokio::pin!(deadline);
+    loop {
+        tokio::select! {
+            res = &mut stream_fut => {
+                // Stream finished before we even got a task id — unusual.
+                res.map_err(|e| anyhow::anyhow!("stream error: {}", e))?;
+                break;
+            }
+            _ = &mut deadline => {
+                // Give up waiting; exit regardless.
+                break;
+            }
+            _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
+                if task_id_cell.lock().await.is_some() {
+                    break;
+                }
+            }
+        }
+    }
+
+    let task_id = task_id_cell.lock().await.clone();
+    match task_id {
+        Some(tid) => {
+            println!("thread_id={}", thread_id);
+            println!("task_id={}", tid);
+            println!(
+                "Task is running in background. Reattach with: distri chat --resume {}",
+                thread_id
+            );
+            let _ = save_last_thread(&thread_id);
+            Ok(())
+        }
+        None => {
+            anyhow::bail!(
+                "Task did not produce a task_id within 5s; aborting background send"
+            );
+        }
+    }
+}
+
 pub async fn run_interactive_chat(
     app: &mut DistriClientApp,
     config: &DistriConfig,
@@ -471,6 +769,9 @@ pub async fn run_interactive_chat(
         print_thread_history(&history_client, &thread_id).await;
     }
 
+    // Build the stream client up-front so resume-time reattach and
+    // the main loop share the same instance.
+
     let rl_config = Config::builder()
         .auto_add_history(true)
         .bracketed_paste(true)
@@ -510,6 +811,23 @@ pub async fn run_interactive_chat(
 
     let mut last_interrupt: Option<Instant> = None;
     let shared_health: Arc<RwLock<ContextHealth>> = Arc::new(RwLock::new(ContextHealth::default()));
+
+    // If resuming a thread that still has a task running in the
+    // background on the server, reattach and stream remaining events
+    // before accepting new user input.
+    if resume.is_some() {
+        reattach_if_active_task(
+            &stream_client,
+            &current_agent,
+            &thread_id,
+            config,
+            verbose,
+            current_agent.clone(),
+            show_tools.load(Ordering::Relaxed),
+            shared_health.clone(),
+        )
+        .await;
+    }
 
     loop {
         {
@@ -582,6 +900,17 @@ pub async fn run_interactive_chat(
                     );
                     let history_client = Distri::from_config(config.clone());
                     print_thread_history(&history_client, &thread_id).await;
+                    reattach_if_active_task(
+                        &stream_client,
+                        &current_agent,
+                        &thread_id,
+                        config,
+                        verbose,
+                        current_agent.clone(),
+                        show_tools.load(Ordering::Relaxed),
+                        shared_health.clone(),
+                    )
+                    .await;
                     continue;
                 }
             }
@@ -635,21 +964,18 @@ pub async fn run_interactive_chat(
         );
         app.inject_external_tools(&mut params);
 
-        match print_stream_with_health(
+        let stream_result = stream_with_ctrl_c_cancel(
             &stream_client,
             &stream_agent_id,
             params,
             verbose,
-            Some(current_agent.clone()),
+            current_agent.clone(),
             show_tools.load(Ordering::Relaxed),
-            Some(shared_health.clone()),
+            shared_health.clone(),
         )
-        .await
-        {
-            Ok((_health, Ok(()))) => {}
-            Ok((_health, Err(err))) => {
-                eprintln!("Error from agent: {}", err);
-            }
+        .await;
+        match stream_result {
+            Ok(()) => {}
             Err(err) => {
                 eprintln!("Error from agent: {}", err);
             }

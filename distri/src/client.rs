@@ -2613,6 +2613,30 @@ impl Distri {
 
     // ========== Threads API ==========
 
+    /// Fetch a single thread by id. The server enriches the response
+    /// with `active_task_id` for any task currently running in the
+    /// thread — clients use this to decide whether to call
+    /// `tasks/resubscribe` when reopening a conversation.
+    pub async fn get_thread(
+        &self,
+        thread_id: &str,
+    ) -> Result<Option<distri_types::Thread>, ClientError> {
+        let url = format!("{}/threads/{}", self.base_url, thread_id);
+        let resp = self.http.get(&url).send().await?;
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if !resp.status().is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            return Err(ClientError::InvalidResponse(format!(
+                "failed to get thread: {}",
+                text
+            )));
+        }
+        let thread: distri_types::Thread = resp.json().await?;
+        Ok(Some(thread))
+    }
+
     pub async fn list_threads(&self) -> Result<Vec<ThreadSummary>, ClientError> {
         let url = format!("{}/threads", self.base_url);
         let resp = self.http.get(&url).send().await?;

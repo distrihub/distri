@@ -428,6 +428,27 @@ impl A2AHandler {
     ) -> Result<serde_json::Value, AgentError> {
         let params: TaskIdParams = serde_json::from_value(params)?;
 
+        // Idempotent cancel: if the task is already in a terminal
+        // state, return its current record without attempting to
+        // cancel again. This lets clients (CLI Ctrl-C, web stop
+        // button) call cancel without worrying about races.
+        if let Ok(Some(existing)) = self
+            .executor
+            .stores
+            .task_store
+            .get_task(&params.id)
+            .await
+        {
+            if matches!(
+                existing.status,
+                distri_types::TaskStatus::Completed
+                    | distri_types::TaskStatus::Canceled
+                    | distri_types::TaskStatus::Failed
+            ) {
+                return Ok(serde_json::to_value(existing)?);
+            }
+        }
+
         // Signal abort via coordinator (sends CancellationSignal, works across nodes)
         if let Err(e) = self.executor.runtime.coordinator().cancel(&params.id).await {
             tracing::warn!("Coordinator cancel failed for {}: {}", params.id, e);

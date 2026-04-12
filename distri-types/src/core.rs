@@ -629,6 +629,12 @@ pub struct Thread {
     /// Total tokens used across all runs in this thread
     #[serde(default)]
     pub total_tokens: u64,
+    /// ID of a task currently running in this thread (if any). Computed
+    /// at read time by querying the task store for non-terminal tasks;
+    /// never persisted. Used by clients to know whether to call
+    /// `tasks/resubscribe` when reopening a thread.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub active_task_id: Option<String>,
 }
 
 impl Thread {
@@ -656,6 +662,7 @@ impl Thread {
             input_tokens: 0,
             output_tokens: 0,
             total_tokens: 0,
+            active_task_id: None,
         }
     }
 

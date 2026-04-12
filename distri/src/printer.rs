@@ -934,6 +934,10 @@ pub async fn print_stream_verbose(
 /// If `shared_health` is Some, updates it from budget events so the caller
 /// (e.g., the chat loop) can display context utilization in the status line.
 ///
+/// If `task_id_sink` is Some, the task_id from the first event that carries
+/// one is written into it. Callers use this to support Ctrl-C cancellation
+/// of a running task via `tasks/cancel`.
+///
 /// Returns (updated_health, stream_result).
 pub async fn print_stream_with_health(
     client: &AgentStreamClient,
@@ -943,6 +947,32 @@ pub async fn print_stream_with_health(
     agent_display_name: Option<String>,
     show_tools: bool,
     shared_health: Option<Arc<RwLock<ContextHealth>>>,
+) -> Result<(Arc<RwLock<ContextHealth>>, Result<(), StreamError>), StreamError> {
+    print_stream_with_health_ex(
+        client,
+        agent_id,
+        params,
+        verbose,
+        agent_display_name,
+        show_tools,
+        shared_health,
+        None,
+    )
+    .await
+}
+
+/// Extended variant of `print_stream_with_health` that also exposes the
+/// current task id to the caller via `task_id_sink`. Used by the CLI to
+/// cancel on Ctrl-C.
+pub async fn print_stream_with_health_ex(
+    client: &AgentStreamClient,
+    agent_id: &str,
+    params: MessageSendParams,
+    verbose: bool,
+    agent_display_name: Option<String>,
+    show_tools: bool,
+    shared_health: Option<Arc<RwLock<ContextHealth>>>,
+    task_id_sink: Option<Arc<Mutex<Option<String>>>>,
 ) -> Result<(Arc<RwLock<ContextHealth>>, Result<(), StreamError>), StreamError> {
     let mut printer = EventPrinter::new().with_verbose(verbose);
     if let Some(name) = agent_display_name {
@@ -959,6 +989,65 @@ pub async fn print_stream_with_health(
     let printer = Arc::new(Mutex::new(printer));
     let result = client
         .stream_agent(agent_id, params, {
+            let printer = printer.clone();
+            let task_id_sink = task_id_sink.clone();
+            move |item: StreamItem| {
+                let printer = printer.clone();
+                let task_id_sink = task_id_sink.clone();
+                async move {
+                    if let Some(event) = item.agent_event.clone() {
+                        if let Some(sink) = task_id_sink.as_ref() {
+                            let mut g = sink.lock().await;
+                            if g.is_none()
+                                && !event.task_id.is_empty()
+                                && event.task_id != "unknown_task"
+                            {
+                                *g = Some(event.task_id.clone());
+                            }
+                        }
+                        let mut guard = printer.lock().await;
+                        guard.handle_event(&event).await;
+                    }
+                    if let Some(ref msg) = item.message
+                        && msg.role == distri_types::MessageRole::Assistant
+                        && let Some(text) = msg.as_text()
+                        && !text.is_empty()
+                    {
+                        println!("\n{}", text);
+                    }
+                }
+            }
+        })
+        .await;
+    Ok((health_out, result))
+}
+
+/// Resubscribe to a background task's event stream and print events
+/// exactly like `print_stream_with_health`. Used by the CLI when
+/// reopening a thread that has a running task.
+pub async fn print_resubscribe_with_health(
+    client: &AgentStreamClient,
+    agent_id: &str,
+    task_id: &str,
+    verbose: bool,
+    agent_display_name: Option<String>,
+    show_tools: bool,
+    shared_health: Option<Arc<RwLock<ContextHealth>>>,
+) -> Result<(Arc<RwLock<ContextHealth>>, Result<(), StreamError>), StreamError> {
+    let mut printer = EventPrinter::new().with_verbose(verbose);
+    if let Some(name) = agent_display_name {
+        printer = printer.with_agent_name(name);
+    }
+    if !show_tools {
+        printer.toggle_show_tools();
+    }
+    if let Some(ref health) = shared_health {
+        printer.context_health = health.clone();
+    }
+    let health_out = printer.context_health.clone();
+    let printer = Arc::new(Mutex::new(printer));
+    let result = client
+        .resubscribe_task(agent_id, task_id, {
             let printer = printer.clone();
             move |item: StreamItem| {
                 let printer = printer.clone();

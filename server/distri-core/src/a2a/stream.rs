@@ -149,12 +149,65 @@ pub async fn init_thread_get_message(
 
 /// Subscribe to events for an existing task via the broadcaster.
 /// Used by the `tasks/resubscribe` A2A method.
+///
+/// Handles the terminal-state race: if the task already finished
+/// before resubscribe is called (or finishes during the subscribe
+/// handshake), we still emit a synthesized final `TaskStatusUpdate`
+/// so the client reliably learns the task's end state instead of
+/// receiving an empty stream.
 pub async fn handle_resubscribe_sse(
     req_id: Option<serde_json::Value>,
     task_id: String,
     executor: Arc<AgentOrchestrator>,
 ) -> impl futures_util::stream::Stream<Item = Result<SseMessage, std::convert::Infallible>> {
     async_stream::stream! {
+        let yield_response = |value: serde_json::Value| SseMessage {
+            event: None,
+            data: serde_json::to_string(&distri_a2a::JsonRpcResponse {
+                jsonrpc: "2.0".to_string(),
+                result: Some(value),
+                error: None,
+                id: req_id.clone(),
+            })
+            .unwrap_or_default(),
+        };
+
+        // Fetch the task up front. If it's already terminal, skip
+        // broadcaster subscribe entirely and emit a synthesized final.
+        let existing_task = executor
+            .stores
+            .task_store
+            .get_task(&task_id)
+            .await
+            .ok()
+            .flatten();
+
+        let is_terminal = |status: &distri_types::TaskStatus| {
+            matches!(
+                status,
+                distri_types::TaskStatus::Completed
+                    | distri_types::TaskStatus::Canceled
+                    | distri_types::TaskStatus::Failed
+            )
+        };
+
+        if let Some(task) = existing_task.as_ref() {
+            if is_terminal(&task.status) {
+                let update = crate::a2a::mapper::create_task_status_update(
+                    task_id.clone(),
+                    task.thread_id.clone(),
+                    map_task_status_to_a2a_state(&task.status),
+                    true,
+                    None,
+                );
+                let kind = distri_a2a::MessageKind::TaskStatusUpdate(update);
+                yield Ok::<_, std::convert::Infallible>(yield_response(
+                    serde_json::to_value(&kind).unwrap_or_default(),
+                ));
+                return;
+            }
+        }
+
         // Subscribe via broadcaster (always available via runtime)
         let event_stream = match executor.broadcaster().subscribe(&task_id).await {
             Ok(s) => s,
@@ -177,20 +230,54 @@ pub async fn handle_resubscribe_sse(
             }
         };
 
+        let mut saw_final = false;
         futures_util::pin_mut!(event_stream);
         while let Some(event) = futures_util::StreamExt::next(&mut event_stream).await {
+            if matches!(
+                event.event,
+                AgentEventType::RunFinished { .. } | AgentEventType::RunError { .. }
+            ) {
+                saw_final = true;
+            }
             let msg = map_agent_event(&event);
-            let response = distri_a2a::JsonRpcResponse {
-                jsonrpc: "2.0".to_string(),
-                result: Some(serde_json::to_value(&msg).unwrap_or_default()),
-                error: None,
-                id: req_id.clone(),
-            };
-            yield Ok::<_, std::convert::Infallible>(SseMessage {
-                event: None,
-                data: serde_json::to_string(&response).unwrap_or_default(),
-            });
+            yield Ok::<_, std::convert::Infallible>(yield_response(
+                serde_json::to_value(&msg).unwrap_or_default(),
+            ));
         }
+
+        // If the broadcaster ended without emitting a terminal event,
+        // it's almost certainly because the task finished in the gap
+        // between our initial get_task() and subscribe(). Re-fetch and
+        // synthesize a final update so the client doesn't hang.
+        if !saw_final {
+            if let Ok(Some(task)) = executor.stores.task_store.get_task(&task_id).await {
+                if is_terminal(&task.status) {
+                    let update = crate::a2a::mapper::create_task_status_update(
+                        task_id.clone(),
+                        task.thread_id.clone(),
+                        map_task_status_to_a2a_state(&task.status),
+                        true,
+                        None,
+                    );
+                    let kind = distri_a2a::MessageKind::TaskStatusUpdate(update);
+                    yield Ok::<_, std::convert::Infallible>(yield_response(
+                        serde_json::to_value(&kind).unwrap_or_default(),
+                    ));
+                }
+            }
+        }
+    }
+}
+
+/// Map our internal `TaskStatus` to the A2A `TaskState` enum used on the wire.
+fn map_task_status_to_a2a_state(status: &distri_types::TaskStatus) -> distri_a2a::TaskState {
+    match status {
+        distri_types::TaskStatus::Pending => distri_a2a::TaskState::Submitted,
+        distri_types::TaskStatus::Running => distri_a2a::TaskState::Working,
+        distri_types::TaskStatus::InputRequired => distri_a2a::TaskState::InputRequired,
+        distri_types::TaskStatus::Completed => distri_a2a::TaskState::Completed,
+        distri_types::TaskStatus::Failed => distri_a2a::TaskState::Failed,
+        distri_types::TaskStatus::Canceled => distri_a2a::TaskState::Canceled,
     }
 }
 
