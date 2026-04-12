@@ -3,7 +3,7 @@ use chrono::Utc;
 use crossterm::terminal;
 use distri::{Distri, TraceSummary};
 
-use crate::{TracesCommands, COLOR_BRIGHT_GREEN, COLOR_BRIGHT_MAGENTA, COLOR_GRAY, COLOR_RESET};
+use crate::{OptimizeCommands, TracesCommands, COLOR_BRIGHT_GREEN, COLOR_BRIGHT_MAGENTA, COLOR_GRAY, COLOR_RESET};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ANSI color constants for span categories
@@ -1120,6 +1120,24 @@ pub async fn handle_traces_command(client: &Distri, command: TracesCommands) -> 
             };
             print_trace_detail(client, &resolved_id, span.as_deref(), verbose).await;
         }
+        TracesCommands::Export {
+            trace_id,
+            latest,
+            output,
+        } => {
+            let resolved_id = if latest {
+                match resolve_latest_trace_id(client).await {
+                    Some(id) => id,
+                    None => return Ok(()),
+                }
+            } else if let Some(id) = trace_id {
+                id
+            } else {
+                eprintln!("Error: provide a trace ID or use --latest");
+                return Ok(());
+            };
+            export_trace_fixture(client, &resolved_id, output.as_deref()).await?;
+        }
     }
     Ok(())
 }
@@ -1141,4 +1159,456 @@ async fn resolve_latest_trace_id(client: &Distri) -> Option<String> {
             None
         }
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Export trace as replay fixture
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Export a trace's LLM call pairs as a JSON replay fixture.
+///
+/// The fixture file can be loaded by `TraceReplayExecutor` in distri-core
+/// for deterministic integration testing.
+async fn export_trace_fixture(
+    client: &Distri,
+    trace_id: &str,
+    output_path: Option<&str>,
+) -> Result<()> {
+    eprintln!("Fetching spans for trace {}...", trace_id);
+
+    let otlp = match client.get_spans(Some(trace_id), None).await {
+        Ok(data) => data,
+        Err(e) => {
+            eprintln!("Failed to fetch spans: {}", e);
+            return Ok(());
+        }
+    };
+
+    // Parse OTLP spans into flat list
+    let flat_spans = parse_otlp_to_flat_json(&otlp);
+
+    if flat_spans.is_empty() {
+        eprintln!("No spans found for trace {}", trace_id);
+        return Ok(());
+    }
+
+    // Filter to LLM spans and build fixture
+    let fixture = build_export_fixture(trace_id, &flat_spans);
+
+    eprintln!(
+        "Exported {} LLM call(s) from {} total span(s)",
+        fixture.calls.len(),
+        flat_spans.len()
+    );
+
+    let json = serde_json::to_string_pretty(&fixture)
+        .map_err(|e| anyhow::anyhow!("Failed to serialize fixture: {}", e))?;
+
+    match output_path {
+        Some(path) => {
+            std::fs::write(path, &json)
+                .map_err(|e| anyhow::anyhow!("Failed to write {}: {}", path, e))?;
+            eprintln!("Written to {}", path);
+        }
+        None => {
+            println!("{}", json);
+        }
+    }
+
+    Ok(())
+}
+
+/// Fixture types for export (matches distri-core TraceFixture format)
+#[derive(serde::Serialize)]
+struct ExportFixture {
+    id: String,
+    description: Option<String>,
+    agent_id: Option<String>,
+    calls: Vec<ExportLLMCall>,
+    metadata: serde_json::Value,
+}
+
+#[derive(serde::Serialize)]
+struct ExportLLMCall {
+    call_index: usize,
+    model: Option<String>,
+    input: serde_json::Value,
+    output_content: String,
+    tool_calls: Vec<ExportToolCall>,
+    finish_reason: String,
+    input_tokens: Option<u32>,
+    output_tokens: Option<u32>,
+}
+
+#[derive(serde::Serialize)]
+struct ExportToolCall {
+    tool_call_id: String,
+    tool_name: String,
+    input: serde_json::Value,
+}
+
+/// Parse OTLP JSON into flat span objects with attributes as key-value maps.
+fn parse_otlp_to_flat_json(otlp: &serde_json::Value) -> Vec<serde_json::Value> {
+    let mut result = Vec::new();
+
+    let resource_spans = match otlp.get("resourceSpans").and_then(|v| v.as_array()) {
+        Some(arr) => arr,
+        None => return result,
+    };
+
+    for rs in resource_spans {
+        let scope_spans = match rs.get("scopeSpans").and_then(|v| v.as_array()) {
+            Some(arr) => arr,
+            None => continue,
+        };
+        for ss in scope_spans {
+            let spans = match ss.get("spans").and_then(|v| v.as_array()) {
+                Some(arr) => arr,
+                None => continue,
+            };
+            for span_obj in spans {
+                // Convert OTLP attributes array to flat map
+                let mut attrs_map = serde_json::Map::new();
+                if let Some(attrs) = span_obj.get("attributes").and_then(|v| v.as_array()) {
+                    for attr in attrs {
+                        if let (Some(key), Some(value)) = (
+                            attr.get("key").and_then(|k| k.as_str()),
+                            attr.get("value"),
+                        ) {
+                            let val_str = extract_otlp_value(value);
+                            attrs_map
+                                .insert(key.to_string(), serde_json::Value::String(val_str));
+                        }
+                    }
+                }
+
+                let mut flat = serde_json::Map::new();
+                if let Some(id) = span_obj.get("spanId") {
+                    flat.insert("span_id".to_string(), id.clone());
+                }
+                if let Some(name) = span_obj.get("name") {
+                    flat.insert("name".to_string(), name.clone());
+                }
+                if let Some(start) = span_obj.get("startTimeUnixNano") {
+                    let ns = start
+                        .as_str()
+                        .and_then(|s| s.parse::<i64>().ok())
+                        .or_else(|| start.as_i64())
+                        .unwrap_or(0);
+                    flat.insert(
+                        "start_time_ns".to_string(),
+                        serde_json::Value::Number(ns.into()),
+                    );
+                }
+                flat.insert(
+                    "attributes".to_string(),
+                    serde_json::Value::Object(attrs_map),
+                );
+                result.push(serde_json::Value::Object(flat));
+            }
+        }
+    }
+
+    result
+}
+
+/// Build an export fixture from flat span objects.
+fn build_export_fixture(trace_id: &str, spans: &[serde_json::Value]) -> ExportFixture {
+    let mut llm_spans: Vec<&serde_json::Value> = spans
+        .iter()
+        .filter(|span| is_llm_span(span))
+        .collect();
+
+    llm_spans.sort_by_key(|span| {
+        span.get("start_time_ns")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0)
+    });
+
+    let agent_id = spans
+        .first()
+        .and_then(|s| s.get("attributes"))
+        .and_then(|a| a.get("distri.agent.id"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    let calls = llm_spans
+        .iter()
+        .enumerate()
+        .map(|(idx, span)| {
+            let attrs = span.get("attributes").cloned().unwrap_or_default();
+
+            let input = attrs
+                .get("input.value")
+                .and_then(|v| v.as_str())
+                .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+                .unwrap_or(serde_json::Value::Null);
+
+            let output_raw = attrs
+                .get("output.value")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+
+            let (output_content, tool_calls, finish_reason) = parse_llm_output(output_raw);
+
+            let model = attrs
+                .get("gen_ai.request.model")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+
+            let input_tokens = attrs
+                .get("gen_ai.usage.input_tokens")
+                .and_then(|v| v.as_str())
+                .and_then(|s| s.parse().ok());
+
+            let output_tokens = attrs
+                .get("gen_ai.usage.output_tokens")
+                .and_then(|v| v.as_str())
+                .and_then(|s| s.parse().ok());
+
+            ExportLLMCall {
+                call_index: idx,
+                model,
+                input,
+                output_content,
+                tool_calls,
+                finish_reason,
+                input_tokens,
+                output_tokens,
+            }
+        })
+        .collect();
+
+    ExportFixture {
+        id: trace_id.to_string(),
+        description: None,
+        agent_id,
+        calls,
+        metadata: serde_json::json!({"trace_id": trace_id}),
+    }
+}
+
+fn is_llm_span(span: &serde_json::Value) -> bool {
+    let attrs = match span.get("attributes") {
+        Some(a) => a,
+        None => return false,
+    };
+
+    if let Some(kind) = attrs.get("openinference.span.kind").and_then(|v| v.as_str()) {
+        if kind.eq_ignore_ascii_case("LLM") {
+            return true;
+        }
+    }
+
+    if let Some(op) = attrs.get("gen_ai.operation.name").and_then(|v| v.as_str()) {
+        if op == "chat" || op == "completion" {
+            return true;
+        }
+    }
+
+    if attrs.get("gen_ai.request.model").is_some() && attrs.get("input.value").is_some() {
+        return true;
+    }
+
+    false
+}
+
+fn parse_llm_output(output_raw: &str) -> (String, Vec<ExportToolCall>, String) {
+    if let Ok(val) = serde_json::from_str::<serde_json::Value>(output_raw) {
+        if let Some(tool_calls_arr) = val.get("tool_calls").and_then(|v| v.as_array()) {
+            let tool_calls: Vec<ExportToolCall> = tool_calls_arr
+                .iter()
+                .filter_map(|tc| {
+                    Some(ExportToolCall {
+                        tool_call_id: tc
+                            .get("id")
+                            .or_else(|| tc.get("tool_call_id"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("unknown")
+                            .to_string(),
+                        tool_name: tc
+                            .get("function")
+                            .and_then(|f| f.get("name"))
+                            .or_else(|| tc.get("tool_name"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("unknown")
+                            .to_string(),
+                        input: tc
+                            .get("function")
+                            .and_then(|f| f.get("arguments"))
+                            .or_else(|| tc.get("input"))
+                            .cloned()
+                            .unwrap_or(serde_json::Value::Object(Default::default())),
+                    })
+                })
+                .collect();
+
+            let content = val
+                .get("content")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+
+            return (content, tool_calls, "tool_calls".to_string());
+        }
+
+        if let Some(content) = val.get("content").and_then(|v| v.as_str()) {
+            return (content.to_string(), vec![], "stop".to_string());
+        }
+
+        if let Some(s) = val.as_str() {
+            return (s.to_string(), vec![], "stop".to_string());
+        }
+    }
+
+    (output_raw.to_string(), vec![], "stop".to_string())
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Optimize command handler
+// ─────────────────────────────────────────────────────────────────────────────
+
+pub async fn handle_optimize_command(client: &Distri, command: OptimizeCommands) -> Result<()> {
+    match command {
+        OptimizeCommands::Analyze {
+            agent,
+            lookback,
+            format,
+        } => {
+            handle_optimize_analyze(client, agent.as_deref(), lookback, &format).await?;
+        }
+        OptimizeCommands::Suggest { agent, target } => {
+            handle_optimize_suggest(client, agent.as_deref(), target.as_deref()).await?;
+        }
+        OptimizeCommands::Loop {
+            iterations,
+            agent,
+            dry_run,
+        } => {
+            handle_optimize_loop(client, iterations, agent.as_deref(), dry_run).await?;
+        }
+    }
+    Ok(())
+}
+
+async fn handle_optimize_analyze(
+    client: &Distri,
+    agent: Option<&str>,
+    lookback: i64,
+    format: &str,
+) -> Result<()> {
+    eprintln!(
+        "Analyzing {} recent traces{}...",
+        lookback,
+        agent.map(|a| format!(" for agent '{}'", a)).unwrap_or_default()
+    );
+
+    let traces = client.list_traces(Some(lookback)).await?;
+
+    if traces.is_empty() {
+        eprintln!("No traces found.");
+        return Ok(());
+    }
+
+    // Analyze each trace
+    let mut total_input_tokens = 0i64;
+    let mut total_cost = 0.0f64;
+    let mut error_count = 0usize;
+    let mut tool_freq: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut model_freq: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+
+    for trace in &traces {
+        total_input_tokens += trace.input_tokens;
+        total_cost += trace.total_cost;
+
+        for model in trace.models.iter().flatten() {
+            *model_freq.entry(model.clone()).or_default() += 1;
+        }
+    }
+
+    let avg_tokens = total_input_tokens / traces.len().max(1) as i64;
+    let avg_cost = total_cost / traces.len().max(1) as f64;
+
+    if format == "json" {
+        let report = serde_json::json!({
+            "total_traces": traces.len(),
+            "avg_input_tokens": avg_tokens,
+            "avg_cost": avg_cost,
+            "total_cost": total_cost,
+            "model_usage": model_freq,
+        });
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        println!(
+            "\n{}── Trace Analysis Report ──{}",
+            COLOR_BRIGHT_GREEN, COLOR_RESET
+        );
+        println!("  Traces analyzed:    {}", traces.len());
+        println!("  Avg input tokens:   {}", avg_tokens);
+        println!("  Avg cost:           ${:.4}", avg_cost);
+        println!("  Total cost:         ${:.4}", total_cost);
+        println!();
+
+        if !model_freq.is_empty() {
+            println!("  {}Models used:{}", COLOR_BRIGHT_GREEN, COLOR_RESET);
+            let mut sorted: Vec<_> = model_freq.iter().collect();
+            sorted.sort_by(|a, b| b.1.cmp(a.1));
+            for (model, count) in sorted {
+                println!("    {} — {} traces", model, count);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn handle_optimize_suggest(
+    client: &Distri,
+    _agent: Option<&str>,
+    _target: Option<&str>,
+) -> Result<()> {
+    eprintln!(
+        "{}Suggest{}: analyzing traces and generating suggestions...",
+        COLOR_BRIGHT_GREEN, COLOR_RESET
+    );
+    eprintln!();
+    eprintln!(
+        "Note: Full suggestion generation requires the trace analysis service"
+    );
+    eprintln!(
+        "running in distri-cloud. Use `distri optimize analyze` to view"
+    );
+    eprintln!("current trace patterns first.");
+    Ok(())
+}
+
+async fn handle_optimize_loop(
+    client: &Distri,
+    iterations: usize,
+    _agent: Option<&str>,
+    dry_run: bool,
+) -> Result<()> {
+    eprintln!(
+        "{}Optimization loop{}: {} iterations{}",
+        COLOR_BRIGHT_GREEN,
+        COLOR_RESET,
+        iterations,
+        if dry_run { " (dry run)" } else { "" }
+    );
+    eprintln!();
+    eprintln!(
+        "Note: The optimization loop requires the trace analysis and optimization"
+    );
+    eprintln!(
+        "services running in distri-cloud. The full loop flow is:"
+    );
+    eprintln!("  1. Analyze recent traces → identify weak scenarios");
+    eprintln!("  2. Select target skill via affinity map");
+    eprintln!("  3. Generate mutation via LLM");
+    eprintln!("  4. Evaluate mutation against scenarios");
+    eprintln!("  5. Keep/discard based on score delta");
+    eprintln!();
+    eprintln!("Use `distri optimize analyze` to start with trace analysis.");
+    Ok(())
 }

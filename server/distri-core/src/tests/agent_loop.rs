@@ -2,23 +2,7 @@ use std::sync::Arc;
 
 use crate::agent::{parse_agent_markdown_content, ExecutorContext};
 use crate::AgentOrchestratorBuilder;
-use distri_types::configuration::{DbConnectionConfig, MetadataStoreConfig, StoreConfig};
-
-/// Creates a StoreConfig that uses a temporary in-memory SQLite database.
-fn test_store_config() -> StoreConfig {
-    let db_name = uuid::Uuid::new_v4();
-    let db_url = format!("file:{}?mode=memory&cache=shared", db_name);
-    StoreConfig {
-        metadata: MetadataStoreConfig {
-            db_config: Some(DbConnectionConfig {
-                database_url: db_url,
-                ..Default::default()
-            }),
-            ..Default::default()
-        },
-        ..Default::default()
-    }
-}
+use crate::tests::helpers::test_store_config;
 
 // ── Agent definition parsing ────────────────────────────────────
 

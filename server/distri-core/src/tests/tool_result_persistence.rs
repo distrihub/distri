@@ -13,43 +13,12 @@
 use std::sync::Arc;
 
 use distri_types::{
-    configuration::{DbConnectionConfig, MetadataStoreConfig, StoreConfig},
     tool_result_store::PERSIST_THRESHOLD_BYTES,
     ExecutionResult, ExecutionStatus, Part, ToolCall, ToolResponse,
 };
 
-use crate::{agent::ExecutorContext, AgentOrchestratorBuilder};
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-fn test_store_config() -> StoreConfig {
-    let db_name = uuid::Uuid::new_v4();
-    let db_url = format!("file:{}?mode=memory&cache=shared", db_name);
-    StoreConfig {
-        metadata: MetadataStoreConfig {
-            db_config: Some(DbConnectionConfig {
-                database_url: db_url,
-                ..Default::default()
-            }),
-            ..Default::default()
-        },
-        ..Default::default()
-    }
-}
-
-/// Full context with orchestrator — needed for store_execution_result and format_agent_scratchpad.
-async fn make_full_context() -> Arc<ExecutorContext> {
-    let orchestrator = Arc::new(
-        AgentOrchestratorBuilder::default()
-            .with_store_config(test_store_config())
-            .build()
-            .await
-            .unwrap(),
-    );
-    let mut ctx = ExecutorContext::default();
-    ctx.orchestrator = Some(orchestrator);
-    Arc::new(ctx)
-}
+use crate::agent::ExecutorContext;
+use crate::tests::helpers::make_test_context;
 
 fn large_result(step_id: &str) -> ExecutionResult {
     let big_content = "x".repeat(PERSIST_THRESHOLD_BYTES + 1000);
@@ -97,7 +66,7 @@ fn small_result(step_id: &str) -> ExecutionResult {
 /// After store_execution_result, the scratchpad contains an Observation section.
 #[tokio::test]
 async fn scratchpad_contains_observation_after_store() {
-    let ctx = make_full_context().await;
+    let ctx = make_test_context().await;
     let result = small_result("step-obs1");
 
     ctx.store_execution_result(&result).await.unwrap();
@@ -122,7 +91,7 @@ async fn scratchpad_contains_observation_after_store() {
 /// Large results are stored and appear in the scratchpad (possibly truncated by compact_for_history).
 #[tokio::test]
 async fn large_result_stored_and_appears_in_scratchpad() {
-    let ctx = make_full_context().await;
+    let ctx = make_test_context().await;
     let result = large_result("step-large1");
 
     ctx.store_execution_result(&result).await.unwrap();
@@ -141,7 +110,7 @@ async fn large_result_stored_and_appears_in_scratchpad() {
 /// Multiple results accumulate in the scratchpad.
 #[tokio::test]
 async fn multiple_results_accumulate_in_scratchpad() {
-    let ctx = make_full_context().await;
+    let ctx = make_test_context().await;
 
     ctx.store_execution_result(&small_result("step-m1"))
         .await

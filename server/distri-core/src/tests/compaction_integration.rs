@@ -3,10 +3,9 @@
 //! These tests exercise the full flow: store execution results → trigger compaction
 //! → verify skill content is re-injected into the scratchpad.
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use distri_types::{
-    configuration::{DbConnectionConfig, MetadataStoreConfig, StoreConfig},
     ExecutionHistoryEntry, ExecutionResult, ExecutionStatus, Part, ScratchpadEntry,
     ScratchpadEntryType, SkillContextEntry,
 };
@@ -15,40 +14,9 @@ use crate::agent::compaction::perform_tier2_summarization;
 use crate::agent::context_size_manager::{ContextSizeConfig, ContextSizeManager};
 use crate::agent::skill_tracker::ActiveSkillTracker;
 use crate::agent::ExecutorContext;
-use crate::llm::LLMResponse;
-use crate::tests::mock_llm::{MockLLM, MockLLMExecutor, MockLLMScenario};
-use crate::AgentOrchestratorBuilder;
+use crate::tests::helpers::{make_mock_executor, make_test_context};
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-fn test_store_config() -> StoreConfig {
-    let db_name = uuid::Uuid::new_v4();
-    let db_url = format!("file:{}?mode=memory&cache=shared", db_name);
-    StoreConfig {
-        metadata: MetadataStoreConfig {
-            db_config: Some(DbConnectionConfig {
-                database_url: db_url,
-                ..Default::default()
-            }),
-            ..Default::default()
-        },
-        ..Default::default()
-    }
-}
-
-/// Create a full ExecutorContext with in-memory stores
-async fn make_test_context() -> Arc<ExecutorContext> {
-    let orchestrator = Arc::new(
-        AgentOrchestratorBuilder::default()
-            .with_store_config(test_store_config())
-            .build()
-            .await
-            .unwrap(),
-    );
-    let mut ctx = ExecutorContext::default();
-    ctx.orchestrator = Some(orchestrator);
-    Arc::new(ctx)
-}
+// ── Helpers (test-local, not worth extracting) ───────────────────────────────
 
 /// Store an execution result with given timestamp and text
 async fn store_execution(ctx: &ExecutorContext, timestamp: i64, text: &str) {
@@ -76,20 +44,6 @@ async fn track_skill(ctx: &ExecutorContext, skill_id: &str, content: &str) {
         content.to_string(),
         chrono::Utc::now().timestamp_millis(),
     );
-}
-
-fn make_mock_executor(response_text: &str) -> MockLLMExecutor {
-    let response = LLMResponse {
-        finish_reason: async_openai::types::chat::FinishReason::Stop,
-        tool_calls: vec![],
-        content: response_text.to_string(),
-        usage: None,
-    };
-    let mock_llm = Arc::new(MockLLM {
-        calls: Mutex::new(0),
-        scenario: MockLLMScenario::Custom(vec![response]),
-    });
-    MockLLMExecutor::new(mock_llm)
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

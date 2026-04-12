@@ -3,7 +3,7 @@ use std::process::Command;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use distri::{print_stream_verbose, AgentStreamClient, BuildHttpClient, Distri, DistriClientApp};
+use distri::{AgentStreamClient, BuildHttpClient, Distri, DistriClientApp, print_stream_verbose};
 use tokio::fs;
 
 mod chat;
@@ -26,7 +26,7 @@ use commands::{
 use config::resolve_workspace;
 use message::{build_connections_context, build_message_params_full};
 use threads::resolve_resume_arg;
-use tools::{register_all, register_approval_handler, validate_external_tools, LOCAL_TOOL_NAMES};
+use tools::{LOCAL_TOOL_NAMES, register_all, register_approval_handler, validate_external_tools};
 
 #[derive(Parser, Debug, Clone)]
 #[clap(author, version, about)]
@@ -137,6 +137,12 @@ enum Commands {
     Traces {
         #[clap(subcommand)]
         command: Option<TracesCommands>,
+    },
+
+    /// Auto-optimization commands (analyze traces, suggest improvements)
+    Optimize {
+        #[clap(subcommand)]
+        command: OptimizeCommands,
     },
 
     /// Manage authentication profiles
@@ -352,8 +358,56 @@ pub(crate) enum TracesCommands {
         #[clap(short, long)]
         verbose: bool,
     },
+    /// Export trace as a replay fixture (JSON with LLM call pairs)
+    Export {
+        /// Trace ID to export
+        #[clap(help = "Trace ID to export")]
+        trace_id: Option<String>,
+        /// Export the most recent trace
+        #[clap(long)]
+        latest: bool,
+        /// Output file path (defaults to stdout)
+        #[clap(long, short)]
+        output: Option<String>,
+    },
 }
 
+#[derive(Subcommand, Debug, Clone)]
+pub(crate) enum OptimizeCommands {
+    /// Analyze recent traces for an agent
+    Analyze {
+        /// Agent ID to analyze
+        #[clap(long)]
+        agent: Option<String>,
+        /// Number of recent traces to analyze
+        #[clap(long, default_value = "50")]
+        lookback: i64,
+        /// Output format: text or json
+        #[clap(long, default_value = "text")]
+        format: String,
+    },
+    /// Suggest improvements based on trace analysis
+    Suggest {
+        /// Agent ID to analyze
+        #[clap(long)]
+        agent: Option<String>,
+        /// Target a specific skill for improvement
+        #[clap(long)]
+        target: Option<String>,
+    },
+    /// Run an optimization loop (analyze → mutate → evaluate → keep/discard)
+    Loop {
+        /// Maximum iterations
+        #[clap(long, default_value = "10")]
+        iterations: usize,
+        /// Agent ID to optimize
+        #[clap(long)]
+        agent: Option<String>,
+        /// Dry run — don't commit changes
+        #[clap(long)]
+        dry_run: bool,
+    },
+}
 
 /// Typed context passed via `--context` JSON.
 /// Accepts `envs`, `env_vars`, and `secrets` — all merge into env_vars.
@@ -597,8 +651,7 @@ async fn main() -> Result<()> {
                             .extension()
                             .and_then(|s| s.to_str())
                             .map(|ext| {
-                                ext.eq_ignore_ascii_case("md")
-                                    || ext.eq_ignore_ascii_case("json")
+                                ext.eq_ignore_ascii_case("md") || ext.eq_ignore_ascii_case("json")
                             })
                             .unwrap_or(false);
                         if is_pushable {
@@ -683,6 +736,9 @@ async fn main() -> Result<()> {
         Commands::Traces { command } => {
             let command = command.unwrap_or(TracesCommands::List { limit: 20 });
             traces::handle_traces_command(&client, command).await?;
+        }
+        Commands::Optimize { command } => {
+            traces::handle_optimize_command(&client, command).await?;
         }
         Commands::Serve { .. } => unreachable!("serve handled earlier"),
     }
