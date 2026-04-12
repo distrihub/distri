@@ -7,6 +7,9 @@ use async_trait::async_trait;
 use distri_types::{AgentEvent, AgentEventType};
 use futures_util::stream::BoxStream;
 use futures_util::StreamExt;
+use tokio_util::sync::CancellationToken;
+
+use crate::worker::mailbox::{AgentMessage, Mailbox};
 
 /// Trait for broadcasting agent events to multiple subscribers.
 ///
@@ -70,4 +73,45 @@ pub trait AgentEventBroadcaster: Send + Sync + 'static {
 
         Ok(Box::pin(stream))
     }
+}
+
+/// Manages task lifecycle: cancellation, mailbox, name resolution.
+///
+/// Companion to `AgentEventBroadcaster` for background-first execution.
+/// The broadcaster handles event streaming; the coordinator handles task lifecycle.
+///
+/// Implementations:
+/// - `InProcessCoordinator`: DashMap-based, in-memory (OSS/CLI)
+/// - `RedisCoordinator`: Redis-backed, cross-node (cloud)
+#[async_trait]
+pub trait AgentTaskCoordinator: Send + Sync + 'static {
+    /// Register a task before execution starts.
+    /// Returns a CancellationToken for cooperative abort by the agent loop.
+    async fn register_task(
+        &self,
+        task_id: &str,
+        agent_name: Option<&str>,
+    ) -> anyhow::Result<CancellationToken>;
+
+    /// Signal cancellation for a task. Works across nodes in Redis impl.
+    async fn cancel(&self, task_id: &str) -> anyhow::Result<()>;
+
+    /// Mark task as completed (cleanup resources).
+    async fn complete_task(&self, task_id: &str) -> anyhow::Result<()>;
+
+    /// Check if task is still registered (not completed).
+    async fn is_running(&self, task_id: &str) -> bool;
+
+    /// Deliver a message to a running task's mailbox (inter-agent communication).
+    async fn deliver_message(&self, task_id: &str, msg: AgentMessage) -> anyhow::Result<()>;
+
+    /// Take the mailbox for a task. Called once after register_task to give the
+    /// mailbox receiver to the agent loop.
+    async fn take_mailbox(&self, task_id: &str) -> anyhow::Result<Mailbox>;
+
+    /// Resolve an agent name to its task_id (for SendMessage routing).
+    async fn resolve_name(&self, name: &str) -> Option<String>;
+
+    /// Register a name → task_id mapping (called when agent spawned with a name).
+    async fn register_name(&self, name: &str, task_id: &str) -> anyhow::Result<()>;
 }

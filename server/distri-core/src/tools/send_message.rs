@@ -81,15 +81,15 @@ impl ExecutorContextTool for SendMessageTool {
 
         let orchestrator = context.get_orchestrator()?;
 
-        let worker_pool = orchestrator.worker_pool.as_ref().ok_or_else(|| {
+        let coordinator = orchestrator.coordinator.as_ref().ok_or_else(|| {
             AgentError::ToolExecution(
-                "send_message requires a WorkerPool (background execution must be enabled)"
+                "send_message requires a coordinator (background execution must be enabled)"
                     .to_string(),
             )
         })?;
 
         // Resolve target name to task_id
-        let target_task_id = worker_pool.resolve_name(&input.to).await.ok_or_else(|| {
+        let target_task_id = coordinator.resolve_name(&input.to).await.ok_or_else(|| {
             AgentError::ToolExecution(format!(
                 "Target agent '{}' not found. It may not be running or was not registered with a name.",
                 input.to
@@ -97,7 +97,7 @@ impl ExecutorContextTool for SendMessageTool {
         })?;
 
         // Check if target is still running
-        if !worker_pool.is_running(&target_task_id).await {
+        if !coordinator.is_running(&target_task_id).await {
             return Err(AgentError::ToolExecution(format!(
                 "Target agent '{}' (task_id={}) has already completed.",
                 input.to, target_task_id
@@ -110,7 +110,7 @@ impl ExecutorContextTool for SendMessageTool {
             content: input.message.clone(),
         };
 
-        worker_pool
+        coordinator
             .deliver_message(&target_task_id, msg)
             .await
             .map_err(|e| {

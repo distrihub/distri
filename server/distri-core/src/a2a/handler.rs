@@ -292,10 +292,8 @@ impl A2AHandler {
             "tasks/get" => Either::Right(self.handle_task_get(req.params).await),
             "tasks/cancel" => Either::Right(self.handle_task_cancel(req.params).await),
             "tasks/resubscribe" => {
-                // Subscribe to events for an existing task via worker pool or broadcaster.
-                let has_pool = self.executor.worker_pool.is_some();
-                let has_broadcaster = self.executor.broadcaster.is_some();
-                if has_pool || has_broadcaster {
+                // Subscribe to events for an existing task via broadcaster.
+                if self.executor.broadcaster.is_some() {
                     let params: TaskIdParams = match serde_json::from_value(req.params) {
                         Ok(p) => p,
                         Err(e) => {
@@ -434,10 +432,10 @@ impl A2AHandler {
     ) -> Result<serde_json::Value, AgentError> {
         let params: TaskIdParams = serde_json::from_value(params)?;
 
-        // Signal abort via worker pool if available (sends CancellationToken signal)
-        if let Some(ref pool) = self.executor.worker_pool {
-            if let Err(e) = pool.cancel(&params.id).await {
-                tracing::warn!("WorkerPool cancel failed for {}: {}", params.id, e);
+        // Signal abort via coordinator (sends CancellationToken signal, works across nodes)
+        if let Some(ref coordinator) = self.executor.coordinator {
+            if let Err(e) = coordinator.cancel(&params.id).await {
+                tracing::warn!("Coordinator cancel failed for {}: {}", params.id, e);
             }
         }
 

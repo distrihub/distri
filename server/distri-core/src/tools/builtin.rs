@@ -952,47 +952,43 @@ impl ExecutorContextTool for UniversalAgentTool {
             agent_name
         };
 
-        // ── Fire-and-forget path: run_in_background via WorkerPool ────────
+        // ── Fire-and-forget path: run_in_background via coordinator + broadcaster ──
         if input.run_in_background {
-            if let Some(ref worker_pool) = orchestrator.worker_pool {
+            if let Some(ref coordinator) = orchestrator.coordinator {
                 let child_task_id = uuid::Uuid::new_v4().to_string();
                 let child_message = Message::user(input.prompt.clone(), None);
 
-                let job = crate::worker::AgentJob {
-                    task_id: child_task_id.clone(),
-                    thread_id: context.thread_id.clone(),
-                    agent_id: agent_name.clone(),
-                    message: child_message.clone(),
-                    workspace_id: context.workspace_id.clone(),
-                    user_id: context.user_id.clone(),
-                    parent_task_id: Some(context.task_id.clone()),
-                    agent_name: input.name.clone(),
-                };
+                // Register task with coordinator
+                let cancel_token = coordinator
+                    .register_task(&child_task_id, input.name.as_deref())
+                    .await
+                    .map_err(|e| {
+                        AgentError::ToolExecution(format!(
+                            "Failed to register background task: {}",
+                            e
+                        ))
+                    })?;
 
-                // Register task in pool
-                let (cancel_token, mailbox) = worker_pool.register_task(&job).await.map_err(|e| {
-                    AgentError::ToolExecution(format!("Failed to register background task: {}", e))
-                })?;
-
-                // Register name for SendMessage routing
-                if let Some(ref name) = input.name {
-                    let _ = worker_pool.register_name(name, &child_task_id).await;
-                }
+                // Take mailbox for inter-agent messaging
+                let mailbox = coordinator.take_mailbox(&child_task_id).await.ok();
 
                 // Create child execution context
                 let child_context = context.new_task(&agent_name).await;
-                let (event_tx, mut event_rx) = tokio::sync::mpsc::channel::<distri_types::AgentEvent>(100);
+                let (event_tx, mut event_rx) =
+                    tokio::sync::mpsc::channel::<distri_types::AgentEvent>(100);
                 let mut child_ctx = child_context.clone_with_tx(event_tx);
                 child_ctx.task_id = child_task_id.clone();
                 child_ctx.cancellation_token = Some(cancel_token);
-                child_ctx.mailbox = Some(Arc::new(tokio::sync::Mutex::new(mailbox)));
+                if let Some(mb) = mailbox {
+                    child_ctx.mailbox = Some(Arc::new(tokio::sync::Mutex::new(mb)));
+                }
                 child_ctx.parent_task_id = Some(context.task_id.clone());
                 let child_ctx_arc = Arc::new(child_ctx);
 
-                // Spawn event relay: child events → worker pool
-                let pool_for_relay = worker_pool.clone();
-                let task_id_for_relay = child_task_id.clone();
+                // Spawn event relay: child events → broadcaster
                 let broadcaster_for_relay = orchestrator.broadcaster.clone();
+                let coord_for_relay = coordinator.clone();
+                let task_id_for_relay = child_task_id.clone();
                 tokio::spawn(async move {
                     while let Some(event) = event_rx.recv().await {
                         let is_terminal = matches!(
@@ -1000,12 +996,12 @@ impl ExecutorContextTool for UniversalAgentTool {
                             distri_types::AgentEventType::RunFinished { .. }
                                 | distri_types::AgentEventType::RunError { .. }
                         );
-                        pool_for_relay.publish_event(&task_id_for_relay, event.clone()).await;
                         if let Some(ref broadcaster) = broadcaster_for_relay {
                             let task_id = event.task_id.clone();
                             let _ = broadcaster.publish(&task_id, event).await;
                         }
                         if is_terminal {
+                            let _ = coord_for_relay.complete_task(&task_id_for_relay).await;
                             break;
                         }
                     }
@@ -1050,7 +1046,7 @@ impl ExecutorContextTool for UniversalAgentTool {
                 }))]);
             } else {
                 tracing::warn!(
-                    "run_in_background requested but no WorkerPool configured. Falling through to synchronous execution."
+                    "run_in_background requested but no coordinator configured. Falling through to synchronous execution."
                 );
             }
         }

@@ -194,47 +194,18 @@ pub async fn handle_resubscribe_sse(
     executor: Arc<AgentOrchestrator>,
 ) -> impl futures_util::stream::Stream<Item = Result<SseMessage, std::convert::Infallible>> {
     async_stream::stream! {
-        // Try worker pool first (new path), fall back to broadcaster (legacy path)
-        let event_stream = if let Some(ref pool) = executor.worker_pool {
-            pool.subscribe(&task_id).await.ok()
-        } else {
-            None
-        };
-
-        let event_stream = match event_stream {
-            Some(s) => s,
-            None => {
-                // Fall back to broadcaster for backward compatibility
-                match executor.broadcaster.as_ref() {
-                    Some(broadcaster) => {
-                        match broadcaster.subscribe(&task_id).await {
-                            Ok(s) => s,
-                            Err(e) => {
-                                let error = distri_a2a::JsonRpcResponse {
-                                    jsonrpc: "2.0".to_string(),
-                                    result: None,
-                                    error: Some(distri_a2a::JsonRpcError {
-                                        code: -32603,
-                                        message: format!("Failed to subscribe: {}", e),
-                                        data: None,
-                                    }),
-                                    id: req_id.clone(),
-                                };
-                                yield Ok::<_, std::convert::Infallible>(SseMessage {
-                                    event: None,
-                                    data: serde_json::to_string(&error).unwrap_or_default(),
-                                });
-                                return;
-                            }
-                        }
-                    }
-                    None => {
+        // Subscribe via broadcaster
+        let event_stream = match executor.broadcaster.as_ref() {
+            Some(broadcaster) => {
+                match broadcaster.subscribe(&task_id).await {
+                    Ok(s) => s,
+                    Err(e) => {
                         let error = distri_a2a::JsonRpcResponse {
                             jsonrpc: "2.0".to_string(),
                             result: None,
                             error: Some(distri_a2a::JsonRpcError {
                                 code: -32603,
-                                message: "No worker pool or broadcaster configured".to_string(),
+                                message: format!("Failed to subscribe: {}", e),
                                 data: None,
                             }),
                             id: req_id.clone(),
@@ -246,6 +217,23 @@ pub async fn handle_resubscribe_sse(
                         return;
                     }
                 }
+            }
+            None => {
+                let error = distri_a2a::JsonRpcResponse {
+                    jsonrpc: "2.0".to_string(),
+                    result: None,
+                    error: Some(distri_a2a::JsonRpcError {
+                        code: -32603,
+                        message: "No broadcaster configured".to_string(),
+                        data: None,
+                    }),
+                    id: req_id.clone(),
+                };
+                yield Ok::<_, std::convert::Infallible>(SseMessage {
+                    event: None,
+                    data: serde_json::to_string(&error).unwrap_or_default(),
+                });
+                return;
             }
         };
 
@@ -357,7 +345,6 @@ fn spawn_background_execution(
     message: crate::types::Message,
     executor_context: Arc<ExecutorContext>,
     definition_overrides: Option<DefinitionOverrides>,
-    _worker_pool: Arc<dyn crate::worker::WorkerPool>,
     task_id: String,
     user_id: String,
     workspace_id: Option<uuid::Uuid>,
@@ -539,25 +526,15 @@ pub async fn handle_message_send_streaming_sse(
 
         let main_task_id = exec_ctx.task_id.clone();
 
-        // === WorkerPool path: background-first execution ===
-        // Submit job to worker pool, spawn background execution, subscribe to events.
-        // Client disconnect does NOT kill the agent — execution continues in the pool.
-        if let Some(ref worker_pool) = executor.worker_pool {
-            let pool = worker_pool.clone();
+        // === Background execution path: coordinator + broadcaster ===
+        // Register task with coordinator, spawn background execution, subscribe via broadcaster.
+        // Client disconnect does NOT kill the agent — execution continues in background.
+        if let (Some(ref coordinator), Some(ref broadcaster)) = (&executor.coordinator, &executor.broadcaster) {
+            let coord = coordinator.clone();
+            let bcast = broadcaster.clone();
 
-            let job = crate::worker::AgentJob {
-                task_id: main_task_id.clone(),
-                thread_id: exec_ctx.thread_id.clone(),
-                agent_id: agent_id.clone(),
-                message: message.clone(),
-                workspace_id: exec_ctx.workspace_id.clone(),
-                user_id: user_id.clone(),
-                parent_task_id: None,
-                agent_name: None,
-            };
-
-            // Register task in pool — get cancellation token and mailbox
-            let (cancel_token, mailbox) = match pool.register_task(&job).await {
+            // Register task — get cancellation token
+            let cancel_token = match coord.register_task(&main_task_id, None).await {
                 Ok(v) => v,
                 Err(e) => {
                     let error = JsonRpcResponse {
@@ -578,18 +555,23 @@ pub async fn handle_message_send_streaming_sse(
                 }
             };
 
+            // Take mailbox for inter-agent communication
+            let mailbox = coord.take_mailbox(&main_task_id).await.ok();
+
             // Wire cancellation token and mailbox into the execution context
             let (event_tx, mut event_rx) = mpsc::channel::<AgentEvent>(100);
             let mut exec_ctx = exec_ctx.clone_with_tx(event_tx);
             exec_ctx.cancellation_token = Some(cancel_token);
-            exec_ctx.mailbox = Some(Arc::new(tokio::sync::Mutex::new(mailbox)));
+            if let Some(mb) = mailbox {
+                exec_ctx.mailbox = Some(Arc::new(tokio::sync::Mutex::new(mb)));
+            }
 
             let executor_context_arc = Arc::new(exec_ctx);
 
-            // Spawn event relay: agent events → worker pool
-            let pool_for_relay = pool.clone();
+            // Spawn event relay: agent events → broadcaster (single target)
+            let bcast_for_relay = bcast.clone();
+            let coord_for_relay = coord.clone();
             let task_id_for_relay = main_task_id.clone();
-            let broadcaster_for_relay = executor.broadcaster.clone();
             let executor_for_relay = executor.clone();
             tokio::spawn(async move {
                 while let Some(event) = event_rx.recv().await {
@@ -605,15 +587,12 @@ pub async fn handle_message_send_streaming_sse(
                             .await;
                     }
 
-                    // Publish to worker pool (for subscribe/resubscribe)
-                    pool_for_relay.publish_event(&task_id_for_relay, event.clone()).await;
-
-                    // Also publish to legacy broadcaster for backward compatibility
-                    if let Some(ref broadcaster) = broadcaster_for_relay {
-                        let _ = broadcaster.publish(&event.task_id, event.clone()).await;
-                    }
+                    // Publish to broadcaster (handles both subscribe and resubscribe)
+                    let task_id = event.task_id.clone();
+                    let _ = bcast_for_relay.publish(&task_id, event).await;
 
                     if is_terminal {
+                        let _ = coord_for_relay.complete_task(&task_id_for_relay).await;
                         break;
                     }
                 }
@@ -626,14 +605,13 @@ pub async fn handle_message_send_streaming_sse(
                 message,
                 executor_context_arc,
                 Some(definition_overrides),
-                pool.clone(),
                 main_task_id.clone(),
                 user_id.clone(),
                 workspace_id,
             );
 
-            // Subscribe to worker pool events and stream as SSE
-            match pool.subscribe(&main_task_id).await {
+            // Subscribe to broadcaster events and stream as SSE
+            match bcast.subscribe(&main_task_id).await {
                 Ok(event_stream) => {
                     futures_util::pin_mut!(event_stream);
                     while let Some(event) = futures_util::StreamExt::next(&mut event_stream).await {

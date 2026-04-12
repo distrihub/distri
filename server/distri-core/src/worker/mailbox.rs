@@ -1,7 +1,8 @@
+use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
 /// A message delivered to a running agent via inter-agent communication.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentMessage {
     /// Sender task_id (or name)
     pub from: String,
