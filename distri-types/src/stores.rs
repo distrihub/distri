@@ -986,6 +986,9 @@ pub struct SkillListItem {
     pub is_system: bool,
     #[serde(default)]
     pub is_owner: bool,
+    /// True when the skill belongs to the current workspace
+    #[serde(default)]
+    pub is_workspace: bool,
     #[serde(default)]
     pub star_count: i32,
     #[serde(default)]
@@ -1014,6 +1017,9 @@ pub struct SkillRecord {
     /// Whether the current user owns this skill
     #[serde(default)]
     pub is_owner: bool,
+    /// True when the skill belongs to the current workspace
+    #[serde(default)]
+    pub is_workspace: bool,
     pub star_count: i32,
     pub clone_count: i32,
     /// Whether the current user has starred this skill

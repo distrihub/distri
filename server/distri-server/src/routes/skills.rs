@@ -85,6 +85,7 @@ async fn list_skills(
                     is_public: s.is_public,
                     is_system: s.is_system,
                     is_owner: s.is_owner,
+                    is_workspace: s.is_workspace,
                     star_count: s.star_count,
                     clone_count: s.clone_count,
                     is_starred: s.is_starred,

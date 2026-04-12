@@ -3570,6 +3570,7 @@ fn to_skill_record(model: SkillModel) -> SkillRecord {
         is_public: model.is_public != 0,
         is_system: model.is_system != 0,
         is_owner: true,
+        is_workspace: true,
         star_count: model.star_count,
         clone_count: model.clone_count,
         is_starred: false,
