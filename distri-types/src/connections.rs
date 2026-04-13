@@ -148,15 +148,34 @@ impl AuthType {
 
 /// Optional HTTP call that enriches the end-user identity at handshake time.
 /// Only meaningful for connections with `auth_scope = EndUser`. When configured,
-/// the `/channel-auth/{code}/submit` handler calls this endpoint with the user's
-/// pasted credential and extracts fields from the response via JSONPath mapping.
+/// the channel-auth flow calls this endpoint with the user's submitted secret
+/// interpolated into the request. A 2xx response marks the binding confirmed.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
 pub struct UserProfileRetrieval {
     pub url: String,
     pub method: String,
     #[serde(default)]
     pub headers: HashMap<String, String>,
-    pub mapping: UserFieldMapping,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub json_body: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum EndUserAuthStatus {
+    Pending,
+    Confirmed,
+    Failed,
+}
+
+impl std::fmt::Display for EndUserAuthStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Pending => write!(f, "pending"),
+            Self::Confirmed => write!(f, "confirmed"),
+            Self::Failed => write!(f, "failed"),
+        }
+    }
 }
 
 /// JSONPath-based mapping from an API response to end-user identity fields.
