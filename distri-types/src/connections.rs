@@ -56,60 +56,107 @@ impl std::str::FromStr for ConnectionStatus {
     }
 }
 
-/// How a connection resolves identity: workspace-level (default) or per end-user.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema, ToSchema)]
+/// Unified auth scope applied to tokens, connections, and channels.
+///
+/// - `Public`: anonymous — no auth required. Valid on channels only; tokens never carry Public.
+/// - `Workspace`: a logged-in platform member (distri signup via OTP).
+/// - `EndUser`: an external actor resolved via a connection (customer's end-user).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema, ToSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum ConnectionAuthMode {
+pub enum AuthScope {
+    Public,
     Workspace,
     EndUser,
 }
 
-impl std::fmt::Display for ConnectionAuthMode {
+impl std::fmt::Display for AuthScope {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Public => write!(f, "public"),
             Self::Workspace => write!(f, "workspace"),
             Self::EndUser => write!(f, "end_user"),
         }
     }
 }
 
-impl std::str::FromStr for ConnectionAuthMode {
+impl std::str::FromStr for AuthScope {
     type Err = anyhow::Error;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
+            "public" => Ok(Self::Public),
             "workspace" => Ok(Self::Workspace),
             "end_user" => Ok(Self::EndUser),
-            _ => Err(anyhow::anyhow!("unknown connection auth_mode: {}", s)),
+            _ => Err(anyhow::anyhow!("unknown auth_scope: {}", s)),
         }
     }
 }
 
-/// Configuration for resolving end-user identity from an external system.
+/// How a connection authenticates to the downstream API.
+///
+/// OAuth/BearerToken/ApiKey are user-creatable. DistriNative is system-seeded only —
+/// it represents the platform-internal distri connection used by the official bot.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
-#[serde(tag = "type")]
-pub enum UserResolutionConfig {
-    /// Call an HTTP endpoint to resolve a user token into identity fields.
-    #[serde(rename = "user_profile_api")]
-    UserProfileApi {
-        url: String,
-        method: String,
-        headers: HashMap<String, String>,
-        mapping: UserFieldMapping,
-    },
-    /// OAuth-based identity resolution (iteration 2 — config defined, not implemented).
-    #[serde(rename = "oauth")]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum AuthType {
+    /// Standard OAuth flow via the distri OAuth provider registry.
     OAuth {
-        client_id: String,
-        client_secret_key: String,
-        authorize_url: String,
-        token_url: String,
-        userinfo_url: String,
+        provider: String,
+        #[serde(default)]
         scopes: Vec<String>,
-        mapping: UserFieldMapping,
     },
-    /// Distri-native identity: resolves from channel_identities → members table.
-    #[serde(rename = "distri_native")]
+    /// Bearer token header. Default header `Authorization: Bearer <token>`, customizable.
+    BearerToken {
+        #[serde(default = "default_authorization_header")]
+        header_name: String,
+        #[serde(default = "default_bearer_prefix")]
+        prefix: String,
+    },
+    /// Custom API key header. e.g. `X-API-Key: <key>`.
+    ApiKey { header_name: String },
+    /// Platform-internal: the seeded distri connection used by the official bot.
+    /// No configuration — the caller's distri session token is proxied through.
     DistriNative,
+}
+
+fn default_authorization_header() -> String {
+    "Authorization".to_string()
+}
+
+fn default_bearer_prefix() -> String {
+    "Bearer ".to_string()
+}
+
+impl AuthType {
+    /// Provider name used for skill template lookup and connection display.
+    pub fn provider_name(&self) -> &str {
+        match self {
+            Self::OAuth { provider, .. } => provider.as_str(),
+            Self::BearerToken { .. } => "bearer",
+            Self::ApiKey { .. } => "api_key",
+            Self::DistriNative => "distri",
+        }
+    }
+
+    pub fn is_oauth(&self) -> bool {
+        matches!(self, Self::OAuth { .. })
+    }
+
+    pub fn is_distri_native(&self) -> bool {
+        matches!(self, Self::DistriNative)
+    }
+}
+
+/// Optional HTTP call that enriches the end-user identity at handshake time.
+/// Only meaningful for connections with `auth_scope = EndUser`. When configured,
+/// the `/channel-auth/{code}/submit` handler calls this endpoint with the user's
+/// pasted credential and extracts fields from the response via JSONPath mapping.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
+pub struct UserProfileRetrieval {
+    pub url: String,
+    pub method: String,
+    #[serde(default)]
+    pub headers: HashMap<String, String>,
+    pub mapping: UserFieldMapping,
 }
 
 /// JSONPath-based mapping from an API response to end-user identity fields.
@@ -118,10 +165,13 @@ pub struct UserFieldMapping {
     /// JSONPath to extract the external user ID (required).
     pub external_user_id: String,
     /// JSONPath to extract the display name (optional).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
     /// JSONPath to extract the email (optional).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub email: Option<String>,
     /// JSONPath to extract the role (optional).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub role: Option<String>,
 }
 
@@ -136,10 +186,19 @@ pub struct Connection {
     pub connected_by: Option<Uuid>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
-    /// Whether this connection operates at workspace level or per end-user.
-    pub auth_mode: ConnectionAuthMode,
-    /// How to resolve end-user identity. Only set when auth_mode = EndUser.
-    pub user_resolution_config: Option<UserResolutionConfig>,
+    /// Who is allowed to use this connection. Workspace = platform members,
+    /// EndUser = external actors resolved via a handshake.
+    pub auth_scope: AuthScope,
+    /// How the connection authenticates to the downstream API.
+    pub auth_type: AuthType,
+    /// Platform-seeded connections (e.g. the `distri` connection) carry is_system=true
+    /// and are write-protected from user mutations.
+    #[serde(default)]
+    pub is_system: bool,
+    /// Optional enrichment config invoked on EndUser handshake; only meaningful for
+    /// EndUser-scope connections.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_profile_retrieval: Option<UserProfileRetrieval>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
@@ -150,8 +209,12 @@ pub struct NewConnection {
     pub status: ConnectionStatus,
     pub config: serde_json::Value,
     pub connected_by: Option<Uuid>,
-    pub auth_mode: ConnectionAuthMode,
-    pub user_resolution_config: Option<UserResolutionConfig>,
+    pub auth_scope: AuthScope,
+    pub auth_type: AuthType,
+    #[serde(default)]
+    pub is_system: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_profile_retrieval: Option<UserProfileRetrieval>,
 }
 
 /// Typed OAuth token — replaces raw serde_json::Value.
