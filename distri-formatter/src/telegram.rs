@@ -1,5 +1,12 @@
-//! Telegram surface renderer — produces MarkdownV2 formatted output
-//! with message splitting, code blocks, diffs, and image support.
+//! Telegram surface renderer — produces HTML-formatted output with message
+//! splitting, code blocks, diffs, and image support.
+//!
+//! Output is escaped + linkified via [`crate::telegram_html`] before being
+//! emitted as `RendererOutput::RichText { parse_mode: ParseMode::Html }`.
+//! HTML is the safer default for raw LLM text (only `< > &` need escaping)
+//! whereas MarkdownV2 has 18 metacharacters that all need escaping correctly
+//! or the message silently falls back to plain. Callers that want MarkdownV2
+//! can construct a `Reply::markdown_v2(...)` directly via the gateway types.
 
 use distri_types::{AgentEvent, AgentEventType, ToolResponse};
 
@@ -7,6 +14,7 @@ use crate::state::{
     ChatState, MessageState, StepState, ToolCallState, ToolCallStatus, is_probe_call,
 };
 use crate::status::format_status_text;
+use crate::telegram_html::escape_and_linkify;
 use crate::{Formatter, MediaAttachment, ParseMode, RendererOutput, SurfaceRenderer};
 
 /// Maximum message length for Telegram (leave margin for formatting).
@@ -132,7 +140,10 @@ impl SurfaceRenderer for TelegramRenderer {
 
         // If we have final text content, return it (possibly with media).
         if !self.output.is_empty() {
-            let text = self.output.clone();
+            // Escape `< > &` and wrap bare URLs in <a href="…">. Done once
+            // here so the chunk-splitter below sees the final HTML byte
+            // length, not the raw LLM text length.
+            let text = escape_and_linkify(&self.output);
             let media = std::mem::take(&mut self.media);
 
             // Split long messages at paragraph boundaries.
@@ -142,7 +153,7 @@ impl SurfaceRenderer for TelegramRenderer {
                     .into_iter()
                     .map(|chunk| RendererOutput::RichText {
                         text: chunk,
-                        parse_mode: ParseMode::Markdown,
+                        parse_mode: ParseMode::Html,
                         media: Vec::new(),
                     })
                     .collect();
@@ -157,7 +168,7 @@ impl SurfaceRenderer for TelegramRenderer {
 
             return RendererOutput::RichText {
                 text,
-                parse_mode: ParseMode::Markdown,
+                parse_mode: ParseMode::Html,
                 media,
             };
         }

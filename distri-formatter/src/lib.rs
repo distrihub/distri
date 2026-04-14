@@ -4,6 +4,7 @@ pub mod renderers;
 pub mod state;
 pub mod status;
 pub mod telegram;
+pub mod telegram_html;
 pub mod text;
 pub mod whatsapp;
 

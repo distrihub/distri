@@ -245,14 +245,21 @@ pub enum AuthProof {
 
 /// Outcome of running the channel-auth resolver against an inbound message.
 /// The gateway webhook handler turns each variant into a concrete reply:
-/// `Authenticated` → dispatch to the agent; `NeedsConfiguration` → reply with
-/// the configure URL; `Denied` → send the reason text.
+/// `Authenticated` → dispatch to the agent; `NeedsConfiguration` / `NeedsSetup`
+/// → reply with the URL; `Denied` → send the reason text.
 #[derive(Debug, Clone)]
 pub enum ResolveOutcome {
     Authenticated(AuthenticatedChannelUser),
     /// Only produced for `AuthScope::User` before the sender has stored the
     /// connection's required field values in the secrets store.
     NeedsConfiguration {
+        url: String,
+    },
+    /// Produced for `AuthScope::Public` when the sender has never linked a
+    /// workspace yet. The gateway replies with the URL; the user logs in +
+    /// picks a workspace on the web page, after which subsequent messages
+    /// resolve to `Authenticated`.
+    NeedsSetup {
         url: String,
     },
     /// No path exists for this user to access the bot (Workspace non-members
