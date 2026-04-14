@@ -97,6 +97,8 @@ impl std::str::FromStr for AuthScope {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AuthType {
     /// Standard OAuth flow via the distri OAuth provider registry.
+    /// Explicit rename so serde doesn't snake_case `OAuth` → `o_auth`.
+    #[serde(rename = "oauth")]
     OAuth {
         provider: String,
         #[serde(default)]
