@@ -1,9 +1,12 @@
 use std::collections::HashSet;
+use std::future::Future;
 
 use anyhow::Result;
 use distri_a2a::MessageSendParams;
 use distri_types::configuration::AgentConfigWithTools;
-use distri_types::{ToolDefinition, configuration::AgentConfig};
+use distri_types::{
+    AgentEvent, ToolCall, ToolDefinition, ToolResponse, configuration::AgentConfig,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::{AgentStreamClient, ClientError, ExternalToolRegistry, StreamError, print_stream};
@@ -26,7 +29,12 @@ pub struct DistriClientApp {
     http: reqwest::Client,
     config: config::DistriConfig,
     registry: ExternalToolRegistry,
-    local_tool_definitions: Vec<ToolDefinition>,
+    /// Schemas of all external tools the client is shipping to the server.
+    /// "External" matches the system-wide vocabulary: agent defs say
+    /// `tools.external = [...]`, the wire format is
+    /// `metadata.external_tools`, and the trait check is `Tool::is_external()`.
+    /// Every entry here must have a matching handler in `registry`.
+    external_tool_definitions: Vec<ToolDefinition>,
 }
 
 impl DistriClientApp {
@@ -49,7 +57,7 @@ impl DistriClientApp {
             http,
             config: cfg,
             registry: ExternalToolRegistry::default(),
-            local_tool_definitions: Vec::new(),
+            external_tool_definitions: Vec::new(),
         }
     }
 
@@ -66,28 +74,91 @@ impl DistriClientApp {
         self.registry.clone()
     }
 
-    /// Inject local tool definitions into message params metadata as `external_tools`.
-    /// This tells the server the tool schemas so it can include them in the LLM's tool list.
-    /// Same pattern as distrijs `enhanceParamsWithTools`.
-    /// Add tool definitions to be injected into requests as external tools.
+    /// Add tool schemas without binding handlers.
+    ///
+    /// **Prefer `register_external_tool` for new code.** This method exists
+    /// only for callers whose handlers come from a different code path (e.g.
+    /// `register_approval_handler`). When you call this, you are responsible
+    /// for ensuring a matching handler is registered in `registry()` —
+    /// `inject_external_tools()` will refuse to ship a request otherwise,
+    /// and `validate_external_tools()` lists missing handlers so you can debug.
     pub fn add_tool_definitions(&mut self, defs: Vec<ToolDefinition>) {
         for def in defs {
             if !self
-                .local_tool_definitions
+                .external_tool_definitions
                 .iter()
                 .any(|d| d.name == def.name)
             {
-                self.local_tool_definitions.push(def);
+                self.external_tool_definitions.push(def);
             }
         }
     }
 
-    pub fn inject_external_tools(&self, params: &mut distri_a2a::MessageSendParams) {
-        if self.local_tool_definitions.is_empty() {
-            return;
+    /// Register an external tool: shipping its schema to the server AND
+    /// binding the handler in one atomic call. This is the preferred API —
+    /// it makes it impossible to ship a schema for which no handler exists,
+    /// which is the bug class that previously caused 120s server-side
+    /// timeouts when the LLM emitted a call for an un-handled tool.
+    pub fn register_external_tool<F, Fut>(&mut self, definition: ToolDefinition, handler: F)
+    where
+        F: Fn(ToolCall, AgentEvent) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = anyhow::Result<ToolResponse>> + Send + 'static,
+    {
+        self.registry
+            .register("*", definition.name.clone(), handler);
+        if !self
+            .external_tool_definitions
+            .iter()
+            .any(|d| d.name == definition.name)
+        {
+            self.external_tool_definitions.push(definition);
         }
+    }
+
+    /// Read-only view of external tool schemas this client is shipping.
+    pub fn external_tool_definitions(&self) -> &[ToolDefinition] {
+        &self.external_tool_definitions
+    }
+
+    /// Verify every shipped schema has a corresponding registered handler.
+    /// Returns the names of any tools that would silently hang at runtime.
+    pub fn validate_external_tools(&self) -> Result<(), String> {
+        let missing: Vec<String> = self
+            .external_tool_definitions
+            .iter()
+            .filter(|d| !self.registry.has_tool("*", &d.name))
+            .map(|d| d.name.clone())
+            .collect();
+        if missing.is_empty() {
+            Ok(())
+        } else {
+            Err(format!(
+                "External tool schemas have no registered handlers: {}. \
+                 Use register_external_tool() to bind schema and handler atomically, \
+                 or call registry().register(\"*\", name, handler) for each missing tool.",
+                missing.join(", ")
+            ))
+        }
+    }
+
+    /// Inject external tool definitions into message params metadata as
+    /// `external_tools`. This tells the server the tool schemas so it can
+    /// include them in the LLM's tool list. Same pattern as distrijs
+    /// `enhanceParamsWithTools`.
+    ///
+    /// **Validates schema↔handler coupling first.** If any shipped tool has
+    /// no registered handler, returns `Err` immediately — turning what was
+    /// previously a 120s server-side hang into a clear request-build error.
+    pub fn inject_external_tools(
+        &self,
+        params: &mut distri_a2a::MessageSendParams,
+    ) -> Result<(), String> {
+        if self.external_tool_definitions.is_empty() {
+            return Ok(());
+        }
+        self.validate_external_tools()?;
         let external_tools: Vec<serde_json::Value> = self
-            .local_tool_definitions
+            .external_tool_definitions
             .iter()
             .map(|def| {
                 let mut tool = serde_json::json!({
@@ -103,6 +174,7 @@ impl DistriClientApp {
             .collect();
         let meta = params.metadata.get_or_insert_with(|| serde_json::json!({}));
         meta["external_tools"] = serde_json::Value::Array(external_tools);
+        Ok(())
     }
 
     pub async fn list_agents(&self) -> Result<Vec<AgentConfig>, ClientError> {
@@ -149,7 +221,7 @@ impl DistriClientApp {
 
         let mut seen: HashSet<String> = items.iter().map(|t| t.tool_name.clone()).collect();
 
-        for def in &self.local_tool_definitions {
+        for def in &self.external_tool_definitions {
             if seen.insert(def.name.clone()) {
                 items.push(ToolListItem {
                     tool_name: def.name.clone(),

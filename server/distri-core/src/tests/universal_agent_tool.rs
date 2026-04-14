@@ -4,7 +4,7 @@ use serde_json::json;
 
 use crate::agent::{load_system_agents, ExecutorContext};
 use crate::tools::builtin::{
-    is_agent_accessible, normalize_system_agent_name, resolve_coder_name, CallAgentInput,
+    is_agent_accessible, normalize_system_agent_name, resolve_code_agent, CallAgentInput,
     ALWAYS_AVAILABLE_BUILTINS, OPT_IN_BUILTINS,
 };
 use crate::tools::UniversalAgentTool;
@@ -45,157 +45,63 @@ fn test_normalize_system_agent_name() {
 #[test]
 fn test_always_available_builtins_accessible_with_empty_sub_agents() {
     let sub_agents: Vec<String> = vec![];
-    assert!(is_agent_accessible(
-        "plan",
-        &sub_agents,
-        &RuntimeMode::Cloud,
-        false
-    ));
-    assert!(is_agent_accessible(
-        "coder",
-        &sub_agents,
-        &RuntimeMode::Cloud,
-        false
-    ));
-    assert!(is_agent_accessible(
-        "_system/plan",
-        &sub_agents,
-        &RuntimeMode::Cloud,
-        false
-    ));
-    assert!(is_agent_accessible(
-        "_system/coder",
-        &sub_agents,
-        &RuntimeMode::Cloud,
-        false
-    ));
+    assert!(is_agent_accessible("plan", &sub_agents));
+    assert!(is_agent_accessible("coder", &sub_agents));
+    assert!(is_agent_accessible("_system/plan", &sub_agents));
+    assert!(is_agent_accessible("_system/coder", &sub_agents));
 }
 
 #[test]
 fn test_opt_in_builtins_not_accessible_without_config() {
     let sub_agents: Vec<String> = vec![];
-    assert!(!is_agent_accessible(
-        "explore",
-        &sub_agents,
-        &RuntimeMode::Cloud,
-        false
-    ));
-    assert!(!is_agent_accessible(
-        "_system/explore",
-        &sub_agents,
-        &RuntimeMode::Cloud,
-        false
-    ));
+    assert!(!is_agent_accessible("explore", &sub_agents));
+    assert!(!is_agent_accessible("_system/explore", &sub_agents));
 }
 
 #[test]
 fn test_opt_in_builtins_accessible_when_listed() {
     let sub_agents = vec!["explore".to_string()];
-    assert!(is_agent_accessible(
-        "explore",
-        &sub_agents,
-        &RuntimeMode::Cloud,
-        false
-    ));
-    assert!(is_agent_accessible(
-        "_system/explore",
-        &sub_agents,
-        &RuntimeMode::Cloud,
-        false
-    ));
+    assert!(is_agent_accessible("explore", &sub_agents));
+    assert!(is_agent_accessible("_system/explore", &sub_agents));
 }
 
 #[test]
 fn test_store_agents_not_accessible_without_config() {
     let sub_agents: Vec<String> = vec![];
-    assert!(!is_agent_accessible(
-        "my_agent",
-        &sub_agents,
-        &RuntimeMode::Cloud,
-        false
-    ));
+    assert!(!is_agent_accessible("my_agent", &sub_agents));
 }
 
 #[test]
 fn test_store_agents_accessible_when_listed() {
     let sub_agents = vec!["my_agent".to_string()];
-    assert!(is_agent_accessible(
-        "my_agent",
-        &sub_agents,
-        &RuntimeMode::Cloud,
-        false
-    ));
+    assert!(is_agent_accessible("my_agent", &sub_agents));
 }
 
 #[test]
 fn test_wildcard_grants_access_to_everything() {
     let sub_agents = vec!["*".to_string()];
-    assert!(is_agent_accessible(
-        "plan",
-        &sub_agents,
-        &RuntimeMode::Cloud,
-        false
-    ));
-    assert!(is_agent_accessible(
-        "coder",
-        &sub_agents,
-        &RuntimeMode::Cloud,
-        false
-    ));
-    assert!(is_agent_accessible(
-        "explore",
-        &sub_agents,
-        &RuntimeMode::Cloud,
-        false
-    ));
-    assert!(is_agent_accessible(
-        "my_agent",
-        &sub_agents,
-        &RuntimeMode::Cloud,
-        false
-    ));
-    assert!(is_agent_accessible(
-        "any_random_agent",
-        &sub_agents,
-        &RuntimeMode::Cloud,
-        false
-    ));
+    assert!(is_agent_accessible("plan", &sub_agents));
+    assert!(is_agent_accessible("coder", &sub_agents));
+    assert!(is_agent_accessible("explore", &sub_agents));
+    assert!(is_agent_accessible("my_agent", &sub_agents));
+    assert!(is_agent_accessible("any_random_agent", &sub_agents));
 }
 
 #[test]
-fn test_resolve_coder_name_cli() {
-    assert_eq!(
-        resolve_coder_name(&RuntimeMode::Cli, false),
-        "_system/coder"
-    );
-    assert_eq!(resolve_coder_name(&RuntimeMode::Cli, true), "_system/coder");
+fn test_resolve_code_agent_cli() {
+    assert_eq!(resolve_code_agent(&RuntimeMode::Cli), "distri_runner");
 }
 
 #[test]
-fn test_resolve_coder_name_cloud_default() {
-    assert_eq!(
-        resolve_coder_name(&RuntimeMode::Cloud, false),
-        "_system/coder"
-    );
+fn test_resolve_code_agent_cloud() {
+    assert_eq!(resolve_code_agent(&RuntimeMode::Cloud), "distri_runner");
 }
 
 #[test]
-fn test_resolve_coder_name_cloud_lite() {
+fn test_resolve_code_agent_browser() {
     assert_eq!(
-        resolve_coder_name(&RuntimeMode::Cloud, true),
-        "_system/coder_lite"
-    );
-}
-
-#[test]
-fn test_resolve_coder_name_browser() {
-    assert_eq!(
-        resolve_coder_name(&RuntimeMode::Browser, false),
-        "_system/coder"
-    );
-    assert_eq!(
-        resolve_coder_name(&RuntimeMode::Browser, true),
-        "_system/coder"
+        resolve_code_agent(&RuntimeMode::Browser),
+        "distri_browser_runner"
     );
 }
 

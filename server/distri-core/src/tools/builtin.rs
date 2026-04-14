@@ -647,15 +647,7 @@ pub(crate) fn normalize_system_agent_name(name: &str) -> String {
 /// - It is in `ALWAYS_AVAILABLE_BUILTINS` (including short-name matches), OR
 /// - The calling agent's `sub_agents` contains `"*"` (wildcard), OR
 /// - It is explicitly listed in the calling agent's `sub_agents`
-///
-/// The `_runtime_mode` and `_use_coder_lite` parameters are accepted for
-/// future use but do not currently affect access control decisions.
-pub(crate) fn is_agent_accessible(
-    agent_name: &str,
-    sub_agents: &[String],
-    _runtime_mode: &RuntimeMode,
-    _use_coder_lite: bool,
-) -> bool {
+pub(crate) fn is_agent_accessible(agent_name: &str, sub_agents: &[String]) -> bool {
     let canonical = normalize_system_agent_name(agent_name);
 
     // Always-available builtins are accessible regardless (check both forms)
@@ -680,17 +672,23 @@ pub(crate) fn is_agent_accessible(
     false
 }
 
-/// Resolve which coder agent variant to use based on runtime mode and use_coder_lite flag.
-pub(crate) fn resolve_coder_name(runtime_mode: &RuntimeMode, use_coder_lite: bool) -> &'static str {
+/// Resolve the logical "code" / "coder" agent to a concrete system agent
+/// name based on the caller's runtime. The orchestrator handles any runtime
+/// mismatch via `BackgroundRunner` — the resolver itself doesn't need to
+/// know about remote dispatch.
+///
+/// Returns short names (no `_system/` prefix); the caller is expected to
+/// run them through `normalize_system_agent_name` + the existing fallback
+/// chain so both file-based and baked-in registrations are found.
+///
+/// Mapping:
+/// - `Browser` → `distri_browser_runner`
+/// - `Cli` / `Cloud` → `distri_runner` (declares `runtime = ["cli"]`, so a
+///   Cloud caller auto-routes via the sandbox launcher).
+pub(crate) fn resolve_code_agent(runtime_mode: &RuntimeMode) -> &'static str {
     match runtime_mode {
-        RuntimeMode::Cloud => {
-            if use_coder_lite {
-                "_system/coder_lite"
-            } else {
-                "_system/coder"
-            }
-        }
-        RuntimeMode::Cli | RuntimeMode::Browser => "_system/coder",
+        RuntimeMode::Browser => "distri_browser_runner",
+        RuntimeMode::Cli | RuntimeMode::Cloud => "distri_runner",
     }
 }
 
@@ -834,24 +832,28 @@ impl ExecutorContextTool for UniversalAgentTool {
                 name.to_string()
             };
 
-            // Special handling: resolve "coder" / "_system/coder" based on runtime mode
-            let resolved = if normalized == "_system/coder" || normalized == "coder" {
-                let use_coder_lite = orchestrator
-                    .get_agent(&context.agent_id)
-                    .await
-                    .and_then(|cfg| match cfg {
-                        distri_types::configuration::AgentConfig::StandardAgent(def) => {
-                            Some(def.use_coder_lite)
-                        }
-                        _ => None,
-                    })
-                    .unwrap_or(false);
-                resolve_coder_name(&context.runtime_mode, use_coder_lite).to_string()
+            // Special handling: resolve the logical "code" / "coder" agent
+            // to a concrete system agent based on the caller's runtime.
+            // Cli/Cloud → distri_runner (Cloud auto-routes via sandbox because
+            // distri_runner declares `runtime = ["cli"]`); Browser → distri_browser_runner.
+            let is_code_alias = matches!(
+                normalized.as_str(),
+                "_system/coder" | "coder" | "_system/code" | "code"
+            );
+            if is_code_alias {
+                let short = resolve_code_agent(&context.runtime_mode);
+                // Run the resolver result through the same normalize+fallback
+                // chain so it works whether the agent is baked-in (`_system/<name>`)
+                // or file-loaded (`<name>` from agents/ dir).
+                let candidate = normalize_system_agent_name(short);
+                if orchestrator.get_agent(&candidate).await.is_some() {
+                    candidate
+                } else {
+                    short.to_string()
+                }
             } else {
                 normalized
-            };
-
-            resolved
+            }
         } else if input.system_prompt.is_some() {
             // Ad-hoc mode: create a temporary agent from system_prompt
             let adhoc_name = format!("_adhoc/{}", uuid::Uuid::new_v4());
@@ -912,12 +914,7 @@ impl ExecutorContextTool for UniversalAgentTool {
             })
             .unwrap_or_default();
 
-        if !is_agent_accessible(
-            &agent_name,
-            &calling_agent_sub_agents,
-            &context.runtime_mode,
-            false,
-        ) {
+        if !is_agent_accessible(&agent_name, &calling_agent_sub_agents) {
             return Err(AgentError::ToolExecution(format!(
                 "Agent '{}' is not accessible from '{}'. Add it to sub_agents or use an always-available builtin.",
                 agent_name, context.agent_id

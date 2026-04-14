@@ -8,7 +8,7 @@
 #   - Agent returns structured text output
 #
 # Prerequisites:
-#   - distri-cloud running with SANDBOX_ENABLED=true
+#   - distri-cloud running (BROWSR_BASE_URL / BROWSR_API_KEY configured)
 #   - browsr router + orchestrator running
 #   - Container image includes python3, pip
 #   - DISTRI_API_KEY set

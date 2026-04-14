@@ -17,21 +17,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::{
-    COLOR_BRIGHT_GREEN, COLOR_BRIGHT_MAGENTA, COLOR_BRIGHT_YELLOW, COLOR_GRAY, COLOR_RESET,
+    COLOR_BRIGHT_GREEN, COLOR_BRIGHT_MAGENTA, COLOR_BRIGHT_YELLOW, COLOR_RESET,
 };
-
-/// Names of all tools the CLI registers locally.
-/// Used to ensure the stream client intercepts these tool calls
-/// regardless of which agent is running.
-pub const LOCAL_TOOL_NAMES: &[&str] = &[
-    "Bash",
-    "Read",
-    "Write",
-    "Edit",
-    "Glob",
-    "Grep",
-    "execute_command",
-];
 
 /// Register all local CLI tools and return their definitions (with prompts).
 pub fn register_all(
@@ -290,55 +277,3 @@ pub fn register_execute_command(
     );
 }
 
-/// Validate that all external tools declared in the agent definition are registered locally.
-/// Prints available/missing tools and returns an error if any are missing.
-pub fn validate_external_tools(
-    registry: &ExternalToolRegistry,
-    agent_id: &str,
-    required: &std::collections::HashSet<String>,
-    verbose: bool,
-) -> anyhow::Result<()> {
-    if required.is_empty() {
-        return Ok(());
-    }
-
-    let mut available = Vec::new();
-    let mut missing = Vec::new();
-
-    for name in required {
-        if registry.has_tool(agent_id, name) {
-            available.push(name.as_str());
-        } else {
-            missing.push(name.as_str());
-        }
-    }
-
-    available.sort();
-    missing.sort();
-
-    if verbose {
-        println!(
-            "{}External tools ({} registered, {} missing){}",
-            COLOR_GRAY,
-            available.len(),
-            missing.len(),
-            COLOR_RESET
-        );
-        for name in &available {
-            println!("  {}✓{} {}", COLOR_BRIGHT_GREEN, COLOR_RESET, name);
-        }
-        for name in &missing {
-            println!("  {}✗{} {}", COLOR_BRIGHT_YELLOW, COLOR_RESET, name);
-        }
-    }
-
-    if !missing.is_empty() {
-        anyhow::bail!(
-            "Agent '{}' requires external tools not available locally: {}",
-            agent_id,
-            missing.join(", ")
-        );
-    }
-
-    Ok(())
-}

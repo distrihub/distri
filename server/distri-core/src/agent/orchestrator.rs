@@ -979,31 +979,62 @@ impl AgentOrchestrator {
         );
         Self::validate_agent_model(&agent_config)?;
 
-        // After the definition is fully built (overrides applied), check if this agent
-        // should run remotely. If so, dispatch via RemoteAgent instead of StandardAgent.
-        if let distri_types::configuration::AgentConfig::StandardAgent(ref definition) =
-            agent_config
-        {
-            if definition.remote {
-                if let Some(runner) = &self.background_runner {
-                    let hooks: Arc<dyn crate::agent::types::AgentHooks> = Arc::new(
-                        crate::agent::hooks::CombinedHooks::new(self.system_hooks.clone()),
-                    );
-                    let agent = crate::agent::remote::RemoteAgent {
-                        definition: definition.clone(),
-                        runner: runner.clone(),
-                        broadcaster: self.runtime.broadcaster_arc(), // Arc needed for RemoteAgent ownership
-                        hooks,
-                    };
-                    return agent.invoke_stream(message, context).await;
-                } else {
-                    return Err(AgentError::Session(
-                        "Agent has remote=true but no background_runner configured".to_string(),
-                    ));
+        // Wildcard external-tools sanity check: an agent that declares
+        // `external = ["*"]` is asking the client to ship at least one tool.
+        // An empty client list silently produces an LLM with zero external tools
+        // and confusing downstream errors — fail fast at request entry.
+        if let distri_types::configuration::AgentConfig::StandardAgent(ref def) = agent_config {
+            if let Some(tools_cfg) = def.tools.as_ref() {
+                if let Some(ext) = tools_cfg.external.as_ref() {
+                    if ext.iter().any(|t| t == "*") && context.external_tools_count().await == 0 {
+                        return Err(AgentError::Session(format!(
+                            "Agent '{}' declares external = [\"*\"] but no external tools \
+                             were provided by the client. The client must ship at least one \
+                             external tool in ExecutorContextMetadata.external_tools.",
+                            def.name
+                        )));
+                    }
                 }
             }
         }
 
+        // Runtime-constraint dispatch. If the agent declares any runtime
+        // constraints and the current ExecutorContext.runtime_mode is not in
+        // the allowed list, route through RemoteAgent — but only if a
+        // BackgroundRunner is configured whose provided_runtime is in the
+        // allowed list. Otherwise fail fast with a clear error.
+        if let distri_types::configuration::AgentConfig::StandardAgent(ref definition) =
+            agent_config
+        {
+            let allowed = definition.allowed_runtimes();
+            if !allowed.is_empty() && !allowed.iter().any(|rt| rt == &context.runtime_mode) {
+                let Some(runner) = &self.background_runner else {
+                    return Err(AgentError::Session(format!(
+                        "Agent '{}' requires runtime {:?} but the current runtime is {:?} \
+                         and no background runner is configured to provide it.",
+                        definition.name, allowed, context.runtime_mode
+                    )));
+                };
+                let provided = runner.provided_runtime();
+                if !allowed.iter().any(|rt| rt == &provided) {
+                    return Err(AgentError::Session(format!(
+                        "Agent '{}' requires runtime {:?} but the only available background \
+                         runner provides {:?}.",
+                        definition.name, allowed, provided
+                    )));
+                }
+                let hooks: Arc<dyn crate::agent::types::AgentHooks> = Arc::new(
+                    crate::agent::hooks::CombinedHooks::new(self.system_hooks.clone()),
+                );
+                let agent = crate::agent::remote::RemoteAgent {
+                    definition: definition.clone(),
+                    runner: runner.clone(),
+                    broadcaster: self.runtime.broadcaster_arc(),
+                    hooks,
+                };
+                return agent.invoke_stream(message, context).await;
+            }
+        }
         // Check if todos are enabled for this agent and initialize shared_todos if needed
         if let distri_types::configuration::AgentConfig::StandardAgent(definition) = &agent_config {
             if definition.should_use_browser() {
@@ -1030,6 +1061,23 @@ impl AgentOrchestrator {
         task: &str,
         context: Arc<ExecutorContext>,
     ) -> Result<InvokeResult, AgentError> {
+        // Same wildcard validation as call_agent_stream — inline agents must
+        // also receive at least one external tool when declaring `external = ["*"]`.
+        if let distri_types::configuration::AgentConfig::StandardAgent(ref def) = agent_config {
+            if let Some(tools_cfg) = def.tools.as_ref() {
+                if let Some(ext) = tools_cfg.external.as_ref() {
+                    if ext.iter().any(|t| t == "*") && context.external_tools_count().await == 0 {
+                        return Err(AgentError::Session(format!(
+                            "Agent '{}' declares external = [\"*\"] but no external tools \
+                             were provided by the client. The client must ship at least one \
+                             external tool in ExecutorContextMetadata.external_tools.",
+                            def.name
+                        )));
+                    }
+                }
+            }
+        }
+
         let agent: Box<dyn BaseAgent> = self
             .create_agent_from_config(agent_config.clone(), context.clone())
             .await?;

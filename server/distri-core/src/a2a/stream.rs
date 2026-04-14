@@ -1,7 +1,7 @@
 use crate::a2a::handler::validate_message;
 use crate::a2a::mapper::{map_agent_event, map_final_result};
-use crate::agent::InvokeResult;
 use crate::a2a::{extract_text_from_message, SseMessage};
+use crate::agent::InvokeResult;
 use crate::agent::{
     types::ExecutorContextMetadata, AgentEventType, AgentOrchestrator, ExecutorContext,
 };

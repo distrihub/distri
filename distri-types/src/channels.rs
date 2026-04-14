@@ -10,7 +10,7 @@
 //! - A [`Channel`] is a single conversation: a Telegram DM or group, a
 //!   WhatsApp chat, a Discord channel. One row per `(bot_id, chat_id)`. Holds
 //!   thread state only — everything else comes from the parent [`Bot`].
-//! - [`AuthScope`] is the 3-variant gate: Public, Workspace, EndUser.
+//! - [`AuthScope`] is the 3-variant gate: Public, Workspace, User.
 //! - [`AuthenticatedChannelUser`] is the type-level proof that the auth gate
 //!   was crossed for a particular `(Channel, PlatformUser)` pair. Every
 //!   downstream function that dispatches to an agent must take one.
@@ -102,9 +102,9 @@ pub enum AuthScope {
     Public,
     /// Platform members of the bot's workspace.
     Workspace,
-    /// External end-users bound via `user_connection_identities` to the
-    /// bot's `connection_id`. First contact returns a channel-auth URL.
-    EndUser,
+    /// External users configured per-connection. First contact returns a
+    /// configure URL that stores their values as user-scope secrets.
+    User,
 }
 
 impl fmt::Display for AuthScope {
@@ -112,7 +112,7 @@ impl fmt::Display for AuthScope {
         f.write_str(match self {
             Self::Public => "public",
             Self::Workspace => "workspace",
-            Self::EndUser => "end_user",
+            Self::User => "user",
         })
     }
 }
@@ -123,7 +123,7 @@ impl std::str::FromStr for AuthScope {
         match s {
             "public" => Ok(Self::Public),
             "workspace" => Ok(Self::Workspace),
-            "end_user" => Ok(Self::EndUser),
+            "user" => Ok(Self::User),
             other => Err(format!("unknown auth scope: {other}")),
         }
     }
@@ -147,7 +147,7 @@ pub struct Bot {
     /// Which agent handles messages routed through this bot.
     pub agent_id: String,
     pub auth_scope: AuthScope,
-    /// Required when `auth_scope == EndUser`. Unused otherwise.
+    /// Required when `auth_scope == User`. Unused otherwise.
     pub connection_id: Option<Uuid>,
     pub active: bool,
 }
@@ -236,8 +236,8 @@ pub enum AuthProof {
     Public,
     /// The user is a platform member of the bot's workspace.
     WorkspaceMember { role: String },
-    /// The user has an end-user binding under the bot's connection.
-    EndUserBinding {
+    /// The user has configured the bot's linked Custom connection.
+    UserBinding {
         connection_id: Uuid,
         external_user_id: String,
     },
@@ -245,14 +245,19 @@ pub enum AuthProof {
 
 /// Outcome of running the channel-auth resolver against an inbound message.
 /// The gateway webhook handler turns each variant into a concrete reply:
-/// `Authenticated` → dispatch to the agent; `NeedsHandshake` → send the URL;
-/// `Denied` → send the reason text.
+/// `Authenticated` → dispatch to the agent; `NeedsConfiguration` → reply with
+/// the configure URL; `Denied` → send the reason text.
 #[derive(Debug, Clone)]
 pub enum ResolveOutcome {
     Authenticated(AuthenticatedChannelUser),
-    /// Only produced for `AuthScope::EndUser` on cache miss.
-    NeedsHandshake { url: String },
-    /// No handshake path exists. Used for Workspace non-members and
-    /// misconfigured rows.
-    Denied { reason: String },
+    /// Only produced for `AuthScope::User` before the sender has stored the
+    /// connection's required field values in the secrets store.
+    NeedsConfiguration {
+        url: String,
+    },
+    /// No path exists for this user to access the bot (Workspace non-members
+    /// or misconfigured rows).
+    Denied {
+        reason: String,
+    },
 }
