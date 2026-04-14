@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useThreads, useAgentsByUsage } from '@distri/react';
-import { useDistriHomeNavigate } from '../DistriHomeProvider';
+import { type Dispatch, type SetStateAction, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useAgentsByUsage } from '@distri/react';
+import { type DetailedThread, type DetailedThreadListParams } from '../DistriHomeClient';
+import { useDistriHomeClient, useDistriHomeNavigate } from '../DistriHomeProvider';
 import {
   Activity,
   AlertTriangle,
@@ -32,6 +33,8 @@ interface Thread {
   channel_id?: string;
   channel_name?: string;
   user_name?: string;
+  user_id?: string;
+  user_email?: string;
   user?: string;
   last_message?: string;
   updated_at?: string;
@@ -40,6 +43,107 @@ interface Thread {
   input_tokens?: number;
   output_tokens?: number;
   total_tokens?: number;
+  channel_provider?: string;
+}
+
+interface ThreadsResultState {
+  threads: DetailedThread[];
+  total: number;
+  page: number;
+  pageSize: number;
+  loading: boolean;
+  error: Error | null;
+  params: DetailedThreadListParams;
+  setParams: Dispatch<SetStateAction<DetailedThreadListParams>>;
+  nextPage: () => void;
+  prevPage: () => void;
+  setPageSize: (size: number) => void;
+}
+
+function useDetailedThreads(initialParams: DetailedThreadListParams): ThreadsResultState {
+  const homeClient = useDistriHomeClient();
+  const [threads, setThreads] = useState<DetailedThread[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSizeState] = useState(initialParams.limit || 30);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<Error | null>(null);
+  const [params, setParams] = useState<DetailedThreadListParams>({
+    limit: initialParams.limit || 30,
+    offset: 0,
+    ...initialParams,
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function run() {
+      if (!homeClient) {
+        setError(new Error('Home client not available'));
+        setLoading(false);
+        return;
+      }
+
+      try {
+        setLoading(true);
+        setError(null);
+        const response = await homeClient.listDetailedThreads(params);
+        if (cancelled) return;
+        setThreads(response.threads);
+        setTotal(response.total);
+        setPage(response.page);
+        setPageSizeState(response.page_size);
+      } catch (err) {
+        if (cancelled) return;
+        setError(err instanceof Error ? err : new Error('Failed to fetch threads'));
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [homeClient, params]);
+
+  const nextPage = useCallback(() => {
+    const currentOffset = params.offset || 0;
+    const currentLimit = params.limit || 30;
+    const newOffset = currentOffset + currentLimit;
+    if (newOffset < total) {
+      setParams((prev) => ({ ...prev, offset: newOffset }));
+    }
+  }, [params.limit, params.offset, total]);
+
+  const prevPage = useCallback(() => {
+    const currentOffset = params.offset || 0;
+    const currentLimit = params.limit || 30;
+    setParams((prev) => ({
+      ...prev,
+      offset: Math.max(0, currentOffset - currentLimit),
+    }));
+  }, [params.limit, params.offset]);
+
+  const setPageSize = useCallback((size: number) => {
+    setParams((prev) => ({ ...prev, limit: size, offset: 0 }));
+  }, []);
+
+  return {
+    threads,
+    total,
+    page,
+    pageSize,
+    loading,
+    error,
+    params,
+    setParams,
+    nextPage,
+    prevPage,
+    setPageSize,
+  };
 }
 
 function AgentSearchDropdown({
@@ -194,6 +298,8 @@ export interface ThreadsViewProps {
   className?: string;
   initialAgentId?: string;
   initialExternalId?: string;
+  initialUserId?: string;
+  initialChannelId?: string;
   onShowTrace?: (threadId: string) => void;
 }
 
@@ -216,7 +322,14 @@ function getTimeFilterDate(filter: QuickTimeFilter): string | undefined {
   }
 }
 
-export function ThreadsView({ className, initialAgentId, initialExternalId, onShowTrace }: ThreadsViewProps) {
+export function ThreadsView({
+  className,
+  initialAgentId,
+  initialExternalId,
+  initialUserId,
+  initialChannelId,
+  onShowTrace,
+}: ThreadsViewProps) {
   const navigate = useDistriHomeNavigate();
   const [showFilterDialog, setShowFilterDialog] = useState(false);
   const [searchInput, setSearchInput] = useState('');
@@ -225,6 +338,8 @@ export function ThreadsView({ className, initialAgentId, initialExternalId, onSh
   // Filter dialog state - initialize from props
   const [dialogAgentId, setDialogAgentId] = useState(initialAgentId || '');
   const [dialogExternalId, setDialogExternalId] = useState(initialExternalId || '');
+  const [dialogUserId, setDialogUserId] = useState(initialUserId || '');
+  const [dialogChannelId, setDialogChannelId] = useState(initialChannelId || '');
   const [dialogFromDate, setDialogFromDate] = useState('');
   const [dialogToDate, setDialogToDate] = useState('');
 
@@ -240,12 +355,27 @@ export function ThreadsView({ className, initialAgentId, initialExternalId, onSh
     nextPage,
     prevPage,
     setPageSize,
-  } = useThreads({
-    initialParams: {
+  } = useDetailedThreads({
+    agent_id: initialAgentId || undefined,
+    external_id: initialExternalId || undefined,
+    user_id: initialUserId || undefined,
+    channel_id: initialChannelId || undefined,
+  });
+
+  useEffect(() => {
+    setDialogAgentId(initialAgentId || '');
+    setDialogExternalId(initialExternalId || '');
+    setDialogUserId(initialUserId || '');
+    setDialogChannelId(initialChannelId || '');
+    setParams((prev) => ({
+      ...prev,
       agent_id: initialAgentId || undefined,
       external_id: initialExternalId || undefined,
-    },
-  });
+      user_id: initialUserId || undefined,
+      channel_id: initialChannelId || undefined,
+      offset: 0,
+    }));
+  }, [initialAgentId, initialExternalId, initialUserId, initialChannelId, setParams]);
 
   const { agents: agentsByUsage, search: agentSearch, setSearch: setAgentSearch } = useAgentsByUsage();
 
@@ -311,10 +441,28 @@ export function ThreadsView({ className, initialAgentId, initialExternalId, onSh
     [params, setParams]
   );
 
+  const handleUserClick = useCallback(
+    (userId: string) => {
+      setParams({ ...params, user_id: userId, offset: 0 });
+      setDialogUserId(userId);
+    },
+    [params, setParams]
+  );
+
+  const handleChannelClick = useCallback(
+    (channelId: string) => {
+      setParams({ ...params, channel_id: channelId, offset: 0 });
+      setDialogChannelId(channelId);
+    },
+    [params, setParams]
+  );
+
   // Filter dialog handlers
   const openFilterDialog = useCallback(() => {
     setDialogAgentId(params.agent_id || '');
     setDialogExternalId(params.external_id || '');
+    setDialogUserId(params.user_id || '');
+    setDialogChannelId(params.channel_id || '');
     setDialogFromDate(params.from_date ? params.from_date.split('T')[0] : '');
     setDialogToDate(params.to_date ? params.to_date.split('T')[0] : '');
     setShowFilterDialog(true);
@@ -326,16 +474,20 @@ export function ThreadsView({ className, initialAgentId, initialExternalId, onSh
       ...params,
       agent_id: dialogAgentId || undefined,
       external_id: dialogExternalId || undefined,
+      user_id: dialogUserId || undefined,
+      channel_id: dialogChannelId || undefined,
       from_date: dialogFromDate ? new Date(dialogFromDate).toISOString() : undefined,
       to_date: dialogToDate ? new Date(dialogToDate + 'T23:59:59').toISOString() : undefined,
       offset: 0,
     });
     setShowFilterDialog(false);
-  }, [params, dialogAgentId, dialogExternalId, dialogFromDate, dialogToDate, setParams]);
+  }, [params, dialogAgentId, dialogExternalId, dialogUserId, dialogChannelId, dialogFromDate, dialogToDate, setParams]);
 
   const clearAllFilters = useCallback(() => {
     setDialogAgentId('');
     setDialogExternalId('');
+    setDialogUserId('');
+    setDialogChannelId('');
     setDialogFromDate('');
     setDialogToDate('');
     setQuickTimeFilter(null);
@@ -381,6 +533,8 @@ export function ThreadsView({ className, initialAgentId, initialExternalId, onSh
   const activeFilterCount = [
     params.agent_id,
     params.external_id,
+    params.user_id,
+    params.channel_id,
     params.from_date,
     params.to_date,
     params.search,
@@ -490,7 +644,7 @@ export function ThreadsView({ className, initialAgentId, initialExternalId, onSh
                 {filter === '7d' && 'Last 7 days'}
               </button>
             ))}
-            {(params.agent_id || params.external_id || params.search) && (
+            {(params.agent_id || params.external_id || params.user_id || params.channel_id || params.search) && (
               <button
                 type="button"
                 onClick={clearAllFilters}
@@ -600,10 +754,31 @@ export function ThreadsView({ className, initialAgentId, initialExternalId, onSh
                             ext:{thread.external_id}
                           </button>
                         )}
+                        {thread.user_id && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleUserClick(thread.user_id!);
+                            }}
+                            className="hover:text-primary hover:underline"
+                            title={`Filter by user: ${thread.user_name || thread.user_id}`}
+                          >
+                            {thread.user_name || `user:${thread.user_id.slice(0, 8)}...`}
+                          </button>
+                        )}
                         {(thread.channel_name || thread.channel_id) && (
-                          <span className="font-mono text-[11px] text-muted-foreground/80">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              thread.channel_id && handleChannelClick(thread.channel_id);
+                            }}
+                            className="font-mono text-[11px] text-muted-foreground/80 hover:text-primary hover:underline"
+                            title={`Filter by channel: ${thread.channel_name || thread.channel_id}`}
+                          >
                             {thread.channel_name ?? `ch:${thread.channel_id?.slice(0, 8)}...`}
-                          </span>
+                          </button>
                         )}
                         <span className="font-mono text-[11px] text-muted-foreground/80">
                           ID: {thread.id.slice(0, 8)}...
@@ -742,6 +917,32 @@ export function ThreadsView({ className, initialAgentId, initialExternalId, onSh
                   value={dialogExternalId}
                   onChange={(e) => setDialogExternalId(e.target.value)}
                   placeholder="Filter by external ID..."
+                  className="h-10 w-full rounded-md border border-border/70 bg-background px-3 text-sm text-foreground"
+                />
+              </div>
+
+              <div>
+                <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  User ID
+                </label>
+                <input
+                  type="text"
+                  value={dialogUserId}
+                  onChange={(e) => setDialogUserId(e.target.value)}
+                  placeholder="Filter by user ID..."
+                  className="h-10 w-full rounded-md border border-border/70 bg-background px-3 text-sm text-foreground"
+                />
+              </div>
+
+              <div>
+                <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  Channel ID
+                </label>
+                <input
+                  type="text"
+                  value={dialogChannelId}
+                  onChange={(e) => setDialogChannelId(e.target.value)}
+                  placeholder="Filter by channel ID..."
                   className="h-10 w-full rounded-md border border-border/70 bg-background px-3 text-sm text-foreground"
                 />
               </div>

@@ -75,6 +75,91 @@ export interface ApiKey {
   created_at?: string;
 }
 
+export interface DetailedThreadListParams {
+  agent_id?: string;
+  external_id?: string;
+  user_id?: string;
+  channel_id?: string;
+  search?: string;
+  from_date?: string;
+  to_date?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface DetailedThread {
+  id: string;
+  title: string;
+  agent_id: string;
+  agent_name: string;
+  updated_at: string;
+  message_count: number;
+  last_message?: string | null;
+  user_id?: string | null;
+  user_name?: string | null;
+  user_email?: string | null;
+  external_id?: string | null;
+  channel_id?: string | null;
+  channel_name?: string | null;
+  channel_provider?: string | null;
+  input_tokens?: number;
+  output_tokens?: number;
+  total_tokens?: number;
+  tags?: string[];
+}
+
+export interface DetailedThreadsResponse {
+  threads: DetailedThread[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface UserChannelSummary {
+  channel_id: string;
+  provider: string;
+  name?: string | null;
+  chat_id?: string | null;
+}
+
+export interface UserListItem {
+  id: string;
+  name?: string | null;
+  email?: string | null;
+  created_at: string;
+  updated_at: string;
+  last_seen_at?: string | null;
+  thread_count: number;
+  message_count: number;
+  channel_count: number;
+  channels: UserChannelSummary[];
+}
+
+export interface UserListResponse {
+  users: UserListItem[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface UserListParams {
+  search?: string;
+  channel_id?: string;
+  sort_by?: 'created_at' | 'updated_at' | 'message_count' | 'channel_count' | 'name';
+  sort_order?: 'asc' | 'desc';
+  limit?: number;
+  offset?: number;
+}
+
+export interface UserDetail extends UserListItem {
+  external_ids: string[];
+}
+
+export interface SendUserTestMessageRequest {
+  channel_id: string;
+  message: string;
+}
+
 /**
  * DistriHomeClient extends DistriClient with home-specific methods.
  * Uses DistriClient's fetch method for authenticated requests.
@@ -137,6 +222,123 @@ export class DistriHomeClient {
     }
 
     return await response.json();
+  }
+
+  async listDetailedThreads(params: DetailedThreadListParams = {}): Promise<DetailedThreadsResponse> {
+    const searchParams = new URLSearchParams();
+    if (params.agent_id) searchParams.set('agent_id', params.agent_id);
+    if (params.external_id) searchParams.set('external_id', params.external_id);
+    if (params.user_id) searchParams.set('user_id', params.user_id);
+    if (params.channel_id) searchParams.set('channel_id', params.channel_id);
+    if (params.search) searchParams.set('search', params.search);
+    if (params.from_date) searchParams.set('from_date', params.from_date);
+    if (params.to_date) searchParams.set('to_date', params.to_date);
+    if (params.limit !== undefined) searchParams.set('limit', params.limit.toString());
+    if (params.offset !== undefined) searchParams.set('offset', params.offset.toString());
+
+    const query = searchParams.toString();
+    const url = query ? `/threads/detailed?${query}` : '/threads/detailed';
+    const response = await this.client.fetch(url);
+
+    if (response.ok) {
+      return await response.json();
+    }
+
+    if (response.status !== 404) {
+      throw new Error(`Failed to fetch detailed threads: ${response.statusText}`);
+    }
+
+    const fallback = await this.client.getThreads({
+      agent_id: params.agent_id,
+      external_id: params.external_id,
+      search: params.search,
+      from_date: params.from_date,
+      to_date: params.to_date,
+      limit: params.limit,
+      offset: params.offset,
+    });
+
+    return {
+      total: fallback.total,
+      page: fallback.page,
+      page_size: fallback.page_size,
+      threads: fallback.threads.map((thread) => ({
+        id: thread.id,
+        title: thread.title,
+        agent_id: thread.agent_id,
+        agent_name: thread.agent_name,
+        updated_at: thread.updated_at,
+        message_count: thread.message_count,
+        last_message: thread.last_message,
+        user_id: thread.user_id ?? null,
+        user_name: null,
+        user_email: null,
+        external_id: thread.external_id ?? null,
+        channel_id: thread.channel_id ?? null,
+        channel_name: thread.channel_name ?? null,
+        channel_provider: null,
+        input_tokens: thread.input_tokens,
+        output_tokens: thread.output_tokens,
+        total_tokens: thread.total_tokens,
+        tags: thread.tags,
+      })),
+    };
+  }
+
+  async listUsers(params: UserListParams = {}): Promise<UserListResponse> {
+    const searchParams = new URLSearchParams();
+    if (params.search) searchParams.set('search', params.search);
+    if (params.channel_id) searchParams.set('channel_id', params.channel_id);
+    if (params.sort_by) searchParams.set('sort_by', params.sort_by);
+    if (params.sort_order) searchParams.set('sort_order', params.sort_order);
+    if (params.limit !== undefined) searchParams.set('limit', params.limit.toString());
+    if (params.offset !== undefined) searchParams.set('offset', params.offset.toString());
+
+    const query = searchParams.toString();
+    const url = query ? `/users?${query}` : '/users';
+    const response = await this.client.fetch(url);
+
+    if (response.ok) {
+      return await response.json();
+    }
+    if (response.status === 404) {
+      return { users: [], total: 0, page: 1, page_size: params.limit ?? 30 };
+    }
+    throw new Error(`Failed to fetch users: ${response.statusText}`);
+  }
+
+  async getUser(userId: string): Promise<UserDetail> {
+    const response = await this.client.fetch(`/users/${encodeURIComponent(userId)}`);
+    if (response.ok) {
+      return await response.json();
+    }
+    if (response.status === 404) {
+      throw new Error('User not found');
+    }
+    throw new Error(`Failed to fetch user: ${response.statusText}`);
+  }
+
+  async deleteUser(userId: string): Promise<void> {
+    const response = await this.client.fetch(`/users/${encodeURIComponent(userId)}`, {
+      method: 'DELETE',
+    });
+    if (!response.ok) {
+      throw new Error(`Failed to delete user: ${response.statusText}`);
+    }
+  }
+
+  async sendUserTestMessage(
+    userId: string,
+    payload: SendUserTestMessageRequest,
+  ): Promise<void> {
+    const response = await this.client.fetch(`/users/${encodeURIComponent(userId)}/test-message`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      throw new Error(`Failed to send test message: ${response.statusText}`);
+    }
   }
 
   /**
@@ -802,4 +1004,3 @@ export interface ModelProviderDefinition {
   models: Model[];
   is_custom: boolean;
 }
-
