@@ -331,7 +331,19 @@ fn spawn_background_execution(
             }
             Err(e) => {
                 tracing::error!("Background execution error for task {}: {}", task_id, e);
-                // Ensure a terminal event is published so subscribers don't hang
+                // Emit a terminal RunError so SSE subscribers (gateway,
+                // web client) see the real failure instead of watching the
+                // stream close silently. Mirror the cancellation branch above.
+                executor_context
+                    .update_status(crate::types::TaskStatus::Failed)
+                    .await;
+                executor_context
+                    .emit(AgentEventType::RunError {
+                        message: e.to_string(),
+                        code: Some("EXECUTION_ERROR".to_string()),
+                        usage: Some(executor_context.get_step_usage().await),
+                    })
+                    .await;
             }
         }
     }));

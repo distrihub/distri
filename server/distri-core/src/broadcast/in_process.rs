@@ -315,6 +315,20 @@ impl InProcessRuntime {
             coordinator: InProcessCoordinator::new(task_store),
         }
     }
+
+    /// Build a runtime sharing an existing broadcaster instance. Used by tests
+    /// that need to publish events from outside the orchestrator (e.g. mock
+    /// background runners) and have those events visible to the orchestrator's
+    /// internal `RemoteAgent` subscriber.
+    pub fn from_broadcaster(
+        broadcaster: Arc<InProcessBroadcaster>,
+        task_store: Arc<dyn TaskStore>,
+    ) -> Self {
+        Self {
+            broadcaster,
+            coordinator: InProcessCoordinator::new(task_store),
+        }
+    }
 }
 
 impl AgentRuntime for InProcessRuntime {

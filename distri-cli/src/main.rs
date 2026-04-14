@@ -509,11 +509,16 @@ async fn main() -> Result<()> {
                     base_url
                 ));
             }
-            // Register local CLI tool handlers under "*" — the registry is
-            // the single source of truth for client-handled tools, and
-            // `register_external_tool` keeps schema and handler in sync.
-            let tool_defs = register_all(&app.registry(), &agent_name, &workspace);
-            app.add_tool_definitions(tool_defs);
+            // Register local CLI tool handlers + ship their schemas to the
+            // server ONLY when running locally. With `--remote`, the agent
+            // forks into a sandbox that has its own distri-cli with its own
+            // tools — the outer CLI is just a passthrough for events. Shipping
+            // schemas in remote mode causes the server to delegate tool calls
+            // back to the outer CLI, which never bound a registry → 120s hang.
+            if !remote {
+                let tool_defs = register_all(&app.registry(), &agent_name, &workspace);
+                app.add_tool_definitions(tool_defs);
+            }
             // Fetch connections to inject into agent context
             let distri_client = Distri::from_config(config.clone());
             let connections_context = build_connections_context(&distri_client).await;
@@ -550,13 +555,16 @@ async fn main() -> Result<()> {
                 connections_context,
                 env_vars,
             );
+            // inject_external_tools is a no-op when no schemas were added.
             if let Err(err) = app.inject_external_tools(&mut params) {
                 return Err(anyhow::anyhow!("Tool registration error: {}", err));
             }
 
             println!("Streaming agent '{}' via {}", agent_name, base_url);
             let registry = app.registry();
-            register_approval_handler(&registry);
+            if !remote {
+                register_approval_handler(&registry);
+            }
             let mut stream_config = config.clone().with_timeout(600);
             stream_config.traceparent = traceparent;
             let http_client = stream_config.build_http_client()?;

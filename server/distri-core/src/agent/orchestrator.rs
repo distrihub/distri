@@ -958,7 +958,7 @@ impl AgentOrchestrator {
         Ok(result)
     }
 
-    async fn call_agent_stream(
+    pub(crate) async fn call_agent_stream(
         &self,
         agent_id: &str,
         message: Message,
@@ -977,7 +977,6 @@ impl AgentOrchestrator {
             definition_overrides,
             &context.default_model_settings,
         );
-        Self::validate_agent_model(&agent_config)?;
 
         // Wildcard external-tools sanity check: an agent that declares
         // `external = ["*"]` is asking the client to ship at least one tool.
@@ -1003,6 +1002,11 @@ impl AgentOrchestrator {
         // the allowed list, route through RemoteAgent — but only if a
         // BackgroundRunner is configured whose provided_runtime is in the
         // allowed list. Otherwise fail fast with a clear error.
+        //
+        // Note: this check runs BEFORE `validate_agent_model` because
+        // remote-dispatched agents configure their model inside the sandbox
+        // (via the inner distri-cli's own settings) — the outer orchestrator
+        // does not need a model for the dispatch path.
         if let distri_types::configuration::AgentConfig::StandardAgent(ref definition) =
             agent_config
         {
@@ -1035,6 +1039,10 @@ impl AgentOrchestrator {
                 return agent.invoke_stream(message, context).await;
             }
         }
+
+        // In-process path requires a configured model. Remote agents skipped
+        // this above because their model lives inside the sandbox.
+        Self::validate_agent_model(&agent_config)?;
         // Check if todos are enabled for this agent and initialize shared_todos if needed
         if let distri_types::configuration::AgentConfig::StandardAgent(definition) = &agent_config {
             if definition.should_use_browser() {

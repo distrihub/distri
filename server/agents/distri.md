@@ -17,8 +17,7 @@ reasoning_depth = "deep"
 type = "tools"
 
 [tools]
-builtin = ["tool_search", "transfer_to_agent"]
-external = ["*"]
+builtin = ["tool_search", "transfer_to_agent", "load_skill"]
 
 [[available_skills]]
 id = "*"
