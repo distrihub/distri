@@ -1,8 +1,7 @@
 /// Integration tests for remote execution mode (`--remote` flag).
 ///
 /// These tests require a running distri-cloud server with:
-///   - `SANDBOX_ENABLED=true`
-///   - browsr router + orchestrator running
+///   - browsr router + orchestrator reachable (BROWSR_BASE_URL / BROWSR_API_KEY)
 ///   - Container image with `distri` binary baked in
 ///
 /// All tests are `#[ignore]` — run them explicitly with:

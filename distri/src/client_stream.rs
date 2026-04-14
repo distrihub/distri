@@ -5,7 +5,6 @@ use distri_types::http_request::HttpFactoryConfig;
 use distri_types::{AgentEvent, AgentEventType, Message, ToolCall, ToolResponse};
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -38,13 +37,11 @@ pub struct StreamItem {
 pub struct AgentStreamClient {
     base_url: String,
     http: reqwest::Client,
+    /// Single source of truth for which tools are client-handled.
+    /// `is_external_tool(name)` answers from `has_tool("*", name)`.
     tool_registry: Option<ExternalToolRegistry>,
     hook_registry: Option<HookRegistry>,
     registered_tools: Vec<DynamicToolFactory>,
-    /// Tool names declared as `external` in the agent definition.
-    /// Only these tools are handled by the client — everything else
-    /// is left to the server.
-    external_tool_names: HashSet<String>,
 }
 
 impl AgentStreamClient {
@@ -66,7 +63,6 @@ impl AgentStreamClient {
             tool_registry: None,
             hook_registry: None,
             registered_tools: vec![platform_tool],
-            external_tool_names: HashSet::new(),
         }
     }
 
@@ -83,18 +79,6 @@ impl AgentStreamClient {
     pub fn with_hook_registry(mut self, registry: HookRegistry) -> Self {
         self.hook_registry = Some(registry);
         self
-    }
-
-    /// Set the external tool names from the agent definition's `external` field.
-    /// Only tools in this set will be handled by the client.
-    pub fn with_external_tool_names(mut self, names: HashSet<String>) -> Self {
-        self.external_tool_names = names;
-        self
-    }
-
-    /// Update the external tool names (useful when switching agents in interactive mode).
-    pub fn set_external_tool_names(&mut self, names: HashSet<String>) {
-        self.external_tool_names = names;
     }
 
     pub fn register_dynamic_tool(&mut self, factory: DynamicToolFactory) {
@@ -149,13 +133,14 @@ impl AgentStreamClient {
         params
     }
 
-    /// Returns true if this tool name is declared external (client-handled).
+    /// Returns true if this tool name is client-handled. The handler registry
+    /// is the single source of truth — every external tool the caller shipped
+    /// has a `("*", name)` handler bound in it (enforced by `register_external_tool`
+    /// and `validate_external_tools` on `DistriClientApp`).
     fn is_external_tool(&self, tool_name: &str) -> bool {
-        self.external_tool_names.contains(tool_name)
-            || self
-                .tool_registry
-                .as_ref()
-                .map_or(false, |r| r.has_tool("*", tool_name))
+        self.tool_registry
+            .as_ref()
+            .map_or(false, |r| r.has_tool("*", tool_name))
     }
 
     pub async fn stream_agent<H, Fut>(

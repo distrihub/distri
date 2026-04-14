@@ -5,7 +5,7 @@
 # Expected: exits in ~2-5 seconds with exit code 0.
 #
 # Prerequisites:
-#   - distri-cloud running with SANDBOX_ENABLED=true
+#   - distri-cloud running (BROWSR_BASE_URL / BROWSR_API_KEY configured)
 #   - browsr router + orchestrator running
 #   - DISTRI_API_KEY set
 #

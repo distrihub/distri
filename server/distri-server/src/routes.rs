@@ -142,6 +142,20 @@ pub struct AgentWithStats {
     /// Cloud-specific metadata (optional, only present in cloud responses)
     #[serde(flatten, default)]
     cloud: distri_types::configuration::AgentCloudMetadata,
+    /// Whether this agent can execute in the caller's runtime (set by the
+    /// `?runtime=cli|cloud|browser` query param). When the query param is
+    /// omitted this stays `None` and is omitted from the JSON.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    runnable: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ListAgentsQuery {
+    /// Filter by caller runtime: `cli`, `cloud`, or `browser`. When set, each
+    /// returned agent gets a `runnable: bool` field indicating whether it
+    /// can execute in that runtime (directly or via remote dispatch).
+    #[serde(default)]
+    runtime: Option<distri_types::RuntimeMode>,
 }
 
 #[utoipa::path(
@@ -150,7 +164,10 @@ pub struct AgentWithStats {
     tag = "Agents",
     responses((status = 200, description = "List all agents with stats", body = Vec<AgentWithStats>))
 )]
-async fn list_agents(executor: web::Data<Arc<AgentOrchestrator>>) -> HttpResponse {
+async fn list_agents(
+    executor: web::Data<Arc<AgentOrchestrator>>,
+    query: web::Query<ListAgentsQuery>,
+) -> HttpResponse {
     let (agents_with_metadata, _) = executor
         .stores
         .agent_store
@@ -165,15 +182,33 @@ async fn list_agents(executor: web::Data<Arc<AgentOrchestrator>>) -> HttpRespons
         .await
         .unwrap_or_default();
 
+    let runner_provides = executor
+        .background_runner
+        .as_ref()
+        .map(|r| r.provided_runtime());
+    let caller_runtime = query.runtime.clone();
+
     let agents_with_stats: Vec<AgentWithStats> = agents_with_metadata
         .into_iter()
         .map(|(config, cloud)| {
             let name = config.get_name().to_string();
             let stats = stats_map.get(&name).cloned();
+            // Compute the `runnable` flag only when the caller specified a runtime.
+            let runnable = caller_runtime.as_ref().map(|current| {
+                match &config {
+                    distri_types::configuration::AgentConfig::StandardAgent(def) => {
+                        def.is_runnable_in(current, runner_provides.as_ref())
+                    }
+                    // Non-standard agents (workflows etc.) have no runtime constraint;
+                    // they run wherever they're called.
+                    _ => true,
+                }
+            });
             AgentWithStats {
                 config,
                 stats,
                 cloud,
+                runnable,
             }
         })
         .collect();

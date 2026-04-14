@@ -233,6 +233,17 @@ impl ExecutorContext {
         tools.clone().into_iter().map(|t| t.clone()).collect()
     }
 
+    /// Number of client-shipped external tools currently bound to this context.
+    /// Used by the orchestrator to validate that an agent declaring
+    /// `external = ["*"]` actually received tools from the caller.
+    pub async fn external_tools_count(&self) -> usize {
+        let Some(tools) = self.dynamic_tools.as_ref() else {
+            return 0;
+        };
+        let guard = tools.read().await;
+        guard.iter().filter(|t| t.is_external()).count()
+    }
+
     pub fn clone_with_tx(&self, event_tx: mpsc::Sender<AgentEvent>) -> Self {
         Self {
             event_tx: Some(Arc::new(event_tx)),

@@ -6,6 +6,7 @@ append_default_instructions = false
 sub_agents = ["inline_search"]
 max_iterations = 60
 tool_format = "provider"
+runtime = "cli"
 
 [tools]
 builtin = [

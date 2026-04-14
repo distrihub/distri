@@ -26,7 +26,7 @@ use commands::{
 use config::resolve_workspace;
 use message::{build_connections_context, build_message_params_full};
 use threads::resolve_resume_arg;
-use tools::{register_all, register_approval_handler, validate_external_tools, LOCAL_TOOL_NAMES};
+use tools::{register_all, register_approval_handler};
 
 #[derive(Parser, Debug, Clone)]
 #[clap(author, version, about)]
@@ -501,36 +501,24 @@ async fn main() -> Result<()> {
         } => {
             let extra_tools = parse_cli_overrides(overrides.as_deref());
             let agent_name = agent.unwrap_or_else(|| "distri_runner".to_string());
-            let mut external_tool_names = std::collections::HashSet::new();
-            if let Some(agent_cfg) = app.fetch_agent(&agent_name).await? {
-                // Extract external tool names from agent definition
-                if let distri_types::configuration::AgentConfig::StandardAgent(def) =
-                    &agent_cfg.agent
-                {
-                    if let Some(tools) = &def.tools {
-                        if let Some(ext) = &tools.external {
-                            for name in ext {
-                                if name != "*" {
-                                    external_tool_names.insert(name.clone());
-                                }
-                            }
-                        }
-                    }
-                }
+            // Verify the agent exists before registering anything.
+            if app.fetch_agent(&agent_name).await?.is_none() {
+                return Err(anyhow::anyhow!(
+                    "Agent '{}' not found on {}",
+                    agent_name,
+                    base_url
+                ));
             }
-            // Always include locally-registered CLI tools so the stream
-            // client intercepts them regardless of agent definition.
-            for name in LOCAL_TOOL_NAMES {
-                external_tool_names.insert(name.to_string());
+            // Register local CLI tool handlers + ship their schemas to the
+            // server ONLY when running locally. With `--remote`, the agent
+            // forks into a sandbox that has its own distri-cli with its own
+            // tools — the outer CLI is just a passthrough for events. Shipping
+            // schemas in remote mode causes the server to delegate tool calls
+            // back to the outer CLI, which never bound a registry → 120s hang.
+            if !remote {
+                let tool_defs = register_all(&app.registry(), &agent_name, &workspace);
+                app.add_tool_definitions(tool_defs);
             }
-            let tool_defs = register_all(&app.registry(), &agent_name, &workspace);
-            app.add_tool_definitions(tool_defs);
-            validate_external_tools(
-                &app.registry(),
-                &agent_name,
-                &external_tool_names,
-                cli.verbose,
-            )?;
             // Fetch connections to inject into agent context
             let distri_client = Distri::from_config(config.clone());
             let connections_context = build_connections_context(&distri_client).await;
@@ -567,23 +555,27 @@ async fn main() -> Result<()> {
                 connections_context,
                 env_vars,
             );
-            app.inject_external_tools(&mut params);
+            // inject_external_tools is a no-op when no schemas were added.
+            if let Err(err) = app.inject_external_tools(&mut params) {
+                return Err(anyhow::anyhow!("Tool registration error: {}", err));
+            }
 
             println!("Streaming agent '{}' via {}", agent_name, base_url);
             let registry = app.registry();
-            register_approval_handler(&registry);
+            if !remote {
+                register_approval_handler(&registry);
+            }
             let mut stream_config = config.clone().with_timeout(600);
             stream_config.traceparent = traceparent;
             let http_client = stream_config.build_http_client()?;
-            // For remote runs the container handles all tool execution — don't register
-            // external tools on the client side or the CLI will try to execute them too.
+            // For remote runs the container handles all tool execution — don't bind
+            // the registry on the client side or the CLI will try to execute them too.
             let mut client = if remote {
                 AgentStreamClient::from_config(config.clone()).with_http_client(http_client)
             } else {
                 AgentStreamClient::from_config(config.clone())
                     .with_http_client(http_client)
                     .with_tool_registry(registry)
-                    .with_external_tool_names(external_tool_names)
             };
             for tool in extra_tools {
                 client.register_dynamic_tool(tool);

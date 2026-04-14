@@ -33,9 +33,11 @@ distri CLI  →  distri-cloud server
 ### Prerequisites
 
 ```bash
-# 1. distri-cloud server running with sandbox enabled
+# 1. distri-cloud server running (SandboxLauncher is always constructed;
+#    routing into a sandbox happens automatically when an agent's runtime
+#    constraint requires it)
 source .env
-SANDBOX_ENABLED=true cargo run -p distri-cloud
+cargo run -p distri-cloud
 
 # 2. browsr router running
 cargo run
@@ -45,7 +47,7 @@ cargo run --bin browsr-orchestrator -p browsr-orchestrator
 
 # 4. Verify env
 echo $BROWSR_BASE_URL        # e.g. http://localhost:8083
-echo $SANDBOX_ENABLED        # must be "true"
+echo $BROWSR_API_KEY         # required if browsr enforces auth
 ```
 
 ### Examples

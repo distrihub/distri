@@ -21,9 +21,7 @@ use crate::message::{build_connections_context, build_message_params};
 use crate::threads::{
     load_last_thread, print_thread_history, resolve_resume_arg, save_last_thread,
 };
-use crate::tools::{
-    register_all, register_approval_handler, validate_external_tools, LOCAL_TOOL_NAMES,
-};
+use crate::tools::{register_all, register_approval_handler};
 use crate::{COLOR_BRIGHT_GREEN, COLOR_GRAY, COLOR_RESET};
 
 #[derive(Debug, Clone)]
@@ -497,13 +495,11 @@ pub async fn run_interactive_chat(
 
     let stream_config = config.clone().with_timeout(60);
     let http_client = stream_config.build_http_client()?;
-    // Seed external tool names with locally-registered tools
-    let initial_external: std::collections::HashSet<String> =
-        LOCAL_TOOL_NAMES.iter().map(|s| s.to_string()).collect();
+    // The registry is the single source of truth for "is this tool client-handled".
+    // No separate name set needed — `is_external_tool` reads from the registry directly.
     let mut stream_client = AgentStreamClient::from_config(config.clone())
         .with_http_client(http_client)
-        .with_tool_registry(registry)
-        .with_external_tool_names(initial_external);
+        .with_tool_registry(registry);
     for tool in extra_tools {
         stream_client.register_dynamic_tool(tool);
     }
@@ -587,41 +583,16 @@ pub async fn run_interactive_chat(
             }
         }
 
-        // Resolve agent config and extract tool names
-        let (stream_agent_id, external_tool_names) = match app.fetch_agent(&current_agent).await? {
-            Some(agent_cfg) => {
-                let id = agent_cfg.agent.get_name().to_string();
-                // Extract external tool names from agent definition
-                let mut ext_names = std::collections::HashSet::new();
-                if let AgentConfig::StandardAgent(def) = &agent_cfg.agent {
-                    if let Some(tools) = &def.tools {
-                        if let Some(ext) = &tools.external {
-                            for name in ext {
-                                if name != "*" {
-                                    ext_names.insert(name.clone());
-                                }
-                            }
-                        }
-                    }
-                }
-                // Always include locally-registered CLI tools
-                for name in LOCAL_TOOL_NAMES {
-                    ext_names.insert(name.to_string());
-                }
-                if let Err(e) =
-                    validate_external_tools(&app.registry(), &current_agent, &ext_names, verbose)
-                {
-                    eprintln!("{}", e);
-                    continue;
-                }
-                (id, ext_names)
-            }
+        // Resolve agent config (just to get the canonical name and verify it exists).
+        // The registry is the single source of truth for which tools are
+        // client-handled — no per-agent tool name set to maintain.
+        let stream_agent_id = match app.fetch_agent(&current_agent).await? {
+            Some(agent_cfg) => agent_cfg.agent.get_name().to_string(),
             None => {
                 eprintln!("Agent '{}' not found on {}", current_agent, base_url);
                 continue;
             }
         };
-        stream_client.set_external_tool_names(external_tool_names);
 
         // Fetch connections context for agent prompt (lightweight, only connected providers)
         let distri_client = Distri::from_config(config.clone());
@@ -633,7 +604,10 @@ pub async fn run_interactive_chat(
             current_model.as_deref(),
             connections_context,
         );
-        app.inject_external_tools(&mut params);
+        if let Err(err) = app.inject_external_tools(&mut params) {
+            eprintln!("Tool registration error: {}", err);
+            continue;
+        }
 
         match print_stream_with_health(
             &stream_client,

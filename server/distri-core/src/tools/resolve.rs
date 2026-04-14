@@ -201,6 +201,12 @@ mod tests {
             connected_by: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
+            auth_scope: AuthScope::Workspace,
+            auth_type: AuthType::OAuth {
+                provider: "google".to_string(),
+                scopes: vec![],
+            },
+            is_system: false,
         }
     }
 

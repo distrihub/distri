@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use distri_types::RuntimeMode;
 
 /// Trait for running agent execution in the background.
 ///
@@ -24,4 +25,16 @@ pub trait BackgroundRunner: Send + Sync + 'static {
         workspace_id: Option<String>,
         environment_id: Option<String>,
     ) -> anyhow::Result<()>;
+
+    /// The runtime that tasks dispatched to this runner will execute under.
+    ///
+    /// Used by the orchestrator when an agent declares a runtime constraint
+    /// that doesn't match the current runtime — the orchestrator dispatches
+    /// remote only when this matches the agent's required runtime.
+    ///
+    /// Default: `RuntimeMode::Cli`. `SandboxLauncher` runs `distri-cli` inside
+    /// a browsr container, which executes in CLI runtime.
+    fn provided_runtime(&self) -> RuntimeMode {
+        RuntimeMode::Cli
+    }
 }

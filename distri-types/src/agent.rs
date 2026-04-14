@@ -406,7 +406,7 @@ impl LlmDefinition {
 
 /// Runtime environment in which the agent is executing.
 /// Determines which built-in agent variants and tools are available.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Hash, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeMode {
     /// Running from distri-cli with local filesystem access
@@ -534,18 +534,69 @@ pub struct StandardDefinition {
     )]
     pub compaction_enabled: bool,
 
-    /// When true and a sandbox runner is available, this agent runs in an isolated
-    /// browsr container with full local tool access (Read, Write, Grep, Bash, etc.)
-    /// instead of running in-process. Used for sub-agents that need filesystem access.
-    /// Also settable via `--remote` CLI flag or `--overrides '{"remote":true}'`.
+    /// **DEPRECATED**: prefer `runtime = ["cli"]` instead.
+    ///
+    /// When true, this is treated as `runtime = [Cli]` — the agent needs a
+    /// CLI-style local environment (filesystem, shell exec). In a Cloud
+    /// runtime the orchestrator forks the call into a sandbox via
+    /// `BackgroundRunner`. Kept for backwards compatibility with existing
+    /// agent definitions and the `--remote` CLI flag / `DefinitionOverrides.remote`.
     #[serde(default, alias = "deepagent")]
     pub remote: bool,
 
-    /// When true, the built-in coder subagent uses CoderLite (browsr shell tools
-    /// directly) instead of the full Coder (distri-cli in browsr container).
-    /// Only relevant in cloud runtime mode. CLI and browser always use Coder.
-    #[serde(default)]
-    pub use_coder_lite: bool,
+    /// Runtime constraint for this agent. Like Docker's `platforms` field:
+    ///
+    /// - empty / omitted → runs in any runtime (default).
+    /// - `["cli"]` → only runs when `ExecutorContext.runtime_mode == Cli`,
+    ///   OR via a `BackgroundRunner` providing `Cli` (e.g. `SandboxLauncher`
+    ///   spawning `distri-cli` inside a browsr container).
+    /// - `["cli", "cloud"]` → runs in either Cli or Cloud, but not Browser.
+    ///
+    /// When the current runtime doesn't match any allowed value and no
+    /// compatible runner exists, the orchestrator fails fast at request entry.
+    ///
+    /// Accepts both scalar (`runtime = "cli"`) and array (`runtime = ["cli"]`)
+    /// syntax in TOML/JSON for ergonomics.
+    #[serde(
+        default,
+        deserialize_with = "deserialize_runtime_modes",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub runtime: Vec<RuntimeMode>,
+}
+
+/// Accept either a single `RuntimeMode` string or an array of them.
+fn deserialize_runtime_modes<'de, D>(deserializer: D) -> Result<Vec<RuntimeMode>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::{self, Deserialize};
+
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum OneOrMany {
+        One(RuntimeMode),
+        Many(Vec<RuntimeMode>),
+    }
+
+    match Option::<OneOrMany>::deserialize(deserializer)? {
+        None => Ok(Vec::new()),
+        Some(OneOrMany::One(rt)) => Ok(vec![rt]),
+        Some(OneOrMany::Many(v)) => {
+            // Reject duplicates so authors notice typos like ["cli", "cli"].
+            let mut seen = std::collections::HashSet::new();
+            for rt in &v {
+                let key = format!("{:?}", rt);
+                if !seen.insert(key) {
+                    return Err(de::Error::custom(format!(
+                        "duplicate runtime entry: {:?}",
+                        rt
+                    )));
+                }
+            }
+            Ok(v)
+        }
+    }
 }
 fn default_append_default_instructions() -> Option<bool> {
     Some(true)
@@ -560,6 +611,48 @@ fn is_true(v: &bool) -> bool {
     *v
 }
 impl StandardDefinition {
+    /// The set of runtimes this agent is allowed to run in, with the
+    /// deprecated `remote: true` flag merged in (treated as `[Cli]` when
+    /// `runtime` is empty).
+    ///
+    /// Empty result = no constraint = runs anywhere.
+    pub fn allowed_runtimes(&self) -> Vec<RuntimeMode> {
+        if !self.runtime.is_empty() {
+            return self.runtime.clone();
+        }
+        if self.remote {
+            return vec![RuntimeMode::Cli];
+        }
+        Vec::new()
+    }
+
+    /// Whether this agent can execute given the caller's `current` runtime,
+    /// optionally with a `BackgroundRunner` providing an alternative runtime
+    /// via remote dispatch.
+    ///
+    /// Returns true when:
+    /// - the agent has no runtime constraint, OR
+    /// - the current runtime matches one of the allowed runtimes, OR
+    /// - a runner is available whose `provided_runtime` matches one of the
+    ///   allowed runtimes.
+    pub fn is_runnable_in(
+        &self,
+        current: &RuntimeMode,
+        runner_provides: Option<&RuntimeMode>,
+    ) -> bool {
+        let allowed = self.allowed_runtimes();
+        if allowed.is_empty() {
+            return true;
+        }
+        if allowed.iter().any(|rt| rt == current) {
+            return true;
+        }
+        match runner_provides {
+            Some(p) => allowed.iter().any(|rt| rt == p),
+            None => false,
+        }
+    }
+
     /// Check if browser should be initialized automatically in orchestrator (default: false)
     pub fn should_use_browser(&self) -> bool {
         self.browser_config

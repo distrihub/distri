@@ -14,6 +14,7 @@ pub use orchestrator::*;
 mod hooks;
 
 pub mod auth;
+pub mod channels;
 pub mod context;
 mod core;
 mod errors;

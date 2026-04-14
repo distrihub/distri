@@ -1311,6 +1311,7 @@ mod tests {
                 is_public: false,
                 is_system: false,
                 is_owner: true,
+                is_workspace: true,
                 star_count: 5,
                 clone_count: 2,
                 is_starred: true,

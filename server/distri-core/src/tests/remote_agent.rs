@@ -514,6 +514,221 @@ impl BackgroundRunner for FailingRunner {
     }
 }
 
+// ── Additional Mock: SpawnCountingRunner ───────────────────────────────────
+
+/// A runner that records every spawn() call by incrementing a shared counter
+/// AND publishing a synthetic RunFinished event so the orchestrator's
+/// RemoteAgent path completes cleanly.
+#[derive(Clone)]
+struct SpawnCountingRunner {
+    broadcaster: Arc<InProcessBroadcaster>,
+    counter: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl SpawnCountingRunner {
+    fn new(broadcaster: Arc<InProcessBroadcaster>) -> (Self, Arc<std::sync::atomic::AtomicUsize>) {
+        let counter = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        (
+            Self {
+                broadcaster,
+                counter: counter.clone(),
+            },
+            counter,
+        )
+    }
+}
+
+#[async_trait]
+impl BackgroundRunner for SpawnCountingRunner {
+    async fn spawn(
+        &self,
+        task_id: String,
+        _agent_name: String,
+        _task: String,
+        _user_id: String,
+        _workspace_id: Option<String>,
+        _environment_id: Option<String>,
+    ) -> anyhow::Result<()> {
+        self.counter
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let broadcaster = self.broadcaster.clone();
+        let tid = task_id.clone();
+        tokio::spawn(async move {
+            let event = distri_types::AgentEvent {
+                timestamp: chrono::Utc::now(),
+                thread_id: "inner-thread".to_string(),
+                run_id: "inner-run".to_string(),
+                event: AgentEventType::RunFinished {
+                    success: true,
+                    total_steps: 0,
+                    failed_steps: 0,
+                    usage: None,
+                    context_budget: None,
+                },
+                task_id: tid.clone(),
+                agent_id: "inner".to_string(),
+                user_id: None,
+                identifier_id: None,
+                workspace_id: None,
+                channel_id: None,
+            };
+            let _ = broadcaster.publish(&tid, event).await;
+        });
+        Ok(())
+    }
+}
+
+// ── Orchestrator dispatch regression tests ─────────────────────────────────
+//
+// Bug being guarded:
+//
+// `distri run --task ... --agent distri --remote` failed with a 120s tool-call
+// timeout because three things conspired:
+//   1. CLI sent `runtime_mode = Cli` regardless of `--remote`.
+//   2. CLI shipped local tool schemas regardless of `--remote`.
+//   3. The orchestrator's runtime-constraint dispatch saw `runtime_mode = Cli`
+//      matched the agent's `[Cli]` allowed list, so it skipped the sandbox path.
+//
+// These tests pin the orchestrator's contract: with `remote = true` (or
+// `runtime = ["cli"]`), Cloud callers MUST be dispatched via the BackgroundRunner;
+// Cli callers MUST execute in-process. The CLI-side bugs are tested in
+// `distri-cli/src/message.rs::tests`.
+
+#[tokio::test]
+async fn orchestrator_routes_cloud_caller_to_background_runner_when_agent_is_remote() {
+    use crate::broadcast::in_process::InProcessRuntime;
+    use crate::tests::helpers::test_store_config;
+    use crate::AgentOrchestratorBuilder;
+    use distri_types::RuntimeMode;
+
+    // Share one broadcaster between the mock runner (which publishes events
+    // under the inner task_id) and the orchestrator's runtime (whose
+    // RemoteAgent subscribes to that inner task_id via follow_stream).
+    // Without this they'd be two separate broadcasters and follow_stream would
+    // never see the mock's events → RemoteAgent.invoke_stream hangs forever.
+    let broadcaster = InProcessBroadcaster::new_shared();
+    let (runner, counter) = SpawnCountingRunner::new(broadcaster.clone());
+
+    // Build a temporary orchestrator just to grab a TaskStore for the runtime.
+    let orchestrator_seed = Arc::new(
+        AgentOrchestratorBuilder::default()
+            .with_store_config(test_store_config())
+            .build()
+            .await
+            .unwrap(),
+    );
+    let task_store = orchestrator_seed.stores.task_store.clone();
+    let runtime = Arc::new(InProcessRuntime::from_broadcaster(broadcaster, task_store));
+
+    let orchestrator = Arc::new(
+        AgentOrchestratorBuilder::default()
+            .with_store_config(test_store_config())
+            .with_runtime(runtime)
+            .with_background_runner(Arc::new(runner))
+            .build()
+            .await
+            .unwrap(),
+    );
+
+    let mut def = StandardDefinition {
+        name: "remote_pinned_agent".to_string(),
+        description: "Agent pinned to Cli runtime via deprecated remote flag".to_string(),
+        ..Default::default()
+    };
+    def.remote = true;
+    orchestrator.register_agent_definition(def).await.unwrap();
+
+    // Caller declares Cloud runtime — should NOT match `[Cli]` allowed list,
+    // should fall through to the BackgroundRunner.
+    let (ctx, _rx) = test_context_with_runtime(&orchestrator, RuntimeMode::Cloud);
+
+    let result = orchestrator
+        .call_agent_stream(
+            "remote_pinned_agent",
+            test_message("hello from cloud"),
+            ctx,
+            None,
+        )
+        .await;
+
+    assert_eq!(
+        counter.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "Cloud caller against a remote=true agent must dispatch via BackgroundRunner exactly once"
+    );
+    assert!(
+        result.is_ok(),
+        "RemoteAgent invocation should succeed: {:?}",
+        result
+    );
+}
+
+#[tokio::test]
+async fn orchestrator_runs_in_process_when_caller_already_provides_required_runtime() {
+    use crate::tests::helpers::test_store_config;
+    use crate::AgentOrchestratorBuilder;
+    use distri_types::RuntimeMode;
+
+    let broadcaster = InProcessBroadcaster::new_shared();
+    let (runner, counter) = SpawnCountingRunner::new(broadcaster);
+
+    let orchestrator = Arc::new(
+        AgentOrchestratorBuilder::default()
+            .with_store_config(test_store_config())
+            .with_background_runner(Arc::new(runner))
+            .build()
+            .await
+            .unwrap(),
+    );
+
+    let mut def = StandardDefinition {
+        name: "remote_pinned_agent_cli".to_string(),
+        description: "Agent pinned to Cli runtime via deprecated remote flag".to_string(),
+        ..Default::default()
+    };
+    def.remote = true;
+    orchestrator.register_agent_definition(def).await.unwrap();
+
+    // Caller declares Cli runtime — matches the agent's `[Cli]` allowed list,
+    // so the orchestrator should run it in-process (no spawn).
+    let (ctx, _rx) = test_context_with_runtime(&orchestrator, RuntimeMode::Cli);
+
+    // The in-process path will fail because we have no model configured, but
+    // that's fine — we're only asserting that the runner was NOT called.
+    let _ = orchestrator
+        .call_agent_stream(
+            "remote_pinned_agent_cli",
+            test_message("hello from cli"),
+            ctx,
+            None,
+        )
+        .await;
+
+    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+    assert_eq!(
+        counter.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "Cli caller against a remote=true agent must NOT fork to BackgroundRunner — it already provides Cli runtime"
+    );
+}
+
+/// Build an `ExecutorContext` with the given runtime_mode wired into a real
+/// orchestrator so the dispatch path has the orchestrator handle it expects.
+fn test_context_with_runtime(
+    orchestrator: &Arc<crate::AgentOrchestrator>,
+    runtime_mode: distri_types::RuntimeMode,
+) -> (Arc<ExecutorContext>, mpsc::Receiver<AgentEvent>) {
+    let (tx, rx) = mpsc::channel(256);
+    let ctx = ExecutorContext {
+        event_tx: Some(Arc::new(tx)),
+        runtime_mode,
+        orchestrator: Some(orchestrator.clone()),
+        ..Default::default()
+    };
+    (Arc::new(ctx), rx)
+}
+
 // ── Additional Mock: ClosingBroadcaster ────────────────────────────────────
 
 /// A broadcaster that delegates to InProcessBroadcaster but overrides
