@@ -254,7 +254,7 @@ export function Home({ onNewAgent, renderNewAgentHelp, className }: HomeProps) {
                       onClick={() => {
                         if (thread.agent_id && thread.id) {
                           navigate(
-                            `chat?id=${encodeURIComponent(thread.agent_id)}&threadId=${encodeURIComponent(thread.id)}`
+                            `/_chat/${encodeURIComponent(thread.id)}?agent=${encodeURIComponent(thread.agent_id)}`
                           );
                         } else {
                           navigate('threads');

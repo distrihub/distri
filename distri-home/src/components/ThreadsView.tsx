@@ -551,7 +551,7 @@ export function ThreadsView({ className, initialAgentId, initialExternalId, onSh
                     onClick={() => {
                       if (thread.agent_id && thread.id) {
                         navigate(
-                          `/chat?id=${encodeURIComponent(thread.agent_id)}&threadId=${encodeURIComponent(thread.id)}`
+                          `/_chat/${encodeURIComponent(thread.id)}?agent=${encodeURIComponent(thread.agent_id)}`
                         );
                       }
                     }}
@@ -644,7 +644,7 @@ export function ThreadsView({ className, initialAgentId, initialExternalId, onSh
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            navigate(`/chat?id=${encodeURIComponent(thread.agent_id!)}`);
+                            navigate(`/_chat/${encodeURIComponent(crypto.randomUUID())}?agent=${encodeURIComponent(thread.agent_id!)}`);
                           }}
                           className="flex items-center gap-2 rounded-full p-2 text-muted-foreground opacity-0 transition hover:text-primary group-hover:opacity-100"
                           title={`New chat with ${thread.agent_name || thread.agent_id}`}
@@ -659,7 +659,7 @@ export function ThreadsView({ className, initialAgentId, initialExternalId, onSh
                           e.stopPropagation();
                           if (thread.agent_id && thread.id) {
                             navigate(
-                              `/chat?id=${encodeURIComponent(thread.agent_id)}&threadId=${encodeURIComponent(thread.id)}`
+                              `/_chat/${encodeURIComponent(thread.id)}?agent=${encodeURIComponent(thread.agent_id)}`
                             );
                           }
                         }}
