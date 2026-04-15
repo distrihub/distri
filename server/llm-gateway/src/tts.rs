@@ -38,6 +38,7 @@ async fn call_tts_inner(
             }
         }
         ProviderType::ElevenLabs => call_elevenlabs(client, req, creds).await,
+        ProviderType::AlibabaCloud => call_alibaba_cloud_tts(client, req, creds).await,
         _ => Err(format!("TTS not supported for provider: {}", req.provider)),
     }
 }
@@ -272,6 +273,65 @@ async fn call_elevenlabs(
     Ok(TtsResult {
         audio: bytes.to_vec(),
         content_type: req.response_format.content_type().to_string(),
+    })
+}
+
+// ── Alibaba Cloud (DashScope) ────────────────────────────────────────────────
+
+async fn call_alibaba_cloud_tts(
+    client: &reqwest::Client,
+    req: &TtsRequest,
+    creds: &TtsCredentials,
+) -> Result<TtsResult, String> {
+    let base = creds
+        .base_url
+        .as_deref()
+        .unwrap_or("https://dashscope-intl.aliyuncs.com/compatible-mode/v1");
+    // DashScope OpenAI-compatible TTS endpoint: /v1/audio/speech
+    let url = format!(
+        "{}/audio/speech",
+        base.trim_end_matches('/')
+    );
+
+    let mut body = serde_json::json!({
+        "model": req.model,
+        "input": req.input,
+        "voice": req.voice,
+        "response_format": req.response_format.as_str(),
+    });
+    if let Some(speed) = req.speed {
+        body["speed"] = serde_json::json!(speed);
+    }
+
+    let resp = client
+        .post(&url)
+        .header("Authorization", format!("Bearer {}", creds.api_key))
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("Alibaba Cloud request failed: {e}"))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let err = resp.text().await.unwrap_or_default();
+        return Err(format!("Alibaba Cloud TTS error ({status}): {err}"));
+    }
+
+    let ct = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or(req.response_format.content_type())
+        .to_string();
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| format!("Failed to read Alibaba Cloud response: {e}"))?;
+
+    Ok(TtsResult {
+        audio: bytes.to_vec(),
+        content_type: ct,
     })
 }
 

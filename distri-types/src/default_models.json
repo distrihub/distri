@@ -789,6 +789,81 @@
             "output": 1.30,
             "cached_input": 0.016
           }
+        },
+        {
+          "id": "cosyvoice-v1",
+          "name": "CosyVoice V1",
+          "capability": "tts",
+          "pricing": {
+            "type": "tts",
+            "per_1m_chars": 2.00
+          },
+          "voices": [
+            { "id": "longxiaochun", "name": "Long Xiaochun", "description": "Warm and gentle female (Chinese)" },
+            { "id": "longshuo", "name": "Long Shuo", "description": "Professional male (Chinese)" },
+            { "id": "longjing", "name": "Long Jing", "description": "Calm female narrator (Chinese)" },
+            { "id": "longmiao", "name": "Long Miao", "description": "Sweet female (Chinese)" },
+            { "id": "longbella", "name": "Long Bella", "description": "Energetic female (Chinese)" },
+            { "id": "longlaotie", "name": "Long Laotie", "description": "Friendly male (Chinese)" },
+            { "id": "longshu", "name": "Long Shu", "description": "Mature male narrator (Chinese)" },
+            { "id": "longfei", "name": "Long Fei", "description": "Warm male (Chinese)" },
+            { "id": "longyue", "name": "Long Yue", "description": "Young female (Chinese)" },
+            { "id": "longjia", "name": "Long Jia", "description": "Young male (Chinese)" },
+            { "id": "longhua", "name": "Long Hua", "description": "Middle-aged male (Chinese)" },
+            { "id": "longyixiao", "name": "Long Yixiao", "description": "Cheerful female (Chinese)" }
+          ],
+          "formats": [
+            "mp3",
+            "wav",
+            "pcm",
+            "opus"
+          ]
+        },
+        {
+          "id": "cosyvoice-v2",
+          "name": "CosyVoice V2",
+          "capability": "tts",
+          "pricing": {
+            "type": "tts",
+            "per_1m_chars": 4.00
+          },
+          "voices": [
+            { "id": "longxiaochun", "name": "Long Xiaochun", "description": "Warm and gentle female (Chinese)" },
+            { "id": "longshuo", "name": "Long Shuo", "description": "Professional male (Chinese)" },
+            { "id": "longjing", "name": "Long Jing", "description": "Calm female narrator (Chinese)" },
+            { "id": "longmiao", "name": "Long Miao", "description": "Sweet female (Chinese)" },
+            { "id": "longbella", "name": "Long Bella", "description": "Energetic female (Chinese)" },
+            { "id": "longlaotie", "name": "Long Laotie", "description": "Friendly male (Chinese)" },
+            { "id": "longshu", "name": "Long Shu", "description": "Mature male narrator (Chinese)" },
+            { "id": "longfei", "name": "Long Fei", "description": "Warm male (Chinese)" },
+            { "id": "longyue", "name": "Long Yue", "description": "Young female (Chinese)" },
+            { "id": "longjia", "name": "Long Jia", "description": "Young male (Chinese)" },
+            { "id": "longhua", "name": "Long Hua", "description": "Middle-aged male (Chinese)" },
+            { "id": "longyixiao", "name": "Long Yixiao", "description": "Cheerful female (Chinese)" }
+          ],
+          "formats": [
+            "mp3",
+            "wav",
+            "pcm",
+            "opus"
+          ]
+        },
+        {
+          "id": "paraformer-v2",
+          "name": "Paraformer V2",
+          "capability": "stt",
+          "pricing": {
+            "type": "stt",
+            "per_minute": 0.012
+          },
+          "formats": [
+            "wav",
+            "mp3",
+            "flac",
+            "opus",
+            "aac",
+            "pcm"
+          ]
         }
       ]
     }
