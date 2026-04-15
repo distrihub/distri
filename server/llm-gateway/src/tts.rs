@@ -27,7 +27,13 @@ async fn call_tts_inner(
     creds: &TtsCredentials,
 ) -> Result<TtsResult, String> {
     match &req.provider {
-        ProviderType::OpenAI => call_openai(client, req, creds).await,
+        ProviderType::OpenAI => {
+            let base = creds
+                .base_url
+                .as_deref()
+                .unwrap_or("https://api.openai.com/v1");
+            call_openai_compat_tts(client, req, base, &creds.api_key).await
+        }
         ProviderType::Azure => {
             // Azure can do both OpenAI-style TTS and Speech Services TTS.
             // Use azure_region presence to distinguish.
@@ -38,23 +44,121 @@ async fn call_tts_inner(
             }
         }
         ProviderType::ElevenLabs => call_elevenlabs(client, req, creds).await,
-        ProviderType::AlibabaCloud => call_alibaba_cloud_tts(client, req, creds).await,
+        ProviderType::AlibabaCloud => {
+            let base = creds
+                .base_url
+                .as_deref()
+                .unwrap_or("https://dashscope-intl.aliyuncs.com");
+            call_dashscope_tts(client, req, base, &creds.api_key).await
+        }
+        ProviderType::AzureAiFoundry | ProviderType::Custom(_) => {
+            let base = creds
+                .base_url
+                .as_deref()
+                .ok_or("Base URL is required for this provider")?;
+            // Azure AI Foundry endpoints need /openai/v1 appended if missing
+            let base = normalize_openai_base(base);
+            call_openai_compat_tts(client, req, base, &creds.api_key).await
+        }
         _ => Err(format!("TTS not supported for provider: {}", req.provider)),
     }
 }
 
-// ── OpenAI ──────────────────────────────────────────────────────────────────
+// ── DashScope TTS (Alibaba Cloud) ────────────────────────────────────────
 
-async fn call_openai(
+/// Call the DashScope multimodal-generation API for TTS (non-streaming).
+/// Returns a URL in `output.audio.url` which we fetch to get the audio bytes.
+async fn call_dashscope_tts(
     client: &reqwest::Client,
     req: &TtsRequest,
-    creds: &TtsCredentials,
+    base_url: &str,
+    api_key: &str,
 ) -> Result<TtsResult, String> {
-    let base = creds
-        .base_url
-        .as_deref()
-        .unwrap_or("https://api.openai.com");
-    let url = format!("{}/v1/audio/speech", base);
+    let url = format!(
+        "{}/api/v1/services/aigc/multimodal-generation/generation",
+        base_url.trim_end_matches('/')
+    );
+
+    let body = serde_json::json!({
+        "model": req.model,
+        "input": {
+            "text": req.input,
+            "voice": req.voice,
+        }
+    });
+
+    let resp = client
+        .post(&url)
+        .header("Authorization", format!("Bearer {}", api_key))
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("DashScope request failed: {e}"))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let err = resp.text().await.unwrap_or_default();
+        return Err(format!("DashScope TTS error ({status}): {err}"));
+    }
+
+    let json: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse DashScope response: {e}"))?;
+
+    // DashScope non-streaming returns a presigned URL in output.audio.url
+    let audio_url = json
+        .get("output")
+        .and_then(|o| o.get("audio"))
+        .and_then(|a| a.get("url"))
+        .and_then(|u| u.as_str())
+        .ok_or("No audio URL in DashScope response")?;
+
+    // Fetch the actual audio bytes from the presigned URL
+    let audio_resp = client
+        .get(audio_url)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to fetch DashScope audio: {e}"))?;
+
+    if !audio_resp.status().is_success() {
+        let status = audio_resp.status();
+        let err = audio_resp.text().await.unwrap_or_default();
+        return Err(format!(
+            "Failed to download DashScope audio ({status}): {err}"
+        ));
+    }
+
+    let content_type = audio_resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("audio/wav")
+        .to_string();
+
+    let bytes = audio_resp
+        .bytes()
+        .await
+        .map_err(|e| format!("Failed to read DashScope audio: {e}"))?;
+
+    Ok(TtsResult {
+        audio: bytes.to_vec(),
+        content_type,
+    })
+}
+
+// ── OpenAI-compatible TTS (OpenAI, Azure AI Foundry, custom) ──
+
+/// Unified TTS call for any OpenAI-compatible endpoint.
+/// `base_url` should end with `/v1` or similar — we append `/audio/speech`.
+async fn call_openai_compat_tts(
+    client: &reqwest::Client,
+    req: &TtsRequest,
+    base_url: impl AsRef<str>,
+    api_key: &str,
+) -> Result<TtsResult, String> {
+    let url = format!("{}/audio/speech", base_url.as_ref().trim_end_matches('/'));
 
     let mut body = serde_json::json!({
         "model": req.model,
@@ -71,17 +175,17 @@ async fn call_openai(
 
     let resp = client
         .post(&url)
-        .header("Authorization", format!("Bearer {}", creds.api_key))
+        .header("Authorization", format!("Bearer {}", api_key))
         .header("Content-Type", "application/json")
         .json(&body)
         .send()
         .await
-        .map_err(|e| format!("OpenAI request failed: {e}"))?;
+        .map_err(|e| format!("TTS request failed: {e}"))?;
 
     if !resp.status().is_success() {
         let status = resp.status();
         let err = resp.text().await.unwrap_or_default();
-        return Err(format!("OpenAI TTS error ({status}): {err}"));
+        return Err(format!("TTS error ({status}): {err}"));
     }
 
     let ct = resp
@@ -93,7 +197,7 @@ async fn call_openai(
     let bytes = resp
         .bytes()
         .await
-        .map_err(|e| format!("Failed to read OpenAI response: {e}"))?;
+        .map_err(|e| format!("Failed to read TTS response: {e}"))?;
 
     Ok(TtsResult {
         audio: bytes.to_vec(),
@@ -101,7 +205,7 @@ async fn call_openai(
     })
 }
 
-// ── Azure OpenAI ────────────────────────────────────────────────────────────
+// ── Azure OpenAI (deployment-based) ─────────────────────────────────────────
 
 async fn call_azure_openai(
     client: &reqwest::Client,
@@ -113,7 +217,6 @@ async fn call_azure_openai(
         .as_deref()
         .ok_or("Azure OpenAI endpoint is required")?;
     let deployment = req.azure_deployment.as_deref().unwrap_or(&req.model);
-    // Strip common suffixes that users may include in the endpoint URL
     let base = endpoint
         .trim_end_matches('/')
         .trim_end_matches("/openai/v1")
@@ -168,7 +271,7 @@ async fn call_azure_openai(
     })
 }
 
-// ── Azure Cognitive Services Speech ─────────────────────────────────────────
+// ── Azure Cognitive Services Speech (SSML) ──────────────────────────────────
 
 async fn call_azure_speech(
     client: &reqwest::Client,
@@ -276,66 +379,19 @@ async fn call_elevenlabs(
     })
 }
 
-// ── Alibaba Cloud (DashScope) ────────────────────────────────────────────────
-
-async fn call_alibaba_cloud_tts(
-    client: &reqwest::Client,
-    req: &TtsRequest,
-    creds: &TtsCredentials,
-) -> Result<TtsResult, String> {
-    let base = creds
-        .base_url
-        .as_deref()
-        .unwrap_or("https://dashscope-intl.aliyuncs.com/compatible-mode/v1");
-    // DashScope OpenAI-compatible TTS endpoint: /v1/audio/speech
-    let url = format!(
-        "{}/audio/speech",
-        base.trim_end_matches('/')
-    );
-
-    let mut body = serde_json::json!({
-        "model": req.model,
-        "input": req.input,
-        "voice": req.voice,
-        "response_format": req.response_format.as_str(),
-    });
-    if let Some(speed) = req.speed {
-        body["speed"] = serde_json::json!(speed);
-    }
-
-    let resp = client
-        .post(&url)
-        .header("Authorization", format!("Bearer {}", creds.api_key))
-        .header("Content-Type", "application/json")
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| format!("Alibaba Cloud request failed: {e}"))?;
-
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let err = resp.text().await.unwrap_or_default();
-        return Err(format!("Alibaba Cloud TTS error ({status}): {err}"));
-    }
-
-    let ct = resp
-        .headers()
-        .get("content-type")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or(req.response_format.content_type())
-        .to_string();
-    let bytes = resp
-        .bytes()
-        .await
-        .map_err(|e| format!("Failed to read Alibaba Cloud response: {e}"))?;
-
-    Ok(TtsResult {
-        audio: bytes.to_vec(),
-        content_type: ct,
-    })
-}
-
 // ── Helpers ─────────────────────────────────────────────────────────────────
+
+/// Ensure a base URL ends with `/openai/v1` for Azure AI Foundry endpoints.
+/// If the URL already ends with `/v1` or `/openai/v1`, leave it as-is.
+/// If it's a bare domain like `https://foo.services.ai.azure.com`, append `/openai/v1`.
+fn normalize_openai_base(url: &str) -> String {
+    let trimmed = url.trim_end_matches('/');
+    if trimmed.ends_with("/v1") || trimmed.ends_with("/openai/v1") {
+        trimmed.to_string()
+    } else {
+        format!("{trimmed}/openai/v1")
+    }
+}
 
 fn escape_xml(s: &str) -> String {
     s.replace('&', "&amp;")

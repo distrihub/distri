@@ -1,4 +1,4 @@
-import { DistriClient, DistriClientConfig } from '@distri/core';
+import { DistriClient, DistriClientConfig, TtsSpeechRequest, TtsSpeechResponse } from '@distri/core';
 
 /**
  * Thread returned in home stats
@@ -826,6 +826,15 @@ export class DistriHomeClient {
     return await response.json();
   }
 
+  // ---- TTS Speech ----
+
+  /**
+   * Generate speech from text. Convenience wrapper around DistriClient.ttsSpeech().
+   */
+  async generateSpeech(request: TtsSpeechRequest): Promise<TtsSpeechResponse> {
+    return this.client.ttsSpeech(request);
+  }
+
   /**
    * Update workspace settings for the current workspace.
    * Uses /workspaces/current to resolve the workspace from the X-Workspace-Id header.
@@ -993,6 +1002,7 @@ export interface TtsVoiceInfo {
   id: string;
   name: string;
   description?: string | null;
+  languages?: string[];
 }
 
 export type ModelCapability = 'completion' | 'tts' | 'stt';

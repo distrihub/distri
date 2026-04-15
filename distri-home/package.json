@@ -52,6 +52,7 @@
   "peerDependencies": {
     "@distri/core": "workspace:*",
     "@distri/react": "workspace:*",
+    "@radix-ui/react-select": "^2.2.6",
     "react": ">=18.0.0",
     "react-dom": ">=18.0.0"
   },

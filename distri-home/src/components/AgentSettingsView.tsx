@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Check, ChevronDown, Layers, Loader2, Mic, Plus, Settings, Star, Trash2, Wrench, X } from 'lucide-react';
+import { Check, ChevronDown, Copy, Layers, Loader2, Mic, Plus, Settings, Star, Trash2, Volume2, Wrench, X } from 'lucide-react';
 import { useDistriHomeClient } from '../DistriHomeProvider';
-import type { Secret, CustomModelEntry, CustomProviderConfig, ModelProviderDefinition, Model, ModelCapability, ModelPricing, ProviderKeyDefinition } from '../DistriHomeClient';
+import type { Secret, CustomModelEntry, CustomProviderConfig, ModelProviderDefinition, Model, ModelCapability, ModelPricing, ProviderKeyDefinition, TtsVoiceInfo } from '../DistriHomeClient';
+import { VoicePreviewDialog } from './VoicePreviewDialog';
 
 type AgentSettingsTab = 'models' | 'providers';
 
@@ -85,6 +86,25 @@ export function AgentSettingsView({ className, activeTab: activeTabProp, onTabCh
   // Model selector dialog
   const [selectorDialogOpen, setSelectorDialogOpen] = useState(false);
   const [selectorDialogCapability, setSelectorDialogCapability] = useState<ModelCapability>('completion');
+
+  // Voice preview dialog
+  const [voiceDialogOpen, setVoiceDialogOpen] = useState(false);
+  const [voiceDialogModelId, setVoiceDialogModelId] = useState<string | undefined>();
+  const [voiceDialogProviderId, setVoiceDialogProviderId] = useState<string | undefined>();
+
+  const openVoiceDialog = useCallback((providerId: string, modelId: string) => {
+    setVoiceDialogProviderId(providerId);
+    setVoiceDialogModelId(modelId);
+    setVoiceDialogOpen(true);
+  }, []);
+
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const handleCopyId = useCallback((id: string) => {
+    navigator.clipboard.writeText(id).then(() => {
+      setCopiedId(id);
+      setTimeout(() => setCopiedId(null), 1500);
+    });
+  }, []);
 
   // Models tab filters
 
@@ -364,6 +384,7 @@ export function AgentSettingsView({ className, activeTab: activeTabProp, onTabCh
           providerConfigured: configured,
           contextWindow: m.context_window,
           pricing: m.pricing,
+          voices: m.voices,
         });
       }
     }
@@ -433,7 +454,8 @@ export function AgentSettingsView({ className, activeTab: activeTabProp, onTabCh
   const renderModelTable = (
     section: 'completion' | 'voice',
     title: string,
-    groups: Array<{ providerId: string; providerLabel: string; models: ModelRow[] }>
+    groups: Array<{ providerId: string; providerLabel: string; models: ModelRow[] }>,
+    headerAction?: React.ReactNode,
   ) => {
     const capTypes = section === 'completion' ? ['completion'] : ['tts', 'stt'];
     const filtered = groups
@@ -447,7 +469,7 @@ export function AgentSettingsView({ className, activeTab: activeTabProp, onTabCh
     const unconfiguredGroups = filtered.filter(g => !g.models.some(m => m.providerConfigured));
 
     const renderTableHeader = () => isCompletion ? (
-      <div className="grid grid-cols-[1fr_70px_110px_70px_40px] gap-2 px-6 py-2 border-b border-border/40 bg-muted/30">
+      <div className="grid grid-cols-[1fr_70px_120px_70px_36px] gap-3 px-6 py-2.5 border-b border-border/40 bg-muted/30">
         <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Model</span>
         <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground text-right">Context</span>
         <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground text-right">Cost / 1M</span>
@@ -455,7 +477,7 @@ export function AgentSettingsView({ className, activeTab: activeTabProp, onTabCh
         <span />
       </div>
     ) : (
-      <div className="grid grid-cols-[1fr_80px_110px_40px] gap-2 px-6 py-2 border-b border-border/40 bg-muted/30">
+      <div className="grid grid-cols-[1fr_70px_130px_36px] gap-3 px-6 py-2.5 border-b border-border/40 bg-muted/30">
         <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Model</span>
         <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Type</span>
         <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground text-right">Cost</span>
@@ -468,57 +490,86 @@ export function AgentSettingsView({ className, activeTab: activeTabProp, onTabCh
       const isDefault = getDefaultForType(model.type) === fullId;
       return isCompletion ? (
         <div key={`${model.providerId}-${model.id}`}
-          className={`group grid grid-cols-[1fr_70px_110px_70px_40px] gap-2 items-center pl-10 pr-6 py-1.5 border-b border-border/10 last:border-b-0 transition ${model.providerConfigured ? 'hover:bg-muted/20' : 'opacity-40'}`}>
-          <div className="flex items-center gap-2 min-w-0">
-            <span className={`text-xs truncate ${model.isCustom ? 'font-mono' : ''} text-muted-foreground`}>{model.name}</span>
-            {model.isCustom && <span className="text-[9px] text-muted-foreground/40 bg-muted/40 px-1 py-0.5 rounded shrink-0">custom</span>}
-            {model.isCustom && <button type="button" onClick={() => handleRemoveCustomModel(model.providerId, model.id)} className="opacity-0 group-hover:opacity-100 text-muted-foreground/40 hover:text-destructive transition p-0.5 shrink-0" title="Remove"><X className="h-3 w-3" /></button>}
+          className={`group grid grid-cols-[1fr_70px_120px_70px_36px] gap-3 items-start pl-10 pr-6 py-2.5 border-b border-border/10 last:border-b-0 transition ${model.providerConfigured ? 'hover:bg-muted/20' : 'opacity-40'}`}>
+          <div className="flex flex-col gap-0.5 min-w-0">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="text-sm truncate text-muted-foreground">{model.name}</span>
+              {model.isCustom && <span className="text-[9px] text-muted-foreground/40 bg-muted/40 px-1 py-0.5 rounded shrink-0">custom</span>}
+              {model.isCustom && <button type="button" onClick={() => handleRemoveCustomModel(model.providerId, model.id)} className="text-muted-foreground/40 hover:text-destructive transition p-0.5 shrink-0" title="Remove"><X className="h-3.5 w-3.5" /></button>}
+            </div>
+            <div className="flex items-center gap-1">
+              <span className="text-[11px] font-mono text-muted-foreground/40 truncate">{model.providerId}/{model.id}</span>
+              <button type="button" onClick={() => handleCopyId(fullId)} className="text-muted-foreground/30 hover:text-muted-foreground transition shrink-0" title="Copy model ID">
+                {copiedId === fullId ? <Check className="h-3 w-3 text-emerald-500" /> : <Copy className="h-3 w-3" />}
+              </button>
+            </div>
           </div>
-          <div className="text-right">{model.contextWindow ? <span className="text-[11px] font-mono text-muted-foreground/60">{formatContextWindow(model.contextWindow)}</span> : <span className="text-[11px] text-muted-foreground/20">&mdash;</span>}</div>
-          <div className="text-right">{model.pricing?.type === 'completion' ? <span className="text-[11px] font-mono text-muted-foreground/60">${model.pricing.input.toFixed(2)} / ${model.pricing.output.toFixed(2)}</span> : <span className="text-[11px] text-muted-foreground/20">&mdash;</span>}</div>
-          <div className="text-right">{model.pricing?.type === 'completion' && model.pricing.cached_input != null ? <span className="text-[11px] font-mono text-muted-foreground/60">${model.pricing.cached_input.toFixed(2)}</span> : <span className="text-[11px] text-muted-foreground/20">&mdash;</span>}</div>
-          <div className="flex justify-end"><button type="button" onClick={() => model.providerConfigured && handleSetDefault(model.type, fullId)} disabled={saving || !model.providerConfigured} className={`p-1 rounded transition ${isDefault ? 'text-primary' : model.providerConfigured ? 'opacity-0 group-hover:opacity-100 text-muted-foreground/40 hover:text-primary' : 'opacity-0'}`} title={isDefault ? 'Default' : 'Set as default'}><Star className={`h-3 w-3 ${isDefault ? 'fill-primary' : ''}`} /></button></div>
+          <div className="text-right">{model.contextWindow ? <span className="text-xs font-mono text-muted-foreground/60">{formatContextWindow(model.contextWindow)}</span> : <span className="text-xs text-muted-foreground/20">&mdash;</span>}</div>
+          <div className="text-right">{model.pricing?.type === 'completion' ? <span className="text-xs font-mono text-muted-foreground/60">${model.pricing.input.toFixed(2)} / ${model.pricing.output.toFixed(2)}</span> : <span className="text-xs text-muted-foreground/20">&mdash;</span>}</div>
+          <div className="text-right">{model.pricing?.type === 'completion' && model.pricing.cached_input != null ? <span className="text-xs font-mono text-muted-foreground/60">${model.pricing.cached_input.toFixed(2)}</span> : <span className="text-xs text-muted-foreground/20">&mdash;</span>}</div>
+          <div className="flex justify-end"><button type="button" onClick={() => model.providerConfigured && handleSetDefault(model.type, fullId)} disabled={saving || !model.providerConfigured} className={`p-1 rounded transition ${isDefault ? 'text-primary' : model.providerConfigured ? 'text-muted-foreground/40 hover:text-primary' : 'opacity-0'}`} title={isDefault ? 'Default' : 'Set as default'}><Star className={`h-4 w-4 ${isDefault ? 'fill-primary' : ''}`} /></button></div>
         </div>
       ) : (
         <div key={`${model.providerId}-${model.type}-${model.id}`}
-          className={`group grid grid-cols-[1fr_80px_110px_40px] gap-2 items-center pl-10 pr-6 py-1.5 border-b border-border/10 last:border-b-0 transition ${model.providerConfigured ? 'hover:bg-muted/20' : 'opacity-40'}`}>
-          <div className="flex items-center gap-2 min-w-0">
-            <span className={`text-xs truncate ${model.isCustom ? 'font-mono' : ''} text-muted-foreground`}>{model.name}</span>
-            {model.isCustom && <span className="text-[9px] text-muted-foreground/40 bg-muted/40 px-1 py-0.5 rounded shrink-0">custom</span>}
-            {model.isCustom && <button type="button" onClick={() => handleRemoveCustomModel(model.providerId, model.id)} className="opacity-0 group-hover:opacity-100 text-muted-foreground/40 hover:text-destructive transition p-0.5 shrink-0" title="Remove"><X className="h-3 w-3" /></button>}
-          </div>
+          className={`group grid grid-cols-[1fr_70px_130px_36px] gap-3 items-start pl-10 pr-6 py-2.5 border-b border-border/10 last:border-b-0 transition ${model.providerConfigured ? 'hover:bg-muted/20' : 'opacity-40'}`}>
+          <button
+            type="button"
+            disabled={!model.providerConfigured || !model.voices?.length}
+            onClick={() => model.type === 'tts' && model.voices?.length && openVoiceDialog(model.providerId, model.id)}
+            className={`flex flex-col gap-0.5 min-w-0 text-left ${model.type === 'tts' && model.voices?.length && model.providerConfigured ? 'cursor-pointer' : 'cursor-default'}`}
+            title={model.type === 'tts' && model.voices?.length ? `${model.voices.length} voices — click to preview` : undefined}
+          >
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="text-sm truncate text-muted-foreground">{model.name}</span>
+              {model.type === 'tts' && model.voices?.length && <span className="text-[10px] text-muted-foreground/40 shrink-0">{model.voices.length} voices</span>}
+              {model.isCustom && <span className="text-[9px] text-muted-foreground/40 bg-muted/40 px-1 py-0.5 rounded shrink-0">custom</span>}
+              {model.isCustom && <button type="button" onClick={(e) => { e.stopPropagation(); handleRemoveCustomModel(model.providerId, model.id); }} className="text-muted-foreground/40 hover:text-destructive transition p-0.5 shrink-0" title="Remove"><X className="h-3.5 w-3.5" /></button>}
+            </div>
+            <div className="flex items-center gap-1">
+              <span className="text-[11px] font-mono text-muted-foreground/40 truncate">{model.providerId}/{model.id}</span>
+              <button type="button" onClick={(e) => { e.stopPropagation(); handleCopyId(fullId); }} className="text-muted-foreground/30 hover:text-muted-foreground transition shrink-0" title="Copy model ID">
+                {copiedId === fullId ? <Check className="h-3 w-3 text-emerald-500" /> : <Copy className="h-3 w-3" />}
+              </button>
+            </div>
+          </button>
           <div><CapabilityBadge type={model.type} /></div>
-          <div className="text-right">{model.pricing?.type === 'tts' ? <span className="text-[11px] font-mono text-muted-foreground/60">${model.pricing.per_1m_chars.toFixed(2)} / 1M chars</span> : model.pricing?.type === 'stt' ? <span className="text-[11px] font-mono text-muted-foreground/60">${model.pricing.per_minute.toFixed(3)} / min</span> : <span className="text-[11px] text-muted-foreground/20">&mdash;</span>}</div>
-          <div className="flex justify-end"><button type="button" onClick={() => model.providerConfigured && handleSetDefault(model.type, fullId)} disabled={saving || !model.providerConfigured} className={`p-1 rounded transition ${isDefault ? 'text-primary' : model.providerConfigured ? 'opacity-0 group-hover:opacity-100 text-muted-foreground/40 hover:text-primary' : 'opacity-0'}`} title={isDefault ? 'Default' : 'Set as default'}><Star className={`h-3 w-3 ${isDefault ? 'fill-primary' : ''}`} /></button></div>
+          <div className="text-right">{model.pricing?.type === 'tts' ? <span className="text-xs font-mono text-muted-foreground/60">${model.pricing.per_1m_chars.toFixed(2)} / 1M chars</span> : model.pricing?.type === 'stt' ? <span className="text-xs font-mono text-muted-foreground/60">${model.pricing.per_minute.toFixed(3)} / min</span> : <span className="text-xs text-muted-foreground/20">&mdash;</span>}</div>
+          <div className="flex justify-end"><button type="button" onClick={() => model.providerConfigured && handleSetDefault(model.type, fullId)} disabled={saving || !model.providerConfigured} className={`p-1 rounded transition ${isDefault ? 'text-primary' : model.providerConfigured ? 'text-muted-foreground/40 hover:text-primary' : 'opacity-0'}`} title={isDefault ? 'Default' : 'Set as default'}><Star className={`h-4 w-4 ${isDefault ? 'fill-primary' : ''}`} /></button></div>
         </div>
       );
     });
 
     return (
       <div className="space-y-0">
-        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground mb-2">{title}</p>
+        {(title || headerAction) && (
+          <div className="flex items-center justify-between mb-2">
+            {title && <p className="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">{title}</p>}
+            <div className="flex-1" />
+            {headerAction}
+          </div>
+        )}
         <div className="rounded-xl border border-border/70 bg-card shadow-sm overflow-hidden">
           {renderTableHeader()}
           {filtered.map((group) => {
             const isConfigured = group.models.some(m => m.providerConfigured);
             return (
               <details key={group.providerId} open={isConfigured || undefined}>
-                <summary className="flex items-center gap-3 px-6 py-2 bg-muted/20 cursor-pointer hover:bg-muted/30 transition select-none list-none [&::-webkit-details-marker]:hidden">
-                  <ChevronDown className="h-3 w-3 text-muted-foreground/50 transition-transform [[open]>&]:rotate-180 shrink-0" />
-                  <span className={`text-[10px] font-semibold uppercase tracking-[0.15em] shrink-0 ${isConfigured ? 'text-muted-foreground/70' : 'text-muted-foreground/50'}`}>{group.providerLabel}</span>
-                  <span className="text-[10px] text-muted-foreground/40">{group.models.length} model{group.models.length !== 1 ? 's' : ''}</span>
+                <summary className="flex items-center gap-3 px-6 py-2.5 bg-muted/20 cursor-pointer hover:bg-muted/30 transition select-none list-none [&::-webkit-details-marker]:hidden">
+                  <ChevronDown className="h-4 w-4 text-muted-foreground/50 transition-transform [[open]>&]:rotate-180 shrink-0" />
+                  <span className={`text-[11px] font-semibold uppercase tracking-[0.15em] shrink-0 ${isConfigured ? 'text-muted-foreground/70' : 'text-muted-foreground/50'}`}>{group.providerLabel}</span>
+                  <span className="text-[11px] text-muted-foreground/40">{group.models.length} model{group.models.length !== 1 ? 's' : ''}</span>
                   <div className="flex-1" />
                   <button type="button" onClick={(e) => {
                     e.preventDefault();
                     const key = `${group.providerId}:${section === 'completion' ? 'completion' : 'tts'}`;
                     setAddingModelKey(addingModelKey === key ? null : key);
                     setNewModelId('');
-                  }} className="text-muted-foreground/40 hover:text-foreground transition p-0.5 shrink-0" title="Add model">
-                    <Plus className="h-3 w-3" />
+                  }} className="text-muted-foreground/50 hover:text-foreground transition p-1 shrink-0" title="Add model">
+                    <Plus className="h-4 w-4" />
                   </button>
                   <button type="button" onClick={(e) => { e.preventDefault(); setAutoExpandProvider(group.providerId); onTabChange?.('providers'); }}
-                    className="flex items-center gap-1 text-[10px] font-medium text-muted-foreground/50 hover:text-foreground transition shrink-0" title="Configure provider">
-                    {isConfigured ? <Check className="h-3 w-3 text-emerald-500" /> : <Wrench className="h-3 w-3" />}
+                    className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground/60 hover:text-foreground transition shrink-0" title="Configure provider">
+                    {isConfigured ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Wrench className="h-3.5 w-3.5" />}
                     Configure
                   </button>
                 </summary>
@@ -836,6 +887,20 @@ export function AgentSettingsView({ className, activeTab: activeTabProp, onTabCh
           }}
         />
       )}
+
+      {/* Voice Preview Dialog */}
+      {voiceDialogOpen && homeClient && (
+        <VoicePreviewDialog
+          open={voiceDialogOpen}
+          onClose={() => setVoiceDialogOpen(false)}
+          providers={providers}
+          isProviderConfigured={isProviderConfigured}
+          homeClient={homeClient}
+          onOpenProviders={() => setActiveTab('providers')}
+          initialModelId={voiceDialogModelId}
+          initialProviderId={voiceDialogProviderId}
+        />
+      )}
     </div>
   );
 }
@@ -852,6 +917,7 @@ interface ModelRow {
   providerConfigured: boolean;
   contextWindow?: number;
   pricing?: ModelPricing;
+  voices?: TtsVoiceInfo[];
 }
 
 interface ModelSelectorDialogProps {

@@ -118,56 +118,16 @@
             "per_1m_chars": 12.00
           },
           "voices": [
-            {
-              "id": "alloy",
-              "name": "Alloy",
-              "description": "Neutral and balanced"
-            },
-            {
-              "id": "ash",
-              "name": "Ash",
-              "description": "Warm and confident"
-            },
-            {
-              "id": "ballad",
-              "name": "Ballad",
-              "description": "Expressive and melodic"
-            },
-            {
-              "id": "coral",
-              "name": "Coral",
-              "description": "Clear and friendly"
-            },
-            {
-              "id": "echo",
-              "name": "Echo",
-              "description": "Smooth and resonant"
-            },
-            {
-              "id": "fable",
-              "name": "Fable",
-              "description": "Storytelling and warm"
-            },
-            {
-              "id": "nova",
-              "name": "Nova",
-              "description": "Bright and energetic"
-            },
-            {
-              "id": "onyx",
-              "name": "Onyx",
-              "description": "Deep and authoritative"
-            },
-            {
-              "id": "sage",
-              "name": "Sage",
-              "description": "Calm and measured"
-            },
-            {
-              "id": "shimmer",
-              "name": "Shimmer",
-              "description": "Light and gentle"
-            }
+            { "id": "alloy", "name": "Alloy", "description": "Neutral and balanced", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
+            { "id": "ash", "name": "Ash", "description": "Warm and confident", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
+            { "id": "ballad", "name": "Ballad", "description": "Expressive and melodic", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
+            { "id": "coral", "name": "Coral", "description": "Clear and friendly", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
+            { "id": "echo", "name": "Echo", "description": "Smooth and resonant", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
+            { "id": "fable", "name": "Fable", "description": "Storytelling and warm", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
+            { "id": "nova", "name": "Nova", "description": "Bright and energetic", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
+            { "id": "onyx", "name": "Onyx", "description": "Deep and authoritative", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
+            { "id": "sage", "name": "Sage", "description": "Calm and measured", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
+            { "id": "shimmer", "name": "Shimmer", "description": "Light and gentle", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] }
           ],
           "formats": [
             "mp3",
@@ -187,36 +147,12 @@
             "per_1m_chars": 15.00
           },
           "voices": [
-            {
-              "id": "alloy",
-              "name": "Alloy",
-              "description": "Neutral and balanced"
-            },
-            {
-              "id": "echo",
-              "name": "Echo",
-              "description": "Smooth and resonant"
-            },
-            {
-              "id": "fable",
-              "name": "Fable",
-              "description": "Storytelling and warm"
-            },
-            {
-              "id": "onyx",
-              "name": "Onyx",
-              "description": "Deep and authoritative"
-            },
-            {
-              "id": "nova",
-              "name": "Nova",
-              "description": "Bright and energetic"
-            },
-            {
-              "id": "shimmer",
-              "name": "Shimmer",
-              "description": "Light and gentle"
-            }
+            { "id": "alloy", "name": "Alloy", "description": "Neutral and balanced", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
+            { "id": "echo", "name": "Echo", "description": "Smooth and resonant", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
+            { "id": "fable", "name": "Fable", "description": "Storytelling and warm", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
+            { "id": "onyx", "name": "Onyx", "description": "Deep and authoritative", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
+            { "id": "nova", "name": "Nova", "description": "Bright and energetic", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
+            { "id": "shimmer", "name": "Shimmer", "description": "Light and gentle", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] }
           ],
           "formats": [
             "mp3",
@@ -236,36 +172,12 @@
             "per_1m_chars": 30.00
           },
           "voices": [
-            {
-              "id": "alloy",
-              "name": "Alloy",
-              "description": "Neutral and balanced"
-            },
-            {
-              "id": "echo",
-              "name": "Echo",
-              "description": "Smooth and resonant"
-            },
-            {
-              "id": "fable",
-              "name": "Fable",
-              "description": "Storytelling and warm"
-            },
-            {
-              "id": "onyx",
-              "name": "Onyx",
-              "description": "Deep and authoritative"
-            },
-            {
-              "id": "nova",
-              "name": "Nova",
-              "description": "Bright and energetic"
-            },
-            {
-              "id": "shimmer",
-              "name": "Shimmer",
-              "description": "Light and gentle"
-            }
+            { "id": "alloy", "name": "Alloy", "description": "Neutral and balanced", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
+            { "id": "echo", "name": "Echo", "description": "Smooth and resonant", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
+            { "id": "fable", "name": "Fable", "description": "Storytelling and warm", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
+            { "id": "onyx", "name": "Onyx", "description": "Deep and authoritative", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
+            { "id": "nova", "name": "Nova", "description": "Bright and energetic", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
+            { "id": "shimmer", "name": "Shimmer", "description": "Light and gentle", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] }
           ],
           "formats": [
             "mp3",
@@ -339,238 +251,6 @@
       ]
     },
     {
-      "id": "azure",
-      "label": "Azure",
-      "keys": [
-        {
-          "key": "AZURE_OPENAI_BASE_URL",
-          "label": "OpenAI Endpoint URL",
-          "placeholder": "https://<resource>.openai.azure.com",
-          "required": true,
-          "sensitive": false
-        },
-        {
-          "key": "AZURE_OPENAI_API_KEY",
-          "label": "OpenAI API key",
-          "placeholder": "...",
-          "required": true,
-          "sensitive": true
-        },
-        {
-          "key": "AZURE_OPENAI_DEPLOYMENT",
-          "label": "Deployment name",
-          "placeholder": "gpt-4o",
-          "required": false,
-          "sensitive": false
-        },
-        {
-          "key": "AZURE_OPENAI_API_VERSION",
-          "label": "API version",
-          "placeholder": "2024-06-01",
-          "required": false,
-          "sensitive": false
-        },
-        {
-          "key": "AZURE_SPEECH_KEY",
-          "label": "Speech Services key",
-          "placeholder": "...",
-          "required": false,
-          "sensitive": true
-        },
-        {
-          "key": "AZURE_SPEECH_REGION",
-          "label": "Speech Services region",
-          "placeholder": "westus2",
-          "required": false,
-          "sensitive": false
-        }
-      ],
-      "models": [
-        {
-          "id": "gpt-4o",
-          "name": "GPT-4o (Azure)",
-          "capability": "completion",
-          "context_window": 128000,
-          "pricing": {
-            "type": "completion",
-            "input": 2.50,
-            "output": 10.00,
-            "cached_input": 1.25
-          }
-        },
-        {
-          "id": "gpt-4o-mini",
-          "name": "GPT-4o Mini (Azure)",
-          "capability": "completion",
-          "context_window": 128000,
-          "pricing": {
-            "type": "completion",
-            "input": 0.15,
-            "output": 0.60,
-            "cached_input": 0.075
-          }
-        },
-        {
-          "id": "tts-1",
-          "name": "Azure TTS-1",
-          "capability": "tts",
-          "pricing": {
-            "type": "tts",
-            "per_1m_chars": 15.00
-          },
-          "voices": [
-            {
-              "id": "alloy",
-              "name": "Alloy",
-              "description": "Neutral and balanced"
-            },
-            {
-              "id": "echo",
-              "name": "Echo",
-              "description": "Smooth and resonant"
-            },
-            {
-              "id": "fable",
-              "name": "Fable",
-              "description": "Storytelling and warm"
-            },
-            {
-              "id": "onyx",
-              "name": "Onyx",
-              "description": "Deep and authoritative"
-            },
-            {
-              "id": "nova",
-              "name": "Nova",
-              "description": "Bright and energetic"
-            },
-            {
-              "id": "shimmer",
-              "name": "Shimmer",
-              "description": "Light and gentle"
-            }
-          ],
-          "formats": [
-            "mp3",
-            "wav",
-            "opus",
-            "aac",
-            "flac",
-            "pcm"
-          ]
-        },
-        {
-          "id": "tts-1-hd",
-          "name": "Azure TTS-1 HD",
-          "capability": "tts",
-          "pricing": {
-            "type": "tts",
-            "per_1m_chars": 30.00
-          },
-          "voices": [
-            {
-              "id": "alloy",
-              "name": "Alloy",
-              "description": "Neutral and balanced"
-            },
-            {
-              "id": "echo",
-              "name": "Echo",
-              "description": "Smooth and resonant"
-            },
-            {
-              "id": "fable",
-              "name": "Fable",
-              "description": "Storytelling and warm"
-            },
-            {
-              "id": "onyx",
-              "name": "Onyx",
-              "description": "Deep and authoritative"
-            },
-            {
-              "id": "nova",
-              "name": "Nova",
-              "description": "Bright and energetic"
-            },
-            {
-              "id": "shimmer",
-              "name": "Shimmer",
-              "description": "Light and gentle"
-            }
-          ],
-          "formats": [
-            "mp3",
-            "wav",
-            "opus",
-            "aac",
-            "flac",
-            "pcm"
-          ]
-        },
-        {
-          "id": "azure-neural-tts",
-          "name": "Azure Neural TTS",
-          "capability": "tts",
-          "pricing": {
-            "type": "tts",
-            "per_1m_chars": 16.00
-          },
-          "voices": [
-            {
-              "id": "en-US-JennyNeural",
-              "name": "Jenny",
-              "description": "General purpose female voice"
-            },
-            {
-              "id": "en-US-GuyNeural",
-              "name": "Guy",
-              "description": "General purpose male voice"
-            },
-            {
-              "id": "en-US-AriaNeural",
-              "name": "Aria",
-              "description": "Expressive female voice"
-            },
-            {
-              "id": "en-US-DavisNeural",
-              "name": "Davis",
-              "description": "Calm male voice"
-            },
-            {
-              "id": "en-US-AmberNeural",
-              "name": "Amber",
-              "description": "Warm female voice"
-            },
-            {
-              "id": "en-US-AndrewNeural",
-              "name": "Andrew",
-              "description": "Professional male voice"
-            },
-            {
-              "id": "en-US-EmmaNeural",
-              "name": "Emma",
-              "description": "Friendly female voice"
-            }
-          ],
-          "formats": [
-            "mp3",
-            "wav",
-            "opus"
-          ]
-        },
-        {
-          "id": "whisper-1",
-          "name": "Whisper",
-          "capability": "stt",
-          "pricing": {
-            "type": "stt",
-            "per_minute": 0.006
-          }
-        }
-      ]
-    },
-    {
       "id": "gemini",
       "label": "Google Gemini",
       "keys": [
@@ -634,32 +314,38 @@
             {
               "id": "21m00Tcm4TlvDq8ikWAM",
               "name": "Rachel",
-              "description": "Calm and natural female"
+              "description": "Calm and natural female",
+              "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Polish", "Russian", "Turkish", "Ukrainian", "Arabic", "Hindi"]
             },
             {
               "id": "29vD33N1CtxCmqQRPOHJ",
               "name": "Drew",
-              "description": "Well-rounded male"
+              "description": "Well-rounded male",
+              "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Polish", "Russian", "Turkish", "Ukrainian", "Arabic", "Hindi"]
             },
             {
               "id": "2EiwWnXFnvU5JabPnv8n",
               "name": "Clyde",
-              "description": "War veteran male"
+              "description": "War veteran male",
+              "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Polish", "Russian", "Turkish", "Ukrainian", "Arabic", "Hindi"]
             },
             {
               "id": "5Q0t7uMcjvnagumLfvZi",
               "name": "Paul",
-              "description": "Ground news male"
+              "description": "Ground news male",
+              "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Polish", "Russian", "Turkish", "Ukrainian", "Arabic", "Hindi"]
             },
             {
               "id": "AZnzlk1XvdvUeBnXmlld",
               "name": "Domi",
-              "description": "Strong female"
+              "description": "Strong female",
+              "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Polish", "Russian", "Turkish", "Ukrainian", "Arabic", "Hindi"]
             },
             {
               "id": "EXAVITQu4vr4xnSDxMaL",
               "name": "Bella",
-              "description": "Soft female"
+              "description": "Soft female",
+              "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Polish", "Russian", "Turkish", "Ukrainian", "Arabic", "Hindi"]
             }
           ],
           "formats": [
@@ -688,7 +374,76 @@
           "sensitive": true
         }
       ],
-      "models": []
+      "models": [
+        {
+          "id": "gpt-5.4",
+          "name": "GPT-5.4",
+          "capability": "completion",
+          "context_window": 128000,
+          "pricing": {
+            "type": "completion",
+            "input": 5.00,
+            "output": 15.00,
+            "cached_input": 2.50
+          }
+        },
+        {
+          "id": "gpt-5.3-codex",
+          "name": "GPT-5.3 Codex",
+          "capability": "completion",
+          "context_window": 192000,
+          "pricing": {
+            "type": "completion",
+            "input": 5.00,
+            "output": 15.00,
+            "cached_input": 2.50
+          }
+        },
+        {
+          "id": "gpt-4.1-mini",
+          "name": "GPT-4.1 Mini",
+          "capability": "completion",
+          "context_window": 1047576,
+          "pricing": {
+            "type": "completion",
+            "input": 0.40,
+            "output": 1.60,
+            "cached_input": 0.10
+          }
+        },
+        {
+          "id": "gpt-4o-mini-tts",
+          "name": "GPT-4o Mini TTS",
+          "capability": "tts",
+          "pricing": {
+            "type": "tts",
+            "per_1m_chars": 12.00
+          },
+          "voices": [
+            { "id": "alloy", "name": "Alloy", "description": "Neutral and balanced", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
+            { "id": "ash", "name": "Ash", "description": "Warm and confident", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
+            { "id": "ballad", "name": "Ballad", "description": "Expressive and melodic", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
+            { "id": "coral", "name": "Coral", "description": "Clear and friendly", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
+            { "id": "echo", "name": "Echo", "description": "Smooth and resonant", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
+            { "id": "fable", "name": "Fable", "description": "Storytelling and warm", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
+            { "id": "nova", "name": "Nova", "description": "Bright and energetic", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
+            { "id": "onyx", "name": "Onyx", "description": "Deep and authoritative", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
+            { "id": "sage", "name": "Sage", "description": "Calm and measured", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] },
+            { "id": "shimmer", "name": "Shimmer", "description": "Light and gentle", "languages": ["English", "Chinese", "German", "Spanish", "French", "Italian", "Portuguese", "Japanese", "Korean", "Dutch", "Polish", "Russian", "Turkish", "Ukrainian", "Vietnamese", "Thai", "Arabic", "Hindi"] }
+          ],
+          "formats": ["mp3", "wav", "opus", "aac", "flac", "pcm"]
+        },
+        {
+          "id": "whisper-1",
+          "name": "Whisper",
+          "capability": "stt",
+          "pricing": {
+            "type": "stt",
+            "per_minute": 0.006
+          },
+          "formats": ["wav", "mp3", "flac", "opus", "aac", "pcm"]
+        }
+      ]
     },
     {
       "id": "aws_bedrock",
@@ -791,61 +546,65 @@
           }
         },
         {
-          "id": "cosyvoice-v1",
-          "name": "CosyVoice V1",
+          "id": "qwen3-tts-flash",
+          "name": "Qwen3 TTS Flash",
           "capability": "tts",
           "pricing": {
             "type": "tts",
-            "per_1m_chars": 2.00
+            "per_1m_chars": 10.00
           },
           "voices": [
-            { "id": "longxiaochun", "name": "Long Xiaochun", "description": "Warm and gentle female (Chinese)" },
-            { "id": "longshuo", "name": "Long Shuo", "description": "Professional male (Chinese)" },
-            { "id": "longjing", "name": "Long Jing", "description": "Calm female narrator (Chinese)" },
-            { "id": "longmiao", "name": "Long Miao", "description": "Sweet female (Chinese)" },
-            { "id": "longbella", "name": "Long Bella", "description": "Energetic female (Chinese)" },
-            { "id": "longlaotie", "name": "Long Laotie", "description": "Friendly male (Chinese)" },
-            { "id": "longshu", "name": "Long Shu", "description": "Mature male narrator (Chinese)" },
-            { "id": "longfei", "name": "Long Fei", "description": "Warm male (Chinese)" },
-            { "id": "longyue", "name": "Long Yue", "description": "Young female (Chinese)" },
-            { "id": "longjia", "name": "Long Jia", "description": "Young male (Chinese)" },
-            { "id": "longhua", "name": "Long Hua", "description": "Middle-aged male (Chinese)" },
-            { "id": "longyixiao", "name": "Long Yixiao", "description": "Cheerful female (Chinese)" }
+            { "id": "Cherry", "name": "Cherry", "description": "Female, sunny and friendly", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
+            { "id": "Serena", "name": "Serena", "description": "Female, gentle", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
+            { "id": "Ethan", "name": "Ethan", "description": "Male, sunny and warm", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
+            { "id": "Chelsie", "name": "Chelsie", "description": "Female, virtual girlfriend style", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
+            { "id": "Momo", "name": "Momo", "description": "Female, playful and mischievous", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
+            { "id": "Vivian", "name": "Vivian", "description": "Female, cute and slightly feisty", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
+            { "id": "Moon", "name": "Moon", "description": "Male, bold and handsome", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
+            { "id": "Maia", "name": "Maia", "description": "Female, intellectual and gentle", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
+            { "id": "Kai", "name": "Kai", "description": "Male, soothing and smooth", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
+            { "id": "Nofish", "name": "Nofish", "description": "Male, casual designer", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
+            { "id": "Bella", "name": "Bella", "description": "Female, lively little girl", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
+            { "id": "Jennifer", "name": "Jennifer", "description": "Female, cinematic American English", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
+            { "id": "Ryan", "name": "Ryan", "description": "Male, dramatic and expressive", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
+            { "id": "Katerina", "name": "Katerina", "description": "Female, mature and elegant", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
+            { "id": "Aiden", "name": "Aiden", "description": "Male, American English young man", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
+            { "id": "Eldric Sage", "name": "Eldric Sage", "description": "Male, calm and wise elder", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
+            { "id": "Mia", "name": "Mia", "description": "Female, gentle and obedient", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
+            { "id": "Mochi", "name": "Mochi", "description": "Male, clever young adult", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
+            { "id": "Bellona", "name": "Bellona", "description": "Female, powerful and clear", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
+            { "id": "Vincent", "name": "Vincent", "description": "Male, raspy and smoky", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
+            { "id": "Bunny", "name": "Bunny", "description": "Female, cute and adorable", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
+            { "id": "Neil", "name": "Neil", "description": "Male, professional news anchor", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
+            { "id": "Elias", "name": "Elias", "description": "Female, academic narrator", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
+            { "id": "Arthur", "name": "Arthur", "description": "Male, earthy storyteller", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
+            { "id": "Nini", "name": "Nini", "description": "Female, sweet and clingy", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
+            { "id": "Seren", "name": "Seren", "description": "Female, soothing lullaby", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
+            { "id": "Pip", "name": "Pip", "description": "Male, playful and mischievous", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
+            { "id": "Stella", "name": "Stella", "description": "Female, sweet teenage girl", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
+            { "id": "Bodega", "name": "Bodega", "description": "Male, passionate Spanish", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
+            { "id": "Sonrisa", "name": "Sonrisa", "description": "Female, cheerful Latin American", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
+            { "id": "Alek", "name": "Alek", "description": "Male, cold Russian", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
+            { "id": "Dolce", "name": "Dolce", "description": "Male, laid-back Italian", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
+            { "id": "Sohee", "name": "Sohee", "description": "Female, Korean unnie", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
+            { "id": "Ono Anna", "name": "Ono Anna", "description": "Female, spirited childhood friend", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
+            { "id": "Lenn", "name": "Lenn", "description": "Male, German post-punk youth", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
+            { "id": "Emilien", "name": "Emilien", "description": "Male, romantic French", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
+            { "id": "Andre", "name": "Andre", "description": "Male, magnetic and steady", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
+            { "id": "Radio Gol", "name": "Radio Gol", "description": "Male, football commentator", "languages": ["Chinese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
+            { "id": "Jada", "name": "Jada", "description": "Female, Shanghainese", "languages": ["Shanghainese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
+            { "id": "Dylan", "name": "Dylan", "description": "Male, Beijing dialect", "languages": ["Beijing dialect", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
+            { "id": "Li", "name": "Li", "description": "Male, Nanjing dialect", "languages": ["Nanjing dialect", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
+            { "id": "Marcus", "name": "Marcus", "description": "Male, Shaanxi dialect", "languages": ["Shaanxi dialect", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
+            { "id": "Roy", "name": "Roy", "description": "Male, Southern Min dialect", "languages": ["Southern Min", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
+            { "id": "Peter", "name": "Peter", "description": "Male, Tianjin dialect", "languages": ["Tianjin dialect", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
+            { "id": "Sunny", "name": "Sunny", "description": "Female, Sichuan dialect", "languages": ["Sichuan dialect", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
+            { "id": "Eric", "name": "Eric", "description": "Male, Sichuan dialect", "languages": ["Sichuan dialect", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
+            { "id": "Rocky", "name": "Rocky", "description": "Male, Cantonese", "languages": ["Cantonese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] },
+            { "id": "Kiki", "name": "Kiki", "description": "Female, Cantonese", "languages": ["Cantonese", "English", "French", "German", "Russian", "Italian", "Spanish", "Portuguese", "Japanese", "Korean"] }
           ],
           "formats": [
-            "mp3",
-            "wav",
-            "pcm",
-            "opus"
-          ]
-        },
-        {
-          "id": "cosyvoice-v2",
-          "name": "CosyVoice V2",
-          "capability": "tts",
-          "pricing": {
-            "type": "tts",
-            "per_1m_chars": 4.00
-          },
-          "voices": [
-            { "id": "longxiaochun", "name": "Long Xiaochun", "description": "Warm and gentle female (Chinese)" },
-            { "id": "longshuo", "name": "Long Shuo", "description": "Professional male (Chinese)" },
-            { "id": "longjing", "name": "Long Jing", "description": "Calm female narrator (Chinese)" },
-            { "id": "longmiao", "name": "Long Miao", "description": "Sweet female (Chinese)" },
-            { "id": "longbella", "name": "Long Bella", "description": "Energetic female (Chinese)" },
-            { "id": "longlaotie", "name": "Long Laotie", "description": "Friendly male (Chinese)" },
-            { "id": "longshu", "name": "Long Shu", "description": "Mature male narrator (Chinese)" },
-            { "id": "longfei", "name": "Long Fei", "description": "Warm male (Chinese)" },
-            { "id": "longyue", "name": "Long Yue", "description": "Young female (Chinese)" },
-            { "id": "longjia", "name": "Long Jia", "description": "Young male (Chinese)" },
-            { "id": "longhua", "name": "Long Hua", "description": "Middle-aged male (Chinese)" },
-            { "id": "longyixiao", "name": "Long Yixiao", "description": "Cheerful female (Chinese)" }
-          ],
-          "formats": [
-            "mp3",
-            "wav",
-            "pcm",
-            "opus"
+            "wav"
           ]
         },
         {
