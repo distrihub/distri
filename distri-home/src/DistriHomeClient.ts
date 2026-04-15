@@ -80,6 +80,7 @@ export interface DetailedThreadListParams {
   external_id?: string;
   user_id?: string;
   channel_id?: string;
+  bot_id?: string;
   search?: string;
   from_date?: string;
   to_date?: string;
@@ -160,6 +161,27 @@ export interface SendUserTestMessageRequest {
   message: string;
 }
 
+export interface ChannelConversation {
+  channel_id: string;
+  chat_id: string;
+  active: boolean;
+  thread_id: string | null;
+  created_at: string | null;
+}
+
+export interface ChannelDetail {
+  id: string;
+  provider: string;
+  bot_username: string | null;
+  auth_mode: string;
+  agent_id: string;
+  active: boolean;
+  workspace_id: string;
+  connection_id: string | null;
+  conversation_count: number;
+  conversations: ChannelConversation[];
+}
+
 /**
  * DistriHomeClient extends DistriClient with home-specific methods.
  * Uses DistriClient's fetch method for authenticated requests.
@@ -230,6 +252,7 @@ export class DistriHomeClient {
     if (params.external_id) searchParams.set('external_id', params.external_id);
     if (params.user_id) searchParams.set('user_id', params.user_id);
     if (params.channel_id) searchParams.set('channel_id', params.channel_id);
+    if (params.bot_id) searchParams.set('bot_id', params.bot_id);
     if (params.search) searchParams.set('search', params.search);
     if (params.from_date) searchParams.set('from_date', params.from_date);
     if (params.to_date) searchParams.set('to_date', params.to_date);
@@ -325,6 +348,17 @@ export class DistriHomeClient {
     if (!response.ok) {
       throw new Error(`Failed to delete user: ${response.statusText}`);
     }
+  }
+
+  async getChannel(channelId: string): Promise<ChannelDetail> {
+    const response = await this.client.fetch(`/channels/${encodeURIComponent(channelId)}`);
+    if (response.ok) {
+      return await response.json();
+    }
+    if (response.status === 404) {
+      throw new Error('Channel not found');
+    }
+    throw new Error(`Failed to fetch channel: ${response.statusText}`);
   }
 
   async sendUserTestMessage(

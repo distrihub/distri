@@ -300,6 +300,7 @@ export interface ThreadsViewProps {
   initialExternalId?: string;
   initialUserId?: string;
   initialChannelId?: string;
+  initialBotId?: string;
   onShowTrace?: (threadId: string) => void;
 }
 
@@ -328,6 +329,7 @@ export function ThreadsView({
   initialExternalId,
   initialUserId,
   initialChannelId,
+  initialBotId,
   onShowTrace,
 }: ThreadsViewProps) {
   const navigate = useDistriHomeNavigate();
@@ -360,6 +362,7 @@ export function ThreadsView({
     external_id: initialExternalId || undefined,
     user_id: initialUserId || undefined,
     channel_id: initialChannelId || undefined,
+    bot_id: initialBotId || undefined,
   });
 
   useEffect(() => {
@@ -373,9 +376,10 @@ export function ThreadsView({
       external_id: initialExternalId || undefined,
       user_id: initialUserId || undefined,
       channel_id: initialChannelId || undefined,
+      bot_id: initialBotId || undefined,
       offset: 0,
     }));
-  }, [initialAgentId, initialExternalId, initialUserId, initialChannelId, setParams]);
+  }, [initialAgentId, initialExternalId, initialUserId, initialChannelId, initialBotId, setParams]);
 
   const { agents: agentsByUsage, search: agentSearch, setSearch: setAgentSearch } = useAgentsByUsage();
 
@@ -443,18 +447,16 @@ export function ThreadsView({
 
   const handleUserClick = useCallback(
     (userId: string) => {
-      setParams({ ...params, user_id: userId, offset: 0 });
-      setDialogUserId(userId);
+      navigate(`/users/${userId}`);
     },
-    [params, setParams]
+    [navigate],
   );
 
   const handleChannelClick = useCallback(
     (channelId: string) => {
-      setParams({ ...params, channel_id: channelId, offset: 0 });
-      setDialogChannelId(channelId);
+      navigate(`/channels/${channelId}`);
     },
-    [params, setParams]
+    [navigate],
   );
 
   // Filter dialog handlers
@@ -703,10 +705,8 @@ export function ThreadsView({
                   <div
                     key={thread.id}
                     onClick={() => {
-                      if (thread.agent_id && thread.id) {
-                        navigate(
-                          `/chat?id=${encodeURIComponent(thread.agent_id)}&threadId=${encodeURIComponent(thread.id)}`
-                        );
+                      if (thread.id) {
+                        navigate(`/threads/${encodeURIComponent(thread.id)}`);
                       }
                     }}
                     className="group flex cursor-pointer items-center justify-between gap-4 px-6 py-4 transition hover:bg-muted/40"
@@ -775,7 +775,7 @@ export function ThreadsView({
                               thread.channel_id && handleChannelClick(thread.channel_id);
                             }}
                             className="font-mono text-[11px] text-muted-foreground/80 hover:text-primary hover:underline"
-                            title={`Filter by channel: ${thread.channel_name || thread.channel_id}`}
+                            title={`Channel: ${thread.channel_name || thread.channel_id}`}
                           >
                             {thread.channel_name ?? `ch:${thread.channel_id?.slice(0, 8)}...`}
                           </button>
