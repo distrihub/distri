@@ -134,6 +134,7 @@ pub async fn init_thread_get_message(
                 .clone()
                 .map(|a| a.thread)
                 .flatten(),
+            executor_context.channel_id.clone(),
         )
         .await?;
 

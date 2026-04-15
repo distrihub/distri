@@ -1171,6 +1171,7 @@ impl AgentOrchestrator {
         thread_id: Option<String>,
         title: Option<&str>,
         attributes: Option<serde_json::Value>,
+        channel_id: Option<String>,
         thread_store: &Arc<dyn ThreadStore>,
     ) -> Result<Thread, AgentError> {
         // For ephemeral mode, skip the get_thread check and always create new thread
@@ -1213,7 +1214,7 @@ impl AgentOrchestrator {
                     attributes,
                     user_id: None,
                     external_id: None,
-                    channel_id: None,
+                    channel_id,
                 };
                 thread_store
                     .create_thread(create_request)
@@ -1229,12 +1230,14 @@ impl AgentOrchestrator {
         thread_id: Option<String>,
         title: Option<&str>,
         attributes: Option<serde_json::Value>,
+        channel_id: Option<String>,
     ) -> Result<Thread, AgentError> {
         self.ensure_thread_exists_with_store(
             agent_id,
             thread_id,
             title,
             attributes,
+            channel_id,
             &self.stores.thread_store,
         )
         .await
@@ -1262,6 +1265,7 @@ impl AgentOrchestrator {
                 .clone()
                 .map(|a| a.thread)
                 .flatten(),
+            context.channel_id.clone(),
             &stores.thread_store,
         )
         .await?;
@@ -1392,6 +1396,7 @@ impl AgentOrchestrator {
                 .as_ref()
                 .map(|a| a.thread.clone())
                 .flatten(),
+            context.channel_id.clone(),
             &stores.thread_store,
         )
         .await?;
