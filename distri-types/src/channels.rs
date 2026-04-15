@@ -245,14 +245,37 @@ pub enum AuthProof {
 
 /// Outcome of running the channel-auth resolver against an inbound message.
 /// The gateway webhook handler turns each variant into a concrete reply:
-/// `Authenticated` → dispatch to the agent; `NeedsConfiguration` → reply with
-/// the configure URL; `Denied` → send the reason text.
+/// `Authenticated` → dispatch to the agent; `NeedsCredential` /
+/// `NeedsWorkspaceLink` → reply with the URL; `Denied` → send the reason.
+///
+/// The two "needs-something" variants are kept separate (not combined under
+/// a single `Pending` variant) because their recovery flows land on
+/// different web pages:
+///
+/// - `NeedsCredential` → `/connections/configure?code=…` — existing
+///   end-user credential form. Does not require the actor to be bound to
+///   a distri account; the credential is stored against the phantom
+///   `users.id` created from the platform identity.
+/// - `NeedsWorkspaceLink` → `/setup?code=…` — public-bot onboarding.
+///   Requires OTP login (so the phantom `users` row can be linked into a
+///   verified account) plus picking a workspace.
+///
+/// Both recovery paths reuse the same *account linking* primitive
+/// (`services::user::link_accounts`) — the difference is which other step
+/// comes after the link.
 #[derive(Debug, Clone)]
 pub enum ResolveOutcome {
     Authenticated(AuthenticatedChannelUser),
-    /// Only produced for `AuthScope::User` before the sender has stored the
-    /// connection's required field values in the secrets store.
-    NeedsConfiguration {
+    /// `AuthScope::User`: actor is known but hasn't stored the connection's
+    /// required credentials yet. URL points at
+    /// `/connections/configure?code=…`.
+    NeedsCredential {
+        url: String,
+    },
+    /// `AuthScope::Public`: actor has no workspace memberships yet. URL
+    /// points at `/setup?code=…`, which runs OTP login + account link +
+    /// workspace pick.
+    NeedsWorkspaceLink {
         url: String,
     },
     /// No path exists for this user to access the bot (Workspace non-members
