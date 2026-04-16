@@ -14,6 +14,7 @@ mod input;
 mod logging;
 mod login;
 mod message;
+mod sidecar;
 mod threads;
 mod tools;
 mod traces;
@@ -173,6 +174,34 @@ enum Commands {
         /// Run headless (do not open the web UI automatically)
         #[clap(long, help = "Skip opening the web UI in your browser")]
         headless: bool,
+    },
+
+    /// Sidecar commands for Claude Code hook integration
+    Sidecar {
+        #[clap(subcommand)]
+        command: SidecarCommands,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum SidecarCommands {
+    /// Start a sidecar session (creates thread+task, writes state file)
+    Start {
+        /// Task description for the session
+        #[clap(long)]
+        task: String,
+        /// Agent name (default: "claude")
+        #[clap(long)]
+        agent_name: Option<String>,
+    },
+    /// Send a Claude Code hook event to distri-cloud
+    Send {
+        /// Hook event type (pre_tool_use, post_tool_use, stop, session_end)
+        #[clap(long)]
+        event: String,
+        /// Agent name (default: "claude")
+        #[clap(long)]
+        agent_name: Option<String>,
     },
 }
 
@@ -727,6 +756,14 @@ async fn main() -> Result<()> {
             traces::handle_optimize_command(&client, command).await?;
         }
         Commands::Serve { .. } => unreachable!("serve handled earlier"),
+        Commands::Sidecar { command } => match command {
+            SidecarCommands::Start { task, agent_name } => {
+                sidecar::run_start(&task, agent_name.as_deref()).await;
+            }
+            SidecarCommands::Send { event, agent_name } => {
+                sidecar::run_send(&event, agent_name.as_deref()).await;
+            }
+        },
     }
 
     Ok(())
