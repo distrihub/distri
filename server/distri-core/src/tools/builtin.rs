@@ -875,14 +875,14 @@ impl ExecutorContextTool for UniversalAgentTool {
             )));
         }
 
-        // Cloud callers of `distri_runner` without a sandbox have nowhere to
-        // route — the agent is designed for sandboxed execution.
-        if agent_name == "distri_runner"
-            && context.runtime_mode == RuntimeMode::Cloud
-            && orchestrator.background_runner.is_none()
-        {
+        // `distri_runner` needs an external CLI client to execute its local
+        // tools (Bash/Read/Write/Edit/Glob/Grep). A sandbox provides that
+        // client by running `distri run --agent distri_runner` inside the
+        // container. Without a sandbox, distri_runner would run in-process
+        // with no tool provider and hang on the first external tool call.
+        if agent_name == "distri_runner" && orchestrator.background_runner.is_none() {
             return Err(AgentError::ToolExecution(
-                "distri_runner requires a sandbox in Cloud mode, but no background_runner is configured"
+                "distri_runner requires a sandbox (no background_runner is configured)"
                     .to_string(),
             ));
         }
@@ -981,10 +981,14 @@ impl ExecutorContextTool for UniversalAgentTool {
         }
 
         // ── Check if remote execution is needed ───────────────────────────
-        // In Cloud mode, `distri_runner` always runs remotely via SandboxLauncher.
-        let use_remote = orchestrator.background_runner.is_some()
-            && agent_name == "distri_runner"
-            && context.runtime_mode == RuntimeMode::Cloud;
+        // `distri_runner` always runs remotely via SandboxLauncher when one
+        // is available. The runtime_mode of the caller doesn't matter: even
+        // when the caller itself is inside a distri-cli stream (runtime=Cli),
+        // `distri_runner` still needs its OWN sandbox/client for tool
+        // execution. Running it in-process without a client would hang on
+        // the first external tool call.
+        let use_remote =
+            orchestrator.background_runner.is_some() && agent_name == "distri_runner";
 
         if use_remote {
             // ── Remote/DeepAgent path ─────────────────────────────────────

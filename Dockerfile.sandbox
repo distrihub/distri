@@ -2,7 +2,7 @@
 # Usage (from distri-cloud/distri/):
 #   docker build -f Dockerfile.sandbox -t distri/sandbox:latest .
 
-FROM rust:1.87-bookworm AS builder
+FROM rust:1.89-bookworm AS builder
 WORKDIR /build
 COPY . .
 RUN cargo build -p distri-cli --release \
@@ -28,10 +28,14 @@ RUN groupadd -r distri && useradd -r -g distri -m -d /home/distri distri
 COPY --from=builder /build/distri-bin /usr/local/bin/distri
 RUN chmod +x /usr/local/bin/distri
 
+COPY sandbox-entrypoint.sh /usr/local/bin/sandbox-entrypoint.sh
+RUN chmod +x /usr/local/bin/sandbox-entrypoint.sh
+
 RUN mkdir -p /workspace && chown distri:distri /workspace
 
 ENV CODE_HOME=/workspace RUST_LOG=info DISTRI_NON_INTERACTIVE=1
 
 WORKDIR /workspace
 USER distri
-CMD ["sleep", "infinity"]
+# Entrypoint dispatches on DISTRI_* env vars: managed-run vs interactive/exec.
+ENTRYPOINT ["/usr/local/bin/sandbox-entrypoint.sh"]

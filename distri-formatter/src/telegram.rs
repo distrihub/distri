@@ -13,7 +13,6 @@ use distri_types::{AgentEvent, AgentEventType, ToolResponse};
 use crate::state::{
     ChatState, MessageState, StepState, ToolCallState, ToolCallStatus, is_probe_call,
 };
-use crate::telegram_html::escape_and_linkify;
 use crate::{Formatter, MediaAttachment, ParseMode, RendererOutput, SurfaceRenderer};
 
 /// Maximum message length for Telegram (leave margin for formatting).
@@ -34,6 +33,13 @@ pub struct TelegramRenderer {
     current_status: Option<String>,
     /// Whether we are in status-only mode (no final text yet).
     in_status_mode: bool,
+    /// `true` when the content accumulated since the last `take_output` is
+    /// purely LLM text (from `render_text`) with no structural markup
+    /// injected. Edits-in-place when emitted. Reset to `true` after each
+    /// flush; set to `false` the moment the formatter writes a structural
+    /// block (tool call line, error line, handover, etc.) directly into
+    /// `output` so the next flush starts a fresh message.
+    pub(crate) streaming_since_flush: bool,
 }
 
 impl TelegramRenderer {
@@ -44,7 +50,19 @@ impl TelegramRenderer {
             dirty: false,
             current_status: None,
             in_status_mode: true,
+            streaming_since_flush: true,
         }
+    }
+
+    /// Append a pre-built HTML block (tool call line, error, handover, etc.).
+    /// Flips the streaming flag so the next flush sends a new message instead
+    /// of editing the current one.
+    pub(crate) fn push_event_html(&mut self, html: &str) {
+        self.in_status_mode = false;
+        self.current_status = None;
+        self.output.push_str(html);
+        self.dirty = true;
+        self.streaming_since_flush = false;
     }
 }
 
@@ -55,24 +73,30 @@ impl Default for TelegramRenderer {
 }
 
 impl SurfaceRenderer for TelegramRenderer {
+    /// Append raw LLM text. Content is HTML-escaped + linkified *at ingestion*
+    /// so the buffer is always valid Telegram HTML by the time `take_output`
+    /// reads it. This is the path TextMessageContent deltas go through.
     fn render_text(&mut self, content: &str) {
         self.in_status_mode = false;
         self.current_status = None;
-        self.output.push_str(content);
+        self.output
+            .push_str(&crate::telegram_html::escape_and_linkify(content));
         self.dirty = true;
     }
 
     fn render_markdown(&mut self, md: &str) {
-        self.in_status_mode = false;
-        self.current_status = None;
-        self.output.push_str(md);
-        self.dirty = true;
+        // Same escape path as render_text — we don't currently render markdown
+        // formatting for Telegram; it would need a dedicated pipeline.
+        self.render_text(md);
     }
 
-    fn render_code_block(&mut self, code: &str, lang: Option<&str>) {
-        let lang_hint = lang.unwrap_or("");
+    fn render_code_block(&mut self, code: &str, _lang: Option<&str>) {
+        // Wrap in <pre><code>...</code></pre> with escaped body.
+        // Telegram HTML ignores language hints inside <code>.
+        self.output.push_str("<pre><code>");
         self.output
-            .push_str(&format!("```{}\n{}\n```\n", lang_hint, code));
+            .push_str(&crate::telegram_html::escape_html(code));
+        self.output.push_str("</code></pre>\n");
         self.dirty = true;
     }
 
@@ -140,11 +164,16 @@ impl SurfaceRenderer for TelegramRenderer {
 
         // If we have final text content, return it (possibly with media).
         if !self.output.is_empty() {
-            // Escape `< > &` and wrap bare URLs in <a href="…">. Done once
-            // here so the chunk-splitter below sees the final HTML byte
-            // length, not the raw LLM text length.
-            let text = escape_and_linkify(&self.output);
+            // `self.output` is already valid Telegram HTML: LLM text deltas
+            // are escape-and-linkified at `render_text` time, and the event
+            // handler's `<b>`/`<pre>`/`<a>` tags are pre-built correctly.
+            // We don't re-escape here — that would double-escape our own tags.
+            let text = self.output.clone();
             let media = std::mem::take(&mut self.media);
+            let is_streaming = self.streaming_since_flush;
+            // Reset for the next cycle: fresh text deltas are "streaming"
+            // again until the next structural event marks the buffer.
+            self.streaming_since_flush = true;
 
             // Split long messages at paragraph boundaries.
             if text.len() > TELEGRAM_MAX_LEN {
@@ -155,6 +184,10 @@ impl SurfaceRenderer for TelegramRenderer {
                         text: chunk,
                         parse_mode: ParseMode::Html,
                         media: Vec::new(),
+                        // Chunks from splitting an oversized buffer each get
+                        // their own new message — streaming-edit semantics
+                        // don't survive chunking.
+                        is_streaming_text: false,
                     })
                     .collect();
                 // Attach media to last chunk.
@@ -170,15 +203,17 @@ impl SurfaceRenderer for TelegramRenderer {
                 text,
                 parse_mode: ParseMode::Html,
                 media,
+                is_streaming_text: is_streaming,
             };
         }
 
         // Status-only output (no final text yet).
         if let Some(status) = &self.current_status {
             return RendererOutput::RichText {
-                text: status.clone(),
-                parse_mode: ParseMode::Plain,
+                text: crate::telegram_html::escape_and_linkify(status),
+                parse_mode: ParseMode::Html,
                 media: Vec::new(),
+                is_streaming_text: false,
             };
         }
 
@@ -189,6 +224,7 @@ impl SurfaceRenderer for TelegramRenderer {
                 text: String::new(),
                 parse_mode: ParseMode::Plain,
                 media,
+                is_streaming_text: false,
             };
         }
 
@@ -254,7 +290,7 @@ impl Formatter for TelegramFormatter {
                     "\n<b>Agent: {}</b>\n",
                     crate::telegram_html::escape_html(&event.agent_id)
                 );
-                self.renderer.render_text(&line);
+                self.renderer.push_event_html(&line);
             }
             self.state.current_agent = Some(event.agent_id.clone());
         }
@@ -296,7 +332,7 @@ impl Formatter for TelegramFormatter {
                         .map(|s| s.index + 1)
                         .unwrap_or(0);
                     self.renderer
-                        .render_text(&format!("\n<b>Step {idx} failed</b>\n"));
+                        .push_event_html(&format!("\n<b>Step {idx} failed</b>\n"));
                 }
             }
             AgentEventType::TextMessageStart {
@@ -348,7 +384,7 @@ impl Formatter for TelegramFormatter {
                         "\n<b>{}</b>\n",
                         crate::telegram_html::escape_html(&call_text)
                     );
-                    self.renderer.render_text(&line);
+                    self.renderer.push_event_html(&line);
                 }
                 self.state.tool_calls.insert(
                     tool_call_id.to_string(),
@@ -380,7 +416,7 @@ impl Formatter for TelegramFormatter {
                     // Render tool output as HTML
                     let html = crate::telegram_html::format_tool_result_html(result);
                     if !html.is_empty() {
-                        self.renderer.render_text(&format!("{html}\n"));
+                        self.renderer.push_event_html(&format!("{html}\n"));
                     }
                     // Extract any Part::Artifact — images become media attachments
                     for part in &result.parts {
@@ -397,13 +433,14 @@ impl Formatter for TelegramFormatter {
                                     artifact_path: Some(meta.relative_path.clone()),
                                 });
                                 self.renderer.dirty = true;
+                                self.renderer.streaming_since_flush = false;
                             } else {
                                 // Non-image artifact: render as inline link/preview
                                 let name = meta
                                     .original_filename
                                     .clone()
                                     .unwrap_or_else(|| meta.file_id.clone());
-                                self.renderer.render_text(&format!(
+                                self.renderer.push_event_html(&format!(
                                     "<i>Artifact: {} ({})</i>\n",
                                     crate::telegram_html::escape_html(&name),
                                     crate::telegram_html::escape_html(mime)
@@ -417,7 +454,7 @@ impl Formatter for TelegramFormatter {
             AgentEventType::RunFinished { success, .. } => {
                 if !*success {
                     self.renderer
-                        .render_text("\n<b>Run completed with errors</b>\n");
+                        .push_event_html("\n<b>Run completed with errors</b>\n");
                 }
             }
             AgentEventType::RunError { message, code, .. } => {
@@ -425,7 +462,7 @@ impl Formatter for TelegramFormatter {
                     .as_ref()
                     .map(|c| format!(" [{}]", crate::telegram_html::escape_html(c)))
                     .unwrap_or_default();
-                self.renderer.render_text(&format!(
+                self.renderer.push_event_html(&format!(
                     "\n<b>Error{code_str}:</b> {}\n",
                     crate::telegram_html::escape_html(message)
                 ));
@@ -439,7 +476,7 @@ impl Formatter for TelegramFormatter {
                     .as_deref()
                     .map(|r| format!(" ({})", crate::telegram_html::escape_html(r)))
                     .unwrap_or_default();
-                self.renderer.render_text(&format!(
+                self.renderer.push_event_html(&format!(
                     "\n<b>Transferring: {} → {}{}</b>\n",
                     crate::telegram_html::escape_html(from_agent),
                     crate::telegram_html::escape_html(to_agent),
@@ -450,7 +487,7 @@ impl Formatter for TelegramFormatter {
                 formatted_todos, ..
             } => {
                 if !formatted_todos.is_empty() {
-                    self.renderer.render_text(&format!(
+                    self.renderer.push_event_html(&format!(
                         "\n<b>Plan updated:</b>\n<pre>{}</pre>\n",
                         crate::telegram_html::escape_html(formatted_todos)
                     ));
@@ -472,7 +509,7 @@ impl Formatter for TelegramFormatter {
                 } else {
                     0.0
                 };
-                self.renderer.render_text(&format!(
+                self.renderer.push_event_html(&format!(
                     "\n<i>Context {tier_label}: {tokens_before} → {tokens_after} tokens ({pct:.0}% reduction)</i>\n"
                 ));
             }
@@ -483,14 +520,14 @@ impl Formatter for TelegramFormatter {
                 let is_safe_url = (url.starts_with("https://") || url.starts_with("http://"))
                     && !url.contains(['"', '<', '>', '\'', ' ', '\n', '\r', '\t']);
                 if is_safe_url {
-                    self.renderer.render_text(&format!(
+                    self.renderer.push_event_html(&format!(
                         "\n<b>{}</b>\n<a href=\"{}\">{}</a>\n",
                         crate::telegram_html::escape_html(label),
                         crate::telegram_html::escape_html(url),
                         crate::telegram_html::escape_html(url),
                     ));
                 } else {
-                    self.renderer.render_text(&format!(
+                    self.renderer.push_event_html(&format!(
                         "\n<b>{}</b>\n<i>(unsafe URL not rendered)</i>\n",
                         crate::telegram_html::escape_html(label),
                     ));
@@ -608,8 +645,14 @@ mod tests {
         match fmt.surface_renderer().take_output() {
             RendererOutput::RichText { text, .. } => {
                 // New behavior: tool calls render as <b>name(args)</b>, not status text
-                assert!(text.contains("search"), "should mention tool name: got {text}");
-                assert!(text.contains("rust async"), "should mention query: got {text}");
+                assert!(
+                    text.contains("search"),
+                    "should mention tool name: got {text}"
+                );
+                assert!(
+                    text.contains("rust async"),
+                    "should mention query: got {text}"
+                );
             }
             other => panic!("Expected RichText, got {:?}", other),
         }
@@ -678,7 +721,10 @@ mod tests {
         match fmt.take_output() {
             RendererOutput::RichText { text, .. } => {
                 assert!(text.contains("Bash"), "should show tool name: got {text}");
-                assert!(text.contains("echo hello"), "should show command: got {text}");
+                assert!(
+                    text.contains("echo hello"),
+                    "should show command: got {text}"
+                );
             }
             other => panic!("Expected RichText, got {:?}", other),
         }
@@ -707,7 +753,10 @@ mod tests {
 
         match fmt.take_output() {
             RendererOutput::RichText { text, .. } => {
-                assert!(text.contains("hello"), "tool result should render: got {text}");
+                assert!(
+                    text.contains("hello"),
+                    "tool result should render: got {text}"
+                );
             }
             other => panic!("Expected RichText with tool result, got {:?}", other),
         }
@@ -813,11 +862,17 @@ mod tests {
 
         match fmt.take_output() {
             RendererOutput::RichText { text, .. } => {
-                assert!(!text.contains("<script>"), "raw <script> must not leak: got {text}");
+                assert!(
+                    !text.contains("<script>"),
+                    "raw <script> must not leak: got {text}"
+                );
                 assert!(!text.contains("onclick="), "no event handlers either");
                 assert!(text.contains("Bad url"), "title should still render");
                 // The href attribute must not be present at all, since we rejected the URL
-                assert!(!text.contains("href="), "href should NOT be rendered for unsafe URL: got {text}");
+                assert!(
+                    !text.contains("href="),
+                    "href should NOT be rendered for unsafe URL: got {text}"
+                );
             }
             other => panic!("Expected RichText, got {:?}", other),
         }
@@ -837,7 +892,10 @@ mod tests {
 
         match fmt.take_output() {
             RendererOutput::RichText { text, .. } => {
-                assert!(!text.contains("javascript:"), "javascript: URL must not appear: got {text}");
+                assert!(
+                    !text.contains("javascript:"),
+                    "javascript: URL must not appear: got {text}"
+                );
                 assert!(!text.contains("href="), "no href for non-http URL");
             }
             other => panic!("Expected RichText, got {:?}", other),

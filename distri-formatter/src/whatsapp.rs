@@ -142,6 +142,8 @@ impl SurfaceRenderer for WhatsAppRenderer {
                         text: chunk,
                         parse_mode: ParseMode::Plain,
                         media: Vec::new(),
+                        // WhatsApp has no edit API — every chunk is a new message.
+                        is_streaming_text: false,
                     })
                     .collect();
                 return RendererOutput::Chunks(parts);
@@ -151,6 +153,7 @@ impl SurfaceRenderer for WhatsAppRenderer {
                 text,
                 parse_mode: ParseMode::Plain,
                 media,
+                is_streaming_text: false,
             };
         }
 
@@ -161,6 +164,7 @@ impl SurfaceRenderer for WhatsAppRenderer {
                     text: status.clone(),
                     parse_mode: ParseMode::Plain,
                     media: Vec::new(),
+                    is_streaming_text: false,
                 };
             }
         }
@@ -172,6 +176,7 @@ impl SurfaceRenderer for WhatsAppRenderer {
                 text: String::new(),
                 parse_mode: ParseMode::Plain,
                 media,
+                is_streaming_text: false,
             };
         }
 
