@@ -71,7 +71,10 @@ impl From<&ModelProvider> for ProviderClientConfig {
                 send_api_key_header: false,
             },
             ModelProvider::AzureAiFoundry { base_url, api_key } => Self {
-                base_url: base_url.clone(),
+                base_url: format!(
+                    "{}/openai/v1",
+                    base_url.trim_end_matches('/')
+                ),
                 api_key_secret: "AZURE_AI_FOUNDRY_API_KEY",
                 inline_api_key: api_key.clone(),
                 project_id: None,
@@ -212,12 +215,29 @@ mod tests {
     #[test]
     fn test_azure_ai_foundry_config() {
         let provider = ModelProvider::AzureAiFoundry {
-            base_url: "https://myproject.services.ai.azure.com/v1".to_string(),
+            base_url: "https://myproject.services.ai.azure.com".to_string(),
             api_key: None,
         };
         let config = ProviderClientConfig::from(&provider);
+        assert_eq!(
+            config.base_url,
+            "https://myproject.services.ai.azure.com/openai/v1"
+        );
         assert_eq!(config.api_key_secret, "AZURE_AI_FOUNDRY_API_KEY");
         assert!(config.send_api_key_header);
+    }
+
+    #[test]
+    fn test_azure_ai_foundry_config_trailing_slash() {
+        let provider = ModelProvider::AzureAiFoundry {
+            base_url: "https://myproject.services.ai.azure.com/".to_string(),
+            api_key: None,
+        };
+        let config = ProviderClientConfig::from(&provider);
+        assert_eq!(
+            config.base_url,
+            "https://myproject.services.ai.azure.com/openai/v1"
+        );
     }
 
     #[test]

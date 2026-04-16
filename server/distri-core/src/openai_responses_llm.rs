@@ -77,6 +77,18 @@ impl OpenAIResponsesLLMExecutor {
             .ms()
             .map_err(AgentError::InvalidConfiguration)?;
 
+        tracing::info!(
+            target: "llm.call",
+            llm_name = %self.llm_def.name,
+            model = %ms.model,
+            provider = %crate::llm::provider_label(&ms),
+            base_url = %crate::provider_config::ProviderClientConfig::from(&ms.inner.provider).base_url,
+            thread_id = %self.context.thread_id,
+            task_id = %self.context.task_id,
+            agent_id = %self.context.agent_id,
+            "building LLM client (openai responses)"
+        );
+
         secret_resolver
             .validate_provider(&ms.inner.provider)
             .await?;

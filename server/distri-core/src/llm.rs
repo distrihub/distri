@@ -3,6 +3,41 @@ use std::{
     sync::Arc,
 };
 
+/// Mask an API key for safe logging: first 8 chars + "***".
+pub fn mask_key(key: &str) -> String {
+    if key.len() <= 8 {
+        "***".to_string()
+    } else {
+        format!("{}***", &key[..8])
+    }
+}
+
+/// Format provider info for logging without leaking full API keys.
+pub fn provider_label(ms: &distri_types::ModelSettings) -> String {
+    let variant = std::mem::discriminant(&ms.inner.provider);
+    let name = match &ms.inner.provider {
+        distri_types::ModelProvider::OpenAI {} => "OpenAI",
+        distri_types::ModelProvider::Anthropic { .. } => "Anthropic",
+        distri_types::ModelProvider::AzureOpenAI { .. } => "AzureOpenAI",
+        distri_types::ModelProvider::Gemini { .. } => "Gemini",
+        distri_types::ModelProvider::AzureAiFoundry { .. } => "AzureAiFoundry",
+        distri_types::ModelProvider::AwsBedrock { .. } => "AwsBedrock",
+        distri_types::ModelProvider::GoogleVertex { .. } => "GoogleVertex",
+        distri_types::ModelProvider::OpenAICompatible { .. } => "OpenAICompatible",
+        distri_types::ModelProvider::AlibabaCloud { .. } => "AlibabaCloud",
+    };
+    // Suppress unused warning — variant is used indirectly via name match above
+    let _ = variant;
+    name.to_string()
+}
+
+/// Format provider + masked key for error messages.
+pub fn provider_error_label(ms: &distri_types::ModelSettings) -> String {
+    let label = provider_label(ms);
+    let pcc = crate::provider_config::ProviderClientConfig::from(&ms.inner.provider);
+    format!("{}(base_url={}, has_key={})", label, pcc.base_url, !pcc.inline_api_key.unwrap_or_default().is_empty() || pcc.api_key_secret != "")
+}
+
 use crate::{
     agent::{log::ModelLogger, AgentEventType, ExecutorContext},
     gateway_config::GatewayConfig,
@@ -1350,9 +1385,25 @@ async fn completion(
 ) -> Result<CreateChatCompletionResponse, AgentError> {
     request.safety_identifier = Some(context.user_id.clone());
     let client = get_client_with_context(llm_def, context, additional_headers, label).await?;
+    let model = request.model.clone();
     let response = client.chat().create(request).await.map_err(|e| {
-        tracing::error!("LLM request failed: {}", e);
-        AgentError::LLMError(e.to_string())
+        let ms = llm_def.ms().ok();
+        let pcc = ms.map(|m| crate::provider_config::ProviderClientConfig::from(&m.inner.provider));
+        tracing::error!(
+            target: "llm.error",
+            model = %model,
+            llm_name = %llm_def.name,
+            provider = %ms.as_ref().map(|m| provider_label(m)).unwrap_or_else(|| "unknown".into()),
+            base_url = %pcc.as_ref().map(|c| c.base_url.clone()).unwrap_or_default(),
+            "LLM request failed: {}",
+            e
+        );
+        AgentError::LLMError(format!(
+            "{} (model={}, provider={})",
+            e,
+            model,
+            ms.map(|m| provider_error_label(m)).unwrap_or_else(|| "unknown".into()),
+        ))
     })?;
     Ok(response)
 }
@@ -1369,9 +1420,25 @@ async fn completion_stream(
 > {
     request.safety_identifier = Some(context.user_id.clone());
     let client = get_client_with_context(llm_def, context, additional_headers, label).await?;
+    let model = request.model.clone();
     let stream = client.chat().create_stream(request).await.map_err(|e| {
-        tracing::error!("LLM stream request failed: {}", e);
-        AgentError::LLMError(e.to_string())
+        let ms = llm_def.ms().ok();
+        let pcc = ms.map(|m| crate::provider_config::ProviderClientConfig::from(&m.inner.provider));
+        tracing::error!(
+            target: "llm.error",
+            model = %model,
+            llm_name = %llm_def.name,
+            provider = %ms.as_ref().map(|m| provider_label(m)).unwrap_or_else(|| "unknown".into()),
+            base_url = %pcc.as_ref().map(|c| c.base_url.clone()).unwrap_or_default(),
+            "LLM stream request failed: {}",
+            e
+        );
+        AgentError::LLMError(format!(
+            "{} (model={}, provider={})",
+            e,
+            model,
+            ms.map(|m| provider_error_label(m)).unwrap_or_else(|| "unknown".into()),
+        ))
     })?;
     Ok(stream)
 }
@@ -1402,6 +1469,25 @@ async fn get_client_with_context(
 
     // Validate that required secrets are configured
     let ms = llm_def.ms().map_err(AgentError::InvalidConfiguration)?;
+    let pcc = crate::provider_config::ProviderClientConfig::from(&ms.inner.provider);
+    tracing::info!(
+        target: "llm.call",
+        llm_name = %llm_def.name,
+        model = %ms.model,
+        provider = %provider_label(&ms),
+        base_url = %pcc.base_url,
+        thread_id = %context.thread_id,
+        task_id = %context.task_id,
+        agent_id = %context.agent_id,
+        "building LLM client (chat completions)"
+    );
+    if pcc.base_url.is_empty() {
+        return Err(AgentError::InvalidConfiguration(format!(
+            "base_url is empty for provider {} (model={})",
+            provider_label(&ms),
+            ms.model,
+        )));
+    }
     secret_resolver
         .validate_provider(&ms.inner.provider)
         .await?;

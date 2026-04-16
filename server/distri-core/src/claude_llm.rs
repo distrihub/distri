@@ -84,15 +84,25 @@ impl ClaudeLLMExecutor {
         let secret_store = get_secret_store(&self.context);
         let secret_resolver = crate::secrets::SecretResolver::new(secret_store);
 
+        let ms = self
+            .llm_def
+            .ms()
+            .map_err(AgentError::InvalidConfiguration)?;
+
+        tracing::info!(
+            target: "llm.call",
+            llm_name = %self.llm_def.name,
+            model = %ms.model,
+            provider = %crate::llm::provider_label(&ms),
+            base_url = %crate::provider_config::ProviderClientConfig::from(&ms.inner.provider).base_url,
+            thread_id = %self.context.thread_id,
+            task_id = %self.context.task_id,
+            agent_id = %self.context.agent_id,
+            "building LLM client (claude)"
+        );
+
         secret_resolver
-            .validate_provider(
-                &self
-                    .llm_def
-                    .ms()
-                    .map_err(AgentError::InvalidConfiguration)?
-                    .inner
-                    .provider,
-            )
+            .validate_provider(&ms.inner.provider)
             .await?;
 
         let (base_url, config_api_key) = match &self

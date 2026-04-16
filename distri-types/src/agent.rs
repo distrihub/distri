@@ -1394,6 +1394,102 @@ impl ModelSettings {
             },
         }))
     }
+
+    /// Merge base (workspace) model settings with agent/request-level overrides.
+    ///
+    /// Provider resolution:
+    /// - If the override explicitly sets a provider (not the default OpenAI),
+    ///   the override's provider and model are used.
+    /// - If only the base has a non-default provider and the override uses default
+    ///   OpenAI, the base's provider AND model win — the override's bare model name
+    ///   is ignored because it may not exist on the base provider.
+    /// - Otherwise, the override's model wins if non-empty.
+    ///
+    /// Scalar fields (temperature, max_tokens, etc.) use override if present, else base.
+    ///
+    /// Returns `None` if the final model string is empty.
+    pub fn merge(&self, override_settings: &ModelSettings) -> Option<ModelSettings> {
+        let default_provider = ModelProvider::OpenAI {};
+        let override_has_explicit_provider = std::mem::discriminant(&override_settings.inner.provider)
+            != std::mem::discriminant(&default_provider);
+        let base_has_explicit_provider = std::mem::discriminant(&self.inner.provider)
+            != std::mem::discriminant(&default_provider);
+
+        let (provider, model) = if override_has_explicit_provider {
+            // Override explicitly set a provider — use override's provider and model.
+            let model = if !override_settings.model.is_empty() {
+                override_settings.model.clone()
+            } else {
+                self.model.clone()
+            };
+            (override_settings.inner.provider.clone(), model)
+        } else if base_has_explicit_provider {
+            // Base uses a non-default provider and override didn't specify one — use
+            // base's provider AND model to avoid mismatching model names.
+            let model = if !self.model.is_empty() {
+                self.model.clone()
+            } else if !override_settings.model.is_empty() {
+                override_settings.model.clone()
+            } else {
+                String::new()
+            };
+            (self.inner.provider.clone(), model)
+        } else {
+            // Both use default OpenAI — override model can win.
+            let model = if !override_settings.model.is_empty() {
+                override_settings.model.clone()
+            } else {
+                self.model.clone()
+            };
+            (self.inner.provider.clone(), model)
+        };
+
+        if model.is_empty() {
+            return None;
+        }
+
+        let default_context_size = 20000u32;
+        Some(ModelSettings {
+            model,
+            inner: ModelSettingsInner {
+                temperature: override_settings
+                    .inner
+                    .temperature
+                    .or(self.inner.temperature),
+                max_tokens: override_settings.inner.max_tokens.or(self.inner.max_tokens),
+                context_size: if override_settings.inner.context_size != default_context_size {
+                    override_settings.inner.context_size
+                } else {
+                    self.inner.context_size
+                },
+                top_p: override_settings.inner.top_p.or(self.inner.top_p),
+                frequency_penalty: override_settings
+                    .inner
+                    .frequency_penalty
+                    .or(self.inner.frequency_penalty),
+                presence_penalty: override_settings
+                    .inner
+                    .presence_penalty
+                    .or(self.inner.presence_penalty),
+                provider,
+                parameters: if override_settings.inner.parameters.is_some() {
+                    override_settings.inner.parameters.clone()
+                } else {
+                    self.inner.parameters.clone()
+                },
+                response_format: if override_settings.inner.response_format.is_some() {
+                    override_settings.inner.response_format.clone()
+                } else {
+                    self.inner.response_format.clone()
+                },
+                api_format: if override_settings.inner.api_format != OpenAiApiFormat::Auto {
+                    override_settings.inner.api_format.clone()
+                } else {
+                    self.inner.api_format.clone()
+                },
+            },
+        })
+    }
 }
 
 // Default functions
@@ -1939,5 +2035,321 @@ mod tests {
         assert_eq!(RuntimeMode::default(), RuntimeMode::Cloud);
         let json = serde_json::to_string(&RuntimeMode::Cli).unwrap();
         assert_eq!(json, "\"cli\"");
+    }
+
+    // ── ModelSettings::merge tests ──────────────────────────────────────────
+
+    #[test]
+    fn merge_both_default_openai_agent_model_wins() {
+        let base = ModelSettings::new("gpt-5.1");
+        let agent = ModelSettings::new("gpt-4.1-mini");
+
+        let result = base.merge(&agent).unwrap();
+        assert_eq!(result.model, "gpt-4.1-mini");
+        assert!(matches!(result.inner.provider, ModelProvider::OpenAI {}));
+    }
+
+    #[test]
+    fn merge_both_default_openai_base_model_used_when_agent_empty() {
+        let base = ModelSettings::new("gpt-5.1");
+        let agent = ModelSettings::new("");
+
+        let result = base.merge(&agent).unwrap();
+        assert_eq!(result.model, "gpt-5.1");
+    }
+
+    #[test]
+    fn merge_agent_explicit_provider_wins() {
+        let base = ModelSettings {
+            model: "gpt-5.1".into(),
+            inner: ModelSettingsInner {
+                provider: ModelProvider::OpenAICompatible {
+                    base_url: "https://custom.com/v1".into(),
+                    api_key: Some("key".into()),
+                    project_id: None,
+                },
+                ..Default::default()
+            },
+        };
+        let agent = ModelSettings {
+            model: "claude-sonnet-4".into(),
+            inner: ModelSettingsInner {
+                provider: ModelProvider::Anthropic {
+                    base_url: None,
+                    api_key: None,
+                },
+                ..Default::default()
+            },
+        };
+
+        let result = base.merge(&agent).unwrap();
+        assert_eq!(result.model, "claude-sonnet-4");
+        assert!(matches!(result.inner.provider, ModelProvider::Anthropic { .. }));
+    }
+
+    #[test]
+    fn merge_agent_explicit_provider_no_model_uses_base() {
+        let base = ModelSettings::new("gpt-5.1");
+        let agent = ModelSettings {
+            model: "".into(),
+            inner: ModelSettingsInner {
+                provider: ModelProvider::Anthropic {
+                    base_url: None,
+                    api_key: None,
+                },
+                ..Default::default()
+            },
+        };
+
+        let result = base.merge(&agent).unwrap();
+        assert_eq!(result.model, "gpt-5.1");
+        assert!(matches!(result.inner.provider, ModelProvider::Anthropic { .. }));
+    }
+
+    #[test]
+    fn merge_workspace_custom_provider_overrides_agent_model() {
+        let base = ModelSettings {
+            model: "gpt-5.4".into(),
+            inner: ModelSettingsInner {
+                provider: ModelProvider::OpenAICompatible {
+                    base_url: "https://custom.azure.com/openai/v1".into(),
+                    api_key: Some("test-key".into()),
+                    project_id: None,
+                },
+                ..Default::default()
+            },
+        };
+        // Agent has no explicit provider (default OpenAI) but different model
+        let agent = ModelSettings::new("gpt-5.1");
+
+        let result = base.merge(&agent).unwrap();
+        assert_eq!(result.model, "gpt-5.4");
+        assert!(matches!(result.inner.provider, ModelProvider::OpenAICompatible { .. }));
+    }
+
+    #[test]
+    fn merge_workspace_custom_provider_agent_empty_model() {
+        let base = ModelSettings {
+            model: "gpt-5.4".into(),
+            inner: ModelSettingsInner {
+                provider: ModelProvider::OpenAICompatible {
+                    base_url: "https://custom.azure.com/openai/v1".into(),
+                    api_key: Some("test-key".into()),
+                    project_id: None,
+                },
+                ..Default::default()
+            },
+        };
+        let agent = ModelSettings::new("");
+
+        let result = base.merge(&agent).unwrap();
+        assert_eq!(result.model, "gpt-5.4");
+    }
+
+    #[test]
+    fn merge_both_empty_returns_none() {
+        let base = ModelSettings::new("");
+        let agent = ModelSettings::new("");
+
+        assert!(base.merge(&agent).is_none());
+    }
+
+    #[test]
+    fn merge_workspace_empty_agent_empty_returns_none() {
+        let base = ModelSettings {
+            model: "".into(),
+            inner: ModelSettingsInner {
+                provider: ModelProvider::OpenAICompatible {
+                    base_url: "https://custom.com".into(),
+                    api_key: None,
+                    project_id: None,
+                },
+                ..Default::default()
+            },
+        };
+        let agent = ModelSettings::new("");
+
+        assert!(base.merge(&agent).is_none());
+    }
+
+    #[test]
+    fn merge_temperature_max_tokens_override() {
+        let base = ModelSettings {
+            model: "gpt-5.1".into(),
+            inner: ModelSettingsInner {
+                temperature: Some(0.5),
+                max_tokens: Some(1000),
+                top_p: Some(0.9),
+                ..Default::default()
+            },
+        };
+        let agent = ModelSettings {
+            model: "gpt-4.1-mini".into(),
+            inner: ModelSettingsInner {
+                temperature: Some(0.9),
+                max_tokens: None, // no override
+                ..Default::default()
+            },
+        };
+
+        let result = base.merge(&agent).unwrap();
+        assert_eq!(result.model, "gpt-4.1-mini");
+        assert_eq!(result.inner.temperature, Some(0.9));
+        assert_eq!(result.inner.max_tokens, Some(1000)); // base value preserved
+        assert_eq!(result.inner.top_p, Some(0.9));      // base value preserved
+    }
+
+    #[test]
+    fn merge_context_size_non_default_wins() {
+        let base = ModelSettings {
+            model: "gpt-5.1".into(),
+            inner: ModelSettingsInner {
+                context_size: 20000, // default
+                ..Default::default()
+            },
+        };
+        let agent = ModelSettings {
+            model: "gpt-4.1-mini".into(),
+            inner: ModelSettingsInner {
+                context_size: 100000, // explicitly set
+                ..Default::default()
+            },
+        };
+
+        let result = base.merge(&agent).unwrap();
+        assert_eq!(result.inner.context_size, 100000);
+    }
+
+    #[test]
+    fn merge_context_size_default_falls_back() {
+        let base = ModelSettings {
+            model: "gpt-5.1".into(),
+            inner: ModelSettingsInner {
+                context_size: 128000,
+                ..Default::default()
+            },
+        };
+        let agent = ModelSettings {
+            model: "gpt-4.1-mini".into(),
+            inner: ModelSettingsInner {
+                context_size: 20000, // default — should use base
+                ..Default::default()
+            },
+        };
+
+        let result = base.merge(&agent).unwrap();
+        assert_eq!(result.inner.context_size, 128000);
+    }
+
+    #[test]
+    fn merge_azure_ai_foundry_base_url_preserved() {
+        let base = ModelSettings {
+            model: "gpt-5.4".into(),
+            inner: ModelSettingsInner {
+                provider: ModelProvider::AzureAiFoundry {
+                    base_url: "https://myresource.openai.azure.com".into(),
+                    api_key: Some("test-key".into()),
+                },
+                ..Default::default()
+            },
+        };
+        let agent = ModelSettings::new("gpt-5.1");
+
+        let result = base.merge(&agent).unwrap();
+        assert_eq!(result.model, "gpt-5.4"); // workspace model wins
+        assert!(matches!(result.inner.provider, ModelProvider::AzureAiFoundry { .. }));
+        if let ModelProvider::AzureAiFoundry { base_url, .. } = result.inner.provider {
+            assert_eq!(base_url, "https://myresource.openai.azure.com");
+        }
+    }
+
+    #[test]
+    fn merge_anthropic_provider_preserves_base_url() {
+        let base = ModelSettings {
+            model: "claude-sonnet-4".into(),
+            inner: ModelSettingsInner {
+                provider: ModelProvider::Anthropic {
+                    base_url: Some("https://custom.anthropic.com".into()),
+                    api_key: Some("key".into()),
+                },
+                temperature: Some(0.7),
+                ..Default::default()
+            },
+        };
+        let agent = ModelSettings::new("");
+
+        let result = base.merge(&agent).unwrap();
+        assert_eq!(result.model, "claude-sonnet-4");
+        assert_eq!(result.inner.temperature, Some(0.7));
+        if let ModelProvider::Anthropic { base_url, api_key } = result.inner.provider {
+            assert_eq!(base_url, Some("https://custom.anthropic.com".into()));
+            assert_eq!(api_key, Some("key".into()));
+        }
+    }
+
+    #[test]
+    fn merge_response_format_agent_wins() {
+        let base = ModelSettings {
+            model: "gpt-5.1".into(),
+            inner: ModelSettingsInner {
+                response_format: Some(serde_json::json!({"type": "text"})),
+                ..Default::default()
+            },
+        };
+        let agent = ModelSettings {
+            model: "gpt-4.1-mini".into(),
+            inner: ModelSettingsInner {
+                response_format: Some(serde_json::json!({"type": "json_object"})),
+                ..Default::default()
+            },
+        };
+
+        let result = base.merge(&agent).unwrap();
+        assert_eq!(
+            result.inner.response_format,
+            Some(serde_json::json!({"type": "json_object"}))
+        );
+    }
+
+    #[test]
+    fn merge_response_format_base_fallback() {
+        let base = ModelSettings {
+            model: "gpt-5.1".into(),
+            inner: ModelSettingsInner {
+                response_format: Some(serde_json::json!({"type": "text"})),
+                ..Default::default()
+            },
+        };
+        let agent = ModelSettings::new("gpt-4.1-mini");
+
+        let result = base.merge(&agent).unwrap();
+        assert_eq!(
+            result.inner.response_format,
+            Some(serde_json::json!({"type": "text"}))
+        );
+    }
+
+    #[test]
+    fn merge_parameters_agent_wins() {
+        let base = ModelSettings {
+            model: "gpt-5.1".into(),
+            inner: ModelSettingsInner {
+                parameters: Some(serde_json::json!({"key": "base"})),
+                ..Default::default()
+            },
+        };
+        let agent = ModelSettings {
+            model: "gpt-4.1-mini".into(),
+            inner: ModelSettingsInner {
+                parameters: Some(serde_json::json!({"key": "agent"})),
+                ..Default::default()
+            },
+        };
+
+        let result = base.merge(&agent).unwrap();
+        assert_eq!(
+            result.inner.parameters,
+            Some(serde_json::json!({"key": "agent"}))
+        );
     }
 }

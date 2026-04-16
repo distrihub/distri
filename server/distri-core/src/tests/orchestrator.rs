@@ -119,14 +119,14 @@ temperature = 0.9
 
 #[tokio::test]
 async fn test_merge_model_settings_errors_when_no_model() {
-    // Both base and agent have no model — merge should error
+    // Both base and agent have no model — merge should return None
     let base = test_model_settings("");
     let agent = test_model_settings("");
 
-    let result = AgentOrchestrator::merge_model_settings(&base, &agent);
+    let result = base.merge(&agent);
     assert!(
-        result.is_err(),
-        "merge_model_settings should error when no model is set"
+        result.is_none(),
+        "merge should return None when no model is set"
     );
 }
 
@@ -154,7 +154,7 @@ async fn test_merge_custom_provider_workspace_overrides_agent_model() {
         },
     };
 
-    let result = AgentOrchestrator::merge_model_settings(&base, &agent).unwrap();
+    let result = base.merge(&agent).unwrap();
 
     // Workspace model should win because workspace uses a custom provider
     // and agent did not explicitly set a provider
@@ -198,7 +198,7 @@ async fn test_merge_agent_explicit_provider_overrides_workspace() {
         },
     };
 
-    let result = AgentOrchestrator::merge_model_settings(&base, &agent).unwrap();
+    let result = base.merge(&agent).unwrap();
 
     // Agent's model and provider should win since it explicitly set a provider
     assert_eq!(result.model, "claude-sonnet-4");

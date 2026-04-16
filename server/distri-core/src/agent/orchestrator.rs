@@ -300,101 +300,6 @@ impl AgentOrchestratorBuilder {
 }
 
 impl AgentOrchestrator {
-    /// Merge base (workspace) model settings with agent-level overrides.
-    ///
-    /// Provider resolution:
-    /// - If the agent explicitly sets a provider (not the serde-default OpenAI),
-    ///   the agent's provider and model are used.
-    /// - If the agent's provider is the default (OpenAI), use the workspace's provider.
-    ///
-    /// Model resolution:
-    /// - If the workspace uses a non-default provider (custom, Azure, Anthropic, etc.)
-    ///   and the agent did NOT explicitly set a provider, the workspace model takes
-    ///   precedence — the agent's bare model name is ignored because it may not be
-    ///   available on the workspace's configured provider.
-    /// - Otherwise, the agent's model overrides the workspace model if non-empty.
-    pub(crate) fn merge_model_settings(
-        base: &ModelSettings,
-        agent: &ModelSettings,
-    ) -> Result<ModelSettings, AgentError> {
-        let default_provider = distri_types::ModelProvider::OpenAI {};
-        let agent_has_explicit_provider = std::mem::discriminant(&agent.inner.provider)
-            != std::mem::discriminant(&default_provider);
-        let base_has_explicit_provider = std::mem::discriminant(&base.inner.provider)
-            != std::mem::discriminant(&default_provider);
-
-        let (provider, model) = if agent_has_explicit_provider {
-            // Agent explicitly set a provider — use agent's provider and model.
-            let model = if !agent.model.is_empty() {
-                agent.model.clone()
-            } else {
-                base.model.clone()
-            };
-            (agent.inner.provider.clone(), model)
-        } else if base_has_explicit_provider {
-            // Workspace uses a non-default provider (custom, Azure, etc.) and agent
-            // did not specify one — use workspace's provider AND model so we don't
-            // send a mismatched model name (e.g. "gpt-5.1") to a custom provider.
-            let model = if !base.model.is_empty() {
-                base.model.clone()
-            } else if !agent.model.is_empty() {
-                agent.model.clone()
-            } else {
-                String::new()
-            };
-            (base.inner.provider.clone(), model)
-        } else {
-            // Both use default OpenAI provider — agent model can override.
-            let model = if !agent.model.is_empty() {
-                agent.model.clone()
-            } else {
-                base.model.clone()
-            };
-            (base.inner.provider.clone(), model)
-        };
-        if model.is_empty() {
-            return Err(AgentError::InvalidConfiguration(
-                "model not set — configure default_model_settings on the orchestrator or workspace"
-                    .to_string(),
-            ));
-        }
-
-        let default_context_size = 20000u32;
-        Ok(ModelSettings {
-            model,
-            inner: distri_types::ModelSettingsInner {
-                temperature: agent.inner.temperature.or(base.inner.temperature),
-                max_tokens: agent.inner.max_tokens.or(base.inner.max_tokens),
-                context_size: if agent.inner.context_size != default_context_size {
-                    agent.inner.context_size
-                } else {
-                    base.inner.context_size
-                },
-                top_p: agent.inner.top_p.or(base.inner.top_p),
-                frequency_penalty: agent
-                    .inner
-                    .frequency_penalty
-                    .or(base.inner.frequency_penalty),
-                presence_penalty: agent.inner.presence_penalty.or(base.inner.presence_penalty),
-                provider,
-                parameters: if agent.inner.parameters.is_some() {
-                    agent.inner.parameters.clone()
-                } else {
-                    base.inner.parameters.clone()
-                },
-                response_format: if agent.inner.response_format.is_some() {
-                    agent.inner.response_format.clone()
-                } else {
-                    base.inner.response_format.clone()
-                },
-                api_format: if agent.inner.api_format != distri_types::OpenAiApiFormat::Auto {
-                    agent.inner.api_format.clone()
-                } else {
-                    base.inner.api_format.clone()
-                },
-            },
-        })
-    }
 
     pub fn cleanup(&self) {
         // No-op: plugin registry has been removed
@@ -1505,13 +1410,12 @@ impl AgentOrchestrator {
         };
         let merged = match (definition.model_settings.take(), default_model_settings) {
             (Some(agent_model), Some(base)) => {
-                match Self::merge_model_settings(base, &agent_model) {
-                    Ok(m) => Some(m),
-                    Err(e) => {
+                match base.merge(&agent_model) {
+                    Some(m) => Some(m),
+                    None => {
                         tracing::error!(
-                            "Failed to merge model settings for agent '{}': {}",
+                            "merge produced empty model for agent '{}'",
                             definition.name,
-                            e
                         );
                         Some(base.clone())
                     }
@@ -1529,7 +1433,7 @@ impl AgentOrchestrator {
             &default_analysis_settings,
         ) {
             (Some(agent_analysis), Some(base)) => {
-                Some(Self::merge_model_settings(base, &agent_analysis).unwrap_or(base.clone()))
+                base.merge(&agent_analysis).or_else(|| Some(base.clone()))
             }
             (Some(agent_analysis), None) => Some(agent_analysis),
             (None, base) => base.clone(),
@@ -1811,15 +1715,13 @@ impl OrchestratorTrait for AgentOrchestrator {
             // Merge: use agent's model_settings as base, override with request's model_settings
             if let (Some(base), Some(override_ms)) = (def.model_settings(), &llm_def.model_settings)
             {
-                let final_model_settings = Self::merge_model_settings(base, override_ms)
-                    .unwrap_or_else(|e| {
-                        tracing::error!(
-                            "Failed to merge model settings for LLM call '{}': {}",
-                            llm_def.name,
-                            e
-                        );
-                        override_ms.clone()
-                    });
+                let final_model_settings = base.merge(override_ms).unwrap_or_else(|| {
+                    tracing::error!(
+                        "merge produced empty model for LLM call '{}'",
+                        llm_def.name
+                    );
+                    override_ms.clone()
+                });
                 llm_def.model_settings = Some(final_model_settings);
             } else if llm_def.model_settings.is_none() {
                 llm_def.model_settings = def.model_settings().cloned();
