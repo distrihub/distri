@@ -25,7 +25,7 @@ impl Tool for SaveArtifactTool {
     }
 
     fn get_description(&self) -> String {
-        "Save a file from the workspace as a persistent artifact. Use for any file you want to share with the user: images (PNG, JPG, SVG), documents (PDF, Markdown), data (JSON, CSV), or videos. The file is stored in the artifact store and each channel renders it appropriately.".to_string()
+        "Save an artifact to share with the user. Provide EITHER `path` (reads a file from the shell workspace or local filesystem) OR `content` (a string to save directly). The artifact is persisted and rendered by each channel according to its MIME type (images inline, markdown/JSON as previews, etc.).".to_string()
     }
 
     fn needs_executor_context(&self) -> bool {
@@ -38,18 +38,22 @@ impl Tool for SaveArtifactTool {
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "Absolute path to the file in the shell workspace or local filesystem (e.g. \"/workspace/chart.png\", \"/tmp/results.json\")"
+                    "description": "Absolute path to the file to save (e.g. \"/workspace/chart.png\"). Mutually exclusive with `content`."
                 },
-                "caption": {
+                "content": {
                     "type": "string",
-                    "description": "Optional description shown alongside the artifact"
+                    "description": "Inline string content to save. Mutually exclusive with `path`. Requires `filename` to be set so the MIME type can be inferred."
                 },
                 "filename": {
                     "type": "string",
-                    "description": "Optional filename override. Defaults to the basename of path."
+                    "description": "Filename (with extension) to save the artifact as. Optional when `path` is given (defaults to basename of path). Required when `content` is given."
+                },
+                "caption": {
+                    "type": "string",
+                    "description": "Optional description shown alongside the artifact."
                 }
             },
-            "required": ["path"]
+            "required": []
         })
     }
 
@@ -69,73 +73,98 @@ impl ExecutorContextTool for SaveArtifactTool {
         tool_call: ToolCall,
         context: Arc<ExecutorContext>,
     ) -> Result<Vec<Part>, AgentError> {
-        let path = tool_call
-            .input
-            .get("path")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| AgentError::ToolExecution("Missing 'path' parameter".to_string()))?;
-
+        let path = tool_call.input.get("path").and_then(|v| v.as_str());
+        let content_field = tool_call.input.get("content").and_then(|v| v.as_str());
         let caption: Option<&str> = tool_call.input.get("caption").and_then(|v| v.as_str());
 
-        let filename: String = tool_call
+        // Enforce exactly one of path/content
+        if path.is_some() && content_field.is_some() {
+            return Err(AgentError::ToolExecution(
+                "Provide either 'path' or 'content', not both".to_string(),
+            ));
+        }
+
+        // Resolve filename: explicit override > basename(path) > required-for-content
+        let filename: String = match tool_call
             .input
             .get("filename")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
-            .unwrap_or_else(|| {
-                std::path::Path::new(path)
+        {
+            Some(f) => f,
+            None => match path {
+                Some(p) => std::path::Path::new(p)
                     .file_name()
                     .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| "artifact.bin".to_string())
-            });
-
-        // Read the file — try browsr shell session first, fall back to local fs
-        let base64_str = if let Ok(Some(session_id)) = get_shell_session_id(&context).await {
-            let client = BrowsrClient::from_env();
-            let response = client
-                .shell_exec(ShellExecRequest {
-                    session_id: session_id.clone(),
-                    command: format!("base64 -w0 {}", shell_quote(path)),
-                    timeout_secs: Some(30),
-                    working_dir: None,
-                })
-                .await
-                .map_err(|e| {
-                    AgentError::ToolExecution(format!("Failed to read file from shell: {}", e))
-                })?;
-
-            if response.result.exit_code != Some(0) {
-                return Err(AgentError::ToolExecution(format!(
-                    "Failed to read file '{}': {}",
-                    path, response.result.stderr
-                )));
-            }
-
-            let s = response.result.stdout.trim().to_string();
-            if s.is_empty() {
-                return Err(AgentError::ToolExecution(format!(
-                    "File '{}' is empty or does not exist",
-                    path
-                )));
-            }
-            s
-        } else {
-            let raw_bytes = tokio::fs::read(path).await.map_err(|e| {
-                AgentError::ToolExecution(format!(
-                    "No active shell session and local file '{}' not readable: {}",
-                    path, e
-                ))
-            })?;
-            if raw_bytes.is_empty() {
-                return Err(AgentError::ToolExecution(format!("File '{}' is empty", path)));
-            }
-            general_purpose::STANDARD.encode(&raw_bytes)
+                    .unwrap_or_else(|| "artifact.bin".to_string()),
+                None => {
+                    return Err(AgentError::ToolExecution(
+                        "'filename' is required when using 'content' mode".to_string(),
+                    ));
+                }
+            },
         };
 
-        let bytes = general_purpose::STANDARD
-            .decode(&base64_str)
-            .map_err(|e| AgentError::ToolExecution(format!("Invalid base64 data: {}", e)))?;
-        let size = bytes.len() as u64;
+        // Acquire base64-encoded bytes in both modes
+        let (base64_str, raw_size) = if let Some(content) = content_field {
+            let raw_bytes = content.as_bytes();
+            let size = raw_bytes.len() as u64;
+            (general_purpose::STANDARD.encode(raw_bytes), size)
+        } else if let Some(path) = path {
+            if let Ok(Some(session_id)) = get_shell_session_id(&context).await {
+                let client = BrowsrClient::from_env();
+                let response = client
+                    .shell_exec(ShellExecRequest {
+                        session_id: session_id.clone(),
+                        command: format!("base64 -w0 {}", shell_quote(path)),
+                        timeout_secs: Some(30),
+                        working_dir: None,
+                    })
+                    .await
+                    .map_err(|e| {
+                        AgentError::ToolExecution(format!("Failed to read file from shell: {}", e))
+                    })?;
+
+                if response.result.exit_code != Some(0) {
+                    return Err(AgentError::ToolExecution(format!(
+                        "Failed to read file '{}': {}",
+                        path, response.result.stderr
+                    )));
+                }
+
+                let s = response.result.stdout.trim().to_string();
+                if s.is_empty() {
+                    return Err(AgentError::ToolExecution(format!(
+                        "File '{}' is empty or does not exist",
+                        path
+                    )));
+                }
+                let decoded = general_purpose::STANDARD
+                    .decode(&s)
+                    .map_err(|e| AgentError::ToolExecution(format!("Invalid base64 data: {}", e)))?;
+                let size = decoded.len() as u64;
+                (s, size)
+            } else {
+                let raw_bytes = tokio::fs::read(path).await.map_err(|e| {
+                    AgentError::ToolExecution(format!(
+                        "No active shell session and local file '{}' not readable: {}",
+                        path, e
+                    ))
+                })?;
+                if raw_bytes.is_empty() {
+                    return Err(AgentError::ToolExecution(format!(
+                        "File '{}' is empty",
+                        path
+                    )));
+                }
+                let size = raw_bytes.len() as u64;
+                (general_purpose::STANDARD.encode(&raw_bytes), size)
+            }
+        } else {
+            return Err(AgentError::ToolExecution(
+                "Must provide either 'path' or 'content'".to_string(),
+            ));
+        };
 
         let mime_type = mime_from_filename(&filename);
 
@@ -167,18 +196,18 @@ impl ExecutorContextTool for SaveArtifactTool {
         };
 
         tracing::info!(
-            path = path,
             filename = %filename,
-            size = size,
+            size = raw_size,
             mime = %mime_type,
             artifact_path = ?artifact_path,
+            mode = if path.is_some() { "path" } else { "content" },
             "save_artifact: artifact saved"
         );
 
         let metadata = FileMetadata {
             file_id: filename.clone(),
             relative_path: artifact_path.unwrap_or_default(),
-            size,
+            size: raw_size,
             content_type: Some(mime_type.to_string()),
             original_filename: Some(filename),
             created_at: chrono::Utc::now(),
