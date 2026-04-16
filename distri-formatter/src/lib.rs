@@ -31,9 +31,13 @@ pub enum ParseMode {
 /// A media attachment (image, document, etc.) produced by a renderer.
 #[derive(Debug, Clone)]
 pub struct MediaAttachment {
+    /// Raw bytes. Empty when `artifact_path` is set (gateway fetches bytes).
     pub data: Vec<u8>,
     pub mime_type: String,
     pub filename: Option<String>,
+    /// If set, channels should fetch bytes from the artifact store at this
+    /// path instead of using `data`. Enables lazy byte-loading for artifacts.
+    pub artifact_path: Option<String>,
 }
 
 /// What a surface renderer produces after handling events.

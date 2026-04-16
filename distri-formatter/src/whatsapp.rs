@@ -96,6 +96,7 @@ impl SurfaceRenderer for WhatsAppRenderer {
             data: data.to_vec(),
             mime_type: mime.to_string(),
             filename: None,
+            artifact_path: None,
         });
         self.dirty = true;
     }
