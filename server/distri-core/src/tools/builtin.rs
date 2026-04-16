@@ -507,11 +507,6 @@ impl ExecutorContextTool for AgentTool {
             let runner = orchestrator.background_runner.as_ref().unwrap();
             let broadcaster = orchestrator.broadcaster();
             let sub_task_id = uuid::Uuid::new_v4().to_string();
-            let env_id = format!(
-                "{}-{}",
-                context.workspace_id.as_deref().unwrap_or("default"),
-                self.agent_name
-            );
 
             tracing::info!(
                 "DeepAgent dispatch: spawning {} in sandbox (task_id={})",
@@ -527,7 +522,7 @@ impl ExecutorContextTool for AgentTool {
                     task,
                     context.user_id.clone(),
                     context.workspace_id.clone(),
-                    Some(env_id),
+                    None,
                     Some(context.thread_id.clone()),
                 )
                 .await
@@ -995,11 +990,6 @@ impl ExecutorContextTool for UniversalAgentTool {
             let runner = orchestrator.background_runner.as_ref().unwrap();
             let broadcaster = orchestrator.broadcaster();
             let sub_task_id = uuid::Uuid::new_v4().to_string();
-            let env_id = format!(
-                "{}-{}",
-                context.workspace_id.as_deref().unwrap_or("default"),
-                agent_name
-            );
 
             tracing::info!(
                 "UniversalAgentTool: remote dispatch {} (task_id={})",
@@ -1014,7 +1004,7 @@ impl ExecutorContextTool for UniversalAgentTool {
                     input.prompt.clone(),
                     context.user_id.clone(),
                     context.workspace_id.clone(),
-                    Some(env_id),
+                    None,
                     None,
                 )
                 .await
