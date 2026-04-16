@@ -13,7 +13,6 @@ use distri_types::{AgentEvent, AgentEventType, ToolResponse};
 use crate::state::{
     ChatState, MessageState, StepState, ToolCallState, ToolCallStatus, is_probe_call,
 };
-use crate::status::format_status_text;
 use crate::telegram_html::escape_and_linkify;
 use crate::{Formatter, MediaAttachment, ParseMode, RendererOutput, SurfaceRenderer};
 
