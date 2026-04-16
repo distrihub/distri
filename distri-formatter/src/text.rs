@@ -260,6 +260,10 @@ impl Formatter for TextFormatter {
                     from_agent, to_agent, reason_str
                 ));
             }
+            AgentEventType::LiveView { url, title, .. } => {
+                let label = title.as_deref().unwrap_or("Live view");
+                self.push_line(&format!("[{label}] {url}"));
+            }
             _ => {}
         }
     }

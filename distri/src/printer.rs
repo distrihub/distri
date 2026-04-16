@@ -636,6 +636,15 @@ impl EventPrinter {
                     COLOR_BRIGHT_CYAN, from_agent, to_agent, reason_str, COLOR_RESET
                 );
             }
+            AgentEventType::LiveView {
+                url, title, ..
+            } => {
+                let label = title.as_deref().unwrap_or("Live view");
+                println!(
+                    "{}⎔ {}: {}{}",
+                    COLOR_BRIGHT_CYAN, label, url, COLOR_RESET
+                );
+            }
             AgentEventType::ContextCompaction {
                 tier,
                 tokens_before,
