@@ -154,7 +154,8 @@ pub fn escape_and_linkify(input: &str) -> String {
 
 use crate::extract::{extract_fields, ToolFields};
 
-/// Max chars for a tool output snippet in Telegram (leaves room for surrounding chat).
+/// Max bytes for a tool output snippet in Telegram. 800 bytes ≈ 800 ASCII
+/// chars or ~270 4-byte UTF-8 chars — leaves room for surrounding chat.
 const TOOL_OUTPUT_MAX: usize = 800;
 
 /// Format a tool result as compact Telegram HTML.
@@ -222,7 +223,7 @@ pub fn format_tool_result_html(response: &distri_types::ToolResponse) -> String 
                 .collect::<Vec<_>>()
                 .join("\n");
             let more = if num_files > 10 {
-                format!("\n… and {} more", num_files - 10)
+                format!("\n… and {} more", num_files.saturating_sub(10))
             } else {
                 String::new()
             };
@@ -279,6 +280,10 @@ fn format_shell_html(stdout: &str, stderr: &str, exit_code: i64) -> String {
     parts.join("\n")
 }
 
+/// Truncate `s` so its UTF-8 byte length is at most `max`. Truncation happens
+/// at line boundaries, so the result is always valid UTF-8 and never splits
+/// a multi-byte character mid-codepoint. Appends `"… (N lines total)"` when
+/// content is dropped.
 fn truncate_for_tg(s: &str, max: usize) -> String {
     if s.len() <= max {
         return s.to_string();
@@ -455,5 +460,36 @@ mod tests {
         // is only meant to run on raw text, not pre-anchored HTML.
         let got = escape_and_linkify(pre_anchored);
         assert!(got.contains("<a href=\"https://example.com\">"));
+    }
+
+    #[test]
+    fn tool_result_html_escapes_dynamic_content() {
+        // Edit path and Bash stdout with HTML-special chars must be escaped.
+        let r = distri_types::ToolResponse::direct(
+            "tc1".into(),
+            "Edit".into(),
+            serde_json::json!({"file_path": "/src/<weird>&file.rs", "replacements": 1}),
+        );
+        let html = format_tool_result_html(&r);
+        assert!(
+            !html.contains("<weird>"),
+            "raw < and > must be escaped, got: {html}"
+        );
+        assert!(
+            html.contains("&lt;weird&gt;"),
+            "expected escaped entities, got: {html}"
+        );
+
+        let r2 = distri_types::ToolResponse::direct(
+            "tc1".into(),
+            "Bash".into(),
+            serde_json::json!({"stdout": "echo <script>alert(1)</script>", "stderr": "", "exit_code": 0}),
+        );
+        let html2 = format_tool_result_html(&r2);
+        assert!(
+            !html2.contains("<script>"),
+            "bash stdout must escape HTML, got: {html2}"
+        );
+        assert!(html2.contains("&lt;script&gt;"));
     }
 }
