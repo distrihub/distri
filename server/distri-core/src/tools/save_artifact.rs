@@ -147,14 +147,14 @@ impl ExecutorContextTool for SaveArtifactTool {
             } else {
                 let raw_bytes = tokio::fs::read(path).await.map_err(|e| {
                     AgentError::ToolExecution(format!(
-                        "No active shell session and local file '{}' not readable: {}",
-                        path, e
+                        "save_artifact: file '{}' does not exist ({}). The file was not written before save_artifact was called. Verify with `ls -la {}` and ensure your code actually writes the file (e.g. matplotlib needs `plt.savefig('{}')` — printing the path is not enough).",
+                        path, e, path, path
                     ))
                 })?;
                 if raw_bytes.is_empty() {
                     return Err(AgentError::ToolExecution(format!(
-                        "File '{}' is empty",
-                        path
+                        "save_artifact: file '{}' exists but is empty (0 bytes). Re-run the code that produces it and confirm with `ls -la {}` before retrying.",
+                        path, path
                     )));
                 }
                 let size = raw_bytes.len() as u64;
