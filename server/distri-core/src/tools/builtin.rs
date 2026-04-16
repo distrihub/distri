@@ -6,7 +6,7 @@ use crate::agent::todos::TodosTool;
 use crate::tools::browser::{
     BrowserStepTool, CrawlTool, DistriBrowserSharedTool, DistriScrapeSharedTool, SearchTool,
 };
-use crate::tools::chart::RenderChartTool;
+use crate::tools::save_artifact::SaveArtifactTool;
 use crate::tools::shell::{ExecuteShellTool, StartShellTool, StopShellTool};
 use crate::{
     agent::{
@@ -39,7 +39,7 @@ pub fn get_builtin_tools() -> Vec<Arc<dyn Tool>> {
         Arc::new(crate::tools::tool_search::ToolSearchTool) as Arc<dyn Tool>,
         Arc::new(DistriExecuteCodeTool) as Arc<dyn Tool>,
         Arc::new(crate::tools::inject_env::InjectConnectionEnvTool) as Arc<dyn Tool>,
-        Arc::new(RenderChartTool) as Arc<dyn Tool>,
+        Arc::new(SaveArtifactTool) as Arc<dyn Tool>,
     ]
 }
 

@@ -14,7 +14,7 @@ use crate::AgentError;
 use distri_types::Part;
 use serde::{Deserialize, Serialize};
 mod browser;
-pub mod chart;
+pub mod save_artifact;
 pub mod code;
 // pub mod authenticated_example;
 pub mod context;
