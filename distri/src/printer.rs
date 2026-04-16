@@ -649,6 +649,28 @@ impl EventPrinter {
                     );
                 }
             }
+            AgentEventType::MediaGenerated {
+                data,
+                mime_type,
+                filename,
+                size,
+                ..
+            } => {
+                // Render generated media (charts, images) inline via viuer.
+                // Reuse the same image rendering path as BrowserScreenshot.
+                if let Err(err) = self.print_browser_image(
+                    data,
+                    Some(mime_type),
+                    filename.as_deref(),
+                    *size,
+                    None,
+                ) {
+                    println!(
+                        "{}🖼 Media (render failed: {}){}",
+                        COLOR_GRAY, err, COLOR_RESET
+                    );
+                }
+            }
             AgentEventType::AgentHandover {
                 from_agent,
                 to_agent,

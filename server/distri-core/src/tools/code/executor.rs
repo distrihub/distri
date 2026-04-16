@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::agent::ExecutorContext;
-use crate::tools::shell::BrowsrShellClient;
+use browsr_client::BrowsrClient;
 use browsr_types::{ShellCreateSessionRequest, ShellExecRequest};
 use serde_json::Value;
 
@@ -25,7 +25,7 @@ pub async fn execute_code_with_tools(
     language_override: Option<String>,
     _context: Arc<ExecutorContext>,
 ) -> Result<(Value, Vec<String>, bool), anyhow::Error> {
-    let client = BrowsrShellClient::from_env();
+    let client = BrowsrClient::from_env();
 
     // Use explicit language if provided, otherwise detect from code content
     let language = language_override
@@ -34,7 +34,7 @@ pub async fn execute_code_with_tools(
 
     // Create an ephemeral shell session
     let session = client
-        .create_session(&ShellCreateSessionRequest {
+        .create_shell_session(ShellCreateSessionRequest {
             language: Some(language.to_string()),
             timeout_secs: Some(30),
             ..Default::default()
@@ -49,7 +49,7 @@ pub async fn execute_code_with_tools(
 
     // Execute the code
     let result = client
-        .exec(&ShellExecRequest {
+        .shell_exec(ShellExecRequest {
             session_id: session_id.clone(),
             command,
             timeout_secs: Some(20),
@@ -61,7 +61,7 @@ pub async fn execute_code_with_tools(
     let destroy_client = client.clone();
     let destroy_id = session_id.clone();
     tokio::spawn(async move {
-        let _ = destroy_client.destroy_session(&destroy_id).await;
+        let _ = destroy_client.terminate_shell_session(&destroy_id).await;
     });
 
     let response = result.map_err(|e| anyhow::anyhow!("Shell execution failed: {}", e))?;

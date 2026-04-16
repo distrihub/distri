@@ -350,6 +350,13 @@ impl Formatter for WhatsAppFormatter {
                     self.renderer.render_image(image.as_bytes(), "image/png");
                 }
             }
+            AgentEventType::MediaGenerated {
+                data, mime_type, ..
+            } => {
+                if self.renderer.supports_images() {
+                    self.renderer.render_image(data.as_bytes(), mime_type);
+                }
+            }
             AgentEventType::AgentHandover {
                 from_agent,
                 to_agent,

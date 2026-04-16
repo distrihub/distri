@@ -3,8 +3,9 @@ use crate::tools::ExecutorContextTool;
 use crate::types::ToolCall;
 use crate::AgentError;
 use anyhow::Result;
+use browsr_client::BrowsrClient;
 use browsr_types::{
-    ShellCreateSessionRequest, ShellCreateSessionResponse, ShellExecRequest, ShellExecResponse,
+    ShellCreateSessionRequest, ShellExecRequest, ShellExecResponse,
 };
 use distri_stores::SessionStoreExt;
 use distri_types::{Part, Tool, ToolContext};
@@ -13,129 +14,6 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 
 const SHELL_SESSION_KEY: &str = "shell_session_id";
-
-// ============================================================
-// Browsr Shell HTTP Client
-// ============================================================
-
-#[derive(Clone)]
-pub(crate) struct BrowsrShellClient {
-    client: reqwest::Client,
-    base_url: String,
-}
-
-impl BrowsrShellClient {
-    pub(crate) fn from_env() -> Self {
-        let base_url = std::env::var("BROWSR_BASE_URL")
-            .or_else(|_| std::env::var("BROWSR_API_URL"))
-            .unwrap_or_else(|_| "https://api.browsr.dev".to_string());
-
-        let mut headers = reqwest::header::HeaderMap::new();
-        if let Ok(api_key) = std::env::var("BROWSR_API_KEY") {
-            if let Ok(val) = reqwest::header::HeaderValue::from_str(&api_key) {
-                headers.insert("x-api-key", val);
-            }
-        }
-
-        let has_key = headers.contains_key("x-api-key");
-        tracing::info!(
-            "[BrowsrShellClient::from_env] base_url={}, has_api_key={}",
-            base_url,
-            has_key
-        );
-
-        let client = reqwest::Client::builder()
-            .default_headers(headers)
-            .timeout(std::time::Duration::from_secs(300))
-            .build()
-            .expect("Failed to build HTTP client");
-
-        Self { client, base_url }
-    }
-
-    pub(crate) async fn create_session(
-        &self,
-        request: &ShellCreateSessionRequest,
-    ) -> Result<ShellCreateSessionResponse, AgentError> {
-        let url = format!("{}/shell/sessions", self.base_url);
-        tracing::info!("[BrowsrShellClient::create_session] POST {}", url);
-        let resp = self
-            .client
-            .post(&url)
-            .json(request)
-            .send()
-            .await
-            .map_err(|e| {
-                AgentError::ToolExecution(format!("Shell session creation failed: {}", e))
-            })?;
-
-        tracing::info!(
-            "[BrowsrShellClient::create_session] response status={}",
-            resp.status()
-        );
-
-        if !resp.status().is_success() {
-            let text = resp.text().await.unwrap_or_default();
-            tracing::error!("[BrowsrShellClient::create_session] failed: {}", text);
-            return Err(AgentError::ToolExecution(format!(
-                "Shell session creation failed: {}",
-                text
-            )));
-        }
-
-        resp.json().await.map_err(|e| {
-            AgentError::ToolExecution(format!("Failed to parse session response: {}", e))
-        })
-    }
-
-    pub(crate) async fn exec(
-        &self,
-        request: &ShellExecRequest,
-    ) -> Result<ShellExecResponse, AgentError> {
-        let url = format!("{}/shell/exec", self.base_url);
-        let resp = self
-            .client
-            .post(&url)
-            .json(request)
-            .send()
-            .await
-            .map_err(|e| AgentError::ToolExecution(format!("Shell exec failed: {}", e)))?;
-
-        if !resp.status().is_success() {
-            let text = resp.text().await.unwrap_or_default();
-            return Err(AgentError::ToolExecution(format!(
-                "Shell exec failed: {}",
-                text
-            )));
-        }
-
-        resp.json()
-            .await
-            .map_err(|e| AgentError::ToolExecution(format!("Failed to parse exec response: {}", e)))
-    }
-
-    pub(crate) async fn destroy_session(&self, session_id: &str) -> Result<(), AgentError> {
-        let url = format!("{}/shell/sessions/{}", self.base_url, session_id);
-        let resp = self.client.delete(&url).send().await.map_err(|e| {
-            AgentError::ToolExecution(format!("Shell session deletion failed: {}", e))
-        })?;
-
-        if !resp.status().is_success() {
-            let text = resp.text().await.unwrap_or_default();
-            return Err(AgentError::ToolExecution(format!(
-                "Shell session deletion failed: {}",
-                text
-            )));
-        }
-
-        Ok(())
-    }
-}
-
-// Shell API types are imported from browsr_types:
-// ShellCreateSessionRequest, ShellCreateSessionResponse,
-// ShellExecRequest, ShellExecResponse,
-// NetworkAccess, ToolDefinition
 
 // ============================================================
 // Shell property overrides from context.tool_metadata["shell"]
@@ -184,7 +62,7 @@ fn get_shell_overrides(context: &ExecutorContext) -> ShellOverrides {
 // Helper: get/set shell session from session store
 // ============================================================
 
-async fn get_shell_session_id(context: &ExecutorContext) -> Result<Option<String>, AgentError> {
+pub(crate) async fn get_shell_session_id(context: &ExecutorContext) -> Result<Option<String>, AgentError> {
     let session_store = context.get_session_store()?;
     let val: Option<String> = session_store
         .get(&context.thread_id, SHELL_SESSION_KEY)
@@ -363,8 +241,11 @@ impl ExecutorContextTool for StartShellTool {
             ..Default::default()
         };
 
-        let client = BrowsrShellClient::from_env();
-        let response = client.create_session(&request).await?;
+        let client = BrowsrClient::from_env();
+        let env_vars_count = request.env_vars.as_ref().map(|v| v.len()).unwrap_or(0);
+
+        let response = client.create_shell_session(request).await
+            .map_err(|e| AgentError::ToolExecution(format!("Shell session creation failed: {}", e)))?;
 
         // Store session ID in session store
         set_shell_session_id(&context, &response.session_id).await?;
@@ -372,7 +253,7 @@ impl ExecutorContextTool for StartShellTool {
         tracing::info!(
             "[start_shell] Created session: {} (env_vars={}, tools={:?})",
             response.session_id,
-            request.env_vars.as_ref().map(|v| v.len()).unwrap_or(0),
+            env_vars_count,
             response.tools_injected,
         );
 
@@ -493,8 +374,9 @@ impl ExecutorContextTool for ExecuteShellTool {
                 .map(String::from),
         };
 
-        let client = BrowsrShellClient::from_env();
-        let response = client.exec(&request).await?;
+        let client = BrowsrClient::from_env();
+        let response: ShellExecResponse = client.shell_exec(request).await
+            .map_err(|e| AgentError::ToolExecution(format!("Shell exec failed: {}", e)))?;
 
         let result = &response.result;
         tracing::debug!(
@@ -576,8 +458,9 @@ impl ExecutorContextTool for StopShellTool {
             }
         };
 
-        let client = BrowsrShellClient::from_env();
-        client.destroy_session(&session_id).await?;
+        let client = BrowsrClient::from_env();
+        client.terminate_shell_session(&session_id).await
+            .map_err(|e| AgentError::ToolExecution(format!("Shell session deletion failed: {}", e)))?;
 
         // Clear session ID from store
         clear_shell_session_id(&context).await?;

@@ -185,6 +185,22 @@ pub enum AgentEventType {
         timestamp_ms: Option<i64>,
     },
 
+    /// Agent produced a media file (chart, generated image, etc.).
+    /// The image data is base64-encoded and should be rendered by all channels
+    /// that support images (Telegram, Web, CLI).
+    MediaGenerated {
+        /// Base64-encoded media data
+        data: String,
+        /// MIME type (e.g. "image/png", "image/jpeg")
+        mime_type: String,
+        /// Original filename (e.g. "sales_chart.png")
+        filename: Option<String>,
+        /// File size in bytes
+        size: Option<u64>,
+        /// Artifact path where the media is persisted
+        artifact_path: Option<String>,
+    },
+
     BrowserSessionStarted {
         session_id: String,
         viewer_url: Option<String>,
