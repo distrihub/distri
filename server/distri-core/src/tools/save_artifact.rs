@@ -95,7 +95,7 @@ impl ExecutorContextTool for SaveArtifactTool {
             let response = client
                 .shell_exec(ShellExecRequest {
                     session_id: session_id.clone(),
-                    command: format!("base64 -w0 {}", path),
+                    command: format!("base64 -w0 {}", shell_quote(path)),
                     timeout_secs: Some(30),
                     working_dir: None,
                 })
@@ -120,7 +120,7 @@ impl ExecutorContextTool for SaveArtifactTool {
             }
             s
         } else {
-            let raw_bytes = std::fs::read(path).map_err(|e| {
+            let raw_bytes = tokio::fs::read(path).await.map_err(|e| {
                 AgentError::ToolExecution(format!(
                     "No active shell session and local file '{}' not readable: {}",
                     path, e
@@ -215,4 +215,20 @@ fn mime_from_filename(filename: &str) -> &'static str {
         Some("webm") => "video/webm",
         _ => "application/octet-stream",
     }
+}
+
+/// Escape a path for safe inclusion in a POSIX shell command.
+/// Wraps in single quotes; any embedded single quote becomes `'\''`.
+fn shell_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('\'');
+    for c in s.chars() {
+        if c == '\'' {
+            out.push_str("'\\''");
+        } else {
+            out.push(c);
+        }
+    }
+    out.push('\'');
+    out
 }
