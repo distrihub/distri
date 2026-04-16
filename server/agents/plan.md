@@ -1,5 +1,5 @@
 ---
-name = "_system/plan"
+name = "plan"
 description = "Software architect agent for designing implementation plans. Read-only: explores and analyzes but cannot modify anything. Returns step-by-step implementation strategies."
 max_iterations = 15
 tool_format = "provider"

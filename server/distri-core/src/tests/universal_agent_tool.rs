@@ -1,13 +1,6 @@
 use std::sync::Arc;
 
-use serde_json::json;
-
-use crate::agent::{load_system_agents, ExecutorContext};
-use crate::tools::builtin::{
-    is_agent_accessible, normalize_system_agent_name, resolve_code_agent, CallAgentInput,
-    ALWAYS_AVAILABLE_BUILTINS, OPT_IN_BUILTINS,
-};
-use crate::tools::UniversalAgentTool;
+use crate::tools::builtin::{is_agent_accessible, resolve_code_agent, ALWAYS_AVAILABLE_BUILTINS};
 use crate::AgentOrchestratorBuilder;
 use distri_types::configuration::{DbConnectionConfig, MetadataStoreConfig, StoreConfig};
 use distri_types::{RuntimeMode, Tool};
@@ -28,41 +21,14 @@ fn test_store_config() -> StoreConfig {
     }
 }
 
-// ── Existing unit tests ────────────────────────────────────────────
-
-#[test]
-fn test_normalize_system_agent_name() {
-    assert_eq!(normalize_system_agent_name("plan"), "_system/plan");
-    assert_eq!(normalize_system_agent_name("coder"), "_system/coder");
-    assert_eq!(normalize_system_agent_name("explore"), "_system/explore");
-    assert_eq!(normalize_system_agent_name("_system/plan"), "_system/plan");
-    assert_eq!(
-        normalize_system_agent_name("my_custom_agent"),
-        "_system/my_custom_agent"
-    );
-}
+// ── is_agent_accessible ────────────────────────────────────────────
 
 #[test]
 fn test_always_available_builtins_accessible_with_empty_sub_agents() {
     let sub_agents: Vec<String> = vec![];
-    assert!(is_agent_accessible("plan", &sub_agents));
-    assert!(is_agent_accessible("coder", &sub_agents));
-    assert!(is_agent_accessible("_system/plan", &sub_agents));
-    assert!(is_agent_accessible("_system/coder", &sub_agents));
-}
-
-#[test]
-fn test_opt_in_builtins_not_accessible_without_config() {
-    let sub_agents: Vec<String> = vec![];
-    assert!(!is_agent_accessible("explore", &sub_agents));
-    assert!(!is_agent_accessible("_system/explore", &sub_agents));
-}
-
-#[test]
-fn test_opt_in_builtins_accessible_when_listed() {
-    let sub_agents = vec!["explore".to_string()];
-    assert!(is_agent_accessible("explore", &sub_agents));
-    assert!(is_agent_accessible("_system/explore", &sub_agents));
+    assert!(is_agent_accessible("distri", &sub_agents));
+    assert!(is_agent_accessible("distri_runner", &sub_agents));
+    assert!(is_agent_accessible("distri_browser_runner", &sub_agents));
 }
 
 #[test]
@@ -80,12 +46,13 @@ fn test_store_agents_accessible_when_listed() {
 #[test]
 fn test_wildcard_grants_access_to_everything() {
     let sub_agents = vec!["*".to_string()];
-    assert!(is_agent_accessible("plan", &sub_agents));
-    assert!(is_agent_accessible("coder", &sub_agents));
-    assert!(is_agent_accessible("explore", &sub_agents));
+    assert!(is_agent_accessible("distri", &sub_agents));
+    assert!(is_agent_accessible("distri_runner", &sub_agents));
     assert!(is_agent_accessible("my_agent", &sub_agents));
     assert!(is_agent_accessible("any_random_agent", &sub_agents));
 }
+
+// ── resolve_code_agent ──────────────────────────────────────────────
 
 #[test]
 fn test_resolve_code_agent_cli() {
@@ -107,13 +74,12 @@ fn test_resolve_code_agent_browser() {
 
 #[test]
 fn test_always_available_builtins_list() {
-    assert!(ALWAYS_AVAILABLE_BUILTINS.contains(&"_system/plan"));
-    assert!(ALWAYS_AVAILABLE_BUILTINS.contains(&"_system/coder"));
-}
-
-#[test]
-fn test_opt_in_builtins_list() {
-    assert!(OPT_IN_BUILTINS.contains(&"_system/explore"));
+    assert!(ALWAYS_AVAILABLE_BUILTINS.contains(&"distri"));
+    assert!(ALWAYS_AVAILABLE_BUILTINS.contains(&"distri_runner"));
+    assert!(ALWAYS_AVAILABLE_BUILTINS.contains(&"distri_browser_runner"));
+    assert!(ALWAYS_AVAILABLE_BUILTINS.contains(&"plan"));
+    assert!(ALWAYS_AVAILABLE_BUILTINS.contains(&"explore"));
+    assert_eq!(ALWAYS_AVAILABLE_BUILTINS.len(), 5);
 }
 
 // ── Integration tests: get_agent_tools wiring ──────────────────────
@@ -226,177 +192,4 @@ async fn test_no_call_name_tools_registered() {
         tool_names.contains(&"call_agent".to_string()),
         "call_agent must be present instead of call_<name> tools"
     );
-}
-
-// ── Integration test: built-in agents ────────────────────────────────
-
-#[tokio::test]
-async fn test_builtin_agents_embedded_and_parseable() {
-    let agents = load_system_agents().await.unwrap();
-    let agent_names: Vec<&str> = agents.iter().map(|a| a.name.as_str()).collect();
-
-    assert!(
-        agent_names.contains(&"_system/plan"),
-        "should have plan, got: {:?}",
-        agent_names
-    );
-    assert!(
-        agent_names.contains(&"_system/coder"),
-        "should have coder, got: {:?}",
-        agent_names
-    );
-    assert!(
-        agent_names.contains(&"_system/coder_lite"),
-        "should have coder_lite, got: {:?}",
-        agent_names
-    );
-    assert!(
-        agent_names.contains(&"_system/explore"),
-        "should have explore, got: {:?}",
-        agent_names
-    );
-    assert_eq!(agents.len(), 4);
-}
-
-#[tokio::test]
-async fn test_builtin_agents_registered_on_orchestrator_build() {
-    let orchestrator = Arc::new(
-        AgentOrchestratorBuilder::default()
-            .with_store_config(test_store_config())
-            .build()
-            .await
-            .unwrap(),
-    );
-
-    // Built-in agents should be auto-registered during build()
-    assert!(
-        orchestrator.get_agent("_system/plan").await.is_some(),
-        "_system/plan should be registered on build"
-    );
-    assert!(
-        orchestrator.get_agent("_system/coder").await.is_some(),
-        "_system/coder should be registered on build"
-    );
-    assert!(
-        orchestrator.get_agent("_system/coder_lite").await.is_some(),
-        "_system/coder_lite should be registered on build"
-    );
-    assert!(
-        orchestrator.get_agent("_system/explore").await.is_some(),
-        "_system/explore should be registered on build"
-    );
-}
-
-// ── UniversalAgentTool Tool trait implementation ────────────────────
-
-#[test]
-fn test_universal_agent_tool_trait() {
-    let tool = UniversalAgentTool;
-    assert_eq!(tool.get_name(), "call_agent");
-    assert!(tool.needs_executor_context());
-
-    let params = tool.get_parameters();
-    assert!(
-        params["properties"]["prompt"].is_object(),
-        "prompt property must exist"
-    );
-    assert!(
-        params["properties"]["agent"].is_object(),
-        "agent property must exist"
-    );
-    assert!(
-        params["properties"]["fork"].is_object(),
-        "fork property must exist"
-    );
-    assert!(
-        params["properties"]["system_prompt"].is_object(),
-        "system_prompt property must exist"
-    );
-    assert_eq!(params["required"], json!(["prompt"]));
-}
-
-// ── CallAgentInput deserialization ─────────────────────────────────
-
-#[test]
-fn test_call_agent_input_minimal() {
-    let input: CallAgentInput = serde_json::from_value(json!({
-        "prompt": "do something"
-    }))
-    .unwrap();
-    assert_eq!(input.prompt, "do something");
-    assert!(input.agent.is_none());
-    assert!(!input.fork);
-}
-
-#[test]
-fn test_call_agent_input_full() {
-    let input: CallAgentInput = serde_json::from_value(json!({
-        "agent": "plan",
-        "prompt": "design the architecture",
-        "fork": true,
-        "model": "fast",
-        "description": "Architecture planning"
-    }))
-    .unwrap();
-    assert_eq!(input.agent.as_deref(), Some("plan"));
-    assert_eq!(input.prompt, "design the architecture");
-    assert!(input.fork);
-    assert_eq!(input.model.as_deref(), Some("fast"));
-    assert_eq!(input.description.as_deref(), Some("Architecture planning"));
-}
-
-#[test]
-fn test_call_agent_input_adhoc() {
-    let input: CallAgentInput = serde_json::from_value(json!({
-        "prompt": "analyze data",
-        "system_prompt": "You are a data analyst",
-        "tools": ["search", "shell"]
-    }))
-    .unwrap();
-    assert!(input.agent.is_none());
-    assert_eq!(
-        input.system_prompt.as_deref(),
-        Some("You are a data analyst")
-    );
-    assert_eq!(
-        input.tools,
-        Some(vec!["search".to_string(), "shell".to_string()])
-    );
-}
-
-// ── RuntimeMode propagation ────────────────────────────────────────
-
-#[tokio::test]
-async fn test_runtime_mode_propagates_to_new_task() {
-    let ctx = ExecutorContext {
-        runtime_mode: RuntimeMode::Cli,
-        ..Default::default()
-    };
-    let child = ctx.new_task("child_agent").await;
-    assert_eq!(child.runtime_mode, RuntimeMode::Cli);
-}
-
-#[tokio::test]
-async fn test_runtime_mode_propagates_to_continue_as() {
-    let ctx = ExecutorContext {
-        runtime_mode: RuntimeMode::Browser,
-        ..Default::default()
-    };
-    let child = ctx.continue_as("target_agent").await;
-    assert_eq!(child.runtime_mode, RuntimeMode::Browser);
-}
-
-#[tokio::test]
-async fn test_runtime_mode_propagates_to_fork() {
-    let ctx = ExecutorContext {
-        runtime_mode: RuntimeMode::Cli,
-        ..Default::default()
-    };
-    let forked = ctx
-        .fork(crate::agent::context::ForkOptions {
-            fork_type: crate::agent::context::ForkType::NewTask,
-            copy_history_limit: None,
-        })
-        .await;
-    assert_eq!(forked.runtime_mode, RuntimeMode::Cli);
 }

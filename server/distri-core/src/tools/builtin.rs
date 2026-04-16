@@ -627,72 +627,38 @@ impl ExecutorContextTool for AgentTool {
 // ── UniversalAgentTool ──────────────────────────────────────────────────────
 
 /// Built-in agent names that are always available regardless of sub_agents config.
+/// These are seeded by `cloud/src/state.rs::seed_default_agents()` on startup.
 pub(crate) const ALWAYS_AVAILABLE_BUILTINS: &[&str] = &[
-    "_system/plan",
-    "_system/coder",
+    "distri",
     "distri_runner",
     "distri_browser_runner",
+    "plan",
+    "explore",
 ];
-
-/// Built-in agents that are only available when explicitly listed in sub_agents.
-#[allow(dead_code)] // Used by tests
-pub(crate) const OPT_IN_BUILTINS: &[&str] = &["_system/explore"];
-
-/// Normalize a short builtin name to its canonical `_system/` prefixed form.
-/// e.g. "plan" → "_system/plan", "coder" → "_system/coder".
-/// If the name already has a prefix, return it unchanged.
-pub(crate) fn normalize_system_agent_name(name: &str) -> String {
-    if name.starts_with("_system/") {
-        name.to_string()
-    } else {
-        format!("_system/{}", name)
-    }
-}
 
 /// Check whether an agent is accessible from the calling agent's context.
 ///
 /// An agent is accessible if:
-/// - It is in `ALWAYS_AVAILABLE_BUILTINS` (including short-name matches), OR
+/// - It is in `ALWAYS_AVAILABLE_BUILTINS`, OR
 /// - The calling agent's `sub_agents` contains `"*"` (wildcard), OR
 /// - It is explicitly listed in the calling agent's `sub_agents`
 pub(crate) fn is_agent_accessible(agent_name: &str, sub_agents: &[String]) -> bool {
-    let canonical = normalize_system_agent_name(agent_name);
-
-    // Always-available builtins are accessible regardless (check both forms)
-    if ALWAYS_AVAILABLE_BUILTINS.contains(&agent_name)
-        || ALWAYS_AVAILABLE_BUILTINS.contains(&canonical.as_str())
-    {
+    if ALWAYS_AVAILABLE_BUILTINS.contains(&agent_name) {
         return true;
     }
-
-    // Wildcard grants access to everything
     if sub_agents.iter().any(|sa| sa == "*") {
         return true;
     }
-
-    // Check if explicitly in sub_agents (exact match or short name match)
-    if sub_agents.iter().any(|sa| {
-        sa == agent_name || normalize_system_agent_name(sa) == agent_name || sa == &canonical
-    }) {
-        return true;
-    }
-
-    false
+    sub_agents.iter().any(|sa| sa == agent_name)
 }
 
-/// Resolve the logical "code" / "coder" agent to a concrete system agent
-/// name based on the caller's runtime. The orchestrator handles any runtime
-/// mismatch via `BackgroundRunner` — the resolver itself doesn't need to
-/// know about remote dispatch.
-///
-/// Returns short names (no `_system/` prefix); the caller is expected to
-/// run them through `normalize_system_agent_name` + the existing fallback
-/// chain so both file-based and baked-in registrations are found.
+/// Resolve the logical "code" / "coder" alias to a concrete system agent
+/// name based on the caller's runtime.
 ///
 /// Mapping:
-/// - `Browser` → `distri_browser_runner`
-/// - `Cli` / `Cloud` → `distri_runner` (declares `runtime = ["cli"]`, so a
-///   Cloud caller auto-routes via the sandbox launcher).
+/// - `Browser` → `distri_browser_runner` (in-browser JS + IndexedDB)
+/// - `Cli` / `Cloud` → `distri_runner` (Linux sandbox + Bash + Python; Cloud
+///   callers auto-route via the sandbox launcher).
 pub(crate) fn resolve_code_agent(runtime_mode: &RuntimeMode) -> &'static str {
     match runtime_mode {
         RuntimeMode::Browser => "distri_browser_runner",
@@ -826,41 +792,13 @@ impl ExecutorContextTool for UniversalAgentTool {
 
         // ── Resolve agent name ────────────────────────────────────────────
         let agent_name = if let Some(ref name) = input.agent {
-            // Named agent: normalize builtin short names
-            let normalized = if !name.contains('/') && !name.starts_with("_system/") {
-                // Could be a short builtin name like "plan" or "coder"
-                let candidate = normalize_system_agent_name(name);
-                // Check if it exists as a builtin, otherwise keep original
-                if orchestrator.get_agent(&candidate).await.is_some() {
-                    candidate
-                } else {
-                    name.to_string()
-                }
+            // `coder` / `code` are runtime-sensitive aliases — route to the
+            // concrete runner for the caller's runtime. Everything else is
+            // used verbatim.
+            if matches!(name.as_str(), "coder" | "code") {
+                resolve_code_agent(&context.runtime_mode).to_string()
             } else {
                 name.to_string()
-            };
-
-            // Special handling: resolve the logical "code" / "coder" agent
-            // to a concrete system agent based on the caller's runtime.
-            // Cli/Cloud → distri_runner (Cloud auto-routes via sandbox because
-            // distri_runner declares `runtime = ["cli"]`); Browser → distri_browser_runner.
-            let is_code_alias = matches!(
-                normalized.as_str(),
-                "_system/coder" | "coder" | "_system/code" | "code"
-            );
-            if is_code_alias {
-                let short = resolve_code_agent(&context.runtime_mode);
-                // Run the resolver result through the same normalize+fallback
-                // chain so it works whether the agent is baked-in (`_system/<name>`)
-                // or file-loaded (`<name>` from agents/ dir).
-                let candidate = normalize_system_agent_name(short);
-                if orchestrator.get_agent(&candidate).await.is_some() {
-                    candidate
-                } else {
-                    short.to_string()
-                }
-            } else {
-                normalized
             }
         } else if input.system_prompt.is_some() {
             // Ad-hoc mode: create a temporary agent from system_prompt
@@ -937,22 +875,17 @@ impl ExecutorContextTool for UniversalAgentTool {
             )));
         }
 
-        // ── Cloud coder: sandbox → remote, otherwise → coder_lite ─────────
-        let agent_name = if agent_name == "_system/coder"
+        // Cloud callers of `distri_runner` without a sandbox have nowhere to
+        // route — the agent is designed for sandboxed execution.
+        if agent_name == "distri_runner"
             && context.runtime_mode == RuntimeMode::Cloud
+            && orchestrator.background_runner.is_none()
         {
-            let has_sandbox = orchestrator.background_runner.is_some();
-            if has_sandbox {
-                // Sandbox available: run _system/coder remotely (distri-cli in browsr container)
-                agent_name
-            } else {
-                // No sandbox: fall back to coder_lite which has browsr shell tools built-in
-                tracing::info!("Cloud mode without sandbox: falling back to _system/coder_lite");
-                "_system/coder_lite".to_string()
-            }
-        } else {
-            agent_name
-        };
+            return Err(AgentError::ToolExecution(
+                "distri_runner requires a sandbox in Cloud mode, but no background_runner is configured"
+                    .to_string(),
+            ));
+        }
 
         // ── Fire-and-forget path: run_in_background via coordinator + broadcaster ──
         if input.run_in_background {
@@ -1048,10 +981,9 @@ impl ExecutorContextTool for UniversalAgentTool {
         }
 
         // ── Check if remote execution is needed ───────────────────────────
-        // In Cloud mode, _system/coder always runs remotely via SandboxLauncher.
-        // (coder_lite runs in-process with browsr shell tools.)
+        // In Cloud mode, `distri_runner` always runs remotely via SandboxLauncher.
         let use_remote = orchestrator.background_runner.is_some()
-            && agent_name == "_system/coder"
+            && agent_name == "distri_runner"
             && context.runtime_mode == RuntimeMode::Cloud;
 
         if use_remote {

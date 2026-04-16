@@ -1,5 +1,5 @@
 ---
-name = "_system/explore"
+name = "explore"
 description = "Fast exploration agent for searching, reading, and analyzing. Read-only: uses search and scrape to gather information quickly."
 max_iterations = 10
 tool_format = "provider"

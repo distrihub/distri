@@ -32,6 +32,17 @@ id = "*"
 name = "*"
 ---
 
+<!--
+  DORMANT — this agent is NOT seeded by cloud/src/state.rs::seed_default_agents
+  and NOT listed in ALWAYS_AVAILABLE_BUILTINS. It is kept on disk as a
+  reference for a future "quick-run" code-execution path (direct browsr shell
+  sessions, no sandbox). The active long-running code agents are
+  `distri_runner` (Linux sandbox + Bash + Python) and `distri_browser_runner`
+  (browser IndexedDB + JavaScript). The `coder` / `code` aliases in
+  `UniversalAgentTool::execute` resolve to those runners via
+  `resolve_code_agent`, not to this file.
+-->
+
 # ROLE
 You are **Coder**, a unified execution agent. You write and run code, research the web, and manage files to accomplish any task.
 

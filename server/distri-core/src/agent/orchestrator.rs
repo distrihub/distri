@@ -281,19 +281,10 @@ impl AgentOrchestratorBuilder {
             }
         }
 
-        // Register built-in agent definitions (plan, coder, coder_lite, explore)
-        match crate::agent::load_system_agents().await {
-            Ok(agents) => {
-                for def in agents {
-                    if let Err(e) = orchestrator.register_agent_definition(def).await {
-                        tracing::warn!("Failed to register built-in agent: {}", e);
-                    }
-                }
-            }
-            Err(e) => {
-                tracing::warn!("Failed to load built-in agents: {}", e);
-            }
-        }
+        // Default system agents (distri, distri_runner, distri_browser_runner)
+        // are seeded by cloud/src/state.rs::seed_default_agents() on startup,
+        // not by the orchestrator. This keeps the orchestrator generic —
+        // callers decide which agents live in their store.
 
         Ok(orchestrator)
     }
