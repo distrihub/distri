@@ -24,6 +24,7 @@ pub trait BackgroundRunner: Send + Sync + 'static {
         user_id: String,
         workspace_id: Option<String>,
         environment_id: Option<String>,
+        thread_id: Option<String>,
     ) -> anyhow::Result<()>;
 
     /// The runtime that tasks dispatched to this runner will execute under.

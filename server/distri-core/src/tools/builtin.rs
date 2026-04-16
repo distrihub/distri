@@ -528,6 +528,7 @@ impl ExecutorContextTool for AgentTool {
                     context.user_id.clone(),
                     context.workspace_id.clone(),
                     Some(env_id),
+                    Some(context.thread_id.clone()),
                 )
                 .await
                 .map_err(|e| {
@@ -1078,6 +1079,7 @@ impl ExecutorContextTool for UniversalAgentTool {
                     context.user_id.clone(),
                     context.workspace_id.clone(),
                     Some(env_id),
+                    None,
                 )
                 .await
                 .map_err(|e| {

@@ -97,45 +97,54 @@ impl ExecutorContextTool for RenderChartTool {
                     .unwrap_or_else(|| "chart.png".to_string())
             });
 
-        // 1. Get shell session ID from context
-        let session_id = get_shell_session_id(&context)
-            .await?
-            .ok_or_else(|| {
-                AgentError::ToolExecution(
-                    "No active shell session. Call start_shell first.".to_string(),
-                )
+        // 1. Read the image file — try browsr shell session first, fall back
+        //    to local filesystem (for agents using Bash instead of start_shell).
+        let base64_str = if let Ok(Some(session_id)) = get_shell_session_id(&context).await {
+            // Read via BrowsrClient shell session (server-side, no base64 through LLM)
+            let client = BrowsrClient::from_env();
+            let response = client
+                .shell_exec(ShellExecRequest {
+                    session_id: session_id.clone(),
+                    command: format!("base64 -w0 {}", path),
+                    timeout_secs: Some(30),
+                    working_dir: None,
+                })
+                .await
+                .map_err(|e| {
+                    AgentError::ToolExecution(format!("Failed to read file from shell: {}", e))
+                })?;
+
+            if response.result.exit_code != Some(0) {
+                return Err(AgentError::ToolExecution(format!(
+                    "Failed to read file '{}': {}",
+                    path, response.result.stderr
+                )));
+            }
+
+            let s = response.result.stdout.trim().to_string();
+            if s.is_empty() {
+                return Err(AgentError::ToolExecution(format!(
+                    "File '{}' is empty or does not exist",
+                    path
+                )));
+            }
+            s
+        } else {
+            // No shell session — read from local filesystem
+            let raw_bytes = std::fs::read(path).map_err(|e| {
+                AgentError::ToolExecution(format!(
+                    "No active shell session and local file '{}' not readable: {}",
+                    path, e
+                ))
             })?;
-
-        // 2. Read file via BrowsrClient (server-side, no base64 through LLM)
-        let client = BrowsrClient::from_env();
-        let response = client
-            .shell_exec(ShellExecRequest {
-                session_id: session_id.clone(),
-                command: format!("base64 -w0 {}", path),
-                timeout_secs: Some(30),
-                working_dir: None,
-            })
-            .await
-            .map_err(|e| {
-                AgentError::ToolExecution(format!("Failed to read file from shell: {}", e))
-            })?;
-
-        if response.result.exit_code != Some(0) {
-            return Err(AgentError::ToolExecution(format!(
-                "Failed to read file '{}': {}",
-                path,
-                response.result.stderr
-            )));
-        }
-
-        let base64_str = response.result.stdout.trim().to_string();
-
-        if base64_str.is_empty() {
-            return Err(AgentError::ToolExecution(format!(
-                "File '{}' is empty or does not exist",
-                path
-            )));
-        }
+            if raw_bytes.is_empty() {
+                return Err(AgentError::ToolExecution(format!(
+                    "File '{}' is empty",
+                    path
+                )));
+            }
+            general_purpose::STANDARD.encode(&raw_bytes)
+        };
 
         // 3. Decode to verify and get size
         let bytes = general_purpose::STANDARD

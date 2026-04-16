@@ -1082,14 +1082,26 @@ impl AgentOrchestrator {
         // For ephemeral mode, skip the get_thread check and always create new thread
         // This avoids "failed to load thread" errors with fresh ephemeral databases
         let thread = if self.is_ephemeral() {
+            tracing::info!(is_ephemeral=true, ?thread_id, "ensure_thread: skipping lookup (ephemeral)");
             None
         } else {
             match &thread_id {
-                Some(thread_id) => thread_store
-                    .get_thread(thread_id)
-                    .await
-                    .map_err(|e| AgentError::Session(e.to_string()))?,
-                None => None,
+                Some(tid) => {
+                    let found = thread_store
+                        .get_thread(tid)
+                        .await
+                        .map_err(|e| AgentError::Session(e.to_string()))?;
+                    tracing::info!(
+                        requested_thread_id = %tid,
+                        found = found.is_some(),
+                        "ensure_thread: get_thread result"
+                    );
+                    found
+                }
+                None => {
+                    tracing::info!("ensure_thread: no thread_id provided, creating new");
+                    None
+                }
             }
         };
 

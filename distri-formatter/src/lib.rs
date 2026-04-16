@@ -1,5 +1,6 @@
 pub mod colors;
 pub mod extract;
+pub mod media;
 pub mod renderers;
 pub mod state;
 pub mod status;

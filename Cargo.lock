@@ -1826,6 +1826,7 @@ dependencies = [
 name = "distri-formatter"
 version = "0.3.7"
 dependencies = [
+ "base64 0.22.1",
  "chrono",
  "distri-types",
  "serde",

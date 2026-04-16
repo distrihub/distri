@@ -47,6 +47,7 @@ impl BackgroundRunner for MockBackgroundRunner {
         _user_id: String,
         _workspace_id: Option<String>,
         _environment_id: Option<String>,
+        _thread_id: Option<String>,
     ) -> anyhow::Result<()> {
         let broadcaster = self.broadcaster.clone();
         let events = self.events.clone();
@@ -509,6 +510,7 @@ impl BackgroundRunner for FailingRunner {
         _user_id: String,
         _workspace_id: Option<String>,
         _environment_id: Option<String>,
+        _thread_id: Option<String>,
     ) -> anyhow::Result<()> {
         Err(anyhow::anyhow!("container creation failed: quota exceeded"))
     }
@@ -548,6 +550,7 @@ impl BackgroundRunner for SpawnCountingRunner {
         _user_id: String,
         _workspace_id: Option<String>,
         _environment_id: Option<String>,
+        _thread_id: Option<String>,
     ) -> anyhow::Result<()> {
         self.counter
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);

@@ -1,0 +1,37 @@
+# Build distri CLI then package into sandbox image.
+# Usage (from distri-cloud/distri/):
+#   docker build -f Dockerfile.sandbox -t distri/sandbox:latest .
+
+FROM rust:1.87-bookworm AS builder
+WORKDIR /build
+COPY . .
+RUN cargo build -p distri-cli --release \
+    && cp target/release/distri /build/distri-bin
+
+# ── Runtime ────────────────────────────────────────────────────────────
+FROM debian:bookworm-slim
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates git curl wget jq unzip build-essential \
+    libssl3 libgcc-s1 \
+    python3 python3-pip python3-venv \
+    nodejs npm \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip3 install --break-system-packages --no-cache-dir \
+    requests httpx beautifulsoup4 pandas numpy matplotlib seaborn \
+    yfinance openpyxl Pillow scipy sympy scikit-learn
+
+RUN groupadd -r distri && useradd -r -g distri -m -d /home/distri distri
+
+COPY --from=builder /build/distri-bin /usr/local/bin/distri
+RUN chmod +x /usr/local/bin/distri
+
+RUN mkdir -p /workspace && chown distri:distri /workspace
+
+ENV CODE_HOME=/workspace RUST_LOG=info DISTRI_NON_INTERACTIVE=1
+
+WORKDIR /workspace
+USER distri
+CMD ["sleep", "infinity"]
