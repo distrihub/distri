@@ -345,26 +345,6 @@ impl Formatter for WhatsAppFormatter {
             AgentEventType::RunError { message, .. } => {
                 self.renderer.render_text(&format!("Error: {}", message));
             }
-            AgentEventType::BrowserScreenshot { image, .. } => {
-                if self.renderer.supports_images() {
-                    if let Some(bytes) = crate::media::decode_base64_media(image) {
-                        self.renderer.render_image(&bytes, "image/png");
-                    } else {
-                        tracing::warn!("failed to decode BrowserScreenshot base64 payload");
-                    }
-                }
-            }
-            AgentEventType::MediaGenerated {
-                data, mime_type, ..
-            } => {
-                if self.renderer.supports_images() {
-                    if let Some(bytes) = crate::media::decode_base64_media(data) {
-                        self.renderer.render_image(&bytes, mime_type);
-                    } else {
-                        tracing::warn!("failed to decode MediaGenerated base64 payload");
-                    }
-                }
-            }
             AgentEventType::AgentHandover {
                 from_agent,
                 to_agent,
