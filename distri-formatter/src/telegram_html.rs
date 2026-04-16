@@ -152,9 +152,225 @@ pub fn escape_and_linkify(input: &str) -> String {
     linkify_html(&escape_html(input))
 }
 
+use crate::extract::{extract_fields, ToolFields};
+
+/// Max chars for a tool output snippet in Telegram (leaves room for surrounding chat).
+const TOOL_OUTPUT_MAX: usize = 800;
+
+/// Format a tool result as compact Telegram HTML.
+///
+/// Returns an empty string for tools whose output should not be shown inline
+/// (final, reflect, console_log, transfer_to_agent) — their effect is visible
+/// through other events.
+pub fn format_tool_result_html(response: &distri_types::ToolResponse) -> String {
+    match response.tool_name.as_str() {
+        "final" | "reflect" | "console_log" | "transfer_to_agent" => return String::new(),
+        _ => {}
+    }
+
+    let fields = extract_fields(response);
+    match fields {
+        ToolFields::Bash {
+            stdout,
+            stderr,
+            exit_code,
+        }
+        | ToolFields::Shell {
+            stdout,
+            stderr,
+            exit_code,
+        } => format_shell_html(&stdout, &stderr, exit_code),
+        ToolFields::Read {
+            file_path,
+            lines_read,
+            total,
+            truncated,
+            ..
+        } => {
+            let trunc = if truncated {
+                format!(" of {total}")
+            } else {
+                String::new()
+            };
+            format!(
+                "<i>{lines_read} lines{trunc} from {}</i>",
+                escape_html(&file_path)
+            )
+        }
+        ToolFields::Grep {
+            output,
+            total_lines,
+            truncated,
+        } => {
+            let suffix = if truncated { " (truncated)" } else { "" };
+            let preview = truncate_for_tg(&output, TOOL_OUTPUT_MAX);
+            format!(
+                "<i>{total_lines} matches{suffix}</i>\n<pre>{}</pre>",
+                escape_html(&preview)
+            )
+        }
+        ToolFields::Glob {
+            filenames,
+            num_files,
+            truncated,
+        } => {
+            let suffix = if truncated { " (truncated)" } else { "" };
+            let list = filenames
+                .iter()
+                .take(10)
+                .map(|f| escape_html(f))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let more = if num_files > 10 {
+                format!("\n… and {} more", num_files - 10)
+            } else {
+                String::new()
+            };
+            format!("<i>{num_files} files{suffix}</i>\n<pre>{list}{more}</pre>")
+        }
+        ToolFields::Edit {
+            file_path,
+            replacements,
+        } => {
+            format!(
+                "<i>{replacements} replacement(s) in {}</i>",
+                escape_html(&file_path)
+            )
+        }
+        ToolFields::Write {
+            file_path,
+            bytes_written,
+        } => {
+            format!(
+                "<i>{bytes_written} bytes written to {}</i>",
+                escape_html(&file_path)
+            )
+        }
+        ToolFields::Generic { text } => {
+            if text.is_empty() {
+                return String::new();
+            }
+            let preview = truncate_for_tg(&text, TOOL_OUTPUT_MAX);
+            format!("<pre>{}</pre>", escape_html(&preview))
+        }
+    }
+}
+
+fn format_shell_html(stdout: &str, stderr: &str, exit_code: i64) -> String {
+    let mut parts = Vec::new();
+
+    if !stdout.trim().is_empty() {
+        let preview = truncate_for_tg(stdout, TOOL_OUTPUT_MAX);
+        parts.push(format!("<pre>{}</pre>", escape_html(&preview)));
+    }
+
+    if !stderr.trim().is_empty() {
+        let first_lines: String = stderr.lines().take(3).collect::<Vec<_>>().join("\n");
+        parts.push(format!(
+            "<i>stderr:</i> <code>{}</code>",
+            escape_html(&first_lines)
+        ));
+    }
+
+    if exit_code != 0 {
+        parts.push(format!("<i>exit {exit_code}</i>"));
+    }
+
+    parts.join("\n")
+}
+
+fn truncate_for_tg(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        return s.to_string();
+    }
+    let lines: Vec<&str> = s.lines().collect();
+    let mut result = String::new();
+    let mut count = 0;
+    for line in &lines {
+        if result.len() + line.len() + 1 > max.saturating_sub(30) {
+            break;
+        }
+        if !result.is_empty() {
+            result.push('\n');
+        }
+        result.push_str(line);
+        count += 1;
+    }
+    if count < lines.len() {
+        result.push_str(&format!("\n… ({} lines total)", lines.len()));
+    }
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tool_result_html_bash_success() {
+        let response = distri_types::ToolResponse::direct(
+            "tc1".into(),
+            "Bash".into(),
+            serde_json::json!({"stdout": "hello world\nline2\nline3", "stderr": "", "exit_code": 0}),
+        );
+        let html = format_tool_result_html(&response);
+        assert!(html.contains("<pre>"), "should have pre block for stdout");
+        assert!(html.contains("hello world"), "should contain stdout");
+        assert!(!html.to_lowercase().contains("stderr"), "empty stderr should be omitted");
+    }
+
+    #[test]
+    fn tool_result_html_bash_error() {
+        let response = distri_types::ToolResponse::direct(
+            "tc1".into(),
+            "Bash".into(),
+            serde_json::json!({"stdout": "", "stderr": "not found", "exit_code": 1}),
+        );
+        let html = format_tool_result_html(&response);
+        assert!(html.contains("exit 1"), "should show exit code");
+        assert!(html.contains("not found"), "should show stderr");
+    }
+
+    #[test]
+    fn tool_result_html_edit() {
+        let response = distri_types::ToolResponse::direct(
+            "tc1".into(),
+            "Edit".into(),
+            serde_json::json!({"file_path": "/src/main.rs", "replacements": 2}),
+        );
+        let html = format_tool_result_html(&response);
+        assert!(html.contains("main.rs"), "should mention file");
+        assert!(html.contains("2"), "should mention replacement count");
+    }
+
+    #[test]
+    fn tool_result_html_suppressed_tools() {
+        for name in &["final", "reflect", "console_log", "transfer_to_agent"] {
+            let response = distri_types::ToolResponse::from_parts(
+                "tc1".into(),
+                name.to_string(),
+                vec![distri_types::Part::Text("ignored".into())],
+            );
+            let html = format_tool_result_html(&response);
+            assert!(html.is_empty(), "{name} should produce empty output");
+        }
+    }
+
+    #[test]
+    fn tool_result_html_truncates_long_output() {
+        let long = "x".repeat(2000);
+        let response = distri_types::ToolResponse::direct(
+            "tc1".into(),
+            "Bash".into(),
+            serde_json::json!({"stdout": long, "stderr": "", "exit_code": 0}),
+        );
+        let html = format_tool_result_html(&response);
+        assert!(
+            html.len() < 1500,
+            "should truncate long output (got {} chars)",
+            html.len()
+        );
+    }
 
     #[test]
     fn escape_basic() {
