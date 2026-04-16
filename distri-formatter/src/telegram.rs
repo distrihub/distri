@@ -479,12 +479,23 @@ impl Formatter for TelegramFormatter {
             }
             AgentEventType::LiveView { url, title, .. } => {
                 let label = title.as_deref().unwrap_or("Live view");
-                self.renderer.render_text(&format!(
-                    "\n<b>{}</b>\n<a href=\"{}\">{}</a>\n",
-                    crate::telegram_html::escape_html(label),
-                    crate::telegram_html::escape_html(url),
-                    crate::telegram_html::escape_html(url),
-                ));
+                // Only allow http(s):// URLs with no characters that would break out of
+                // the href attribute. Otherwise fall back to a title-only line.
+                let is_safe_url = (url.starts_with("https://") || url.starts_with("http://"))
+                    && !url.contains(['"', '<', '>', '\'', ' ', '\n', '\r', '\t']);
+                if is_safe_url {
+                    self.renderer.render_text(&format!(
+                        "\n<b>{}</b>\n<a href=\"{}\">{}</a>\n",
+                        crate::telegram_html::escape_html(label),
+                        crate::telegram_html::escape_html(url),
+                        crate::telegram_html::escape_html(url),
+                    ));
+                } else {
+                    self.renderer.render_text(&format!(
+                        "\n<b>{}</b>\n<i>(unsafe URL not rendered)</i>\n",
+                        crate::telegram_html::escape_html(label),
+                    ));
+                }
             }
             // Explicit no-ops for events we intentionally don't render in chat.
             AgentEventType::DiagnosticLog { .. }
@@ -785,6 +796,52 @@ mod tests {
                 );
             }
             other => panic!("Expected RichText with live view, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn live_view_rejects_unsafe_urls() {
+        // A URL containing a quote would break out of the href attribute.
+        let mut fmt = TelegramFormatter::new();
+        fmt.handle_event(&make_event(AgentEventType::LiveView {
+            view_id: "v1".into(),
+            url: "https://evil.example.com/\"><script>alert(1)</script>".into(),
+            title: Some("Bad url".into()),
+            display_mode: None,
+            width: None,
+            height: None,
+        }));
+
+        match fmt.take_output() {
+            RendererOutput::RichText { text, .. } => {
+                assert!(!text.contains("<script>"), "raw <script> must not leak: got {text}");
+                assert!(!text.contains("onclick="), "no event handlers either");
+                assert!(text.contains("Bad url"), "title should still render");
+                // The href attribute must not be present at all, since we rejected the URL
+                assert!(!text.contains("href="), "href should NOT be rendered for unsafe URL: got {text}");
+            }
+            other => panic!("Expected RichText, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn live_view_rejects_non_http_urls() {
+        let mut fmt = TelegramFormatter::new();
+        fmt.handle_event(&make_event(AgentEventType::LiveView {
+            view_id: "v1".into(),
+            url: "javascript:alert(1)".into(),
+            title: None,
+            display_mode: None,
+            width: None,
+            height: None,
+        }));
+
+        match fmt.take_output() {
+            RendererOutput::RichText { text, .. } => {
+                assert!(!text.contains("javascript:"), "javascript: URL must not appear: got {text}");
+                assert!(!text.contains("href="), "no href for non-http URL");
+            }
+            other => panic!("Expected RichText, got {:?}", other),
         }
     }
 
