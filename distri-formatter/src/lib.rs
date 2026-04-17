@@ -31,9 +31,13 @@ pub enum ParseMode {
 /// A media attachment (image, document, etc.) produced by a renderer.
 #[derive(Debug, Clone)]
 pub struct MediaAttachment {
+    /// Raw bytes. Empty when `artifact_path` is set (gateway fetches bytes).
     pub data: Vec<u8>,
     pub mime_type: String,
     pub filename: Option<String>,
+    /// If set, channels should fetch bytes from the artifact store at this
+    /// path instead of using `data`. Enables lazy byte-loading for artifacts.
+    pub artifact_path: Option<String>,
 }
 
 /// What a surface renderer produces after handling events.
@@ -46,10 +50,18 @@ pub enum RendererOutput {
     /// Plain text fallback.
     Text(String),
     /// Formatted output for channels (Telegram, WhatsApp, etc.).
+    ///
+    /// When `is_streaming_text` is true, the content is accumulated LLM text
+    /// that should be edited in place in the current channel message (growing
+    /// a single message as more text streams in). When false, it's a
+    /// structural event (tool call, tool result, error, handover) that should
+    /// be sent as a fresh message and end any in-progress streaming edit.
     RichText {
         text: String,
         parse_mode: ParseMode,
         media: Vec<MediaAttachment>,
+        #[doc(hidden)]
+        is_streaming_text: bool,
     },
     /// Split messages (e.g. Telegram 4K limit).
     Chunks(Vec<RendererOutput>),

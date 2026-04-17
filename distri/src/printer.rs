@@ -1,13 +1,9 @@
 use std::{collections::HashMap, sync::Arc, time::Instant};
 
-use anyhow::Context;
-use base64::{Engine as _, engine::general_purpose};
 use chrono::Local;
 use distri_a2a::MessageSendParams;
 use distri_types::{AgentEvent, AgentEventType, MessageRole, ToolResponse};
-use image::DynamicImage;
 use tokio::sync::{Mutex, RwLock};
-use viuer::Config;
 
 use crate::client_stream::{AgentStreamClient, StreamError, StreamItem};
 
@@ -626,51 +622,6 @@ impl EventPrinter {
                     COLOR_GRAY, COLOR_RESET, formatted_todos
                 );
             }
-            AgentEventType::BrowserScreenshot { .. } => {
-                // Render the screenshot if present in metadata
-                if let AgentEventType::BrowserScreenshot {
-                    image,
-                    format,
-                    filename,
-                    size,
-                    timestamp_ms,
-                } = &event.event
-                    && let Err(err) = self.print_browser_image(
-                        image,
-                        format.as_deref(),
-                        filename.as_deref(),
-                        *size,
-                        *timestamp_ms,
-                    )
-                {
-                    println!(
-                        "{}📸 Browser screenshot (render failed: {}){}",
-                        COLOR_GRAY, err, COLOR_RESET
-                    );
-                }
-            }
-            AgentEventType::MediaGenerated {
-                data,
-                mime_type,
-                filename,
-                size,
-                ..
-            } => {
-                // Render generated media (charts, images) inline via viuer.
-                // Reuse the same image rendering path as BrowserScreenshot.
-                if let Err(err) = self.print_browser_image(
-                    data,
-                    Some(mime_type),
-                    filename.as_deref(),
-                    *size,
-                    None,
-                ) {
-                    println!(
-                        "{}🖼 Media (render failed: {}){}",
-                        COLOR_GRAY, err, COLOR_RESET
-                    );
-                }
-            }
             AgentEventType::AgentHandover {
                 from_agent,
                 to_agent,
@@ -683,6 +634,15 @@ impl EventPrinter {
                 println!(
                     "{}⇢ Transferring: {} → {}{}{}",
                     COLOR_BRIGHT_CYAN, from_agent, to_agent, reason_str, COLOR_RESET
+                );
+            }
+            AgentEventType::LiveView {
+                url, title, ..
+            } => {
+                let label = title.as_deref().unwrap_or("Live view");
+                println!(
+                    "{}⎔ {}: {}{}",
+                    COLOR_BRIGHT_CYAN, label, url, COLOR_RESET
                 );
             }
             AgentEventType::ContextCompaction {
@@ -827,92 +787,6 @@ impl EventPrinter {
         crate::renderers::render_tool_output(result, self.verbose);
     }
 
-    fn print_browser_image(
-        &self,
-        image_data: &str,
-        format: Option<&str>,
-        filename: Option<&str>,
-        size: Option<u64>,
-        timestamp_ms: Option<i64>,
-    ) -> Result<(), anyhow::Error> {
-        let snapshot = Self::decode_browser_image(image_data)?;
-        let cols = 100u16;
-        let mut width_cells = cols.saturating_sub(4);
-        if width_cells == 0 {
-            width_cells = cols;
-        }
-        if width_cells == 0 {
-            width_cells = 80;
-        }
-        width_cells = width_cells.min(160);
-
-        let preview_width = width_cells.min(80);
-        let config = Config {
-            width: Some(u32::from(preview_width)),
-            ..Default::default()
-        };
-
-        viuer::print(&snapshot, &config)
-            .map_err(|err| anyhow::anyhow!("failed to display browser screenshot: {}", err))?;
-
-        if let Some(meta) = Self::format_browser_metadata(format, filename, size, timestamp_ms) {
-            println!("{}", meta);
-        }
-
-        println!();
-        Ok(())
-    }
-
-    fn decode_browser_image(encoded_image: &str) -> Result<DynamicImage, anyhow::Error> {
-        let trimmed = encoded_image.trim();
-        let payload = if let Some(idx) = trimmed.find("base64,") {
-            &trimmed[idx + "base64,".len()..]
-        } else if let Some(idx) = trimmed.find(',') {
-            &trimmed[idx + 1..]
-        } else {
-            trimmed
-        };
-
-        let sanitized: String = payload.split_whitespace().collect();
-
-        let decoded = general_purpose::STANDARD
-            .decode(sanitized.as_bytes())
-            .context("failed to decode browser screenshot payload")?;
-
-        image::load_from_memory(&decoded).map_err(|e| anyhow::anyhow!(e))
-    }
-
-    fn format_browser_metadata(
-        format: Option<&str>,
-        filename: Option<&str>,
-        size: Option<u64>,
-        timestamp_ms: Option<i64>,
-    ) -> Option<String> {
-        let mut parts = Vec::new();
-        if let Some(f) = format {
-            parts.push(format!("format={}", f));
-        }
-        if let Some(name) = filename {
-            parts.push(format!("file={}", name));
-        }
-        if let Some(bytes) = size {
-            parts.push(format!("size={}B", bytes));
-        }
-        if let Some(ts) = timestamp_ms {
-            parts.push(format!("ts={}", ts));
-        }
-
-        if parts.is_empty() {
-            None
-        } else {
-            Some(format!(
-                "{}   {}{}",
-                COLOR_GRAY,
-                parts.join(" | "),
-                COLOR_RESET
-            ))
-        }
-    }
 
     fn format_tool_input(&self, input: &serde_json::Value) -> String {
         distri_formatter::state::format_tool_input(input)

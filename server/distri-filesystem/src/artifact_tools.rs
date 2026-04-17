@@ -61,12 +61,6 @@ pub struct DeleteArtifactParams {
     pub filename: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct SaveArtifactParams {
-    pub filename: String,
-    pub content: String,
-}
-
 // Artifact response types
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ArtifactListEntry {
@@ -386,85 +380,12 @@ impl Tool for DeleteArtifactTool {
     }
 }
 
-/// Save content as artifact
-#[derive(Debug)]
-pub struct SaveArtifactTool {
-    filesystem: Arc<dyn FileSystemOps>,
-}
-
-impl SaveArtifactTool {
-    pub fn new(filesystem: Arc<dyn FileSystemOps>) -> Self {
-        Self { filesystem }
-    }
-}
-
-#[async_trait::async_trait]
-impl Tool for SaveArtifactTool {
-    fn get_name(&self) -> String {
-        "save_artifact".to_string()
-    }
-
-    fn get_description(&self) -> String {
-        "Save content as an artifact with specified filename".to_string()
-    }
-
-    fn get_parameters(&self) -> Value {
-        json!({
-            "type": "object",
-            "properties": {
-                "filename": {
-                    "type": "string",
-                    "description": "Filename (including extension) to save the artifact as"
-                },
-                "content": {
-                    "type": "string",
-                    "description": "Content to store in the artifact"
-                }
-            },
-            "required": ["filename", "content"]
-        })
-    }
-
-    async fn execute(
-        &self,
-        tool_call: distri_types::ToolCall,
-        context: Arc<ToolContext>,
-    ) -> Result<Vec<distri_types::Part>, anyhow::Error> {
-        let params: SaveArtifactParams = serde_json::from_value(tool_call.input)?;
-        let base_path = ArtifactBasePath::from_context(&context)
-            .ok_or(anyhow::anyhow!("artifact_base_path is empty in metadata"))?;
-        tracing::info!(
-            "🔍 SaveArtifactTool: thread_id={}, task_id={}, base_path={}",
-            context.thread_id,
-            context.task_id,
-            base_path
-        );
-        let wrapper = ArtifactWrapper::new(self.filesystem.clone(), base_path).await?;
-
-        tracing::info!(
-            "💾 SaveArtifactTool: Saving filename={}, content_len={}",
-            params.filename,
-            params.content.len()
-        );
-
-        wrapper
-            .save_artifact(&params.filename, &params.content)
-            .await?;
-        tracing::info!("✅ SaveArtifactTool: Successfully saved artifact");
-        Ok(vec![distri_types::Part::Data(serde_json::json!({
-            "success": true,
-            "filename": params.filename
-        }))])
-    }
-}
-
 /// Factory function to create all artifact tools
 pub fn create_artifact_tools(filesystem: Arc<dyn FileSystemOps>) -> Vec<Arc<dyn Tool>> {
     vec![
         Arc::new(ListArtifactsTool::new(filesystem.clone())) as Arc<dyn Tool>,
         Arc::new(ReadArtifactTool::new(filesystem.clone())) as Arc<dyn Tool>,
         Arc::new(SearchArtifactsTool::new(filesystem.clone())) as Arc<dyn Tool>,
-        Arc::new(DeleteArtifactTool::new(filesystem.clone())) as Arc<dyn Tool>,
-        Arc::new(SaveArtifactTool::new(filesystem)) as Arc<dyn Tool>,
+        Arc::new(DeleteArtifactTool::new(filesystem)) as Arc<dyn Tool>,
     ]
 }

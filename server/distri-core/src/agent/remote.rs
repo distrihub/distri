@@ -165,6 +165,7 @@ impl RemoteAgent {
                     context.user_id.clone(),
                     context.workspace_id.clone(),
                     None,
+                    Some(context.thread_id.clone()),
                 )
                 .await
                 .map_err(|e| AgentError::Session(format!("Remote spawn failed: {}", e)))?;

@@ -29,7 +29,7 @@ pub mod workflow_agent;
 // Export specific items to avoid conflicts
 pub use agent_loop::*;
 pub use distri_types::parse_agent_markdown_content;
-pub use parser::{load_agents_from_dir, load_system_agents};
+pub use parser::load_agents_from_dir;
 pub use prompt_validation::{
     builtin_partials, extract_partial_references, format_validation_table, validate_agent_prompt,
     validate_agent_prompt_with_partials, validate_partial_references, Criticality, ValidationIssue,

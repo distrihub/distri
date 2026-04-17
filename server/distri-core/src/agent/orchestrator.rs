@@ -281,19 +281,10 @@ impl AgentOrchestratorBuilder {
             }
         }
 
-        // Register built-in agent definitions (plan, coder, coder_lite, explore)
-        match crate::agent::load_system_agents().await {
-            Ok(agents) => {
-                for def in agents {
-                    if let Err(e) = orchestrator.register_agent_definition(def).await {
-                        tracing::warn!("Failed to register built-in agent: {}", e);
-                    }
-                }
-            }
-            Err(e) => {
-                tracing::warn!("Failed to load built-in agents: {}", e);
-            }
-        }
+        // Default system agents (distri, distri_runner, distri_browser_runner)
+        // are seeded by cloud/src/state.rs::seed_default_agents() on startup,
+        // not by the orchestrator. This keeps the orchestrator generic —
+        // callers decide which agents live in their store.
 
         Ok(orchestrator)
     }
@@ -652,10 +643,33 @@ impl AgentOrchestrator {
                                             c.status
                                                 == distri_types::connections::ConnectionStatus::Connected
                                         })
+                                        // DistriNative connections (the seeded `distri` platform
+                                        // connection) are for internal platform API calls — never
+                                        // for third-party services like Google/Slack. Hiding them
+                                        // from the agent's "Available Connections" list stops the
+                                        // LLM from accidentally using the wrong connection_id
+                                        // when no real provider connection exists.
+                                        .filter(|c| {
+                                            !matches!(
+                                                c.auth_type,
+                                                distri_types::connections::AuthType::DistriNative
+                                            )
+                                        })
                                         .map(|c| {
+                                            let provider_tag = match &c.auth_type {
+                                                distri_types::connections::AuthType::OAuth {
+                                                    provider,
+                                                    scopes,
+                                                } => format!(
+                                                    ", provider: {}, scopes: [{}]",
+                                                    provider,
+                                                    scopes.join(", ")
+                                                ),
+                                                _ => String::new(),
+                                            };
                                             format!(
-                                                "- **{}** (id: `{}`, status: connected)",
-                                                c.name, c.id
+                                                "- **{}** (id: `{}`, status: connected{})",
+                                                c.name, c.id, provider_tag
                                             )
                                         })
                                         .collect();
@@ -1082,14 +1096,26 @@ impl AgentOrchestrator {
         // For ephemeral mode, skip the get_thread check and always create new thread
         // This avoids "failed to load thread" errors with fresh ephemeral databases
         let thread = if self.is_ephemeral() {
+            tracing::info!(is_ephemeral=true, ?thread_id, "ensure_thread: skipping lookup (ephemeral)");
             None
         } else {
             match &thread_id {
-                Some(thread_id) => thread_store
-                    .get_thread(thread_id)
-                    .await
-                    .map_err(|e| AgentError::Session(e.to_string()))?,
-                None => None,
+                Some(tid) => {
+                    let found = thread_store
+                        .get_thread(tid)
+                        .await
+                        .map_err(|e| AgentError::Session(e.to_string()))?;
+                    tracing::info!(
+                        requested_thread_id = %tid,
+                        found = found.is_some(),
+                        "ensure_thread: get_thread result"
+                    );
+                    found
+                }
+                None => {
+                    tracing::info!("ensure_thread: no thread_id provided, creating new");
+                    None
+                }
             }
         };
 

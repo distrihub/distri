@@ -246,18 +246,6 @@ impl Formatter for TextFormatter {
             } => {
                 self.push_line(&format!("Todos updated:\n{}", formatted_todos));
             }
-            AgentEventType::BrowserScreenshot { .. } => {
-                // No image rendering in plain text.
-                self.push_line("[Browser screenshot]");
-            }
-            AgentEventType::MediaGenerated {
-                filename, mime_type, ..
-            } => {
-                let name = filename
-                    .as_deref()
-                    .unwrap_or("media");
-                self.push_line(&format!("[Media: {} ({})]", name, mime_type));
-            }
             AgentEventType::AgentHandover {
                 from_agent,
                 to_agent,
@@ -271,6 +259,10 @@ impl Formatter for TextFormatter {
                     "Transferring: {} -> {}{}",
                     from_agent, to_agent, reason_str
                 ));
+            }
+            AgentEventType::LiveView { url, title, .. } => {
+                let label = title.as_deref().unwrap_or("Live view");
+                self.push_line(&format!("[{label}] {url}"));
             }
             _ => {}
         }

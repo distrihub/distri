@@ -23,11 +23,11 @@ const WHATSAPP_MAX_LEN: usize = 65_000;
 /// decides when/how to send them.
 pub struct WhatsAppRenderer {
     /// Accumulated text output.
-    output: String,
+    pub(crate) output: String,
     /// Pending media attachments.
-    media: Vec<MediaAttachment>,
+    pub(crate) media: Vec<MediaAttachment>,
     /// Whether there is new output to flush.
-    dirty: bool,
+    pub(crate) dirty: bool,
     /// Current status text (latest tool action).
     current_status: Option<String>,
     /// Whether the status has changed since last take_output.
@@ -96,6 +96,7 @@ impl SurfaceRenderer for WhatsAppRenderer {
             data: data.to_vec(),
             mime_type: mime.to_string(),
             filename: None,
+            artifact_path: None,
         });
         self.dirty = true;
     }
@@ -141,6 +142,8 @@ impl SurfaceRenderer for WhatsAppRenderer {
                         text: chunk,
                         parse_mode: ParseMode::Plain,
                         media: Vec::new(),
+                        // WhatsApp has no edit API — every chunk is a new message.
+                        is_streaming_text: false,
                     })
                     .collect();
                 return RendererOutput::Chunks(parts);
@@ -150,6 +153,7 @@ impl SurfaceRenderer for WhatsAppRenderer {
                 text,
                 parse_mode: ParseMode::Plain,
                 media,
+                is_streaming_text: false,
             };
         }
 
@@ -160,6 +164,7 @@ impl SurfaceRenderer for WhatsAppRenderer {
                     text: status.clone(),
                     parse_mode: ParseMode::Plain,
                     media: Vec::new(),
+                    is_streaming_text: false,
                 };
             }
         }
@@ -171,6 +176,7 @@ impl SurfaceRenderer for WhatsAppRenderer {
                 text: String::new(),
                 parse_mode: ParseMode::Plain,
                 media,
+                is_streaming_text: false,
             };
         }
 
@@ -336,26 +342,43 @@ impl Formatter for WhatsAppFormatter {
                     };
                 }
             }
-            AgentEventType::ToolResults { .. } => {
-                // Tool results are not shown in WhatsApp — the status gets
-                // replaced by the next status or the final assistant text.
+            AgentEventType::ToolResults { results, .. } => {
+                for result in results {
+                    if matches!(
+                        result.tool_name.as_str(),
+                        "final" | "reflect" | "console_log" | "transfer_to_agent"
+                    ) {
+                        continue;
+                    }
+                    // WhatsApp plain text — use extract_fields for a compact summary
+                    let fields = crate::extract::extract_fields(result);
+                    let summary = fields.format_plain(500, None);
+                    if !summary.is_empty() {
+                        self.renderer.render_text(&format!("{summary}\n"));
+                    }
+                    for part in &result.parts {
+                        if let distri_types::Part::Artifact(meta) = part {
+                            let mime = meta
+                                .content_type
+                                .as_deref()
+                                .unwrap_or("application/octet-stream");
+                            if mime.starts_with("image/") && !meta.relative_path.is_empty() {
+                                self.renderer.media.push(crate::MediaAttachment {
+                                    data: Vec::new(),
+                                    mime_type: mime.to_string(),
+                                    filename: meta.original_filename.clone(),
+                                    artifact_path: Some(meta.relative_path.clone()),
+                                });
+                                self.renderer.dirty = true;
+                            }
+                        }
+                    }
+                }
             }
             AgentEventType::ToolCalls { .. } => {}
             AgentEventType::RunFinished { .. } => {}
             AgentEventType::RunError { message, .. } => {
                 self.renderer.render_text(&format!("Error: {}", message));
-            }
-            AgentEventType::BrowserScreenshot { image, .. } => {
-                if self.renderer.supports_images() {
-                    self.renderer.render_image(image.as_bytes(), "image/png");
-                }
-            }
-            AgentEventType::MediaGenerated {
-                data, mime_type, ..
-            } => {
-                if self.renderer.supports_images() {
-                    self.renderer.render_image(data.as_bytes(), mime_type);
-                }
             }
             AgentEventType::AgentHandover {
                 from_agent,
@@ -364,6 +387,10 @@ impl Formatter for WhatsAppFormatter {
             } => {
                 self.renderer
                     .render_agent_transfer(from_agent, to_agent, reason.as_deref());
+            }
+            AgentEventType::LiveView { url, title, .. } => {
+                let label = title.as_deref().unwrap_or("Live view");
+                self.renderer.render_text(&format!("{label}: {url}\n"));
             }
             _ => {}
         }

@@ -14,7 +14,7 @@ use crate::AgentError;
 use distri_types::Part;
 use serde::{Deserialize, Serialize};
 mod browser;
-pub mod chart;
+pub mod save_artifact;
 pub mod code;
 // pub mod authenticated_example;
 pub mod context;
@@ -135,6 +135,8 @@ pub fn cast_to_executor_context_tool(
         "tool_search" => Ok(Box::new(tool_search::ToolSearchTool)),
         // Connection env injection
         "inject_connection_env" => Ok(Box::new(inject_env::InjectConnectionEnvTool)),
+        // Artifact sharing (reads a file, persists via ArtifactWrapper, returns Part::Artifact)
+        "save_artifact" => Ok(Box::new(save_artifact::SaveArtifactTool)),
         // Universal agent tool
         "call_agent" => Ok(Box::new(UniversalAgentTool)),
         // Inter-agent communication

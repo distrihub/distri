@@ -177,28 +177,26 @@ pub enum AgentEventType {
         reason: Option<String>,
     },
 
-    BrowserScreenshot {
-        image: String,
-        format: Option<String>,
-        filename: Option<String>,
-        size: Option<u64>,
-        timestamp_ms: Option<i64>,
-    },
-
-    /// Agent produced a media file (chart, generated image, etc.).
-    /// The image data is base64-encoded and should be rendered by all channels
-    /// that support images (Telegram, Web, CLI).
-    MediaGenerated {
-        /// Base64-encoded media data
-        data: String,
-        /// MIME type (e.g. "image/png", "image/jpeg")
-        mime_type: String,
-        /// Original filename (e.g. "sales_chart.png")
-        filename: Option<String>,
-        /// File size in bytes
-        size: Option<u64>,
-        /// Artifact path where the media is persisted
-        artifact_path: Option<String>,
+    /// A live, embeddable view produced by a tool (e.g. browsr viewer, Grafana
+    /// dashboard, map widget). The channel renders it inline as an iframe
+    /// (web) or as a clickable link (Telegram, WhatsApp, CLI).
+    LiveView {
+        /// Unique ID for this view — used for updates and teardown
+        view_id: String,
+        /// URL to embed or link (must be https:// for iframe security)
+        url: String,
+        /// Human-readable title for the view
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        title: Option<String>,
+        /// Display mode hint: "inline", "fullscreen", or "pip"
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        display_mode: Option<String>,
+        /// Width hint in pixels
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        width: Option<u32>,
+        /// Height hint in pixels
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        height: Option<u32>,
     },
 
     BrowserSessionStarted {

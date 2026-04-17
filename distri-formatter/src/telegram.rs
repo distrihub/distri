@@ -13,8 +13,6 @@ use distri_types::{AgentEvent, AgentEventType, ToolResponse};
 use crate::state::{
     ChatState, MessageState, StepState, ToolCallState, ToolCallStatus, is_probe_call,
 };
-use crate::status::format_status_text;
-use crate::telegram_html::escape_and_linkify;
 use crate::{Formatter, MediaAttachment, ParseMode, RendererOutput, SurfaceRenderer};
 
 /// Maximum message length for Telegram (leave margin for formatting).
@@ -26,15 +24,22 @@ const TELEGRAM_MAX_LEN: usize = 4000;
 /// edited in-place via the Telegram Bot API.
 pub struct TelegramRenderer {
     /// Accumulated text output for the current message.
-    output: String,
+    pub(crate) output: String,
     /// Pending media attachments.
-    media: Vec<MediaAttachment>,
+    pub(crate) media: Vec<MediaAttachment>,
     /// Whether there is new output to flush.
-    dirty: bool,
+    pub(crate) dirty: bool,
     /// Current status text (shown while agent is working).
     current_status: Option<String>,
     /// Whether we are in status-only mode (no final text yet).
     in_status_mode: bool,
+    /// `true` when the content accumulated since the last `take_output` is
+    /// purely LLM text (from `render_text`) with no structural markup
+    /// injected. Edits-in-place when emitted. Reset to `true` after each
+    /// flush; set to `false` the moment the formatter writes a structural
+    /// block (tool call line, error line, handover, etc.) directly into
+    /// `output` so the next flush starts a fresh message.
+    pub(crate) streaming_since_flush: bool,
 }
 
 impl TelegramRenderer {
@@ -45,7 +50,19 @@ impl TelegramRenderer {
             dirty: false,
             current_status: None,
             in_status_mode: true,
+            streaming_since_flush: true,
         }
+    }
+
+    /// Append a pre-built HTML block (tool call line, error, handover, etc.).
+    /// Flips the streaming flag so the next flush sends a new message instead
+    /// of editing the current one.
+    pub(crate) fn push_event_html(&mut self, html: &str) {
+        self.in_status_mode = false;
+        self.current_status = None;
+        self.output.push_str(html);
+        self.dirty = true;
+        self.streaming_since_flush = false;
     }
 }
 
@@ -56,24 +73,30 @@ impl Default for TelegramRenderer {
 }
 
 impl SurfaceRenderer for TelegramRenderer {
+    /// Append raw LLM text. Content is HTML-escaped + linkified *at ingestion*
+    /// so the buffer is always valid Telegram HTML by the time `take_output`
+    /// reads it. This is the path TextMessageContent deltas go through.
     fn render_text(&mut self, content: &str) {
         self.in_status_mode = false;
         self.current_status = None;
-        self.output.push_str(content);
+        self.output
+            .push_str(&crate::telegram_html::escape_and_linkify(content));
         self.dirty = true;
     }
 
     fn render_markdown(&mut self, md: &str) {
-        self.in_status_mode = false;
-        self.current_status = None;
-        self.output.push_str(md);
-        self.dirty = true;
+        // Same escape path as render_text — we don't currently render markdown
+        // formatting for Telegram; it would need a dedicated pipeline.
+        self.render_text(md);
     }
 
-    fn render_code_block(&mut self, code: &str, lang: Option<&str>) {
-        let lang_hint = lang.unwrap_or("");
+    fn render_code_block(&mut self, code: &str, _lang: Option<&str>) {
+        // Wrap in <pre><code>...</code></pre> with escaped body.
+        // Telegram HTML ignores language hints inside <code>.
+        self.output.push_str("<pre><code>");
         self.output
-            .push_str(&format!("```{}\n{}\n```\n", lang_hint, code));
+            .push_str(&crate::telegram_html::escape_html(code));
+        self.output.push_str("</code></pre>\n");
         self.dirty = true;
     }
 
@@ -102,6 +125,7 @@ impl SurfaceRenderer for TelegramRenderer {
             data: data.to_vec(),
             mime_type: mime.to_string(),
             filename: None,
+            artifact_path: None,
         });
         self.dirty = true;
     }
@@ -140,11 +164,16 @@ impl SurfaceRenderer for TelegramRenderer {
 
         // If we have final text content, return it (possibly with media).
         if !self.output.is_empty() {
-            // Escape `< > &` and wrap bare URLs in <a href="…">. Done once
-            // here so the chunk-splitter below sees the final HTML byte
-            // length, not the raw LLM text length.
-            let text = escape_and_linkify(&self.output);
+            // `self.output` is already valid Telegram HTML: LLM text deltas
+            // are escape-and-linkified at `render_text` time, and the event
+            // handler's `<b>`/`<pre>`/`<a>` tags are pre-built correctly.
+            // We don't re-escape here — that would double-escape our own tags.
+            let text = self.output.clone();
             let media = std::mem::take(&mut self.media);
+            let is_streaming = self.streaming_since_flush;
+            // Reset for the next cycle: fresh text deltas are "streaming"
+            // again until the next structural event marks the buffer.
+            self.streaming_since_flush = true;
 
             // Split long messages at paragraph boundaries.
             if text.len() > TELEGRAM_MAX_LEN {
@@ -155,6 +184,10 @@ impl SurfaceRenderer for TelegramRenderer {
                         text: chunk,
                         parse_mode: ParseMode::Html,
                         media: Vec::new(),
+                        // Chunks from splitting an oversized buffer each get
+                        // their own new message — streaming-edit semantics
+                        // don't survive chunking.
+                        is_streaming_text: false,
                     })
                     .collect();
                 // Attach media to last chunk.
@@ -170,15 +203,17 @@ impl SurfaceRenderer for TelegramRenderer {
                 text,
                 parse_mode: ParseMode::Html,
                 media,
+                is_streaming_text: is_streaming,
             };
         }
 
         // Status-only output (no final text yet).
         if let Some(status) = &self.current_status {
             return RendererOutput::RichText {
-                text: status.clone(),
-                parse_mode: ParseMode::Plain,
+                text: crate::telegram_html::escape_and_linkify(status),
+                parse_mode: ParseMode::Html,
                 media: Vec::new(),
+                is_streaming_text: false,
             };
         }
 
@@ -189,6 +224,7 @@ impl SurfaceRenderer for TelegramRenderer {
                 text: String::new(),
                 parse_mode: ParseMode::Plain,
                 media,
+                is_streaming_text: false,
             };
         }
 
@@ -241,7 +277,7 @@ impl Formatter for TelegramFormatter {
             self.state.thread_id = Some(event.thread_id.clone());
         }
 
-        // Track agent changes.
+        // Track agent changes — emit a line when switching (except the first agent).
         let agent_changed = self
             .state
             .current_agent
@@ -249,13 +285,20 @@ impl Formatter for TelegramFormatter {
             .map(|a| a != &event.agent_id)
             .unwrap_or(true);
         if agent_changed && !event.agent_id.is_empty() {
+            if self.state.current_agent.is_some() {
+                let line = format!(
+                    "\n<b>Agent: {}</b>\n",
+                    crate::telegram_html::escape_html(&event.agent_id)
+                );
+                self.renderer.push_event_html(&line);
+            }
             self.state.current_agent = Some(event.agent_id.clone());
         }
 
         match &event.event {
             AgentEventType::PlanStarted { .. } => {
                 self.state.is_planning = true;
-                self.renderer.show_planning("Planning...");
+                self.renderer.show_planning("Planning…");
             }
             AgentEventType::PlanFinished { .. } => {
                 self.state.is_planning = false;
@@ -280,6 +323,16 @@ impl Formatter for TelegramFormatter {
             } => {
                 if let Some(step) = self.state.steps.get_mut(step_id) {
                     step.status = if *success { "done" } else { "error" }.into();
+                }
+                if !*success {
+                    let idx = self
+                        .state
+                        .steps
+                        .get(step_id)
+                        .map(|s| s.index + 1)
+                        .unwrap_or(0);
+                    self.renderer
+                        .push_event_html(&format!("\n<b>Step {idx} failed</b>\n"));
                 }
             }
             AgentEventType::TextMessageStart {
@@ -325,11 +378,13 @@ impl Formatter for TelegramFormatter {
                 input,
                 ..
             } => {
-                // Skip probe calls.
                 if !is_probe_call(tool_call_name, input) {
-                    let status_text = format_status_text(tool_call_name, input);
-                    self.renderer
-                        .render_tool_start(tool_call_name, input, &status_text);
+                    let call_text = crate::state::format_tool_call(tool_call_name, input);
+                    let line = format!(
+                        "\n<b>{}</b>\n",
+                        crate::telegram_html::escape_html(&call_text)
+                    );
+                    self.renderer.push_event_html(&line);
                 }
                 self.state.tool_calls.insert(
                     tool_call_id.to_string(),
@@ -356,38 +411,137 @@ impl Formatter for TelegramFormatter {
                     };
                 }
             }
-            AgentEventType::ToolResults { .. } => {
-                // Tool results are not shown in Telegram — the status gets
-                // replaced by the next status or the final assistant text.
-                // Rendering tool results here would pollute the output with
-                // skill content, API responses, etc.
+            AgentEventType::ToolResults { results, .. } => {
+                for result in results {
+                    // Render tool output as HTML
+                    let html = crate::telegram_html::format_tool_result_html(result);
+                    if !html.is_empty() {
+                        self.renderer.push_event_html(&format!("{html}\n"));
+                    }
+                    // Extract any Part::Artifact — images become media attachments
+                    for part in &result.parts {
+                        if let distri_types::Part::Artifact(meta) = part {
+                            let mime = meta
+                                .content_type
+                                .as_deref()
+                                .unwrap_or("application/octet-stream");
+                            if mime.starts_with("image/") && !meta.relative_path.is_empty() {
+                                self.renderer.media.push(crate::MediaAttachment {
+                                    data: Vec::new(),
+                                    mime_type: mime.to_string(),
+                                    filename: meta.original_filename.clone(),
+                                    artifact_path: Some(meta.relative_path.clone()),
+                                });
+                                self.renderer.dirty = true;
+                                self.renderer.streaming_since_flush = false;
+                            } else {
+                                // Non-image artifact: render as inline link/preview
+                                let name = meta
+                                    .original_filename
+                                    .clone()
+                                    .unwrap_or_else(|| meta.file_id.clone());
+                                self.renderer.push_event_html(&format!(
+                                    "<i>Artifact: {} ({})</i>\n",
+                                    crate::telegram_html::escape_html(&name),
+                                    crate::telegram_html::escape_html(mime)
+                                ));
+                            }
+                        }
+                    }
+                }
             }
             AgentEventType::ToolCalls { .. } => {}
-            AgentEventType::RunFinished { .. } => {}
-            AgentEventType::RunError { message, .. } => {
-                self.renderer.render_text(&format!("Error: {}", message));
-            }
-            AgentEventType::BrowserScreenshot { image, .. } => {
-                if self.renderer.supports_images() {
-                    self.renderer.render_image(image.as_bytes(), "image/png");
+            AgentEventType::RunFinished { success, .. } => {
+                if !*success {
+                    self.renderer
+                        .push_event_html("\n<b>Run completed with errors</b>\n");
                 }
             }
-            AgentEventType::MediaGenerated {
-                data, mime_type, ..
-            } => {
-                if self.renderer.supports_images() {
-                    self.renderer.render_image(data.as_bytes(), mime_type);
-                }
+            AgentEventType::RunError { message, code, .. } => {
+                let code_str = code
+                    .as_ref()
+                    .map(|c| format!(" [{}]", crate::telegram_html::escape_html(c)))
+                    .unwrap_or_default();
+                self.renderer.push_event_html(&format!(
+                    "\n<b>Error{code_str}:</b> {}\n",
+                    crate::telegram_html::escape_html(message)
+                ));
             }
             AgentEventType::AgentHandover {
                 from_agent,
                 to_agent,
                 reason,
             } => {
-                self.renderer
-                    .render_agent_transfer(from_agent, to_agent, reason.as_deref());
+                let reason_str = reason
+                    .as_deref()
+                    .map(|r| format!(" ({})", crate::telegram_html::escape_html(r)))
+                    .unwrap_or_default();
+                self.renderer.push_event_html(&format!(
+                    "\n<b>Transferring: {} → {}{}</b>\n",
+                    crate::telegram_html::escape_html(from_agent),
+                    crate::telegram_html::escape_html(to_agent),
+                    reason_str
+                ));
             }
-            _ => {}
+            AgentEventType::TodosUpdated {
+                formatted_todos, ..
+            } => {
+                if !formatted_todos.is_empty() {
+                    self.renderer.push_event_html(&format!(
+                        "\n<b>Plan updated:</b>\n<pre>{}</pre>\n",
+                        crate::telegram_html::escape_html(formatted_todos)
+                    ));
+                }
+            }
+            AgentEventType::ContextCompaction {
+                tier,
+                tokens_before,
+                tokens_after,
+                ..
+            } => {
+                let tier_label = match tier {
+                    distri_types::CompactionTier::Trim => "Trim",
+                    distri_types::CompactionTier::Summarize => "Summarize",
+                    distri_types::CompactionTier::Reset => "Reset",
+                };
+                let pct = if *tokens_before > 0 {
+                    (1.0 - *tokens_after as f64 / *tokens_before as f64) * 100.0
+                } else {
+                    0.0
+                };
+                self.renderer.push_event_html(&format!(
+                    "\n<i>Context {tier_label}: {tokens_before} → {tokens_after} tokens ({pct:.0}% reduction)</i>\n"
+                ));
+            }
+            AgentEventType::LiveView { url, title, .. } => {
+                let label = title.as_deref().unwrap_or("Live view");
+                // Only allow http(s):// URLs with no characters that would break out of
+                // the href attribute. Otherwise fall back to a title-only line.
+                let is_safe_url = (url.starts_with("https://") || url.starts_with("http://"))
+                    && !url.contains(['"', '<', '>', '\'', ' ', '\n', '\r', '\t']);
+                if is_safe_url {
+                    self.renderer.push_event_html(&format!(
+                        "\n<b>{}</b>\n<a href=\"{}\">{}</a>\n",
+                        crate::telegram_html::escape_html(label),
+                        crate::telegram_html::escape_html(url),
+                        crate::telegram_html::escape_html(url),
+                    ));
+                } else {
+                    self.renderer.push_event_html(&format!(
+                        "\n<b>{}</b>\n<i>(unsafe URL not rendered)</i>\n",
+                        crate::telegram_html::escape_html(label),
+                    ));
+                }
+            }
+            // Explicit no-ops for events we intentionally don't render in chat.
+            AgentEventType::DiagnosticLog { .. }
+            | AgentEventType::ReflectStarted {}
+            | AgentEventType::ReflectFinished { .. }
+            | AgentEventType::PlanPruned { .. }
+            | AgentEventType::ContextBudgetUpdate { .. }
+            | AgentEventType::RunStarted {}
+            | AgentEventType::BrowserSessionStarted { .. }
+            | AgentEventType::InlineHookRequested { .. } => {}
         }
     }
 
@@ -490,9 +644,17 @@ mod tests {
 
         match fmt.surface_renderer().take_output() {
             RendererOutput::RichText { text, .. } => {
-                assert_eq!(text, "Searching: rust async");
+                // New behavior: tool calls render as <b>name(args)</b>, not status text
+                assert!(
+                    text.contains("search"),
+                    "should mention tool name: got {text}"
+                );
+                assert!(
+                    text.contains("rust async"),
+                    "should mention query: got {text}"
+                );
             }
-            other => panic!("Expected RichText status, got {:?}", other),
+            other => panic!("Expected RichText, got {:?}", other),
         }
     }
 
@@ -543,6 +705,243 @@ mod tests {
         assert!(chunks.len() > 1);
         for chunk in &chunks {
             assert!(chunk.len() <= 4000);
+        }
+    }
+
+    #[test]
+    fn tool_call_renders_formatted_line() {
+        let mut fmt = TelegramFormatter::new();
+        fmt.handle_event(&make_event(AgentEventType::ToolExecutionStart {
+            step_id: "s1".into(),
+            tool_call_id: "tc1".into(),
+            tool_call_name: "Bash".into(),
+            input: serde_json::json!({"command": "echo hello"}),
+        }));
+
+        match fmt.take_output() {
+            RendererOutput::RichText { text, .. } => {
+                assert!(text.contains("Bash"), "should show tool name: got {text}");
+                assert!(
+                    text.contains("echo hello"),
+                    "should show command: got {text}"
+                );
+            }
+            other => panic!("Expected RichText, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn tool_result_renders_output() {
+        let mut fmt = TelegramFormatter::new();
+        fmt.handle_event(&make_event(AgentEventType::ToolExecutionStart {
+            step_id: "s1".into(),
+            tool_call_id: "tc1".into(),
+            tool_call_name: "Bash".into(),
+            input: serde_json::json!({"command": "echo hello"}),
+        }));
+        let _ = fmt.take_output();
+
+        fmt.handle_event(&make_event(AgentEventType::ToolResults {
+            step_id: "s1".into(),
+            parent_message_id: None,
+            results: vec![distri_types::ToolResponse::direct(
+                "tc1".into(),
+                "Bash".into(),
+                serde_json::json!({"stdout": "hello\n", "stderr": "", "exit_code": 0}),
+            )],
+        }));
+
+        match fmt.take_output() {
+            RendererOutput::RichText { text, .. } => {
+                assert!(
+                    text.contains("hello"),
+                    "tool result should render: got {text}"
+                );
+            }
+            other => panic!("Expected RichText with tool result, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn step_failure_renders_error() {
+        let mut fmt = TelegramFormatter::new();
+        fmt.handle_event(&make_event(AgentEventType::StepStarted {
+            step_id: "s1".into(),
+            step_index: 0,
+        }));
+        fmt.handle_event(&make_event(AgentEventType::StepCompleted {
+            step_id: "s1".into(),
+            success: false,
+            context_budget: None,
+            usage: None,
+        }));
+
+        match fmt.take_output() {
+            RendererOutput::RichText { text, .. } => {
+                assert!(
+                    text.to_lowercase().contains("failed"),
+                    "should show step failure: got {text}"
+                );
+            }
+            other => panic!("Expected RichText with failure notice, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn run_error_renders_with_code() {
+        let mut fmt = TelegramFormatter::new();
+        fmt.handle_event(&make_event(AgentEventType::RunError {
+            message: "quota exceeded".into(),
+            code: Some("rate_limit".into()),
+            usage: None,
+        }));
+
+        match fmt.take_output() {
+            RendererOutput::RichText { text, .. } => {
+                assert!(text.contains("quota exceeded"), "should show message");
+                assert!(text.contains("rate_limit"), "should show error code");
+            }
+            other => panic!("Expected RichText with error, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn todos_updated_renders() {
+        let mut fmt = TelegramFormatter::new();
+        fmt.handle_event(&make_event(AgentEventType::TodosUpdated {
+            formatted_todos: "1. [x] Setup\n2. [ ] Build".into(),
+            action: "write_todos".into(),
+            todo_count: 2,
+        }));
+
+        match fmt.take_output() {
+            RendererOutput::RichText { text, .. } => {
+                assert!(text.contains("Setup"));
+                assert!(text.contains("Build"));
+            }
+            other => panic!("Expected RichText with todos, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn live_view_renders_with_title_and_link() {
+        let mut fmt = TelegramFormatter::new();
+        fmt.handle_event(&make_event(AgentEventType::LiveView {
+            view_id: "v1".into(),
+            url: "https://browsr.example.com/viewer/abc".into(),
+            title: Some("Live browser".into()),
+            display_mode: Some("inline".into()),
+            width: None,
+            height: None,
+        }));
+
+        match fmt.take_output() {
+            RendererOutput::RichText { text, .. } => {
+                assert!(text.contains("Live browser"), "should show title");
+                assert!(
+                    text.contains("browsr.example.com"),
+                    "should include URL: got {text}"
+                );
+            }
+            other => panic!("Expected RichText with live view, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn live_view_rejects_unsafe_urls() {
+        // A URL containing a quote would break out of the href attribute.
+        let mut fmt = TelegramFormatter::new();
+        fmt.handle_event(&make_event(AgentEventType::LiveView {
+            view_id: "v1".into(),
+            url: "https://evil.example.com/\"><script>alert(1)</script>".into(),
+            title: Some("Bad url".into()),
+            display_mode: None,
+            width: None,
+            height: None,
+        }));
+
+        match fmt.take_output() {
+            RendererOutput::RichText { text, .. } => {
+                assert!(
+                    !text.contains("<script>"),
+                    "raw <script> must not leak: got {text}"
+                );
+                assert!(!text.contains("onclick="), "no event handlers either");
+                assert!(text.contains("Bad url"), "title should still render");
+                // The href attribute must not be present at all, since we rejected the URL
+                assert!(
+                    !text.contains("href="),
+                    "href should NOT be rendered for unsafe URL: got {text}"
+                );
+            }
+            other => panic!("Expected RichText, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn live_view_rejects_non_http_urls() {
+        let mut fmt = TelegramFormatter::new();
+        fmt.handle_event(&make_event(AgentEventType::LiveView {
+            view_id: "v1".into(),
+            url: "javascript:alert(1)".into(),
+            title: None,
+            display_mode: None,
+            width: None,
+            height: None,
+        }));
+
+        match fmt.take_output() {
+            RendererOutput::RichText { text, .. } => {
+                assert!(
+                    !text.contains("javascript:"),
+                    "javascript: URL must not appear: got {text}"
+                );
+                assert!(!text.contains("href="), "no href for non-http URL");
+            }
+            other => panic!("Expected RichText, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn artifact_image_produces_media_attachment() {
+        let mut fmt = TelegramFormatter::new();
+        let meta = distri_types::FileMetadata {
+            file_id: "chart.png".into(),
+            relative_path: "threads/t1/tasks/t2/content/chart.png".into(),
+            size: 1024,
+            content_type: Some("image/png".into()),
+            original_filename: Some("chart.png".into()),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+            checksum: None,
+            stats: None,
+            preview: None,
+        };
+
+        fmt.handle_event(&make_event(AgentEventType::ToolResults {
+            step_id: "s1".into(),
+            parent_message_id: None,
+            results: vec![distri_types::ToolResponse::from_parts(
+                "tc1".into(),
+                "save_artifact".into(),
+                vec![distri_types::Part::Artifact(meta)],
+            )],
+        }));
+
+        match fmt.take_output() {
+            RendererOutput::RichText { media, .. } => {
+                assert_eq!(media.len(), 1, "should have one media attachment");
+                assert_eq!(
+                    media[0].artifact_path.as_deref(),
+                    Some("threads/t1/tasks/t2/content/chart.png")
+                );
+                assert_eq!(media[0].mime_type, "image/png");
+                assert!(
+                    media[0].data.is_empty(),
+                    "data should be empty — gateway fetches bytes"
+                );
+            }
+            other => panic!("Expected RichText with media, got {:?}", other),
         }
     }
 }

@@ -123,6 +123,12 @@ pub async fn init_thread_get_message(
 
     let thread_title = extract_text_from_message(&params.message);
 
+    tracing::info!(
+        context_id = ?params.message.context_id,
+        agent_id = %agent_id,
+        "init_thread_get_message: context_id from params"
+    );
+
     // Middleware already set task-local context - no need to extract user_id/workspace_id here
     let thread = executor
         .ensure_thread_exists(
@@ -503,6 +509,11 @@ pub async fn handle_message_send_streaming_sse(
         // 2. Spawn event relay: agent events → broadcaster
         executor.spawn_task_relay(main_task_id.clone(), event_rx);
 
+        // Clone *before* spawn_background_execution moves the Arc — this is
+        // the context the `final` tool writes its result to, so we must read
+        // from the same Arc after the agent completes.
+        let executor_context_for_final = executor_context_arc.clone();
+
         // 3. Spawn background execution
         spawn_background_execution(
             executor.clone(),
@@ -514,11 +525,6 @@ pub async fn handle_message_send_streaming_sse(
             user_id.clone(),
             workspace_id,
         );
-
-        // 4. Subscribe to broadcaster events and stream as SSE.
-        //    Break the loop when a terminal event is seen, then yield a final
-        //    MessageKind::Message constructed from the task's saved final message.
-        let executor_context_for_final = executor_context.clone();
         match executor.broadcaster().subscribe(&main_task_id).await {
             Ok(event_stream) => {
                 futures_util::pin_mut!(event_stream);

@@ -12,7 +12,7 @@ pub mod wrapper;
 pub use artifact::ArtifactWrapper;
 pub use artifact_tools::{
     create_artifact_tools, DeleteArtifactTool, ListArtifactsTool, ReadArtifactTool,
-    SaveArtifactTool, SearchArtifactsTool,
+    SearchArtifactsTool,
 };
 pub use config::{
     ArtifactStorageConfig, DirectoryEntry, DirectoryListing, FileReadResult, FileSystemConfig,

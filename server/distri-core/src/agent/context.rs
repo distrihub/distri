@@ -383,10 +383,7 @@ impl ExecutorContext {
         // Skip saving artifacts to the task store through events
         // as they are saved separately
         // And text deltas
-        if matches!(
-            event.event,
-            AgentEventType::TextMessageContent { .. } | AgentEventType::BrowserScreenshot { .. }
-        ) {
+        if matches!(event.event, AgentEventType::TextMessageContent { .. }) {
             return;
         }
 
