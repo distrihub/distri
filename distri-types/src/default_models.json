@@ -608,8 +608,8 @@
           ]
         },
         {
-          "id": "paraformer-v2",
-          "name": "Paraformer V2",
+          "id": "qwen3-asr-flash",
+          "name": "Qwen3 ASR Flash",
           "capability": "stt",
           "pricing": {
             "type": "stt",
@@ -619,9 +619,9 @@
             "wav",
             "mp3",
             "flac",
-            "opus",
+            "ogg",
             "aac",
-            "pcm"
+            "m4a"
           ]
         }
       ]

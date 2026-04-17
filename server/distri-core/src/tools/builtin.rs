@@ -1005,7 +1005,14 @@ impl ExecutorContextTool for UniversalAgentTool {
                     context.user_id.clone(),
                     context.workspace_id.clone(),
                     None,
-                    None,
+                    // Pass the parent's thread_id so the sandbox's shell
+                    // session gets recorded on the same thread that server-
+                    // side tools (save_artifact) will see via
+                    // context.thread_id when the sandboxed agent invokes
+                    // them. Without this the session_store write happens
+                    // under a nil thread_id and save_artifact's shell-exec
+                    // fallback can't find the session.
+                    Some(context.thread_id.clone()),
                 )
                 .await
                 .map_err(|e| {

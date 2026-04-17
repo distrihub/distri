@@ -643,10 +643,33 @@ impl AgentOrchestrator {
                                             c.status
                                                 == distri_types::connections::ConnectionStatus::Connected
                                         })
+                                        // DistriNative connections (the seeded `distri` platform
+                                        // connection) are for internal platform API calls — never
+                                        // for third-party services like Google/Slack. Hiding them
+                                        // from the agent's "Available Connections" list stops the
+                                        // LLM from accidentally using the wrong connection_id
+                                        // when no real provider connection exists.
+                                        .filter(|c| {
+                                            !matches!(
+                                                c.auth_type,
+                                                distri_types::connections::AuthType::DistriNative
+                                            )
+                                        })
                                         .map(|c| {
+                                            let provider_tag = match &c.auth_type {
+                                                distri_types::connections::AuthType::OAuth {
+                                                    provider,
+                                                    scopes,
+                                                } => format!(
+                                                    ", provider: {}, scopes: [{}]",
+                                                    provider,
+                                                    scopes.join(", ")
+                                                ),
+                                                _ => String::new(),
+                                            };
                                             format!(
-                                                "- **{}** (id: `{}`, status: connected)",
-                                                c.name, c.id
+                                                "- **{}** (id: `{}`, status: connected{})",
+                                                c.name, c.id, provider_tag
                                             )
                                         })
                                         .collect();
