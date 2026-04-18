@@ -710,47 +710,6 @@ async fn mode_transfer_sets_parents_final_result_and_emits_handover() {
     );
 }
 
-// ── 7a.6 deprecated flag mapping ────────────────────────────────────────────
-
-#[tokio::test]
-async fn deprecated_run_in_background_maps_to_offload() {
-    let (orchestrator, _bc, _runner) =
-        build_orchestrator_with_runner(json!("bg"), Duration::from_secs(2)).await;
-    register_caller_agent(&orchestrator, "caller", vec!["sub".to_string()]).await;
-    register_remote_only_agent(&orchestrator, "sub").await;
-
-    let (parent_ctx, _rx) = build_parent_ctx(&orchestrator, "caller");
-
-    let tool = UniversalAgentTool;
-    let start = std::time::Instant::now();
-    let result = tool
-        .execute_with_executor_context(
-            call_agent_tool_call(json!({
-                "agent": "sub",
-                "prompt": "bg work",
-                "run_in_background": true,
-            })),
-            parent_ctx,
-        )
-        .await
-        .expect("dispatch must succeed");
-    let elapsed = start.elapsed();
-    assert!(
-        elapsed < Duration::from_millis(1000),
-        "deprecated run_in_background must map to offload (fast return); took {:?}",
-        elapsed
-    );
-    match result.first() {
-        Some(Part::Data(v)) => {
-            assert_eq!(
-                v.get("status").and_then(|s| s.as_str()),
-                Some("async_launched")
-            );
-        }
-        other => panic!("expected Part::Data async_launched, got {:?}", other),
-    }
-}
-
 // ── 7a.9 remote dispatch via InProcessRemoteRunner ────────────────────────────────
 
 #[tokio::test]

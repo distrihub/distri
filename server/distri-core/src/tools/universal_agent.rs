@@ -92,17 +92,9 @@ pub(crate) struct CallAgentInput {
     /// Model override for the ad-hoc agent.
     #[serde(default)]
     pub(crate) model: Option<String>,
-    /// **Deprecated** — set `mode = "fork"` instead. When true and no explicit `mode`,
-    /// maps to `CallMode::Fork`.
-    #[serde(default)]
-    pub(crate) fork: bool,
     /// Description for the ad-hoc agent.
     #[serde(default)]
     pub(crate) description: Option<String>,
-    /// **Deprecated** — set `mode = "offload"` instead. When true and no explicit `mode`,
-    /// maps to `CallMode::Offload`.
-    #[serde(default)]
-    pub(crate) run_in_background: bool,
     /// Optional name for the background agent (used by `send_message` for routing).
     #[serde(default)]
     pub(crate) name: Option<String>,
@@ -183,19 +175,9 @@ impl Tool for UniversalAgentTool {
                     "type": "string",
                     "description": "Model override for the agent (only with system_prompt)."
                 },
-                "fork": {
-                    "type": "boolean",
-                    "description": "Deprecated: prefer `mode = \"fork\"`. When true and no mode is set, maps to Fork.",
-                    "default": false
-                },
                 "description": {
                     "type": "string",
                     "description": "Description for the ad-hoc agent (only with system_prompt)."
-                },
-                "run_in_background": {
-                    "type": "boolean",
-                    "description": "Deprecated: prefer `mode = \"offload\"`. When true and no mode is set, maps to Offload.",
-                    "default": false
                 },
                 "name": {
                     "type": "string",
@@ -266,25 +248,9 @@ async fn build_spec(
     parent_ctx: &ExecutorContext,
     orchestrator: &crate::agent::AgentOrchestrator,
 ) -> Result<InvocationSpec, AgentError> {
-    // ── 1. Resolve mode (deprecated flags have strictly lower precedence than
-    //       an explicit `mode`). ─────────────────────────────────────────────
-    let mode = if input.mode != CallMode::InProcess {
-        input.mode
-    } else if input.fork {
-        tracing::warn!(
-            "call_agent: `fork = true` is deprecated; use `mode = \"fork\"` instead"
-        );
-        CallMode::Fork
-    } else if input.run_in_background {
-        tracing::warn!(
-            "call_agent: `run_in_background = true` is deprecated; use `mode = \"offload\"` instead"
-        );
-        CallMode::Offload
-    } else {
-        input.mode
-    };
+    let mode = input.mode;
 
-    // ── 2. Resolve agent_name. ──────────────────────────────────────────────
+    // ── Resolve agent_name. ────────────────────────────────────────────────
     let agent_name = if let Some(ref name) = input.agent {
         if matches!(name.as_str(), "coder" | "code") {
             resolve_code_agent(&parent_ctx.runtime_mode).to_string()
