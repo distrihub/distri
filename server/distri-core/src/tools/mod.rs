@@ -31,10 +31,9 @@ pub mod send_message;
 pub mod simulator;
 pub mod skill_script;
 pub mod tool_search;
-pub use builtin::{
-    get_builtin_tools, AgentTool, ConsoleLogTool, DistriExecuteCodeTool, FinalTool,
-    TransferToAgentTool, UniversalAgentTool,
-};
+pub mod universal_agent;
+pub use builtin::{get_builtin_tools, ConsoleLogTool, DistriExecuteCodeTool, FinalTool};
+pub use universal_agent::UniversalAgentTool;
 pub use inject_env::InjectConnectionEnvTool;
 pub use send_message::SendMessageTool;
 pub use tool_search::ToolSearchTool;
@@ -117,7 +116,6 @@ pub fn cast_to_executor_context_tool(
     // Check hardcoded tool names
     match tool_name.as_str() {
         "final" => Ok(Box::new(FinalTool)),
-        "transfer_to_agent" => Ok(Box::new(TransferToAgentTool)),
         "write_todos" => Ok(Box::new(TodosTool)),
         // Browsr tools
         "browsr_scrape" => Ok(Box::new(DistriScrapeSharedTool)),
@@ -141,12 +139,6 @@ pub fn cast_to_executor_context_tool(
         "call_agent" => Ok(Box::new(UniversalAgentTool)),
         // Inter-agent communication
         "send_message" => Ok(Box::new(SendMessageTool)),
-        name if name.starts_with("call_") => {
-            let safe_agent_name = name.strip_prefix("call_").unwrap_or(name);
-            // Convert double underscores back to slashes for package/agent names
-            let agent_name = safe_agent_name.replace("__", "/");
-            Ok(Box::new(AgentTool::new(agent_name)))
-        }
         _ => Err(AgentError::ToolExecution(format!(
             "Tool '{}' cannot be cast to ExecutorContextTool",
             tool_name
@@ -481,13 +473,6 @@ mod tests {
     }
 
     #[test]
-    fn cast_transfer_to_agent_tool() {
-        let tool = TransferToAgentTool;
-        let result = cast_to_executor_context_tool(&tool);
-        assert!(result.is_ok());
-    }
-
-    #[test]
     fn cast_start_shell_tool() {
         let tool = shell::StartShellTool;
         let result = cast_to_executor_context_tool(&tool);
@@ -518,23 +503,6 @@ mod tests {
     #[test]
     fn cast_tool_search_tool() {
         let tool = ToolSearchTool;
-        let result = cast_to_executor_context_tool(&tool);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn cast_agent_tool_with_call_prefix() {
-        // AgentTool is returned for any "call_*" tool name
-        let tool = AgentTool::new("my_agent".to_string());
-        let result = cast_to_executor_context_tool(&tool);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn cast_agent_tool_with_package_name() {
-        let tool = AgentTool::new("pkg/agent".to_string());
-        // Tool name becomes "call_pkg__agent"
-        assert_eq!(tool.get_name(), "call_pkg__agent");
         let result = cast_to_executor_context_tool(&tool);
         assert!(result.is_ok());
     }

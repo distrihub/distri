@@ -29,10 +29,9 @@ fn core_tools_list_contains_essentials() {
 }
 
 #[test]
-fn call_prefix_always_core() {
+fn call_agent_is_always_core() {
     let config = ToolsConfig::default();
-    assert!(config.is_core_tool("call_coder"));
-    assert!(config.is_core_tool("call_deep__research"));
+    assert!(config.is_core_tool("call_agent"));
 }
 
 #[test]

@@ -1,9 +1,11 @@
 use std::sync::Arc;
 
-use crate::tools::builtin::{is_agent_accessible, resolve_code_agent, ALWAYS_AVAILABLE_BUILTINS};
+use crate::agent::context::{ForkOptions, ForkType};
+use crate::agent::ExecutorContext;
+use crate::tools::universal_agent::{is_agent_accessible, resolve_code_agent, ALWAYS_AVAILABLE_BUILTINS};
 use crate::AgentOrchestratorBuilder;
 use distri_types::configuration::{DbConnectionConfig, MetadataStoreConfig, StoreConfig};
-use distri_types::{RuntimeMode, Tool};
+use distri_types::{RuntimeMode, Tool as _};
 
 /// Creates a StoreConfig that uses a temporary in-memory SQLite database.
 fn test_store_config() -> StoreConfig {
@@ -77,9 +79,10 @@ fn test_always_available_builtins_list() {
     assert!(ALWAYS_AVAILABLE_BUILTINS.contains(&"distri"));
     assert!(ALWAYS_AVAILABLE_BUILTINS.contains(&"distri_runner"));
     assert!(ALWAYS_AVAILABLE_BUILTINS.contains(&"distri_browser_runner"));
+    assert!(ALWAYS_AVAILABLE_BUILTINS.contains(&"_adhoc_base"));
     assert!(ALWAYS_AVAILABLE_BUILTINS.contains(&"plan"));
     assert!(ALWAYS_AVAILABLE_BUILTINS.contains(&"explore"));
-    assert_eq!(ALWAYS_AVAILABLE_BUILTINS.len(), 5);
+    assert_eq!(ALWAYS_AVAILABLE_BUILTINS.len(), 6);
 }
 
 // ── Integration tests: get_agent_tools wiring ──────────────────────
@@ -113,43 +116,50 @@ async fn test_call_agent_tool_always_registered() {
     );
 }
 
-#[tokio::test]
-async fn test_transfer_to_agent_registered_with_wildcard_builtins() {
-    let orchestrator = Arc::new(
-        AgentOrchestratorBuilder::default()
-            .with_store_config(test_store_config())
-            .build()
-            .await
-            .unwrap(),
-    );
+// ── is_sandbox propagation ──────────────────────────────────────────
 
-    // When builtin tools use wildcard, transfer_to_agent should be included
-    let definition = distri_types::StandardDefinition {
-        name: "test_agent".to_string(),
-        sub_agents: vec![],
-        tools: Some(distri_types::ToolsConfig {
-            builtin: vec!["*".to_string()],
-            ..Default::default()
-        }),
+#[tokio::test]
+async fn is_sandbox_propagates_through_all_clone_paths() {
+    let parent = ExecutorContext {
+        is_sandbox: true,
         ..Default::default()
     };
 
-    let resolved = orchestrator
-        .get_agent_tools(&definition, &[])
-        .await
-        .unwrap();
-
-    let tool_names: Vec<String> = resolved.all_tools.iter().map(|t| t.get_name()).collect();
+    // new_task: creates a fresh task context within the same thread.
+    let child_task = parent.new_task("child").await;
     assert!(
-        tool_names.contains(&"transfer_to_agent".to_string()),
-        "transfer_to_agent must be registered when builtin wildcard is used, got: {:?}",
-        tool_names
+        child_task.is_sandbox,
+        "new_task must preserve is_sandbox"
     );
-    // call_agent should also be present alongside transfer_to_agent
+
+    // continue_as: handover (same task, new run).
+    let continuation = parent.continue_as("target").await;
     assert!(
-        tool_names.contains(&"call_agent".to_string()),
-        "call_agent must also be present, got: {:?}",
-        tool_names
+        continuation.is_sandbox,
+        "continue_as must preserve is_sandbox"
+    );
+
+    // fork: branching.
+    let forked = parent
+        .fork(ForkOptions {
+            fork_type: ForkType::NewTask,
+            copy_history_limit: None,
+        })
+        .await;
+    assert!(forked.is_sandbox, "fork must preserve is_sandbox");
+
+    // create_inner_context: internal stream forwarding.
+    let (inner, _rx) = parent.create_inner_context().await;
+    assert!(
+        inner.is_sandbox,
+        "create_inner_context must preserve is_sandbox"
+    );
+
+    // Default is false (no accidental sandbox marker on fresh contexts).
+    let fresh = ExecutorContext::default();
+    assert!(
+        !fresh.is_sandbox,
+        "Default ExecutorContext must have is_sandbox = false"
     );
 }
 

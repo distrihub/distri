@@ -435,9 +435,6 @@ pub struct StandardDefinition {
     #[serde(default)]
     pub instructions: String,
 
-    /// A list of MCP server definitions associated with the agent.
-    #[serde(default)]
-    pub mcp_servers: Option<Vec<McpDefinition>>,
     /// Settings related to the model used by the agent.
     /// When `None`, the agent inherits model settings from the orchestrator context defaults.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -534,16 +531,6 @@ pub struct StandardDefinition {
     )]
     pub compaction_enabled: bool,
 
-    /// **DEPRECATED**: prefer `runtime = ["cli"]` instead.
-    ///
-    /// When true, this is treated as `runtime = [Cli]` — the agent needs a
-    /// CLI-style local environment (filesystem, shell exec). In a Cloud
-    /// runtime the orchestrator forks the call into a sandbox via
-    /// `BackgroundRunner`. Kept for backwards compatibility with existing
-    /// agent definitions and the `--remote` CLI flag / `DefinitionOverrides.remote`.
-    #[serde(default, alias = "deepagent")]
-    pub remote: bool,
-
     /// Runtime constraint for this agent. Like Docker's `platforms` field:
     ///
     /// - empty / omitted → runs in any runtime (default).
@@ -611,19 +598,11 @@ fn is_true(v: &bool) -> bool {
     *v
 }
 impl StandardDefinition {
-    /// The set of runtimes this agent is allowed to run in, with the
-    /// deprecated `remote: true` flag merged in (treated as `[Cli]` when
-    /// `runtime` is empty).
+    /// The set of runtimes this agent is allowed to run in.
     ///
     /// Empty result = no constraint = runs anywhere.
     pub fn allowed_runtimes(&self) -> Vec<RuntimeMode> {
-        if !self.runtime.is_empty() {
-            return self.runtime.clone();
-        }
-        if self.remote {
-            return vec![RuntimeMode::Cli];
-        }
-        Vec::new()
+        self.runtime.clone()
     }
 
     /// Whether this agent can execute given the caller's `current` runtime,
@@ -761,8 +740,24 @@ impl StandardDefinition {
             self.instructions = instructions;
         }
 
-        if let Some(remote) = overrides.remote {
-            self.remote = remote;
+        if let Some(runtime) = overrides.runtime {
+            self.runtime = runtime;
+        }
+
+        if let Some(description) = overrides.description {
+            self.description = description;
+        }
+
+        if let Some(name) = overrides.name {
+            self.name = name;
+        }
+
+        if let Some(sub_agents) = overrides.sub_agents {
+            self.sub_agents = sub_agents;
+        }
+
+        if let Some(tools_override) = overrides.tools {
+            self.tools = Some(tools_override);
         }
 
         if let Some(use_browser) = overrides.use_browser {
@@ -789,7 +784,7 @@ pub const VALID_BUILTIN_TOOLS: &[&str] = &[
     // Agent control
     "final",
     "reflect",
-    "transfer_to_agent",
+    "call_agent",
     // Browser & scraping
     "browsr_scrape",
     "browsr_browser",
@@ -819,7 +814,7 @@ pub const VALID_BUILTIN_TOOLS: &[&str] = &[
 /// These are the most commonly used tools that agents need immediately.
 pub const CORE_TOOLS: &[&str] = &[
     "final",
-    "transfer_to_agent",
+    "call_agent",
     "tool_search",
     "write_todos",
     "execute_shell",
@@ -833,7 +828,7 @@ pub const DEFAULT_DEFERRED_THRESHOLD: usize = 15;
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 #[serde(deny_unknown_fields)]
 pub struct ToolsConfig {
-    /// Built-in tools to include (e.g., ["final", "transfer_to_agent"])
+    /// Built-in tools to include (e.g., ["final", "call_agent"])
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub builtin: Vec<String>,
 
@@ -884,10 +879,7 @@ impl ToolsConfig {
 
     /// Whether a tool should always get a full schema (never deferred).
     pub fn is_core_tool(&self, name: &str) -> bool {
-        CORE_TOOLS.contains(&name)
-            || self.always_full_schema.iter().any(|n| n == name)
-            // call_* agent tools are always core (the model needs to know how to call sub-agents)
-            || name.starts_with("call_")
+        CORE_TOOLS.contains(&name) || self.always_full_schema.iter().any(|n| n == name)
     }
 
     /// Effective threshold for automatic tool deferral.
@@ -1972,7 +1964,7 @@ mod tests {
         assert!(config.is_core_tool("final"));
         assert!(config.is_core_tool("tool_search"));
         assert!(config.is_core_tool("execute_shell"));
-        assert!(config.is_core_tool("call_coder"));
+        assert!(config.is_core_tool("call_agent"));
         assert!(!config.is_core_tool("browsr_scrape"));
     }
 

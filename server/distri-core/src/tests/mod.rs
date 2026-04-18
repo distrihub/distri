@@ -17,5 +17,7 @@ mod request_tool;
 mod tool_result_format;
 mod tool_result_persistence;
 pub mod trace_replay;
-mod universal_agent_tool;
+mod a2a_service;
+mod universal_agent_access;
+mod universal_agent_dispatch;
 mod usage_tracking;

@@ -6,20 +6,7 @@ use crate::AgentOrchestratorBuilder;
 
 // ── Agent definition parsing ────────────────────────────────────
 
-#[tokio::test]
-async fn parse_code_executor_agent() {
-    let content = include_str!("../../../agents/code_executor.md");
-    let def = parse_agent_markdown_content(content).await.unwrap();
-    assert_eq!(def.name, "code");
-    assert_eq!(def.max_iterations, Some(15));
-    let tools = def
-        .tools
-        .as_ref()
-        .expect("code agent should have tools config");
-    assert!(tools.builtin.contains(&"start_shell".to_string()));
-    assert!(tools.builtin.contains(&"execute_shell".to_string()));
-    assert!(tools.builtin.contains(&"stop_shell".to_string()));
-}
+// code_executor.md removed from the repo (replaced by coder.md); see parse_coder_agent below.
 
 #[tokio::test]
 async fn parse_coder_agent() {
@@ -87,21 +74,13 @@ async fn parse_distri_agent() {
     assert!(!def.instructions.is_empty());
 }
 
-#[tokio::test]
-async fn parse_deepresearch_agent() {
-    let content = include_str!("../../../agents/deepresearch.md");
-    let def = parse_agent_markdown_content(content).await.unwrap();
-    assert_eq!(def.name, "deepresearch");
-    assert!(def.max_iterations.unwrap() >= 20);
-}
+// deepresearch.md was removed from server/agents (not shipped by default). Test removed with it.
 
 #[tokio::test]
 async fn agent_definition_has_instructions() {
-    let content = include_str!("../../../agents/code_executor.md");
+    let content = include_str!("../../../agents/coder.md");
     let def = parse_agent_markdown_content(content).await.unwrap();
-    // Instructions should contain the markdown body (after frontmatter)
-    assert!(def.instructions.contains("ROLE"));
-    assert!(def.instructions.contains("{{task}}"));
+    assert!(!def.instructions.is_empty());
 }
 
 // ── Orchestrator builder ────────────────────────────────────────
@@ -117,7 +96,7 @@ async fn orchestrator_builds_with_defaults() {
 
 #[tokio::test]
 async fn orchestrator_registers_agent() {
-    let content = include_str!("../../../agents/code_executor.md");
+    let content = include_str!("../../../agents/coder.md");
     let def = parse_agent_markdown_content(content).await.unwrap();
     let name = def.name.clone();
 
@@ -159,24 +138,24 @@ async fn orchestrator_registers_multiple_agents() {
             .unwrap(),
     );
 
-    let code_def = parse_agent_markdown_content(include_str!("../../../agents/code_executor.md"))
-        .await
-        .unwrap();
     let coder_def = parse_agent_markdown_content(include_str!("../../../agents/coder.md"))
         .await
         .unwrap();
-
-    orchestrator
-        .register_agent_definition(code_def)
+    let distri_def = parse_agent_markdown_content(include_str!("../../../agents/distri.md"))
         .await
         .unwrap();
+
     orchestrator
         .register_agent_definition(coder_def)
         .await
         .unwrap();
+    orchestrator
+        .register_agent_definition(distri_def)
+        .await
+        .unwrap();
 
-    assert!(orchestrator.get_agent("code").await.is_some());
     assert!(orchestrator.get_agent("coder").await.is_some());
+    assert!(orchestrator.get_agent("distri").await.is_some());
 }
 
 // ── ExecutorContext ──────────────────────────────────────────────

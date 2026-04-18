@@ -482,8 +482,6 @@ impl AgentOrchestrator {
             tools.push(Arc::new(crate::tools::UniversalAgentTool));
         }
 
-        // Always keep transfer_to_agent (access control checked at execution time)
-
         let is_browser_agent =
             definition.name == "browser_agent" || definition.name.ends_with("/browser_agent");
         if definition.should_use_browser() && !is_browser_agent {
@@ -726,7 +724,7 @@ impl AgentOrchestrator {
                     let mut sub_agent_lines = Vec::new();
 
                     // Always-available system agents
-                    for builtin_name in crate::tools::builtin::ALWAYS_AVAILABLE_BUILTINS {
+                    for builtin_name in crate::tools::universal_agent::ALWAYS_AVAILABLE_BUILTINS {
                         if let Some(agent_cfg) = self.get_agent(builtin_name).await {
                             let desc = match agent_cfg {
                                 distri_types::configuration::AgentConfig::StandardAgent(def) => {
@@ -768,11 +766,6 @@ impl AgentOrchestrator {
                         };
                         sub_agent_lines.push(format!("- **{}** — {}", name, desc));
                     }
-
-                    // Always mention transfer_to_agent availability
-                    sub_agent_lines.push(
-                        "\n*Use `transfer_to_agent` to hand over control completely (your execution stops, target agent takes over with your history).*".to_string()
-                    );
 
                     context
                         .merge_hook_prompt_state(crate::agent::context::HookPromptState {
@@ -1031,11 +1024,27 @@ impl AgentOrchestrator {
     }
 
     pub async fn get_thread(&self, thread_id: &str) -> Result<Option<Thread>, AgentError> {
-        self.stores
+        let thread = self
+            .stores
             .thread_store
             .get_thread(thread_id)
             .await
-            .map_err(|e| AgentError::Session(e.to_string()))
+            .map_err(|e| AgentError::Session(e.to_string()))?;
+
+        // Compute `active_task_id` at read time: the first non-terminal task
+        // in this thread. Never persisted to the DB; clients use it to decide
+        // whether to resubscribe on thread reopen.
+        if let Some(mut t) = thread {
+            if let Ok(tasks) = self.stores.task_store.list_tasks(Some(thread_id)).await {
+                t.active_task_id = tasks
+                    .into_iter()
+                    .find(|task| !task.status.is_terminal())
+                    .map(|task| task.id);
+            }
+            Ok(Some(t))
+        } else {
+            Ok(None)
+        }
     }
 
     pub async fn update_thread(

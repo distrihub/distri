@@ -1,4 +1,10 @@
-use distri::Distri;
+//! Helpers for building the `MessageSendParams` that both the CLI and the
+//! server-side in-process runner send when kicking off an agent run.
+//!
+//! Both call paths go through these builders so the runtime_mode /
+//! definition_overrides semantics can't drift between them.
+
+use crate::Distri;
 use distri_a2a::{
     EventKind, Message as A2aMessage, MessageSendParams, Part as A2aPart, Role, TextPart,
 };
@@ -79,12 +85,23 @@ pub fn build_message_params_full(
     } else {
         RuntimeMode::Cli
     };
+    // The sandbox entrypoint sets DISTRI_IN_SANDBOX=1 (see SandboxLauncher).
+    // Forward that to the server so it stamps ExecutorContext.is_sandbox for
+    // the child run — tools/prompts use this to detect sandbox-context runs.
+    let is_sandbox = std::env::var("DISTRI_IN_SANDBOX")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
     let mut metadata = ExecutorContextMetadata {
         runtime_mode,
+        is_sandbox,
         definition_overrides: if has_overrides {
             Some(DefinitionOverrides {
                 model: model.map(|m| m.to_string()),
-                remote: if remote { Some(true) } else { None },
+                runtime: if remote {
+                    Some(vec![RuntimeMode::Cloud])
+                } else {
+                    None
+                },
                 ..Default::default()
             })
         } else {
@@ -165,9 +182,9 @@ mod tests {
             metadata
                 .definition_overrides
                 .as_ref()
-                .and_then(|o| o.remote),
-            Some(true),
-            "with --remote, definition_overrides.remote must be Some(true)"
+                .and_then(|o| o.runtime.clone()),
+            Some(vec![RuntimeMode::Cloud]),
+            "with --remote, definition_overrides.runtime must be Some([Cloud])"
         );
     }
 
@@ -190,9 +207,9 @@ mod tests {
             metadata
                 .definition_overrides
                 .as_ref()
-                .and_then(|o| o.remote)
+                .and_then(|o| o.runtime.as_ref())
                 .is_none(),
-            "without --remote, definition_overrides.remote must be unset"
+            "without --remote, definition_overrides.runtime must be unset"
         );
     }
 }

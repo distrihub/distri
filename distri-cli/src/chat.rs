@@ -17,7 +17,7 @@ use tokio::sync::RwLock;
 
 use crate::config::{load_last_model, save_last_model};
 use crate::input::{DistriHelper, ToggleToolsHandler};
-use crate::message::{build_connections_context, build_message_params};
+use distri::message::{build_connections_context, build_message_params};
 use crate::threads::{
     load_last_thread, print_thread_history, resolve_resume_arg, save_last_thread,
 };

@@ -638,7 +638,7 @@ async fn orchestrator_routes_cloud_caller_to_background_runner_when_agent_is_rem
         description: "Agent pinned to Cli runtime via deprecated remote flag".to_string(),
         ..Default::default()
     };
-    def.remote = true;
+    def.runtime = vec![distri_types::RuntimeMode::Cli];
     orchestrator.register_agent_definition(def).await.unwrap();
 
     // Caller declares Cloud runtime — should NOT match `[Cli]` allowed list,
@@ -689,7 +689,7 @@ async fn orchestrator_runs_in_process_when_caller_already_provides_required_runt
         description: "Agent pinned to Cli runtime via deprecated remote flag".to_string(),
         ..Default::default()
     };
-    def.remote = true;
+    def.runtime = vec![distri_types::RuntimeMode::Cli];
     orchestrator.register_agent_definition(def).await.unwrap();
 
     // Caller declares Cli runtime — matches the agent's `[Cli]` allowed list,

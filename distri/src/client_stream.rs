@@ -1,5 +1,5 @@
 use chrono::Utc;
-use distri_a2a::{JsonRpcRequest, MessageKind, MessageSendParams};
+use distri_a2a::{JsonRpcRequest, MessageKind, MessageSendParams, TaskIdParams};
 use distri_types::dynamic_tool::DynamicToolFactory;
 use distri_types::http_request::HttpFactoryConfig;
 use distri_types::{AgentEvent, AgentEventType, Message, ToolCall, ToolResponse};
@@ -244,6 +244,151 @@ impl AgentStreamClient {
                         }
                     }
                 }
+
+                on_event(item).await;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Resubscribe to the SSE stream of an existing task. Yields `StreamItem`s
+    /// via `on_event` until the stream closes. If the task was already
+    /// terminal when the server received the request, the server emits a
+    /// single synthesized `TaskStatusUpdate` frame and closes — so this
+    /// function still returns promptly rather than hanging.
+    pub async fn resubscribe_task<H, Fut>(
+        &self,
+        agent_id: &str,
+        task_id: &str,
+        on_event: H,
+    ) -> Result<(), StreamError>
+    where
+        H: FnMut(StreamItem) -> Fut,
+        Fut: std::future::Future<Output = ()> + Send,
+    {
+        let rpc = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::Value::String(Uuid::new_v4().to_string())),
+            method: "tasks/resubscribe".to_string(),
+            params: serde_json::to_value(TaskIdParams {
+                id: task_id.to_string(),
+            })?,
+        };
+
+        self.run_sse(agent_id, &rpc, on_event).await
+    }
+
+    /// Cancel a running task. The server is idempotent: canceling an already-
+    /// terminal task returns the current record without error.
+    pub async fn cancel_task(
+        &self,
+        agent_id: &str,
+        task_id: &str,
+    ) -> Result<distri_a2a::Task, StreamError> {
+        let rpc = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::Value::String(Uuid::new_v4().to_string())),
+            method: "tasks/cancel".to_string(),
+            params: serde_json::to_value(TaskIdParams {
+                id: task_id.to_string(),
+            })?,
+        };
+
+        let url = format!(
+            "{}/agents/{}",
+            self.base_url.trim_end_matches('/'),
+            agent_id
+        );
+
+        let resp = self
+            .http
+            .post(url)
+            .json(&rpc)
+            .send()
+            .await
+            .map_err(|e| StreamError::Event(format!("cancel_task request failed: {e}")))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(StreamError::Event(format!(
+                "cancel_task failed ({status}): {body}"
+            )));
+        }
+
+        let rpc_resp: RpcResponse = resp.json().await.map_err(StreamError::Http)?;
+        if let Some(err) = rpc_resp.error {
+            return Err(StreamError::Server(err.message));
+        }
+        let result = rpc_resp.result.ok_or_else(|| {
+            StreamError::InvalidResponse("cancel_task: missing result".to_string())
+        })?;
+        serde_json::from_value::<distri_a2a::Task>(result).map_err(StreamError::Serialization)
+    }
+
+    /// Shared SSE request + parse loop. Used by `stream_agent` (via direct
+    /// inlining, since it layers tool-call handling on top) and by
+    /// `resubscribe_task` (which only forwards items).
+    async fn run_sse<H, Fut>(
+        &self,
+        agent_id: &str,
+        rpc: &JsonRpcRequest,
+        mut on_event: H,
+    ) -> Result<(), StreamError>
+    where
+        H: FnMut(StreamItem) -> Fut,
+        Fut: std::future::Future<Output = ()> + Send,
+    {
+        let url = format!(
+            "{}/agents/{}",
+            self.base_url.trim_end_matches('/'),
+            agent_id
+        );
+
+        let resp = self
+            .http
+            .post(url)
+            .header("Accept", "text/event-stream")
+            .json(rpc)
+            .send()
+            .await
+            .map_err(|e| StreamError::Event(format!("SSE connection failed: {e}")))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(StreamError::Event(format!(
+                "SSE request failed ({status}): {body}"
+            )));
+        }
+
+        let mut stream = resp.bytes_stream();
+        let mut buf = String::new();
+
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|e| StreamError::Event(e.to_string()))?;
+            buf.push_str(&String::from_utf8_lossy(&chunk));
+
+            while let Some(pos) = buf.find("\n\n") {
+                let message_block = buf[..pos].to_string();
+                buf = buf[pos + 2..].to_string();
+
+                let mut data_lines = Vec::new();
+                for line in message_block.lines() {
+                    if let Some(value) = line.strip_prefix("data:") {
+                        data_lines.push(value.trim_start().to_string());
+                    }
+                }
+
+                if data_lines.is_empty() {
+                    continue;
+                }
+
+                let data = data_lines.join("\n");
+                let Some(item) = parse_sse_data(agent_id, &data)? else {
+                    continue;
+                };
 
                 on_event(item).await;
             }

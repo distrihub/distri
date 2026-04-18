@@ -7,9 +7,12 @@ use distri_types::RuntimeMode;
 /// and returns immediately. The caller monitors progress by subscribing
 /// to the `AgentEventBroadcaster` for the given task_id.
 ///
-/// Implementations:
-/// - `InProcessRunner`: runs the agent loop via `tokio::spawn` (for distri-server)
-/// - `SandboxLauncher`: spawns a browsr container with distri-cli (for distri-cloud)
+/// Implementations live outside distri-core:
+/// - `cloud::runner::LocalProcessRemoteRunner`: runs tasks via the `distri`
+///   client library against the same server process. Used in DEV_MODE=true
+///   for local --remote runs without spawning a sandbox container.
+/// - `cloud::runner::SandboxLauncher`: production path — spawns a browsr
+///   container with distri-cli and lets the container drive the A2A service.
 #[async_trait]
 pub trait BackgroundRunner: Send + Sync + 'static {
     /// Spawn agent execution in the background. Returns immediately.

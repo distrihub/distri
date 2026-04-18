@@ -265,6 +265,54 @@ pub struct JsonRpcError {
     pub data: Option<serde_json::Value>,
 }
 
+impl JsonRpcResponse {
+    /// Construct a successful JSON-RPC response.
+    pub fn success(id: Option<serde_json::Value>, result: serde_json::Value) -> Self {
+        Self {
+            jsonrpc: "2.0".to_string(),
+            id,
+            result: Some(result),
+            error: None,
+        }
+    }
+
+    /// Construct a failed JSON-RPC response.
+    pub fn error(id: Option<serde_json::Value>, error: JsonRpcError) -> Self {
+        Self {
+            jsonrpc: "2.0".to_string(),
+            id,
+            result: None,
+            error: Some(error),
+        }
+    }
+}
+
+impl JsonRpcError {
+    /// Generic constructor.
+    pub fn new(code: i32, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            message: message.into(),
+            data: None,
+        }
+    }
+
+    /// `-32602 Invalid params` JSON-RPC error.
+    pub fn invalid_params(msg: impl Into<String>) -> Self {
+        Self::new(-32602, msg)
+    }
+
+    /// `-32601 Method not found` JSON-RPC error.
+    pub fn method_not_found(method: &str) -> Self {
+        Self::new(-32601, format!("Method not found: {method}"))
+    }
+
+    /// `-32603 Internal error` JSON-RPC error.
+    pub fn internal(msg: impl Into<String>) -> Self {
+        Self::new(-32603, msg)
+    }
+}
+
 // A2A Method Params
 
 /// Parameters for the `message/send` method.

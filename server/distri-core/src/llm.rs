@@ -965,13 +965,32 @@ impl LLMExecutor {
             None
         };
 
-        // Force tool use when tools are provided
+        // Force tool use when tools are provided.
+        //
+        // Exception: Qwen "thinking mode" models (qwen3.6-plus / qwq / qwen3)
+        // reject `tool_choice: required` — DashScope returns HTTP 400
+        // `InternalError.Algo.InvalidParameter: The tool_choice parameter does
+        // not support being set to required or object in thinking mode`.
+        // Fall back to Auto for those; the planner's tool-calling loop still
+        // works, it just can't *force* a tool call.
+        let is_qwen_thinking = {
+            let m = model.to_ascii_lowercase();
+            m.contains("qwen3") || m.contains("qwq")
+        };
         let tool_choice = if tools.is_some() {
-            Some(
-                async_openai::types::chat::ChatCompletionToolChoiceOption::Mode(
-                    async_openai::types::chat::ToolChoiceOptions::Required,
-                ),
-            )
+            if is_qwen_thinking {
+                Some(
+                    async_openai::types::chat::ChatCompletionToolChoiceOption::Mode(
+                        async_openai::types::chat::ToolChoiceOptions::Auto,
+                    ),
+                )
+            } else {
+                Some(
+                    async_openai::types::chat::ChatCompletionToolChoiceOption::Mode(
+                        async_openai::types::chat::ToolChoiceOptions::Required,
+                    ),
+                )
+            }
         } else {
             None
         };
