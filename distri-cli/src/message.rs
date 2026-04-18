@@ -79,8 +79,15 @@ pub fn build_message_params_full(
     } else {
         RuntimeMode::Cli
     };
+    // The sandbox entrypoint sets DISTRI_IN_SANDBOX=1 (see SandboxLauncher).
+    // Forward that to the server so it stamps ExecutorContext.is_sandbox for
+    // the child run — tools/prompts use this to detect sandbox-context runs.
+    let is_sandbox = std::env::var("DISTRI_IN_SANDBOX")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
     let mut metadata = ExecutorContextMetadata {
         runtime_mode,
+        is_sandbox,
         definition_overrides: if has_overrides {
             Some(DefinitionOverrides {
                 model: model.map(|m| m.to_string()),

@@ -155,6 +155,11 @@ pub struct ExecutorContext {
     /// Mailbox for receiving inter-agent messages (from SendMessage tool).
     /// The agent loop drains this between iterations.
     pub mailbox: Option<Arc<tokio::sync::Mutex<Box<dyn crate::worker::MailboxReceiver>>>>,
+    /// True when this context is executing inside a browsr sandbox container
+    /// (the process was started by SandboxLauncher via `distri run ...`, gated
+    /// on the `DISTRI_IN_SANDBOX` env var). Tools and prompts can use this to
+    /// detect "I'm inside the sandbox, not the host orchestrator".
+    pub is_sandbox: bool,
 }
 
 impl std::fmt::Debug for ExecutorContext {
@@ -223,6 +228,7 @@ impl Default for ExecutorContext {
             )),
             cancellation_signal: None,
             mailbox: None,
+            is_sandbox: false,
         }
     }
 }
@@ -919,6 +925,7 @@ impl ExecutorContext {
             env_vars: self.env_vars.clone(),
             runtime_mode: self.runtime_mode.clone(),
             skill_tracker: Arc::new(RwLock::new(self.skill_tracker.read().await.clone())),
+            is_sandbox: self.is_sandbox,
 
             ..Default::default()
         }
@@ -954,6 +961,7 @@ impl ExecutorContext {
             default_model_settings: self.default_model_settings.clone(),
             env_vars: self.env_vars.clone(),
             runtime_mode: self.runtime_mode.clone(),
+            is_sandbox: self.is_sandbox,
 
             ..Default::default()
         }
@@ -1052,6 +1060,7 @@ impl ExecutorContext {
             skill_tracker: self.skill_tracker.clone(),
             cancellation_signal: self.cancellation_signal.clone(),
             mailbox: self.mailbox.clone(),
+            is_sandbox: self.is_sandbox,
         };
 
         (inner_context, inner_rx)

@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+use crate::agent::context::{ForkOptions, ForkType};
+use crate::agent::ExecutorContext;
 use crate::tools::builtin::{is_agent_accessible, resolve_code_agent, ALWAYS_AVAILABLE_BUILTINS};
 use crate::AgentOrchestratorBuilder;
 use distri_types::configuration::{DbConnectionConfig, MetadataStoreConfig, StoreConfig};
@@ -150,6 +152,53 @@ async fn test_transfer_to_agent_registered_with_wildcard_builtins() {
         tool_names.contains(&"call_agent".to_string()),
         "call_agent must also be present, got: {:?}",
         tool_names
+    );
+}
+
+// ── is_sandbox propagation ──────────────────────────────────────────
+
+#[tokio::test]
+async fn is_sandbox_propagates_through_all_clone_paths() {
+    let parent = ExecutorContext {
+        is_sandbox: true,
+        ..Default::default()
+    };
+
+    // new_task: creates a fresh task context within the same thread.
+    let child_task = parent.new_task("child").await;
+    assert!(
+        child_task.is_sandbox,
+        "new_task must preserve is_sandbox"
+    );
+
+    // continue_as: handover (same task, new run).
+    let continuation = parent.continue_as("target").await;
+    assert!(
+        continuation.is_sandbox,
+        "continue_as must preserve is_sandbox"
+    );
+
+    // fork: branching.
+    let forked = parent
+        .fork(ForkOptions {
+            fork_type: ForkType::NewTask,
+            copy_history_limit: None,
+        })
+        .await;
+    assert!(forked.is_sandbox, "fork must preserve is_sandbox");
+
+    // create_inner_context: internal stream forwarding.
+    let (inner, _rx) = parent.create_inner_context().await;
+    assert!(
+        inner.is_sandbox,
+        "create_inner_context must preserve is_sandbox"
+    );
+
+    // Default is false (no accidental sandbox marker on fresh contexts).
+    let fresh = ExecutorContext::default();
+    assert!(
+        !fresh.is_sandbox,
+        "Default ExecutorContext must have is_sandbox = false"
     );
 }
 

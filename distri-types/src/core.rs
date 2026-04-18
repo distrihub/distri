@@ -814,4 +814,11 @@ pub struct ExecutorContextMetadata {
     /// Runtime environment. Determines which system agent variants to use.
     #[serde(default)]
     pub runtime_mode: crate::RuntimeMode,
+
+    /// When true, the caller is running inside a distri sandbox container
+    /// (gated on `DISTRI_IN_SANDBOX=1` in the sandbox entrypoint).
+    /// Server copies this onto `ExecutorContext.is_sandbox` so tools and
+    /// prompts can detect sandbox-context execution.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub is_sandbox: bool,
 }

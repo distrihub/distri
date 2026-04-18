@@ -197,6 +197,7 @@ impl A2AHandler {
             env_vars,
             dry_run,
             runtime_mode: metadata.runtime_mode,
+            is_sandbox: metadata.is_sandbox,
             ..Default::default()
         };
 
