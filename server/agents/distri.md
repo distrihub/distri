@@ -22,6 +22,12 @@ builtin = ["tool_search", "call_agent", "load_skill"]
 [[available_skills]]
 id = "*"
 name = "*"
+
+# Wildcard: list every connected workspace connection in the `{{> connections}}`
+# partial. No env vars injected — auth goes through `distri_request` with
+# `x-connection-id`, so tokens are resolved per-request on the server.
+[[connections]]
+provider = "*"
 ---
 
 # ROLE

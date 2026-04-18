@@ -1711,6 +1711,11 @@ fn parse_structured_output(raw: &str) -> serde_json::Value {
 /// Errors out (as `AgentError::Validation`) when a `ConnectionRequirement`
 /// marked `required=true` cannot be resolved. Non-required missing
 /// requirements are surfaced to the model under `available_providers`.
+///
+/// A `provider = "*"` requirement is a wildcard: list every connected
+/// workspace connection (and available-but-not-connected providers from the
+/// registry) without injecting env vars. Used by the top-level distri
+/// orchestrator, which authenticates via the `x-connection-id` proxy path.
 async fn resolve_declared_connections(
     stores: &distri_types::stores::InitializedStores,
     definition: &distri_types::StandardDefinition,
@@ -1750,6 +1755,39 @@ async fn resolve_declared_connections(
     let mut missing_providers: Vec<String> = Vec::new();
 
     for req in &definition.connections {
+        // Wildcard: list every connected workspace connection in the partial
+        // but do NOT inject env vars. The agent is expected to authenticate
+        // via the `x-connection-id` proxy path (see distri_request /
+        // POST /request) rather than raw env-var token reuse. Used by the
+        // top-level distri orchestrator agent which manages user connections.
+        if req.provider.as_deref() == Some("*") {
+            for c in &ws_connections {
+                if c.status != distri_types::connections::ConnectionStatus::Connected {
+                    continue;
+                }
+                // Hide the system-seeded DistriNative connection from the
+                // listing so the LLM doesn't mistake it for a third-party
+                // service to call on the user's behalf.
+                if matches!(
+                    c.auth_type,
+                    distri_types::connections::AuthType::DistriNative
+                ) {
+                    continue;
+                }
+                let provider_tag = match &c.auth_type {
+                    distri_types::connections::AuthType::OAuth {
+                        provider, scopes, ..
+                    } => format!(", provider: {}, scopes: [{}]", provider, scopes.join(", ")),
+                    _ => String::new(),
+                };
+                connected_lines.push(format!(
+                    "- **{}** (id: `{}`, status: connected{})",
+                    c.name, c.id, provider_tag
+                ));
+            }
+            continue;
+        }
+
         // Locate the matching connection.
         let matched: Option<Connection> = if let Some(id) = req.connection_id {
             ws_connections.iter().find(|c| c.id == id).cloned()
@@ -1861,6 +1899,30 @@ async fn resolve_declared_connections(
                     "- **{}** — error resolving: {}",
                     connection.name, e
                 ));
+            }
+        }
+    }
+
+    // Wildcard path also surfaces registry-known but not-yet-connected providers
+    // so the LLM can suggest which ones the user could connect.
+    let has_wildcard = definition
+        .connections
+        .iter()
+        .any(|r| r.provider.as_deref() == Some("*"));
+    if has_wildcard {
+        if let Some(registry) = &stores.provider_registry {
+            let connected_names: std::collections::HashSet<String> =
+                ws_connections.iter().map(|c| c.name.clone()).collect();
+            let all_providers = registry.list_providers().await;
+            for provider in &all_providers {
+                if !connected_names.contains(provider)
+                    && registry.is_provider_available(provider).await
+                {
+                    missing_providers.push(format!(
+                        "- **{}** — ready to connect via OAuth",
+                        provider
+                    ));
+                }
             }
         }
     }

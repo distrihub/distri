@@ -168,8 +168,17 @@ pub struct Bot {
     pub workspace_id: Uuid,
     pub created_by_user_id: Uuid,
     pub provider: ChannelProvider,
-    /// Bot handle (`@testzippybot` on Telegram, phone number on WhatsApp, etc.).
+    /// Platform handle — Telegram `@username`, WhatsApp `phone_number_id`
+    /// (Meta's opaque internal ID, NOT the user-facing phone number),
+    /// Discord bot client id, etc. Used by webhook/send paths at runtime.
     pub bot_username: Option<String>,
+    /// User-visible phone number for WhatsApp bots (e.g. `+14028760395`).
+    /// Returned by Meta's `phone_numbers` API at create time; persisted so
+    /// the UI can render `wa.me/` deep links and a real number instead of
+    /// the opaque `phone_number_id` in `bot_username`. Empty string for
+    /// non-WhatsApp providers and for legacy rows where it's unknown.
+    #[serde(default)]
+    pub display_phone_number: String,
     /// Bot credential token.
     pub bot_token: Option<String>,
     /// Per-bot HMAC for inbound webhook validation.
@@ -194,6 +203,8 @@ pub struct NewBot {
     pub created_by_user_id: Uuid,
     pub provider: ChannelProvider,
     pub bot_username: Option<String>,
+    /// See [`Bot::display_phone_number`]. Empty for non-WhatsApp providers.
+    pub display_phone_number: String,
     pub bot_token: Option<String>,
     pub webhook_secret: Option<String>,
     pub agent_id: String,
