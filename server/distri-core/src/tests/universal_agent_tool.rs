@@ -79,9 +79,10 @@ fn test_always_available_builtins_list() {
     assert!(ALWAYS_AVAILABLE_BUILTINS.contains(&"distri"));
     assert!(ALWAYS_AVAILABLE_BUILTINS.contains(&"distri_runner"));
     assert!(ALWAYS_AVAILABLE_BUILTINS.contains(&"distri_browser_runner"));
+    assert!(ALWAYS_AVAILABLE_BUILTINS.contains(&"_adhoc_base"));
     assert!(ALWAYS_AVAILABLE_BUILTINS.contains(&"plan"));
     assert!(ALWAYS_AVAILABLE_BUILTINS.contains(&"explore"));
-    assert_eq!(ALWAYS_AVAILABLE_BUILTINS.len(), 5);
+    assert_eq!(ALWAYS_AVAILABLE_BUILTINS.len(), 6);
 }
 
 // ── Integration tests: get_agent_tools wiring ──────────────────────

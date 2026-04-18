@@ -629,6 +629,9 @@ pub(crate) const ALWAYS_AVAILABLE_BUILTINS: &[&str] = &[
     "distri",
     "distri_runner",
     "distri_browser_runner",
+    // Ad-hoc agent base: `call_agent` with `system_prompt` resolves here
+    // and applies overrides at dispatch time. See tools/universal_agent.rs.
+    "_adhoc_base",
     "plan",
     "explore",
 ];
