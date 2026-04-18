@@ -33,7 +33,6 @@ const ALWAYS_SIMULATE: &[&str] = &[
     "start_shell",   // starts a shell session
     "execute_shell", // runs commands
     "inject_connection_env",
-    "transfer_to_agent",
     "create_skill",
     "create_note",
     "update_note",

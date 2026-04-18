@@ -116,46 +116,6 @@ async fn test_call_agent_tool_always_registered() {
     );
 }
 
-#[tokio::test]
-async fn test_transfer_to_agent_registered_with_wildcard_builtins() {
-    let orchestrator = Arc::new(
-        AgentOrchestratorBuilder::default()
-            .with_store_config(test_store_config())
-            .build()
-            .await
-            .unwrap(),
-    );
-
-    // When builtin tools use wildcard, transfer_to_agent should be included
-    let definition = distri_types::StandardDefinition {
-        name: "test_agent".to_string(),
-        sub_agents: vec![],
-        tools: Some(distri_types::ToolsConfig {
-            builtin: vec!["*".to_string()],
-            ..Default::default()
-        }),
-        ..Default::default()
-    };
-
-    let resolved = orchestrator
-        .get_agent_tools(&definition, &[])
-        .await
-        .unwrap();
-
-    let tool_names: Vec<String> = resolved.all_tools.iter().map(|t| t.get_name()).collect();
-    assert!(
-        tool_names.contains(&"transfer_to_agent".to_string()),
-        "transfer_to_agent must be registered when builtin wildcard is used, got: {:?}",
-        tool_names
-    );
-    // call_agent should also be present alongside transfer_to_agent
-    assert!(
-        tool_names.contains(&"call_agent".to_string()),
-        "call_agent must also be present, got: {:?}",
-        tool_names
-    );
-}
-
 // ── is_sandbox propagation ──────────────────────────────────────────
 
 #[tokio::test]

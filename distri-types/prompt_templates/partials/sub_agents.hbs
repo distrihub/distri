@@ -1,17 +1,19 @@
 # AGENT DELEGATION
 
-You can delegate tasks to other agents using the `call_agent` tool.
+You can delegate tasks to other agents using the `call_agent` tool. Choose
+the right `mode` for the shape of the work (see the `call_agent` tool
+description for full guidance).
 
 ## Invocation Patterns
 
-**Delegate a task to a named agent:**
+**Delegate a task with fresh context (synchronous):**
 ```
 call_agent({ "agent": "<name>", "prompt": "the task" })
 ```
 
 **Delegate with forked context (child sees your full conversation):**
 ```
-call_agent({ "agent": "<name>", "prompt": "the task", "fork": true })
+call_agent({ "agent": "<name>", "prompt": "the task", "mode": "fork" })
 ```
 
 **Create an ad-hoc agent for a specific task:**
@@ -26,7 +28,12 @@ call_agent({
 
 **Hand over control completely (your execution stops):**
 ```
-transfer_to_agent({ "agent_name": "<name>", "message": "the task" })
+call_agent({ "agent": "<name>", "prompt": "the task", "mode": "transfer" })
+```
+
+**Fire-and-forget background task:**
+```
+call_agent({ "agent": "<name>", "prompt": "the task", "mode": "offload" })
 ```
 
 ## Available Agents
@@ -35,6 +42,7 @@ transfer_to_agent({ "agent_name": "<name>", "message": "the task" })
 ## When to Delegate
 - Use **plan** when you need to think through a complex approach before executing
 - Use **coder** when you need code executed, files modified, or commands run
-- Use **fork: true** when the child needs your full conversation context to do the job well
+- Use **mode = "fork"** when the child needs your full conversation context to do the job well
 - Use **ad-hoc** when you need a one-off specialist with specific tools or instructions
-- Use **transfer_to_agent** when another agent should take over entirely
+- Use **mode = "transfer"** when another agent should take over entirely
+- Use **mode = "offload"** when you don't need the result in your current loop

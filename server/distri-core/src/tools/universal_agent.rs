@@ -1,4 +1,6 @@
+use distri_types::configuration::DefinitionOverrides;
 use distri_types::{MessageRole, Part, RuntimeMode, Tool, ToolContext};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::sync::Arc;
 
@@ -55,10 +57,28 @@ pub(crate) fn resolve_code_agent(runtime_mode: &RuntimeMode) -> &'static str {
     }
 }
 
+/// How the parent agent wants to invoke the target agent.
+///
+/// See `UniversalAgentTool::get_description` for guidance on picking a mode.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CallMode {
+    /// Synchronous call, fresh context (`new_task`). Parent waits for result.
+    #[default]
+    InProcess,
+    /// Synchronous call with copied history (`fork(NewTask)` + replay). Parent waits.
+    Fork,
+    /// Fire-and-forget. Returns `{task_id, status: "async_launched"}` immediately.
+    Offload,
+    /// Hard handover via `continue_as` (same task, shared history). Parent's
+    /// `final_result` is set from the target's result so the parent loop stops.
+    Transfer,
+}
+
 /// Input struct for the `call_agent` tool.
 #[derive(Debug, serde::Deserialize)]
 pub(crate) struct CallAgentInput {
-    /// Name of the agent to call. If omitted, an ad-hoc agent is created from system_prompt.
+    /// Name of the agent to call. If omitted, an ad-hoc agent is created from `system_prompt`.
     #[serde(default)]
     pub(crate) agent: Option<String>,
     /// The task/prompt to send to the agent.
@@ -66,30 +86,65 @@ pub(crate) struct CallAgentInput {
     /// System prompt for ad-hoc agent creation. When set without `agent`, creates a temporary agent.
     #[serde(default)]
     pub(crate) system_prompt: Option<String>,
-    /// Tool names to give the ad-hoc agent (only used with system_prompt).
+    /// Tool names to give the ad-hoc agent (only used with `system_prompt`).
     #[serde(default)]
     pub(crate) tools: Option<Vec<String>>,
     /// Model override for the ad-hoc agent.
     #[serde(default)]
     pub(crate) model: Option<String>,
-    /// When true, fork the current context (copy history) instead of creating a clean sub-task.
+    /// **Deprecated** — set `mode = "fork"` instead. When true and no explicit `mode`,
+    /// maps to `CallMode::Fork`.
     #[serde(default)]
     pub(crate) fork: bool,
     /// Description for the ad-hoc agent.
     #[serde(default)]
     pub(crate) description: Option<String>,
-    /// When true, launch the agent in the background and return immediately.
-    /// The parent will be notified when the child completes.
+    /// **Deprecated** — set `mode = "offload"` instead. When true and no explicit `mode`,
+    /// maps to `CallMode::Offload`.
     #[serde(default)]
     pub(crate) run_in_background: bool,
-    /// Optional name for the background agent (used by SendMessage for routing).
+    /// Optional name for the background agent (used by `send_message` for routing).
     #[serde(default)]
     pub(crate) name: Option<String>,
+    /// How to invoke the agent. See tool description for semantics.
+    #[serde(default)]
+    pub(crate) mode: CallMode,
+    /// Optional human reason — surfaced in the `AgentHandover` event for
+    /// `Transfer` mode.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) reason: Option<String>,
 }
+
+/// Mode-selection guidance + tool overview shown to the LLM.
+///
+/// Following the claude-code pattern, the prompt tells the model WHEN to use
+/// each mode rather than hiding this knowledge in per-agent system prompts.
+const TOOL_DESCRIPTION: &str = "Call another agent. Choose `mode` based on the shape of the work.\n\
+\n\
+mode = \"in_process\" (default): synchronous call, fresh context. \
+Brief the agent fully — it starts with zero context. Use when you need \
+a result and the sub-agent's intermediate tool output is NOT worth keeping \
+in your context.\n\
+\n\
+mode = \"fork\": synchronous call with inherited conversation history. \
+Use for open-ended research or implementation work requiring more than \
+a couple of edits. The prompt is a *directive* (what to do), not a briefing.\n\
+\n\
+mode = \"offload\": fire-and-forget. Returns {task_id, status: \"async_launched\"} \
+immediately. Use for tasks whose result you don't need in your current \
+reasoning loop. Subscribe to the task_id out-of-band if you want the result later.\n\
+\n\
+mode = \"transfer\": hard handover. Your execution STOPS. The target agent \
+takes over the same task (shared history via continue_as), and its result \
+becomes your final result. Requires a named `agent` (transfer + ad-hoc is rejected).\n\
+\n\
+Remote execution is orthogonal: if the target agent declares a `runtime` \
+constraint the current process can't provide, the orchestrator auto-routes \
+via the background runner. You don't set a remote mode — it's inferred.";
 
 /// Universal agent tool that replaces per-agent `call_<name>` tools with a single
 /// `call_agent` tool. Handles resolution, access control, ad-hoc creation, fork,
-/// and remote execution internally.
+/// transfer, and background offload through a single dispatch path.
 #[derive(Debug)]
 pub struct UniversalAgentTool;
 
@@ -100,7 +155,7 @@ impl Tool for UniversalAgentTool {
     }
 
     fn get_description(&self) -> String {
-        "Call another agent to perform a task. Can target a named agent, or create an ad-hoc agent with a custom system prompt. Supports forking (copying parent history) for continuity.".to_string()
+        TOOL_DESCRIPTION.to_string()
     }
 
     fn get_parameters(&self) -> serde_json::Value {
@@ -130,7 +185,7 @@ impl Tool for UniversalAgentTool {
                 },
                 "fork": {
                     "type": "boolean",
-                    "description": "When true, fork the current context so the child agent sees the parent's message history.",
+                    "description": "Deprecated: prefer `mode = \"fork\"`. When true and no mode is set, maps to Fork.",
                     "default": false
                 },
                 "description": {
@@ -139,12 +194,22 @@ impl Tool for UniversalAgentTool {
                 },
                 "run_in_background": {
                     "type": "boolean",
-                    "description": "When true, launch the agent in the background and return immediately. You will be notified when it completes.",
+                    "description": "Deprecated: prefer `mode = \"offload\"`. When true and no mode is set, maps to Offload.",
                     "default": false
                 },
                 "name": {
                     "type": "string",
                     "description": "Optional name for the background agent (used for inter-agent messaging via send_message)."
+                },
+                "mode": {
+                    "type": "string",
+                    "enum": ["in_process", "fork", "offload", "transfer"],
+                    "default": "in_process",
+                    "description": "How to invoke the agent. See tool description for semantics."
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Optional human reason, surfaced in the AgentHandover event for transfer mode."
                 }
             },
             "required": ["prompt"]
@@ -166,6 +231,21 @@ impl Tool for UniversalAgentTool {
     }
 }
 
+/// Everything `dispatch` needs to invoke the target agent. Built by
+/// `build_spec`, consumed by `dispatch`. Keeps input validation separate
+/// from runtime orchestration.
+struct InvocationSpec {
+    agent_name: String,
+    overrides: Option<DefinitionOverrides>,
+    /// Unregistered child context; ownership moves into `register_task`.
+    child_context: ExecutorContext,
+    message: Message,
+    mode: CallMode,
+    task_id: String,
+    /// Carried into the `AgentHandover` event for Transfer mode.
+    reason: Option<String>,
+}
+
 #[async_trait::async_trait]
 impl ExecutorContextTool for UniversalAgentTool {
     async fn execute_with_executor_context(
@@ -173,311 +253,128 @@ impl ExecutorContextTool for UniversalAgentTool {
         tool_call: ToolCall,
         context: Arc<ExecutorContext>,
     ) -> Result<Vec<Part>, AgentError> {
-        // Parse input
         let input: CallAgentInput = serde_json::from_value(tool_call.input.clone())
             .map_err(|e| AgentError::ToolExecution(format!("Invalid call_agent input: {}", e)))?;
+        let orchestrator = context.get_orchestrator()?.clone();
+        let spec = build_spec(input, &context, &orchestrator).await?;
+        dispatch(orchestrator, &context, spec).await
+    }
+}
 
-        let orchestrator = context.get_orchestrator()?;
+async fn build_spec(
+    input: CallAgentInput,
+    parent_ctx: &ExecutorContext,
+    orchestrator: &crate::agent::AgentOrchestrator,
+) -> Result<InvocationSpec, AgentError> {
+    // ── 1. Resolve mode (deprecated flags have strictly lower precedence than
+    //       an explicit `mode`). ─────────────────────────────────────────────
+    let mode = if input.mode != CallMode::InProcess {
+        input.mode
+    } else if input.fork {
+        tracing::warn!(
+            "call_agent: `fork = true` is deprecated; use `mode = \"fork\"` instead"
+        );
+        CallMode::Fork
+    } else if input.run_in_background {
+        tracing::warn!(
+            "call_agent: `run_in_background = true` is deprecated; use `mode = \"offload\"` instead"
+        );
+        CallMode::Offload
+    } else {
+        input.mode
+    };
 
-        // ── Resolve agent name ────────────────────────────────────────────
-        let agent_name = if let Some(ref name) = input.agent {
-            // `coder` / `code` are runtime-sensitive aliases — route to the
-            // concrete runner for the caller's runtime. Everything else is
-            // used verbatim.
-            if matches!(name.as_str(), "coder" | "code") {
-                resolve_code_agent(&context.runtime_mode).to_string()
-            } else {
-                name.to_string()
-            }
-        } else if input.system_prompt.is_some() {
-            // Ad-hoc mode: create a temporary agent from system_prompt
-            let adhoc_name = format!("_adhoc/{}", uuid::Uuid::new_v4());
-            let system_prompt = input.system_prompt.as_deref().unwrap_or_default();
-
-            let mut definition = distri_types::StandardDefinition {
-                name: adhoc_name.clone(),
-                description: input
-                    .description
-                    .clone()
-                    .unwrap_or_else(|| "Ad-hoc agent".to_string()),
-                instructions: system_prompt.to_string(),
-                ..Default::default()
-            };
-
-            // Set model if specified
-            if let Some(ref model) = input.model {
-                definition.model_settings = Some(distri_types::ModelSettings::new(model.clone()));
-            }
-
-            // Set tools if specified
-            if let Some(ref tool_names) = input.tools {
-                definition.tools = Some(distri_types::ToolsConfig {
-                    builtin: tool_names.clone(),
-                    ..Default::default()
-                });
-            }
-
-            // Register the ad-hoc agent
-            let agent_config = distri_types::configuration::AgentConfig::StandardAgent(definition);
-            orchestrator
-                .stores
-                .agent_store
-                .register(agent_config)
-                .await
-                .map_err(|e| {
-                    AgentError::ToolExecution(format!("Failed to register ad-hoc agent: {}", e))
-                })?;
-
-            adhoc_name
+    // ── 2. Resolve agent_name. ──────────────────────────────────────────────
+    let agent_name = if let Some(ref name) = input.agent {
+        if matches!(name.as_str(), "coder" | "code") {
+            resolve_code_agent(&parent_ctx.runtime_mode).to_string()
         } else {
-            return Err(AgentError::ToolExecution(
-                "call_agent requires either 'agent' name or 'system_prompt' for ad-hoc creation"
-                    .to_string(),
-            ));
-        };
-
-        // ── Access control ────────────────────────────────────────────────
-        // Get the calling agent's sub_agents list
-        let calling_agent_sub_agents = orchestrator
-            .get_agent(&context.agent_id)
-            .await
-            .and_then(|cfg| match cfg {
-                distri_types::configuration::AgentConfig::StandardAgent(def) => {
-                    Some(def.sub_agents)
-                }
-                _ => None,
-            })
-            .unwrap_or_default();
-
-        if !is_agent_accessible(&agent_name, &calling_agent_sub_agents) {
-            return Err(AgentError::ToolExecution(format!(
-                "Agent '{}' is not accessible from '{}'. Add it to sub_agents or use an always-available builtin.",
-                agent_name, context.agent_id
-            )));
+            name.clone()
         }
-
-        // Verify agent exists
-        if orchestrator.get_agent(&agent_name).await.is_none() {
-            return Err(AgentError::ToolExecution(format!(
-                "Agent '{}' not found",
-                agent_name
-            )));
-        }
-
-        // `distri_runner` needs an external CLI client to execute its local
-        // tools (Bash/Read/Write/Edit/Glob/Grep). A sandbox provides that
-        // client by running `distri run --agent distri_runner` inside the
-        // container. Without a sandbox, distri_runner would run in-process
-        // with no tool provider and hang on the first external tool call.
-        if agent_name == "distri_runner" && orchestrator.background_runner.is_none() {
+    } else if input.system_prompt.is_some() {
+        // Transfer requires a named agent — you can't hand over execution to
+        // an anonymous ad-hoc agent (there would be nothing to hand over to
+        // on resume).
+        if mode == CallMode::Transfer {
             return Err(AgentError::ToolExecution(
-                "distri_runner requires a sandbox (no background_runner is configured)"
-                    .to_string(),
+                "mode = 'transfer' requires a named 'agent'; cannot transfer to an ad-hoc system_prompt".to_string(),
             ));
         }
+        "_adhoc_base".to_string()
+    } else {
+        return Err(AgentError::ToolExecution(
+            "call_agent requires either 'agent' name or 'system_prompt' for ad-hoc creation"
+                .to_string(),
+        ));
+    };
 
-        // ── Fire-and-forget path: run_in_background via coordinator + broadcaster ──
-        if input.run_in_background {
-            let coordinator = orchestrator.coordinator();
-            let child_task_id = uuid::Uuid::new_v4().to_string();
-            let child_message = Message::user(input.prompt.clone(), None);
-
-            // Register task with coordinator
-            let cancel_signal = coordinator
-                .register_task(&child_task_id, &context.thread_id, input.name.as_deref())
-                .await
-                .map_err(|e| {
-                    AgentError::ToolExecution(format!("Failed to register background task: {}", e))
-                })?;
-
-            // Take mailbox for inter-agent messaging
-            let mailbox = coordinator.take_mailbox(&child_task_id).await.ok();
-
-            // Create child execution context
-            let child_context = context.new_task(&agent_name).await;
-            let (event_tx, mut event_rx) =
-                tokio::sync::mpsc::channel::<distri_types::AgentEvent>(100);
-            let mut child_ctx = child_context.clone_with_tx(event_tx);
-            child_ctx.task_id = child_task_id.clone();
-            child_ctx.cancellation_signal = Some(cancel_signal);
-            if let Some(mb) = mailbox {
-                child_ctx.mailbox = Some(Arc::new(tokio::sync::Mutex::new(mb)));
-            }
-            child_ctx.parent_task_id = Some(context.task_id.clone());
-            let child_ctx_arc = Arc::new(child_ctx);
-
-            // Spawn event relay: child events → broadcaster
-            let runtime_for_relay = orchestrator.runtime.clone();
-            let task_id_for_relay = child_task_id.clone();
-            tokio::spawn(async move {
-                while let Some(event) = event_rx.recv().await {
-                    let is_terminal = matches!(
-                        &event.event,
-                        distri_types::AgentEventType::RunFinished { .. }
-                            | distri_types::AgentEventType::RunError { .. }
-                    );
-                    let task_id = event.task_id.clone();
-                    let _ = runtime_for_relay
-                        .broadcaster()
-                        .publish(&task_id, event)
-                        .await;
-                    if is_terminal {
-                        let _ = runtime_for_relay
-                            .coordinator()
-                            .complete_task(&task_id_for_relay)
-                            .await;
-                        break;
-                    }
-                }
+    // ── 3. Build overrides (ad-hoc branch only). ────────────────────────────
+    let overrides = if input.system_prompt.is_some() {
+        let mut o = DefinitionOverrides::default()
+            .with_instructions(input.system_prompt.clone().unwrap_or_default());
+        if let Some(ref model) = input.model {
+            o = o.with_model(model.clone());
+        }
+        if let Some(ref tools) = input.tools {
+            o = o.with_tools(distri_types::ToolsConfig {
+                builtin: tools.clone(),
+                ..Default::default()
             });
-
-            // Spawn the actual agent execution in background
-            let orchestrator_clone = orchestrator.clone();
-            let agent_name_clone = agent_name.clone();
-            let user_id = context.user_id.clone();
-            let workspace_id = context
-                .workspace_id
-                .as_ref()
-                .and_then(|s| uuid::Uuid::parse_str(s).ok());
-            tokio::spawn(distri_auth::context::with_user_and_workspace(
-                user_id,
-                workspace_id,
-                async move {
-                    let result = orchestrator_clone
-                        .execute_stream(
-                            &agent_name_clone,
-                            child_message,
-                            child_ctx_arc.clone(),
-                            None,
-                        )
-                        .await;
-                    if let Ok(invoke_result) = result {
-                        if let Some(content) = &invoke_result.content {
-                            let final_msg = distri_types::Message::assistant(content.clone(), None);
-                            child_ctx_arc.save_message(&final_msg).await;
-                        }
-                    }
-                },
-            ));
-
-            // Return immediately — parent continues executing
-            return Ok(vec![Part::Data(json!({
-                "status": "async_launched",
-                "task_id": child_task_id,
-                "agent": agent_name,
-                "message": "Agent launched in background. You will be notified when it completes."
-            }))]);
         }
+        if let Some(ref desc) = input.description {
+            o = o.with_description(desc.clone());
+        }
+        if let Some(ref name) = input.name {
+            o = o.with_name(name.clone());
+        }
+        Some(o)
+    } else {
+        None
+    };
 
-        // ── Check if remote execution is needed ───────────────────────────
-        // `distri_runner` always runs remotely via SandboxLauncher when one
-        // is available. The runtime_mode of the caller doesn't matter: even
-        // when the caller itself is inside a distri-cli stream (runtime=Cli),
-        // `distri_runner` still needs its OWN sandbox/client for tool
-        // execution. Running it in-process without a client would hang on
-        // the first external tool call.
-        let use_remote =
-            orchestrator.background_runner.is_some() && agent_name == "distri_runner";
+    // ── 4. Access control. ──────────────────────────────────────────────────
+    let calling_agent_sub_agents = orchestrator
+        .get_agent(&parent_ctx.agent_id)
+        .await
+        .and_then(|cfg| match cfg {
+            distri_types::configuration::AgentConfig::StandardAgent(def) => Some(def.sub_agents),
+            _ => None,
+        })
+        .unwrap_or_default();
 
-        if use_remote {
-            // ── Remote/DeepAgent path ─────────────────────────────────────
-            let runner = orchestrator.background_runner.as_ref().unwrap();
-            let broadcaster = orchestrator.broadcaster();
-            let sub_task_id = uuid::Uuid::new_v4().to_string();
+    if !is_agent_accessible(&agent_name, &calling_agent_sub_agents) {
+        return Err(AgentError::ToolExecution(format!(
+            "Agent '{}' is not accessible from '{}'. Add it to sub_agents or use an always-available builtin.",
+            agent_name, parent_ctx.agent_id
+        )));
+    }
 
-            tracing::info!(
-                "UniversalAgentTool: remote dispatch {} (task_id={})",
-                agent_name,
-                sub_task_id
-            );
+    // ── 5. Agent existence check (skip for ad-hoc). ─────────────────────────
+    if overrides.is_none() && orchestrator.get_agent(&agent_name).await.is_none() {
+        return Err(AgentError::ToolExecution(format!(
+            "Agent '{}' not found",
+            agent_name
+        )));
+    }
 
-            runner
-                .spawn(
-                    sub_task_id.clone(),
-                    agent_name.clone(),
-                    input.prompt.clone(),
-                    context.user_id.clone(),
-                    context.workspace_id.clone(),
-                    None,
-                    // Pass the parent's thread_id so the sandbox's shell
-                    // session gets recorded on the same thread that server-
-                    // side tools (save_artifact) will see via
-                    // context.thread_id when the sandboxed agent invokes
-                    // them. Without this the session_store write happens
-                    // under a nil thread_id and save_artifact's shell-exec
-                    // fallback can't find the session.
-                    Some(context.thread_id.clone()),
-                )
-                .await
-                .map_err(|e| {
-                    AgentError::ToolExecution(format!("Failed to spawn remote agent: {}", e))
-                })?;
-
-            let mut stream = broadcaster.subscribe(&sub_task_id).await.map_err(|e| {
-                AgentError::ToolExecution(format!(
-                    "Failed to subscribe to remote agent events: {}",
-                    e
-                ))
-            })?;
-
-            let mut final_result: Option<Value> = None;
-
-            use futures_util::StreamExt;
-            while let Some(event) = stream.next().await {
-                context.emit(event.event.clone()).await;
-
-                match &event.event {
-                    distri_types::AgentEventType::RunFinished { .. } => {
-                        if let Ok(Some(task_data)) =
-                            orchestrator.stores.task_store.get_task(&sub_task_id).await
-                        {
-                            let a2a_task: distri_a2a::Task = task_data.into();
-                            if let Some(msg) = a2a_task.status.message {
-                                let text: String = msg
-                                    .parts
-                                    .iter()
-                                    .filter_map(|p| match p {
-                                        distri_a2a::Part::Text(t) => Some(t.text.clone()),
-                                        _ => None,
-                                    })
-                                    .collect::<Vec<_>>()
-                                    .join("\n");
-                                if !text.is_empty() {
-                                    final_result = Some(Value::String(text));
-                                }
-                            }
-                        }
-                        break;
-                    }
-                    distri_types::AgentEventType::RunError { message, .. } => {
-                        final_result =
-                            Some(Value::String(format!("Remote agent error: {}", message)));
-                        break;
-                    }
-                    _ => {}
-                }
-            }
-
-            Ok(vec![Part::Data(final_result.unwrap_or_else(|| {
-                Value::String("Remote agent completed".to_string())
-            }))])
-        } else if input.fork {
-            // ── Fork path: copy parent history into child ─────────────────
-            let forked_context = context
+    // ── 6. Build child_context per mode. ────────────────────────────────────
+    let child_context: ExecutorContext = match mode {
+        CallMode::InProcess | CallMode::Offload => parent_ctx.new_task(&agent_name).await,
+        CallMode::Fork => {
+            let mut child = parent_ctx
                 .fork(ForkOptions {
                     fork_type: ForkType::NewTask,
                     copy_history_limit: None,
                 })
                 .await;
-            let mut forked_context = forked_context;
-            forked_context.agent_id = agent_name.clone();
+            child.agent_id = agent_name.clone();
 
-            // Copy parent's message history to the forked task
-            let parent_history = context
+            // Copy parent's message history into the child task so the fork
+            // can pick up where the parent left off.
+            let parent_history = parent_ctx
                 .get_current_task_message_history()
                 .await
                 .unwrap_or_default();
-
             for msg in &parent_history {
                 let store_msg = distri_types::Message {
                     id: msg.id.clone(),
@@ -491,76 +388,193 @@ impl ExecutorContextTool for UniversalAgentTool {
                 let _ = orchestrator
                     .stores
                     .task_store
-                    .add_message_to_task(&forked_context.task_id, &store_msg)
+                    .add_message_to_task(&child.task_id, &store_msg)
                     .await;
             }
+            child
+        }
+        CallMode::Transfer => parent_ctx.continue_as(&agent_name).await,
+    };
 
-            // Add the fork directive message
-            let fork_message = Message {
-                id: uuid::Uuid::new_v4().to_string(),
-                name: None,
-                parts: vec![Part::Text(format!(
-                    "[Forked from parent agent '{}'. Continue with the following task:]\n\n{}",
-                    context.agent_id, input.prompt
-                ))],
-                role: MessageRole::User,
-                created_at: chrono::Utc::now().timestamp_millis(),
-                agent_id: None,
-                parts_metadata: None,
-            };
-
-            let forked_context_arc = Arc::new(forked_context);
-            let forked_context_clone = forked_context_arc.clone();
-
-            let result = orchestrator
-                .execute_stream(&agent_name, fork_message, forked_context_arc, None)
-                .await;
-
-            match result {
-                Ok(invoke_result) => {
-                    let final_result = forked_context_clone.get_final_result().await;
-                    let response_text = final_result
-                        .or(invoke_result.content.map(Value::String))
-                        .unwrap_or_else(|| {
-                            Value::String("Forked agent completed without response".to_string())
-                        });
-                    Ok(vec![Part::Data(response_text)])
-                }
-                Err(e) => Ok(vec![Part::Data(Value::String(e.to_string()))]),
-            }
-        } else {
-            // ── Standard in-process path ──────────────────────────────────
-            let child_context = context.new_task(&agent_name).await;
-
-            let message = Message {
-                id: uuid::Uuid::new_v4().to_string(),
-                name: None,
-                parts: vec![Part::Text(input.prompt.clone())],
-                role: MessageRole::User,
-                created_at: chrono::Utc::now().timestamp_millis(),
-                agent_id: None,
-                parts_metadata: None,
-            };
-
-            let child_context_arc = Arc::new(child_context);
-            let child_context_clone = child_context_arc.clone();
-
-            let result = orchestrator
-                .execute_stream(&agent_name, message, child_context_arc, None)
-                .await;
-
-            match result {
-                Ok(invoke_result) => {
-                    let final_result = child_context_clone.get_final_result().await;
-                    let response_text = final_result
-                        .or(invoke_result.content.map(Value::String))
-                        .unwrap_or_else(|| {
-                            Value::String("Child agent completed without response".to_string())
-                        });
-                    Ok(vec![Part::Data(response_text)])
-                }
-                Err(e) => Ok(vec![Part::Data(Value::String(e.to_string()))]),
+    // ── 7. Build prompt text + message per mode. ────────────────────────────
+    let prompt_text = match mode {
+        CallMode::Fork => format!(
+            "[Forked from parent agent '{}'. Continue with the following task:]\n\n{}",
+            parent_ctx.agent_id, input.prompt
+        ),
+        CallMode::Transfer => {
+            if input.prompt.is_empty() {
+                let history = parent_ctx
+                    .get_current_task_message_history()
+                    .await
+                    .unwrap_or_default();
+                history
+                    .iter()
+                    .rev()
+                    .find(|m| m.role == distri_types::MessageRole::User)
+                    .and_then(|m| m.as_text().map(|t| t.to_string()))
+                    .unwrap_or_else(|| "Continue the task".to_string())
+            } else {
+                input.prompt.clone()
             }
         }
+        _ => input.prompt.clone(),
+    };
+
+    let message = Message {
+        id: uuid::Uuid::new_v4().to_string(),
+        name: None,
+        parts: vec![Part::Text(prompt_text)],
+        role: MessageRole::User,
+        created_at: chrono::Utc::now().timestamp_millis(),
+        agent_id: None,
+        parts_metadata: None,
+    };
+
+    // ── 8. Return. ──────────────────────────────────────────────────────────
+    let task_id = child_context.task_id.clone();
+    Ok(InvocationSpec {
+        agent_name,
+        overrides,
+        child_context,
+        message,
+        mode,
+        task_id,
+        reason: input.reason.clone(),
+    })
+}
+
+async fn dispatch(
+    orchestrator: Arc<crate::agent::AgentOrchestrator>,
+    parent_ctx: &ExecutorContext,
+    spec: InvocationSpec,
+) -> Result<Vec<Part>, AgentError> {
+    // ── Transfer: emit the handover event BEFORE launching the target. ──────
+    // Mirrors the old TransferToAgentTool behavior so UIs show the handover
+    // at the right point in the event timeline.
+    if spec.mode == CallMode::Transfer {
+        parent_ctx
+            .emit(crate::agent::types::AgentEventType::AgentHandover {
+                from_agent: parent_ctx.agent_id.clone(),
+                to_agent: spec.agent_name.clone(),
+                reason: spec.reason.clone(),
+            })
+            .await;
+        tracing::info!(
+            "Agent handover: {} → {} (reason: {:?})",
+            parent_ctx.agent_id,
+            spec.agent_name,
+            spec.reason
+        );
+    }
+
+    // ── Register task + spawn event relay (exactly once per dispatch). ──────
+    // register_task wires event_tx + cancellation_signal + mailbox into the
+    // child context. spawn_task_relay handles terminal-event detection +
+    // coordinator.complete_task + broadcaster.publish. The tool itself never
+    // talks to the coordinator or broadcaster directly beyond read-only
+    // subscription below.
+    let thread_id = spec.child_context.thread_id.clone();
+    let (child_ctx_arc, event_rx) = orchestrator
+        .register_task(&spec.task_id, &thread_id, spec.child_context)
+        .await
+        .map_err(|e| AgentError::ToolExecution(format!("Failed to register task: {}", e)))?;
+    orchestrator.spawn_task_relay(spec.task_id.clone(), event_rx);
+
+    // ── Spawn the execution (consults runtime constraints; routes to
+    //    RemoteAgent/BackgroundRunner automatically when needed). ────────────
+    let user_id = parent_ctx.user_id.clone();
+    let workspace_id = parent_ctx
+        .workspace_id
+        .as_ref()
+        .and_then(|s| uuid::Uuid::parse_str(s).ok());
+    crate::a2a::stream::spawn_background_execution(
+        orchestrator.clone(),
+        spec.agent_name.clone(),
+        spec.message,
+        child_ctx_arc.clone(),
+        spec.overrides,
+        spec.task_id.clone(),
+        user_id,
+        workspace_id,
+    );
+
+    // ── Mode-specific return. ───────────────────────────────────────────────
+    match spec.mode {
+        CallMode::Offload => Ok(vec![Part::Data(json!({
+            "status": "async_launched",
+            "task_id": spec.task_id,
+            "agent": spec.agent_name,
+            "message": "Agent launched in background. You will be notified when it completes.",
+        }))]),
+        CallMode::InProcess | CallMode::Fork | CallMode::Transfer => {
+            // Drain the broadcaster, relaying events to the parent so the
+            // caller sees progress. Break on the first terminal event.
+            let mut stream = orchestrator
+                .broadcaster()
+                .subscribe(&spec.task_id)
+                .await
+                .map_err(|e| {
+                    AgentError::ToolExecution(format!("Failed to subscribe: {}", e))
+                })?;
+
+            use futures_util::StreamExt;
+            while let Some(event) = stream.next().await {
+                parent_ctx.emit(event.event.clone()).await;
+                if matches!(
+                    &event.event,
+                    crate::agent::types::AgentEventType::RunFinished { .. }
+                        | crate::agent::types::AgentEventType::RunError { .. }
+                ) {
+                    break;
+                }
+            }
+
+            // Prefer the child's set_final_result (set by the `final` tool or
+            // a reflection tool). Fall back to the last assistant message
+            // stored on the task — mirrors the old in-process/fork branches.
+            let final_value = match child_ctx_arc.get_final_result().await {
+                Some(v) => v,
+                None => match orchestrator.stores.task_store.get_task(&spec.task_id).await {
+                    Ok(Some(task_data)) => {
+                        let a2a_task: distri_a2a::Task = task_data.into();
+                        if let Some(msg) = a2a_task.status.message {
+                            let text: String = msg
+                                .parts
+                                .iter()
+                                .filter_map(|p| match p {
+                                    distri_a2a::Part::Text(t) => Some(t.text.clone()),
+                                    _ => None,
+                                })
+                                .collect::<Vec<_>>()
+                                .join("\n");
+                            if !text.is_empty() {
+                                Value::String(text)
+                            } else {
+                                Value::String(completion_fallback_message(spec.mode))
+                            }
+                        } else {
+                            Value::String(completion_fallback_message(spec.mode))
+                        }
+                    }
+                    _ => Value::String("Agent completed without response".to_string()),
+                },
+            };
+
+            // Transfer: set parent's final_result so the parent loop stops.
+            if spec.mode == CallMode::Transfer {
+                parent_ctx.set_final_result(Some(final_value.clone())).await;
+            }
+
+            Ok(vec![Part::Data(final_value)])
+        }
+    }
+}
+
+fn completion_fallback_message(mode: CallMode) -> String {
+    match mode {
+        CallMode::Fork => "Forked agent completed without response".to_string(),
+        CallMode::Transfer => "Target agent completed without response".to_string(),
+        _ => "Child agent completed without response".to_string(),
     }
 }

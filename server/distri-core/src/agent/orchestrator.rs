@@ -482,8 +482,6 @@ impl AgentOrchestrator {
             tools.push(Arc::new(crate::tools::UniversalAgentTool));
         }
 
-        // Always keep transfer_to_agent (access control checked at execution time)
-
         let is_browser_agent =
             definition.name == "browser_agent" || definition.name.ends_with("/browser_agent");
         if definition.should_use_browser() && !is_browser_agent {
@@ -768,11 +766,6 @@ impl AgentOrchestrator {
                         };
                         sub_agent_lines.push(format!("- **{}** — {}", name, desc));
                     }
-
-                    // Always mention transfer_to_agent availability
-                    sub_agent_lines.push(
-                        "\n*Use `transfer_to_agent` to hand over control completely (your execution stops, target agent takes over with your history).*".to_string()
-                    );
 
                     context
                         .merge_hook_prompt_state(crate::agent::context::HookPromptState {

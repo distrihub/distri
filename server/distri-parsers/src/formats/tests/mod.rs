@@ -92,7 +92,7 @@ impl TestData {
         vec![
             "final".to_string(),
             "search".to_string(),
-            "transfer_to_agent".to_string(),
+            "call_agent".to_string(),
             "distri_execute_code".to_string(),
             "browsr_scrape".to_string(),
             "browsr_browser".to_string(),
