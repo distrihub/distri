@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::agent::context::{ForkOptions, ForkType};
 use crate::agent::ExecutorContext;
-use crate::tools::builtin::{is_agent_accessible, resolve_code_agent, ALWAYS_AVAILABLE_BUILTINS};
+use crate::tools::universal_agent::{is_agent_accessible, resolve_code_agent, ALWAYS_AVAILABLE_BUILTINS};
 use crate::AgentOrchestratorBuilder;
 use distri_types::configuration::{DbConnectionConfig, MetadataStoreConfig, StoreConfig};
 use distri_types::{RuntimeMode, Tool};

@@ -283,7 +283,7 @@ async fn prepare_execution(
 
 /// Spawn the agent execution in the background, publishing events to the worker pool.
 /// This is the core of the background-first execution model.
-fn spawn_background_execution(
+pub(crate) fn spawn_background_execution(
     executor: Arc<AgentOrchestrator>,
     agent_id: String,
     message: crate::types::Message,

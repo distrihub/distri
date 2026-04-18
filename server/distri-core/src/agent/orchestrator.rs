@@ -726,7 +726,7 @@ impl AgentOrchestrator {
                     let mut sub_agent_lines = Vec::new();
 
                     // Always-available system agents
-                    for builtin_name in crate::tools::builtin::ALWAYS_AVAILABLE_BUILTINS {
+                    for builtin_name in crate::tools::universal_agent::ALWAYS_AVAILABLE_BUILTINS {
                         if let Some(agent_cfg) = self.get_agent(builtin_name).await {
                             let desc = match agent_cfg {
                                 distri_types::configuration::AgentConfig::StandardAgent(def) => {
