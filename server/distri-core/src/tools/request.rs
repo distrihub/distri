@@ -9,9 +9,9 @@ use std::collections::HashMap;
 
 use distri_types::http_request::{HttpMethod, HttpRequestInput, HttpRequestResponse};
 
+use crate::connections::{ConnectionResolver, DefaultResolver, ResolveCtx};
 use crate::tools::resolve::{
-    extract_vars, extract_vars_from_value, resolve_all, resolve_connection_token,
-    substitute_string, ResolveContext,
+    extract_vars, extract_vars_from_value, resolve_all, substitute_string, ResolveContext,
 };
 
 /// Useful response headers to include (skip noise like cache-control, x-powered-by).
@@ -92,17 +92,25 @@ pub async fn execute_http_request(
         }
     }
 
-    // 6. If x-connection-id was present, resolve and inject Bearer token
+    // 6. If x-connection-id was present, resolve via unified resolver and
+    // inject the resulting HTTP headers (Bearer for OAuth, templated header
+    // for Custom with auth_header_template).
     if let Some(ref conn_id) = connection_id {
         let stores = stores
             .ok_or_else(|| anyhow::anyhow!("stores not available for connection resolution"))?;
-        let (_provider, access_token) = resolve_connection_token(conn_id, stores)
+        let resolve_ctx = ResolveCtx::new(stores);
+        let resolved = DefaultResolver
+            .resolve(conn_id, &resolve_ctx)
             .await
             .map_err(|e| anyhow::anyhow!(e))?;
-        header_map.insert(
-            reqwest::header::AUTHORIZATION,
-            format!("Bearer {}", access_token).parse().unwrap(),
-        );
+        for (k, v) in resolved.http_headers {
+            if let (Ok(name), Ok(hval)) = (
+                reqwest::header::HeaderName::from_bytes(k.to_lowercase().as_bytes()),
+                reqwest::header::HeaderValue::from_str(&v),
+            ) {
+                header_map.insert(name, hval);
+            }
+        }
     }
 
     // 7. Build and send request

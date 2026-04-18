@@ -1,6 +1,7 @@
 pub mod a2a;
 pub mod agent;
 pub mod broadcast;
+pub mod connections;
 pub mod runner;
 pub mod worker;
 

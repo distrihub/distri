@@ -44,55 +44,33 @@ pub async fn resolve_all(
 }
 
 /// Resolve an OAuth token for a connection directly from stores.
-/// Returns `(connection_name, access_token)`.
+/// Returns `(provider_name, access_token)`.
+///
+/// Thin wrapper over the unified [`crate::connections::DefaultResolver`] —
+/// kept for backwards compatibility with direct callers. New code should use
+/// the resolver directly so it also handles `Custom` and `DistriNative`.
 pub async fn resolve_connection_token(
     connection_id: &str,
     stores: &distri_types::stores::InitializedStores,
 ) -> Result<(String, String), String> {
-    let conn_store = stores
-        .connection_store
-        .as_ref()
-        .ok_or_else(|| "connection store not configured".to_string())?;
-    let token_store = stores
-        .connection_token_store
-        .as_ref()
-        .ok_or_else(|| "connection token store not configured".to_string())?;
+    use crate::connections::{ConnectionResolver, DefaultResolver, ResolveCtx};
 
-    // Verify connection exists
-    let connection = conn_store
-        .get_by_id(connection_id)
-        .await
-        .map_err(|e| format!("failed to get connection: {e}"))?
-        .ok_or_else(|| format!("connection '{}' not found", connection_id))?;
+    let ctx = ResolveCtx::new(stores);
+    let resolved = DefaultResolver.resolve(connection_id, &ctx).await?;
 
-    // Get stored token
-    let token = token_store
-        .get_token(connection_id)
-        .await
-        .map_err(|e| format!("failed to get token: {e}"))?
+    let access_token = resolved
+        .http_headers
+        .get("Authorization")
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .map(|s| s.to_string())
         .ok_or_else(|| {
             format!(
-                "no token for connection '{}'. Connect it first.",
-                connection.name
+                "connection '{}' does not yield a Bearer token (non-OAuth auth_type?)",
+                resolved.name
             )
         })?;
 
-    // Check expiry — try refresh if expired
-    if token.is_expired() {
-        match token_store.refresh_token(connection_id, &connection).await {
-            Ok(Some(refreshed)) => {
-                return Ok((connection.name, refreshed.access_token));
-            }
-            Ok(None) | Err(_) => {
-                return Err(format!(
-                    "OAuth token expired for '{}'. Please reconnect your {} account.",
-                    connection.name, connection.name
-                ));
-            }
-        }
-    }
-
-    Ok((connection.name, token.access_token))
+    Ok((resolved.provider, access_token))
 }
 
 #[cfg(test)]
