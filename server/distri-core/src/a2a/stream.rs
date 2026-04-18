@@ -11,7 +11,7 @@ use distri_auth::context::{with_user_and_workspace, with_user_id};
 // Note: with_user_and_workspace IS needed for stream! macro and spawned tasks
 // because they don't inherit task-local storage from middleware
 use anyhow::anyhow;
-use distri_a2a::{JsonRpcError, JsonRpcResponse, MessageSendParams};
+use distri_a2a::{JsonRpcError, MessageSendParams};
 use distri_types::configuration::{AgentConfig, DefinitionOverrides};
 
 use futures_util::future::poll_fn;
@@ -166,20 +166,10 @@ pub async fn handle_resubscribe_sse(
         let event_stream = match executor.broadcaster().subscribe(&task_id).await {
             Ok(s) => s,
             Err(e) => {
-                let error = distri_a2a::JsonRpcResponse {
-                    jsonrpc: "2.0".to_string(),
-                    result: None,
-                    error: Some(distri_a2a::JsonRpcError {
-                        code: -32603,
-                        message: format!("Failed to subscribe: {}", e),
-                        data: None,
-                    }),
-                    id: req_id.clone(),
-                };
-                yield Ok::<_, std::convert::Infallible>(SseMessage {
-                    event: None,
-                    data: serde_json::to_string(&error).unwrap_or_default(),
-                });
+                yield Ok::<_, std::convert::Infallible>(SseMessage::error_frame(
+                    req_id.clone(),
+                    JsonRpcError::internal(format!("Failed to subscribe: {}", e)),
+                ));
                 return;
             }
         };
@@ -187,16 +177,10 @@ pub async fn handle_resubscribe_sse(
         futures_util::pin_mut!(event_stream);
         while let Some(event) = futures_util::StreamExt::next(&mut event_stream).await {
             let msg = map_agent_event(&event);
-            let response = distri_a2a::JsonRpcResponse {
-                jsonrpc: "2.0".to_string(),
-                result: Some(serde_json::to_value(&msg).unwrap_or_default()),
-                error: None,
-                id: req_id.clone(),
-            };
-            yield Ok::<_, std::convert::Infallible>(SseMessage {
-                event: None,
-                data: serde_json::to_string(&response).unwrap_or_default(),
-            });
+            yield Ok::<_, std::convert::Infallible>(SseMessage::success_frame(
+                req_id.clone(),
+                serde_json::to_value(&msg).unwrap_or_default(),
+            ));
         }
     }
 }
@@ -382,40 +366,20 @@ pub async fn handle_message_send_streaming_sse(
         let params: MessageSendParams = match serde_json::from_value(params) {
             Ok(p) => p,
             Err(e) => {
-                let error = JsonRpcResponse {
-                    jsonrpc: "2.0".to_string(),
-                    result: None,
-                    error: Some(JsonRpcError {
-                        code: -32602,
-                        message: e.to_string(),
-                        data: None,
-                    }),
-                    id: Some(id_field_clone.clone().into()),
-                };
-                yield Ok::<_, std::convert::Infallible>(SseMessage {
-                    event: None,
-                    data: serde_json::to_string(&error).unwrap(),
-                });
+                yield Ok::<_, std::convert::Infallible>(SseMessage::error_frame(
+                    Some(id_field_clone.clone().into()),
+                    JsonRpcError::invalid_params(e.to_string()),
+                ));
                 return;
             }
         };
 
         // Check the pre-computed secret validation result
         if let Err(e) = secret_validation {
-            let error = JsonRpcResponse {
-                jsonrpc: "2.0".to_string(),
-                result: None,
-                error: Some(JsonRpcError {
-                    code: -32603,
-                    message: e.to_string(),
-                    data: None,
-                }),
-                id: Some(id_field_clone.clone().into()),
-            };
-            yield Ok::<_, std::convert::Infallible>(SseMessage {
-                event: None,
-                data: serde_json::to_string(&error).unwrap(),
-            });
+            yield Ok::<_, std::convert::Infallible>(SseMessage::error_frame(
+                Some(id_field_clone.clone().into()),
+                JsonRpcError::internal(e.to_string()),
+            ));
             return;
         }
 
@@ -434,20 +398,10 @@ pub async fn handle_message_send_streaming_sse(
         {
             Ok(t) => t,
             Err(e) => {
-                let error = JsonRpcResponse {
-                    jsonrpc: "2.0".to_string(),
-                    result: None,
-                    error: Some(JsonRpcError {
-                        code: -32603,
-                        message: e.to_string(),
-                        data: None,
-                    }),
-                    id: Some(id_field_clone.clone().into()),
-                };
-                yield Ok::<_, std::convert::Infallible>(SseMessage {
-                    event: None,
-                    data: serde_json::to_string(&error).unwrap(),
-                });
+                yield Ok::<_, std::convert::Infallible>(SseMessage::error_frame(
+                    Some(id_field_clone.clone().into()),
+                    JsonRpcError::internal(e.to_string()),
+                ));
                 return;
             }
         };
@@ -458,20 +412,10 @@ pub async fn handle_message_send_streaming_sse(
         ).await {
             Ok(v) => v,
             Err(e) => {
-                let error = JsonRpcResponse {
-                    jsonrpc: "2.0".to_string(),
-                    result: None,
-                    error: Some(JsonRpcError {
-                        code: -32603,
-                        message: e.to_string(),
-                        data: None,
-                    }),
-                    id: Some(id_field_clone.clone().into()),
-                };
-                yield Ok::<_, std::convert::Infallible>(SseMessage {
-                    event: None,
-                    data: serde_json::to_string(&error).unwrap(),
-                });
+                yield Ok::<_, std::convert::Infallible>(SseMessage::error_frame(
+                    Some(id_field_clone.clone().into()),
+                    JsonRpcError::internal(e.to_string()),
+                ));
                 return;
             }
         };
@@ -488,20 +432,10 @@ pub async fn handle_message_send_streaming_sse(
         {
             Ok(v) => v,
             Err(e) => {
-                let error = JsonRpcResponse {
-                    jsonrpc: "2.0".to_string(),
-                    result: None,
-                    error: Some(JsonRpcError {
-                        code: -32603,
-                        message: format!("Failed to register task: {}", e),
-                        data: None,
-                    }),
-                    id: req_id.clone(),
-                };
-                yield Ok::<_, std::convert::Infallible>(SseMessage {
-                    event: None,
-                    data: serde_json::to_string(&error).unwrap(),
-                });
+                yield Ok::<_, std::convert::Infallible>(SseMessage::error_frame(
+                    req_id.clone(),
+                    JsonRpcError::internal(format!("Failed to register task: {}", e)),
+                ));
                 return;
             }
         };
@@ -535,16 +469,10 @@ pub async fn handle_message_send_streaming_sse(
                         AgentEventType::RunFinished { .. } | AgentEventType::RunError { .. }
                     );
                     let msg = map_agent_event(&event);
-                    let message = JsonRpcResponse {
-                        jsonrpc: "2.0".to_string(),
-                        result: Some(serde_json::to_value(msg).unwrap_or_default()),
-                        error: None,
-                        id: req_id.clone(),
-                    };
-                    yield Ok::<_, std::convert::Infallible>(SseMessage {
-                        event: None,
-                        data: serde_json::to_string(&message).unwrap_or_default(),
-                    });
+                    yield Ok::<_, std::convert::Infallible>(SseMessage::success_frame(
+                        req_id.clone(),
+                        serde_json::to_value(msg).unwrap_or_default(),
+                    ));
                     if is_terminal {
                         saw_terminal = true;
                         break;
@@ -569,35 +497,19 @@ pub async fn handle_message_send_streaming_sse(
                                 ..Default::default()
                             };
                             let msg = map_final_result(&result, executor_context_for_final);
-                            let message = JsonRpcResponse {
-                                jsonrpc: "2.0".to_string(),
-                                result: Some(serde_json::to_value(msg).unwrap_or_default()),
-                                error: None,
-                                id: req_id.clone(),
-                            };
-                            yield Ok::<_, std::convert::Infallible>(SseMessage {
-                                event: None,
-                                data: serde_json::to_string(&message).unwrap_or_default(),
-                            });
+                            yield Ok::<_, std::convert::Infallible>(SseMessage::success_frame(
+                                req_id.clone(),
+                                serde_json::to_value(msg).unwrap_or_default(),
+                            ));
                         }
                     }
                 }
             }
             Err(e) => {
-                let error = JsonRpcResponse {
-                    jsonrpc: "2.0".to_string(),
-                    result: None,
-                    error: Some(JsonRpcError {
-                        code: -32603,
-                        message: format!("Failed to subscribe to task events: {}", e),
-                        data: None,
-                    }),
-                    id: req_id.clone(),
-                };
-                yield Ok::<_, std::convert::Infallible>(SseMessage {
-                    event: None,
-                    data: serde_json::to_string(&error).unwrap(),
-                });
+                yield Ok::<_, std::convert::Infallible>(SseMessage::error_frame(
+                    req_id.clone(),
+                    JsonRpcError::internal(format!("Failed to subscribe to task events: {}", e)),
+                ));
             }
         }
 

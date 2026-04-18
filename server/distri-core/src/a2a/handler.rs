@@ -297,15 +297,10 @@ impl A2AHandler {
                 let params: TaskIdParams = match serde_json::from_value(req.params) {
                     Ok(p) => p,
                     Err(e) => {
-                        return Either::Right(JsonRpcResponse {
-                            jsonrpc: "2.0".to_string(),
-                            result: None,
-                            error: Some(map_agent_error(AgentError::Validation(format!(
-                                "Invalid params: {}",
-                                e
-                            )))),
-                            id: req_id.clone(),
-                        });
+                        return Either::Right(JsonRpcResponse::error(
+                            req_id.clone(),
+                            JsonRpcError::invalid_params(format!("Invalid params: {}", e)),
+                        ));
                     }
                 };
                 let res = crate::a2a::stream::handle_resubscribe_sse(
@@ -329,18 +324,12 @@ impl A2AHandler {
 
         match result {
             Either::Left(res) => Either::Left(res),
-            Either::Right(Ok(res)) => Either::Right(JsonRpcResponse {
-                jsonrpc: "2.0".to_string(),
-                result: Some(res),
-                error: None,
-                id: req_id.clone(),
-            }),
-            Either::Right(Err(err)) => Either::Right(JsonRpcResponse {
-                jsonrpc: "2.0".to_string(),
-                result: None,
-                error: Some(map_agent_error(err)),
-                id: req_id.clone(),
-            }),
+            Either::Right(Ok(res)) => {
+                Either::Right(JsonRpcResponse::success(req_id.clone(), res))
+            }
+            Either::Right(Err(err)) => {
+                Either::Right(JsonRpcResponse::error(req_id.clone(), map_agent_error(err)))
+            }
         }
     }
 
@@ -448,11 +437,7 @@ impl A2AHandler {
 }
 
 pub fn map_agent_error(e: AgentError) -> JsonRpcError {
-    JsonRpcError {
-        code: -32603,
-        message: e.to_string(),
-        data: None,
-    }
+    JsonRpcError::internal(e.to_string())
 }
 
 pub fn validate_message(message: &crate::types::Message) -> Result<(), AgentError> {

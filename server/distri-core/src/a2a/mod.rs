@@ -45,6 +45,46 @@ impl SseMessage {
             data: serde_json::to_string(&self).unwrap(),
         }
     }
+
+    /// Serialize a JSON-RPC response as an SSE frame with no `event:` field.
+    pub fn from_jsonrpc(resp: &distri_a2a::JsonRpcResponse) -> Self {
+        Self {
+            event: None,
+            data: serde_json::to_string(resp).unwrap_or_default(),
+        }
+    }
+
+    /// Build an SSE frame that wraps a JSON-RPC success response.
+    pub fn success_frame(id: Option<serde_json::Value>, result: serde_json::Value) -> Self {
+        Self::from_jsonrpc(&distri_a2a::JsonRpcResponse::success(id, result))
+    }
+
+    /// Build an SSE frame that wraps a JSON-RPC error response.
+    pub fn error_frame(id: Option<serde_json::Value>, error: distri_a2a::JsonRpcError) -> Self {
+        Self::from_jsonrpc(&distri_a2a::JsonRpcResponse::error(id, error))
+    }
+}
+
+/// Produce a single-frame SSE stream carrying a JSON-RPC error. Useful as an
+/// early-return shortcut from routes that must hand an SSE stream back to the
+/// framework even when preparation failed.
+pub fn single_error_frame_stream(
+    id: Option<serde_json::Value>,
+    error: distri_a2a::JsonRpcError,
+) -> impl futures_util::stream::Stream<Item = Result<SseMessage, std::convert::Infallible>> + Send {
+    futures_util::stream::once(async move { Ok(SseMessage::error_frame(id, error)) })
+}
+
+/// Map an [`AgentError`] onto the JSON-RPC error code space used by the A2A
+/// endpoints. Validation errors are surfaced as `-32602 Invalid params`;
+/// `NotFound` gets a dedicated application code (`-32004`). Everything else
+/// falls through to `-32603 Internal error`.
+pub fn agent_error_to_jsonrpc(e: AgentError) -> distri_a2a::JsonRpcError {
+    match e {
+        AgentError::Validation(m) => distri_a2a::JsonRpcError::invalid_params(m),
+        AgentError::NotFound(m) => distri_a2a::JsonRpcError::new(-32004, m),
+        other => distri_a2a::JsonRpcError::internal(other.to_string()),
+    }
 }
 
 pub fn to_a2a_message(message: &distri_types::Message, task: &distri_types::Task) -> Message {
@@ -111,10 +151,6 @@ pub enum A2AError {
 
 impl From<A2AError> for JsonRpcError {
     fn from(error: A2AError) -> Self {
-        JsonRpcError {
-            code: -32603,
-            message: error.to_string(),
-            data: None,
-        }
+        JsonRpcError::internal(error.to_string())
     }
 }
