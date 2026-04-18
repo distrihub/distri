@@ -1,16 +1,46 @@
 mod handler;
+pub mod service;
 pub mod stream;
 use distri_a2a::{EventKind, JsonRpcError, Message, Part, Role, TaskStatus, TaskStatusUpdateEvent};
 use distri_types::{a2a_converters::MessageMetadata, AgentError};
 pub use handler::A2AHandler;
+pub use service::{A2AService, BoxedSseStream, ResubscribeSession, ServiceRequest, StreamingSession};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 pub mod mapper;
 pub mod messages;
 
-fn unimplemented_error(method: &str) -> AgentError {
-    AgentError::NotImplemented(format!("Method not implemented: {}", method))
+/// Validate that a `Message` is well-formed before dispatching to an agent.
+///
+/// Shared by `A2AService::send_message`, `A2AService::prepare_streaming_session`
+/// (via `init_thread_get_message`), and the legacy `A2AHandler` adapter.
+pub fn validate_message(message: &crate::types::Message) -> Result<(), AgentError> {
+    if message.parts.is_empty() {
+        return Err(AgentError::Validation(
+            "Message must have at least one part".to_string(),
+        ));
+    }
+    for part in message.parts.iter() {
+        match &part {
+            crate::types::Part::ToolResult(tool_result) => match &tool_result.result() {
+                serde_json::Value::Null => {
+                    return Err(AgentError::Validation(
+                        "Tool result must have a result".to_string(),
+                    ));
+                }
+
+                _ => {
+                    continue;
+                }
+            },
+            _ => {
+                continue;
+            }
+        }
+    }
+    Ok(())
 }
+
 pub fn extract_text_from_message(message: &Message) -> Option<String> {
     let text = message
         .parts
