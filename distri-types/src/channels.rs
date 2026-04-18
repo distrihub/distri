@@ -19,6 +19,7 @@
 
 use std::fmt;
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -219,6 +220,10 @@ pub struct Channel {
     pub verified: bool,
     /// The `channel_identities.id` of the user who first opened this channel.
     pub created_by_identity_id: Option<Uuid>,
+    #[serde(default)]
+    pub created_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub updated_at: Option<DateTime<Utc>>,
 }
 
 /// Payload for creating a new channel row.
