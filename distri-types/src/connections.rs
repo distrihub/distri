@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -233,5 +235,25 @@ fn default_token_type() -> String {
 impl ConnectionToken {
     pub fn is_expired(&self) -> bool {
         self.expires_at.map(|exp| exp < Utc::now()).unwrap_or(false)
+    }
+}
+
+/// Describes an HTTP request that the gateway should make to verify a user's
+/// identity against an external service. Stored in `connection.config` under
+/// the key `verify_request`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct VerifyRequest {
+    pub url: String,
+    pub method: String,
+    #[serde(default)]
+    pub headers: HashMap<String, String>,
+}
+
+impl Connection {
+    /// Returns the `verify_request` object from `config`, if present.
+    pub fn verify_request(&self) -> Option<VerifyRequest> {
+        self.config
+            .get("verify_request")
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
     }
 }

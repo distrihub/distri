@@ -6,14 +6,16 @@
 //!
 //! - A [`Bot`] is a configured messaging-platform bot (Telegram bot token,
 //!   WhatsApp business number, Discord app). One row per bot. Holds workspace,
-//!   agent, auth scope, connection binding, credentials.
+//!   agent, trigger mode, credentials.
 //! - A [`Channel`] is a single conversation: a Telegram DM or group, a
 //!   WhatsApp chat, a Discord channel. One row per `(bot_id, chat_id)`. Holds
-//!   thread state only — everything else comes from the parent [`Bot`].
-//! - [`AuthScope`] is the 3-variant gate: Public, Workspace, User.
+//!   thread state and verification status.
+//! - [`TriggerMode`] controls whether the bot responds to all messages or only
+//!   those that mention it.
+//! - [`PlatformAuthScope`] distinguishes platforms with workspace-level auth
+//!   (Slack, Discord) from open platforms (Telegram, WhatsApp).
 //! - [`AuthenticatedChannelUser`] is the type-level proof that the auth gate
-//!   was crossed for a particular `(Channel, PlatformUser)` pair. Every
-//!   downstream function that dispatches to an agent must take one.
+//!   was crossed for a particular `(Channel, PlatformUser)` pair.
 
 use std::fmt;
 
@@ -92,39 +94,67 @@ impl std::str::FromStr for ChatType {
     }
 }
 
-// ── Auth scope (3-variant, no coarse shim) ────────────────────────────────
+// ── Trigger mode ──────────────────────────────────────────────────────────
 
-/// Who is allowed to actually use a bot's channels.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
-#[serde(rename_all = "snake_case")]
-pub enum AuthScope {
-    /// Anyone. Global identity is inline-created on first contact.
-    Public,
-    /// Platform members of the bot's workspace.
-    Workspace,
-    /// External users configured per-connection. First contact returns a
-    /// configure URL that stores their values as user-scope secrets.
-    User,
+/// Whether the bot responds to all messages in a chat or only those that
+/// mention it by username. Relevant for group chats.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TriggerMode {
+    All,
+    OnMention,
 }
 
-impl fmt::Display for AuthScope {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::Public => "public",
-            Self::Workspace => "workspace",
-            Self::User => "user",
-        })
+impl Default for TriggerMode {
+    fn default() -> Self {
+        TriggerMode::All
     }
 }
 
-impl std::str::FromStr for AuthScope {
+impl TriggerMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            TriggerMode::All => "all",
+            TriggerMode::OnMention => "on_mention",
+        }
+    }
+}
+
+impl fmt::Display for TriggerMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl std::str::FromStr for TriggerMode {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "public" => Ok(Self::Public),
-            "workspace" => Ok(Self::Workspace),
-            "user" => Ok(Self::User),
-            other => Err(format!("unknown auth scope: {other}")),
+            "all" => Ok(Self::All),
+            "on_mention" => Ok(Self::OnMention),
+            other => Err(format!("unknown trigger mode: {other}")),
+        }
+    }
+}
+
+// ── Platform auth scope ───────────────────────────────────────────────────
+
+/// Whether a platform has built-in workspace-level authentication
+/// (Slack OAuth installs, Discord guild memberships) or is open-access.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlatformAuthScope {
+    /// Anyone with the bot's handle can message it (Telegram, WhatsApp).
+    Open,
+    /// The bot is installed into a workspace; only members can interact
+    /// (Slack, Discord).
+    WorkspaceScoped,
+}
+
+impl ChannelProvider {
+    pub fn platform_auth_scope(&self) -> PlatformAuthScope {
+        match self {
+            ChannelProvider::Telegram | ChannelProvider::Whatsapp => PlatformAuthScope::Open,
+            ChannelProvider::Slack | ChannelProvider::Discord => PlatformAuthScope::WorkspaceScoped,
         }
     }
 }
@@ -136,19 +166,17 @@ impl std::str::FromStr for AuthScope {
 pub struct Bot {
     pub id: Uuid,
     pub workspace_id: Uuid,
+    pub created_by_user_id: Uuid,
     pub provider: ChannelProvider,
     /// Bot handle (`@testzippybot` on Telegram, phone number on WhatsApp, etc.).
-    /// `None` for the platform-shared official bot which uses env credentials.
     pub bot_username: Option<String>,
-    /// Bot credential. `None` for the platform-shared official bot.
+    /// Bot credential token.
     pub bot_token: Option<String>,
     /// Per-bot HMAC for inbound webhook validation.
     pub webhook_secret: Option<String>,
     /// Which agent handles messages routed through this bot.
     pub agent_id: String,
-    pub auth_scope: AuthScope,
-    /// Required when `auth_scope == User`. Unused otherwise.
-    pub connection_id: Option<Uuid>,
+    pub trigger_mode: TriggerMode,
     pub active: bool,
 }
 
@@ -157,13 +185,14 @@ pub struct Bot {
 pub struct NewBot {
     pub id: Uuid,
     pub workspace_id: Uuid,
+    pub created_by_user_id: Uuid,
     pub provider: ChannelProvider,
     pub bot_username: Option<String>,
     pub bot_token: Option<String>,
     pub webhook_secret: Option<String>,
     pub agent_id: String,
-    pub auth_scope: AuthScope,
-    pub connection_id: Option<Uuid>,
+    pub trigger_mode: TriggerMode,
+    pub active: bool,
 }
 
 // ── Channel (pure conversation row) ───────────────────────────────────────
@@ -179,7 +208,53 @@ pub struct Channel {
     pub chat_type: ChatType,
     pub thread_id: Option<String>,
     pub verbose: bool,
-    pub active: bool,
+    /// Whether this channel has been verified (a pairing handshake has
+    /// completed for at least one connection).
+    pub verified: bool,
+    /// The `channel_identities.id` of the user who first opened this channel.
+    pub created_by_identity_id: Option<Uuid>,
+}
+
+/// Payload for creating a new channel row.
+#[derive(Debug, Clone)]
+pub struct NewChannel {
+    pub bot_id: Uuid,
+    pub chat_id: String,
+    pub chat_type: ChatType,
+    pub thread_id: Option<String>,
+    pub verbose: bool,
+    /// Defaults to `false`; set to `true` after a pairing handshake.
+    pub verified: bool,
+    pub created_by_identity_id: Option<Uuid>,
+}
+
+// ── Bot connection join ────────────────────────────────────────────────────
+
+/// A connection wired up to a bot. One bot can have multiple connections;
+/// the `position` field controls which one is tried first.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BotConnection {
+    pub bot_id: Uuid,
+    pub connection_id: Uuid,
+    pub requires_setup: bool,
+    pub position: i32,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+// ── Channel verification ───────────────────────────────────────────────────
+
+/// Records a completed pairing handshake: a specific user on a specific
+/// channel has proven their identity via a particular connection.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChannelVerification {
+    pub id: Uuid,
+    pub channel_id: Uuid,
+    pub connection_id: Uuid,
+    pub verified_by_user_id: Uuid,
+    pub external_user_id: Option<String>,
+    pub metadata: serde_json::Value,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub last_seen_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 // ── Platform user (raw input from the webhook) ────────────────────────────
@@ -229,58 +304,35 @@ pub struct AuthenticatedChannelUser {
 }
 
 /// Discriminator on [`AuthenticatedChannelUser`] explaining *why* access was
-/// granted. Commands like `/stop` inspect this to do the right unbinding.
-#[derive(Debug, Clone)]
+/// granted.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AuthProof {
-    /// Public bot — no extra check.
-    Public,
-    /// The user is a platform member of the bot's workspace.
-    WorkspaceMember { role: String },
-    /// The user has configured the bot's linked Custom connection.
-    UserBinding {
-        connection_id: Uuid,
-        external_user_id: String,
-    },
+    /// Platform verified by default — no distri gate needed (e.g. Slack OAuth install).
+    PlatformVerified,
+    /// Open platform (Telegram/WhatsApp) with no connection gate — anyone can use.
+    Open,
+    /// Access granted because the user passed the gate for this connection.
+    GatedBy { connection_id: Uuid },
 }
 
 /// Outcome of running the channel-auth resolver against an inbound message.
-/// The gateway webhook handler turns each variant into a concrete reply:
-/// `Authenticated` → dispatch to the agent; `NeedsCredential` /
-/// `NeedsWorkspaceLink` → reply with the URL; `Denied` → send the reason.
-///
-/// The two "needs-something" variants are kept separate (not combined under
-/// a single `Pending` variant) because their recovery flows land on
-/// different web pages:
-///
-/// - `NeedsCredential` → `/connections/configure?code=…` — existing
-///   end-user credential form. Does not require the actor to be bound to
-///   a distri account; the credential is stored against the phantom
-///   `users.id` created from the platform identity.
-/// - `NeedsWorkspaceLink` → `/setup?code=…` — public-bot onboarding.
-///   Requires OTP login (so the phantom `users` row can be linked into a
-///   verified account) plus picking a workspace.
-///
-/// Both recovery paths reuse the same *account linking* primitive
-/// (`services::user::link_accounts`) — the difference is which other step
-/// comes after the link.
+/// The gateway webhook handler turns each variant into a concrete reply.
 #[derive(Debug, Clone)]
 pub enum ResolveOutcome {
     Authenticated(AuthenticatedChannelUser),
-    /// `AuthScope::User`: actor is known but hasn't stored the connection's
-    /// required credentials yet. URL points at
-    /// `/connections/configure?code=…`.
-    NeedsCredential {
-        url: String,
-    },
-    /// `AuthScope::Public`: actor has no workspace memberships yet. URL
-    /// points at `/setup?code=…`, which runs OTP login + account link +
-    /// workspace pick.
-    NeedsWorkspaceLink {
-        url: String,
-    },
-    /// No path exists for this user to access the bot (Workspace non-members
-    /// or misconfigured rows).
-    Denied {
-        reason: String,
-    },
+    /// The channel/user needs to complete a verification flow.
+    NeedsVerification { url: String, gate_kind: GateKind },
+    /// No path exists for this user to access the bot.
+    Denied { reason: String },
+    /// The message should be silently rejected (e.g. unknown update type).
+    Rejected,
+}
+
+/// Describes what kind of gate needs to be passed for verification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum GateKind {
+    /// Gate is the distri-native account link flow.
+    DistriNative,
+    /// Gate is an external connection with the given id.
+    External { connection_id: Uuid },
 }
