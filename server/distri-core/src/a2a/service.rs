@@ -10,14 +10,14 @@
 //! `spawn_task_relay` + `spawn_background_execution`). This service only drives
 //! them; it never touches `broadcaster.publish` or coordinator methods directly.
 
-use crate::a2a::mapper::{map_agent_event, map_final_result};
+use crate::a2a::mapper::map_agent_event;
 use crate::a2a::stream::{
     init_thread_get_message, prepare_execution, spawn_background_execution,
     validate_provider_secrets,
 };
 use crate::a2a::{agent_error_to_jsonrpc, single_error_frame_stream, A2AError, SseMessage};
 use crate::agent::types::ExecutorContextMetadata;
-use crate::agent::{AgentEvent, AgentEventType, AgentOrchestrator, ExecutorContext, InvokeResult};
+use crate::agent::{AgentEvent, AgentEventType, AgentOrchestrator, ExecutorContext};
 use crate::types::default_agent_version;
 use crate::AgentError;
 use distri_a2a::{
@@ -25,7 +25,6 @@ use distri_a2a::{
     TaskIdParams,
 };
 use distri_auth::context::with_user_id;
-use distri_types::configuration::DefinitionOverrides;
 use futures::future::Either;
 use futures_util::future::poll_fn;
 use futures_util::stream::BoxStream;
@@ -58,16 +57,28 @@ pub struct ServiceRequest {
     pub workspace_model_settings: Option<distri_types::ModelSettings>,
 }
 
-/// Prepared state for a streaming session. `prepare_streaming_session` does
-/// all fallible work and returns this; `run_streaming_session` consumes it
-/// and yields SSE frames.
+/// Prepared state for any agent invocation — streaming OR send.
+///
+/// `initialize_task` does all fallible work (context build, secret validation,
+/// thread init, metadata/override merge, task registration, relay spawn,
+/// background execution spawn, broadcaster subscribe) and returns this.
+///
+/// - `prepare_streaming_session` is a thin alias returning this, handed to
+///   `run_streaming_session` for SSE fan-out.
+/// - `send_message` consumes this by draining the event stream until terminal
+///   and then fetching the resulting Task.
+///
+/// Both paths go through identical bootstrap so `message/send` and
+/// `message/stream` are always behaviorally consistent (same secret checks,
+/// same thread init, same cancellation wiring, same background execution).
 pub struct StreamingSession {
     pub req_id: Option<serde_json::Value>,
     pub user_id: String,
     pub workspace_id: Option<uuid::Uuid>,
     pub task_id: String,
+    pub thread_id: String,
     pub executor_context: Arc<ExecutorContext>,
-    /// Broadcaster stream already subscribed — `run_*` only needs to drain.
+    /// Broadcaster stream already subscribed — consumers only drain.
     pub event_stream: BoxStream<'static, AgentEvent>,
 }
 
@@ -201,88 +212,45 @@ impl A2AService {
 
     // ── send_message / get_task / cancel_task / agent_def_to_card ──────
 
+    /// Non-streaming JSON-RPC `message/send`. Goes through the SAME bootstrap
+    /// as `prepare_streaming_session` (secret validation, thread init,
+    /// prepare_execution, register_task, relay, background exec) so
+    /// `message/send` and `message/stream` are always behaviorally consistent.
+    /// Awaits the terminal broadcaster event, then fetches the finalized Task.
     pub async fn send_message(&self, input: ServiceRequest) -> Result<Task, AgentError> {
-        let ServiceRequest {
-            agent_id,
-            user_id,
-            workspace_id,
-            req,
+        let session = self.initialize_task(input).await?;
+        let StreamingSession {
+            task_id,
             executor_context,
-            verbose,
-            workspace_model_settings,
-        } = input;
+            event_stream,
+            ..
+        } = session;
 
-        // Build or accept executor context, then apply workspace model settings.
-        let mut executor_context = match executor_context {
-            Some(ctx) => ctx,
-            None => {
-                self.build_executor_context(
-                    &req,
-                    agent_id.clone(),
-                    user_id,
-                    workspace_id,
-                    verbose,
-                )
-                .await?
+        // Drain events to completion. The background execution path publishes
+        // a terminal RunFinished/RunError on the broadcaster when done.
+        futures_util::pin_mut!(event_stream);
+        while let Some(event) = futures_util::StreamExt::next(&mut event_stream).await {
+            if matches!(
+                &event.event,
+                AgentEventType::RunFinished { .. } | AgentEventType::RunError { .. }
+            ) {
+                break;
             }
-        };
-        if let Some(ms) = workspace_model_settings {
-            executor_context.default_model_settings = Some(ms);
         }
-        let executor_context = Arc::new(executor_context);
 
+        // Fetch the finalized task record.
         let task_store = self.orchestrator.stores.task_store.clone();
-        let coordinator = &self.orchestrator;
-
-        let params: MessageSendParams = serde_json::from_value(req.params)?;
-        let message: crate::types::Message = params.message.clone().try_into()?;
-
-        let task_id = params
-            .message
-            .task_id
-            .clone()
-            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-
-        let mut definition_overrides: Option<DefinitionOverrides> = None;
-        if let Some(meta) = params.metadata.as_ref() {
-            if let Some(overrides_value) = meta.get("definition_overrides") {
-                match serde_json::from_value::<DefinitionOverrides>(overrides_value.clone()) {
-                    Ok(overrides) => {
-                        definition_overrides = Some(overrides);
-                    }
-                    Err(err) => {
-                        tracing::warn!("Failed to parse definition_overrides metadata: {}", err);
-                    }
-                }
-            }
-        }
-
-        let execution_result = coordinator
-            .execute(&agent_id, message, executor_context, definition_overrides)
-            .await?;
-
         let updated_task = task_store
             .get_task(&task_id)
             .await
             .map_err(|e| AgentError::Session(e.to_string()))?
             .ok_or_else(|| AgentError::Session("Task disappeared".to_string()))?;
-
         let mut updated_task: Task = updated_task.into();
 
-        // Get the final result from execution_result and put it in status.message
-        if let Some(text) = execution_result.content {
-            updated_task.status.message = Some(distri_a2a::Message {
-                kind: distri_a2a::EventKind::Message,
-                message_id: Uuid::new_v4().to_string(),
-                role: distri_a2a::Role::Agent,
-                parts: vec![distri_a2a::Part::Text(distri_a2a::TextPart { text })],
-                context_id: Some(updated_task.context_id.clone()),
-                task_id: Some(updated_task.id.clone()),
-                reference_task_ids: vec![],
-                extensions: vec![],
-                metadata: None,
-            });
-        }
+        // Surface the final result (if any) as status.message. Same builder
+        // as the trailing SSE frame in `run_streaming_session` so both paths
+        // deliver identical payload shape.
+        updated_task.status.message = build_final_message(&executor_context).await;
 
         Ok(updated_task)
     }
@@ -379,7 +347,17 @@ impl A2AService {
 
     // ── prepare/run split ──────────────────────────────────────────────
 
-    pub async fn prepare_streaming_session(
+    /// Shared bootstrap for every agent invocation — used by both
+    /// `message/send` and `message/stream`. Does all fallible work upfront
+    /// (secret validation, thread init, prepare_execution, register_task,
+    /// relay, background exec, broadcaster subscribe) and returns the
+    /// prepared session. Consumers either drain it synchronously
+    /// (`send_message`) or yield SSE frames (`run_streaming_session`).
+    ///
+    /// This function is the single source of truth for "start an agent
+    /// task." Any new preflight concern (auth, rate-limiting, quota,
+    /// tracing-span attachment) should land here so both paths get it.
+    pub async fn initialize_task(
         &self,
         input: ServiceRequest,
     ) -> Result<StreamingSession, AgentError> {
@@ -421,17 +399,15 @@ impl A2AService {
             .and_then(|s| uuid::Uuid::parse_str(s).ok());
 
         // Step 2: Parse params.
-        let params: MessageSendParams = serde_json::from_value(req.params).map_err(|e| {
-            AgentError::Validation(format!("Invalid params: {}", e))
-        })?;
+        let params: MessageSendParams = serde_json::from_value(req.params)
+            .map_err(|e| AgentError::Validation(format!("Invalid params: {}", e)))?;
 
-        // Step 3: Validate provider secrets BEFORE entering any stream so
-        // the check runs in the caller's task-local context (which carries
-        // user/workspace for TenantSecretStore).
+        // Step 3: Validate provider secrets BEFORE anything else so errors
+        // run in the caller's task-local context (user/workspace — needed
+        // for TenantSecretStore).
         validate_provider_secrets(&self.orchestrator, &agent_id).await?;
 
-        // Step 4: Init thread + build the core Message. This already runs
-        // under the caller's task-local storage.
+        // Step 4: Init thread + build the core Message.
         let (thread_id, message) = init_thread_get_message(
             agent_id.clone(),
             self.orchestrator.clone(),
@@ -441,13 +417,8 @@ impl A2AService {
         .await?;
 
         // Step 5: Prepare execution context (metadata, browser, overrides).
-        let (exec_ctx, definition_overrides) = prepare_execution(
-            &agent_id,
-            &params,
-            &self.orchestrator,
-            &executor_context,
-        )
-        .await?;
+        let (exec_ctx, definition_overrides) =
+            prepare_execution(&agent_id, &params, &self.orchestrator, &executor_context).await?;
 
         let task_id = exec_ctx.task_id.clone();
 
@@ -475,7 +446,9 @@ impl A2AService {
             stream_workspace_id,
         );
 
-        // Step 9: Subscribe to broadcaster for SSE fan-out.
+        // Step 9: Subscribe to broadcaster. Both SSE fan-out AND send_message's
+        // terminal-event wait use this. Subscribing BEFORE returning ensures
+        // no events published between spawn and subscribe are missed.
         let event_stream = self
             .orchestrator
             .broadcaster()
@@ -490,9 +463,20 @@ impl A2AService {
             user_id: stream_user_id,
             workspace_id: stream_workspace_id,
             task_id,
+            thread_id,
             executor_context: executor_context_arc,
             event_stream,
         })
+    }
+
+    /// Thin alias over `initialize_task` — kept for naming clarity at the
+    /// dispatch level (`prepare_streaming_session` + `run_streaming_session`
+    /// matches PR #69's vocabulary).
+    pub async fn prepare_streaming_session(
+        &self,
+        input: ServiceRequest,
+    ) -> Result<StreamingSession, AgentError> {
+        self.initialize_task(input).await
     }
 
     pub fn run_streaming_session(session: StreamingSession) -> BoxedSseStream {
@@ -501,6 +485,7 @@ impl A2AService {
             user_id,
             workspace_id: _,
             task_id: _,
+            thread_id: _,
             executor_context,
             event_stream,
         } = session;
@@ -527,29 +512,18 @@ impl A2AService {
                 }
             }
 
-            // After terminal event: read the final result from the shared
-            // ExecutorContext (set by the `final` tool via set_final_result,
-            // shared via Arc<RwLock>) and yield it as MessageKind::Message so
-            // clients render the final answer.
+            // After terminal event: yield the final-result message (if any)
+            // as MessageKind::Message so clients render the final answer.
+            // Uses the same builder as send_message for consistency.
             if saw_terminal {
-                if let Some(final_value) =
-                    executor_context_for_final.get_final_result().await
+                if let Some(final_msg) =
+                    build_final_message(&executor_context_for_final).await
                 {
-                    let text = match final_value {
-                        serde_json::Value::String(s) => s,
-                        other => other.to_string(),
-                    };
-                    if !text.is_empty() {
-                        let result = InvokeResult {
-                            content: Some(text),
-                            ..Default::default()
-                        };
-                        let msg = map_final_result(&result, executor_context_for_final);
-                        yield Ok::<_, std::convert::Infallible>(SseMessage::success_frame(
-                            req_id.clone(),
-                            serde_json::to_value(msg).unwrap_or_default(),
-                        ));
-                    }
+                    let msg = distri_a2a::MessageKind::Message(final_msg);
+                    yield Ok::<_, std::convert::Infallible>(SseMessage::success_frame(
+                        req_id.clone(),
+                        serde_json::to_value(msg).unwrap_or_default(),
+                    ));
                 }
             }
         };
@@ -669,7 +643,8 @@ impl A2AService {
         let _req_id = req.id.clone();
         let params = req.params.clone();
 
-        let params: MessageSendParams = serde_json::from_value(params)?;
+        let params: MessageSendParams = serde_json::from_value(params)
+            .map_err(|e| AgentError::Validation(format!("Invalid params: {}", e)))?;
 
         // Validate task_id for tool result messages
         if req.method == "message/stream" || req.method == "message/send" {
@@ -773,4 +748,34 @@ impl A2AService {
 /// fn so legacy `A2AHandler` re-exports can forward to it.
 pub fn map_agent_error(e: AgentError) -> JsonRpcError {
     agent_error_to_jsonrpc(e)
+}
+
+/// Build the terminal assistant `Message` from the completed task's final
+/// result. Shared between `send_message` (as `Task.status.message`) and
+/// `run_streaming_session` (as the trailing SSE frame) so both response
+/// shapes carry identical payloads.
+///
+/// Returns `None` when the agent never called `final` (or the final result
+/// was empty) — consumers should leave the corresponding slot unset in
+/// that case.
+pub async fn build_final_message(executor_context: &ExecutorContext) -> Option<distri_a2a::Message> {
+    let final_value = executor_context.get_final_result().await?;
+    let text = match final_value {
+        serde_json::Value::String(s) => s,
+        other => other.to_string(),
+    };
+    if text.is_empty() {
+        return None;
+    }
+    Some(distri_a2a::Message {
+        kind: distri_a2a::EventKind::Message,
+        message_id: Uuid::new_v4().to_string(),
+        role: distri_a2a::Role::Agent,
+        parts: vec![distri_a2a::Part::Text(distri_a2a::TextPart { text })],
+        context_id: Some(executor_context.thread_id.clone()),
+        task_id: Some(executor_context.task_id.clone()),
+        reference_task_ids: vec![],
+        extensions: vec![],
+        metadata: None,
+    })
 }

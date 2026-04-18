@@ -269,6 +269,119 @@ async fn jsonrpc_error_helpers_produce_correct_codes() {
     assert_eq!(e.code, -32603);
 }
 
+// ── Shared bootstrap: send_message and prepare_streaming_session agree ──────
+//
+// Both paths must funnel through `initialize_task`. These tests verify that
+// the fallible preflight — invalid params, missing agent — produces the SAME
+// AgentError variant on both entry points. If someone adds a new preflight
+// check in only one path, this test catches it.
+
+fn make_request(method: &str, params: serde_json::Value) -> JsonRpcRequest {
+    JsonRpcRequest {
+        jsonrpc: "2.0".to_string(),
+        method: method.to_string(),
+        params,
+        id: Some(json!(1)),
+    }
+}
+
+fn make_service_request(method: &str, params: serde_json::Value) -> ServiceRequest {
+    ServiceRequest {
+        agent_id: "unused-in-these-tests".to_string(),
+        user_id: "u-1".to_string(),
+        workspace_id: None,
+        req: make_request(method, params),
+        executor_context: None,
+        verbose: false,
+        workspace_model_settings: None,
+    }
+}
+
+fn classify_agent_error(e: &AgentError) -> &'static str {
+    match e {
+        AgentError::Validation(_) => "validation",
+        AgentError::NotFound(_) => "not_found",
+        AgentError::InvalidConfiguration(_) => "invalid_config",
+        AgentError::Session(_) => "session",
+        _ => "other",
+    }
+}
+
+#[tokio::test]
+async fn send_and_stream_share_preflight_on_invalid_params() {
+    // Missing required fields in MessageSendParams → both paths must return
+    // AgentError::Validation via the shared initialize_task bootstrap.
+    let service = build_service().await;
+
+    let send_err = match service
+        .send_message(make_service_request("message/send", json!({})))
+        .await
+    {
+        Ok(_) => panic!("send_message must reject invalid params"),
+        Err(e) => e,
+    };
+
+    let stream_err = match service
+        .prepare_streaming_session(make_service_request("message/stream", json!({})))
+        .await
+    {
+        Ok(_) => panic!("prepare_streaming_session must reject invalid params"),
+        Err(e) => e,
+    };
+
+    assert_eq!(
+        classify_agent_error(&send_err),
+        classify_agent_error(&stream_err),
+        "send_message and prepare_streaming_session must surface the same \
+         AgentError variant — they go through the same initialize_task. \
+         send: {:?}, stream: {:?}",
+        send_err,
+        stream_err
+    );
+    assert_eq!(classify_agent_error(&send_err), "validation");
+}
+
+#[tokio::test]
+async fn build_final_message_returns_none_when_no_final_result() {
+    // When the agent never called `final`, build_final_message returns None.
+    // Both send_message (→ Task.status.message = None) and
+    // run_streaming_session (→ no trailing SSE frame) rely on this.
+    use crate::agent::ExecutorContext;
+
+    let ctx = ExecutorContext::default();
+    let msg = crate::a2a::service::build_final_message(&ctx).await;
+    assert!(
+        msg.is_none(),
+        "build_final_message must return None when no final_result is set"
+    );
+
+    // Now set a final result and confirm it builds a Message.
+    ctx.set_final_result(Some(json!("hello world"))).await;
+    let msg = crate::a2a::service::build_final_message(&ctx)
+        .await
+        .expect("build_final_message must return Some when final_result is set");
+    assert!(matches!(msg.role, distri_a2a::Role::Agent));
+    assert_eq!(
+        msg.parts.len(),
+        1,
+        "final message must have exactly one text part"
+    );
+    match &msg.parts[0] {
+        distri_a2a::Part::Text(t) => assert_eq!(t.text, "hello world"),
+        other => panic!("expected Text part; got {:?}", other),
+    }
+    assert_eq!(msg.task_id, Some(ctx.task_id.clone()));
+    assert_eq!(msg.context_id, Some(ctx.thread_id.clone()));
+
+    // Empty string → None (semantic: no-content final counts as no final).
+    let ctx2 = ExecutorContext::default();
+    ctx2.set_final_result(Some(json!(""))).await;
+    assert!(
+        crate::a2a::service::build_final_message(&ctx2).await.is_none(),
+        "empty final_result must yield None so callers leave the slot unset"
+    );
+}
+
 // ── Sanity check on SseMessage frame builders ───────────────────────────────
 
 #[tokio::test]
