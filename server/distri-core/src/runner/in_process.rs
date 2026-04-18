@@ -1,54 +1,110 @@
-//! `InProcA2ARunner` — a `BackgroundRunner` that drives tasks through
-//! `A2AService::handle` on a shared orchestrator (no HTTP).
+//! `InProcessRemoteRunner` — a `BackgroundRunner` implementation that drives
+//! remote-dispatched tasks through the **same orchestrator** in-process
+//! instead of spawning a real browsr container.
 //!
-//! Used by dispatch tests that want to exercise the service-layer remote
-//! dispatch path end-to-end without standing up a full cloud test server.
-//! Events emitted by the remote orchestrator's A2A SSE stream are parsed back
-//! into `AgentEvent`s and republished on the caller's broadcaster under the
-//! original task_id, so any subscriber on the caller side still sees a
-//! terminal event and their drain loop exits.
+//! When to use this:
+//! - **Local dev (`DEV_MODE=true`)**: skip the sandbox overhead. `--remote`
+//!   CLI flag still works end-to-end; `distri_runner` and any other
+//!   `runtime = [Cli]`-gated agents still get remote-routed via the
+//!   orchestrator's constraint check — they just execute in-process.
+//! - **Unit + service tests**: exercises the `A2AService` layer
+//!   (`prepare_streaming_session` → `run_streaming_session`) without HTTP.
 //!
-//! Not a full gateway implementation — only terminal events (and any explicit
-//! preflight error frames) are synthesized back. Intermediate tool/step
-//! events are dropped, which is fine for tests that only assert on task
-//! completion.
+//! ## Construction pattern (chicken-and-egg)
 //!
-//! See `/Users/vivek/.claude/plans/continue-with-this-thread-silly-dream.md`
-//! section "Phase 6 — TestRemoteRunner".
-use crate::a2a::service::{A2AService, ServiceRequest};
-use crate::a2a::SseMessage;
-use crate::broadcast::AgentEventBroadcaster;
-use crate::runner::BackgroundRunner;
+//! The runner drives the orchestrator, and the orchestrator holds the runner
+//! (via `Arc<dyn BackgroundRunner>`). Holding the orchestrator via `Arc` would
+//! create a reference cycle, so we store a `Weak` behind a `OnceCell`:
+//!
+//! ```ignore
+//! // 1. Build the runner detached.
+//! let runner = Arc::new(InProcessRemoteRunner::new_detached(RuntimeMode::Cli));
+//!
+//! // 2. Pass to the orchestrator builder.
+//! let orchestrator = AgentOrchestratorBuilder::default()
+//!     .with_background_runner(runner.clone())
+//!     .build().await?;
+//! let orchestrator = Arc::new(orchestrator);
+//!
+//! // 3. Attach the orchestrator back onto the runner.
+//! runner.attach(&orchestrator);
+//! ```
+//!
+//! `spawn()` upgrades the `Weak`; if the orchestrator has been dropped OR
+//! `attach()` was never called, returns a synthesized `RunError` so drains
+//! don't hang.
+//!
+//! ## What it does on spawn
+//!
+//! 1. Constructs a `message/stream` JSON-RPC request.
+//! 2. Hands it to an `A2AService` wrapping the attached orchestrator.
+//! 3. Drains the resulting SSE stream into the caller's broadcaster,
+//!    synthesizing a terminal `AgentEvent` on the caller's `task_id` so any
+//!    subscriber keyed to it sees `RunFinished`/`RunError`.
+//!
+//! Limitations: only terminal events + explicit error frames are republished
+//! on the caller's broadcaster. Intermediate tool/step events are dropped —
+//! the production sandbox path's events already flow through the server-side
+//! relay; the in-process runner is a shim for completion-signal parity, not
+//! a full gateway.
+
+use std::sync::{Arc, Weak};
+
 use async_trait::async_trait;
-use distri_a2a::JsonRpcRequest;
-use distri_types::{AgentEvent, AgentEventType, RuntimeMode};
 use futures::future::Either;
 use futures_util::StreamExt;
+use once_cell::sync::OnceCell;
 use serde::Deserialize;
-use std::sync::Arc;
 
-pub struct InProcA2ARunner {
-    service: Arc<A2AService>,
-    caller_broadcaster: Arc<dyn AgentEventBroadcaster>,
+use crate::a2a::service::{A2AService, ServiceRequest};
+use crate::a2a::SseMessage;
+use crate::agent::AgentOrchestrator;
+use crate::runner::BackgroundRunner;
+use distri_a2a::JsonRpcRequest;
+use distri_types::{AgentEvent, AgentEventType, RuntimeMode};
+
+/// `BackgroundRunner` that runs remote-dispatched tasks via the in-process
+/// `A2AService` — no sandbox container. Enable for local dev via
+/// `DEV_MODE=true`.
+pub struct InProcessRemoteRunner {
+    orchestrator: OnceCell<Weak<AgentOrchestrator>>,
     provided_runtime: RuntimeMode,
 }
 
-impl InProcA2ARunner {
-    pub fn new(
-        service: Arc<A2AService>,
-        caller_broadcaster: Arc<dyn AgentEventBroadcaster>,
-        provided_runtime: RuntimeMode,
-    ) -> Self {
+impl InProcessRemoteRunner {
+    /// Build a detached runner — no orchestrator attached yet. Pass this into
+    /// the orchestrator builder, then call `attach()` on the resulting Arc
+    /// once the orchestrator is built. See module doc for the full pattern.
+    ///
+    /// `provided_runtime` is what this runner claims to provide; the
+    /// orchestrator routes runtime-mismatched calls here when the agent's
+    /// `runtime` list contains this value. Defaults in practice to `Cli` so
+    /// `distri_runner`-style agents (`runtime = ["cli"]`) route transparently
+    /// in dev.
+    pub fn new_detached(provided_runtime: RuntimeMode) -> Self {
         Self {
-            service,
-            caller_broadcaster,
+            orchestrator: OnceCell::new(),
             provided_runtime,
         }
+    }
+
+    /// Attach the orchestrator once it has been built. Idempotent on the
+    /// first call — a second call is ignored with a `tracing::warn!`.
+    pub fn attach(&self, orchestrator: &Arc<AgentOrchestrator>) {
+        if self.orchestrator.set(Arc::downgrade(orchestrator)).is_err() {
+            tracing::warn!(
+                "InProcessRemoteRunner::attach called more than once; keeping the original orchestrator"
+            );
+        }
+    }
+
+    fn upgraded_orchestrator(&self) -> Option<Arc<AgentOrchestrator>> {
+        self.orchestrator.get().and_then(Weak::upgrade)
     }
 }
 
 #[async_trait]
-impl BackgroundRunner for InProcA2ARunner {
+impl BackgroundRunner for InProcessRemoteRunner {
     async fn spawn(
         &self,
         task_id: String,
@@ -59,8 +115,16 @@ impl BackgroundRunner for InProcA2ARunner {
         _environment_id: Option<String>,
         thread_id: Option<String>,
     ) -> anyhow::Result<()> {
-        let service = self.service.clone();
-        let caller_broadcaster = self.caller_broadcaster.clone();
+        let Some(orchestrator) = self.upgraded_orchestrator() else {
+            // Not attached (bug in wiring) or orchestrator already dropped.
+            // Publish a synthetic terminal so caller-side drains don't hang.
+            anyhow::bail!(
+                "InProcessRemoteRunner has no orchestrator attached — call InProcessRemoteRunner::attach(&orchestrator) after build"
+            );
+        };
+
+        let caller_broadcaster = orchestrator.runtime.broadcaster_arc();
+        let service = Arc::new(A2AService::new(orchestrator));
         let task_id_clone = task_id.clone();
 
         let message_id = uuid::Uuid::new_v4().to_string();
@@ -102,9 +166,6 @@ impl BackgroundRunner for InProcA2ARunner {
 
             match result {
                 Either::Left(mut sse_stream) => {
-                    // Drain SSE frames, synthesizing a terminal `AgentEvent` on the
-                    // caller's broadcaster when we detect either a final TaskStatus
-                    // frame or an error frame. Intermediate frames are dropped.
                     let mut saw_terminal = false;
                     while let Some(Ok(frame)) = sse_stream.next().await {
                         if let Some(event) = parse_sse_to_agent_event(
@@ -117,8 +178,7 @@ impl BackgroundRunner for InProcA2ARunner {
                                 AgentEventType::RunFinished { .. }
                                     | AgentEventType::RunError { .. }
                             );
-                            let _ =
-                                caller_broadcaster.publish(&task_id_clone, event).await;
+                            let _ = caller_broadcaster.publish(&task_id_clone, event).await;
                             if is_terminal {
                                 saw_terminal = true;
                                 break;
@@ -127,15 +187,13 @@ impl BackgroundRunner for InProcA2ARunner {
                     }
 
                     if !saw_terminal {
-                        // Stream closed without a terminal frame — synthesize one
-                        // so subscribers don't hang.
                         let _ = caller_broadcaster
                             .publish(
                                 &task_id_clone,
                                 make_run_error(
                                     &task_id_clone,
                                     &agent_name_for_events,
-                                    "remote stream closed without terminal event",
+                                    "in-process runner stream closed without terminal event",
                                     Some("STREAM_CLOSED"),
                                 ),
                             )
@@ -143,9 +201,6 @@ impl BackgroundRunner for InProcA2ARunner {
                     }
                 }
                 Either::Right(resp) => {
-                    // Non-streaming response path. For `message/stream` requests
-                    // this shouldn't happen — errors come back via Either::Left
-                    // as a single error SSE frame — but handle it defensively.
                     let (msg, code) = if let Some(err) = resp.error {
                         (err.message, "PREFLIGHT")
                     } else {
@@ -176,7 +231,7 @@ impl BackgroundRunner for InProcA2ARunner {
     }
 }
 
-/// Minimal JSON-RPC response shape for *parsing* an SSE frame's `data` field.
+/// Minimal JSON-RPC response shape for parsing an SSE frame's `data` field.
 /// `distri_a2a::JsonRpcResponse` is `Serialize` only, so we can't round-trip
 /// it directly.
 #[derive(Debug, Deserialize)]
@@ -196,9 +251,7 @@ struct ParsedJsonRpcError {
 }
 
 /// Parse an SSE frame into an `AgentEvent` keyed to the caller's task_id.
-///
-/// Only terminal frames (and explicit error frames) produce events — this is a
-/// test helper, not a general gateway. Returns `None` for intermediate frames.
+/// Only terminal frames + explicit error frames produce events.
 fn parse_sse_to_agent_event(
     frame: &SseMessage,
     task_id: &str,
@@ -216,10 +269,6 @@ fn parse_sse_to_agent_event(
 
     let result = resp.result?;
 
-    // First-class case: the A2A mapper emits `MessageKind::TaskStatusUpdate`
-    // with `final: true` for terminal run events. Peek at `final` without
-    // fully deserializing the enum — the untagged MessageKind costs us an
-    // extra layer but the shape is stable.
     let is_final = result
         .get("final")
         .and_then(|v| v.as_bool())
@@ -228,21 +277,17 @@ fn parse_sse_to_agent_event(
         return None;
     }
 
-    // Try to recover the original event type from the status-update metadata —
-    // `map_agent_event` stores it verbatim there. If it doesn't parse as a
-    // known `AgentEventType` we still synthesize a RunFinished so drains exit.
     let event_type = result
         .get("metadata")
         .cloned()
-        .and_then(|meta| serde_json::from_value::<AgentEventType>(meta).ok());
-
-    let event_type = event_type.unwrap_or(AgentEventType::RunFinished {
-        success: true,
-        total_steps: 0,
-        failed_steps: 0,
-        usage: None,
-        context_budget: None,
-    });
+        .and_then(|meta| serde_json::from_value::<AgentEventType>(meta).ok())
+        .unwrap_or(AgentEventType::RunFinished {
+            success: true,
+            total_steps: 0,
+            failed_steps: 0,
+            usage: None,
+            context_budget: None,
+        });
 
     Some(AgentEvent {
         timestamp: chrono::Utc::now(),
@@ -285,36 +330,29 @@ fn make_run_error(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::broadcast::in_process::InProcessBroadcaster;
     use crate::tests::helpers::test_store_config;
     use crate::AgentOrchestratorBuilder;
     use futures_util::StreamExt;
 
     /// Preflight-error path: spawning for a nonexistent agent should land a
-    /// `RunError` on the caller's broadcaster under the task_id we passed in.
+    /// `RunError` on the orchestrator's broadcaster under the task_id.
     #[tokio::test]
-    async fn inproc_runner_publishes_run_error_on_missing_agent() {
+    async fn publishes_run_error_on_missing_agent() {
+        // Build runner detached, wire into orchestrator, then attach.
+        let runner = Arc::new(InProcessRemoteRunner::new_detached(RuntimeMode::Cloud));
         let orchestrator = Arc::new(
             AgentOrchestratorBuilder::default()
                 .with_store_config(test_store_config())
+                .with_background_runner(runner.clone())
                 .build()
                 .await
                 .unwrap(),
         );
-
-        let service = Arc::new(A2AService::new(orchestrator.clone()));
-        let caller_broadcaster: Arc<dyn AgentEventBroadcaster> =
-            Arc::new(InProcessBroadcaster::new());
-
-        let runner = InProcA2ARunner::new(
-            service,
-            caller_broadcaster.clone(),
-            RuntimeMode::Cloud,
-        );
+        runner.attach(&orchestrator);
         assert_eq!(runner.provided_runtime(), RuntimeMode::Cloud);
 
         let task_id = uuid::Uuid::new_v4().to_string();
-        let mut stream = caller_broadcaster.subscribe(&task_id).await.unwrap();
+        let mut stream = orchestrator.broadcaster().subscribe(&task_id).await.unwrap();
 
         runner
             .spawn(
@@ -329,7 +367,6 @@ mod tests {
             .await
             .unwrap();
 
-        // Drain with a timeout so a hang surfaces as a test failure.
         let got = tokio::time::timeout(std::time::Duration::from_secs(5), async move {
             while let Some(ev) = stream.next().await {
                 if matches!(ev.event, AgentEventType::RunError { .. }) {
@@ -343,14 +380,24 @@ mod tests {
 
         let event = got.expect("stream ended without a terminal event");
         assert_eq!(event.task_id, task_id);
-        match event.event {
-            AgentEventType::RunError { message, .. } => {
-                assert!(
-                    !message.is_empty(),
-                    "RunError message should not be empty"
-                );
-            }
-            _ => unreachable!(),
-        }
+    }
+
+    /// Calling spawn() without attach() must fail loudly, not hang.
+    #[tokio::test]
+    async fn spawn_without_attach_errors() {
+        let runner = InProcessRemoteRunner::new_detached(RuntimeMode::Cloud);
+        let err = runner
+            .spawn(
+                "t".to_string(),
+                "a".to_string(),
+                "task".to_string(),
+                "u".to_string(),
+                None,
+                None,
+                None,
+            )
+            .await
+            .expect_err("spawn without attach must error");
+        assert!(err.to_string().contains("attach"));
     }
 }

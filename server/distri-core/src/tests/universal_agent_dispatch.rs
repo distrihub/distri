@@ -2,7 +2,7 @@
 //!
 //! Covers all four `CallMode` variants (InProcess, Fork, Offload, Transfer),
 //! ad-hoc non-persistence, access control, deprecated flag mapping, and the
-//! remote dispatch path via `InProcA2ARunner`.
+//! remote dispatch path via `InProcessRemoteRunner`.
 //!
 //! Strategy:
 //! - Full agent execution requires an LLM, which our MockLLMExecutor can't
@@ -13,7 +13,7 @@
 //!   dispatch drain loop exits and `Part::Data(final_value)` is returned.
 //! - Tests that exit before dispatch (access control, transfer+ad-hoc rejection)
 //!   don't need a runner.
-//! - The remote-dispatch test (7a.9) uses `InProcA2ARunner` hitting a separate
+//! - The remote-dispatch test (7a.9) uses `InProcessRemoteRunner` hitting a separate
 //!   remote orchestrator (same pattern as cloud).
 
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -31,7 +31,7 @@ use crate::broadcast::in_process::{InProcessBroadcaster, InProcessRuntime};
 use crate::broadcast::AgentEventBroadcaster;
 use crate::runner::BackgroundRunner;
 use crate::tests::helpers::test_store_config;
-use crate::tests::inproc_a2a_runner::InProcA2ARunner;
+use crate::runner::InProcessRemoteRunner;
 use crate::tools::universal_agent::{CallMode, UniversalAgentTool};
 use crate::tools::ExecutorContextTool;
 use crate::types::ToolCall;
@@ -751,31 +751,41 @@ async fn deprecated_run_in_background_maps_to_offload() {
     }
 }
 
-// ── 7a.9 remote dispatch via InProcA2ARunner ────────────────────────────────
+// ── 7a.9 remote dispatch via InProcessRemoteRunner ────────────────────────────────
 
 #[tokio::test]
 async fn remote_dispatch_when_agent_requires_different_runtime() {
-    // Remote orchestrator — where the A2AService lives.
-    let remote_orchestrator = Arc::new(
+    // Shared broadcaster: both remote orchestrator (where the runner
+    // dispatches) and parent orchestrator (where the drain loop subscribes)
+    // must fan out events through the same backend. Without this the
+    // runner's A2AService publishes to a dangling broadcaster and the
+    // parent's drain loop hangs.
+    let shared_broadcaster = InProcessBroadcaster::new_shared();
+
+    // Remote orchestrator — uses the shared broadcaster so its events reach
+    // the parent's drain loop.
+    let remote_base = Arc::new(
         AgentOrchestratorBuilder::default()
             .with_store_config(test_store_config())
             .build()
             .await
             .unwrap(),
     );
-    // The remote side needs the agent registered so the InProcA2ARunner's
-    // agent-existence check passes.
+    let remote_runtime = Arc::new(InProcessRuntime::from_broadcaster(
+        shared_broadcaster.clone(),
+        remote_base.stores.task_store.clone(),
+    ));
+    let remote_orchestrator = Arc::new(
+        AgentOrchestratorBuilder::default()
+            .with_stores(remote_base.stores.clone())
+            .with_runtime(remote_runtime)
+            .build()
+            .await
+            .unwrap(),
+    );
     register_remote_only_agent(&remote_orchestrator, "remote_agent").await;
 
-    // Parent orchestrator — declares parent's runtime as Cli. We build a
-    // shared broadcaster + runtime so the InProcA2ARunner publishes onto the
-    // same broadcaster the parent orchestrator's RemoteAgent follow_stream
-    // subscribes to. Without this wiring, the remote events go to a dangling
-    // broadcaster and follow_stream hangs forever.
-    let shared_broadcaster = InProcessBroadcaster::new_shared();
-
-    // Build a base parent orchestrator so we can steal its task_store, then
-    // rebuild with the shared runtime + runner.
+    // Parent orchestrator uses the same shared broadcaster.
     let parent_base = Arc::new(
         AgentOrchestratorBuilder::default()
             .with_store_config(test_store_config())
@@ -788,23 +798,20 @@ async fn remote_dispatch_when_agent_requires_different_runtime() {
         parent_base.stores.task_store.clone(),
     ));
 
-    let service = Arc::new(A2AService::new(remote_orchestrator.clone()));
-    let caller_broadcaster: Arc<dyn AgentEventBroadcaster> = shared_broadcaster.clone();
-    let runner = InProcA2ARunner::new(
-        service.clone(),
-        caller_broadcaster.clone(),
-        RuntimeMode::Cloud,
-    );
-
+    let runner = Arc::new(InProcessRemoteRunner::new_detached(RuntimeMode::Cloud));
     let parent_orchestrator = Arc::new(
         AgentOrchestratorBuilder::default()
             .with_stores(parent_base.stores.clone())
             .with_runtime(parent_runtime)
-            .with_background_runner(Arc::new(runner))
+            .with_background_runner(runner.clone())
             .build()
             .await
             .unwrap(),
     );
+    // Attach the REMOTE orchestrator — that's where the runner dispatches.
+    // Events fan out on remote_orchestrator's broadcaster, which is the
+    // shared_broadcaster wired above, so the parent's drain loop sees them.
+    runner.attach(&remote_orchestrator);
     register_caller_agent(
         &parent_orchestrator,
         "caller",
@@ -818,7 +825,7 @@ async fn remote_dispatch_when_agent_requires_different_runtime() {
     let tool = UniversalAgentTool;
     // The remote orchestrator has no LLM configured, so the actual remote
     // execution fails with a model-validation error. That surfaces back as a
-    // RunError SSE frame, which InProcA2ARunner turns into an AgentEventType
+    // RunError SSE frame, which InProcessRemoteRunner turns into an AgentEventType
     // RunError on the shared broadcaster → parent's dispatch drain loop
     // exits cleanly.
     let result = tokio::time::timeout(
