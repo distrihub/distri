@@ -178,6 +178,12 @@ pub struct Bot {
     pub agent_id: String,
     pub trigger_mode: TriggerMode,
     pub active: bool,
+    /// True iff this row is a platform-shared system bot
+    /// (`workspace_id == Uuid::nil()`). Computed at read time from the
+    /// workspace id; not a persisted column. Clients use this to render
+    /// system bots with a `System` pill and lock down delete/edit actions.
+    #[serde(default)]
+    pub is_system: bool,
 }
 
 /// Payload for creating a new bot row.
