@@ -1,4 +1,10 @@
-use distri::Distri;
+//! Helpers for building the `MessageSendParams` that both the CLI and the
+//! server-side in-process runner send when kicking off an agent run.
+//!
+//! Both call paths go through these builders so the runtime_mode /
+//! definition_overrides semantics can't drift between them.
+
+use crate::Distri;
 use distri_a2a::{
     EventKind, Message as A2aMessage, MessageSendParams, Part as A2aPart, Role, TextPart,
 };

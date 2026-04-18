@@ -13,7 +13,6 @@ mod credentials;
 mod input;
 mod logging;
 mod login;
-mod message;
 mod threads;
 mod tools;
 mod traces;
@@ -24,7 +23,7 @@ use commands::{
     handle_secrets_command, handle_skills_command, push_file,
 };
 use config::resolve_workspace;
-use message::{build_connections_context, build_message_params_full};
+use distri::run::{build_run_params, resolve_agent_name, RunOptions};
 use threads::resolve_resume_arg;
 use tools::{register_all, register_approval_handler};
 
@@ -500,34 +499,14 @@ async fn main() -> Result<()> {
             traceparent,
         } => {
             let extra_tools = parse_cli_overrides(overrides.as_deref());
-            let agent_name = agent.unwrap_or_else(|| "distri_runner".to_string());
-            // Verify the agent exists before registering anything.
-            if app.fetch_agent(&agent_name).await?.is_none() {
-                return Err(anyhow::anyhow!(
-                    "Agent '{}' not found on {}",
-                    agent_name,
-                    base_url
-                ));
-            }
-            // Register local CLI tool handlers + ship their schemas to the
-            // server ONLY when running locally. With `--remote`, the agent
-            // forks into a sandbox that has its own distri-cli with its own
-            // tools — the outer CLI is just a passthrough for events. Shipping
-            // schemas in remote mode causes the server to delegate tool calls
-            // back to the outer CLI, which never bound a registry → 120s hang.
-            if !remote {
-                let tool_defs = register_all(&app.registry(), &agent_name, &workspace);
-                app.add_tool_definitions(tool_defs);
-            }
-            // Fetch connections to inject into agent context
-            let distri_client = Distri::from_config(config.clone());
-            let connections_context = build_connections_context(&distri_client).await;
-            // Set thread_id/context_id: --thread-id > --resume > DISTRI_THREAD_ID env
-            let effective_thread = thread_id
+            // Pre-resolve thread_id: explicit --thread-id > DISTRI_THREAD_ID env
+            // > --resume. RunOptions only has a single thread_id field and its
+            // own env fallback (DISTRI_THREAD_ID), so we resolve --resume here
+            // (CLI-specific) before handing off.
+            let resolved_thread_id = thread_id
+                .clone()
                 .or_else(|| std::env::var("DISTRI_THREAD_ID").ok())
                 .or_else(|| resume.as_ref().map(|r| resolve_resume_arg(r)));
-            // Set task_id: --task-id flag > DISTRI_TASK_ID env > auto-generated
-            let effective_task = task_id.or_else(|| std::env::var("DISTRI_TASK_ID").ok());
 
             // Parse --context env vars if provided
             let env_vars = context.and_then(|ctx_json| {
@@ -546,15 +525,43 @@ async fn main() -> Result<()> {
                 }
             });
 
-            let mut params = build_message_params_full(
+            let run_opts = RunOptions {
+                agent,
                 task,
-                effective_thread.as_deref(),
-                effective_task.as_deref(),
-                None,
+                task_id,
+                thread_id: resolved_thread_id,
                 remote,
-                connections_context,
+                model: None,
                 env_vars,
-            );
+                skip_connections_context: false,
+            };
+            let agent_name = resolve_agent_name(&run_opts);
+
+            // Verify the agent exists before registering anything.
+            if app.fetch_agent(&agent_name).await?.is_none() {
+                return Err(anyhow::anyhow!(
+                    "Agent '{}' not found on {}",
+                    agent_name,
+                    base_url
+                ));
+            }
+            // Register local CLI tool handlers + ship their schemas to the
+            // server ONLY when running locally. With `--remote`, the agent
+            // forks into a sandbox that has its own distri-cli with its own
+            // tools — the outer CLI is just a passthrough for events. Shipping
+            // schemas in remote mode causes the server to delegate tool calls
+            // back to the outer CLI, which never bound a registry → 120s hang.
+            if !remote {
+                let tool_defs = register_all(&app.registry(), &agent_name, &workspace);
+                app.add_tool_definitions(tool_defs);
+            }
+
+            // Build params via the shared entry point — same code path the
+            // server-side LocalProcessRemoteRunner uses. We split build +
+            // stream (vs. calling run_agent directly) so we can inject
+            // external tool schemas in between.
+            let distri_client = Distri::from_config(config.clone());
+            let mut params = build_run_params(&distri_client, &run_opts).await;
             // inject_external_tools is a no-op when no schemas were added.
             if let Err(err) = app.inject_external_tools(&mut params) {
                 return Err(anyhow::anyhow!("Tool registration error: {}", err));
@@ -580,6 +587,9 @@ async fn main() -> Result<()> {
             for tool in extra_tools {
                 client.register_dynamic_tool(tool);
             }
+            // print_stream_verbose is a pretty-print wrapper over
+            // AgentStreamClient::stream_agent — same underlying call that
+            // distri::run::stream_run wraps, just with terminal rendering.
             print_stream_verbose(
                 &client,
                 &agent_name,

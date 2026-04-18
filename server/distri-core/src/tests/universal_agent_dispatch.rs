@@ -2,7 +2,7 @@
 //!
 //! Covers all four `CallMode` variants (InProcess, Fork, Offload, Transfer),
 //! ad-hoc non-persistence, access control, deprecated flag mapping, and the
-//! remote dispatch path via `InProcessRemoteRunner`.
+//! remote dispatch path via a `BackgroundRunner`.
 //!
 //! Strategy:
 //! - Full agent execution requires an LLM, which our MockLLMExecutor can't
@@ -13,8 +13,11 @@
 //!   dispatch drain loop exits and `Part::Data(final_value)` is returned.
 //! - Tests that exit before dispatch (access control, transfer+ad-hoc rejection)
 //!   don't need a runner.
-//! - The remote-dispatch test (7a.9) uses `InProcessRemoteRunner` hitting a separate
-//!   remote orchestrator (same pattern as cloud).
+//! - The remote-dispatch test (7a.9) uses the same `FinalizingTestRunner` wired
+//!   to the parent orchestrator — no separate "remote" orchestrator needed.
+//!   Real cross-orchestrator remote dispatch lives at the cloud integration
+//!   layer (cloud::runner::LocalProcessRemoteRunner) and is exercised by its
+//!   tests there.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -31,7 +34,6 @@ use crate::broadcast::in_process::{InProcessBroadcaster, InProcessRuntime};
 use crate::broadcast::AgentEventBroadcaster;
 use crate::runner::BackgroundRunner;
 use crate::tests::helpers::test_store_config;
-use crate::runner::InProcessRemoteRunner;
 use crate::tools::universal_agent::{CallMode, UniversalAgentTool};
 use crate::tools::ExecutorContextTool;
 use crate::types::ToolCall;
@@ -710,83 +712,36 @@ async fn mode_transfer_sets_parents_final_result_and_emits_handover() {
     );
 }
 
-// ── 7a.9 remote dispatch via InProcessRemoteRunner ────────────────────────────────
+// ── 7a.9 remote dispatch goes through the registered BackgroundRunner ────────
 
+/// When an agent declares `runtime = [Cloud]` and the caller is in `Cli`
+/// runtime, the orchestrator must hand dispatch to the registered
+/// `BackgroundRunner`. We assert that by using a `FinalizingTestRunner`
+/// (counts spawn calls) and checking its counter after the dispatch.
+///
+/// This replaces the old `InProcessRemoteRunner`-driven test. That runner's
+/// production replacement (`cloud::runner::LocalProcessRemoteRunner`) lives
+/// outside distri-core — its behavior is exercised by cloud integration
+/// tests.
 #[tokio::test]
 async fn remote_dispatch_when_agent_requires_different_runtime() {
-    // Shared broadcaster: both remote orchestrator (where the runner
-    // dispatches) and parent orchestrator (where the drain loop subscribes)
-    // must fan out events through the same backend. Without this the
-    // runner's A2AService publishes to a dangling broadcaster and the
-    // parent's drain loop hangs.
-    let shared_broadcaster = InProcessBroadcaster::new_shared();
+    // Build a parent orchestrator with a FinalizingTestRunner as the
+    // background runner. `FinalizingTestRunner` claims `Cloud` runtime,
+    // matching the child agent's requirement.
+    let (orchestrator, _bc, runner) =
+        build_orchestrator_with_runner(json!("done"), Duration::from_millis(0)).await;
 
-    // Remote orchestrator — uses the shared broadcaster so its events reach
-    // the parent's drain loop.
-    let remote_base = Arc::new(
-        AgentOrchestratorBuilder::default()
-            .with_store_config(test_store_config())
-            .build()
-            .await
-            .unwrap(),
-    );
-    let remote_runtime = Arc::new(InProcessRuntime::from_broadcaster(
-        shared_broadcaster.clone(),
-        remote_base.stores.task_store.clone(),
-    ));
-    let remote_orchestrator = Arc::new(
-        AgentOrchestratorBuilder::default()
-            .with_stores(remote_base.stores.clone())
-            .with_runtime(remote_runtime)
-            .build()
-            .await
-            .unwrap(),
-    );
-    register_remote_only_agent(&remote_orchestrator, "remote_agent").await;
-
-    // Parent orchestrator uses the same shared broadcaster.
-    let parent_base = Arc::new(
-        AgentOrchestratorBuilder::default()
-            .with_store_config(test_store_config())
-            .build()
-            .await
-            .unwrap(),
-    );
-    let parent_runtime = Arc::new(InProcessRuntime::from_broadcaster(
-        shared_broadcaster.clone(),
-        parent_base.stores.task_store.clone(),
-    ));
-
-    let runner = Arc::new(InProcessRemoteRunner::new_detached(RuntimeMode::Cloud));
-    let parent_orchestrator = Arc::new(
-        AgentOrchestratorBuilder::default()
-            .with_stores(parent_base.stores.clone())
-            .with_runtime(parent_runtime)
-            .with_background_runner(runner.clone())
-            .build()
-            .await
-            .unwrap(),
-    );
-    // Attach the REMOTE orchestrator — that's where the runner dispatches.
-    // Events fan out on remote_orchestrator's broadcaster, which is the
-    // shared_broadcaster wired above, so the parent's drain loop sees them.
-    runner.attach(&remote_orchestrator);
     register_caller_agent(
-        &parent_orchestrator,
+        &orchestrator,
         "caller",
         vec!["remote_agent".to_string()],
     )
     .await;
-    register_remote_only_agent(&parent_orchestrator, "remote_agent").await;
+    register_remote_only_agent(&orchestrator, "remote_agent").await;
 
-    let (parent_ctx, _rx) = build_parent_ctx(&parent_orchestrator, "caller");
+    let (parent_ctx, _rx) = build_parent_ctx(&orchestrator, "caller");
 
     let tool = UniversalAgentTool;
-    // The remote orchestrator has no LLM configured, so the actual remote
-    // execution fails with a model-validation error. That surfaces back as a
-    // RunError SSE frame, which InProcessRemoteRunner turns into an AgentEventType
-    // RunError on the shared broadcaster → parent's dispatch drain loop
-    // exits cleanly.
     let result = tokio::time::timeout(
         Duration::from_secs(10),
         tool.execute_with_executor_context(
@@ -799,8 +754,15 @@ async fn remote_dispatch_when_agent_requires_different_runtime() {
     )
     .await
     .expect("remote dispatch must terminate (not hang)");
-    // We only require that the dispatch did not hang — the result shape may
-    // be either Ok (if a terminal was synthesized) or an expected Err.
+
+    // Dispatch must have touched the BackgroundRunner at least once — that's
+    // the whole point of the runtime-mismatch path.
+    assert!(
+        runner.counter.load(Ordering::SeqCst) >= 1,
+        "remote dispatch must invoke BackgroundRunner::spawn"
+    );
+    // Must also terminate (with Ok or an expected Err — we don't pin the
+    // shape, just non-hang behavior).
     assert!(
         result.is_ok() || result.is_err(),
         "remote dispatch must terminate with either Ok or Err"

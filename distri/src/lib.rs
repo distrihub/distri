@@ -2,8 +2,10 @@ mod client;
 mod client_app;
 mod client_stream;
 pub mod config;
+pub mod message;
 mod printer;
 mod renderers;
+pub mod run;
 
 /// Workflow engine — define, execute, and track multi-step workflows.
 pub mod workflow {
@@ -40,6 +42,7 @@ pub use distri_types::{
 pub use printer::{
     ContextHealth, EventPrinter, print_stream, print_stream_verbose, print_stream_with_health,
 };
+pub use run::{build_run_params, run_agent, stream_run, RunOptions, DEFAULT_RUN_AGENT};
 
 #[cfg(test)]
 mod tests;
