@@ -937,6 +937,39 @@ impl Distri {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
+    // A2A task API (cancel / resubscribe)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Cancel a running task. Idempotent: canceling an already-terminal task
+    /// returns the existing record without error.
+    pub async fn cancel_task(
+        &self,
+        agent_id: &str,
+        task_id: &str,
+    ) -> Result<distri_a2a::Task, StreamError> {
+        self.stream.cancel_task(agent_id, task_id).await
+    }
+
+    /// Resubscribe to an existing task's event stream, forwarding each
+    /// `StreamItem` to the callback. If the task already finished before the
+    /// call, the server emits a single synthesized `TaskStatusUpdate` frame
+    /// and closes — the callback fires exactly once and the future resolves.
+    pub async fn resubscribe_task<H, Fut>(
+        &self,
+        agent_id: &str,
+        task_id: &str,
+        on_event: H,
+    ) -> Result<(), StreamError>
+    where
+        H: FnMut(StreamItem) -> Fut,
+        Fut: std::future::Future<Output = ()> + Send,
+    {
+        self.stream
+            .resubscribe_task(agent_id, task_id, on_event)
+            .await
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     // Artifact API
     // ─────────────────────────────────────────────────────────────────────────
 

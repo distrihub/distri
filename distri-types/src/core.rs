@@ -552,6 +552,16 @@ pub enum TaskStatus {
     Canceled,
 }
 
+impl TaskStatus {
+    /// Whether this status represents a terminal state (no further transitions).
+    pub fn is_terminal(&self) -> bool {
+        matches!(
+            self,
+            TaskStatus::Completed | TaskStatus::Canceled | TaskStatus::Failed
+        )
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct McpSession {
@@ -629,6 +639,11 @@ pub struct Thread {
     /// Total tokens used across all runs in this thread
     #[serde(default)]
     pub total_tokens: u64,
+    /// When the thread has an active (non-terminal) task, its ID. Computed at
+    /// read time in `AgentOrchestrator::get_thread()`; never persisted to DB.
+    /// Clients use this to decide whether to resubscribe on thread reopen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_task_id: Option<String>,
 }
 
 impl Thread {
@@ -656,6 +671,7 @@ impl Thread {
             input_tokens: 0,
             output_tokens: 0,
             total_tokens: 0,
+            active_task_id: None,
         }
     }
 

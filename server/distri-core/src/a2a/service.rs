@@ -75,11 +75,15 @@ pub struct StreamingSession {
 pub struct ResubscribeSession {
     pub req_id: Option<serde_json::Value>,
     pub task_id: String,
+    /// Context/thread id for the task — needed so the synthesized terminal
+    /// frame in `run_resubscribe_session` carries the correct `context_id`
+    /// (clients use it to route the event).
+    pub context_id: String,
     pub event_stream: BoxStream<'static, AgentEvent>,
     /// Set when the task was already terminal at prepare time. `run_*` emits a
-    /// synthesized `TaskStatusUpdate` frame before the stream (which may be
-    /// empty, or may yield residual events). Populated by Phase 5c; left as
-    /// `None` for 5b.
+    /// synthesized `TaskStatusUpdate` frame before the (likely empty) event
+    /// stream so clients that resubscribe after completion still learn the
+    /// end state.
     pub pre_terminal_status: Option<distri_a2a::TaskState>,
 }
 
@@ -571,33 +575,69 @@ impl A2AService {
                 AgentError::Session(format!("Failed to subscribe: {}", e))
             })?;
 
-        // Phase 5c will populate `pre_terminal_status` from the task store so
-        // that `run_resubscribe_session` can synthesize a terminal frame for
-        // clients who subscribe after the task has already finished. Left as
-        // None for 5b.
+        // If the task has already reached a terminal state, the broadcaster
+        // won't replay the final event — clients that resubscribe after
+        // completion would otherwise hang. Fetch the current task and surface
+        // the terminal state to `run_resubscribe_session`, which synthesizes a
+        // final `TaskStatusUpdate` frame for them.
+        let (pre_terminal_status, context_id) = match self
+            .orchestrator
+            .stores
+            .task_store
+            .get_task(&params.id)
+            .await
+        {
+            Ok(Some(task)) => {
+                let context_id = task.thread_id.clone();
+                let state = if task.status.is_terminal() {
+                    Some(distri_types::a2a_converters::map_task_status_to_a2a_state(
+                        &task.status,
+                    ))
+                } else {
+                    None
+                };
+                (state, context_id)
+            }
+            _ => (None, String::new()),
+        };
+
         Ok(ResubscribeSession {
             req_id,
             task_id: params.id,
+            context_id,
             event_stream,
-            pre_terminal_status: None,
+            pre_terminal_status,
         })
     }
 
     pub fn run_resubscribe_session(session: ResubscribeSession) -> BoxedSseStream {
         let ResubscribeSession {
             req_id,
-            task_id: _,
+            task_id,
+            context_id,
             event_stream,
             pre_terminal_status,
         } = session;
 
         let stream = async_stream::stream! {
             // If the task was already terminal at prepare time, emit a
-            // synthesized TaskStatusUpdate before draining the (likely empty)
-            // event stream. `pre_terminal_status` stays `None` until Phase 5c
-            // wires it up, so this branch is a no-op in 5b.
-            if let Some(_state) = pre_terminal_status {
-                // Phase 5c: synthesize a final TaskStatusUpdate frame here.
+            // synthesized TaskStatusUpdate and terminate — the broadcaster will
+            // not replay past events, so any further polling would block
+            // forever.
+            if let Some(state) = pre_terminal_status {
+                let update = crate::a2a::mapper::create_task_status_update(
+                    task_id.clone(),
+                    context_id.clone(),
+                    state,
+                    /* is_final */ true,
+                    None,
+                );
+                let msg = distri_a2a::MessageKind::TaskStatusUpdate(update);
+                yield Ok::<_, std::convert::Infallible>(SseMessage::success_frame(
+                    req_id.clone(),
+                    serde_json::to_value(&msg).unwrap_or_default(),
+                ));
+                return;
             }
 
             futures_util::pin_mut!(event_stream);

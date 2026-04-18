@@ -1,6 +1,8 @@
 #![allow(dead_code)]
 
 #[cfg(test)]
+mod cancel_task_test;
+#[cfg(test)]
 mod thread_tokens_test;
 use std::{collections::HashMap, fmt::Display, sync::Arc};
 
@@ -177,6 +179,7 @@ fn to_thread(model: ThreadModel) -> Thread {
         input_tokens: model.input_tokens.max(0) as u64,
         output_tokens: model.output_tokens.max(0) as u64,
         total_tokens: model.total_tokens.max(0) as u64,
+        active_task_id: None,
     }
 }
 
@@ -1832,6 +1835,18 @@ where
     }
 
     async fn cancel_task(&self, task_id: &str) -> Result<Task> {
+        // Idempotent: if already terminal (Completed | Canceled | Failed),
+        // return the existing record without issuing an UPDATE. This preserves
+        // the original terminal state (e.g. a task that Completed before a
+        // cancel request arrived stays Completed).
+        if let Some(existing) = self.get_task(task_id).await? {
+            if existing.status.is_terminal() {
+                return Ok(existing);
+            }
+        } else {
+            return Err(anyhow!("task not found: {task_id}"));
+        }
+
         self.update_task_status(task_id, TaskStatus::Canceled)
             .await?;
         self.get_task(task_id)

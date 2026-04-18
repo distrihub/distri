@@ -1024,11 +1024,27 @@ impl AgentOrchestrator {
     }
 
     pub async fn get_thread(&self, thread_id: &str) -> Result<Option<Thread>, AgentError> {
-        self.stores
+        let thread = self
+            .stores
             .thread_store
             .get_thread(thread_id)
             .await
-            .map_err(|e| AgentError::Session(e.to_string()))
+            .map_err(|e| AgentError::Session(e.to_string()))?;
+
+        // Compute `active_task_id` at read time: the first non-terminal task
+        // in this thread. Never persisted to the DB; clients use it to decide
+        // whether to resubscribe on thread reopen.
+        if let Some(mut t) = thread {
+            if let Ok(tasks) = self.stores.task_store.list_tasks(Some(thread_id)).await {
+                t.active_task_id = tasks
+                    .into_iter()
+                    .find(|task| !task.status.is_terminal())
+                    .map(|task| task.id);
+            }
+            Ok(Some(t))
+        } else {
+            Ok(None)
+        }
     }
 
     pub async fn update_thread(

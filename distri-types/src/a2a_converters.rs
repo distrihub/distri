@@ -181,6 +181,13 @@ impl From<crate::TaskStatus> for TaskState {
     }
 }
 
+/// Convenience free-function wrapper around `From<crate::TaskStatus> for TaskState`.
+/// Intended for call sites that prefer explicit function-call syntax (e.g.
+/// `A2AService::prepare_resubscribe`, `orchestrator::get_thread`).
+pub fn map_task_status_to_a2a_state(status: &crate::TaskStatus) -> TaskState {
+    status.clone().into()
+}
+
 impl From<crate::Part> for Part {
     fn from(part: crate::Part) -> Self {
         match part {
