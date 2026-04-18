@@ -493,12 +493,14 @@ impl ExecutorContextTool for AgentTool {
 
         let orchestrator = context.get_orchestrator()?;
 
-        // Check if this sub-agent should run in a remote sandbox (deepagent mode)
+        // Check if this sub-agent should run in a remote sandbox (based on runtime constraints).
+        // This whole AgentTool path is slated for removal in Phase 4b; we only need it to compile here.
         let use_remote = orchestrator.background_runner.is_some() && {
             let agent_def = orchestrator.stores.agent_store.get(&self.agent_name).await;
             matches!(
                 agent_def,
-                Some(distri_types::configuration::AgentConfig::StandardAgent(ref def)) if def.remote
+                Some(distri_types::configuration::AgentConfig::StandardAgent(ref def))
+                    if def.runtime.contains(&distri_types::RuntimeMode::Cli)
             )
         };
 

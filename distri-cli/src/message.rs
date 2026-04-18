@@ -84,7 +84,11 @@ pub fn build_message_params_full(
         definition_overrides: if has_overrides {
             Some(DefinitionOverrides {
                 model: model.map(|m| m.to_string()),
-                remote: if remote { Some(true) } else { None },
+                runtime: if remote {
+                    Some(vec![RuntimeMode::Cloud])
+                } else {
+                    None
+                },
                 ..Default::default()
             })
         } else {
@@ -165,9 +169,9 @@ mod tests {
             metadata
                 .definition_overrides
                 .as_ref()
-                .and_then(|o| o.remote),
-            Some(true),
-            "with --remote, definition_overrides.remote must be Some(true)"
+                .and_then(|o| o.runtime.clone()),
+            Some(vec![RuntimeMode::Cloud]),
+            "with --remote, definition_overrides.runtime must be Some([Cloud])"
         );
     }
 
@@ -190,9 +194,9 @@ mod tests {
             metadata
                 .definition_overrides
                 .as_ref()
-                .and_then(|o| o.remote)
+                .and_then(|o| o.runtime.as_ref())
                 .is_none(),
-            "without --remote, definition_overrides.remote must be unset"
+            "without --remote, definition_overrides.runtime must be unset"
         );
     }
 }
