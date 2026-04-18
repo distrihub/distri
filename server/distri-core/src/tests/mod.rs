@@ -8,6 +8,7 @@ mod deferred_tools_integration;
 mod definition;
 mod fixture_scenarios;
 pub mod helpers;
+pub mod inproc_a2a_runner;
 mod llm;
 pub mod mock_llm;
 mod orchestrator;
