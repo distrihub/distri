@@ -3,10 +3,11 @@ pub mod extract;
 pub mod renderers;
 pub mod state;
 pub mod status;
-pub mod telegram;
-pub mod telegram_html;
 pub mod text;
-pub mod whatsapp;
+
+// Per-platform surface renderers (TelegramFormatter, WhatsAppFormatter,
+// telegram_html) moved to distri-gateway. distri-formatter keeps only the
+// trait + shared state + default text renderer.
 
 use distri_types::{AgentEvent, ToolResponse};
 use serde::{Deserialize, Serialize};
