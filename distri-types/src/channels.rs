@@ -219,6 +219,10 @@ pub struct Channel {
     pub verified: bool,
     /// The `channel_identities.id` of the user who first opened this channel.
     pub created_by_identity_id: Option<Uuid>,
+    #[serde(default)]
+    pub created_at: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(default)]
+    pub updated_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 /// Payload for creating a new channel row.
