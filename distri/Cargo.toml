@@ -1,6 +1,6 @@
 [package]
 name = "distri"
-version = "0.3.7"
+version = "0.3.8"
 edition = "2024"
 description = "Rust client for the Distri A2A agent platform"
 license = "MIT"
@@ -24,10 +24,10 @@ tokio = { workspace = true, features = [
 ] }
 reqwest = { workspace = true, features = ["json", "stream", "gzip"] }
 flate2 = "1.0"
-distri-types = { path = "../distri-types", version = "0.3.7" }
-distri-formatter = { path = "../distri-formatter", version = "0.3.7" }
-distri-a2a = { path = "../distri-a2a", version = "0.3.7" }
-distri-workflow = { path = "../distri-workflow", version = "0.3.7" }
+distri-types = { path = "../distri-types", version = "0.3.8" }
+distri-formatter = { path = "../distri-formatter", version = "0.3.8" }
+distri-a2a = { path = "../distri-a2a", version = "0.3.8" }
+distri-workflow = { path = "../distri-workflow", version = "0.3.8" }
 which = "8.0"
 dashmap = "6.1"
 futures-util = "0.3"
