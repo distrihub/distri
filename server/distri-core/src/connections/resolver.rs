@@ -213,11 +213,10 @@ async fn resolve_custom(
         let key = format!("connection.{}.{}", connection.id, field.key);
         match secret_store.get(&key).await {
             Ok(Some(record)) => {
-                let env_name = format!(
-                    "{}_{}",
-                    connection.name.to_uppercase(),
-                    field.key.to_uppercase()
-                );
+                // Use the field key exactly as declared — no implicit
+                // connection-name prefix. Connection authors control the env
+                // var name by choosing the field key (e.g. `ZIPPY_PUBLISH_KEY`).
+                let env_name = field.key.to_uppercase();
                 env_vars.insert(env_name, record.value);
             }
             Ok(None) => {
@@ -286,20 +285,17 @@ async fn resolve_distri_native(
 }
 
 /// Substitute `{{field_key}}` occurrences in the template against resolved
-/// env vars (keyed back to the original field_key).
+/// env vars (keyed back to the original field_key). Env var names match the
+/// field key uppercased exactly — see `resolve_custom`.
 fn substitute_fields(
     template: &str,
     fields: &[distri_types::connections::CustomField],
     env_vars: &HashMap<String, String>,
-    connection_name: &str,
+    _connection_name: &str,
 ) -> String {
     let mut out = template.to_string();
     for field in fields {
-        let env_key = format!(
-            "{}_{}",
-            connection_name.to_uppercase(),
-            field.key.to_uppercase()
-        );
+        let env_key = field.key.to_uppercase();
         if let Some(value) = env_vars.get(&env_key) {
             out = out.replace(&format!("{{{{{}}}}}", field.key), value);
         }
@@ -549,7 +545,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn resolves_custom_fields_into_namespaced_env_vars() {
+    async fn resolves_custom_fields_into_field_key_env_vars() {
+        // Env var names are the field keys uppercased — the connection
+        // name is NOT implicitly prepended. Authors choose the env var
+        // name by picking the field key (e.g. `API_KEY` → `API_KEY`,
+        // or `ZIPPY_PUBLISH_KEY` → `ZIPPY_PUBLISH_KEY`).
         let id = Uuid::new_v4();
         let conn = custom_connection(id, "acme", vec!["api_key", "api_secret"]);
         let secrets = vec![
@@ -564,8 +564,9 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(r.env_vars.get("ACME_API_KEY").unwrap(), "k-123");
-        assert_eq!(r.env_vars.get("ACME_API_SECRET").unwrap(), "s-456");
+        assert_eq!(r.env_vars.get("API_KEY").unwrap(), "k-123");
+        assert_eq!(r.env_vars.get("API_SECRET").unwrap(), "s-456");
+        assert!(r.env_vars.get("ACME_API_KEY").is_none());
         // No Authorization header without auth_header_template.
         assert!(r.http_headers.get("Authorization").is_none());
     }
