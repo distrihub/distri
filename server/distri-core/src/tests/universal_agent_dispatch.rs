@@ -216,10 +216,7 @@ async fn build_orchestrator_with_runner(
     (orchestrator, broadcaster, runner)
 }
 
-async fn register_remote_only_agent(
-    orchestrator: &Arc<AgentOrchestrator>,
-    name: &str,
-) {
+async fn register_remote_only_agent(orchestrator: &Arc<AgentOrchestrator>, name: &str) {
     let mut def = StandardDefinition {
         name: name.to_string(),
         description: format!("Remote-only test agent: {}", name),
@@ -616,7 +613,9 @@ async fn mode_offload_returns_task_id_without_waiting() {
         elapsed
     );
 
-    let part = result.first().expect("offload must return at least one part");
+    let part = result
+        .first()
+        .expect("offload must return at least one part");
     match part {
         Part::Data(v) => {
             assert_eq!(
@@ -637,8 +636,7 @@ async fn mode_offload_returns_task_id_without_waiting() {
 #[tokio::test]
 async fn mode_transfer_sets_parents_final_result_and_emits_handover() {
     let (orchestrator, _bc, runner) =
-        build_orchestrator_with_runner(json!("transferred-result"), Duration::from_millis(0))
-            .await;
+        build_orchestrator_with_runner(json!("transferred-result"), Duration::from_millis(0)).await;
     register_caller_agent(&orchestrator, "caller", vec!["target".to_string()]).await;
     register_remote_only_agent(&orchestrator, "target").await;
 
@@ -703,8 +701,7 @@ async fn mode_transfer_sets_parents_final_result_and_emits_handover() {
         .list_tasks(Some(&parent_ctx.thread_id))
         .await
         .unwrap();
-    let child_tasks_under_thread: Vec<&str> =
-        tasks.iter().map(|t| t.id.as_str()).collect();
+    let child_tasks_under_thread: Vec<&str> = tasks.iter().map(|t| t.id.as_str()).collect();
     assert!(
         child_tasks_under_thread.contains(&parent_task_id.as_str()),
         "parent task must still be present after transfer; got {:?}",
@@ -731,12 +728,7 @@ async fn remote_dispatch_when_agent_requires_different_runtime() {
     let (orchestrator, _bc, runner) =
         build_orchestrator_with_runner(json!("done"), Duration::from_millis(0)).await;
 
-    register_caller_agent(
-        &orchestrator,
-        "caller",
-        vec!["remote_agent".to_string()],
-    )
-    .await;
+    register_caller_agent(&orchestrator, "caller", vec!["remote_agent".to_string()]).await;
     register_remote_only_agent(&orchestrator, "remote_agent").await;
 
     let (parent_ctx, _rx) = build_parent_ctx(&orchestrator, "caller");
@@ -814,11 +806,7 @@ async fn get_thread_includes_active_task_id() {
         .await
         .unwrap();
 
-    let fetched2 = orchestrator
-        .get_thread(&thread.id)
-        .await
-        .unwrap()
-        .unwrap();
+    let fetched2 = orchestrator.get_thread(&thread.id).await.unwrap().unwrap();
     assert!(
         fetched2.active_task_id.is_none(),
         "active_task_id must be None once the task is terminal; got {:?}",

@@ -1,3 +1,4 @@
+mod a2a_service;
 mod agent_loop;
 mod agent_loop_store_integration;
 mod browser_sessions;
@@ -17,7 +18,6 @@ mod request_tool;
 mod tool_result_format;
 mod tool_result_persistence;
 pub mod trace_replay;
-mod a2a_service;
 mod universal_agent_access;
 mod universal_agent_dispatch;
 mod usage_tracking;

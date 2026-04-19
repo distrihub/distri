@@ -291,7 +291,6 @@ impl AgentOrchestratorBuilder {
 }
 
 impl AgentOrchestrator {
-
     pub fn cleanup(&self) {
         // No-op: plugin registry has been removed
     }
@@ -677,8 +676,7 @@ impl AgentOrchestrator {
                                 if agent_name == definition.name || listed.contains(&agent_name) {
                                     continue;
                                 }
-                                sub_agent_lines
-                                    .push(format!("- **{}** — {}", agent_name, desc));
+                                sub_agent_lines.push(format!("- **{}** — {}", agent_name, desc));
                                 listed.insert(agent_name);
                             }
                             continue;
@@ -1050,7 +1048,11 @@ impl AgentOrchestrator {
         // For ephemeral mode, skip the get_thread check and always create new thread
         // This avoids "failed to load thread" errors with fresh ephemeral databases
         let thread = if self.is_ephemeral() {
-            tracing::info!(is_ephemeral=true, ?thread_id, "ensure_thread: skipping lookup (ephemeral)");
+            tracing::info!(
+                is_ephemeral = true,
+                ?thread_id,
+                "ensure_thread: skipping lookup (ephemeral)"
+            );
             None
         } else {
             match &thread_id {
@@ -1389,18 +1391,13 @@ impl AgentOrchestrator {
             }
         };
         let merged = match (definition.model_settings.take(), default_model_settings) {
-            (Some(agent_model), Some(base)) => {
-                match base.merge(&agent_model) {
-                    Some(m) => Some(m),
-                    None => {
-                        tracing::error!(
-                            "merge produced empty model for agent '{}'",
-                            definition.name,
-                        );
-                        Some(base.clone())
-                    }
+            (Some(agent_model), Some(base)) => match base.merge(&agent_model) {
+                Some(m) => Some(m),
+                None => {
+                    tracing::error!("merge produced empty model for agent '{}'", definition.name,);
+                    Some(base.clone())
                 }
-            }
+            },
             (Some(agent_model), None) => Some(agent_model),
             (None, Some(base)) => Some(base.clone()),
             (None, None) => None,
@@ -1696,10 +1693,7 @@ impl OrchestratorTrait for AgentOrchestrator {
             if let (Some(base), Some(override_ms)) = (def.model_settings(), &llm_def.model_settings)
             {
                 let final_model_settings = base.merge(override_ms).unwrap_or_else(|| {
-                    tracing::error!(
-                        "merge produced empty model for LLM call '{}'",
-                        llm_def.name
-                    );
+                    tracing::error!("merge produced empty model for LLM call '{}'", llm_def.name);
                     override_ms.clone()
                 });
                 llm_def.model_settings = Some(final_model_settings);
@@ -1947,10 +1941,8 @@ async fn resolve_declared_connections(
                 if !connected_names.contains(provider)
                     && registry.is_provider_available(provider).await
                 {
-                    missing_providers.push(format!(
-                        "- **{}** — ready to connect via OAuth",
-                        provider
-                    ));
+                    missing_providers
+                        .push(format!("- **{}** — ready to connect via OAuth", provider));
                 }
             }
         }

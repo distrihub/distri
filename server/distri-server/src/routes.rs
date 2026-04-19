@@ -929,9 +929,7 @@ async fn llm_execute(
     // Merge with request's model_settings if provided
     let model_settings: Option<ModelSettings> =
         match (base_model_settings, payload.model_settings.clone()) {
-            (Some(base), Some(override_ms)) => {
-                base.merge(&override_ms)
-            }
+            (Some(base), Some(override_ms)) => base.merge(&override_ms),
             (Some(base), None) => Some(base),
             (None, override_ms) => override_ms,
         };

@@ -118,7 +118,9 @@ where
     F: FnMut(StreamItem) -> Fut,
     Fut: std::future::Future<Output = ()> + Send,
 {
-    stream_client.stream_agent(agent_name, params, on_event).await
+    stream_client
+        .stream_agent(agent_name, params, on_event)
+        .await
 }
 
 /// Convenience: build + stream in one call. Used by server-side in-process

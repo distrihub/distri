@@ -2,7 +2,9 @@ use std::sync::Arc;
 
 use crate::agent::context::{ForkOptions, ForkType};
 use crate::agent::ExecutorContext;
-use crate::tools::universal_agent::{is_agent_accessible, resolve_code_agent, ALWAYS_AVAILABLE_BUILTINS};
+use crate::tools::universal_agent::{
+    is_agent_accessible, resolve_code_agent, ALWAYS_AVAILABLE_BUILTINS,
+};
 use crate::AgentOrchestratorBuilder;
 use distri_types::configuration::{DbConnectionConfig, MetadataStoreConfig, StoreConfig};
 use distri_types::{RuntimeMode, Tool as _};
@@ -127,10 +129,7 @@ async fn is_sandbox_propagates_through_all_clone_paths() {
 
     // new_task: creates a fresh task context within the same thread.
     let child_task = parent.new_task("child").await;
-    assert!(
-        child_task.is_sandbox,
-        "new_task must preserve is_sandbox"
-    );
+    assert!(child_task.is_sandbox, "new_task must preserve is_sandbox");
 
     // continue_as: handover (same task, new run).
     let continuation = parent.continue_as("target").await;

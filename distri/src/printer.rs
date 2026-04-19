@@ -636,14 +636,9 @@ impl EventPrinter {
                     COLOR_BRIGHT_CYAN, from_agent, to_agent, reason_str, COLOR_RESET
                 );
             }
-            AgentEventType::LiveView {
-                url, title, ..
-            } => {
+            AgentEventType::LiveView { url, title, .. } => {
                 let label = title.as_deref().unwrap_or("Live view");
-                println!(
-                    "{}⎔ {}: {}{}",
-                    COLOR_BRIGHT_CYAN, label, url, COLOR_RESET
-                );
+                println!("{}⎔ {}: {}{}", COLOR_BRIGHT_CYAN, label, url, COLOR_RESET);
             }
             AgentEventType::ContextCompaction {
                 tier,
@@ -786,7 +781,6 @@ impl EventPrinter {
         }
         crate::renderers::render_tool_output(result, self.verbose);
     }
-
 
     fn format_tool_input(&self, input: &serde_json::Value) -> String {
         distri_formatter::state::format_tool_input(input)

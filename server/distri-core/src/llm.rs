@@ -35,7 +35,12 @@ pub fn provider_label(ms: &distri_types::ModelSettings) -> String {
 pub fn provider_error_label(ms: &distri_types::ModelSettings) -> String {
     let label = provider_label(ms);
     let pcc = crate::provider_config::ProviderClientConfig::from(&ms.inner.provider);
-    format!("{}(base_url={}, has_key={})", label, pcc.base_url, !pcc.inline_api_key.unwrap_or_default().is_empty() || pcc.api_key_secret != "")
+    format!(
+        "{}(base_url={}, has_key={})",
+        label,
+        pcc.base_url,
+        !pcc.inline_api_key.unwrap_or_default().is_empty() || pcc.api_key_secret != ""
+    )
 }
 
 use crate::{
@@ -1421,7 +1426,8 @@ async fn completion(
             "{} (model={}, provider={})",
             e,
             model,
-            ms.map(|m| provider_error_label(m)).unwrap_or_else(|| "unknown".into()),
+            ms.map(|m| provider_error_label(m))
+                .unwrap_or_else(|| "unknown".into()),
         ))
     })?;
     Ok(response)
@@ -1456,7 +1462,8 @@ async fn completion_stream(
             "{} (model={}, provider={})",
             e,
             model,
-            ms.map(|m| provider_error_label(m)).unwrap_or_else(|| "unknown".into()),
+            ms.map(|m| provider_error_label(m))
+                .unwrap_or_else(|| "unknown".into()),
         ))
     })?;
     Ok(stream)

@@ -230,6 +230,13 @@ pub struct Channel {
     pub verified: bool,
     /// The `channel_identities.id` of the user who first opened this channel.
     pub created_by_identity_id: Option<Uuid>,
+    /// User's explicit workspace choice for this conversation, set via
+    /// `/switch` on system bots. `None` means "use the executor's default
+    /// resolution" (bot's workspace for workspace-scoped bots; actor's
+    /// primary workspace for system bots). Never written on workspace-scoped
+    /// bots — the gateway's `/switch` handler rejects there.
+    #[serde(default)]
+    pub selected_workspace_id: Option<Uuid>,
     #[serde(default)]
     pub created_at: Option<chrono::DateTime<chrono::Utc>>,
     #[serde(default)]
@@ -342,9 +349,14 @@ pub enum AuthProof {
 pub enum ResolveOutcome {
     Authenticated(AuthenticatedChannelUser),
     /// The channel/user needs to complete a verification flow.
-    NeedsVerification { url: String, gate_kind: GateKind },
+    NeedsVerification {
+        url: String,
+        gate_kind: GateKind,
+    },
     /// No path exists for this user to access the bot.
-    Denied { reason: String },
+    Denied {
+        reason: String,
+    },
     /// The message should be silently rejected (e.g. unknown update type).
     Rejected,
 }

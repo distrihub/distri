@@ -71,10 +71,7 @@ impl From<&ModelProvider> for ProviderClientConfig {
                 send_api_key_header: false,
             },
             ModelProvider::AzureAiFoundry { base_url, api_key } => Self {
-                base_url: format!(
-                    "{}/openai/v1",
-                    base_url.trim_end_matches('/')
-                ),
+                base_url: format!("{}/openai/v1", base_url.trim_end_matches('/')),
                 api_key_secret: "AZURE_AI_FOUNDRY_API_KEY",
                 inline_api_key: api_key.clone(),
                 project_id: None,
