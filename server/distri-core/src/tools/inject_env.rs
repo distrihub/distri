@@ -1,5 +1,5 @@
 use crate::agent::ExecutorContext;
-use crate::tools::resolve::resolve_connection_token;
+use crate::connections::{ConnectionResolver, DefaultResolver, ResolveCtx};
 use crate::tools::ExecutorContextTool;
 use crate::types::ToolCall;
 use crate::AgentError;
@@ -82,35 +82,44 @@ impl ExecutorContextTool for InjectConnectionEnvTool {
                 )
             })?;
 
-        let (provider, access_token) = resolve_connection_token(connection_id, stores)
-            .await
-            .map_err(|e| AgentError::ToolExecution(e))?;
+        let env_var_override = input.get("env_var").and_then(|v| v.as_str());
 
-        // Determine env var name
-        let env_var_name = input
-            .get("env_var")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| format!("{}_TOKEN", provider.to_uppercase()));
-
-        // Inject into context env_vars (shared via Arc<RwLock>)
-        {
-            let mut env_vars = context.env_vars.write().await;
-            env_vars.insert(env_var_name.clone(), access_token);
+        let mut resolve_ctx = ResolveCtx::new(stores);
+        if let Some(ws) = context.workspace_id.as_deref() {
+            resolve_ctx = resolve_ctx.with_workspace(ws);
+        }
+        resolve_ctx = resolve_ctx.with_user(context.user_id.as_str());
+        if let Some(ev) = env_var_override {
+            resolve_ctx = resolve_ctx.with_env_override(ev);
         }
 
+        let resolved = DefaultResolver
+            .resolve(connection_id, &resolve_ctx)
+            .await
+            .map_err(AgentError::ToolExecution)?;
+
+        // Merge resolved env vars into context (shared via Arc<RwLock>).
+        let injected_names: Vec<String> = resolved.env_vars.keys().cloned().collect();
+        {
+            let mut env_vars = context.env_vars.write().await;
+            for (k, v) in &resolved.env_vars {
+                env_vars.insert(k.clone(), v.clone());
+            }
+        }
+        context.mark_connection_used(connection_id).await;
+
         tracing::info!(
-            "[inject_connection_env] Injected {} for provider '{}' (connection: {})",
-            env_var_name,
-            provider,
+            "[inject_connection_env] Injected {:?} for provider '{}' (connection: {})",
+            injected_names,
+            resolved.provider,
             connection_id
         );
 
-        // Return confirmation — token never appears in the response
+        // Return confirmation — tokens never appear in the response
         Ok(vec![Part::Data(json!({
             "injected": true,
-            "provider": provider,
-            "env_var": env_var_name,
+            "provider": resolved.provider,
+            "env_vars": injected_names,
             "connection_id": connection_id,
         }))])
     }

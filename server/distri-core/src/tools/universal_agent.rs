@@ -276,8 +276,28 @@ async fn build_spec(
 
     // ── 3. Build overrides (ad-hoc branch only). ────────────────────────────
     let overrides = if input.system_prompt.is_some() {
-        let mut o = DefinitionOverrides::default()
-            .with_instructions(input.system_prompt.clone().unwrap_or_default());
+        // `_adhoc_base` sets `append_default_instructions = false`, so the
+        // rendered prompt is exactly whatever we put in `instructions`.
+        // When the caller supplies `system_prompt`, they often tell the model
+        // to produce text-only output ("Output only valid MDX", etc.), which
+        // causes the LLM to never call `final` — the agent loop then re-runs
+        // the same prompt, producing the same text, until `max_iterations`
+        // burns out. Force an explicit terminate-with-final reminder so the
+        // LLM knows to emit its answer via the `final` tool instead of free
+        // text.
+        let user_instructions = input.system_prompt.clone().unwrap_or_default();
+        let instructions = format!(
+            "{}\n\n\
+             # TERMINATION\n\
+             When your answer is ready, call the `final` tool with your\n\
+             complete output as the `result` parameter. Do NOT reply with\n\
+             free-form text — the caller will only receive whatever you\n\
+             pass to `final`. Every response must end with exactly one\n\
+             `final` tool call.",
+            user_instructions.trim_end()
+        );
+
+        let mut o = DefinitionOverrides::default().with_instructions(instructions);
         if let Some(ref model) = input.model {
             o = o.with_model(model.clone());
         }

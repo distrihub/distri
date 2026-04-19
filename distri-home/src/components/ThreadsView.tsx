@@ -342,6 +342,7 @@ export function ThreadsView({
   const [dialogExternalId, setDialogExternalId] = useState(initialExternalId || '');
   const [dialogUserId, setDialogUserId] = useState(initialUserId || '');
   const [dialogChannelId, setDialogChannelId] = useState(initialChannelId || '');
+  const [dialogBotId, setDialogBotId] = useState(initialBotId || '');
   const [dialogFromDate, setDialogFromDate] = useState('');
   const [dialogToDate, setDialogToDate] = useState('');
 
@@ -370,6 +371,7 @@ export function ThreadsView({
     setDialogExternalId(initialExternalId || '');
     setDialogUserId(initialUserId || '');
     setDialogChannelId(initialChannelId || '');
+    setDialogBotId(initialBotId || '');
     setParams((prev) => ({
       ...prev,
       agent_id: initialAgentId || undefined,
@@ -465,6 +467,7 @@ export function ThreadsView({
     setDialogExternalId(params.external_id || '');
     setDialogUserId(params.user_id || '');
     setDialogChannelId(params.channel_id || '');
+    setDialogBotId(params.bot_id || '');
     setDialogFromDate(params.from_date ? params.from_date.split('T')[0] : '');
     setDialogToDate(params.to_date ? params.to_date.split('T')[0] : '');
     setShowFilterDialog(true);
@@ -478,18 +481,20 @@ export function ThreadsView({
       external_id: dialogExternalId || undefined,
       user_id: dialogUserId || undefined,
       channel_id: dialogChannelId || undefined,
+      bot_id: dialogBotId || undefined,
       from_date: dialogFromDate ? new Date(dialogFromDate).toISOString() : undefined,
       to_date: dialogToDate ? new Date(dialogToDate + 'T23:59:59').toISOString() : undefined,
       offset: 0,
     });
     setShowFilterDialog(false);
-  }, [params, dialogAgentId, dialogExternalId, dialogUserId, dialogChannelId, dialogFromDate, dialogToDate, setParams]);
+  }, [params, dialogAgentId, dialogExternalId, dialogUserId, dialogChannelId, dialogBotId, dialogFromDate, dialogToDate, setParams]);
 
   const clearAllFilters = useCallback(() => {
     setDialogAgentId('');
     setDialogExternalId('');
     setDialogUserId('');
     setDialogChannelId('');
+    setDialogBotId('');
     setDialogFromDate('');
     setDialogToDate('');
     setQuickTimeFilter(null);
@@ -537,6 +542,7 @@ export function ThreadsView({
     params.external_id,
     params.user_id,
     params.channel_id,
+    params.bot_id,
     params.from_date,
     params.to_date,
     params.search,
@@ -943,6 +949,19 @@ export function ThreadsView({
                   value={dialogChannelId}
                   onChange={(e) => setDialogChannelId(e.target.value)}
                   placeholder="Filter by channel ID..."
+                  className="h-10 w-full rounded-md border border-border/70 bg-background px-3 text-sm text-foreground"
+                />
+              </div>
+
+              <div>
+                <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  Bot ID
+                </label>
+                <input
+                  type="text"
+                  value={dialogBotId}
+                  onChange={(e) => setDialogBotId(e.target.value)}
+                  placeholder="Filter by bot ID..."
                   className="h-10 w-full rounded-md border border-border/70 bg-background px-3 text-sm text-foreground"
                 />
               </div>

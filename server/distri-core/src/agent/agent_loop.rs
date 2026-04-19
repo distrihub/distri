@@ -263,6 +263,18 @@ impl AgentLoop {
                 break;
             }
 
+            // Early termination if anything set a final_result between
+            // iterations (e.g. the planner auto-finalized after MAX_RETRIES of
+            // text-only LLM responses). Without this check, an empty plan
+            // would trigger replanning and the same pattern would repeat.
+            if context.get_final_result().await.is_some() {
+                verbose_log!(
+                    context.verbose,
+                    "Final result already set before planning; stopping loop"
+                );
+                break;
+            }
+
             // Emit StepStarted BEFORE planning so the plan span nests under the step span
             // in the OTel trace hierarchy. Use the global iteration count as the step index
             // so it reflects overall progress rather than local-plan position.

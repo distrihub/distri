@@ -186,7 +186,7 @@ impl PlanningStrategy for UnifiedPlanner {
                             Ok(response) => {
                                 if !response.tool_calls.is_empty() {
                                     break Ok(response);
-                                } else {
+                                } else if attempt < MAX_RETRIES {
                                     let err = "You always need to return tool calls in the response, but got:";
                                     messages.push(crate::types::Message::assistant(
                                         response.content.clone(),
@@ -200,6 +200,31 @@ impl PlanningStrategy for UnifiedPlanner {
                                         None,
                                     ));
                                     continue;
+                                } else {
+                                    // LLM refused to produce a tool call after
+                                    // MAX_RETRIES. Treat the final text content
+                                    // as the answer and auto-finalize so the
+                                    // agent loop doesn't spin forever. Common
+                                    // trigger: an ad-hoc sub-agent whose
+                                    // `system_prompt` tells the model to emit
+                                    // text-only output (e.g. "return only valid
+                                    // MDX") — the model obeys, never calls
+                                    // `final`, and every outer iteration re-
+                                    // invokes planning which repeats the same
+                                    // text. Fall back to the text as the final
+                                    // result.
+                                    tracing::warn!(
+                                        agent = %self.agent_def.name,
+                                        attempts = attempt,
+                                        "Planner: LLM returned text-only after {} retries; auto-finalizing",
+                                        MAX_RETRIES
+                                    );
+                                    context
+                                        .set_final_result(Some(serde_json::Value::String(
+                                            response.content.clone(),
+                                        )))
+                                        .await;
+                                    break Ok(response);
                                 }
                             }
                             Err(AgentError::XmlParsingFailed(ref content, ref err))

@@ -617,106 +617,12 @@ impl AgentOrchestrator {
                     }
                 }
 
-                // Inject connection context for connection-aware agents
-                {
-                    let is_connection_aware = definition.available_skills.iter().any(|s| {
-                        s.name.contains("connections_manager")
-                            || s.name.starts_with("connection:")
-                            || s.name == "*"
-                    });
-
-                    if is_connection_aware {
-                        if let Some(ws_id) = &context.workspace_id {
-                            let mut dv = std::collections::HashMap::new();
-
-                            // Build connected services list
-                            if let Some(conn_store) = &self.stores.connection_store {
-                                if let Ok(connections) = conn_store.list_by_workspace(ws_id).await {
-                                    let connected_names: std::collections::HashSet<String> =
-                                        connections.iter().map(|c| c.name.clone()).collect();
-
-                                    let connected_lines: Vec<String> = connections
-                                        .iter()
-                                        .filter(|c| {
-                                            c.status
-                                                == distri_types::connections::ConnectionStatus::Connected
-                                        })
-                                        // DistriNative connections (the seeded `distri` platform
-                                        // connection) are for internal platform API calls — never
-                                        // for third-party services like Google/Slack. Hiding them
-                                        // from the agent's "Available Connections" list stops the
-                                        // LLM from accidentally using the wrong connection_id
-                                        // when no real provider connection exists.
-                                        .filter(|c| {
-                                            !matches!(
-                                                c.auth_type,
-                                                distri_types::connections::AuthType::DistriNative
-                                            )
-                                        })
-                                        .map(|c| {
-                                            let provider_tag = match &c.auth_type {
-                                                distri_types::connections::AuthType::OAuth {
-                                                    provider,
-                                                    scopes,
-                                                } => format!(
-                                                    ", provider: {}, scopes: [{}]",
-                                                    provider,
-                                                    scopes.join(", ")
-                                                ),
-                                                _ => String::new(),
-                                            };
-                                            format!(
-                                                "- **{}** (id: `{}`, status: connected{})",
-                                                c.name, c.id, provider_tag
-                                            )
-                                        })
-                                        .collect();
-
-                                    if !connected_lines.is_empty() {
-                                        dv.insert(
-                                            "available_connections".to_string(),
-                                            serde_json::Value::String(connected_lines.join("\n")),
-                                        );
-                                    }
-
-                                    // Build available-but-not-connected providers list
-                                    if let Some(registry) = &self.stores.provider_registry {
-                                        let all_providers = registry.list_providers().await;
-                                        let mut available_lines = Vec::new();
-                                        for provider in &all_providers {
-                                            if !connected_names.contains(provider)
-                                                && registry.is_provider_available(provider).await
-                                            {
-                                                available_lines.push(format!(
-                                                    "- **{}** — ready to connect via OAuth",
-                                                    provider
-                                                ));
-                                            }
-                                        }
-                                        if !available_lines.is_empty() {
-                                            dv.insert(
-                                                "available_providers".to_string(),
-                                                serde_json::Value::String(
-                                                    available_lines.join("\n"),
-                                                ),
-                                            );
-                                        }
-                                    }
-                                }
-                            }
-
-                            if !dv.is_empty() {
-                                context
-                                    .merge_hook_prompt_state(
-                                        crate::agent::context::HookPromptState {
-                                            dynamic_values: dv,
-                                            ..Default::default()
-                                        },
-                                    )
-                                    .await;
-                            }
-                        }
-                    }
+                // Resolve declared connections. Agents must declare connections
+                // in `definition.connections` to get any injection — we do NOT
+                // auto-discover or auto-inject based on skills or workspace
+                // state. This keeps the prompt/env surface explicit.
+                if !definition.connections.is_empty() {
+                    resolve_declared_connections(&self.stores, &definition, &context).await?;
                 }
 
                 // Always inject agent delegation info into prompt context
@@ -744,12 +650,40 @@ impl AgentOrchestrator {
                         }
                     }
 
-                    // Declared sub_agents (store agents + opt-in built-ins)
+                    // Track names we've already listed so explicit entries and
+                    // the wildcard expansion don't collide.
+                    let mut listed: std::collections::HashSet<String> =
+                        crate::tools::universal_agent::ALWAYS_AVAILABLE_BUILTINS
+                            .iter()
+                            .map(|s| s.to_string())
+                            .collect();
+
+                    // Declared sub_agents (store agents + opt-in built-ins).
+                    // `"*"` expands to every non-system agent in the workspace
+                    // (minus self and the always-available builtins already
+                    // listed above). This mirrors `available_skills = [{id:"*"}]`.
                     for name in &definition.sub_agents {
                         if name == "*" {
-                            sub_agent_lines.push(
-                                "- **\\*** — all agents in the workspace are available".to_string(),
-                            );
+                            let (all_agents, _) = self.list_agents(None, None).await;
+                            for cfg in &all_agents {
+                                let (agent_name, desc) = match cfg {
+                                    distri_types::configuration::AgentConfig::StandardAgent(
+                                        def,
+                                    ) => (def.name.clone(), def.description.clone()),
+                                    distri_types::configuration::AgentConfig::WorkflowAgent(
+                                        def,
+                                    ) => (def.name.clone(), def.description.clone()),
+                                };
+                                if agent_name == definition.name || listed.contains(&agent_name) {
+                                    continue;
+                                }
+                                sub_agent_lines
+                                    .push(format!("- **{}** — {}", agent_name, desc));
+                                listed.insert(agent_name);
+                            }
+                            continue;
+                        }
+                        if listed.contains(name) {
                             continue;
                         }
                         let desc = if let Some(agent_cfg) = self.get_agent(name).await {
@@ -765,6 +699,7 @@ impl AgentOrchestrator {
                             "Sub-agent".to_string()
                         };
                         sub_agent_lines.push(format!("- **{}** — {}", name, desc));
+                        listed.insert(name.clone());
                     }
 
                     context
@@ -857,6 +792,11 @@ impl AgentOrchestrator {
         );
         Self::validate_agent_model(&agent_config)?;
 
+        let declared_definition = match &agent_config {
+            distri_types::configuration::AgentConfig::StandardAgent(def) => Some(def.clone()),
+            _ => None,
+        };
+
         let agent = self
             .create_agent_from_config(agent_config, context.clone())
             .await?;
@@ -867,6 +807,11 @@ impl AgentOrchestrator {
             .invoke_stream(message, Arc::new(context_with_tx))
             .await?;
         let _ = handle.await;
+
+        if let Some(def) = declared_definition {
+            warn_unused_connections(&def, &context).await;
+        }
+
         Ok(result)
     }
 
@@ -1784,4 +1729,287 @@ impl OrchestratorTrait for AgentOrchestrator {
 
 fn parse_structured_output(raw: &str) -> serde_json::Value {
     serde_json::from_str(raw).unwrap_or_else(|_| serde_json::Value::String(raw.to_string()))
+}
+
+/// Resolve the connections declared in `definition.connections` against the
+/// workspace's stored connections, inject resolved env vars into the
+/// `ExecutorContext`, and populate `{{available_connections}}` /
+/// `{{available_providers}}` dynamic values for the `{{> connections}}`
+/// partial.
+///
+/// Errors out (as `AgentError::Validation`) when a `ConnectionRequirement`
+/// marked `required=true` cannot be resolved. Non-required missing
+/// requirements are surfaced to the model under `available_providers`.
+///
+/// A `provider = "*"` requirement is a wildcard: list every connected
+/// workspace connection (and available-but-not-connected providers from the
+/// registry) without injecting env vars. Used by the top-level distri
+/// orchestrator, which authenticates via the `x-connection-id` proxy path.
+async fn resolve_declared_connections(
+    stores: &distri_types::stores::InitializedStores,
+    definition: &distri_types::StandardDefinition,
+    context: &Arc<ExecutorContext>,
+) -> Result<(), AgentError> {
+    use crate::connections::{ConnectionResolver, DefaultResolver, ResolveCtx};
+    use distri_types::connections::Connection;
+
+    let conn_store = match stores.connection_store.as_ref() {
+        Some(s) => s,
+        None => {
+            tracing::warn!(
+                "Agent '{}' declares connections but no connection_store is configured",
+                definition.name
+            );
+            return Ok(());
+        }
+    };
+
+    let workspace_id = match &context.workspace_id {
+        Some(ws) => ws.clone(),
+        None => {
+            return Err(AgentError::Validation(format!(
+                "Agent '{}' declares connections but context has no workspace_id",
+                definition.name
+            )));
+        }
+    };
+
+    // Pre-load workspace connections once so we can match by provider in O(n).
+    let ws_connections: Vec<Connection> = conn_store
+        .list_by_workspace(&workspace_id)
+        .await
+        .map_err(|e| AgentError::Validation(format!("failed to list connections: {e}")))?;
+
+    let mut connected_lines: Vec<String> = Vec::new();
+    let mut missing_providers: Vec<String> = Vec::new();
+
+    for req in &definition.connections {
+        // Wildcard: list every connected workspace connection in the partial
+        // but do NOT inject env vars. The agent is expected to authenticate
+        // via the `x-connection-id` proxy path (see distri_request /
+        // POST /request) rather than raw env-var token reuse. Used by the
+        // top-level distri orchestrator agent which manages user connections.
+        if req.provider.as_deref() == Some("*") {
+            for c in &ws_connections {
+                if c.status != distri_types::connections::ConnectionStatus::Connected {
+                    continue;
+                }
+                // Hide the system-seeded DistriNative connection from the
+                // listing so the LLM doesn't mistake it for a third-party
+                // service to call on the user's behalf.
+                if matches!(
+                    c.auth_type,
+                    distri_types::connections::AuthType::DistriNative
+                ) {
+                    continue;
+                }
+                let provider_tag = match &c.auth_type {
+                    distri_types::connections::AuthType::OAuth {
+                        provider, scopes, ..
+                    } => format!(", provider: {}, scopes: [{}]", provider, scopes.join(", ")),
+                    _ => String::new(),
+                };
+                connected_lines.push(format!(
+                    "- **{}** (id: `{}`, status: connected{})",
+                    c.name, c.id, provider_tag
+                ));
+            }
+            continue;
+        }
+
+        // Locate the matching connection.
+        let matched: Option<Connection> = if let Some(id) = req.connection_id {
+            ws_connections.iter().find(|c| c.id == id).cloned()
+        } else if let Some(provider) = req.provider.as_deref() {
+            ws_connections
+                .iter()
+                .find(|c| match &c.auth_type {
+                    distri_types::connections::AuthType::OAuth { provider: p, .. } => p == provider,
+                    distri_types::connections::AuthType::Custom { .. } => c.name == provider,
+                    distri_types::connections::AuthType::DistriNative => provider == "distri",
+                })
+                .cloned()
+        } else {
+            return Err(AgentError::Validation(format!(
+                "Agent '{}' has a connection requirement with neither provider nor connection_id",
+                definition.name
+            )));
+        };
+
+        let Some(connection) = matched else {
+            let label = req
+                .provider
+                .clone()
+                .or_else(|| req.connection_id.map(|id| id.to_string()))
+                .unwrap_or_default();
+            if req.required {
+                return Err(AgentError::Validation(format!(
+                    "Agent '{}' requires connection '{}' but none is connected in this workspace",
+                    definition.name, label
+                )));
+            }
+            missing_providers.push(format!(
+                "- **{}** — not connected yet in this workspace",
+                label
+            ));
+            continue;
+        };
+
+        // Scope check (OAuth).
+        if !req.scopes.is_empty() {
+            if let distri_types::connections::AuthType::OAuth {
+                scopes: granted, ..
+            } = &connection.auth_type
+            {
+                let missing_scopes: Vec<&String> = req
+                    .scopes
+                    .iter()
+                    .filter(|s| !granted.iter().any(|g| g == *s))
+                    .collect();
+                if !missing_scopes.is_empty() {
+                    if req.required {
+                        return Err(AgentError::Validation(format!(
+                            "Connection '{}' missing required scopes: {:?}",
+                            connection.name, missing_scopes
+                        )));
+                    }
+                    missing_providers.push(format!(
+                        "- **{}** — connected but missing scopes: {:?}",
+                        connection.name, missing_scopes
+                    ));
+                    continue;
+                }
+            }
+        }
+
+        // Resolve and merge env vars.
+        let mut resolve_ctx = ResolveCtx::new(stores).with_workspace(&workspace_id);
+        resolve_ctx = resolve_ctx.with_user(context.user_id.as_str());
+        if let Some(ev) = req.env_var.as_deref() {
+            resolve_ctx = resolve_ctx.with_env_override(ev);
+        }
+
+        match DefaultResolver
+            .resolve(&connection.id.to_string(), &resolve_ctx)
+            .await
+        {
+            Ok(resolved) => {
+                {
+                    let mut env_vars = context.env_vars.write().await;
+                    for (k, v) in &resolved.env_vars {
+                        env_vars.insert(k.clone(), v.clone());
+                    }
+                }
+                let scopes_tag = match &connection.auth_type {
+                    distri_types::connections::AuthType::OAuth { scopes, .. } => {
+                        format!(", scopes: [{}]", scopes.join(", "))
+                    }
+                    _ => String::new(),
+                };
+                connected_lines.push(format!(
+                    "- **{}** (id: `{}`, provider: {}{})",
+                    connection.name, connection.id, resolved.provider, scopes_tag
+                ));
+            }
+            Err(e) => {
+                if req.required {
+                    return Err(AgentError::Validation(format!(
+                        "Failed to resolve connection '{}': {}",
+                        connection.name, e
+                    )));
+                }
+                tracing::warn!(
+                    "Agent '{}' declared non-required connection '{}' but resolution failed: {}",
+                    definition.name,
+                    connection.name,
+                    e
+                );
+                missing_providers.push(format!(
+                    "- **{}** — error resolving: {}",
+                    connection.name, e
+                ));
+            }
+        }
+    }
+
+    // Wildcard path also surfaces registry-known but not-yet-connected providers
+    // so the LLM can suggest which ones the user could connect.
+    let has_wildcard = definition
+        .connections
+        .iter()
+        .any(|r| r.provider.as_deref() == Some("*"));
+    if has_wildcard {
+        if let Some(registry) = &stores.provider_registry {
+            let connected_names: std::collections::HashSet<String> =
+                ws_connections.iter().map(|c| c.name.clone()).collect();
+            let all_providers = registry.list_providers().await;
+            for provider in &all_providers {
+                if !connected_names.contains(provider)
+                    && registry.is_provider_available(provider).await
+                {
+                    missing_providers.push(format!(
+                        "- **{}** — ready to connect via OAuth",
+                        provider
+                    ));
+                }
+            }
+        }
+    }
+
+    let mut dv = std::collections::HashMap::new();
+    if !connected_lines.is_empty() {
+        dv.insert(
+            "available_connections".to_string(),
+            serde_json::Value::String(connected_lines.join("\n")),
+        );
+    }
+    if !missing_providers.is_empty() {
+        dv.insert(
+            "available_providers".to_string(),
+            serde_json::Value::String(missing_providers.join("\n")),
+        );
+    }
+
+    if !dv.is_empty() {
+        context
+            .merge_hook_prompt_state(crate::agent::context::HookPromptState {
+                dynamic_values: dv,
+                ..Default::default()
+            })
+            .await;
+    }
+
+    Ok(())
+}
+
+/// After a run finishes, warn when an agent declared `connections: [...]` but
+/// none of them were resolved (no `inject_connection_env`, no `x-connection-id`,
+/// no proxy hit). Helps catch definitions that carry unused connections.
+pub async fn warn_unused_connections(
+    definition: &distri_types::StandardDefinition,
+    context: &Arc<ExecutorContext>,
+) {
+    if definition.connections.is_empty() {
+        return;
+    }
+    let used = context.connections_used_snapshot().await;
+    if !used.is_empty() {
+        return;
+    }
+    let declared: Vec<String> = definition
+        .connections
+        .iter()
+        .map(|r| {
+            r.provider
+                .clone()
+                .or_else(|| r.connection_id.map(|id| id.to_string()))
+                .unwrap_or_else(|| "<unspecified>".to_string())
+        })
+        .collect();
+    tracing::warn!(
+        event = "connections_declared_but_unused",
+        agent = %definition.name,
+        declared = ?declared,
+        "Agent declared connections but did not use any during this run"
+    );
 }

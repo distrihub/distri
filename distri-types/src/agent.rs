@@ -464,6 +464,14 @@ pub struct StandardDefinition {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub available_skills: Vec<AvailableSkill>,
 
+    /// Connections this agent needs to function. Resolved at run start from the
+    /// workspace's connections: OAuth tokens / custom secrets / distri-native
+    /// sessions are injected into `ExecutorContext.env_vars` and surfaced to
+    /// the model via the `{{> connections}}` partial. Agents without declared
+    /// connections get neither env vars nor the partial.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub connections: Vec<crate::connections::ConnectionRequirement>,
+
     /// List of sub-agents that this agent can transfer control to
     #[serde(default)]
     pub sub_agents: Vec<String>,

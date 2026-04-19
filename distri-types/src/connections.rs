@@ -257,3 +257,41 @@ impl Connection {
             .and_then(|v| serde_json::from_value(v.clone()).ok())
     }
 }
+
+/// Declarative reference to a connection that an agent definition requires.
+///
+/// Resolved at agent-run start: the orchestrator matches this against the
+/// workspace's `connections` table, fetches the secret (OAuth token / custom
+/// fields / distri-native session), and injects the result into
+/// `ExecutorContext.env_vars` + `dynamic_values.available_connections`.
+///
+/// Prefer `provider` (portable across workspaces) over `connection_id`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema, Default)]
+pub struct ConnectionRequirement {
+    /// Match by provider name (preferred): "google", "slack", ...
+    /// Resolved against `AuthType::OAuth.provider` / `AuthType::Custom` (name match)
+    /// / `AuthType::DistriNative` (provider_name == "distri").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+
+    /// Pin to a specific connection ID. Takes precedence over `provider`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection_id: Option<Uuid>,
+
+    /// Minimum OAuth scopes required. Resolution fails (when `required=true`)
+    /// or marks the requirement unmet (when `required=false`) if the connected
+    /// token doesn't cover all of these.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scopes: Vec<String>,
+
+    /// Env var name override. Default: `<PROVIDER>_TOKEN` for OAuth,
+    /// `<PROVIDER>_<FIELD_KEY>` for each Custom field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env_var: Option<String>,
+
+    /// If true, the agent fails to start when this connection can't be resolved.
+    /// If false (default), the agent starts and the requirement is surfaced in
+    /// `{{available_providers}}` so the LLM can prompt the user to connect.
+    #[serde(default)]
+    pub required: bool,
+}

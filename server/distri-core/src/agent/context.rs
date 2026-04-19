@@ -160,6 +160,11 @@ pub struct ExecutorContext {
     /// on the `DISTRI_IN_SANDBOX` env var). Tools and prompts can use this to
     /// detect "I'm inside the sandbox, not the host orchestrator".
     pub is_sandbox: bool,
+    /// Connection IDs that were actually resolved during this run (via
+    /// `inject_connection_env`, the `x-connection-id` HTTP path, or the cloud
+    /// proxy). The orchestrator uses this post-run to warn when an agent
+    /// declared `connections: [...]` but never used them.
+    pub connections_used: Arc<RwLock<HashSet<String>>>,
 }
 
 impl std::fmt::Debug for ExecutorContext {
@@ -229,6 +234,7 @@ impl Default for ExecutorContext {
             cancellation_signal: None,
             mailbox: None,
             is_sandbox: false,
+            connections_used: Arc::new(RwLock::new(HashSet::new())),
         }
     }
 }
@@ -282,6 +288,18 @@ impl ExecutorContext {
     pub async fn extend_tools(&self, tools: Vec<Arc<dyn Tool>>) {
         let mut guard = self.tools.write().await;
         guard.extend(tools);
+    }
+
+    /// Record that a connection was resolved during this run. Called by the
+    /// connection resolver any time it resolves a connection_id, so the
+    /// orchestrator can post-run warn when a declared connection was unused.
+    pub async fn mark_connection_used(&self, connection_id: &str) {
+        let mut guard = self.connections_used.write().await;
+        guard.insert(connection_id.to_string());
+    }
+
+    pub async fn connections_used_snapshot(&self) -> HashSet<String> {
+        self.connections_used.read().await.clone()
     }
 
     /// Set the names of deferred tools (for tool_search awareness).
@@ -1061,6 +1079,7 @@ impl ExecutorContext {
             cancellation_signal: self.cancellation_signal.clone(),
             mailbox: self.mailbox.clone(),
             is_sandbox: self.is_sandbox,
+            connections_used: self.connections_used.clone(),
         };
 
         (inner_context, inner_rx)
