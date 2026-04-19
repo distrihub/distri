@@ -224,7 +224,9 @@ async fn unimplemented_methods_return_method_not_found() {
             .await;
         match resp {
             Either::Right(r) => {
-                let err = r.error.expect("unimplemented method must yield JSON-RPC error");
+                let err = r
+                    .error
+                    .expect("unimplemented method must yield JSON-RPC error");
                 assert_eq!(
                     err.code, -32601,
                     "method {} must map to -32601 Method not found; got code {}",
@@ -377,7 +379,9 @@ async fn build_final_message_returns_none_when_no_final_result() {
     let ctx2 = ExecutorContext::default();
     ctx2.set_final_result(Some(json!(""))).await;
     assert!(
-        crate::a2a::service::build_final_message(&ctx2).await.is_none(),
+        crate::a2a::service::build_final_message(&ctx2)
+            .await
+            .is_none(),
         "empty final_result must yield None so callers leave the slot unset"
     );
 }

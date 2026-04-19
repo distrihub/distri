@@ -139,9 +139,9 @@ impl ExecutorContextTool for SaveArtifactTool {
                         path
                     )));
                 }
-                let decoded = general_purpose::STANDARD
-                    .decode(&s)
-                    .map_err(|e| AgentError::ToolExecution(format!("Invalid base64 data: {}", e)))?;
+                let decoded = general_purpose::STANDARD.decode(&s).map_err(|e| {
+                    AgentError::ToolExecution(format!("Invalid base64 data: {}", e))
+                })?;
                 let size = decoded.len() as u64;
                 (s, size)
             } else {

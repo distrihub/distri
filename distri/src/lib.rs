@@ -40,9 +40,10 @@ pub use distri_types::{
     ModelProviderDefinition, ProviderKeyDefinition, ProviderType, TokenResponse, TtsVoiceInfo,
 };
 pub use printer::{
-    ContextHealth, EventPrinter, print_stream, print_stream_verbose, print_stream_with_health,
+    ContextHealth, EventPrinter, format_context_breakdown, print_stream, print_stream_verbose,
+    print_stream_with_health,
 };
-pub use run::{build_run_params, run_agent, stream_run, RunOptions, DEFAULT_RUN_AGENT};
+pub use run::{DEFAULT_RUN_AGENT, RunOptions, build_run_params, run_agent, stream_run};
 
 #[cfg(test)]
 mod tests;

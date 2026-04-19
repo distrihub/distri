@@ -21,8 +21,7 @@ use crate::agent::{AgentEvent, AgentEventType, AgentOrchestrator, ExecutorContex
 use crate::types::default_agent_version;
 use crate::AgentError;
 use distri_a2a::{
-    AgentCard, JsonRpcError, JsonRpcRequest, JsonRpcResponse, MessageSendParams, Task,
-    TaskIdParams,
+    AgentCard, JsonRpcError, JsonRpcRequest, JsonRpcResponse, MessageSendParams, Task, TaskIdParams,
 };
 use distri_auth::context::with_user_id;
 use futures::future::Either;
@@ -140,10 +139,7 @@ impl A2AService {
 
     // ── High-level JSON-RPC entry ──────────────────────────────────────
 
-    pub async fn handle(
-        &self,
-        input: ServiceRequest,
-    ) -> Either<BoxedSseStream, JsonRpcResponse> {
+    pub async fn handle(&self, input: ServiceRequest) -> Either<BoxedSseStream, JsonRpcResponse> {
         let req_id = input.req.id.clone();
         let method = input.req.method.clone();
 
@@ -275,7 +271,13 @@ impl A2AService {
         let params: TaskIdParams = serde_json::from_value(params)?;
 
         // Signal abort via coordinator (sends CancellationSignal, works across nodes)
-        if let Err(e) = self.orchestrator.runtime.coordinator().cancel(&params.id).await {
+        if let Err(e) = self
+            .orchestrator
+            .runtime
+            .coordinator()
+            .cancel(&params.id)
+            .await
+        {
             tracing::warn!("Coordinator cancel failed for {}: {}", params.id, e);
         }
 
@@ -377,14 +379,8 @@ impl A2AService {
         let mut executor_context = match executor_context {
             Some(ctx) => ctx,
             None => {
-                self.build_executor_context(
-                    &req,
-                    agent_id.clone(),
-                    user_id,
-                    workspace_id,
-                    verbose,
-                )
-                .await?
+                self.build_executor_context(&req, agent_id.clone(), user_id, workspace_id, verbose)
+                    .await?
             }
         };
         if let Some(ms) = workspace_model_settings {
@@ -536,18 +532,15 @@ impl A2AService {
         params: serde_json::Value,
         req_id: Option<serde_json::Value>,
     ) -> Result<ResubscribeSession, AgentError> {
-        let params: TaskIdParams = serde_json::from_value(params).map_err(|e| {
-            AgentError::Validation(format!("Invalid params: {}", e))
-        })?;
+        let params: TaskIdParams = serde_json::from_value(params)
+            .map_err(|e| AgentError::Validation(format!("Invalid params: {}", e)))?;
 
         let event_stream = self
             .orchestrator
             .broadcaster()
             .subscribe(&params.id)
             .await
-            .map_err(|e| {
-                AgentError::Session(format!("Failed to subscribe: {}", e))
-            })?;
+            .map_err(|e| AgentError::Session(format!("Failed to subscribe: {}", e)))?;
 
         // If the task has already reached a terminal state, the broadcaster
         // won't replay the final event — clients that resubscribe after
@@ -758,7 +751,9 @@ pub fn map_agent_error(e: AgentError) -> JsonRpcError {
 /// Returns `None` when the agent never called `final` (or the final result
 /// was empty) — consumers should leave the corresponding slot unset in
 /// that case.
-pub async fn build_final_message(executor_context: &ExecutorContext) -> Option<distri_a2a::Message> {
+pub async fn build_final_message(
+    executor_context: &ExecutorContext,
+) -> Option<distri_a2a::Message> {
     let final_value = executor_context.get_final_result().await?;
     let text = match final_value {
         serde_json::Value::String(s) => s,

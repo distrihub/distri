@@ -316,6 +316,20 @@ pub trait ThreadStore: Send + Sync {
         message: &str,
     ) -> anyhow::Result<()>;
 
+    /// Persist the latest `ContextBudget` snapshot (as a pre-serialized JSON
+    /// value) on the thread row. Written by the orchestrator's task relay on
+    /// every `ContextBudgetUpdate` event so non-live surfaces can render the
+    /// breakdown. Default impl is a no-op so tests / in-memory stores don't
+    /// need to care.
+    async fn update_last_context_budget(
+        &self,
+        thread_id: &str,
+        budget: Option<serde_json::Value>,
+    ) -> anyhow::Result<()> {
+        let _ = (thread_id, budget);
+        Ok(())
+    }
+
     /// Get aggregated home statistics
     async fn get_home_stats(&self) -> anyhow::Result<HomeStats>;
 
@@ -1235,6 +1249,15 @@ pub trait ConnectionStore: Send + Sync + 'static {
     async fn list_by_workspace(&self, workspace_id: &str) -> anyhow::Result<Vec<Connection>>;
     async fn update_status(&self, id: &str, status: ConnectionStatus) -> anyhow::Result<()>;
     async fn update_skill_id(&self, id: &str, skill_id: uuid::Uuid) -> anyhow::Result<()>;
+    /// Update the connection's display name and/or auth_type schema.
+    /// Callers must enforce "no rename of existing field keys" — renaming
+    /// would orphan secrets keyed as `connection.<id>.<old_field_key>`.
+    async fn update(
+        &self,
+        id: &str,
+        name: Option<String>,
+        auth_type: Option<crate::connections::AuthType>,
+    ) -> anyhow::Result<Connection>;
     async fn delete(&self, id: &str) -> anyhow::Result<()>;
     async fn get_by_provider(
         &self,

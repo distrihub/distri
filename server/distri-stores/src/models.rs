@@ -45,6 +45,9 @@ pub struct ThreadModel {
     pub input_tokens: i64,
     pub output_tokens: i64,
     pub total_tokens: i64,
+    /// JSON-serialized `ContextBudget` from the most recent run. Updated by
+    /// the orchestrator's usage hook; `None` until the first event lands.
+    pub last_context_budget: Option<String>,
 }
 
 #[derive(Debug, Clone, Insertable)]
@@ -78,6 +81,7 @@ pub struct ThreadChangeset<'a> {
     pub attributes: Option<&'a str>,
     pub external_id: Option<Option<&'a str>>,
     pub channel_id: Option<Option<&'a str>>,
+    pub last_context_budget: Option<Option<&'a str>>,
 }
 
 #[derive(

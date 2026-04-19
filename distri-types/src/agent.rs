@@ -1410,8 +1410,9 @@ impl ModelSettings {
     /// Returns `None` if the final model string is empty.
     pub fn merge(&self, override_settings: &ModelSettings) -> Option<ModelSettings> {
         let default_provider = ModelProvider::OpenAI {};
-        let override_has_explicit_provider = std::mem::discriminant(&override_settings.inner.provider)
-            != std::mem::discriminant(&default_provider);
+        let override_has_explicit_provider =
+            std::mem::discriminant(&override_settings.inner.provider)
+                != std::mem::discriminant(&default_provider);
         let base_has_explicit_provider = std::mem::discriminant(&self.inner.provider)
             != std::mem::discriminant(&default_provider);
 
@@ -2084,7 +2085,10 @@ mod tests {
 
         let result = base.merge(&agent).unwrap();
         assert_eq!(result.model, "claude-sonnet-4");
-        assert!(matches!(result.inner.provider, ModelProvider::Anthropic { .. }));
+        assert!(matches!(
+            result.inner.provider,
+            ModelProvider::Anthropic { .. }
+        ));
     }
 
     #[test]
@@ -2103,7 +2107,10 @@ mod tests {
 
         let result = base.merge(&agent).unwrap();
         assert_eq!(result.model, "gpt-5.1");
-        assert!(matches!(result.inner.provider, ModelProvider::Anthropic { .. }));
+        assert!(matches!(
+            result.inner.provider,
+            ModelProvider::Anthropic { .. }
+        ));
     }
 
     #[test]
@@ -2124,7 +2131,10 @@ mod tests {
 
         let result = base.merge(&agent).unwrap();
         assert_eq!(result.model, "gpt-5.4");
-        assert!(matches!(result.inner.provider, ModelProvider::OpenAICompatible { .. }));
+        assert!(matches!(
+            result.inner.provider,
+            ModelProvider::OpenAICompatible { .. }
+        ));
     }
 
     #[test]
@@ -2196,7 +2206,7 @@ mod tests {
         assert_eq!(result.model, "gpt-4.1-mini");
         assert_eq!(result.inner.temperature, Some(0.9));
         assert_eq!(result.inner.max_tokens, Some(1000)); // base value preserved
-        assert_eq!(result.inner.top_p, Some(0.9));      // base value preserved
+        assert_eq!(result.inner.top_p, Some(0.9)); // base value preserved
     }
 
     #[test]
@@ -2257,7 +2267,10 @@ mod tests {
 
         let result = base.merge(&agent).unwrap();
         assert_eq!(result.model, "gpt-5.4"); // workspace model wins
-        assert!(matches!(result.inner.provider, ModelProvider::AzureAiFoundry { .. }));
+        assert!(matches!(
+            result.inner.provider,
+            ModelProvider::AzureAiFoundry { .. }
+        ));
         if let ModelProvider::AzureAiFoundry { base_url, .. } = result.inner.provider {
             assert_eq!(base_url, "https://myresource.openai.azure.com");
         }

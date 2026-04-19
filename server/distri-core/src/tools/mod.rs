@@ -14,8 +14,8 @@ use crate::AgentError;
 use distri_types::Part;
 use serde::{Deserialize, Serialize};
 mod browser;
-pub mod save_artifact;
 pub mod code;
+pub mod save_artifact;
 // pub mod authenticated_example;
 pub mod context;
 pub mod shell;
@@ -33,10 +33,10 @@ pub mod skill_script;
 pub mod tool_search;
 pub mod universal_agent;
 pub use builtin::{get_builtin_tools, ConsoleLogTool, DistriExecuteCodeTool, FinalTool};
-pub use universal_agent::UniversalAgentTool;
 pub use inject_env::InjectConnectionEnvTool;
 pub use send_message::SendMessageTool;
 pub use tool_search::ToolSearchTool;
+pub use universal_agent::UniversalAgentTool;
 
 #[derive(Debug, Clone)]
 pub struct DynExecutorTool {

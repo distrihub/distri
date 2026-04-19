@@ -111,7 +111,8 @@ pub(crate) struct CallAgentInput {
 ///
 /// Following the claude-code pattern, the prompt tells the model WHEN to use
 /// each mode rather than hiding this knowledge in per-agent system prompts.
-const TOOL_DESCRIPTION: &str = "Call another agent. Choose `mode` based on the shape of the work.\n\
+const TOOL_DESCRIPTION: &str =
+    "Call another agent. Choose `mode` based on the shape of the work.\n\
 \n\
 mode = \"in_process\" (default): synchronous call, fresh context. \
 Brief the agent fully — it starts with zero context. Use when you need \
@@ -500,9 +501,7 @@ async fn dispatch(
                 .broadcaster()
                 .subscribe(&spec.task_id)
                 .await
-                .map_err(|e| {
-                    AgentError::ToolExecution(format!("Failed to subscribe: {}", e))
-                })?;
+                .map_err(|e| AgentError::ToolExecution(format!("Failed to subscribe: {}", e)))?;
 
             use futures_util::StreamExt;
             while let Some(event) = stream.next().await {

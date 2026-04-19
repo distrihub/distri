@@ -180,6 +180,10 @@ fn to_thread(model: ThreadModel) -> Thread {
         output_tokens: model.output_tokens.max(0) as u64,
         total_tokens: model.total_tokens.max(0) as u64,
         active_task_id: None,
+        last_context_budget: model
+            .last_context_budget
+            .as_deref()
+            .and_then(|s| serde_json::from_str(s).ok()),
     }
 }
 
@@ -860,6 +864,7 @@ where
             attributes: Some(&attr_str),
             external_id: None,
             channel_id: None,
+            last_context_budget: None,
         };
 
         diesel::update(threads::table.find(thread_id))
@@ -1188,6 +1193,7 @@ where
             attributes: Some(&attr_str),
             external_id: None,
             channel_id: None,
+            last_context_budget: None,
         };
 
         diesel::update(threads::table.find(thread_id))

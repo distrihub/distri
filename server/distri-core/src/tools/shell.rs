@@ -4,9 +4,7 @@ use crate::types::ToolCall;
 use crate::AgentError;
 use anyhow::Result;
 use browsr_client::BrowsrClient;
-use browsr_types::{
-    ShellCreateSessionRequest, ShellExecRequest, ShellExecResponse,
-};
+use browsr_types::{ShellCreateSessionRequest, ShellExecRequest, ShellExecResponse};
 use distri_stores::SessionStoreExt;
 use distri_types::{Part, Tool, ToolContext};
 use serde::Deserialize;
@@ -62,7 +60,9 @@ fn get_shell_overrides(context: &ExecutorContext) -> ShellOverrides {
 // Helper: get/set shell session from session store
 // ============================================================
 
-pub(crate) async fn get_shell_session_id(context: &ExecutorContext) -> Result<Option<String>, AgentError> {
+pub(crate) async fn get_shell_session_id(
+    context: &ExecutorContext,
+) -> Result<Option<String>, AgentError> {
     let session_store = context.get_session_store()?;
     let val: Option<String> = session_store
         .get(&context.thread_id, SHELL_SESSION_KEY)
@@ -244,8 +244,9 @@ impl ExecutorContextTool for StartShellTool {
         let client = BrowsrClient::from_env();
         let env_vars_count = request.env_vars.as_ref().map(|v| v.len()).unwrap_or(0);
 
-        let response = client.create_shell_session(request).await
-            .map_err(|e| AgentError::ToolExecution(format!("Shell session creation failed: {}", e)))?;
+        let response = client.create_shell_session(request).await.map_err(|e| {
+            AgentError::ToolExecution(format!("Shell session creation failed: {}", e))
+        })?;
 
         // Store session ID in session store
         set_shell_session_id(&context, &response.session_id).await?;
@@ -375,7 +376,9 @@ impl ExecutorContextTool for ExecuteShellTool {
         };
 
         let client = BrowsrClient::from_env();
-        let response: ShellExecResponse = client.shell_exec(request).await
+        let response: ShellExecResponse = client
+            .shell_exec(request)
+            .await
             .map_err(|e| AgentError::ToolExecution(format!("Shell exec failed: {}", e)))?;
 
         let result = &response.result;
@@ -459,8 +462,12 @@ impl ExecutorContextTool for StopShellTool {
         };
 
         let client = BrowsrClient::from_env();
-        client.terminate_shell_session(&session_id).await
-            .map_err(|e| AgentError::ToolExecution(format!("Shell session deletion failed: {}", e)))?;
+        client
+            .terminate_shell_session(&session_id)
+            .await
+            .map_err(|e| {
+                AgentError::ToolExecution(format!("Shell session deletion failed: {}", e))
+            })?;
 
         // Clear session ID from store
         clear_shell_session_id(&context).await?;

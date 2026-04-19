@@ -4,8 +4,10 @@ pub mod stream;
 use distri_a2a::{EventKind, JsonRpcError, Message, Part, Role, TaskStatus, TaskStatusUpdateEvent};
 use distri_types::{a2a_converters::MessageMetadata, AgentError};
 pub use handler::A2AHandler;
-pub use service::{A2AService, BoxedSseStream, ResubscribeSession, ServiceRequest, StreamingSession};
 use serde::{Deserialize, Serialize};
+pub use service::{
+    A2AService, BoxedSseStream, ResubscribeSession, ServiceRequest, StreamingSession,
+};
 use thiserror::Error;
 pub mod mapper;
 pub mod messages;

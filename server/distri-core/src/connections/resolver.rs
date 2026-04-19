@@ -213,8 +213,10 @@ async fn resolve_custom(
         let key = format!("connection.{}.{}", connection.id, field.key);
         match secret_store.get(&key).await {
             Ok(Some(record)) => {
-                let env_name =
-                    format!("{}_{}", connection.name.to_uppercase(), field.key.to_uppercase());
+                // Use the field key exactly as declared — no implicit
+                // connection-name prefix. Connection authors control the env
+                // var name by choosing the field key (e.g. `ZIPPY_PUBLISH_KEY`).
+                let env_name = field.key.to_uppercase();
                 env_vars.insert(env_name, record.value);
             }
             Ok(None) => {
@@ -262,9 +264,9 @@ async fn resolve_distri_native(
     connection: &Connection,
     ctx: &ResolveCtx<'_>,
 ) -> Result<ResolvedConnection, String> {
-    let token = ctx.distri_session_token.ok_or_else(|| {
-        "DistriNative connection requires a caller session token".to_string()
-    })?;
+    let token = ctx
+        .distri_session_token
+        .ok_or_else(|| "DistriNative connection requires a caller session token".to_string())?;
 
     let mut env_vars = HashMap::new();
     env_vars.insert("DISTRI_API_KEY".to_string(), token.to_string());
@@ -283,20 +285,17 @@ async fn resolve_distri_native(
 }
 
 /// Substitute `{{field_key}}` occurrences in the template against resolved
-/// env vars (keyed back to the original field_key).
+/// env vars (keyed back to the original field_key). Env var names match the
+/// field key uppercased exactly — see `resolve_custom`.
 fn substitute_fields(
     template: &str,
     fields: &[distri_types::connections::CustomField],
     env_vars: &HashMap<String, String>,
-    connection_name: &str,
+    _connection_name: &str,
 ) -> String {
     let mut out = template.to_string();
     for field in fields {
-        let env_key = format!(
-            "{}_{}",
-            connection_name.to_uppercase(),
-            field.key.to_uppercase()
-        );
+        let env_key = field.key.to_uppercase();
         if let Some(value) = env_vars.get(&env_key) {
             out = out.replace(&format!("{{{{{}}}}}", field.key), value);
         }
@@ -345,11 +344,7 @@ mod tests {
         async fn delete(&self, _id: &str) -> anyhow::Result<()> {
             unimplemented!()
         }
-        async fn get_by_provider(
-            &self,
-            _w: &str,
-            _p: &str,
-        ) -> anyhow::Result<Option<Connection>> {
+        async fn get_by_provider(&self, _w: &str, _p: &str) -> anyhow::Result<Option<Connection>> {
             unimplemented!()
         }
     }
@@ -368,17 +363,10 @@ mod tests {
         async fn remove_token(&self, _id: &str) -> anyhow::Result<()> {
             unimplemented!()
         }
-        async fn store_oauth_state(
-            &self,
-            _k: &str,
-            _v: serde_json::Value,
-        ) -> anyhow::Result<()> {
+        async fn store_oauth_state(&self, _k: &str, _v: serde_json::Value) -> anyhow::Result<()> {
             unimplemented!()
         }
-        async fn get_oauth_state(
-            &self,
-            _k: &str,
-        ) -> anyhow::Result<Option<serde_json::Value>> {
+        async fn get_oauth_state(&self, _k: &str) -> anyhow::Result<Option<serde_json::Value>> {
             unimplemented!()
         }
         async fn remove_oauth_state(&self, _k: &str) -> anyhow::Result<()> {
@@ -450,10 +438,9 @@ mod tests {
         };
         let mut stores = distri_stores::initialize_stores(&cfg).await.unwrap();
         stores.connection_store = Some(Arc::new(MemConnStore(tokio::sync::RwLock::new(conns))));
-        stores.connection_token_store =
-            Some(Arc::new(MemTokenStore(tokio::sync::RwLock::new(
-                tokens.into_iter().collect(),
-            ))));
+        stores.connection_token_store = Some(Arc::new(MemTokenStore(tokio::sync::RwLock::new(
+            tokens.into_iter().collect(),
+        ))));
         stores.secret_store = Some(Arc::new(MemSecretStore(tokio::sync::RwLock::new(
             secrets.into_iter().collect(),
         ))));
@@ -521,7 +508,10 @@ mod tests {
         let stores = build_stores(vec![conn], vec![(id.to_string(), token)], vec![]).await;
 
         let ctx = ResolveCtx::new(&stores);
-        let r = DefaultResolver.resolve(&id.to_string(), &ctx).await.unwrap();
+        let r = DefaultResolver
+            .resolve(&id.to_string(), &ctx)
+            .await
+            .unwrap();
 
         assert_eq!(r.provider, "google");
         assert_eq!(r.env_vars.get("GOOGLE_TOKEN").unwrap(), "ya29.xyz");
@@ -545,14 +535,21 @@ mod tests {
         let stores = build_stores(vec![conn], vec![(id.to_string(), token)], vec![]).await;
 
         let ctx = ResolveCtx::new(&stores).with_env_override("MY_CUSTOM_VAR");
-        let r = DefaultResolver.resolve(&id.to_string(), &ctx).await.unwrap();
+        let r = DefaultResolver
+            .resolve(&id.to_string(), &ctx)
+            .await
+            .unwrap();
 
         assert_eq!(r.env_vars.get("MY_CUSTOM_VAR").unwrap(), "tok");
         assert!(r.env_vars.get("GOOGLE_TOKEN").is_none());
     }
 
     #[tokio::test]
-    async fn resolves_custom_fields_into_namespaced_env_vars() {
+    async fn resolves_custom_fields_into_field_key_env_vars() {
+        // Env var names are the field keys uppercased — the connection
+        // name is NOT implicitly prepended. Authors choose the env var
+        // name by picking the field key (e.g. `API_KEY` → `API_KEY`,
+        // or `ZIPPY_PUBLISH_KEY` → `ZIPPY_PUBLISH_KEY`).
         let id = Uuid::new_v4();
         let conn = custom_connection(id, "acme", vec!["api_key", "api_secret"]);
         let secrets = vec![
@@ -562,10 +559,14 @@ mod tests {
         let stores = build_stores(vec![conn], vec![], secrets).await;
 
         let ctx = ResolveCtx::new(&stores);
-        let r = DefaultResolver.resolve(&id.to_string(), &ctx).await.unwrap();
+        let r = DefaultResolver
+            .resolve(&id.to_string(), &ctx)
+            .await
+            .unwrap();
 
-        assert_eq!(r.env_vars.get("ACME_API_KEY").unwrap(), "k-123");
-        assert_eq!(r.env_vars.get("ACME_API_SECRET").unwrap(), "s-456");
+        assert_eq!(r.env_vars.get("API_KEY").unwrap(), "k-123");
+        assert_eq!(r.env_vars.get("API_SECRET").unwrap(), "s-456");
+        assert!(r.env_vars.get("ACME_API_KEY").is_none());
         // No Authorization header without auth_header_template.
         assert!(r.http_headers.get("Authorization").is_none());
     }
@@ -579,7 +580,10 @@ mod tests {
         let stores = build_stores(vec![conn], vec![], secrets).await;
 
         let ctx = ResolveCtx::new(&stores);
-        let r = DefaultResolver.resolve(&id.to_string(), &ctx).await.unwrap();
+        let r = DefaultResolver
+            .resolve(&id.to_string(), &ctx)
+            .await
+            .unwrap();
 
         assert_eq!(
             r.http_headers.get("Authorization").unwrap(),
@@ -594,7 +598,10 @@ mod tests {
         let stores = build_stores(vec![conn], vec![], vec![]).await;
 
         let ctx = ResolveCtx::new(&stores);
-        let err = DefaultResolver.resolve(&id.to_string(), &ctx).await.unwrap_err();
+        let err = DefaultResolver
+            .resolve(&id.to_string(), &ctx)
+            .await
+            .unwrap_err();
         assert!(err.contains("missing required fields"), "got: {}", err);
     }
 
@@ -614,7 +621,10 @@ mod tests {
 
         // With session token → emits DISTRI_API_KEY + Bearer header.
         let ctx = ResolveCtx::new(&stores).with_distri_session("session-xyz");
-        let r = DefaultResolver.resolve(&id.to_string(), &ctx).await.unwrap();
+        let r = DefaultResolver
+            .resolve(&id.to_string(), &ctx)
+            .await
+            .unwrap();
         assert_eq!(r.env_vars.get("DISTRI_API_KEY").unwrap(), "session-xyz");
         assert_eq!(
             r.http_headers.get("Authorization").unwrap(),
