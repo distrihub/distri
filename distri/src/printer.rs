@@ -56,52 +56,21 @@ impl ContextHealth {
             println!("No context data yet — run a query first.");
             return;
         };
-        if budget.context_window_size == 0 {
-            println!("Context window size unknown.");
-            return;
+        // Colored variant for the terminal. For non-terminal surfaces
+        // (channel bots, logs), use `format_context_breakdown` below.
+        match format_context_breakdown_inner(budget, true) {
+            Some(s) => println!("{}", s),
+            None => println!("Context window size unknown."),
         }
-        let total = budget.total_tokens();
-        let window = budget.context_window_size;
-        let pct = budget.utilization() * 100.0;
-        let remaining = budget.remaining_tokens();
+    }
 
-        println!(
-            "{}{:.0}% used — {} / {} tokens  ({} remaining){}",
-            COLOR_GRAY,
-            pct,
-            format_token_count(total),
-            format_token_count(window),
-            format_token_count(remaining),
-            COLOR_RESET
-        );
-
-        let rows: &[(&str, usize)] = &[
-            ("system (static)", budget.system_prompt_static_tokens),
-            ("system (dynamic)", budget.system_prompt_dynamic_tokens),
-            ("tool schemas", budget.tool_schema_tokens),
-            ("deferred tools", budget.deferred_tool_tokens),
-            ("skills", budget.skill_listing_tokens),
-            ("conversation", budget.conversation_tokens),
-            ("tool results", budget.tool_result_tokens),
-        ];
-
-        let max_label = rows.iter().map(|(l, _)| l.len()).max().unwrap_or(0);
-        for (label, tokens) in rows {
-            if *tokens == 0 {
-                continue;
-            }
-            let bar_pct = if window > 0 { *tokens * 40 / window } else { 0 };
-            let bar = "█".repeat(bar_pct);
-            println!(
-                "{}  {:<width$}  {:>6}  {}{}",
-                COLOR_GRAY,
-                label,
-                format_token_count(*tokens),
-                bar,
-                COLOR_RESET,
-                width = max_label
-            );
-        }
+    /// Pure-string variant for non-terminal surfaces (channel bots, tests).
+    /// Same layout as `print_context_breakdown` minus ANSI colors. Returns
+    /// `None` when there's no budget yet — callers render their own "no
+    /// data" message.
+    pub fn format_context_breakdown_plain(&self) -> Option<String> {
+        let budget = self.last_budget.as_ref()?;
+        format_context_breakdown_inner(budget, false)
     }
 
     /// Reset per-run token counters. Called on RunStarted so the status bar
@@ -177,6 +146,64 @@ impl ContextHealth {
             "\x1b[38;2;34;197;94m" // Green
         }
     }
+}
+
+/// Pure formatter used by both the terminal (with colors) and non-terminal
+/// (channel bots) surfaces. Returns `None` if the budget has no window size.
+pub fn format_context_breakdown(budget: &distri_types::ContextBudget) -> Option<String> {
+    format_context_breakdown_inner(budget, false)
+}
+
+fn format_context_breakdown_inner(
+    budget: &distri_types::ContextBudget,
+    colored: bool,
+) -> Option<String> {
+    if budget.context_window_size == 0 {
+        return None;
+    }
+    let total = budget.total_tokens();
+    let window = budget.context_window_size;
+    let pct = budget.utilization() * 100.0;
+    let remaining = budget.remaining_tokens();
+
+    let (gray, reset) = if colored {
+        (COLOR_GRAY, COLOR_RESET)
+    } else {
+        ("", "")
+    };
+
+    let mut out = format!(
+        "{gray}{pct:.0}% used — {} / {} tokens  ({} remaining){reset}",
+        format_token_count(total),
+        format_token_count(window),
+        format_token_count(remaining),
+    );
+
+    let rows: &[(&str, usize)] = &[
+        ("system (static)", budget.system_prompt_static_tokens),
+        ("system (dynamic)", budget.system_prompt_dynamic_tokens),
+        ("tool schemas", budget.tool_schema_tokens),
+        ("deferred tools", budget.deferred_tool_tokens),
+        ("skills", budget.skill_listing_tokens),
+        ("conversation", budget.conversation_tokens),
+        ("tool results", budget.tool_result_tokens),
+    ];
+
+    let max_label = rows.iter().map(|(l, _)| l.len()).max().unwrap_or(0);
+    for (label, tokens) in rows {
+        if *tokens == 0 {
+            continue;
+        }
+        let bar_pct = if window > 0 { *tokens * 40 / window } else { 0 };
+        let bar = "█".repeat(bar_pct);
+        out.push('\n');
+        out.push_str(&format!(
+            "{gray}  {label:<max_label$}  {:>6}  {bar}{reset}",
+            format_token_count(*tokens),
+        ));
+    }
+
+    Some(out)
 }
 
 /// Format a token count as "1.2K", "45K", "200K", or "3" for small values.

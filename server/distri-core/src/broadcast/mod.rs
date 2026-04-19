@@ -129,6 +129,30 @@ pub trait AgentTaskCoordinator: Send + Sync + 'static {
 
     /// Register a name → task_id mapping (called when agent spawned with a name).
     async fn register_name(&self, name: &str, task_id: &str) -> anyhow::Result<()>;
+
+    /// Record the active task for a conversation channel so a subsequent
+    /// `/stop` from the same channel can find it. `channel_id` is the
+    /// `channels.id` UUID. No-op when the caller doesn't have a channel
+    /// context (e.g. CLI / web runs).
+    async fn set_channel_task(&self, channel_id: &str, task_id: &str) -> anyhow::Result<()> {
+        let _ = (channel_id, task_id);
+        Ok(())
+    }
+
+    /// Look up the active task_id for a channel. Implementations should
+    /// return `None` if the stored task is no longer running (the channel
+    /// was hit, but the agent finished between pings).
+    async fn get_channel_task(&self, channel_id: &str) -> anyhow::Result<Option<String>> {
+        let _ = channel_id;
+        Ok(None)
+    }
+
+    /// Clear the channel → task mapping. Called when a stream drains or the
+    /// task enters a terminal state.
+    async fn clear_channel_task(&self, channel_id: &str) -> anyhow::Result<()> {
+        let _ = channel_id;
+        Ok(())
+    }
 }
 
 // ── AgentRuntime ───────────────────────────────────────────────────
@@ -147,4 +171,8 @@ pub trait AgentRuntime: Send + Sync + 'static {
     fn coordinator(&self) -> &dyn AgentTaskCoordinator;
     /// Get an owned Arc to the broadcaster (for handing to RemoteAgent, etc.).
     fn broadcaster_arc(&self) -> Arc<dyn AgentEventBroadcaster>;
+    /// Get an owned Arc to the coordinator. Used by the channel gateway to
+    /// look up the active task for a `/stop` command without borrowing the
+    /// whole runtime.
+    fn coordinator_arc(&self) -> Arc<dyn AgentTaskCoordinator>;
 }

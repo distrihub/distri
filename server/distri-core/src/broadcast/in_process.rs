@@ -171,6 +171,9 @@ pub struct InProcessCoordinator {
     mailbox_txs: DashMap<String, InMemoryMailboxSender>,
     mailbox_rxs: DashMap<String, InMemoryMailbox>,
     names: DashMap<String, String>,
+    /// channel_id → active task_id. Populated by gateway so a user's
+    /// `/stop` can find the in-flight task on their channel.
+    channel_tasks: DashMap<String, String>,
 }
 
 impl InProcessCoordinator {
@@ -181,6 +184,7 @@ impl InProcessCoordinator {
             mailbox_txs: DashMap::new(),
             mailbox_rxs: DashMap::new(),
             names: DashMap::new(),
+            channel_tasks: DashMap::new(),
         }
     }
 
@@ -297,6 +301,30 @@ impl AgentTaskCoordinator for InProcessCoordinator {
         self.names.insert(name.to_string(), task_id.to_string());
         Ok(())
     }
+
+    async fn set_channel_task(&self, channel_id: &str, task_id: &str) -> anyhow::Result<()> {
+        self.channel_tasks
+            .insert(channel_id.to_string(), task_id.to_string());
+        Ok(())
+    }
+
+    async fn get_channel_task(&self, channel_id: &str) -> anyhow::Result<Option<String>> {
+        let Some(task_id) = self.channel_tasks.get(channel_id).map(|e| e.clone()) else {
+            return Ok(None);
+        };
+        // Auto-cleanup: if the stored task has already finished, treat it as
+        // absent and drop the stale mapping.
+        if !self.is_running(&task_id).await {
+            self.channel_tasks.remove(channel_id);
+            return Ok(None);
+        }
+        Ok(Some(task_id))
+    }
+
+    async fn clear_channel_task(&self, channel_id: &str) -> anyhow::Result<()> {
+        self.channel_tasks.remove(channel_id);
+        Ok(())
+    }
 }
 
 // ── InProcessRuntime ─────────────────────────────────────────────────
@@ -305,14 +333,14 @@ impl AgentTaskCoordinator for InProcessCoordinator {
 /// Auto-created by AgentOrchestratorBuilder::build() when no runtime is provided.
 pub struct InProcessRuntime {
     broadcaster: Arc<InProcessBroadcaster>,
-    coordinator: InProcessCoordinator,
+    coordinator: Arc<InProcessCoordinator>,
 }
 
 impl InProcessRuntime {
     pub fn new(task_store: Arc<dyn TaskStore>) -> Self {
         Self {
             broadcaster: Arc::new(InProcessBroadcaster::new()),
-            coordinator: InProcessCoordinator::new(task_store),
+            coordinator: Arc::new(InProcessCoordinator::new(task_store)),
         }
     }
 
@@ -326,7 +354,7 @@ impl InProcessRuntime {
     ) -> Self {
         Self {
             broadcaster,
-            coordinator: InProcessCoordinator::new(task_store),
+            coordinator: Arc::new(InProcessCoordinator::new(task_store)),
         }
     }
 }
@@ -337,10 +365,14 @@ impl AgentRuntime for InProcessRuntime {
     }
 
     fn coordinator(&self) -> &dyn AgentTaskCoordinator {
-        &self.coordinator
+        self.coordinator.as_ref()
     }
 
     fn broadcaster_arc(&self) -> Arc<dyn AgentEventBroadcaster> {
         self.broadcaster.clone()
+    }
+
+    fn coordinator_arc(&self) -> Arc<dyn AgentTaskCoordinator> {
+        self.coordinator.clone()
     }
 }

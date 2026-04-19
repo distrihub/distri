@@ -1234,6 +1234,7 @@ impl AgentOrchestrator {
     ) {
         let runtime = self.runtime.clone();
         let executor = Arc::new(self.clone());
+        let thread_store = self.stores.thread_store.clone();
 
         tokio::spawn(async move {
             while let Some(event) = event_rx.recv().await {
@@ -1247,6 +1248,20 @@ impl AgentOrchestrator {
                     let _ = executor
                         .complete_inline_hook(&request.hook_id, HookMutation::none())
                         .await;
+                }
+
+                // Persist the latest `ContextBudget` on the thread row so the
+                // channel `/context` command (and any other non-live surface)
+                // can render a breakdown without subscribing to events. Errors
+                // are swallowed — bookkeeping must not disrupt the stream.
+                if let AgentEventType::ContextBudgetUpdate { ref budget, .. } = event.event {
+                    if !event.thread_id.is_empty() {
+                        if let Ok(serialized) = serde_json::to_value(budget) {
+                            let _ = thread_store
+                                .update_last_context_budget(&event.thread_id, Some(serialized))
+                                .await;
+                        }
+                    }
                 }
 
                 // Publish to broadcaster

@@ -36,6 +36,7 @@ diesel::table! {
         input_tokens -> BigInt,
         output_tokens -> BigInt,
         total_tokens -> BigInt,
+        last_context_budget -> Nullable<Jsonb>,
     }
 }
 

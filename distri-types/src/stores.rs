@@ -316,6 +316,20 @@ pub trait ThreadStore: Send + Sync {
         message: &str,
     ) -> anyhow::Result<()>;
 
+    /// Persist the latest `ContextBudget` snapshot (as a pre-serialized JSON
+    /// value) on the thread row. Written by the orchestrator's task relay on
+    /// every `ContextBudgetUpdate` event so non-live surfaces can render the
+    /// breakdown. Default impl is a no-op so tests / in-memory stores don't
+    /// need to care.
+    async fn update_last_context_budget(
+        &self,
+        thread_id: &str,
+        budget: Option<serde_json::Value>,
+    ) -> anyhow::Result<()> {
+        let _ = (thread_id, budget);
+        Ok(())
+    }
+
     /// Get aggregated home statistics
     async fn get_home_stats(&self) -> anyhow::Result<HomeStats>;
 

@@ -644,6 +644,11 @@ pub struct Thread {
     /// Clients use this to decide whether to resubscribe on thread reopen.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_task_id: Option<String>,
+    /// Last-known `ContextBudget` from the most recent run. Persisted per
+    /// thread so non-live surfaces (channel bots, post-run UI) can show the
+    /// context breakdown without a live event stream.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_context_budget: Option<serde_json::Value>,
 }
 
 impl Thread {
@@ -672,6 +677,7 @@ impl Thread {
             output_tokens: 0,
             total_tokens: 0,
             active_task_id: None,
+            last_context_budget: None,
         }
     }
 
