@@ -205,14 +205,51 @@ pub fn format_tool_call(name: &str, input: &serde_json::Value) -> String {
         "transfer_to_agent" => {
             format!("transfer_to_agent(\"{}\")", str_field("agent_name"))
         }
+        "call_agent" => {
+            // Universal agent dispatch. Prefer (named agent, mode) over the
+            // raw JSON dump — matches the rendering style of every other
+            // arm. Ad-hoc agents (no `agent`, but `system_prompt` set) get
+            // a "ad-hoc" placeholder.
+            let agent = input
+                .get("agent")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| {
+                    if input.get("system_prompt").is_some() {
+                        "<ad-hoc>".to_string()
+                    } else {
+                        "?".to_string()
+                    }
+                });
+            let mode = input
+                .get("mode")
+                .and_then(|v| v.as_str())
+                .unwrap_or("in_process");
+            format!("call_agent(\"{}\", mode: {})", truncate(&agent, 40), mode)
+        }
         "final" | "reflect" | "console_log" => format!("{}(...)", name),
         _ => {
             // HTTP factory tools (e.g. distri_request, zippy_request) use
-            // {path, method, body?} input — print as "name(METHOD /path)".
+            // {path, method, body?} input. When an `x-connection-id` header
+            // is present the connection name is the most useful at-a-glance
+            // identifier — show it before the method/path.
             if let (Some(path), Some(method)) = (
                 input.get("path").and_then(|v| v.as_str()),
                 input.get("method").and_then(|v| v.as_str()),
             ) {
+                let connection = input
+                    .get("headers")
+                    .and_then(|h| h.get("x-connection-id"))
+                    .and_then(|v| v.as_str());
+                if let Some(conn) = connection {
+                    return format!(
+                        "{}({} → {} {})",
+                        name,
+                        truncate(conn, 30),
+                        method,
+                        truncate(path, 50)
+                    );
+                }
                 return format!("{}({} {})", name, method, truncate(path, 60));
             }
             let compact = serde_json::to_string(input).unwrap_or_else(|_| "...".into());
@@ -228,4 +265,59 @@ pub fn format_tool_input(input: &serde_json::Value) -> String {
         return "...".into();
     }
     serde_json::to_string(input).unwrap_or_else(|_| "...".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn call_agent_named_with_mode() {
+        let input = json!({"agent": "distri_runner", "mode": "fork", "prompt": "hi"});
+        assert_eq!(
+            format_tool_call("call_agent", &input),
+            "call_agent(\"distri_runner\", mode: fork)"
+        );
+    }
+
+    #[test]
+    fn call_agent_default_mode_when_missing() {
+        let input = json!({"agent": "coder", "prompt": "hi"});
+        assert_eq!(
+            format_tool_call("call_agent", &input),
+            "call_agent(\"coder\", mode: in_process)"
+        );
+    }
+
+    #[test]
+    fn call_agent_ad_hoc() {
+        let input = json!({"system_prompt": "you are a helpful assistant", "prompt": "hi"});
+        assert_eq!(
+            format_tool_call("call_agent", &input),
+            "call_agent(\"<ad-hoc>\", mode: in_process)"
+        );
+    }
+
+    #[test]
+    fn http_factory_with_connection_shows_connection_first() {
+        let input = json!({
+            "method": "GET",
+            "path": "/calendar/events",
+            "headers": {"x-connection-id": "google-calendar"},
+        });
+        assert_eq!(
+            format_tool_call("distri_request", &input),
+            "distri_request(google-calendar → GET /calendar/events)"
+        );
+    }
+
+    #[test]
+    fn http_factory_without_connection_shows_method_path() {
+        let input = json!({"method": "POST", "path": "/v1/skills"});
+        assert_eq!(
+            format_tool_call("distri_request", &input),
+            "distri_request(POST /v1/skills)"
+        );
+    }
 }

@@ -88,6 +88,12 @@ pub struct ExecutorContext {
     pub workspace_id: Option<String>,
     /// Channel ID for channel-scoped usage tracking
     pub channel_id: Option<String>,
+    /// Channel kind ("telegram", "whatsapp", "discord", "slack", "web", …)
+    /// for surface-aware prompt rendering. Read by the planning template's
+    /// `channel_formatting` partial so the agent emits Telegram-HTML on
+    /// Telegram, WhatsApp-markdown on WhatsApp, etc. None for non-channel
+    /// callers (web, CLI, A2A direct).
+    pub channel_kind: Option<String>,
     /// Tenant context for multi-tenant operations
     /// Stores can use this to filter data by tenant
     pub tenant_context: distri_types::TenantContext,
@@ -197,6 +203,7 @@ impl Default for ExecutorContext {
             identifier_id: None,
             workspace_id: None,
             channel_id: None,
+            channel_kind: None,
             tenant_context,
             browser_session_id: None,
             tools: Arc::default(),
@@ -925,6 +932,7 @@ impl ExecutorContext {
             identifier_id: self.identifier_id.clone(),
             workspace_id: self.workspace_id.clone(),
             channel_id: self.channel_id.clone(),
+            channel_kind: self.channel_kind.clone(),
             tenant_context: self.tenant_context.clone(),
             // Child gets its own usage counter — NOT shared with parent.
             // This prevents double-counting: child records its own tokens via RunFinished,
@@ -964,6 +972,7 @@ impl ExecutorContext {
             identifier_id: self.identifier_id.clone(),
             workspace_id: self.workspace_id.clone(),
             channel_id: self.channel_id.clone(),
+            channel_kind: self.channel_kind.clone(),
             tenant_context: self.tenant_context.clone(),
             usage: self.usage.clone(),
             verbose: self.verbose,
@@ -1042,6 +1051,7 @@ impl ExecutorContext {
             identifier_id: self.identifier_id.clone(),
             workspace_id: self.workspace_id.clone(),
             channel_id: self.channel_id.clone(),
+            channel_kind: self.channel_kind.clone(),
             tenant_context: self.tenant_context.clone(),
             browser_session_id: self.browser_session_id.clone(),
             tools: self.tools.clone(),               // Arc::clone
