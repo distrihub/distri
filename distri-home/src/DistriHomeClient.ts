@@ -121,6 +121,8 @@ export interface UserChannelSummary {
   provider: string;
   name?: string | null;
   chat_id?: string | null;
+  thread_count: number;
+  message_count: number;
 }
 
 export interface UserListItem {

@@ -650,12 +650,40 @@ impl AgentOrchestrator {
                         }
                     }
 
-                    // Declared sub_agents (store agents + opt-in built-ins)
+                    // Track names we've already listed so explicit entries and
+                    // the wildcard expansion don't collide.
+                    let mut listed: std::collections::HashSet<String> =
+                        crate::tools::universal_agent::ALWAYS_AVAILABLE_BUILTINS
+                            .iter()
+                            .map(|s| s.to_string())
+                            .collect();
+
+                    // Declared sub_agents (store agents + opt-in built-ins).
+                    // `"*"` expands to every non-system agent in the workspace
+                    // (minus self and the always-available builtins already
+                    // listed above). This mirrors `available_skills = [{id:"*"}]`.
                     for name in &definition.sub_agents {
                         if name == "*" {
-                            sub_agent_lines.push(
-                                "- **\\*** — all agents in the workspace are available".to_string(),
-                            );
+                            let (all_agents, _) = self.list_agents(None, None).await;
+                            for cfg in &all_agents {
+                                let (agent_name, desc) = match cfg {
+                                    distri_types::configuration::AgentConfig::StandardAgent(
+                                        def,
+                                    ) => (def.name.clone(), def.description.clone()),
+                                    distri_types::configuration::AgentConfig::WorkflowAgent(
+                                        def,
+                                    ) => (def.name.clone(), def.description.clone()),
+                                };
+                                if agent_name == definition.name || listed.contains(&agent_name) {
+                                    continue;
+                                }
+                                sub_agent_lines
+                                    .push(format!("- **{}** — {}", agent_name, desc));
+                                listed.insert(agent_name);
+                            }
+                            continue;
+                        }
+                        if listed.contains(name) {
                             continue;
                         }
                         let desc = if let Some(agent_cfg) = self.get_agent(name).await {
@@ -671,6 +699,7 @@ impl AgentOrchestrator {
                             "Sub-agent".to_string()
                         };
                         sub_agent_lines.push(format!("- **{}** — {}", name, desc));
+                        listed.insert(name.clone());
                     }
 
                     context
