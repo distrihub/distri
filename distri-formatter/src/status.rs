@@ -123,6 +123,21 @@ pub fn format_status_text(name: &str, input: &Value) -> String {
             let agent = str_field("agent_name").unwrap_or_else(|| "...".to_string());
             format!("Handing off to {}", agent)
         }
+        "call_agent" => {
+            let agent = str_field("agent").unwrap_or_else(|| {
+                if input.get("system_prompt").is_some() {
+                    "ad-hoc agent".to_string()
+                } else {
+                    "agent".to_string()
+                }
+            });
+            let mode = str_field("mode").unwrap_or_else(|| "in_process".to_string());
+            if mode == "in_process" {
+                format!("Launching {}...", agent)
+            } else {
+                format!("Launching {} ({} mode)...", agent, mode)
+            }
+        }
         "tool_search" => "Searching tools...".to_string(),
         "inject_connection_env" => {
             let provider = str_field("provider_name").unwrap_or_else(|| "service".to_string());
@@ -228,5 +243,26 @@ mod tests {
         let input = json!({});
         let result = format_status_text("my_custom_tool", &input);
         assert_eq!(result, "My custom tool...");
+    }
+
+    #[test]
+    fn call_agent_named_default_mode() {
+        let input = json!({"agent": "distri_runner", "prompt": "hi"});
+        let result = format_status_text("call_agent", &input);
+        assert_eq!(result, "Launching distri_runner...");
+    }
+
+    #[test]
+    fn call_agent_named_fork_mode() {
+        let input = json!({"agent": "coder", "mode": "fork", "prompt": "hi"});
+        let result = format_status_text("call_agent", &input);
+        assert_eq!(result, "Launching coder (fork mode)...");
+    }
+
+    #[test]
+    fn call_agent_ad_hoc() {
+        let input = json!({"system_prompt": "you are nice", "prompt": "hi"});
+        let result = format_status_text("call_agent", &input);
+        assert_eq!(result, "Launching ad-hoc agent...");
     }
 }

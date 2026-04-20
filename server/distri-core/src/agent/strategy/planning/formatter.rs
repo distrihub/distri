@@ -142,6 +142,7 @@ impl<'a> MessageFormatter<'a> {
             tool_prompts: tool_prompts_concat,
             tool_prompt_list: tool_prompt_entries,
             deferred_tools_listing,
+            channel_kind: context.channel_kind.clone(),
         };
 
         let template_to_use = hook_state

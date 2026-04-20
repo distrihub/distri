@@ -45,15 +45,6 @@ impl AgentExecutor {
             return Err(AgentError::Validation("No tool calls provided".to_string()));
         }
 
-        // Emit tool call event
-        context
-            .emit(AgentEventType::ToolCalls {
-                step_id: step_id.to_string(),
-                parent_message_id: context.get_current_message_id().await,
-                tool_calls: tool_calls.to_vec(),
-            })
-            .await;
-
         // Get all available tools from context (including MCP tools)
         let enhanced_tools = context.get_tools().await;
 
@@ -64,6 +55,13 @@ impl AgentExecutor {
             .and_then(|def| def.strategy.as_ref())
             .map(|s| s.get_external_tool_timeout_secs())
             .unwrap_or(DEFAULT_EXTERNAL_TOOL_TIMEOUT_SECS);
+
+        // NOTE: the ToolCalls event is emitted inside
+        // `execute_tool_calls_with_timeout` AFTER all external tool calls are
+        // pre-registered — this closes the race where a client receiving the
+        // event could call `complete_tool` before the server has a pending
+        // receiver set up, which used to surface as "complete_tool timed out
+        // after retries — server never registered the pending call".
 
         // Execute tool calls with configurable timeout
         let tool_results = execute_tool_calls_with_timeout(
@@ -424,12 +422,67 @@ pub async fn execute_tool_calls_with_timeout(
         })
         .collect::<Result<Vec<_>, AgentError>>()?;
 
+    // Pre-register every external tool call BEFORE emitting the ToolCalls
+    // event. Previously the server emitted ToolCalls, then entered the
+    // per-tool `handle_external_tool_inline` which called
+    // `register_external_tool_call`. If the client finished executing the
+    // tool and hit `/complete-tool` before the server reached that
+    // registration, the server returned "No pending…" and the client
+    // retried with exponential backoff — but after 10 retries (~11s total)
+    // the client gave up with "complete_tool timed out after retries —
+    // server never registered the pending call". Registering before
+    // emitting closes the race by construction.
+    use std::collections::HashMap;
+    let mut pending_receivers: HashMap<
+        String,
+        tokio::sync::oneshot::Receiver<distri_types::ToolResponse>,
+    > = HashMap::new();
+    for (tool, tool_call) in &tool_tuples {
+        if tool.is_external() {
+            match external_tool_calls_store
+                .register_external_tool_call(&tool_call.tool_call_id)
+                .await
+            {
+                Ok(rx) => {
+                    pending_receivers.insert(tool_call.tool_call_id.clone(), rx);
+                }
+                Err(e) => {
+                    tracing::error!(
+                        tool_call_id = %tool_call.tool_call_id,
+                        tool = %tool_call.tool_name,
+                        "failed to pre-register external tool call: {}",
+                        e
+                    );
+                    // Fall through: handle_external_tool_inline will attempt
+                    // a late registration and return a proper error if it
+                    // still fails — preserving the old error shape rather
+                    // than silently dropping the call.
+                }
+            }
+        }
+    }
+
+    // Now it is safe to tell the client about these tool calls — the
+    // receivers are in place so `complete_tool` cannot race us.
+    context
+        .emit(AgentEventType::ToolCalls {
+            step_id: step_id.to_string(),
+            parent_message_id: context.get_current_message_id().await,
+            tool_calls: tool_calls.to_vec(),
+        })
+        .await;
+
     let step_id = step_id.to_string();
     let timeout = Duration::from_secs(external_tool_timeout_secs);
+
+    // Wrap in Arc<Mutex> so each spawned future can steal its own receiver.
+    let pending_receivers = Arc::new(tokio::sync::Mutex::new(pending_receivers));
+
     let results = futures::future::join_all(tool_tuples.iter().map(|tuple| {
         let context = context.clone();
         let step_id = step_id.clone();
         let external_tool_calls_store = external_tool_calls_store.clone();
+        let pending_receivers = pending_receivers.clone();
         async move {
             let (tool, tool_call) = tuple;
 
@@ -478,12 +531,17 @@ pub async fn execute_tool_calls_with_timeout(
             }
 
             if tool.is_external() {
+                let pre_rx = pending_receivers
+                    .lock()
+                    .await
+                    .remove(&tool_call.tool_call_id);
                 return handle_external_tool_inline(
                     external_tool_calls_store.clone(),
                     tool_call.clone(),
                     context.clone(),
                     &step_id,
                     timeout,
+                    pre_rx,
                 )
                 .await;
             }
@@ -574,13 +632,20 @@ pub async fn execute_tool_calls_with_timeout(
     Ok(results)
 }
 
-/// Handle external tool execution with inline behavior - waits for response from client
+/// Handle external tool execution with inline behavior - waits for response from client.
+///
+/// `pre_registered_rx` is the receiver produced during the pre-registration
+/// pass in `execute_tool_calls_with_timeout`. When present, we skip the
+/// late `register_external_tool_call` call (and the race it opens); when
+/// absent (e.g. the pre-registration step failed or a caller outside the
+/// standard path invokes this), we fall back to registering here.
 async fn handle_external_tool_inline(
     store: Arc<dyn distri_types::stores::ExternalToolCallsStore>,
     tool_call: crate::types::ToolCall,
     context: Arc<ExecutorContext>,
     step_id: &str,
     timeout: Duration,
+    pre_registered_rx: Option<tokio::sync::oneshot::Receiver<distri_types::ToolResponse>>,
 ) -> ToolResultWithSkip {
     tracing::info!(
         "Waiting for tool response: {}, {} (timeout: {}s)",
@@ -592,16 +657,18 @@ async fn handle_external_tool_inline(
     // Use tool_call_id as the session ID
     let tool_call_id = tool_call.tool_call_id.clone();
 
-    // Register the external tool call and get receiver
-    let rx = match store.register_external_tool_call(&tool_call_id).await {
-        Ok(rx) => rx,
-        Err(e) => {
-            tracing::error!("Failed to register external tool call: {}", e);
-            return ToolResultWithSkip::Skip {
-                tool_call_id: tool_call.tool_call_id.clone(),
-                reason: format!("Failed to register external tool call: {}", e),
-            };
-        }
+    let rx = match pre_registered_rx {
+        Some(rx) => rx,
+        None => match store.register_external_tool_call(&tool_call_id).await {
+            Ok(rx) => rx,
+            Err(e) => {
+                tracing::error!("Failed to register external tool call: {}", e);
+                return ToolResultWithSkip::Skip {
+                    tool_call_id: tool_call.tool_call_id.clone(),
+                    reason: format!("Failed to register external tool call: {}", e),
+                };
+            }
+        },
     };
 
     // Emit tool execution start event

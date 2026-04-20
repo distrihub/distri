@@ -205,15 +205,53 @@ pub fn format_tool_call(name: &str, input: &serde_json::Value) -> String {
         "transfer_to_agent" => {
             format!("transfer_to_agent(\"{}\")", str_field("agent_name"))
         }
+        "call_agent" => {
+            // Universal agent dispatch. Prefer (named agent, mode) over the
+            // raw JSON dump — matches the rendering style of every other
+            // arm. Ad-hoc agents (no `agent`, but `system_prompt` set) get
+            // a "ad-hoc" placeholder.
+            let agent = input
+                .get("agent")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| {
+                    if input.get("system_prompt").is_some() {
+                        "<ad-hoc>".to_string()
+                    } else {
+                        "?".to_string()
+                    }
+                });
+            let mode = input
+                .get("mode")
+                .and_then(|v| v.as_str())
+                .unwrap_or("in_process");
+            format!("call_agent(\"{}\", mode: {})", truncate(&agent, 40), mode)
+        }
         "final" | "reflect" | "console_log" => format!("{}(...)", name),
         _ => {
-            // HTTP factory tools (e.g. distri_request, zippy_request) use
-            // {path, method, body?} input — print as "name(METHOD /path)".
-            if let (Some(path), Some(method)) = (
-                input.get("path").and_then(|v| v.as_str()),
-                input.get("method").and_then(|v| v.as_str()),
-            ) {
-                return format!("{}({} {})", name, method, truncate(path, 60));
+            // HTTP factory tools (e.g. distri_request) take
+            // {path | url, method?, body?, headers?}. `path` is for the
+            // distri platform API (base_url is prepended); `url` is for
+            // external APIs (absolute, base_url skipped). Either flavor is
+            // an HTTP-factory call. `method` defaults to GET.
+            let path_or_url = input
+                .get("url")
+                .and_then(|v| v.as_str())
+                .or_else(|| input.get("path").and_then(|v| v.as_str()));
+            if let Some(target) = path_or_url {
+                let method = input
+                    .get("method")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("GET");
+                let connection = input
+                    .get("headers")
+                    .and_then(|h| h.get("x-connection-id"))
+                    .and_then(|v| v.as_str())
+                    .map(render_connection_label_short);
+                if let Some(conn) = connection {
+                    return format!("{}({} → {} {})", name, conn, method, truncate(target, 50));
+                }
+                return format!("{}({} {})", name, method, truncate(target, 60));
             }
             let compact = serde_json::to_string(input).unwrap_or_else(|_| "...".into());
             let preview = truncate(&compact, 80);
@@ -222,10 +260,132 @@ pub fn format_tool_call(name: &str, input: &serde_json::Value) -> String {
     }
 }
 
+/// Compact connection-id label for inline tool-call lines (the one-liner
+/// path used by every surface). UUIDs become "🔐"; named connections
+/// (e.g. "google-calendar") render as-is.
+fn render_connection_label_short(conn_id: &str) -> String {
+    if looks_like_uuid(conn_id) {
+        "🔐".to_string()
+    } else {
+        conn_id.to_string()
+    }
+}
+
+/// True when `s` matches the canonical UUID 8-4-4-4-12 hex shape (any
+/// version, hyphenated). Avoids pulling in the `uuid` crate just for this.
+fn looks_like_uuid(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    if bytes.len() != 36 {
+        return false;
+    }
+    for (i, &b) in bytes.iter().enumerate() {
+        let is_hyphen_pos = matches!(i, 8 | 13 | 18 | 23);
+        if is_hyphen_pos {
+            if b != b'-' {
+                return false;
+            }
+        } else if !b.is_ascii_hexdigit() {
+            return false;
+        }
+    }
+    true
+}
+
 /// Compact JSON representation of a tool input, or `"..."` on failure / empty object.
 pub fn format_tool_input(input: &serde_json::Value) -> String {
     if input.is_object() && input.as_object().map(|m| m.is_empty()).unwrap_or(false) {
         return "...".into();
     }
     serde_json::to_string(input).unwrap_or_else(|_| "...".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn call_agent_named_with_mode() {
+        let input = json!({"agent": "distri_runner", "mode": "fork", "prompt": "hi"});
+        assert_eq!(
+            format_tool_call("call_agent", &input),
+            "call_agent(\"distri_runner\", mode: fork)"
+        );
+    }
+
+    #[test]
+    fn call_agent_default_mode_when_missing() {
+        let input = json!({"agent": "coder", "prompt": "hi"});
+        assert_eq!(
+            format_tool_call("call_agent", &input),
+            "call_agent(\"coder\", mode: in_process)"
+        );
+    }
+
+    #[test]
+    fn call_agent_ad_hoc() {
+        let input = json!({"system_prompt": "you are a helpful assistant", "prompt": "hi"});
+        assert_eq!(
+            format_tool_call("call_agent", &input),
+            "call_agent(\"<ad-hoc>\", mode: in_process)"
+        );
+    }
+
+    #[test]
+    fn http_factory_with_named_connection_shows_connection_first() {
+        let input = json!({
+            "method": "GET",
+            "path": "/calendar/events",
+            "headers": {"x-connection-id": "google-calendar"},
+        });
+        assert_eq!(
+            format_tool_call("distri_request", &input),
+            "distri_request(google-calendar → GET /calendar/events)"
+        );
+    }
+
+    #[test]
+    fn http_factory_with_uuid_connection_collapses_to_lock() {
+        let input = json!({
+            "method": "GET",
+            "path": "/connections",
+            "headers": {"x-connection-id": "f9ef3fe3-9203-422c-96d9-b36c4aa10c6d"},
+        });
+        assert_eq!(
+            format_tool_call("distri_request", &input),
+            "distri_request(🔐 → GET /connections)"
+        );
+    }
+
+    #[test]
+    fn http_factory_url_form_works_too() {
+        let input = json!({
+            "method": "GET",
+            "url": "https://www.googleapis.com/calendar/v3/events",
+        });
+        let result = format_tool_call("distri_request", &input);
+        assert!(
+            result.contains("GET"),
+            "should detect HTTP factory via url field: {result}"
+        );
+        assert!(result.contains("googleapis.com"));
+    }
+
+    #[test]
+    fn http_factory_method_defaults_to_get() {
+        let input = json!({"path": "/agents"});
+        assert_eq!(
+            format_tool_call("distri_request", &input),
+            "distri_request(GET /agents)"
+        );
+    }
+
+    #[test]
+    fn http_factory_without_connection_shows_method_path() {
+        let input = json!({"method": "POST", "path": "/v1/skills"});
+        assert_eq!(
+            format_tool_call("distri_request", &input),
+            "distri_request(POST /v1/skills)"
+        );
+    }
 }

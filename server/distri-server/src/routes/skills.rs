@@ -119,7 +119,7 @@ async fn get_skill(
     tag = "Skills",
     request_body = NewSkill,
     responses(
-        (status = 200, description = "Skill created"),
+        (status = 200, description = "Skill created or updated"),
         (status = 500, description = "Internal server error")
     )
 )]
@@ -135,7 +135,11 @@ async fn create_skill(
         }
     };
 
-    match store.create(payload.into_inner()).await {
+    // UPSERT by (workspace_id, name) — matches `POST /v1/agents` semantics
+    // so `distri skills push` is idempotent across re-runs. A re-push of the
+    // same name updates content in place instead of returning a unique-
+    // constraint error.
+    match store.upsert_by_name(payload.into_inner()).await {
         Ok(skill) => HttpResponse::Ok().json(skill),
         Err(e) => HttpResponse::InternalServerError().json(json!({"error": e.to_string()})),
     }

@@ -1096,7 +1096,11 @@ pub enum SkillScope {
 }
 
 /// Filters for listing skills — one struct drives list, search, and pagination.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+///
+/// `Default` yields `page = 1, per_page = 50` so Rust-side callers like
+/// `client.upsert_skill(...)` hit the correct first page. `#[serde(default)]`
+/// uses the same values for missing JSON fields.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillFilter {
     /// Which slice of skills to return
     #[serde(default)]
@@ -1110,6 +1114,17 @@ pub struct SkillFilter {
     /// Items per page (default 50)
     #[serde(default = "default_per_page")]
     pub per_page: i64,
+}
+
+impl Default for SkillFilter {
+    fn default() -> Self {
+        Self {
+            scope: SkillScope::default(),
+            search: None,
+            page: default_page(),
+            per_page: default_per_page(),
+        }
+    }
 }
 
 fn default_page() -> i64 {
@@ -1140,6 +1155,41 @@ pub trait SkillStore: Send + Sync {
     async fn star(&self, skill_id: &str) -> anyhow::Result<()>;
     async fn unstar(&self, skill_id: &str) -> anyhow::Result<()>;
     async fn clone_skill(&self, skill_id: &str) -> anyhow::Result<SkillRecord>;
+
+    /// Create-or-update a skill by name in the caller's current workspace.
+    ///
+    /// Mirrors `AgentStore::register` semantics: `distri skills push` is an
+    /// UPSERT, not a CREATE. Implementations SHOULD do this atomically against
+    /// the `(workspace_id, name)` unique constraint (Postgres: `ON CONFLICT
+    /// DO UPDATE`). The default impl below is a fall-back for backends that
+    /// don't have a native upsert — it performs the list+update-or-create
+    /// dance the old client used to do, and inherits its races, so backends
+    /// should override it whenever possible.
+    async fn upsert_by_name(&self, skill: NewSkill) -> anyhow::Result<SkillRecord> {
+        let response = self
+            .list(SkillFilter {
+                scope: SkillScope::Workspace,
+                ..Default::default()
+            })
+            .await?;
+        if let Some(existing) = response.skills.iter().find(|s| s.name == skill.name) {
+            return self
+                .update(
+                    &existing.id,
+                    UpdateSkill {
+                        name: Some(skill.name),
+                        description: skill.description,
+                        content: Some(skill.content),
+                        tags: Some(skill.tags),
+                        is_public: Some(skill.is_public),
+                        model: skill.model,
+                        context: Some(skill.context),
+                    },
+                )
+                .await;
+        }
+        self.create(skill).await
+    }
 }
 
 // ─── Usage Service ──────────────────────────────────────────────────────────

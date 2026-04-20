@@ -73,6 +73,13 @@ pub struct TemplateData<'a> {
     /// it can use `tool_search` to fetch full schemas on demand.
     #[serde(default)]
     pub deferred_tools_listing: Option<String>,
+    /// Channel/surface this conversation is happening on
+    /// ("telegram", "whatsapp", "discord", "slack", "web"). Read by the
+    /// `channel_formatting` partial in `dynamic_suffix.hbs` to give the
+    /// agent surface-specific output guidance. None when the run isn't tied
+    /// to a chat surface (web direct, CLI, A2A).
+    #[serde(default)]
+    pub channel_kind: Option<String>,
 }
 
 /// A single tool's prompt entry for template iteration.
@@ -193,6 +200,10 @@ impl PromptRegistry {
             (
                 "dynamic_suffix",
                 include_str!("../prompt_templates/partials/dynamic_suffix.hbs"),
+            ),
+            (
+                "channel_formatting",
+                include_str!("../prompt_templates/partials/channel_formatting.hbs"),
             ),
         ];
 
@@ -810,6 +821,7 @@ mod tests {
             tool_prompts: String::new(),
             tool_prompt_list: vec![],
             deferred_tools_listing: None,
+            channel_kind: None,
         };
         let msgs = build_prompt_messages(
             &registry,
