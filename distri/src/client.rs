@@ -2042,27 +2042,14 @@ impl Distri {
     }
 
     /// Create or update a skill by name (upsert).
-    /// Tries create first; if list_skills is available and skill already exists, updates instead.
+    ///
+    /// `POST /v1/skills` is an UPSERT on the server (like `POST /v1/agents`),
+    /// so this is a single round-trip. The previous list+find-or-create dance
+    /// is gone — it was racy and broke under pagination.
     pub async fn upsert_skill(
         &self,
         request: &CreateSkillRequest,
     ) -> Result<SkillResponse, ClientError> {
-        // Try to find existing skill to update, but don't fail if list_skills is broken
-        if let Ok(resp) = self
-            .list_skills(&distri_types::stores::SkillFilter::default())
-            .await
-            && let Some(skill) = resp.skills.iter().find(|s| s.name == request.name)
-        {
-            let update = UpdateSkillRequest {
-                name: Some(request.name.clone()),
-                description: request.description.clone(),
-                content: Some(request.content.clone()),
-                tags: Some(request.tags.clone()),
-                is_public: Some(request.is_public),
-            };
-            return self.update_skill(&skill.id, &update).await;
-        }
-        // Create new skill (also used as fallback when list_skills fails)
         self.create_skill(request).await
     }
 }

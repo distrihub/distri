@@ -77,6 +77,30 @@ fn test_resolve_code_agent_browser() {
 }
 
 #[test]
+fn test_system_prefix_is_tolerated_for_builtins() {
+    // Regression: the tool description advertises `_system/plan`, but the
+    // cloud agent store seeds the bare name `plan`. Access checks must
+    // accept either form so the LLM isn't punished for following the doc.
+    let sub_agents: Vec<String> = vec![];
+    assert!(is_agent_accessible("_system/plan", &sub_agents));
+    assert!(is_agent_accessible("_system/explore", &sub_agents));
+    assert!(is_agent_accessible("plan", &sub_agents));
+    assert!(is_agent_accessible("explore", &sub_agents));
+}
+
+#[test]
+fn test_system_prefix_tolerated_in_sub_agents_list() {
+    // If the parent agent declares `sub_agents = ["my_pkg/helper"]`, calls
+    // to `_system/my_pkg/helper` should not be granted — the stripping only
+    // applies to the well-known `_system/` namespace. But a parent declaring
+    // `["_system/plan"]` should cover `plan` and vice versa.
+    assert!(is_agent_accessible("plan", &["_system/plan".to_string()]));
+    assert!(is_agent_accessible("_system/plan", &["plan".to_string()]));
+    // Unrelated agent: denied
+    assert!(!is_agent_accessible("other", &["plan".to_string()]));
+}
+
+#[test]
 fn test_always_available_builtins_list() {
     assert!(ALWAYS_AVAILABLE_BUILTINS.contains(&"distri"));
     assert!(ALWAYS_AVAILABLE_BUILTINS.contains(&"distri_runner"));

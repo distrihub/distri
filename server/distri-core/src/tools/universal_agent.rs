@@ -27,20 +27,36 @@ pub(crate) const ALWAYS_AVAILABLE_BUILTINS: &[&str] = &[
     "explore",
 ];
 
+/// Strip the `_system/` namespace prefix if present.
+///
+/// The tool description advertises `_system/plan` as the canonical name, but
+/// cloud seeds system agents under the bare name (`plan`, `explore`). Standalone
+/// server seeds the prefixed form. Normalizing lets either form match.
+pub(crate) fn strip_system_prefix(name: &str) -> &str {
+    name.strip_prefix("_system/").unwrap_or(name)
+}
+
 /// Check whether an agent is accessible from the calling agent's context.
 ///
 /// An agent is accessible if:
-/// - It is in `ALWAYS_AVAILABLE_BUILTINS`, OR
+/// - It is in `ALWAYS_AVAILABLE_BUILTINS` (either the raw name or the
+///   `_system/`-stripped form — the LLM may call either), OR
 /// - The calling agent's `sub_agents` contains `"*"` (wildcard), OR
-/// - It is explicitly listed in the calling agent's `sub_agents`
+/// - It is explicitly listed in the calling agent's `sub_agents` (same
+///   `_system/` tolerance applies).
 pub(crate) fn is_agent_accessible(agent_name: &str, sub_agents: &[String]) -> bool {
-    if ALWAYS_AVAILABLE_BUILTINS.contains(&agent_name) {
+    let stripped = strip_system_prefix(agent_name);
+    if ALWAYS_AVAILABLE_BUILTINS.contains(&agent_name)
+        || ALWAYS_AVAILABLE_BUILTINS.contains(&stripped)
+    {
         return true;
     }
     if sub_agents.iter().any(|sa| sa == "*") {
         return true;
     }
-    sub_agents.iter().any(|sa| sa == agent_name)
+    sub_agents
+        .iter()
+        .any(|sa| sa == agent_name || sa == stripped || strip_system_prefix(sa) == stripped)
 }
 
 /// Resolve the logical "code" / "coder" alias to a concrete system agent
@@ -252,11 +268,25 @@ async fn build_spec(
     let mode = input.mode;
 
     // ── Resolve agent_name. ────────────────────────────────────────────────
+    // Accept `_system/plan` (advertised form) and `plan` (cloud storage form)
+    // interchangeably: look up both and pick whichever the store has.
     let agent_name = if let Some(ref name) = input.agent {
         if matches!(name.as_str(), "coder" | "code") {
             resolve_code_agent(&parent_ctx.runtime_mode).to_string()
-        } else {
+        } else if orchestrator.get_agent(name).await.is_some() {
             name.clone()
+        } else {
+            let stripped = strip_system_prefix(name);
+            if stripped != name && orchestrator.get_agent(stripped).await.is_some() {
+                stripped.to_string()
+            } else {
+                let prefixed = format!("_system/{}", name);
+                if orchestrator.get_agent(&prefixed).await.is_some() {
+                    prefixed
+                } else {
+                    name.clone() // let the existence check below produce the error
+                }
+            }
         }
     } else if input.system_prompt.is_some() {
         // Transfer requires a named agent — you can't hand over execution to
