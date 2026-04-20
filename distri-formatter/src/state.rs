@@ -229,34 +229,66 @@ pub fn format_tool_call(name: &str, input: &serde_json::Value) -> String {
         }
         "final" | "reflect" | "console_log" => format!("{}(...)", name),
         _ => {
-            // HTTP factory tools (e.g. distri_request, zippy_request) use
-            // {path, method, body?} input. When an `x-connection-id` header
-            // is present the connection name is the most useful at-a-glance
-            // identifier — show it before the method/path.
-            if let (Some(path), Some(method)) = (
-                input.get("path").and_then(|v| v.as_str()),
-                input.get("method").and_then(|v| v.as_str()),
-            ) {
+            // HTTP factory tools (e.g. distri_request) take
+            // {path | url, method?, body?, headers?}. `path` is for the
+            // distri platform API (base_url is prepended); `url` is for
+            // external APIs (absolute, base_url skipped). Either flavor is
+            // an HTTP-factory call. `method` defaults to GET.
+            let path_or_url = input
+                .get("url")
+                .and_then(|v| v.as_str())
+                .or_else(|| input.get("path").and_then(|v| v.as_str()));
+            if let Some(target) = path_or_url {
+                let method = input
+                    .get("method")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("GET");
                 let connection = input
                     .get("headers")
                     .and_then(|h| h.get("x-connection-id"))
-                    .and_then(|v| v.as_str());
+                    .and_then(|v| v.as_str())
+                    .map(render_connection_label_short);
                 if let Some(conn) = connection {
-                    return format!(
-                        "{}({} → {} {})",
-                        name,
-                        truncate(conn, 30),
-                        method,
-                        truncate(path, 50)
-                    );
+                    return format!("{}({} → {} {})", name, conn, method, truncate(target, 50));
                 }
-                return format!("{}({} {})", name, method, truncate(path, 60));
+                return format!("{}({} {})", name, method, truncate(target, 60));
             }
             let compact = serde_json::to_string(input).unwrap_or_else(|_| "...".into());
             let preview = truncate(&compact, 80);
             format!("{}({})", name, preview)
         }
     }
+}
+
+/// Compact connection-id label for inline tool-call lines (the one-liner
+/// path used by every surface). UUIDs become "🔐"; named connections
+/// (e.g. "google-calendar") render as-is.
+fn render_connection_label_short(conn_id: &str) -> String {
+    if looks_like_uuid(conn_id) {
+        "🔐".to_string()
+    } else {
+        conn_id.to_string()
+    }
+}
+
+/// True when `s` matches the canonical UUID 8-4-4-4-12 hex shape (any
+/// version, hyphenated). Avoids pulling in the `uuid` crate just for this.
+fn looks_like_uuid(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    if bytes.len() != 36 {
+        return false;
+    }
+    for (i, &b) in bytes.iter().enumerate() {
+        let is_hyphen_pos = matches!(i, 8 | 13 | 18 | 23);
+        if is_hyphen_pos {
+            if b != b'-' {
+                return false;
+            }
+        } else if !b.is_ascii_hexdigit() {
+            return false;
+        }
+    }
+    true
 }
 
 /// Compact JSON representation of a tool input, or `"..."` on failure / empty object.
@@ -300,7 +332,7 @@ mod tests {
     }
 
     #[test]
-    fn http_factory_with_connection_shows_connection_first() {
+    fn http_factory_with_named_connection_shows_connection_first() {
         let input = json!({
             "method": "GET",
             "path": "/calendar/events",
@@ -309,6 +341,42 @@ mod tests {
         assert_eq!(
             format_tool_call("distri_request", &input),
             "distri_request(google-calendar → GET /calendar/events)"
+        );
+    }
+
+    #[test]
+    fn http_factory_with_uuid_connection_collapses_to_lock() {
+        let input = json!({
+            "method": "GET",
+            "path": "/connections",
+            "headers": {"x-connection-id": "f9ef3fe3-9203-422c-96d9-b36c4aa10c6d"},
+        });
+        assert_eq!(
+            format_tool_call("distri_request", &input),
+            "distri_request(🔐 → GET /connections)"
+        );
+    }
+
+    #[test]
+    fn http_factory_url_form_works_too() {
+        let input = json!({
+            "method": "GET",
+            "url": "https://www.googleapis.com/calendar/v3/events",
+        });
+        let result = format_tool_call("distri_request", &input);
+        assert!(
+            result.contains("GET"),
+            "should detect HTTP factory via url field: {result}"
+        );
+        assert!(result.contains("googleapis.com"));
+    }
+
+    #[test]
+    fn http_factory_method_defaults_to_get() {
+        let input = json!({"path": "/agents"});
+        assert_eq!(
+            format_tool_call("distri_request", &input),
+            "distri_request(GET /agents)"
         );
     }
 
