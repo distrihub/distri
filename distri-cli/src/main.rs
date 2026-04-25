@@ -13,6 +13,8 @@ mod credentials;
 mod input;
 mod logging;
 mod login;
+mod push;
+mod registries;
 mod threads;
 mod tools;
 mod traces;
@@ -114,6 +116,56 @@ enum Commands {
     Skills {
         #[clap(subcommand)]
         command: Option<SkillsCommands>,
+    },
+
+    /// Sync the entire `agents/`, `skills/`, `templates/` tree to the
+    /// current workspace. With no arg runs from the current directory.
+    Push {
+        /// Optional sub-path. When omitted, walks `./agents`, `./skills`,
+        /// `./templates`. When given a folder named `agents`/`skills`/
+        /// `templates`, pushes only that resource. When given a deeper
+        /// path (e.g. `skills/my-skill`), pushes that single item.
+        path: Option<PathBuf>,
+        /// Print what would be pushed without uploading.
+        #[clap(long)]
+        dry_run: bool,
+    },
+
+    /// Pull every agent/skill/template from the workspace into the
+    /// `agents/`, `skills/`, `templates/` convention layout.
+    Checkout {
+        /// Output directory. Defaults to current dir; refuses to overwrite
+        /// non-empty dirs unless --force is set.
+        #[clap(long, short)]
+        out: Option<PathBuf>,
+        /// Limit checkout to a single resource type.
+        #[clap(long, value_enum, default_value_t = CheckoutScope::All)]
+        scope: CheckoutScope,
+        /// Allow checkout into a non-empty directory (overwrites).
+        #[clap(long)]
+        force: bool,
+    },
+
+    /// Search external skill registries (skillsmp.com, GitHub, …).
+    Search {
+        /// Search query.
+        query: String,
+        /// Only search this registry (otherwise: all configured).
+        #[clap(long)]
+        registry: Option<String>,
+    },
+
+    /// Install a skill from a registry into the current workspace.
+    /// Format: `<name>@<registry>` (e.g. `pdf-processing@anthropic`).
+    Install {
+        /// `<name>@<registry>` reference.
+        reference: String,
+    },
+
+    /// Manage external skill registries (add, remove, list).
+    Registry {
+        #[clap(subcommand)]
+        command: RegistryCommands,
     },
 
     /// Connection management commands (defaults to list)
@@ -292,11 +344,43 @@ pub(crate) enum SkillsCommands {
     },
     /// Push skill(s) to the server from a file or directory
     Push {
-        #[clap(help = "Path to a skill .md file or directory containing skill files")]
+        #[clap(help = "Path to a SKILL.md file, a skill folder, or a directory of skills")]
         path: PathBuf,
         /// Push all skill files in a directory
-        #[clap(long, help = "Push all skill markdown files in the directory")]
+        #[clap(long, help = "Push every skill in the given directory")]
         all: bool,
+    },
+}
+
+/// Scope filter for `distri checkout`.
+#[derive(clap::ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CheckoutScope {
+    Agents,
+    Skills,
+    Templates,
+    All,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub(crate) enum RegistryCommands {
+    /// List configured registries.
+    List,
+    /// Add a registry. Type is one of: skillsmp, github, git, local, http.
+    Add {
+        /// Friendly name (referenced as `<name>@<registry>`).
+        name: String,
+        /// Registry type.
+        #[clap(long)]
+        kind: String,
+        /// Source URL.
+        url: String,
+        /// Optional API key (used for the `skillsmp` type).
+        #[clap(long)]
+        api_key: Option<String>,
+    },
+    /// Remove a registry by name.
+    Remove {
+        name: String,
     },
 }
 
@@ -716,6 +800,21 @@ async fn main() -> Result<()> {
         Commands::Skills { command } => {
             let command = command.unwrap_or(SkillsCommands::List { all: false });
             handle_skills_command(&client, command).await?;
+        }
+        Commands::Push { path, dry_run } => {
+            push::handle_push(&client, path, dry_run).await?;
+        }
+        Commands::Checkout { out, scope, force } => {
+            push::handle_checkout(&client, out, scope, force).await?;
+        }
+        Commands::Search { query, registry } => {
+            push::handle_search(query, registry).await?;
+        }
+        Commands::Install { reference } => {
+            push::handle_install(&client, &reference).await?;
+        }
+        Commands::Registry { command } => {
+            push::handle_registry(command)?;
         }
         Commands::Connections { command } => {
             let command = command.unwrap_or(ConnectionsCommands::List);
