@@ -1,63 +1,79 @@
 use crate::stores::{
     DEFAULT_SKILL_MAX_TOKENS, SKILL_DESCRIPTION_CAP, SkillFrontmatter, format_skill_listing,
 };
+use std::collections::HashMap;
+
+// agentskills.io frontmatter — the spec at https://agentskills.io/specification:
+// required: name, description; optional: license, compatibility, metadata, allowed-tools.
+// Distri-specific runtime hints (model, max_tokens, can_spawn_tasks, tags) live
+// inside `metadata` so the file stays portable.
 
 #[test]
 fn skill_frontmatter_parse_full() {
     let yaml = r#"
-        name: web_search
+        name: web-search
         description: Search the web for information
-        tags: [search, web]
-        model: gpt-4.1
-        max_tokens: 3000
-        can_spawn_tasks: true
-        paths: ["src/**/*.rs"]
-        is_public: true
+        license: Apache-2.0
+        compatibility: Designed for Claude Code
+        metadata:
+            model: gpt-4.1
+            max_tokens: "3000"
+            can_spawn_tasks: "true"
+            tags: search,web
+        allowed-tools: "Bash(git:*) Read"
     "#;
     let fm: SkillFrontmatter = serde_yaml::from_str(yaml).unwrap();
-    assert_eq!(fm.name, "web_search");
-    assert_eq!(fm.model.as_deref(), Some("gpt-4.1"));
-    assert_eq!(fm.max_tokens, Some(3000));
-    assert!(fm.can_spawn_tasks);
-    assert_eq!(fm.paths, vec!["src/**/*.rs"]);
+    assert_eq!(fm.name, "web-search");
+    assert_eq!(fm.license.as_deref(), Some("Apache-2.0"));
+    assert_eq!(fm.compatibility.as_deref(), Some("Designed for Claude Code"));
+    assert_eq!(fm.allowed_tools.as_deref(), Some("Bash(git:*) Read"));
+    assert_eq!(fm.model(), Some("gpt-4.1"));
+    assert_eq!(fm.max_tokens(), Some(3000));
+    assert!(fm.can_spawn_tasks());
+    assert_eq!(fm.tags(), vec!["search".to_string(), "web".to_string()]);
 }
 
 #[test]
 fn skill_frontmatter_parse_minimal() {
-    let yaml = r#"name: minimal_skill"#;
+    let yaml = r#"name: minimal-skill"#;
     let fm: SkillFrontmatter = serde_yaml::from_str(yaml).unwrap();
-    assert_eq!(fm.name, "minimal_skill");
-    assert!(fm.model.is_none());
+    assert_eq!(fm.name, "minimal-skill");
+    assert!(fm.model().is_none());
     assert_eq!(fm.effective_max_tokens(), DEFAULT_SKILL_MAX_TOKENS);
-    assert!(!fm.can_spawn_tasks);
+    assert!(!fm.can_spawn_tasks());
 }
 
 #[test]
 fn skill_frontmatter_model_preference() {
-    let yaml = "name: smart\nmodel: claude-sonnet-4";
-    let fm: SkillFrontmatter = serde_yaml::from_str(yaml).unwrap();
-    assert_eq!(fm.model.as_deref(), Some("claude-sonnet-4"));
+    let mut metadata = HashMap::new();
+    metadata.insert("model".into(), "claude-sonnet-4".into());
+    let fm = SkillFrontmatter {
+        name: "smart".into(),
+        metadata,
+        ..Default::default()
+    };
+    assert_eq!(fm.model(), Some("claude-sonnet-4"));
 }
 
 #[test]
 fn skill_frontmatter_can_spawn_tasks() {
-    let yaml = "name: orch\ncan_spawn_tasks: true";
-    let fm: SkillFrontmatter = serde_yaml::from_str(yaml).unwrap();
-    assert!(fm.can_spawn_tasks);
-}
-
-#[test]
-fn skill_frontmatter_paths_relevance() {
-    let yaml = "name: rust\npaths: [\"src/**/*.rs\", \"Cargo.toml\"]";
-    let fm: SkillFrontmatter = serde_yaml::from_str(yaml).unwrap();
-    assert_eq!(fm.paths.len(), 2);
+    let mut metadata = HashMap::new();
+    metadata.insert("can_spawn_tasks".into(), "true".into());
+    let fm = SkillFrontmatter {
+        name: "orch".into(),
+        metadata,
+        ..Default::default()
+    };
+    assert!(fm.can_spawn_tasks());
 }
 
 #[test]
 fn skill_frontmatter_max_tokens() {
+    let mut metadata = HashMap::new();
+    metadata.insert("max_tokens".into(), "3000".into());
     let fm = SkillFrontmatter {
         name: "test".into(),
-        max_tokens: Some(3000),
+        metadata,
         ..Default::default()
     };
     assert_eq!(fm.effective_max_tokens(), 3000);
@@ -70,16 +86,18 @@ fn skill_frontmatter_max_tokens() {
 
 #[test]
 fn skill_listing_format_one_line() {
+    let mut metadata = HashMap::new();
+    metadata.insert("model".into(), "gpt-4.1".into());
+    metadata.insert("can_spawn_tasks".into(), "true".into());
     let fm = SkillFrontmatter {
-        name: "web_search".into(),
+        name: "web-search".into(),
         description: Some("Search the web".into()),
-        model: Some("gpt-4.1".into()),
-        can_spawn_tasks: true,
+        metadata,
         ..Default::default()
     };
     assert_eq!(
         fm.as_listing_line(),
-        "- web_search: Search the web (model: gpt-4.1, tasks: yes)"
+        "- web-search: Search the web (model: gpt-4.1, tasks: yes)"
     );
 }
 
@@ -87,7 +105,7 @@ fn skill_listing_format_one_line() {
 fn skill_listing_budget_capped() {
     let skills: Vec<SkillFrontmatter> = (0..50)
         .map(|i| SkillFrontmatter {
-            name: format!("skill_{}", i),
+            name: format!("skill-{}", i),
             description: Some(format!(
                 "Description for skill {} that is moderately long",
                 i

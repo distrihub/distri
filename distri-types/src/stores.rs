@@ -904,29 +904,69 @@ pub const SKILL_DESCRIPTION_CAP: usize = 250;
 /// Default max output tokens for a skill when not explicitly set.
 pub const DEFAULT_SKILL_MAX_TOKENS: u32 = 8000;
 
-/// Parsed frontmatter from a skill markdown file.
+/// Parsed frontmatter from a SKILL.md file (agentskills.io spec).
+///
+/// Per the spec at https://agentskills.io/specification:
+/// - `name` — required, lowercase a-z + hyphens, must match parent directory.
+/// - `description` — required.
+/// - `license` — optional license name or path.
+/// - `compatibility` — optional environment requirements string.
+/// - `metadata` — optional free-form key/value map (where distri-specific
+///    knobs like `model`, `max_tokens`, `can_spawn_tasks` live).
+/// - `allowed_tools` — optional pre-approved tools list (experimental).
+///
+/// All distri-specific runtime hints are read from `metadata` so the file
+/// is portable to any agentskills.io-compliant client.
 #[derive(Debug, Clone, Serialize, Deserialize, Default, ToSchema, JsonSchema)]
 pub struct SkillFrontmatter {
     pub name: String,
     #[serde(default)]
     pub description: Option<String>,
-    #[serde(default)]
-    pub tags: Vec<String>,
-    #[serde(default)]
-    pub model: Option<String>,
-    #[serde(default)]
-    pub max_tokens: Option<u32>,
-    #[serde(default)]
-    pub can_spawn_tasks: bool,
-    #[serde(default)]
-    pub paths: Vec<String>,
-    #[serde(default)]
-    pub is_public: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub license: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compatibility: Option<String>,
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub metadata: std::collections::HashMap<String, String>,
+    /// Maps to `allowed-tools` on the wire (per agentskills.io spec).
+    #[serde(default, rename = "allowed-tools", skip_serializing_if = "Option::is_none")]
+    pub allowed_tools: Option<String>,
 }
 
 impl SkillFrontmatter {
+    /// Distri-specific runtime hint stored in `metadata.model`.
+    pub fn model(&self) -> Option<&str> {
+        self.metadata.get("model").map(|s| s.as_str())
+    }
+
+    /// Distri-specific runtime hint stored in `metadata.max_tokens`.
+    pub fn max_tokens(&self) -> Option<u32> {
+        self.metadata.get("max_tokens").and_then(|s| s.parse().ok())
+    }
+
+    /// Distri-specific runtime hint stored in `metadata.can_spawn_tasks`.
+    pub fn can_spawn_tasks(&self) -> bool {
+        self.metadata
+            .get("can_spawn_tasks")
+            .map(|s| s == "true" || s == "yes")
+            .unwrap_or(false)
+    }
+
+    /// Distri-specific runtime hint stored as a comma- or space-separated list.
+    pub fn tags(&self) -> Vec<String> {
+        self.metadata
+            .get("tags")
+            .map(|s| {
+                s.split(|c: char| c == ',' || c.is_whitespace())
+                    .filter(|t| !t.is_empty())
+                    .map(|t| t.trim().to_string())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     pub fn effective_max_tokens(&self) -> u32 {
-        self.max_tokens.unwrap_or(DEFAULT_SKILL_MAX_TOKENS)
+        self.max_tokens().unwrap_or(DEFAULT_SKILL_MAX_TOKENS)
     }
 
     pub fn as_listing_line(&self) -> String {
@@ -937,10 +977,10 @@ impl SkillFrontmatter {
             desc.to_string()
         };
         let mut meta = Vec::new();
-        if let Some(model) = &self.model {
+        if let Some(model) = self.model() {
             meta.push(format!("model: {}", model));
         }
-        if self.can_spawn_tasks {
+        if self.can_spawn_tasks() {
             meta.push("tasks: yes".to_string());
         }
         if meta.is_empty() {
@@ -982,6 +1022,10 @@ pub struct SkillsListResponse {
 
 /// Lighter skill record for list endpoints — no content or scripts.
 /// Used by both distri-server (OSS) and distri-cloud.
+///
+/// Note: marketplace fields (`is_public`, `is_system`, `star_count`,
+/// `clone_count`, `is_starred`) were removed. Skills are workspace-scoped;
+/// public discovery happens through external registries.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
 pub struct SkillListItem {
     pub id: String,
@@ -995,24 +1039,16 @@ pub struct SkillListItem {
     #[serde(default)]
     pub tags: Vec<String>,
     #[serde(default)]
-    pub is_public: bool,
-    #[serde(default)]
-    pub is_system: bool,
-    #[serde(default)]
     pub is_owner: bool,
     /// True when the skill belongs to the current workspace
     #[serde(default)]
     pub is_workspace: bool,
-    #[serde(default)]
-    pub star_count: i32,
-    #[serde(default)]
-    pub clone_count: i32,
-    #[serde(default)]
-    pub is_starred: bool,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
 
+/// Full skill record — content + metadata. Marketplace fields removed; see
+/// `SkillListItem` doc comment.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
 pub struct SkillRecord {
     pub id: String,
@@ -1026,19 +1062,12 @@ pub struct SkillRecord {
     pub description: Option<String>,
     pub content: String,
     pub tags: Vec<String>,
-    pub is_public: bool,
-    pub is_system: bool,
     /// Whether the current user owns this skill
     #[serde(default)]
     pub is_owner: bool,
     /// True when the skill belongs to the current workspace
     #[serde(default)]
     pub is_workspace: bool,
-    pub star_count: i32,
-    pub clone_count: i32,
-    /// Whether the current user has starred this skill
-    #[serde(default)]
-    pub is_starred: bool,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
     /// Preferred model for skill execution (overrides agent default)
@@ -1050,15 +1079,13 @@ pub struct SkillRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
-#[schema(example = json!({"name": "my-skill", "content": "# My Skill\nA helpful utility skill", "description": "A utility skill", "tags": ["utility"], "is_public": false}))]
+#[schema(example = json!({"name": "my-skill", "content": "# My Skill\nA helpful utility skill", "description": "A utility skill", "tags": ["utility"]}))]
 pub struct NewSkill {
     pub name: String,
     pub description: Option<String>,
     pub content: String,
     #[serde(default)]
     pub tags: Vec<String>,
-    #[serde(default)]
-    pub is_public: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     #[serde(default)]
@@ -1071,7 +1098,6 @@ pub struct UpdateSkill {
     pub description: Option<String>,
     pub content: Option<String>,
     pub tags: Option<Vec<String>>,
-    pub is_public: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1082,16 +1108,12 @@ pub struct UpdateSkill {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum SkillScope {
-    /// Skills belonging to the current workspace (not system)
+    /// Skills belonging to the current workspace
     #[default]
     Workspace,
-    /// Starred skills
-    Starred,
-    /// System skills
-    System,
-    /// Public skills from other workspaces (excludes own + system)
+    /// Discover external skills (skillsmp.com / GitHub registries)
     Discover,
-    /// Everything the user can see (workspace + public + system)
+    /// Workspace + discover combined
     All,
 }
 
@@ -1152,9 +1174,6 @@ pub trait SkillStore: Send + Sync {
     async fn create(&self, skill: NewSkill) -> anyhow::Result<SkillRecord>;
     async fn update(&self, id: &str, update: UpdateSkill) -> anyhow::Result<SkillRecord>;
     async fn delete(&self, id: &str) -> anyhow::Result<()>;
-    async fn star(&self, skill_id: &str) -> anyhow::Result<()>;
-    async fn unstar(&self, skill_id: &str) -> anyhow::Result<()>;
-    async fn clone_skill(&self, skill_id: &str) -> anyhow::Result<SkillRecord>;
 
     /// Create-or-update a skill by name in the caller's current workspace.
     ///
@@ -1181,7 +1200,6 @@ pub trait SkillStore: Send + Sync {
                         description: skill.description,
                         content: Some(skill.content),
                         tags: Some(skill.tags),
-                        is_public: Some(skill.is_public),
                         model: skill.model,
                         context: Some(skill.context),
                     },

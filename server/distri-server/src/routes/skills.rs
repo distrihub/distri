@@ -63,8 +63,6 @@ async fn list_skills(
     };
 
     let scope = match query.scope.as_deref() {
-        Some("starred") => SkillScope::Starred,
-        Some("system") => SkillScope::System,
         Some("discover") => SkillScope::Discover,
         Some("all") => SkillScope::All,
         _ => SkillScope::Workspace,

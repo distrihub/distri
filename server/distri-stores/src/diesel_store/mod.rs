@@ -3588,13 +3588,8 @@ fn to_skill_record(model: SkillModel) -> SkillRecord {
         description: model.description,
         content: model.content,
         tags,
-        is_public: model.is_public != 0,
-        is_system: model.is_system != 0,
         is_owner: true,
         is_workspace: true,
-        star_count: model.star_count,
-        clone_count: model.clone_count,
-        is_starred: false,
         created_at: from_naive(model.created_at),
         updated_at: from_naive(model.updated_at),
         model: model.model,
@@ -3647,31 +3642,19 @@ where
         use distri_types::stores::SkillScope;
         let mut conn = self.conn().await?;
 
-        let mut query = skills.into_boxed();
-
-        // Scope filtering
-        match filter.scope {
-            SkillScope::Workspace => {
-                query = query.filter(is_system.eq(0));
-            }
-            SkillScope::Starred => {
-                // No star tracking in OSS
-                return Ok(distri_types::stores::SkillListResponse {
-                    skills: vec![],
-                    total: 0,
-                    page: filter.page,
-                    per_page: filter.per_page,
-                    total_pages: 0,
-                });
-            }
-            SkillScope::System => {
-                query = query.filter(is_system.eq(1));
-            }
-            SkillScope::Discover => {
-                query = query.filter(is_public.eq(1)).filter(is_system.eq(0));
-            }
-            SkillScope::All => {}
+        // OSS only knows about local skills. Discover (external registries)
+        // is a CLI-side concern and returns empty here.
+        if matches!(filter.scope, SkillScope::Discover) {
+            return Ok(distri_types::stores::SkillListResponse {
+                skills: vec![],
+                total: 0,
+                page: filter.page,
+                per_page: filter.per_page,
+                total_pages: 0,
+            });
         }
+
+        let query = skills.into_boxed();
 
         // Load all matching scope
         let all_results: Vec<SkillModel> = query
@@ -3715,13 +3698,8 @@ where
                     full_name: r.full_name,
                     description: r.description,
                     tags: r.tags,
-                    is_public: r.is_public,
-                    is_system: r.is_system,
                     is_owner: r.is_owner,
                     is_workspace: r.is_workspace,
-                    star_count: r.star_count,
-                    clone_count: r.clone_count,
-                    is_starred: r.is_starred,
                     created_at: r.created_at,
                     updated_at: r.updated_at,
                 }
@@ -3781,8 +3759,6 @@ where
             description: skill.description.as_deref(),
             content: &skill.content,
             tags: &tags_json,
-            is_public: if skill.is_public { 1 } else { 0 },
-            is_system: 0,
             created_at: now,
             updated_at: now,
             model: skill.model.as_deref(),
@@ -3833,12 +3809,6 @@ where
                 .execute(&mut conn)
                 .await?;
         }
-        if let Some(p) = update.is_public {
-            diesel::update(skills.filter(id.eq(skill_id_val)))
-                .set(is_public.eq(if p { 1 } else { 0 }))
-                .execute(&mut conn)
-                .await?;
-        }
         if let Some(ref m) = update.model {
             diesel::update(skills.filter(id.eq(skill_id_val)))
                 .set(crate::schema::skills::model.eq(m))
@@ -3875,54 +3845,7 @@ where
         Ok(())
     }
 
-    async fn star(&self, _skill_id: &str) -> Result<()> {
-        anyhow::bail!("star not supported in OSS mode")
-    }
-
-    async fn unstar(&self, _skill_id: &str) -> Result<()> {
-        anyhow::bail!("unstar not supported in OSS mode")
-    }
-
-    async fn clone_skill(&self, skill_id_val: &str) -> Result<SkillRecord> {
-        use crate::schema::skills::dsl::*;
-        let mut conn = self.conn().await?;
-
-        let source = skills
-            .filter(id.eq(skill_id_val))
-            .select(SkillModel::as_select())
-            .first::<SkillModel>(&mut conn)
-            .await?;
-
-        let now = Utc::now().naive_utc();
-        let new_id = Uuid::new_v4().to_string();
-        let new_name = format!("Clone of {}", source.name);
-
-        let new_skill = NewSkillModel {
-            id: &new_id,
-            name: &new_name,
-            description: source.description.as_deref(),
-            content: &source.content,
-            tags: &source.tags,
-            is_public: 0,
-            is_system: 0,
-            created_at: now,
-            updated_at: now,
-            model: source.model.as_deref(),
-            context: &source.context,
-        };
-
-        diesel::insert_into(skills)
-            .values(&new_skill)
-            .execute(&mut conn)
-            .await?;
-
-        let result = skills
-            .filter(id.eq(&new_id))
-            .select(SkillModel::as_select())
-            .first::<SkillModel>(&mut conn)
-            .await?;
-        Ok(to_skill_record(result))
-    }
+    // Marketplace methods (star, unstar, clone_skill) removed.
 }
 
 #[cfg(feature = "sqlite")]
