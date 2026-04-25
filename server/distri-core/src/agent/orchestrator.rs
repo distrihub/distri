@@ -336,30 +336,39 @@ impl AgentOrchestrator {
         &self,
         definition: crate::types::StandardDefinition,
     ) -> anyhow::Result<()> {
-        tracing::debug!("🤖 Registering agent definition: {}", definition.name);
-        // Register agent's custom partials with the prompt registry
-        for (name, path) in &definition.partials {
-            match self.register_prompt_partial_file(name.clone(), path).await {
-                Ok(()) => {
-                    tracing::debug!("✅ Registered partial '{}' from '{}'", name, path);
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        "⚠️  Failed to register partial '{}' from '{}': {}",
-                        name,
-                        path,
-                        e
-                    );
-                    // Continue with other partials instead of failing completely
+        let config = distri_types::configuration::AgentConfig::StandardAgent(definition);
+        self.register_agent_config(config).await
+    }
+
+    /// Variant-aware registration. Workflow agents skip the partial-template
+    /// hookup (workflows have no prompt templates), but still go through the
+    /// store so they appear in `list_agents` and the workspace tree.
+    pub async fn register_agent_config(
+        &self,
+        config: distri_types::configuration::AgentConfig,
+    ) -> anyhow::Result<()> {
+        tracing::debug!("🤖 Registering agent config: {}", config.get_name());
+        if let distri_types::configuration::AgentConfig::StandardAgent(ref definition) = config {
+            for (name, path) in &definition.partials {
+                match self.register_prompt_partial_file(name.clone(), path).await {
+                    Ok(()) => {
+                        tracing::debug!("✅ Registered partial '{}' from '{}'", name, path);
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "⚠️  Failed to register partial '{}' from '{}': {}",
+                            name,
+                            path,
+                            e
+                        );
+                    }
                 }
             }
         }
 
-        let agent_config =
-            distri_types::configuration::AgentConfig::StandardAgent(definition.clone());
         self.stores
             .agent_store
-            .register(agent_config)
+            .register(config)
             .await
             .map_err(|e| anyhow::anyhow!(e))
     }
