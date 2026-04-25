@@ -522,31 +522,36 @@ async fn get_agent_definition(
 
     let context = Arc::default();
     match agent {
-        Some(agent) => {
-            let def = match &agent {
-                distri_types::configuration::AgentConfig::StandardAgent(d) => d,
-                _ => {
-                    return HttpResponse::BadRequest().json(json!({
-                        "error": "WorkflowAgent does not support this endpoint"
-                    }));
-                }
-            };
-            let markdown = build_markdown_from_definition(def);
-            let tools = executor
-                .get_agent_tools(def, &context)
-                .await
-                .map(|r| r.all_tools)
-                .unwrap_or_default()
-                .into_iter()
-                .map(|t| t.get_tool_definition())
-                .collect();
-            HttpResponse::Ok().json(AgentConfigWithTools {
-                agent,
-                resolved_tools: tools,
-                markdown: Some(markdown),
-                cloud: cloud_metadata,
-            })
-        }
+        Some(agent) => match &agent {
+            distri_types::configuration::AgentConfig::StandardAgent(def) => {
+                let markdown = build_markdown_from_definition(def);
+                let tools = executor
+                    .get_agent_tools(def, &context)
+                    .await
+                    .map(|r| r.all_tools)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|t| t.get_tool_definition())
+                    .collect();
+                HttpResponse::Ok().json(AgentConfigWithTools {
+                    agent: agent.clone(),
+                    resolved_tools: tools,
+                    markdown: Some(markdown),
+                    cloud: cloud_metadata,
+                })
+            }
+            distri_types::configuration::AgentConfig::WorkflowAgent(_) => {
+                // Workflow agents have no LLM-callable tools and no markdown
+                // body. The DAG / triggers / input_schema all live on the
+                // flattened `agent` envelope.
+                HttpResponse::Ok().json(AgentConfigWithTools {
+                    agent,
+                    resolved_tools: Vec::new(),
+                    markdown: None,
+                    cloud: cloud_metadata,
+                })
+            }
+        },
         None => HttpResponse::NotFound().finish(),
     }
 }
