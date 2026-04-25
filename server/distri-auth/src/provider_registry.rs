@@ -161,6 +161,33 @@ impl ProviderRegistry {
         None
     }
 
+    /// Build an ad-hoc provider from a known provider config plus
+    /// caller-supplied OAuth credentials. Used for "bring your own keys"
+    /// connections where the workspace admin has registered their own OAuth
+    /// app and the platform's env-var-loaded `client_id` / `client_secret`
+    /// are not appropriate.
+    ///
+    /// Returns `None` if the named provider is unknown or is not an oauth2
+    /// provider.
+    pub async fn get_provider_with_credentials(
+        &self,
+        name: &str,
+        client_id: String,
+        client_secret: String,
+    ) -> Option<Arc<dyn AuthProvider>> {
+        let providers = self.providers.read().await;
+        let config = providers.get(name).cloned()?;
+        if config.r#type != "oauth2" {
+            return None;
+        }
+        Some(Arc::new(OAuth2Provider::new(
+            config.name,
+            client_id,
+            client_secret,
+            self.default_redirect_uri.clone(),
+        )))
+    }
+
     /// List all available provider names
     pub async fn list_providers(&self) -> Vec<String> {
         let providers = self.providers.read().await;

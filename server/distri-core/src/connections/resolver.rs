@@ -462,6 +462,7 @@ mod tests {
             auth_type: AuthType::OAuth {
                 provider: provider.to_string(),
                 scopes: vec![],
+                use_own_credentials: false,
             },
             is_system: false,
         }

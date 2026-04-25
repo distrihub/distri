@@ -105,6 +105,13 @@ pub enum AuthType {
         provider: String,
         #[serde(default)]
         scopes: Vec<String>,
+        /// When true, the connection authenticates with workspace-supplied
+        /// OAuth app credentials instead of distri's platform-managed app.
+        /// The `client_id` / `client_secret` values themselves live in the
+        /// secrets table at `connection.<id>.oauth_client_id` /
+        /// `connection.<id>.oauth_client_secret`.
+        #[serde(default)]
+        use_own_credentials: bool,
     },
     /// User-defined key/value field schema. The admin declares the shape; values
     /// are collected separately (inline at create time for Workspace scope, or
