@@ -11,8 +11,6 @@ import {
   Gauge,
   Loader2,
   MessageSquare,
-  Plus,
-  RefreshCw,
   Users,
   X,
 } from 'lucide-react';
@@ -36,9 +34,8 @@ export interface HomeProps {
 export function Home({ onNewAgent, renderNewAgentHelp, className }: HomeProps) {
   const navigate = useDistriHomeNavigate();
   const config = useDistriHomeConfig();
-  const { stats, loading: statsLoading, error: statsError, refetch } = useHomeStats();
+  const { stats, loading: statsLoading, error: statsError } = useHomeStats();
   const { agents } = useAgentDefinitions();
-  const [refreshing, setRefreshing] = useState(false);
   const [showPushHelp, setShowPushHelp] = useState(false);
 
   // Suppress unused variable warning
@@ -77,47 +74,17 @@ export function Home({ onNewAgent, renderNewAgentHelp, className }: HomeProps) {
       ? '—'
       : `${(stats.avg_run_time_ms / 1000).toFixed(2)}s`;
 
-  const handleRefresh = async () => {
-    setRefreshing(true);
-    try {
-      await refetch();
-    } finally {
-      setRefreshing(false);
-    }
-  };
-
-  const handleNewAgent = () => {
-    if (onNewAgent) {
-      onNewAgent();
-    } else {
-      setShowPushHelp(true);
-    }
-  };
+  // handleRefresh / handleNewAgent removed with the header buttons.
+  // Refresh is on the global top nav; New Agent is created through the
+  // Distri chat panel.
+  void onNewAgent;
 
   return (
     <div className={`flex-1 overflow-y-auto bg-background ${className ?? ''}`}>
       <div className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-8 lg:py-10">
-        <header className="mb-8 flex flex-wrap items-center justify-between gap-4">
-          <div />
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={handleRefresh}
-              className="inline-flex items-center gap-2 rounded-lg border border-border/70 bg-card px-4 py-2 text-sm font-medium text-foreground transition hover:border-primary/40 hover:text-primary"
-            >
-              <RefreshCw className={refreshing ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
-              {refreshing ? 'Refreshing' : 'Refresh'}
-            </button>
-            <button
-              type="button"
-              onClick={handleNewAgent}
-              className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground shadow-sm shadow-primary/20 transition hover:bg-primary/90"
-            >
-              <Plus className="h-4 w-4" />
-              New agent
-            </button>
-          </div>
-        </header>
+        {/* Refresh + New Agent header buttons removed — Refresh now lives
+            in the global top nav (AppLayout); creating a new agent is
+            handled through the global Distri chat panel. */}
 
         {showWarning ? (
           <div className="mb-6 flex items-start gap-3 rounded-lg border border-amber-300/50 bg-amber-100/60 px-4 py-3 text-xs text-amber-900 dark:border-amber-400/20 dark:bg-amber-400/10 dark:text-amber-100">
