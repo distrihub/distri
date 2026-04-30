@@ -109,8 +109,16 @@ impl ExecutionResult {
                         mime_type
                     ),
                 },
-                // Minimal placeholder; richer rendering handled in later tasks.
-                Part::File(_) => "[File]".to_string(),
+                Part::File(file) => match file {
+                    FileType::Url { url, .. } => format!("[File: {}]", url),
+                    FileType::Bytes {
+                        name, mime_type, ..
+                    } => format!(
+                        "[File: {} ({})]",
+                        name.as_deref().unwrap_or("unnamed"),
+                        mime_type
+                    ),
+                },
                 // Phase 6.2: Include artifact preview in observation
                 Part::Artifact(artifact) => {
                     let preview = artifact
