@@ -108,6 +108,14 @@ mod tests {
         async fn update_skill_id(&self, _id: &str, _s: uuid::Uuid) -> anyhow::Result<()> {
             unimplemented!()
         }
+        async fn update(
+            &self,
+            _id: &str,
+            _name: Option<String>,
+            _auth_type: Option<distri_types::connections::AuthType>,
+        ) -> anyhow::Result<Connection> {
+            unimplemented!()
+        }
         async fn delete(&self, _id: &str) -> anyhow::Result<()> {
             unimplemented!()
         }
