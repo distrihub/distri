@@ -127,7 +127,8 @@ fn build_openai_file_part(
         obj.insert("filename".to_string(), serde_json::Value::String(n));
     }
     let file_obj: async_openai::types::chat::FileObject =
-        serde_json::from_value(serde_json::Value::Object(obj)).ok()?;
+        serde_json::from_value(serde_json::Value::Object(obj))
+            .expect("hand-constructed FileObject JSON should always deserialize");
 
     Some(
         async_openai::types::chat::ChatCompletionRequestUserMessageContentPart::File(
