@@ -77,7 +77,7 @@ impl TryFrom<Message> for crate::Message {
                     }
                 }
                 Part::File(f) => {
-                    let ft = file_object_to_filetype(f.file.clone());
+                    let ft = file_object_to_filetype(f.file);
                     if ft.mime_type().starts_with("image/") {
                         parts.push(crate::Part::Image(ft));
                     } else {
