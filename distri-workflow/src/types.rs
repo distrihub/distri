@@ -1,74 +1,65 @@
 //! Core types for the workflow engine.
+//!
+//! Two layers:
+//!
+//! - **Definition** (`WorkflowDefinition`, `WorkflowStep`): the static
+//!   template — what this workflow IS. Stored alongside the agent
+//!   config; never mutated by execution.
+//! - **Run** (`WorkflowRun`, `WorkflowStepRun`): runtime state for one
+//!   execution — status, current step pointer, shared context, per-step
+//!   result/error/timestamps. Built from a definition via
+//!   `WorkflowRun::new(definition)` and then mutated by the engine.
+//!
+//! Status uses the canonical `distri_types::TaskStatus` everywhere.
+//! Workflow-specific concepts that don't have a 1:1 TaskStatus value
+//! map as follows:
+//!
+//! | concept | TaskStatus | extra signal |
+//! |---|---|---|
+//! | step waiting for input / workflow paused | InputRequired | — |
+//! | step skipped (skip_if / entry-point) | Canceled | note appended |
+//! | step blocked (missing requirement) | Failed | error explains |
+//!
+//! Phase 2b will replace `WorkflowStateStore` with the cloud
+//! `TaskStore` + a `workflow_step_executions` sidecar so runs flow
+//! through the canonical task tree.
 
 use chrono::{DateTime, Utc};
+use distri_types::TaskStatus;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 // ============================================================================
-// Workflow Definition
+// Workflow Definition (template)
 // ============================================================================
 
-/// A workflow is a DAG of steps with shared context and tracked state.
+/// A workflow is a DAG of steps. The definition is the *template* — no
+/// runtime state lives here. Use `WorkflowRun::new(definition)` to start
+/// an execution.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowDefinition {
     pub id: String,
-    /// Runtime state — defaults to Pending. Not part of the definition template.
-    #[serde(default)]
-    pub status: WorkflowStatus,
-    /// Runtime state — current step index.
-    #[serde(default)]
-    pub current_step: usize,
-    /// Runtime state — shared data between steps. Populated from input at execution time.
-    #[serde(default = "default_empty_object")]
-    pub context: serde_json::Value,
     pub steps: Vec<WorkflowStep>,
-    /// Runtime state — execution log.
-    #[serde(default)]
-    pub notes: Vec<WorkflowNote>,
     /// JSON Schema describing required inputs for this workflow.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input_schema: Option<serde_json::Value>,
-    /// How workflow state is checkpointed. Defaults to Internal.
+    /// How workflow state is checkpointed between steps.
     #[serde(default)]
     pub checkpoint: CheckpointStrategy,
     /// Named entry points for multi-entry workflows.
-    /// Each entry point specifies a starting step and optional pre-populated state.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub entry_points: Vec<EntryPoint>,
-    #[serde(default = "default_now")]
-    pub created_at: DateTime<Utc>,
-    #[serde(default = "default_now")]
-    pub updated_at: DateTime<Utc>,
-}
-
-fn default_empty_object() -> serde_json::Value {
-    serde_json::json!({})
-}
-
-fn default_now() -> DateTime<Utc> {
-    Utc::now()
 }
 
 impl WorkflowDefinition {
     pub fn new(steps: Vec<WorkflowStep>) -> Self {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
-            status: WorkflowStatus::Pending,
-            current_step: 0,
-            context: serde_json::json!({}),
             steps,
-            notes: vec![],
             input_schema: None,
             checkpoint: CheckpointStrategy::default(),
             entry_points: vec![],
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
         }
-    }
-
-    pub fn with_context(mut self, context: serde_json::Value) -> Self {
-        self.context = context;
-        self
     }
 
     pub fn with_id(mut self, id: &str) -> Self {
@@ -91,71 +82,20 @@ impl WorkflowDefinition {
         self.entry_points.iter().find(|ep| ep.id == id)
     }
 
-    /// Apply an entry point: mark steps before `starts_at` as Skipped,
-    /// pre-populate results from `preset_results`, and return the modified workflow.
-    pub fn apply_entry_point(mut self, entry_point_id: &str) -> Result<Self, String> {
-        let ep = self
-            .entry_points
-            .iter()
-            .find(|ep| ep.id == entry_point_id)
-            .ok_or_else(|| format!("Entry point '{}' not found", entry_point_id))?
-            .clone();
-
-        // Validate starts_at step exists
-        if !self.steps.iter().any(|s| s.id == ep.starts_at) {
-            return Err(format!(
-                "Entry point '{}' references step '{}' which does not exist",
-                entry_point_id, ep.starts_at
-            ));
-        }
-
-        // Collect steps that are "before" starts_at in the DAG.
-        // A step is before if starts_at does not transitively depend on it,
-        // OR it's simply not reachable from starts_at's dependency chain.
-        // Simpler approach: mark all steps as Skipped that are NOT starts_at
-        // and NOT reachable from starts_at via depends_on chain.
-        let reachable = self.reachable_from(&ep.starts_at);
-
-        for step in &mut self.steps {
-            if !reachable.contains(&step.id) {
-                step.status = StepStatus::Skipped;
-                // Apply preset result if available
-                if let Some(result) = ep.preset_results.get(&step.id) {
-                    step.result = Some(result.clone());
-                }
-            }
-        }
-
-        // Pre-populate context with preset results so downstream steps can reference them
-        if let Some(ctx) = self.context.as_object_mut() {
-            let steps = ctx
-                .entry("steps")
-                .or_insert(serde_json::json!({}))
-                .as_object_mut()
-                .expect("steps must be an object");
-            for (step_id, result) in &ep.preset_results {
-                steps.insert(step_id.clone(), result.clone());
-            }
-        }
-
-        Ok(self)
-    }
-
-    /// Find all step IDs reachable from the given step (inclusive) by following depends_on forward.
-    /// "Reachable from X" means X itself, plus any step that X depends on or that depends on X transitively.
-    fn reachable_from(&self, start_step_id: &str) -> std::collections::HashSet<String> {
+    /// Find all step IDs reachable from the given step (inclusive) by following
+    /// depends_on forward. Used by entry-point logic to mark unreachable steps
+    /// as skipped at run start.
+    pub fn reachable_from(&self, start_step_id: &str) -> std::collections::HashSet<String> {
         use std::collections::{HashSet, VecDeque};
 
         let mut reachable = HashSet::new();
         let mut queue = VecDeque::new();
         queue.push_back(start_step_id.to_string());
 
-        // Forward: start_step and everything that depends on it (downstream)
         while let Some(current) = queue.pop_front() {
             if !reachable.insert(current.clone()) {
                 continue;
             }
-            // Find steps that depend on `current`
             for step in &self.steps {
                 if step.depends_on.contains(&current) && !reachable.contains(&step.id) {
                     queue.push_back(step.id.clone());
@@ -164,182 +104,6 @@ impl WorkflowDefinition {
         }
 
         reachable
-    }
-
-    /// Merge external input into the workflow context.
-    /// Initialize workflow with validated input. Input is validated against
-    /// `input_schema` if present, then merged into context.
-    ///
-    /// Input is stored both at the top level (backward compat) and under the
-    /// `input` namespace so that `{input.X}` references work in skip_if and templates.
-    pub fn with_input(mut self, input: serde_json::Value) -> Result<Self, String> {
-        // Validate input against schema if present
-        if let Some(ref schema_value) = self.input_schema {
-            let validator = jsonschema::validator_for(schema_value)
-                .map_err(|e| format!("Invalid input_schema: {e}"))?;
-
-            if !validator.is_valid(&input) {
-                let errors: Vec<String> = validator
-                    .iter_errors(&input)
-                    .map(|e| format!("{}", e))
-                    .collect();
-                return Err(format!("Input validation failed: {}", errors.join("; ")));
-            }
-        }
-
-        // Merge input into context (both flat for backward compat and under "input" namespace)
-        if let (Some(ctx), Some(inp)) = (self.context.as_object_mut(), input.as_object()) {
-            for (k, v) in inp {
-                ctx.insert(k.clone(), v.clone());
-            }
-            // Also store under "input" namespace for {input.X} references
-            ctx.insert("input".to_string(), input.clone());
-        }
-
-        self.status = WorkflowStatus::Running;
-        self.updated_at = Utc::now();
-        Ok(self)
-    }
-
-    /// Get the next pending step, if any.
-    pub fn next_pending_step(&self) -> Option<(usize, &WorkflowStep)> {
-        self.steps
-            .iter()
-            .enumerate()
-            .find(|(_, s)| s.status == StepStatus::Pending)
-    }
-
-    /// Get all steps that can run now (pending steps with all dependencies met).
-    /// Dependencies are "met" if the step is Done or Skipped (entry point skips count).
-    /// This is a pure query — it does not mutate.
-    pub fn runnable_steps(&self) -> Vec<(usize, &WorkflowStep)> {
-        let mut runnable = vec![];
-        for (i, step) in self.steps.iter().enumerate() {
-            if step.status != StepStatus::Pending {
-                continue;
-            }
-
-            // Check if all dependencies are done or skipped
-            let deps_met = step.depends_on.iter().all(|dep_id| {
-                self.steps.iter().any(|s| {
-                    &s.id == dep_id && matches!(s.status, StepStatus::Done | StepStatus::Skipped)
-                })
-            });
-
-            if deps_met {
-                runnable.push((i, step));
-            }
-        }
-        runnable
-    }
-
-    /// Check if the workflow is complete (all steps done, skipped, or blocked).
-    pub fn is_complete(&self) -> bool {
-        self.steps.iter().all(|s| {
-            matches!(
-                s.status,
-                StepStatus::Done | StepStatus::Skipped | StepStatus::Blocked
-            )
-        })
-    }
-
-    /// Check if the workflow is paused waiting for human/external input.
-    pub fn is_waiting_for_input(&self) -> bool {
-        self.steps
-            .iter()
-            .any(|s| s.status == StepStatus::WaitingForInput)
-    }
-
-    /// Get the step that is waiting for input, if any.
-    pub fn waiting_step(&self) -> Option<(usize, &WorkflowStep)> {
-        self.steps
-            .iter()
-            .enumerate()
-            .find(|(_, s)| s.status == StepStatus::WaitingForInput)
-    }
-
-    /// Resume a paused workflow by providing input for the waiting step.
-    /// Marks the step as Done with the provided result and sets workflow back to Running.
-    pub fn resume_step(
-        &mut self,
-        step_id: &str,
-        result: serde_json::Value,
-    ) -> Result<usize, String> {
-        let idx = self
-            .steps
-            .iter()
-            .position(|s| s.id == step_id && s.status == StepStatus::WaitingForInput)
-            .ok_or_else(|| {
-                format!(
-                    "Step '{}' not found or not in waiting_for_input state",
-                    step_id
-                )
-            })?;
-
-        self.steps[idx].status = StepStatus::Done;
-        self.steps[idx].result = Some(result.clone());
-        self.steps[idx].completed_at = Some(Utc::now());
-
-        // Store result in context so downstream steps can reference it
-        if let Some(ctx) = self.context.as_object_mut() {
-            let steps = ctx
-                .entry("steps")
-                .or_insert(serde_json::json!({}))
-                .as_object_mut()
-                .expect("steps must be an object");
-            steps.insert(step_id.to_string(), result);
-        }
-
-        self.status = WorkflowStatus::Running;
-        self.updated_at = Utc::now();
-        Ok(idx)
-    }
-
-    /// Check if the workflow is stuck — remaining steps are all blocked, no forward progress possible.
-    pub fn is_stuck(&self) -> bool {
-        let has_blocked = self.steps.iter().any(|s| s.status == StepStatus::Blocked);
-        let has_pending = self.steps.iter().any(|s| s.status == StepStatus::Pending);
-        let has_running = self.steps.iter().any(|s| s.status == StepStatus::Running);
-
-        // Stuck if we have blocked steps, nothing running, and either:
-        // - no pending steps, or
-        // - pending steps whose deps include blocked steps (can never resolve)
-        if !has_blocked || has_running {
-            return false;
-        }
-
-        if !has_pending {
-            return true;
-        }
-
-        // Check if any pending step can ever run (all deps must be done or doable)
-        !self.steps.iter().any(|step| {
-            step.status == StepStatus::Pending
-                && step.depends_on.iter().all(|dep_id| {
-                    self.steps.iter().any(|s| {
-                        &s.id == dep_id
-                            && matches!(
-                                s.status,
-                                StepStatus::Done | StepStatus::Pending | StepStatus::Running
-                            )
-                    })
-                })
-        })
-    }
-
-    /// Check if any step has failed.
-    pub fn has_failed(&self) -> bool {
-        self.steps.iter().any(|s| s.status == StepStatus::Failed)
-    }
-
-    /// Add a note to the workflow log.
-    pub fn add_note(&mut self, step_id: &str, message: &str) {
-        self.notes.push(WorkflowNote {
-            step_id: step_id.to_string(),
-            message: message.to_string(),
-            at: Utc::now(),
-        });
-        self.updated_at = Utc::now();
     }
 
     /// Detect circular dependencies in the workflow DAG.
@@ -421,6 +185,381 @@ impl WorkflowDefinition {
 }
 
 // ============================================================================
+// Workflow Run (execution state)
+// ============================================================================
+
+fn default_empty_object() -> serde_json::Value {
+    serde_json::json!({})
+}
+
+fn default_now() -> DateTime<Utc> {
+    Utc::now()
+}
+
+/// One execution of a `WorkflowDefinition`. Owns the definition plus all
+/// runtime state — status, shared context, per-step status / result /
+/// error / timestamps. The engine mutates a `WorkflowRun`.
+///
+/// `step_runs` is parallel to `definition.steps` (same length, same
+/// order).
+///
+/// **Wire shape**: `definition` is flattened, so a `WorkflowRun`
+/// serializes as one flat JSON object with the definition fields
+/// (`id`, `steps`, `input_schema`, …) alongside the runtime fields
+/// (`status`, `current_step`, `context`, `step_runs`, …). This
+/// keeps the persisted run row identical to the legacy monolithic
+/// shape.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowRun {
+    #[serde(flatten)]
+    pub definition: WorkflowDefinition,
+    #[serde(default)]
+    pub status: WorkflowStatus,
+    #[serde(default)]
+    pub current_step: usize,
+    #[serde(default = "default_empty_object")]
+    pub context: serde_json::Value,
+    #[serde(default)]
+    pub notes: Vec<WorkflowNote>,
+    #[serde(default)]
+    pub step_runs: Vec<WorkflowStepRun>,
+    #[serde(default = "default_now")]
+    pub created_at: DateTime<Utc>,
+    #[serde(default = "default_now")]
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Per-step runtime state. Parallel to `WorkflowDefinition.steps[i]`.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct WorkflowStepRun {
+    pub step_id: String,
+    #[serde(default)]
+    pub status: StepStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completed_at: Option<DateTime<Utc>>,
+}
+
+impl WorkflowRun {
+    /// Build a fresh run from a definition. All step_runs start `Pending`,
+    /// context is `{}`, status is `Pending`.
+    pub fn new(definition: WorkflowDefinition) -> Self {
+        let step_runs = definition
+            .steps
+            .iter()
+            .map(|s| WorkflowStepRun {
+                step_id: s.id.clone(),
+                ..Default::default()
+            })
+            .collect();
+        Self {
+            definition,
+            status: WorkflowStatus::Pending,
+            current_step: 0,
+            context: serde_json::json!({}),
+            notes: vec![],
+            step_runs,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
+
+    /// Convenience for callers that want to skip the explicit
+    /// definition struct (mostly tests).
+    pub fn from_steps(steps: Vec<WorkflowStep>) -> Self {
+        Self::new(WorkflowDefinition::new(steps))
+    }
+
+    pub fn with_context(mut self, context: serde_json::Value) -> Self {
+        self.context = context;
+        self
+    }
+
+    pub fn with_id(mut self, id: &str) -> Self {
+        self.definition.id = id.to_string();
+        self
+    }
+
+    pub fn with_checkpoint(mut self, strategy: CheckpointStrategy) -> Self {
+        self.definition.checkpoint = strategy;
+        self
+    }
+
+    pub fn with_entry_points(mut self, entry_points: Vec<EntryPoint>) -> Self {
+        self.definition.entry_points = entry_points;
+        self
+    }
+
+    pub fn id(&self) -> &str {
+        &self.definition.id
+    }
+
+    pub fn steps(&self) -> &[WorkflowStep] {
+        &self.definition.steps
+    }
+
+    pub fn step(&self, idx: usize) -> &WorkflowStep {
+        &self.definition.steps[idx]
+    }
+
+    pub fn step_run(&self, idx: usize) -> &WorkflowStepRun {
+        &self.step_runs[idx]
+    }
+
+    pub fn step_run_mut(&mut self, idx: usize) -> &mut WorkflowStepRun {
+        &mut self.step_runs[idx]
+    }
+
+    pub fn step_run_by_id(&self, step_id: &str) -> Option<&WorkflowStepRun> {
+        self.step_runs.iter().find(|s| s.step_id == step_id)
+    }
+
+    pub fn step_run_by_id_mut(&mut self, step_id: &str) -> Option<&mut WorkflowStepRun> {
+        self.step_runs.iter_mut().find(|s| s.step_id == step_id)
+    }
+
+    /// Apply an entry point: mark steps not reachable from `starts_at` as
+    /// Skipped, pre-populate their results from `preset_results`, and
+    /// merge those into context so downstream `{steps.X}` references work.
+    pub fn apply_entry_point(mut self, entry_point_id: &str) -> Result<Self, String> {
+        let ep = self
+            .definition
+            .entry_points
+            .iter()
+            .find(|ep| ep.id == entry_point_id)
+            .ok_or_else(|| format!("Entry point '{}' not found", entry_point_id))?
+            .clone();
+
+        if !self.definition.steps.iter().any(|s| s.id == ep.starts_at) {
+            return Err(format!(
+                "Entry point '{}' references step '{}' which does not exist",
+                entry_point_id, ep.starts_at
+            ));
+        }
+
+        let reachable = self.definition.reachable_from(&ep.starts_at);
+
+        for (i, step) in self.definition.steps.iter().enumerate() {
+            if !reachable.contains(&step.id) {
+                self.step_runs[i].status = StepStatus::Skipped;
+                if let Some(result) = ep.preset_results.get(&step.id) {
+                    self.step_runs[i].result = Some(result.clone());
+                }
+            }
+        }
+
+        if let Some(ctx) = self.context.as_object_mut() {
+            let steps = ctx
+                .entry("steps")
+                .or_insert(serde_json::json!({}))
+                .as_object_mut()
+                .expect("steps must be an object");
+            for (step_id, result) in &ep.preset_results {
+                steps.insert(step_id.clone(), result.clone());
+            }
+        }
+
+        Ok(self)
+    }
+
+    /// Initialize the run with validated input. Input is validated
+    /// against `definition.input_schema` if present, then merged into
+    /// `context`. Status flips to Running.
+    pub fn with_input(mut self, input: serde_json::Value) -> Result<Self, String> {
+        if let Some(ref schema_value) = self.definition.input_schema {
+            let validator = jsonschema::validator_for(schema_value)
+                .map_err(|e| format!("Invalid input_schema: {e}"))?;
+
+            if !validator.is_valid(&input) {
+                let errors: Vec<String> = validator
+                    .iter_errors(&input)
+                    .map(|e| format!("{}", e))
+                    .collect();
+                return Err(format!("Input validation failed: {}", errors.join("; ")));
+            }
+        }
+
+        if let (Some(ctx), Some(inp)) = (self.context.as_object_mut(), input.as_object()) {
+            for (k, v) in inp {
+                ctx.insert(k.clone(), v.clone());
+            }
+            ctx.insert("input".to_string(), input.clone());
+        }
+
+        self.status = WorkflowStatus::Running;
+        self.updated_at = Utc::now();
+        Ok(self)
+    }
+
+    /// First pending step, if any.
+    pub fn next_pending_step(&self) -> Option<(usize, &WorkflowStep)> {
+        self.step_runs
+            .iter()
+            .enumerate()
+            .find(|(_, s)| s.status == StepStatus::Pending)
+            .map(|(i, _)| (i, &self.definition.steps[i]))
+    }
+
+    /// All steps that can run now: pending + all dependencies completed.
+    /// Pure query — does not mutate.
+    pub fn runnable_steps(&self) -> Vec<(usize, &WorkflowStep)> {
+        let mut runnable = vec![];
+        for (i, step) in self.definition.steps.iter().enumerate() {
+            if self.step_runs[i].status != StepStatus::Pending {
+                continue;
+            }
+            let deps_met = step.depends_on.iter().all(|dep_id| {
+                self.definition
+                    .steps
+                    .iter()
+                    .zip(self.step_runs.iter())
+                    .any(|(s, sr)| {
+                        &s.id == dep_id
+                            && matches!(sr.status, StepStatus::Done | StepStatus::Skipped)
+                    })
+            });
+            if deps_met {
+                runnable.push((i, step));
+            }
+        }
+        runnable
+    }
+
+    pub fn is_complete(&self) -> bool {
+        self.step_runs.iter().all(|s| {
+            matches!(
+                s.status,
+                StepStatus::Done | StepStatus::Skipped | StepStatus::Blocked
+            )
+        })
+    }
+
+    pub fn is_waiting_for_input(&self) -> bool {
+        self.step_runs
+            .iter()
+            .any(|s| s.status == StepStatus::WaitingForInput)
+    }
+
+    pub fn waiting_step(&self) -> Option<(usize, &WorkflowStep)> {
+        self.step_runs
+            .iter()
+            .enumerate()
+            .find(|(_, s)| s.status == StepStatus::WaitingForInput)
+            .map(|(i, _)| (i, &self.definition.steps[i]))
+    }
+
+    /// Resume a paused run by providing input for the waiting step.
+    pub fn resume_step(
+        &mut self,
+        step_id: &str,
+        result: serde_json::Value,
+    ) -> Result<usize, String> {
+        let idx = self
+            .step_runs
+            .iter()
+            .position(|s| s.step_id == step_id && s.status == StepStatus::WaitingForInput)
+            .ok_or_else(|| {
+                format!(
+                    "Step '{}' not found or not in waiting_for_input state",
+                    step_id
+                )
+            })?;
+
+        self.step_runs[idx].status = StepStatus::Done;
+        self.step_runs[idx].result = Some(result.clone());
+        self.step_runs[idx].completed_at = Some(Utc::now());
+
+        if let Some(ctx) = self.context.as_object_mut() {
+            let steps = ctx
+                .entry("steps")
+                .or_insert(serde_json::json!({}))
+                .as_object_mut()
+                .expect("steps must be an object");
+            steps.insert(step_id.to_string(), result);
+        }
+
+        self.status = WorkflowStatus::Running;
+        self.updated_at = Utc::now();
+        Ok(idx)
+    }
+
+    /// Stuck: blocked steps, nothing running, no path forward.
+    pub fn is_stuck(&self) -> bool {
+        let has_blocked = self
+            .step_runs
+            .iter()
+            .any(|s| s.status == StepStatus::Blocked);
+        let has_pending = self
+            .step_runs
+            .iter()
+            .any(|s| s.status == StepStatus::Pending);
+        let has_running = self
+            .step_runs
+            .iter()
+            .any(|s| s.status == StepStatus::Running);
+
+        if !has_blocked || has_running {
+            return false;
+        }
+
+        if !has_pending {
+            return true;
+        }
+
+        !self
+            .definition
+            .steps
+            .iter()
+            .zip(self.step_runs.iter())
+            .any(|(step, run)| {
+                run.status == StepStatus::Pending
+                    && step.depends_on.iter().all(|dep_id| {
+                        self.definition
+                            .steps
+                            .iter()
+                            .zip(self.step_runs.iter())
+                            .any(|(s, sr)| {
+                                &s.id == dep_id
+                                    && matches!(
+                                        sr.status,
+                                        StepStatus::Done
+                                            | StepStatus::Pending
+                                            | StepStatus::Running
+                                    )
+                            })
+                    })
+            })
+    }
+
+    pub fn has_failed(&self) -> bool {
+        self.step_runs
+            .iter()
+            .any(|s| s.status == StepStatus::Failed)
+    }
+
+    /// Append a note to the run's log.
+    pub fn add_note(&mut self, step_id: &str, message: &str) {
+        self.notes.push(WorkflowNote {
+            step_id: step_id.to_string(),
+            message: message.to_string(),
+            at: Utc::now(),
+        });
+        self.updated_at = Utc::now();
+    }
+
+    /// Validate the underlying DAG. Convenience that delegates to the
+    /// definition's `detect_cycles`.
+    pub fn detect_cycles(&self) -> Result<(), String> {
+        self.definition.detect_cycles()
+    }
+}
+
+// ============================================================================
 // Entry Point — named starting positions for multi-entry workflows
 // ============================================================================
 
@@ -447,30 +586,16 @@ pub struct EntryPoint {
 }
 
 // ============================================================================
-// Workflow Step
+// Workflow Step (template)
 // ============================================================================
 
-/// A single step in a workflow.
+/// A single step in a workflow. **Template only** — runtime status /
+/// result / timestamps live on `WorkflowStepRun`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowStep {
     pub id: String,
     pub label: String,
     pub kind: StepKind,
-    /// Runtime state — defaults to Pending.
-    #[serde(default)]
-    pub status: StepStatus,
-    /// Runtime state.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub result: Option<serde_json::Value>,
-    /// Runtime state.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-    /// Runtime state.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub started_at: Option<DateTime<Utc>>,
-    /// Runtime state.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub completed_at: Option<DateTime<Utc>>,
     /// IDs of steps that must complete before this one can run.
     #[serde(default)]
     pub depends_on: Vec<String>,
@@ -498,11 +623,6 @@ impl WorkflowStep {
             id: id.to_string(),
             label: label.to_string(),
             kind,
-            status: StepStatus::Pending,
-            result: None,
-            error: None,
-            started_at: None,
-            completed_at: None,
             depends_on: vec![],
             execution: StepExecution::Sequential,
             requires: vec![],
@@ -873,12 +993,15 @@ pub struct CheckpointMeta {
 // Enums
 // ============================================================================
 
+/// Top-level run status. Engine-internal; external surfaces translate
+/// to `distri_types::TaskStatus` via `From`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkflowStatus {
     #[default]
     Pending,
     Running,
+    /// Waiting for human/external input (`WaitForInput` step).
     Paused,
     Completed,
     Failed,
@@ -886,6 +1009,25 @@ pub enum WorkflowStatus {
     Blocked,
 }
 
+impl From<WorkflowStatus> for TaskStatus {
+    fn from(s: WorkflowStatus) -> Self {
+        match s {
+            WorkflowStatus::Pending => TaskStatus::Pending,
+            WorkflowStatus::Running => TaskStatus::Running,
+            WorkflowStatus::Paused => TaskStatus::InputRequired,
+            WorkflowStatus::Completed => TaskStatus::Completed,
+            WorkflowStatus::Failed => TaskStatus::Failed,
+            // No 1:1 TaskStatus for Blocked — surface as Failed; the
+            // step-level error fields carry the "missing skills:" reason.
+            WorkflowStatus::Blocked => TaskStatus::Failed,
+        }
+    }
+}
+
+/// Per-step phase. Engine-internal; richer than `TaskStatus` because
+/// the engine cares about the difference between "blocked on a missing
+/// requirement" (cannot start) and "failed during execution" (tried,
+/// errored). External surfaces translate via `From<StepStatus>`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum StepStatus {
@@ -899,6 +1041,23 @@ pub enum StepStatus {
     Skipped,
     /// Step is waiting for external/human input. Workflow is paused.
     WaitingForInput,
+}
+
+impl From<StepStatus> for TaskStatus {
+    fn from(s: StepStatus) -> Self {
+        match s {
+            StepStatus::Pending => TaskStatus::Pending,
+            // No TaskStatus::Blocked — surface as Failed (with
+            // `step_run.error` carrying the missing-requirement reason).
+            StepStatus::Blocked => TaskStatus::Failed,
+            StepStatus::Running => TaskStatus::Running,
+            StepStatus::Done => TaskStatus::Completed,
+            StepStatus::Failed => TaskStatus::Failed,
+            // Intentionally not run; semantically a deliberate cancel.
+            StepStatus::Skipped => TaskStatus::Canceled,
+            StepStatus::WaitingForInput => TaskStatus::InputRequired,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -988,6 +1147,63 @@ pub struct WorkflowNote {
     pub step_id: String,
     pub message: String,
     pub at: DateTime<Utc>,
+}
+
+// ============================================================================
+// Workflow Run Summary (returned at end of execution)
+// ============================================================================
+
+/// Snapshot of one finished step in a `WorkflowRunSummary`.
+///
+/// Surfaces `distri_types::TaskStatus` at the boundary — engine-internal
+/// `StepStatus` distinctions (Blocked / Skipped) translate via
+/// `StepStatus → TaskStatus`. The original phase is still recoverable
+/// from the `error` field for Blocked steps.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowStepSummary {
+    pub id: String,
+    pub label: String,
+    pub status: TaskStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// Final summary of a workflow run — id, terminal status, and one row
+/// per step. Returned to callers (e.g. the WorkflowAgent invoke result)
+/// instead of an ad-hoc JSON shape.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowRunSummary {
+    pub workflow_id: String,
+    pub status: TaskStatus,
+    pub steps: Vec<WorkflowStepSummary>,
+}
+
+impl WorkflowRunSummary {
+    /// Build a summary from a finished `WorkflowRun` and its terminal
+    /// `WorkflowStatus`. Translates statuses to `TaskStatus` at the
+    /// boundary so consumers don't need to know about the engine's
+    /// internal enums.
+    pub fn from_run(run: &WorkflowRun, status: WorkflowStatus) -> Self {
+        let steps = run
+            .steps()
+            .iter()
+            .zip(run.step_runs.iter())
+            .map(|(step, sr)| WorkflowStepSummary {
+                id: step.id.clone(),
+                label: step.label.clone(),
+                status: sr.status.into(),
+                result: sr.result.clone(),
+                error: sr.error.clone(),
+            })
+            .collect();
+        Self {
+            workflow_id: run.id().to_string(),
+            status: status.into(),
+            steps,
+        }
+    }
 }
 
 // ============================================================================

@@ -101,20 +101,20 @@ mod tests {
             WorkflowStep::api_call("step2", "Second", "POST", "/api/2"),
             WorkflowStep::api_call("step3", "Third", "PUT", "/api/3"),
         ];
-        let workflow = WorkflowDefinition::new(steps);
+        let workflow = WorkflowRun::from_steps(steps);
         let store = InMemoryStore::new();
         store.save(&workflow).await.unwrap();
 
         let executor = MockExecutor::new();
         let runner = WorkflowRunner::new(store, executor);
 
-        let status = runner.run_all(&workflow.id).await.unwrap();
+        let status = runner.run_all(&workflow.id()).await.unwrap();
         assert_eq!(status, WorkflowStatus::Completed);
 
-        let final_state = runner.get_state(&workflow.id).await.unwrap().unwrap();
+        let final_state = runner.get_state(&workflow.id()).await.unwrap().unwrap();
         assert_eq!(final_state.status, WorkflowStatus::Completed);
         assert!(final_state
-            .steps
+            .step_runs
             .iter()
             .all(|s| s.status == StepStatus::Done));
     }
@@ -126,7 +126,7 @@ mod tests {
             WorkflowStep::api_call("b", "Step B", "GET", "/b").parallel(),
             WorkflowStep::api_call("c", "Step C", "GET", "/c").parallel(),
         ];
-        let workflow = WorkflowDefinition::new(steps);
+        let workflow = WorkflowRun::from_steps(steps);
         let store = InMemoryStore::new();
         store.save(&workflow).await.unwrap();
 
@@ -134,7 +134,7 @@ mod tests {
         let call_count = executor.call_count.clone();
         let runner = WorkflowRunner::new(store, executor);
 
-        let results = runner.run_next(&workflow.id).await.unwrap();
+        let results = runner.run_next(&workflow.id()).await.unwrap();
         assert_eq!(results.len(), 3);
         assert_eq!(call_count.load(Ordering::SeqCst), 3);
     }
@@ -148,22 +148,22 @@ mod tests {
             WorkflowStep::api_call("save", "Save results", "PUT", "/save")
                 .with_depends_on(vec!["process"]),
         ];
-        let workflow = WorkflowDefinition::new(steps);
+        let workflow = WorkflowRun::from_steps(steps);
         let store = InMemoryStore::new();
         store.save(&workflow).await.unwrap();
 
         let executor = MockExecutor::new();
         let runner = WorkflowRunner::new(store, executor);
 
-        let r1 = runner.run_next(&workflow.id).await.unwrap();
+        let r1 = runner.run_next(&workflow.id()).await.unwrap();
         assert_eq!(r1.len(), 1);
         assert_eq!(r1[0].0, "fetch");
 
-        let r2 = runner.run_next(&workflow.id).await.unwrap();
+        let r2 = runner.run_next(&workflow.id()).await.unwrap();
         assert_eq!(r2.len(), 1);
         assert_eq!(r2[0].0, "process");
 
-        let r3 = runner.run_next(&workflow.id).await.unwrap();
+        let r3 = runner.run_next(&workflow.id()).await.unwrap();
         assert_eq!(r3.len(), 1);
         assert_eq!(r3[0].0, "save");
     }
@@ -175,17 +175,17 @@ mod tests {
             WorkflowStep::api_call("b", "Step B", "GET", "/b").parallel(),
             WorkflowStep::api_call("c", "Join step", "POST", "/c").with_depends_on(vec!["a", "b"]),
         ];
-        let workflow = WorkflowDefinition::new(steps);
+        let workflow = WorkflowRun::from_steps(steps);
         let store = InMemoryStore::new();
         store.save(&workflow).await.unwrap();
 
         let executor = MockExecutor::new();
         let runner = WorkflowRunner::new(store, executor);
 
-        let r1 = runner.run_next(&workflow.id).await.unwrap();
+        let r1 = runner.run_next(&workflow.id()).await.unwrap();
         assert_eq!(r1.len(), 2);
 
-        let r2 = runner.run_next(&workflow.id).await.unwrap();
+        let r2 = runner.run_next(&workflow.id()).await.unwrap();
         assert_eq!(r2.len(), 1);
         assert_eq!(r2[0].0, "c");
     }
@@ -197,20 +197,20 @@ mod tests {
             WorkflowStep::api_call("fail", "Failing step", "POST", "/fail"),
             WorkflowStep::api_call("after", "After fail", "GET", "/after"),
         ];
-        let workflow = WorkflowDefinition::new(steps);
+        let workflow = WorkflowRun::from_steps(steps);
         let store = InMemoryStore::new();
         store.save(&workflow).await.unwrap();
 
         let executor = MockExecutor::with_failures(vec!["fail"]);
         let runner = WorkflowRunner::new(store, executor);
 
-        let status = runner.run_all(&workflow.id).await.unwrap();
+        let status = runner.run_all(&workflow.id()).await.unwrap();
         assert_eq!(status, WorkflowStatus::Failed);
 
-        let state = runner.get_state(&workflow.id).await.unwrap().unwrap();
-        assert_eq!(state.steps[0].status, StepStatus::Done);
-        assert_eq!(state.steps[1].status, StepStatus::Failed);
-        assert_eq!(state.steps[2].status, StepStatus::Pending);
+        let state = runner.get_state(&workflow.id()).await.unwrap().unwrap();
+        assert_eq!(state.step_runs[0].status, StepStatus::Done);
+        assert_eq!(state.step_runs[1].status, StepStatus::Failed);
+        assert_eq!(state.step_runs[2].status, StepStatus::Pending);
     }
 
     #[tokio::test]
@@ -220,16 +220,16 @@ mod tests {
             WorkflowStep::api_call("step2", "Second", "GET", "/2"),
         ];
         let workflow =
-            WorkflowDefinition::new(steps).with_context(serde_json::json!({ "initial": true }));
+            WorkflowRun::from_steps(steps).with_context(serde_json::json!({ "initial": true }));
         let store = InMemoryStore::new();
         store.save(&workflow).await.unwrap();
 
         let executor = MockExecutor::new();
         let runner = WorkflowRunner::new(store, executor);
 
-        runner.run_all(&workflow.id).await.unwrap();
+        runner.run_all(&workflow.id()).await.unwrap();
 
-        let state = runner.get_state(&workflow.id).await.unwrap().unwrap();
+        let state = runner.get_state(&workflow.id()).await.unwrap().unwrap();
         assert_eq!(state.context["initial"], true);
         assert_eq!(state.context["step1_done"], true);
         assert_eq!(state.context["step2_done"], true);
@@ -238,15 +238,15 @@ mod tests {
     #[tokio::test]
     async fn run_next_on_completed_returns_empty() {
         let steps = vec![WorkflowStep::api_call("only", "Only step", "GET", "/")];
-        let workflow = WorkflowDefinition::new(steps);
+        let workflow = WorkflowRun::from_steps(steps);
         let store = InMemoryStore::new();
         store.save(&workflow).await.unwrap();
 
         let executor = MockExecutor::new();
         let runner = WorkflowRunner::new(store, executor);
 
-        runner.run_next(&workflow.id).await.unwrap();
-        let results = runner.run_next(&workflow.id).await.unwrap();
+        runner.run_next(&workflow.id()).await.unwrap();
+        let results = runner.run_next(&workflow.id()).await.unwrap();
         assert!(results.is_empty());
     }
 
@@ -260,19 +260,19 @@ mod tests {
                 .parallel(),
         ];
         let workflow =
-            WorkflowDefinition::new(steps).with_context(serde_json::json!({"doc_id": "abc123"}));
+            WorkflowRun::from_steps(steps).with_context(serde_json::json!({"doc_id": "abc123"}));
 
         let json = serde_json::to_string_pretty(&workflow).unwrap();
-        let parsed: WorkflowDefinition = serde_json::from_str(&json).unwrap();
+        let parsed: WorkflowRun = serde_json::from_str(&json).unwrap();
 
-        assert_eq!(parsed.steps.len(), 2);
-        assert_eq!(parsed.steps[1].depends_on, vec!["read"]);
-        assert_eq!(parsed.steps[1].execution, StepExecution::Parallel);
+        assert_eq!(parsed.steps().len(), 2);
+        assert_eq!(parsed.steps()[1].depends_on, vec!["read"]);
+        assert_eq!(parsed.steps()[1].execution, StepExecution::Parallel);
     }
 
     #[tokio::test]
     async fn notes_are_recorded() {
-        let mut workflow = WorkflowDefinition::new(vec![]);
+        let mut workflow = WorkflowRun::from_steps(vec![]);
         workflow.add_note("step1", "Detected 10 essays");
         workflow.add_note("step2", "Created 10 submissions");
 
@@ -282,7 +282,7 @@ mod tests {
 
     #[tokio::test]
     async fn empty_workflow_is_immediately_complete() {
-        let workflow = WorkflowDefinition::new(vec![]);
+        let workflow = WorkflowRun::from_steps(vec![]);
         assert!(workflow.is_complete());
     }
 
@@ -331,7 +331,7 @@ mod tests {
     async fn requirements_block_step_execution() {
         let steps = vec![WorkflowStep::api_call("step1", "Needs shell", "GET", "/1")
             .with_requires(vec![StepRequirement::native("shell")])];
-        let workflow = WorkflowDefinition::new(steps);
+        let workflow = WorkflowRun::from_steps(steps);
         let store = InMemoryStore::new();
         store.save(&workflow).await.unwrap();
 
@@ -339,12 +339,12 @@ mod tests {
         let executor = SkillAwareExecutor::with_skills(vec!["native:network"]);
         let runner = WorkflowRunner::new(store, executor);
 
-        let results = runner.run_next(&workflow.id).await.unwrap();
+        let results = runner.run_next(&workflow.id()).await.unwrap();
         assert!(results.is_empty());
 
-        let state = runner.get_state(&workflow.id).await.unwrap().unwrap();
-        assert_eq!(state.steps[0].status, StepStatus::Blocked);
-        assert!(state.steps[0]
+        let state = runner.get_state(&workflow.id()).await.unwrap().unwrap();
+        assert_eq!(state.step_runs[0].status, StepStatus::Blocked);
+        assert!(state.step_runs[0]
             .error
             .as_ref()
             .unwrap()
@@ -357,14 +357,14 @@ mod tests {
             WorkflowStep::api_call("step1", "Needs network", "GET", "/1")
                 .with_requires(vec![StepRequirement::native("network")]),
         ];
-        let workflow = WorkflowDefinition::new(steps);
+        let workflow = WorkflowRun::from_steps(steps);
         let store = InMemoryStore::new();
         store.save(&workflow).await.unwrap();
 
         let executor = SkillAwareExecutor::with_skills(vec!["native:network"]);
         let runner = WorkflowRunner::new(store, executor);
 
-        let results = runner.run_next(&workflow.id).await.unwrap();
+        let results = runner.run_next(&workflow.id()).await.unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0, "step1");
     }
@@ -379,20 +379,20 @@ mod tests {
                 .with_requires(vec![StepRequirement::native("shell")])
                 .parallel(),
         ];
-        let workflow = WorkflowDefinition::new(steps);
+        let workflow = WorkflowRun::from_steps(steps);
         let store = InMemoryStore::new();
         store.save(&workflow).await.unwrap();
 
         let executor = SkillAwareExecutor::with_skills(vec!["native:network"]);
         let runner = WorkflowRunner::new(store, executor);
 
-        let results = runner.run_next(&workflow.id).await.unwrap();
+        let results = runner.run_next(&workflow.id()).await.unwrap();
         // Only net_step should execute
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0, "net_step");
 
-        let state = runner.get_state(&workflow.id).await.unwrap().unwrap();
-        assert_eq!(state.steps[1].status, StepStatus::Blocked);
+        let state = runner.get_state(&workflow.id()).await.unwrap().unwrap();
+        assert_eq!(state.step_runs[1].status, StepStatus::Blocked);
     }
 
     #[tokio::test]
@@ -401,14 +401,14 @@ mod tests {
             WorkflowStep::api_call("step1", "Needs browser", "GET", "/1")
                 .with_requires(vec![StepRequirement::native("browser")]),
         ];
-        let workflow = WorkflowDefinition::new(steps);
+        let workflow = WorkflowRun::from_steps(steps);
         let store = InMemoryStore::new();
         store.save(&workflow).await.unwrap();
 
         let executor = SkillAwareExecutor::with_skills(vec!["native:network"]);
         let runner = WorkflowRunner::new(store, executor);
 
-        let status = runner.run_all(&workflow.id).await.unwrap();
+        let status = runner.run_all(&workflow.id()).await.unwrap();
         assert_eq!(status, WorkflowStatus::Blocked);
     }
 
@@ -420,20 +420,20 @@ mod tests {
             WorkflowStep::api_call("waits", "Waits on blocked", "POST", "/2")
                 .with_depends_on(vec!["blocked"]),
         ];
-        let workflow = WorkflowDefinition::new(steps);
+        let workflow = WorkflowRun::from_steps(steps);
         let store = InMemoryStore::new();
         store.save(&workflow).await.unwrap();
 
         let executor = SkillAwareExecutor::with_skills(vec!["native:network"]);
         let runner = WorkflowRunner::new(store, executor);
 
-        let status = runner.run_all(&workflow.id).await.unwrap();
+        let status = runner.run_all(&workflow.id()).await.unwrap();
         assert_eq!(status, WorkflowStatus::Blocked);
 
-        let state = runner.get_state(&workflow.id).await.unwrap().unwrap();
-        assert_eq!(state.steps[0].status, StepStatus::Blocked);
+        let state = runner.get_state(&workflow.id()).await.unwrap().unwrap();
+        assert_eq!(state.step_runs[0].status, StepStatus::Blocked);
         // Step waiting on blocked is still pending but workflow is stuck
-        assert_eq!(state.steps[1].status, StepStatus::Pending);
+        assert_eq!(state.step_runs[1].status, StepStatus::Pending);
         assert!(state.is_stuck());
     }
 
@@ -441,14 +441,14 @@ mod tests {
     async fn no_requirements_uses_default_executor() {
         // Steps without requires should work with any executor (backward compat)
         let steps = vec![WorkflowStep::api_call("step1", "No reqs", "GET", "/1")];
-        let workflow = WorkflowDefinition::new(steps);
+        let workflow = WorkflowRun::from_steps(steps);
         let store = InMemoryStore::new();
         store.save(&workflow).await.unwrap();
 
         let executor = MockExecutor::new();
         let runner = WorkflowRunner::new(store, executor);
 
-        let status = runner.run_all(&workflow.id).await.unwrap();
+        let status = runner.run_all(&workflow.id()).await.unwrap();
         assert_eq!(status, WorkflowStatus::Completed);
     }
 
@@ -464,14 +464,14 @@ mod tests {
             "api_request",
             serde_json::json!({"method": "GET", "path": "/v1/skills"}),
         )];
-        let workflow = WorkflowDefinition::new(steps);
+        let workflow = WorkflowRun::from_steps(steps);
         let store = InMemoryStore::new();
         store.save(&workflow).await.unwrap();
 
         let executor = MockExecutor::new();
         let runner = WorkflowRunner::new(store, executor);
 
-        let status = runner.run_all(&workflow.id).await.unwrap();
+        let status = runner.run_all(&workflow.id()).await.unwrap();
         assert_eq!(status, WorkflowStatus::Completed);
     }
 
@@ -596,8 +596,8 @@ mod tests {
 
     #[tokio::test]
     async fn checkpoint_strategy_defaults_to_internal() {
-        let workflow = WorkflowDefinition::new(vec![]);
-        match workflow.checkpoint {
+        let workflow = WorkflowRun::from_steps(vec![]);
+        match workflow.definition.checkpoint {
             CheckpointStrategy::Internal { ttl_secs } => {
                 assert_eq!(ttl_secs, None);
             }
@@ -608,7 +608,7 @@ mod tests {
     #[tokio::test]
     async fn checkpoint_strategy_serializes() {
         let workflow =
-            WorkflowDefinition::new(vec![]).with_checkpoint(CheckpointStrategy::External {
+            WorkflowRun::from_steps(vec![]).with_checkpoint(CheckpointStrategy::External {
                 tool_name: "my_checkpoint_tool".to_string(),
             });
 
@@ -628,7 +628,7 @@ mod tests {
     #[tokio::test]
     async fn internal_checkpoint_serializes_with_ttl() {
         let workflow =
-            WorkflowDefinition::new(vec![]).with_checkpoint(CheckpointStrategy::Internal {
+            WorkflowRun::from_steps(vec![]).with_checkpoint(CheckpointStrategy::Internal {
                 ttl_secs: Some(3600),
             });
 
@@ -686,26 +686,26 @@ mod tests {
     #[tokio::test]
     async fn not_stuck_when_steps_are_pending() {
         let workflow =
-            WorkflowDefinition::new(vec![WorkflowStep::api_call("s", "Step", "GET", "/")]);
+            WorkflowRun::from_steps(vec![WorkflowStep::api_call("s", "Step", "GET", "/")]);
         assert!(!workflow.is_stuck());
     }
 
     #[tokio::test]
     async fn not_stuck_when_all_done() {
         let mut workflow =
-            WorkflowDefinition::new(vec![WorkflowStep::api_call("s", "Step", "GET", "/")]);
-        workflow.steps[0].status = StepStatus::Done;
+            WorkflowRun::from_steps(vec![WorkflowStep::api_call("s", "Step", "GET", "/")]);
+        workflow.step_runs[0].status = StepStatus::Done;
         assert!(!workflow.is_stuck());
     }
 
     #[tokio::test]
     async fn stuck_when_only_blocked_steps_remain() {
-        let mut workflow = WorkflowDefinition::new(vec![
+        let mut workflow = WorkflowRun::from_steps(vec![
             WorkflowStep::api_call("s1", "Step 1", "GET", "/1"),
             WorkflowStep::api_call("s2", "Step 2", "GET", "/2"),
         ]);
-        workflow.steps[0].status = StepStatus::Done;
-        workflow.steps[1].status = StepStatus::Blocked;
+        workflow.step_runs[0].status = StepStatus::Done;
+        workflow.step_runs[1].status = StepStatus::Blocked;
         assert!(workflow.is_stuck());
     }
 
@@ -730,7 +730,7 @@ mod tests {
         ];
 
         let workflow =
-            WorkflowDefinition::new(steps).with_context(serde_json::json!({"source": "api"}));
+            WorkflowRun::from_steps(steps).with_context(serde_json::json!({"source": "api"}));
 
         let store = InMemoryStore::new();
         store.save(&workflow).await.unwrap();
@@ -738,11 +738,11 @@ mod tests {
         let executor = MockExecutor::new();
         let runner = WorkflowRunner::new(store, executor);
 
-        let status = runner.run_all(&workflow.id).await.unwrap();
+        let status = runner.run_all(&workflow.id()).await.unwrap();
         assert_eq!(status, WorkflowStatus::Completed);
 
-        let state = runner.get_state(&workflow.id).await.unwrap().unwrap();
-        assert!(state.steps.iter().all(|s| s.status == StepStatus::Done));
+        let state = runner.get_state(&workflow.id()).await.unwrap().unwrap();
+        assert!(state.step_runs.iter().all(|s| s.status == StepStatus::Done));
     }
 
     #[tokio::test]
@@ -785,11 +785,11 @@ mod tests {
             "updated_at": "2026-03-25T00:00:00Z"
         });
 
-        let workflow: WorkflowDefinition = serde_json::from_value(json).unwrap();
-        assert_eq!(workflow.id, "test-001");
-        assert!(workflow.steps[0].requires.is_empty());
+        let workflow: WorkflowRun = serde_json::from_value(json).unwrap();
+        assert_eq!(workflow.id(), "test-001");
+        assert!(workflow.steps()[0].requires.is_empty());
         // Checkpoint defaults to Internal
-        match workflow.checkpoint {
+        match workflow.definition.checkpoint {
             CheckpointStrategy::Internal { ttl_secs } => assert_eq!(ttl_secs, None),
             _ => panic!("Expected Internal default"),
         }
@@ -812,7 +812,7 @@ mod tests {
 
     #[tokio::test]
     async fn workflow_with_input_merges_context() {
-        let workflow = WorkflowDefinition::new(vec![])
+        let workflow = WorkflowRun::from_steps(vec![])
             .with_context(serde_json::json!({"existing": true}))
             .with_input(serde_json::json!({"file_id": "abc", "class_id": "xyz"}))
             .unwrap();
@@ -824,8 +824,8 @@ mod tests {
 
     #[tokio::test]
     async fn workflow_serializes_with_input_schema() {
-        let mut workflow = WorkflowDefinition::new(vec![]);
-        workflow.input_schema = Some(serde_json::json!({
+        let mut workflow = WorkflowRun::from_steps(vec![]);
+        workflow.definition.input_schema = Some(serde_json::json!({
             "type": "object",
             "required": ["file_id"],
             "properties": { "file_id": { "type": "string" } }
@@ -850,8 +850,8 @@ mod tests {
 
     #[tokio::test]
     async fn input_validation_rejects_missing_required_field() {
-        let mut workflow = WorkflowDefinition::new(vec![]);
-        workflow.input_schema = Some(serde_json::json!({
+        let mut workflow = WorkflowRun::from_steps(vec![]);
+        workflow.definition.input_schema = Some(serde_json::json!({
             "type": "object",
             "required": ["file_id", "class_id"],
             "properties": {
@@ -868,8 +868,8 @@ mod tests {
 
     #[tokio::test]
     async fn input_validation_rejects_wrong_type() {
-        let mut workflow = WorkflowDefinition::new(vec![]);
-        workflow.input_schema = Some(serde_json::json!({
+        let mut workflow = WorkflowRun::from_steps(vec![]);
+        workflow.definition.input_schema = Some(serde_json::json!({
             "type": "object",
             "properties": { "count": { "type": "integer" } }
         }));
@@ -880,8 +880,8 @@ mod tests {
 
     #[tokio::test]
     async fn input_validation_accepts_valid_input() {
-        let mut workflow = WorkflowDefinition::new(vec![]);
-        workflow.input_schema = Some(serde_json::json!({
+        let mut workflow = WorkflowRun::from_steps(vec![]);
+        workflow.definition.input_schema = Some(serde_json::json!({
             "type": "object",
             "required": ["file_id"],
             "properties": { "file_id": { "type": "string" } }
@@ -896,7 +896,7 @@ mod tests {
 
     #[tokio::test]
     async fn input_without_schema_accepts_anything() {
-        let workflow = WorkflowDefinition::new(vec![]);
+        let workflow = WorkflowRun::from_steps(vec![]);
         // No input_schema set
         let result = workflow.with_input(serde_json::json!({ "anything": "goes" }));
         assert!(result.is_ok());
@@ -925,7 +925,7 @@ mod tests {
             WorkflowStep::api_call("s1", "Step 1", "GET", "/1"),
             WorkflowStep::api_call("s2", "Step 2", "POST", "/2"),
         ];
-        let workflow = WorkflowDefinition::new(steps);
+        let workflow = WorkflowRun::from_steps(steps);
         let store = InMemoryStore::new();
         store.save(&workflow).await.unwrap();
 
@@ -935,7 +935,7 @@ mod tests {
         let executor = MockExecutor::new();
         let runner = WorkflowRunner::with_events(store, executor, sink);
 
-        runner.run_all(&workflow.id).await.unwrap();
+        runner.run_all(&workflow.id()).await.unwrap();
 
         let events = runner.events.events.lock().unwrap();
         // Should have: started, step1_started, step1_completed, step2_started, step2_completed, workflow_completed
@@ -1027,7 +1027,7 @@ mod tests {
                 })),
         ];
 
-        let mut workflow = WorkflowDefinition::new(steps);
+        let mut workflow = WorkflowRun::from_steps(steps);
         // Initialize structured context with input
         workflow.context = serde_json::json!({
             "input": {"doc_id": "doc-123", "class_id": "class-abc"},
@@ -1051,7 +1051,7 @@ mod tests {
         let store = InMemoryStore::new();
         store.save(&workflow).await.unwrap();
         let runner = WorkflowRunner::new(store, executor);
-        let status = runner.run_all(&workflow.id).await.unwrap();
+        let status = runner.run_all(&workflow.id()).await.unwrap();
         assert_eq!(status, WorkflowStatus::Completed);
 
         let caps = captured.lock().await;
@@ -1081,7 +1081,7 @@ mod tests {
             serde_json::json!({}),
         )];
 
-        let mut workflow = WorkflowDefinition::new(steps);
+        let mut workflow = WorkflowRun::from_steps(steps);
         workflow.context = serde_json::json!({
             "input": {"key": "value"},
             "steps": {},
@@ -1095,7 +1095,7 @@ mod tests {
         let store = InMemoryStore::new();
         store.save(&workflow).await.unwrap();
         let runner = WorkflowRunner::new(store, executor);
-        runner.run_all(&workflow.id).await.unwrap();
+        runner.run_all(&workflow.id()).await.unwrap();
 
         let caps = captured.lock().await;
         // No input mapping → receives full context with all namespaces
@@ -1116,7 +1116,7 @@ mod tests {
                 })),
         ];
 
-        let mut workflow = WorkflowDefinition::new(steps);
+        let mut workflow = WorkflowRun::from_steps(steps);
         workflow.context = serde_json::json!({"input": {}, "steps": {}, "env": {}});
 
         let executor = ContextCapturingExecutor::new(vec![
@@ -1128,7 +1128,7 @@ mod tests {
         let store = InMemoryStore::new();
         store.save(&workflow).await.unwrap();
         let runner = WorkflowRunner::new(store, executor);
-        runner.run_all(&workflow.id).await.unwrap();
+        runner.run_all(&workflow.id()).await.unwrap();
 
         let caps = captured.lock().await;
         assert_eq!(caps[1].0, "use_array");
@@ -1153,7 +1153,7 @@ mod tests {
             WorkflowStep::tool_call("c", "C", "t", serde_json::json!({}))
                 .with_depends_on(vec!["b"]),
         ];
-        let workflow = WorkflowDefinition::new(steps);
+        let workflow = WorkflowRun::from_steps(steps);
         let result = workflow.detect_cycles();
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Circular dependency"));
@@ -1165,7 +1165,7 @@ mod tests {
             WorkflowStep::tool_call("a", "A", "t", serde_json::json!({}))
                 .with_depends_on(vec!["a"]),
         ];
-        let workflow = WorkflowDefinition::new(steps);
+        let workflow = WorkflowRun::from_steps(steps);
         let result = workflow.detect_cycles();
         assert!(result.is_err());
     }
@@ -1176,7 +1176,7 @@ mod tests {
             WorkflowStep::tool_call("a", "A", "t", serde_json::json!({}))
                 .with_depends_on(vec!["missing_step"]),
         ];
-        let workflow = WorkflowDefinition::new(steps);
+        let workflow = WorkflowRun::from_steps(steps);
         let result = workflow.detect_cycles();
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("does not exist"));
@@ -1191,7 +1191,7 @@ mod tests {
             WorkflowStep::tool_call("c", "C", "t", serde_json::json!({}))
                 .with_depends_on(vec!["a", "b"]),
         ];
-        let workflow = WorkflowDefinition::new(steps);
+        let workflow = WorkflowRun::from_steps(steps);
         assert!(workflow.detect_cycles().is_ok());
     }
 
@@ -1203,13 +1203,13 @@ mod tests {
             WorkflowStep::tool_call("b", "B", "t", serde_json::json!({}))
                 .with_depends_on(vec!["a"]),
         ];
-        let workflow = WorkflowDefinition::new(steps);
+        let workflow = WorkflowRun::from_steps(steps);
         let store = InMemoryStore::new();
         store.save(&workflow).await.unwrap();
 
         let executor = MockExecutor::new();
         let runner = WorkflowRunner::new(store, executor);
-        let result = runner.run_all(&workflow.id).await;
+        let result = runner.run_all(&workflow.id()).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Circular dependency"));
     }
@@ -1237,7 +1237,7 @@ mod tests {
                 })),
         ];
 
-        let mut workflow = WorkflowDefinition::new(steps);
+        let mut workflow = WorkflowRun::from_steps(steps);
         workflow.context = serde_json::json!({"input": {}, "steps": {}, "env": {}});
 
         let executor = ContextCapturingExecutor::new(vec![
@@ -1263,7 +1263,7 @@ mod tests {
         let store = InMemoryStore::new();
         store.save(&workflow).await.unwrap();
         let runner = WorkflowRunner::new(store, executor);
-        let status = runner.run_all(&workflow.id).await.unwrap();
+        let status = runner.run_all(&workflow.id()).await.unwrap();
         assert_eq!(status, WorkflowStatus::Completed);
 
         let caps = captured.lock().await;
@@ -1284,7 +1284,9 @@ mod tests {
 
     #[tokio::test]
     async fn definition_without_runtime_fields_deserializes() {
-        // A minimal definition — no status, context, current_step, notes, timestamps
+        // A minimal definition — no status, context, current_step, notes, timestamps.
+        // The clean shape parses as `WorkflowDefinition`; constructing a run
+        // out of it gives us the canonical initial state.
         let json = serde_json::json!({
             "id": "minimal",
             "input_schema": {
@@ -1302,14 +1304,17 @@ mod tests {
             ]
         });
 
-        let workflow: WorkflowDefinition = serde_json::from_value(json).unwrap();
-        assert_eq!(workflow.id, "minimal");
-        assert_eq!(workflow.status, WorkflowStatus::Pending);
-        assert_eq!(workflow.current_step, 0);
-        assert!(workflow.notes.is_empty());
-        assert_eq!(workflow.steps[0].status, StepStatus::Pending);
-        assert!(workflow.steps[0].result.is_none());
-        assert!(workflow.steps[0].input.is_some());
+        let definition: WorkflowDefinition = serde_json::from_value(json).unwrap();
+        assert_eq!(definition.id, "minimal");
+        assert!(definition.input_schema.is_some());
+        assert!(definition.steps[0].input.is_some());
+
+        let run = WorkflowRun::new(definition);
+        assert_eq!(run.status, WorkflowStatus::Pending);
+        assert_eq!(run.current_step, 0);
+        assert!(run.notes.is_empty());
+        assert_eq!(run.step_runs[0].status, StepStatus::Pending);
+        assert!(run.step_runs[0].result.is_none());
     }
 
     // ========================================================================
@@ -1328,7 +1333,7 @@ mod tests {
                 .with_depends_on(vec!["configure_eval"]),
         ];
 
-        let workflow = WorkflowDefinition::new(steps).with_entry_points(vec![EntryPoint {
+        let workflow = WorkflowRun::from_steps(steps).with_entry_points(vec![EntryPoint {
             id: "grade_only".to_string(),
             label: "Grade Only".to_string(),
             description: Some("Start at grading".to_string()),
@@ -1343,14 +1348,14 @@ mod tests {
         let applied = workflow.apply_entry_point("grade_only").unwrap();
 
         // detect, create_content, configure_eval should be skipped
-        assert_eq!(applied.steps[0].status, StepStatus::Skipped); // detect
-        assert_eq!(applied.steps[1].status, StepStatus::Skipped); // create_content
-        assert_eq!(applied.steps[2].status, StepStatus::Skipped); // configure_eval
-        assert_eq!(applied.steps[3].status, StepStatus::Pending); // grade — should run
+        assert_eq!(applied.step_runs[0].status, StepStatus::Skipped); // detect
+        assert_eq!(applied.step_runs[1].status, StepStatus::Skipped); // create_content
+        assert_eq!(applied.step_runs[2].status, StepStatus::Skipped); // configure_eval
+        assert_eq!(applied.step_runs[3].status, StepStatus::Pending); // grade — should run
 
         // configure_eval should have preset result
         assert_eq!(
-            applied.steps[2].result,
+            applied.step_runs[2].result,
             Some(serde_json::json!({"rubric_id": "r1"}))
         );
     }
@@ -1367,7 +1372,7 @@ mod tests {
                 .with_depends_on(vec!["eval"]),
         ];
 
-        let workflow = WorkflowDefinition::new(steps).with_entry_points(vec![EntryPoint {
+        let workflow = WorkflowRun::from_steps(steps).with_entry_points(vec![EntryPoint {
             id: "existing_activity".to_string(),
             label: "Existing Activity".to_string(),
             description: None,
@@ -1377,16 +1382,16 @@ mod tests {
         }]);
 
         let applied = workflow.apply_entry_point("existing_activity").unwrap();
-        assert_eq!(applied.steps[0].status, StepStatus::Skipped); // detect
-        assert_eq!(applied.steps[1].status, StepStatus::Skipped); // content
-        assert_eq!(applied.steps[2].status, StepStatus::Pending); // eval
-        assert_eq!(applied.steps[3].status, StepStatus::Pending); // grade
+        assert_eq!(applied.step_runs[0].status, StepStatus::Skipped); // detect
+        assert_eq!(applied.step_runs[1].status, StepStatus::Skipped); // content
+        assert_eq!(applied.step_runs[2].status, StepStatus::Pending); // eval
+        assert_eq!(applied.step_runs[3].status, StepStatus::Pending); // grade
     }
 
     #[test]
     fn entry_point_not_found_returns_error() {
         let workflow =
-            WorkflowDefinition::new(vec![WorkflowStep::api_call("s1", "S1", "GET", "/")]);
+            WorkflowRun::from_steps(vec![WorkflowStep::api_call("s1", "S1", "GET", "/")]);
         assert!(workflow.apply_entry_point("nonexistent").is_err());
     }
 
@@ -1398,7 +1403,7 @@ mod tests {
                 .with_depends_on(vec!["detect"]),
         ];
 
-        let workflow = WorkflowDefinition::new(steps).with_entry_points(vec![EntryPoint {
+        let workflow = WorkflowRun::from_steps(steps).with_entry_points(vec![EntryPoint {
             id: "grade_only".to_string(),
             label: "Grade Only".to_string(),
             description: None,
@@ -1430,7 +1435,7 @@ mod tests {
                 .with_depends_on(vec!["content"]),
         ];
 
-        let workflow = WorkflowDefinition::new(steps)
+        let workflow = WorkflowRun::from_steps(steps)
             .with_id("ep-test")
             .with_entry_points(vec![EntryPoint {
                 id: "from_eval".to_string(),
@@ -1463,7 +1468,7 @@ mod tests {
             WorkflowStep::api_call("grade", "Grade", "POST", "/grade"),
         ];
 
-        let workflow = WorkflowDefinition::new(steps)
+        let workflow = WorkflowRun::from_steps(steps)
             .with_id("skip-test")
             .with_input(serde_json::json!({"activity_id": "existing-123"}))
             .unwrap();
@@ -1476,8 +1481,8 @@ mod tests {
 
         assert_eq!(status, WorkflowStatus::Completed);
         let final_wf = runner.get_state("skip-test").await.unwrap().unwrap();
-        assert_eq!(final_wf.steps[0].status, StepStatus::Skipped);
-        assert_eq!(final_wf.steps[1].status, StepStatus::Done);
+        assert_eq!(final_wf.step_runs[0].status, StepStatus::Skipped);
+        assert_eq!(final_wf.step_runs[1].status, StepStatus::Done);
     }
 
     #[tokio::test]
@@ -1488,7 +1493,7 @@ mod tests {
             WorkflowStep::api_call("grade", "Grade", "POST", "/grade"),
         ];
 
-        let workflow = WorkflowDefinition::new(steps)
+        let workflow = WorkflowRun::from_steps(steps)
             .with_id("no-skip-test")
             .with_input(serde_json::json!({}))
             .unwrap();
@@ -1501,8 +1506,8 @@ mod tests {
 
         assert_eq!(status, WorkflowStatus::Completed);
         let final_wf = runner.get_state("no-skip-test").await.unwrap().unwrap();
-        assert_eq!(final_wf.steps[0].status, StepStatus::Done);
-        assert_eq!(final_wf.steps[1].status, StepStatus::Done);
+        assert_eq!(final_wf.step_runs[0].status, StepStatus::Done);
+        assert_eq!(final_wf.step_runs[1].status, StepStatus::Done);
     }
 
     #[test]
@@ -1564,7 +1569,7 @@ mod tests {
             WorkflowStep::api_call("s2", "S2", "GET", "/").with_depends_on(vec!["s1"]),
         ];
 
-        let workflow = WorkflowDefinition::new(steps).with_entry_points(vec![EntryPoint {
+        let workflow = WorkflowRun::from_steps(steps).with_entry_points(vec![EntryPoint {
             id: "from_s2".to_string(),
             label: "From S2".to_string(),
             description: Some("Skip S1".to_string()),
@@ -1607,19 +1612,19 @@ mod tests {
             WorkflowStep::api_call("step3", "Step 3", "POST", "/api/submit")
                 .with_depends_on(vec!["human_review"]),
         ];
-        let workflow = WorkflowDefinition::new(steps);
+        let workflow = WorkflowRun::from_steps(steps);
         let store = InMemoryStore::new();
         store.save(&workflow).await.unwrap();
         let runner = WorkflowRunner::new(store, MockExecutor::new());
 
         // Run all — should execute step1 then pause at human_review
-        let status = runner.run_all(&workflow.id).await.unwrap();
+        let status = runner.run_all(&workflow.id()).await.unwrap();
         assert_eq!(status, WorkflowStatus::Paused);
 
-        let state = runner.get_state(&workflow.id).await.unwrap().unwrap();
-        assert_eq!(state.steps[0].status, StepStatus::Done);
-        assert_eq!(state.steps[1].status, StepStatus::WaitingForInput);
-        assert_eq!(state.steps[2].status, StepStatus::Pending);
+        let state = runner.get_state(&workflow.id()).await.unwrap().unwrap();
+        assert_eq!(state.step_runs[0].status, StepStatus::Done);
+        assert_eq!(state.step_runs[1].status, StepStatus::WaitingForInput);
+        assert_eq!(state.step_runs[2].status, StepStatus::Pending);
     }
 
     #[tokio::test]
@@ -1631,19 +1636,19 @@ mod tests {
             WorkflowStep::api_call("step3", "Step 3", "POST", "/api/submit")
                 .with_depends_on(vec!["human_review"]),
         ];
-        let workflow = WorkflowDefinition::new(steps);
+        let workflow = WorkflowRun::from_steps(steps);
         let store = InMemoryStore::new();
         store.save(&workflow).await.unwrap();
         let runner = WorkflowRunner::new(store, MockExecutor::new());
 
         // Run until paused
-        let status = runner.run_all(&workflow.id).await.unwrap();
+        let status = runner.run_all(&workflow.id()).await.unwrap();
         assert_eq!(status, WorkflowStatus::Paused);
 
         // Resume with human input
         let status = runner
             .resume(
-                &workflow.id,
+                &workflow.id(),
                 "human_review",
                 serde_json::json!({"approved": true, "notes": "Looks good"}),
             )
@@ -1651,10 +1656,10 @@ mod tests {
             .unwrap();
         assert_eq!(status, WorkflowStatus::Completed);
 
-        let state = runner.get_state(&workflow.id).await.unwrap().unwrap();
-        assert_eq!(state.steps[0].status, StepStatus::Done);
-        assert_eq!(state.steps[1].status, StepStatus::Done);
-        assert_eq!(state.steps[2].status, StepStatus::Done);
+        let state = runner.get_state(&workflow.id()).await.unwrap().unwrap();
+        assert_eq!(state.step_runs[0].status, StepStatus::Done);
+        assert_eq!(state.step_runs[1].status, StepStatus::Done);
+        assert_eq!(state.step_runs[2].status, StepStatus::Done);
 
         // Verify human input was stored in context for downstream steps
         let ctx = state.context.as_object().unwrap();
@@ -1670,16 +1675,16 @@ mod tests {
             "Review",
             "Review this",
         )];
-        let workflow = WorkflowDefinition::new(steps);
+        let workflow = WorkflowRun::from_steps(steps);
         let store = InMemoryStore::new();
         store.save(&workflow).await.unwrap();
         let runner = WorkflowRunner::new(store, MockExecutor::new());
 
-        let status = runner.run_all(&workflow.id).await.unwrap();
+        let status = runner.run_all(&workflow.id()).await.unwrap();
         assert_eq!(status, WorkflowStatus::Paused);
 
         let err = runner
-            .resume(&workflow.id, "wrong_id", serde_json::json!({}))
+            .resume(&workflow.id(), "wrong_id", serde_json::json!({}))
             .await;
         assert!(err.is_err());
     }
@@ -1692,13 +1697,13 @@ mod tests {
             "GET",
             "/api/data",
         )];
-        let workflow = WorkflowDefinition::new(steps);
+        let workflow = WorkflowRun::from_steps(steps);
         let store = InMemoryStore::new();
         store.save(&workflow).await.unwrap();
         let runner = WorkflowRunner::new(store, MockExecutor::new());
 
         let err = runner
-            .resume(&workflow.id, "step1", serde_json::json!({}))
+            .resume(&workflow.id(), "step1", serde_json::json!({}))
             .await;
         assert!(err.is_err());
     }
@@ -1718,7 +1723,7 @@ mod tests {
                 .with_depends_on(vec!["confirm_import"]),
         ];
 
-        let workflow = WorkflowDefinition::new(steps)
+        let workflow = WorkflowRun::from_steps(steps)
             .with_entry_points(vec![EntryPoint {
                 id: "review_only".to_string(),
                 label: "Review & Import".to_string(),
@@ -1742,17 +1747,17 @@ mod tests {
         let runner = WorkflowRunner::new(store, MockExecutor::new());
 
         // detect should be skipped, should pause at confirm_import
-        let status = runner.run_all(&workflow.id).await.unwrap();
+        let status = runner.run_all(&workflow.id()).await.unwrap();
         assert_eq!(status, WorkflowStatus::Paused);
 
-        let state = runner.get_state(&workflow.id).await.unwrap().unwrap();
-        assert_eq!(state.steps[0].status, StepStatus::Skipped); // detect
-        assert_eq!(state.steps[1].status, StepStatus::WaitingForInput); // confirm_import
+        let state = runner.get_state(&workflow.id()).await.unwrap().unwrap();
+        assert_eq!(state.step_runs[0].status, StepStatus::Skipped); // detect
+        assert_eq!(state.step_runs[1].status, StepStatus::WaitingForInput); // confirm_import
 
         // Resume
         let status = runner
             .resume(
-                &workflow.id,
+                &workflow.id(),
                 "confirm_import",
                 serde_json::json!({"confirmed": true}),
             )
@@ -1774,30 +1779,30 @@ mod tests {
             WorkflowStep::api_call("step3", "Submit", "POST", "/submit")
                 .with_depends_on(vec!["review2"]),
         ];
-        let workflow = WorkflowDefinition::new(steps);
+        let workflow = WorkflowRun::from_steps(steps);
         let store = InMemoryStore::new();
         store.save(&workflow).await.unwrap();
         let runner = WorkflowRunner::new(store, MockExecutor::new());
 
         // Pause at first review
-        let status = runner.run_all(&workflow.id).await.unwrap();
+        let status = runner.run_all(&workflow.id()).await.unwrap();
         assert_eq!(status, WorkflowStatus::Paused);
 
         // Resume first review — should run step2 then pause at second review
         let status = runner
-            .resume(&workflow.id, "review1", serde_json::json!({"ok": true}))
+            .resume(&workflow.id(), "review1", serde_json::json!({"ok": true}))
             .await
             .unwrap();
         assert_eq!(status, WorkflowStatus::Paused);
 
-        let state = runner.get_state(&workflow.id).await.unwrap().unwrap();
-        assert_eq!(state.steps[2].status, StepStatus::Done); // step2 ran
-        assert_eq!(state.steps[3].status, StepStatus::WaitingForInput); // review2
+        let state = runner.get_state(&workflow.id()).await.unwrap().unwrap();
+        assert_eq!(state.step_runs[2].status, StepStatus::Done); // step2 ran
+        assert_eq!(state.step_runs[3].status, StepStatus::WaitingForInput); // review2
 
         // Resume second review — should complete
         let status = runner
             .resume(
-                &workflow.id,
+                &workflow.id(),
                 "review2",
                 serde_json::json!({"approved": true}),
             )
@@ -1846,7 +1851,7 @@ mod tests {
     /// Full grading pipeline with three entry points:
     /// detect → create_content → configure_eval → checkpoint(review) → grade → report
     /// Entry points: "full" (default), "grade_only" (skip to grade), "review_and_grade" (skip to checkpoint)
-    fn grading_workflow() -> WorkflowDefinition {
+    fn grading_workflow() -> WorkflowRun {
         let steps = vec![
             WorkflowStep::api_call("detect", "Detect documents", "POST", "/detect"),
             WorkflowStep::api_call("create_content", "Create content", "POST", "/content")
@@ -1865,7 +1870,7 @@ mod tests {
                 .with_depends_on(vec!["grade"]),
         ];
 
-        WorkflowDefinition::new(steps)
+        WorkflowRun::from_steps(steps)
             .with_id("grading-pipeline")
             .with_entry_points(vec![
                 EntryPoint {
@@ -1909,12 +1914,12 @@ mod tests {
         assert_eq!(status, WorkflowStatus::Paused);
 
         let state = runner.get_state("grading-pipeline").await.unwrap().unwrap();
-        assert_eq!(state.steps[0].status, StepStatus::Done); // detect
-        assert_eq!(state.steps[1].status, StepStatus::Done); // create_content
-        assert_eq!(state.steps[2].status, StepStatus::Done); // configure_eval
-        assert_eq!(state.steps[3].status, StepStatus::WaitingForInput); // review
-        assert_eq!(state.steps[4].status, StepStatus::Pending); // grade
-        assert_eq!(state.steps[5].status, StepStatus::Pending); // report
+        assert_eq!(state.step_runs[0].status, StepStatus::Done); // detect
+        assert_eq!(state.step_runs[1].status, StepStatus::Done); // create_content
+        assert_eq!(state.step_runs[2].status, StepStatus::Done); // configure_eval
+        assert_eq!(state.step_runs[3].status, StepStatus::WaitingForInput); // review
+        assert_eq!(state.step_runs[4].status, StepStatus::Pending); // grade
+        assert_eq!(state.step_runs[5].status, StepStatus::Pending); // report
     }
 
     #[tokio::test]
@@ -1941,7 +1946,7 @@ mod tests {
         assert_eq!(status, WorkflowStatus::Completed);
 
         let state = runner.get_state("grading-pipeline").await.unwrap().unwrap();
-        assert!(state.steps.iter().all(|s| s.status == StepStatus::Done));
+        assert!(state.step_runs.iter().all(|s| s.status == StepStatus::Done));
 
         // Verify review input is in context
         let steps_ctx = state.context.get("steps").unwrap();
@@ -1957,18 +1962,18 @@ mod tests {
         store.save(&workflow).await.unwrap();
 
         let runner = WorkflowRunner::new(store, MockExecutor::new());
-        let status = runner.run_all(&workflow.id).await.unwrap();
+        let status = runner.run_all(&workflow.id()).await.unwrap();
 
         // Should complete — no checkpoint in the way (review is pre-filled)
         assert_eq!(status, WorkflowStatus::Completed);
 
-        let state = runner.get_state(&workflow.id).await.unwrap().unwrap();
-        assert_eq!(state.steps[0].status, StepStatus::Skipped); // detect
-        assert_eq!(state.steps[1].status, StepStatus::Skipped); // create_content
-        assert_eq!(state.steps[2].status, StepStatus::Skipped); // configure_eval
-        assert_eq!(state.steps[3].status, StepStatus::Skipped); // review (preset)
-        assert_eq!(state.steps[4].status, StepStatus::Done); // grade
-        assert_eq!(state.steps[5].status, StepStatus::Done); // report
+        let state = runner.get_state(&workflow.id()).await.unwrap().unwrap();
+        assert_eq!(state.step_runs[0].status, StepStatus::Skipped); // detect
+        assert_eq!(state.step_runs[1].status, StepStatus::Skipped); // create_content
+        assert_eq!(state.step_runs[2].status, StepStatus::Skipped); // configure_eval
+        assert_eq!(state.step_runs[3].status, StepStatus::Skipped); // review (preset)
+        assert_eq!(state.step_runs[4].status, StepStatus::Done); // grade
+        assert_eq!(state.step_runs[5].status, StepStatus::Done); // report
 
         // Preset results should be in context
         let steps_ctx = state.context.get("steps").unwrap();
@@ -1986,21 +1991,21 @@ mod tests {
         store.save(&workflow).await.unwrap();
 
         let runner = WorkflowRunner::new(store, MockExecutor::new());
-        let status = runner.run_all(&workflow.id).await.unwrap();
+        let status = runner.run_all(&workflow.id()).await.unwrap();
 
         // Should pause at review checkpoint
         assert_eq!(status, WorkflowStatus::Paused);
 
-        let state = runner.get_state(&workflow.id).await.unwrap().unwrap();
-        assert_eq!(state.steps[0].status, StepStatus::Skipped); // detect
-        assert_eq!(state.steps[1].status, StepStatus::Skipped); // create_content
-        assert_eq!(state.steps[2].status, StepStatus::Skipped); // configure_eval
-        assert_eq!(state.steps[3].status, StepStatus::WaitingForInput); // review
+        let state = runner.get_state(&workflow.id()).await.unwrap().unwrap();
+        assert_eq!(state.step_runs[0].status, StepStatus::Skipped); // detect
+        assert_eq!(state.step_runs[1].status, StepStatus::Skipped); // create_content
+        assert_eq!(state.step_runs[2].status, StepStatus::Skipped); // configure_eval
+        assert_eq!(state.step_runs[3].status, StepStatus::WaitingForInput); // review
 
         // Resume and complete
         let status = runner
             .resume(
-                &workflow.id,
+                &workflow.id(),
                 "review",
                 serde_json::json!({"approved": true}),
             )
@@ -2026,7 +2031,7 @@ mod tests {
         ]);
         let captured = executor.captured();
         let runner = WorkflowRunner::new(store, executor);
-        let status = runner.run_all(&workflow.id).await.unwrap();
+        let status = runner.run_all(&workflow.id()).await.unwrap();
         assert_eq!(status, WorkflowStatus::Completed);
 
         // Verify input was available to executed steps
@@ -2050,7 +2055,7 @@ mod tests {
                 })),
         ];
 
-        let mut workflow = WorkflowDefinition::new(steps)
+        let mut workflow = WorkflowRun::from_steps(steps)
             .with_id("data-flow-ep")
             .with_entry_points(vec![EntryPoint {
                 id: "grade_only".to_string(),
@@ -2100,12 +2105,12 @@ mod tests {
                 .with_depends_on(vec!["fetch"]),
             WorkflowStep::api_call("save", "Save", "POST", "/save").with_depends_on(vec!["verify"]),
         ];
-        let workflow = WorkflowDefinition::new(steps);
+        let workflow = WorkflowRun::from_steps(steps);
         let store = InMemoryStore::new();
         store.save(&workflow).await.unwrap();
 
         let runner = WorkflowRunner::new(store, MockExecutor::new());
-        let status = runner.run_all(&workflow.id).await.unwrap();
+        let status = runner.run_all(&workflow.id()).await.unwrap();
 
         // Checkpoint kind goes through executor, should complete
         assert_eq!(status, WorkflowStatus::Completed);
@@ -2124,12 +2129,12 @@ mod tests {
 
         // grade_only: 4 skipped (detect, create_content, configure_eval, review), 2 pending
         let skipped1: Vec<_> = ep1
-            .steps
+            .step_runs
             .iter()
             .filter(|s| s.status == StepStatus::Skipped)
             .collect();
         let pending1: Vec<_> = ep1
-            .steps
+            .step_runs
             .iter()
             .filter(|s| s.status == StepStatus::Pending)
             .collect();
@@ -2138,12 +2143,12 @@ mod tests {
 
         // review_and_grade: 3 skipped (detect, create_content, configure_eval), 3 pending (review, grade, report)
         let skipped2: Vec<_> = ep2
-            .steps
+            .step_runs
             .iter()
             .filter(|s| s.status == StepStatus::Skipped)
             .collect();
         let pending2: Vec<_> = ep2
-            .steps
+            .step_runs
             .iter()
             .filter(|s| s.status == StepStatus::Pending)
             .collect();
@@ -2170,7 +2175,7 @@ mod tests {
                 .with_depends_on(vec!["merge"]),
         ];
 
-        let workflow = WorkflowDefinition::new(steps)
+        let workflow = WorkflowRun::from_steps(steps)
             .with_id("parallel-entry")
             .with_entry_points(vec![EntryPoint {
                 id: "from_merge".to_string(),
@@ -2204,11 +2209,11 @@ mod tests {
         assert_eq!(status, WorkflowStatus::Completed);
 
         let state = runner.get_state("parallel-entry").await.unwrap().unwrap();
-        assert_eq!(state.steps[0].status, StepStatus::Skipped); // detect
-        assert_eq!(state.steps[1].status, StepStatus::Skipped); // analyze_a
-        assert_eq!(state.steps[2].status, StepStatus::Skipped); // analyze_b
-        assert_eq!(state.steps[3].status, StepStatus::Done); // merge
-        assert_eq!(state.steps[4].status, StepStatus::Done); // report
+        assert_eq!(state.step_runs[0].status, StepStatus::Skipped); // detect
+        assert_eq!(state.step_runs[1].status, StepStatus::Skipped); // analyze_a
+        assert_eq!(state.step_runs[2].status, StepStatus::Skipped); // analyze_b
+        assert_eq!(state.step_runs[3].status, StepStatus::Done); // merge
+        assert_eq!(state.step_runs[4].status, StepStatus::Done); // report
     }
 
     #[tokio::test]
@@ -2239,7 +2244,7 @@ mod tests {
         let runner = WorkflowRunner::with_events(store, MockExecutor::new(), sink);
 
         // Run to checkpoint
-        let status = runner.run_all(&workflow.id).await.unwrap();
+        let status = runner.run_all(&workflow.id()).await.unwrap();
         assert_eq!(status, WorkflowStatus::Paused);
 
         let events = runner.events.events.lock().unwrap();
@@ -2278,7 +2283,7 @@ mod tests {
         ];
 
         // Using entry point to skip to eval
-        let workflow = WorkflowDefinition::new(steps)
+        let workflow = WorkflowRun::from_steps(steps)
             .with_id("skip-entry-combo")
             .with_entry_points(vec![EntryPoint {
                 id: "from_eval".to_string(),
@@ -2301,9 +2306,9 @@ mod tests {
         assert_eq!(status, WorkflowStatus::Completed);
 
         let state = runner.get_state("skip-entry-combo").await.unwrap().unwrap();
-        assert_eq!(state.steps[0].status, StepStatus::Skipped); // detect (by entry point)
-        assert_eq!(state.steps[1].status, StepStatus::Done); // eval
-        assert_eq!(state.steps[2].status, StepStatus::Done); // grade
+        assert_eq!(state.step_runs[0].status, StepStatus::Skipped); // detect (by entry point)
+        assert_eq!(state.step_runs[1].status, StepStatus::Done); // eval
+        assert_eq!(state.step_runs[2].status, StepStatus::Done); // grade
     }
 
     #[tokio::test]

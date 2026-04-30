@@ -1,4 +1,8 @@
 //! Workflow executor — runs steps sequentially or in parallel.
+//!
+//! Operates on `WorkflowRun` (a definition + runtime state). Template
+//! fields read from `run.definition.steps[i]`; runtime mutations apply
+//! to `run.step_runs[i]`.
 
 use crate::resolve;
 use crate::store::WorkflowStateStore;
@@ -133,46 +137,45 @@ impl<S: WorkflowStateStore, E: StepExecutor, K: EventSink> WorkflowRunner<S, E, 
     /// Run the next runnable step(s). Handles both sequential and parallel.
     /// Returns the results of executed steps.
     pub async fn run_next(&self, workflow_id: &str) -> Result<Vec<(String, StepResult)>, String> {
-        let mut workflow = self
+        let mut run = self
             .store
             .load(workflow_id)
             .await?
             .ok_or("Workflow not found")?;
 
-        if workflow.is_complete() {
-            workflow.status = WorkflowStatus::Completed;
-            self.store.save(&workflow).await?;
+        if run.is_complete() {
+            run.status = WorkflowStatus::Completed;
+            self.store.save(&run).await?;
             return Ok(vec![]);
         }
 
-        if workflow.has_failed() {
+        if run.has_failed() {
             return Err("Workflow has failed steps".into());
         }
 
         // Evaluate skip_if conditions on pending steps
         let mut skipped_any = false;
-        for i in 0..workflow.steps.len() {
-            if workflow.steps[i].status != StepStatus::Pending {
+        for i in 0..run.definition.steps.len() {
+            if run.step_runs[i].status != StepStatus::Pending {
                 continue;
             }
-            if let Some(ref skip_expr) = workflow.steps[i].skip_if {
-                if resolve::evaluate_skip_condition(skip_expr, &workflow.context) {
-                    workflow.steps[i].status = StepStatus::Skipped;
-                    workflow.steps[i].completed_at = Some(chrono::Utc::now());
-                    workflow.add_note(
-                        &workflow.steps[i].id.clone(),
-                        "Skipped by skip_if condition",
-                    );
+            let skip_expr = run.definition.steps[i].skip_if.clone();
+            if let Some(skip_expr) = skip_expr {
+                if resolve::evaluate_skip_condition(&skip_expr, &run.context) {
+                    let step_id = run.definition.steps[i].id.clone();
+                    run.step_runs[i].status = StepStatus::Skipped;
+                    run.step_runs[i].completed_at = Some(chrono::Utc::now());
+                    run.add_note(&step_id, "Skipped by skip_if condition");
                     skipped_any = true;
                 }
             }
         }
         if skipped_any {
-            self.store.save(&workflow).await?;
+            self.store.save(&run).await?;
         }
 
         // Collect runnable step info
-        let runnable: Vec<(usize, String, StepExecution, WorkflowStep)> = workflow
+        let runnable: Vec<(usize, String, StepExecution, WorkflowStep)> = run
             .runnable_steps()
             .into_iter()
             .map(|(i, s)| (i, s.id.clone(), s.execution, s.clone()))
@@ -180,9 +183,9 @@ impl<S: WorkflowStateStore, E: StepExecutor, K: EventSink> WorkflowRunner<S, E, 
 
         if runnable.is_empty() {
             // Check if we're stuck (all remaining are blocked or depend on blocked)
-            if workflow.is_stuck() {
-                workflow.status = WorkflowStatus::Blocked;
-                self.store.save(&workflow).await?;
+            if run.is_stuck() {
+                run.status = WorkflowStatus::Blocked;
+                self.store.save(&run).await?;
                 return Ok(vec![]);
             }
             return Err("No runnable steps (all blocked by dependencies)".into());
@@ -204,19 +207,19 @@ impl<S: WorkflowStateStore, E: StepExecutor, K: EventSink> WorkflowRunner<S, E, 
 
         // Mark blocked steps
         for (idx, missing) in &blocked_indices {
-            workflow.steps[*idx].status = StepStatus::Blocked;
-            workflow.steps[*idx].error = Some(format!("Missing skills: {}", missing.join(", ")));
+            run.step_runs[*idx].status = StepStatus::Blocked;
+            run.step_runs[*idx].error = Some(format!("Missing skills: {}", missing.join(", ")));
         }
 
         if !blocked_indices.is_empty() {
-            self.store.save(&workflow).await?;
+            self.store.save(&run).await?;
         }
 
         if executable.is_empty() {
             // All runnable steps were blocked
-            if workflow.is_stuck() {
-                workflow.status = WorkflowStatus::Blocked;
-                self.store.save(&workflow).await?;
+            if run.is_stuck() {
+                run.status = WorkflowStatus::Blocked;
+                self.store.save(&run).await?;
             }
             return Ok(vec![]);
         }
@@ -233,11 +236,11 @@ impl<S: WorkflowStateStore, E: StepExecutor, K: EventSink> WorkflowRunner<S, E, 
                 StepKind::WaitForInput { message, schema } => (message.clone(), schema.clone()),
                 _ => unreachable!(),
             };
-            workflow.steps[*idx].status = StepStatus::WaitingForInput;
-            workflow.steps[*idx].started_at = Some(chrono::Utc::now());
-            workflow.status = WorkflowStatus::Paused;
-            workflow.current_step = *idx;
-            self.store.save(&workflow).await?;
+            run.step_runs[*idx].status = StepStatus::WaitingForInput;
+            run.step_runs[*idx].started_at = Some(chrono::Utc::now());
+            run.status = WorkflowStatus::Paused;
+            run.current_step = *idx;
+            self.store.save(&run).await?;
             self.events
                 .emit(WorkflowEvent::StepWaiting {
                     workflow_id: workflow_id.to_string(),
@@ -259,11 +262,11 @@ impl<S: WorkflowStateStore, E: StepExecutor, K: EventSink> WorkflowRunner<S, E, 
         // Run parallel steps
         if !parallel.is_empty() {
             for (idx, _, _, _) in &parallel {
-                workflow.steps[*idx].status = StepStatus::Running;
-                workflow.steps[*idx].started_at = Some(chrono::Utc::now());
+                run.step_runs[*idx].status = StepStatus::Running;
+                run.step_runs[*idx].started_at = Some(chrono::Utc::now());
             }
-            workflow.status = WorkflowStatus::Running;
-            self.store.save(&workflow).await?;
+            run.status = WorkflowStatus::Running;
+            self.store.save(&run).await?;
 
             for (idx, step_id, _, step) in &parallel {
                 self.events
@@ -275,7 +278,7 @@ impl<S: WorkflowStateStore, E: StepExecutor, K: EventSink> WorkflowRunner<S, E, 
                     .await;
 
                 let step_context =
-                    resolve::resolve_step_input(step.input.as_ref(), &workflow.context);
+                    resolve::resolve_step_input(step.input.as_ref(), &run.context);
                 let result = self.executor.execute(step, &step_context).await;
                 match result {
                     Ok(r) if r.status == StepStatus::Failed => {
@@ -326,11 +329,11 @@ impl<S: WorkflowStateStore, E: StepExecutor, K: EventSink> WorkflowRunner<S, E, 
         if !sequential.is_empty() && parallel.is_empty() {
             let (idx, step_id, _, step) = &sequential[0];
 
-            workflow.steps[*idx].status = StepStatus::Running;
-            workflow.steps[*idx].started_at = Some(chrono::Utc::now());
-            workflow.status = WorkflowStatus::Running;
-            workflow.current_step = *idx;
-            self.store.save(&workflow).await?;
+            run.step_runs[*idx].status = StepStatus::Running;
+            run.step_runs[*idx].started_at = Some(chrono::Utc::now());
+            run.status = WorkflowStatus::Running;
+            run.current_step = *idx;
+            self.store.save(&run).await?;
 
             self.events
                 .emit(WorkflowEvent::StepStarted {
@@ -340,7 +343,7 @@ impl<S: WorkflowStateStore, E: StepExecutor, K: EventSink> WorkflowRunner<S, E, 
                 })
                 .await;
 
-            let step_context = resolve::resolve_step_input(step.input.as_ref(), &workflow.context);
+            let step_context = resolve::resolve_step_input(step.input.as_ref(), &run.context);
             let result = self.executor.execute(step, &step_context).await;
             match result {
                 Ok(r) if r.status == StepStatus::Failed => {
@@ -387,10 +390,12 @@ impl<S: WorkflowStateStore, E: StepExecutor, K: EventSink> WorkflowRunner<S, E, 
         }
 
         // Check if workflow is now complete
-        let workflow = self.store.load(workflow_id).await?.unwrap();
-        if workflow.is_complete() {
-            let mut w = workflow;
-            if w.is_stuck() || w.steps.iter().any(|s| s.status == StepStatus::Blocked) {
+        let run = self.store.load(workflow_id).await?.unwrap();
+        if run.is_complete() {
+            let mut w = run;
+            if w.is_stuck()
+                || w.step_runs.iter().any(|s| s.status == StepStatus::Blocked)
+            {
                 w.status = WorkflowStatus::Blocked;
             } else {
                 w.status = WorkflowStatus::Completed;
@@ -404,49 +409,49 @@ impl<S: WorkflowStateStore, E: StepExecutor, K: EventSink> WorkflowRunner<S, E, 
     /// Run all steps until completion, failure, blocked, or pause.
     pub async fn run_all(&self, workflow_id: &str) -> Result<WorkflowStatus, String> {
         // Validate DAG before executing
-        let workflow = self
+        let run = self
             .store
             .load(workflow_id)
             .await?
             .ok_or("Workflow not found")?;
-        workflow.detect_cycles()?;
+        run.detect_cycles()?;
 
         // Emit workflow started
         self.events
             .emit(WorkflowEvent::WorkflowStarted {
                 workflow_id: workflow_id.to_string(),
-                total_steps: workflow.steps.len(),
+                total_steps: run.definition.steps.len(),
             })
             .await;
 
         loop {
-            let workflow = self
+            let run = self
                 .store
                 .load(workflow_id)
                 .await?
                 .ok_or("Workflow not found")?;
 
-            match workflow.status {
+            match run.status {
                 WorkflowStatus::Completed | WorkflowStatus::Failed | WorkflowStatus::Blocked => {
-                    let done = workflow
-                        .steps
+                    let done = run
+                        .step_runs
                         .iter()
                         .filter(|s| s.status == StepStatus::Done)
                         .count();
-                    let failed = workflow
-                        .steps
+                    let failed = run
+                        .step_runs
                         .iter()
                         .filter(|s| s.status == StepStatus::Failed)
                         .count();
                     self.events
                         .emit(WorkflowEvent::WorkflowCompleted {
                             workflow_id: workflow_id.to_string(),
-                            status: workflow.status,
+                            status: run.status,
                             steps_done: done,
                             steps_failed: failed,
                         })
                         .await;
-                    return Ok(workflow.status);
+                    return Ok(run.status);
                 }
                 // Paused = waiting for human input. Return without emitting completed.
                 WorkflowStatus::Paused => {
@@ -455,12 +460,12 @@ impl<S: WorkflowStateStore, E: StepExecutor, K: EventSink> WorkflowRunner<S, E, 
                 _ => {}
             }
 
-            if workflow.is_complete() {
+            if run.is_complete() {
                 self.events
                     .emit(WorkflowEvent::WorkflowCompleted {
                         workflow_id: workflow_id.to_string(),
                         status: WorkflowStatus::Completed,
-                        steps_done: workflow.steps.len(),
+                        steps_done: run.definition.steps.len(),
                         steps_failed: 0,
                     })
                     .await;
@@ -474,12 +479,12 @@ impl<S: WorkflowStateStore, E: StepExecutor, K: EventSink> WorkflowRunner<S, E, 
                 w.status = WorkflowStatus::Failed;
                 self.store.save(&w).await?;
                 let done = w
-                    .steps
+                    .step_runs
                     .iter()
                     .filter(|s| s.status == StepStatus::Done)
                     .count();
                 let failed = w
-                    .steps
+                    .step_runs
                     .iter()
                     .filter(|s| s.status == StepStatus::Failed)
                     .count();
@@ -509,28 +514,28 @@ impl<S: WorkflowStateStore, E: StepExecutor, K: EventSink> WorkflowRunner<S, E, 
         step_id: &str,
         input: serde_json::Value,
     ) -> Result<WorkflowStatus, String> {
-        let mut workflow = self
+        let mut run = self
             .store
             .load(workflow_id)
             .await?
             .ok_or("Workflow not found")?;
 
-        if workflow.status != WorkflowStatus::Paused {
+        if run.status != WorkflowStatus::Paused {
             return Err(format!(
                 "Workflow is not paused (status: {:?})",
-                workflow.status
+                run.status
             ));
         }
 
-        workflow.resume_step(step_id, input)?;
-        self.store.save(&workflow).await?;
+        run.resume_step(step_id, input)?;
+        self.store.save(&run).await?;
 
         // Continue running remaining steps
         self.run_all(workflow_id).await
     }
 
-    /// Get current workflow state.
-    pub async fn get_state(&self, workflow_id: &str) -> Result<Option<WorkflowDefinition>, String> {
+    /// Get current workflow run state.
+    pub async fn get_state(&self, workflow_id: &str) -> Result<Option<WorkflowRun>, String> {
         self.store.load(workflow_id).await
     }
 }

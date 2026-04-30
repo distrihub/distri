@@ -538,11 +538,13 @@ impl WorkflowAgent {
         message: Message,
         context: Arc<ExecutorContext>,
     ) -> Result<InvokeResult, AgentError> {
-        // Parse the workflow definition
-        let mut workflow: WorkflowDefinition =
+        // Parse the workflow definition (template) from the agent config
+        // and build a fresh `WorkflowRun` to mutate during execution.
+        let definition: WorkflowDefinition =
             serde_json::from_value(self.definition.definition.clone()).map_err(|e| {
                 AgentError::Execution(format!("Invalid workflow definition: {}", e))
             })?;
+        let mut run = WorkflowRun::new(definition);
 
         // Parse typed input from message (first text part as JSON, or defaults)
         let workflow_input: WorkflowInput = message
@@ -561,20 +563,20 @@ impl WorkflowAgent {
         context.save_message(&message).await;
 
         // Validate and merge the user data (everything except workflow control fields)
-        workflow = workflow
+        run = run
             .with_input(workflow_input.data)
-            .map_err(|e| AgentError::Validation(e))?;
+            .map_err(AgentError::Validation)?;
 
         // Apply entry point if specified
         if let Some(entry_id) = workflow_input.entry_point {
-            workflow = workflow
+            run = run
                 .apply_entry_point(&entry_id)
-                .map_err(|e| AgentError::Validation(e))?;
+                .map_err(AgentError::Validation)?;
         }
 
         // Populate env namespace from executor context env vars
-        if let Some(ctx_obj) = workflow.context.as_object_mut() {
-            let env = ctx_obj
+        if let Some(ctx_obj) = run.context.as_object_mut() {
+            let env: &mut serde_json::Map<String, serde_json::Value> = ctx_obj
                 .entry("env")
                 .or_insert(serde_json::json!({}))
                 .as_object_mut()
@@ -587,10 +589,8 @@ impl WorkflowAgent {
 
         // Set up execution
         let store = InMemoryStore::new();
-        store
-            .save(&workflow)
-            .await
-            .map_err(|e| AgentError::Execution(e))?;
+        let workflow_id = run.id().to_string();
+        store.save(&run).await.map_err(AgentError::Execution)?;
 
         let event_sink = ContextEventSink {
             context: context.clone(),
@@ -602,30 +602,19 @@ impl WorkflowAgent {
 
         // Run the workflow
         let status = runner
-            .run_all(&workflow.id)
+            .run_all(&workflow_id)
             .await
-            .map_err(|e| AgentError::Execution(e))?;
+            .map_err(AgentError::Execution)?;
 
         // Get final state
         let final_state = runner
-            .get_state(&workflow.id)
+            .get_state(&workflow_id)
             .await
-            .map_err(|e| AgentError::Execution(e))?
+            .map_err(AgentError::Execution)?
             .ok_or_else(|| AgentError::Execution("Workflow state lost".to_string()))?;
 
-        let summary = serde_json::json!({
-            "workflow_id": final_state.id,
-            "status": format!("{:?}", status),
-            "steps": final_state.steps.iter().map(|s| {
-                serde_json::json!({
-                    "id": s.id,
-                    "label": s.label,
-                    "status": format!("{:?}", s.status),
-                    "result": s.result,
-                    "error": s.error,
-                })
-            }).collect::<Vec<_>>(),
-        });
+        let summary = serde_json::to_value(WorkflowRunSummary::from_run(&final_state, status))
+            .map_err(|e| AgentError::Execution(format!("summary serialize: {e}")))?;
 
         let summary_text = serde_json::to_string_pretty(&summary).unwrap_or_default();
 

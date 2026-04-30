@@ -6,11 +6,19 @@
 //!
 //! # Architecture
 //!
-//! - `WorkflowDefinition` — the workflow as a DAG of steps
-//! - `WorkflowStep` — a single step (API call, script, agent run, tool call, condition)
+//! Two layers, deliberately separated:
+//!
+//! - **Definition** — the workflow as a DAG of steps. Static template;
+//!   no runtime state. (`WorkflowDefinition`, `WorkflowStep`).
+//! - **Run** — execution state for one invocation: status, shared
+//!   context, per-step status / result / error / timestamps.
+//!   (`WorkflowRun`, `WorkflowStepRun`).
+//!
+//! Other key types:
+//!
 //! - `StepRequirement` — what a step needs to run (native skills, connections)
 //! - `StepExecutor` trait — executes a step (implement for your runtime)
-//! - `WorkflowStateStore` trait — persists workflow state (Redis, DB, in-memory)
+//! - `WorkflowStateStore` trait — persists `WorkflowRun`s (Redis, DB, in-memory)
 //! - `WorkflowRunner` — orchestrates execution with requirement checking
 //!
 //! # Example
@@ -30,11 +38,13 @@
 //!         .with_timeout(300),
 //! ];
 //!
-//! let workflow = WorkflowDefinition::new(steps);
+//! let definition = WorkflowDefinition::new(steps);
+//! let run = WorkflowRun::new(definition);
 //! ```
 
 pub mod executor;
 pub mod resolve;
+pub mod step_executions;
 pub mod store;
 pub mod types;
 
@@ -42,6 +52,10 @@ pub use executor::{EventSink, NoopEventSink, StepExecutor, TracingEventSink, Wor
 pub use resolve::{
     build_execution_context, evaluate_skip_condition, resolve_step_input, resolve_template,
     resolve_value,
+};
+pub use step_executions::{
+    InMemoryWorkflowStepExecutionStore, WorkflowStepExecution, WorkflowStepExecutionStore,
+    WorkflowStepExecutionUpdate,
 };
 pub use store::{InMemoryStore, WorkflowStateStore};
 pub use types::*;
