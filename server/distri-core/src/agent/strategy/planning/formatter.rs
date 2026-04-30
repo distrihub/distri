@@ -584,6 +584,9 @@ impl<'a> MessageFormatter<'a> {
                 Part::Image(image) => {
                     assistant_parts.push(Part::Image(image.clone()));
                 }
+                Part::File(file) => {
+                    assistant_parts.push(Part::File(file.clone()));
+                }
                 Part::Artifact(artifact) => {
                     assistant_parts.push(Part::Artifact(artifact.clone()));
                 }
