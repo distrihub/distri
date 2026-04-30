@@ -4,21 +4,18 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-/// Cloud-specific metadata for agents (optional, only present in cloud responses)
+/// Cloud-specific metadata for agents (optional, only present in cloud responses).
+/// The marketplace surface (`published`, `published_at`, `is_system`, the
+/// "agent from another workspace" cross-publish concept) was removed.
+/// Agents are workspace-scoped only.
 #[derive(Debug, Clone, Serialize, Deserialize, Default, ToSchema, JsonSchema)]
 pub struct AgentCloudMetadata {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub published: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub published_at: Option<chrono::DateTime<chrono::Utc>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub is_owner: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub is_system: Option<bool>,
-    /// True when the agent belongs to the current workspace (not from another workspace via publish)
+    /// True when the agent belongs to the current workspace.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub is_workspace: Option<bool>,
-    /// Workspace slug the agent belongs to (for display on cross-workspace agents)
+    /// Workspace slug the agent belongs to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_slug: Option<String>,
 }

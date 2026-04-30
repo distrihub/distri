@@ -42,23 +42,25 @@ impl EventSink for ChannelEventSink {
 
 /// A workflow execution session with event streaming.
 ///
-/// Create a session, take the event receiver, then run the workflow.
+/// Create a session from a `WorkflowDefinition` (template). The session
+/// builds the corresponding `WorkflowRun` internally before kicking off
+/// execution. Take the event receiver, then run.
 /// Events are emitted in the same format as the server-side WorkflowAgent,
 /// making them compatible with distrijs SSE rendering.
 pub struct WorkflowSession {
     client: Arc<Distri>,
-    workflow: WorkflowDefinition,
+    run: WorkflowRun,
     event_tx: mpsc::Sender<WorkflowEvent>,
     event_rx: Option<mpsc::Receiver<WorkflowEvent>>,
 }
 
 impl WorkflowSession {
-    /// Create a new workflow session.
-    pub fn new(client: Arc<Distri>, workflow: WorkflowDefinition) -> Self {
+    /// Create a new workflow session from a definition.
+    pub fn new(client: Arc<Distri>, definition: WorkflowDefinition) -> Self {
         let (tx, rx) = mpsc::channel(100);
         Self {
             client,
-            workflow,
+            run: WorkflowRun::new(definition),
             event_tx: tx,
             event_rx: Some(rx),
         }
@@ -74,7 +76,8 @@ impl WorkflowSession {
     /// Returns the final workflow status.
     pub async fn run(self) -> Result<WorkflowStatus, String> {
         let store = InMemoryStore::new();
-        store.save(&self.workflow).await?;
+        let workflow_id = self.run.id().to_string();
+        store.save(&self.run).await?;
 
         let event_sink = ChannelEventSink {
             tx: self.event_tx.clone(),
@@ -82,15 +85,16 @@ impl WorkflowSession {
         let executor = DistriStepExecutor::new(self.client.clone());
         let runner = WorkflowRunner::with_events(store, executor, event_sink);
 
-        runner.run_all(&self.workflow.id).await
+        runner.run_all(&workflow_id).await
     }
 
     /// Run the workflow with input. Validates against input_schema, merges into context.
     pub async fn run_with_input(mut self, input: Value) -> Result<WorkflowStatus, String> {
-        self.workflow = self.workflow.with_input(input)?;
+        self.run = self.run.with_input(input)?;
 
         let store = InMemoryStore::new();
-        store.save(&self.workflow).await?;
+        let workflow_id = self.run.id().to_string();
+        store.save(&self.run).await?;
 
         let event_sink = ChannelEventSink {
             tx: self.event_tx.clone(),
@@ -98,7 +102,7 @@ impl WorkflowSession {
         let executor = DistriStepExecutor::new(self.client.clone());
         let runner = WorkflowRunner::with_events(store, executor, event_sink);
 
-        runner.run_all(&self.workflow.id).await
+        runner.run_all(&workflow_id).await
     }
 }
 

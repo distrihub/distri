@@ -522,31 +522,36 @@ async fn get_agent_definition(
 
     let context = Arc::default();
     match agent {
-        Some(agent) => {
-            let def = match &agent {
-                distri_types::configuration::AgentConfig::StandardAgent(d) => d,
-                _ => {
-                    return HttpResponse::BadRequest().json(json!({
-                        "error": "WorkflowAgent does not support this endpoint"
-                    }));
-                }
-            };
-            let markdown = build_markdown_from_definition(def);
-            let tools = executor
-                .get_agent_tools(def, &context)
-                .await
-                .map(|r| r.all_tools)
-                .unwrap_or_default()
-                .into_iter()
-                .map(|t| t.get_tool_definition())
-                .collect();
-            HttpResponse::Ok().json(AgentConfigWithTools {
-                agent,
-                resolved_tools: tools,
-                markdown: Some(markdown),
-                cloud: cloud_metadata,
-            })
-        }
+        Some(agent) => match &agent {
+            distri_types::configuration::AgentConfig::StandardAgent(def) => {
+                let markdown = build_markdown_from_definition(def);
+                let tools = executor
+                    .get_agent_tools(def, &context)
+                    .await
+                    .map(|r| r.all_tools)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|t| t.get_tool_definition())
+                    .collect();
+                HttpResponse::Ok().json(AgentConfigWithTools {
+                    agent: agent.clone(),
+                    resolved_tools: tools,
+                    markdown: Some(markdown),
+                    cloud: cloud_metadata,
+                })
+            }
+            distri_types::configuration::AgentConfig::WorkflowAgent(_) => {
+                // Workflow agents have no LLM-callable tools and no markdown
+                // body. The DAG / triggers / input_schema all live on the
+                // flattened `agent` envelope.
+                HttpResponse::Ok().json(AgentConfigWithTools {
+                    agent,
+                    resolved_tools: Vec::new(),
+                    markdown: None,
+                    cloud: cloud_metadata,
+                })
+            }
+        },
         None => HttpResponse::NotFound().finish(),
     }
 }
@@ -1516,9 +1521,25 @@ async fn create_agent(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
 
-    let parsed: Result<StandardDefinition, AgentError> =
+    // JSON bodies may be either a StandardDefinition (legacy) or the tagged
+    // AgentConfig enum (workflow_agent / standard_agent). Markdown bodies
+    // always parse as StandardDefinition. We normalise to AgentConfig before
+    // registering so workflow agents are persisted as a workflow variant.
+    let agent_config: distri_types::configuration::AgentConfig =
         if content_type.contains("application/json") {
-            serde_json::from_slice(&body).map_err(AgentError::from)
+            // Try the discriminated AgentConfig first; fall back to a bare
+            // StandardDefinition for clients that haven't been updated.
+            match serde_json::from_slice::<distri_types::configuration::AgentConfig>(&body) {
+                Ok(cfg) => cfg,
+                Err(_) => match serde_json::from_slice::<StandardDefinition>(&body) {
+                    Ok(def) => distri_types::configuration::AgentConfig::StandardAgent(def),
+                    Err(e) => {
+                        return HttpResponse::BadRequest().json(json!({
+                            "error": format!("Failed to parse agent JSON: {}", e)
+                        }));
+                    }
+                },
+            }
         } else {
             let content = match String::from_utf8(body.to_vec()) {
                 Ok(s) => s,
@@ -1528,70 +1549,89 @@ async fn create_agent(
                     }))
                 }
             };
-            parse_agent_markdown_content(&content).await
+            match parse_agent_markdown_content(&content).await {
+                Ok(def) => distri_types::configuration::AgentConfig::StandardAgent(def),
+                Err(e) => {
+                    return HttpResponse::BadRequest().json(json!({
+                        "error": format!("Failed to parse agent markdown: {}", e)
+                    }));
+                }
+            }
         };
 
-    let definition = match parsed {
-        Ok(def) => def,
-        Err(e) => {
-            return HttpResponse::BadRequest().json(json!({
-                "error": format!("Failed to parse agent definition: {}", e)
-            }))
-        }
-    };
-
-    // Validate builtin tool names
-    if let Some(ref tools) = definition.tools {
-        let invalid = tools.invalid_builtin_tools();
-        if !invalid.is_empty() {
-            return HttpResponse::BadRequest().json(json!({
-                "error": format!(
-                    "Unknown builtin tool(s): {}. Valid tools: {}",
-                    invalid.join(", "),
-                    distri_types::VALID_BUILTIN_TOOLS.join(", ")
-                )
-            }));
-        }
-        for factory in &tools.dynamic {
-            if let Err(e) = distri_core::tools::dynamic_factory::validate_dynamic_tool(factory) {
-                return HttpResponse::BadRequest().json(json!({ "error": e.to_string() }));
+    // Variant-specific validation. Workflow agents have no tool config to
+    // validate; standard agents need their builtin / dynamic tool names
+    // checked before they reach the store.
+    if let distri_types::configuration::AgentConfig::StandardAgent(ref definition) = agent_config {
+        if let Some(ref tools) = definition.tools {
+            let invalid = tools.invalid_builtin_tools();
+            if !invalid.is_empty() {
+                return HttpResponse::BadRequest().json(json!({
+                    "error": format!(
+                        "Unknown builtin tool(s): {}. Valid tools: {}",
+                        invalid.join(", "),
+                        distri_types::VALID_BUILTIN_TOOLS.join(", ")
+                    )
+                }));
+            }
+            for factory in &tools.dynamic {
+                if let Err(e) =
+                    distri_core::tools::dynamic_factory::validate_dynamic_tool(factory)
+                {
+                    return HttpResponse::BadRequest().json(json!({ "error": e.to_string() }));
+                }
             }
         }
     }
 
-    if let Err(e) = executor.register_agent_definition(definition.clone()).await {
+    let agent_name = agent_config.get_name().to_string();
+    if let Err(e) = executor.register_agent_config(agent_config.clone()).await {
         return HttpResponse::BadRequest().json(json!({
             "error": format!("Failed to create agent: {}", e)
         }));
     }
 
-    // Return full response with cloud metadata if available
+    // Build the response. Standard agents include resolved tools + the
+    // round-tripped markdown; workflow agents return the stored config
+    // verbatim (no tools, no markdown).
     if let Some((agent, cloud)) = executor
         .stores
         .agent_store
-        .get_with_cloud_metadata(&definition.name)
+        .get_with_cloud_metadata(&agent_name)
         .await
     {
-        let markdown = build_markdown_from_definition(&definition);
-        let context = Arc::default();
-        let tools = executor
-            .get_agent_tools(&definition, &context)
-            .await
-            .map(|r| {
-                r.all_tools
-                    .into_iter()
-                    .map(|t| t.get_tool_definition())
-                    .collect()
-            })
-            .unwrap_or_default();
-        HttpResponse::Ok().json(AgentConfigWithTools {
-            agent,
-            resolved_tools: tools,
-            markdown: Some(markdown),
-            cloud,
-        })
+        match &agent_config {
+            distri_types::configuration::AgentConfig::StandardAgent(definition) => {
+                let markdown = build_markdown_from_definition(definition);
+                let context = Arc::default();
+                let tools = executor
+                    .get_agent_tools(definition, &context)
+                    .await
+                    .map(|r| {
+                        r.all_tools
+                            .into_iter()
+                            .map(|t| t.get_tool_definition())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                HttpResponse::Ok().json(AgentConfigWithTools {
+                    agent,
+                    resolved_tools: tools,
+                    markdown: Some(markdown),
+                    cloud,
+                })
+            }
+            distri_types::configuration::AgentConfig::WorkflowAgent(_) => {
+                HttpResponse::Ok().json(AgentConfigWithTools {
+                    agent,
+                    resolved_tools: Vec::new(),
+                    markdown: None,
+                    cloud,
+                })
+            }
+        }
     } else {
-        HttpResponse::Ok().json(definition)
+        HttpResponse::Ok().json(agent_config)
     }
 }
 

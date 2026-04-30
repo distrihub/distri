@@ -1877,7 +1877,8 @@ impl Distri {
 // Skill API Types and Methods
 // ============================================================
 
-/// Full skill information including content.
+/// Full skill information including content. Marketplace fields removed —
+/// see distri_types::stores::SkillRecord doc comment.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillResponse {
     pub id: String,
@@ -1888,17 +1889,7 @@ pub struct SkillResponse {
     #[serde(default)]
     pub tags: Vec<String>,
     #[serde(default)]
-    pub is_public: bool,
-    #[serde(default)]
-    pub is_system: bool,
-    #[serde(default)]
     pub is_owner: bool,
-    #[serde(default)]
-    pub star_count: i32,
-    #[serde(default)]
-    pub clone_count: i32,
-    #[serde(default)]
-    pub is_starred: bool,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -1912,8 +1903,14 @@ pub struct CreateSkillRequest {
     pub content: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
-    #[serde(default)]
-    pub is_public: bool,
+    /// Optional inline skill_scripts uploaded alongside the SKILL.md.
+    /// Each script is identified by a unique name within the skill and
+    /// stored on the backend in `skill_scripts.code`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scripts: Vec<SkillScriptInput>,
+    /// Provenance tracking for skills imported from external registries.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<SkillSource>,
 }
 
 /// Request to update an existing skill.
@@ -1927,8 +1924,26 @@ pub struct UpdateSkillRequest {
     pub content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tags: Option<Vec<String>>,
+}
+
+/// One bundled script (e.g. `scripts/extract.py`) attached to a skill.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillScriptInput {
+    pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub is_public: Option<bool>,
+    pub description: Option<String>,
+    pub code: String,
+    /// "python", "javascript", "typescript", "bash", … free-form text.
+    pub language: String,
+}
+
+/// Where a skill came from when it was imported from an external registry.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillSource {
+    pub registry: String,
+    pub url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub git_ref: Option<String>,
 }
 
 impl Distri {

@@ -313,17 +313,9 @@ pub async fn handle_skills_command(client: &Distri, command: SkillsCommands) -> 
                 println!("No skills found.");
             } else {
                 for skill in response.skills {
-                    let visibility = if skill.is_public { "public" } else { "private" };
-                    let stars = if skill.star_count > 0 {
-                        format!(" *{}", skill.star_count)
-                    } else {
-                        String::new()
-                    };
                     println!(
-                        "{} [{}]{} - {}",
+                        "{} - {}",
                         skill.name,
-                        visibility,
-                        stars,
                         skill.description.as_deref().unwrap_or("(no description)")
                     );
                 }
@@ -372,14 +364,9 @@ pub async fn handle_skills_command(client: &Distri, command: SkillsCommands) -> 
             for skill_path in skill_files {
                 let request = parse_skill_file(&skill_path).await?;
                 let result = client.upsert_skill(&request).await?;
-                let visibility = if result.is_public {
-                    "public"
-                } else {
-                    "private"
-                };
                 println!(
-                    "{}  Pushed skill '{}' [{}]{}",
-                    COLOR_BRIGHT_GREEN, result.name, visibility, COLOR_RESET
+                    "{}  Pushed skill '{}'{}",
+                    COLOR_BRIGHT_GREEN, result.name, COLOR_RESET
                 );
             }
         }
@@ -387,68 +374,153 @@ pub async fn handle_skills_command(client: &Distri, command: SkillsCommands) -> 
     Ok(())
 }
 
-/// TOML frontmatter for skill files.
-/// Uses the shared SkillFrontmatter from distri-types for consistency.
-type SkillFrontmatter = distri_types::stores::SkillFrontmatter;
-
-/// Parse a skill markdown file into a CreateSkillRequest.
+/// Parse a skill into a CreateSkillRequest.
 ///
-/// Format:
-/// ```text
-/// ---
-/// name = "my-skill"
-/// description = "A cool skill"
-/// tags = ["foo", "bar"]
-/// is_public = false
-/// ---
+/// Two layouts are supported:
 ///
-/// # My Skill
-/// ... content ...
+/// 1. Folder layout (agentskills.io spec — preferred):
+///    ```text
+///    skills/my-skill/
+///    ├── SKILL.md          # YAML frontmatter + body
+///    ├── scripts/          # any executable files
+///    │   ├── extract.py
+///    │   └── merge.sh
+///    ├── references/       # (warning: not yet uploaded)
+///    └── assets/           # (warning: not yet uploaded)
+///    ```
+/// 2. Single-file legacy layout: a `.md` file with YAML frontmatter, no
+///    bundled scripts.
 ///
-/// ## Scripts
-///
-/// ### script_name
-///
-/// Description of the script.
-///
-/// ```javascript
-/// // code here
-/// ```
-/// ```
+/// Frontmatter follows the agentskills.io spec
+/// (https://agentskills.io/specification): required `name` and `description`;
+/// optional `license`, `compatibility`, `metadata`, `allowed-tools`.
 pub async fn parse_skill_file(path: &Path) -> Result<CreateSkillRequest> {
+    if path.is_dir() {
+        return parse_skill_folder(path).await;
+    }
     let raw = fs::read_to_string(path)
         .await
         .with_context(|| format!("reading {}", path.display()))?;
+    let (fm, body) = parse_skill_markdown(&raw, path)?;
+    Ok(create_request(fm, body, vec![], None))
+}
 
-    // Split frontmatter and body
-    let (frontmatter_str, body) = if let Some(rest) = raw.strip_prefix("---") {
-        if let Some(end) = rest.find("---") {
-            let fm = &rest[..end];
-            let body = &rest[end + 3..];
-            (fm.trim(), body.trim_start_matches('\n').to_string())
-        } else {
-            anyhow::bail!(
-                "Invalid frontmatter in {}: missing closing ---",
-                path.display()
+async fn parse_skill_folder(dir: &Path) -> Result<CreateSkillRequest> {
+    let skill_md = dir.join("SKILL.md");
+    if !skill_md.is_file() {
+        anyhow::bail!(
+            "{}: agentskills.io layout requires SKILL.md at the skill root",
+            dir.display()
+        );
+    }
+    let raw = fs::read_to_string(&skill_md)
+        .await
+        .with_context(|| format!("reading {}", skill_md.display()))?;
+    let (fm, body) = parse_skill_markdown(&raw, &skill_md)?;
+
+    // Per the spec, `name` must equal the parent directory name.
+    let dir_name = dir
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or_default();
+    if fm.name != dir_name {
+        anyhow::bail!(
+            "{}: SKILL.md `name: {}` must equal parent directory name `{}`",
+            skill_md.display(),
+            fm.name,
+            dir_name
+        );
+    }
+
+    let scripts = collect_skill_scripts(&dir.join("scripts")).await?;
+    for opt in ["references", "assets"] {
+        if dir.join(opt).is_dir() {
+            eprintln!(
+                "  warning: {}/{} skipped (not yet supported by the backend)",
+                dir.display(),
+                opt
             );
         }
-    } else {
-        anyhow::bail!(
-            "Skill file {} must start with TOML frontmatter (---)",
-            path.display()
-        );
-    };
+    }
+    Ok(create_request(fm, body, scripts, None))
+}
 
-    let frontmatter: SkillFrontmatter = toml::from_str(frontmatter_str)
-        .with_context(|| format!("parsing frontmatter in {}", path.display()))?;
+fn parse_skill_markdown(
+    raw: &str,
+    src: &Path,
+) -> Result<(distri_types::stores::SkillFrontmatter, String)> {
+    let trimmed = raw.trim_start();
+    let rest = trimmed
+        .strip_prefix("---")
+        .ok_or_else(|| anyhow::anyhow!("{}: missing leading `---` frontmatter", src.display()))?;
+    let end = rest
+        .find("\n---")
+        .ok_or_else(|| anyhow::anyhow!("{}: missing closing `---`", src.display()))?;
+    let fm_str = &rest[..end];
+    let body = rest[end + 4..].trim_start_matches('\n').to_string();
+    let fm: distri_types::stores::SkillFrontmatter = serde_yaml::from_str(fm_str)
+        .with_context(|| format!("parsing YAML frontmatter in {}", src.display()))?;
+    Ok((fm, body))
+}
 
-    Ok(CreateSkillRequest {
-        name: frontmatter.name,
-        description: frontmatter.description,
+async fn collect_skill_scripts(scripts_dir: &Path) -> Result<Vec<distri::SkillScriptInput>> {
+    if !scripts_dir.is_dir() {
+        return Ok(vec![]);
+    }
+    let mut out = Vec::new();
+    let mut entries = fs::read_dir(scripts_dir).await?;
+    while let Some(entry) = entries.next_entry().await? {
+        let p = entry.path();
+        if !p.is_file() {
+            continue;
+        }
+        let name = p
+            .file_name()
+            .and_then(|s| s.to_str())
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+        if name.is_empty() || name.starts_with('.') {
+            continue;
+        }
+        let language = match p.extension().and_then(|s| s.to_str()) {
+            Some("py") => "python",
+            Some("js") | Some("mjs") | Some("cjs") => "javascript",
+            Some("ts") | Some("tsx") => "typescript",
+            Some("sh") | Some("bash") => "bash",
+            Some("rb") => "ruby",
+            Some("go") => "go",
+            Some(other) => other,
+            None => "text",
+        }
+        .to_string();
+        let code = fs::read_to_string(&p)
+            .await
+            .with_context(|| format!("reading {}", p.display()))?;
+        out.push(distri::SkillScriptInput {
+            name,
+            description: None,
+            code,
+            language,
+        });
+    }
+    Ok(out)
+}
+
+fn create_request(
+    fm: distri_types::stores::SkillFrontmatter,
+    body: String,
+    scripts: Vec<distri::SkillScriptInput>,
+    source: Option<distri::SkillSource>,
+) -> CreateSkillRequest {
+    let tags = fm.tags();
+    CreateSkillRequest {
+        name: fm.name,
+        description: fm.description,
         content: body,
-        tags: frontmatter.tags,
-        is_public: frontmatter.is_public,
-    })
+        tags,
+        scripts,
+        source,
+    }
 }
 
 pub async fn handle_connections_command(

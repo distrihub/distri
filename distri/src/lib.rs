@@ -25,10 +25,10 @@ pub use client::{
     ConnectResponse, ConnectionSummary, ConnectionToken, CreatePluginRequest, CreateSkillRequest,
     Distri, InvokeOptions, LlmExecuteOptions, LlmExecuteResponse, LoginUrlResponse,
     NewPromptTemplateRequest, NewSecretRequest, PluginResponse, PluginsListResponse,
-    PromptTemplateResponse, ProviderInfo, SecretEntry, SkillResponse, SyncPromptTemplatesResponse,
-    TaskNamespaceResponse, ThreadSummary, TraceSummary, TtsModelsResponse, TtsSpeechRequest,
-    TtsSpeechResponse, UpdatePluginRequest, UpdateSkillRequest, ValidatePluginResponse,
-    WorkspaceResponse,
+    PromptTemplateResponse, ProviderInfo, SecretEntry, SkillResponse, SkillScriptInput,
+    SkillSource, SyncPromptTemplatesResponse, TaskNamespaceResponse, ThreadSummary, TraceSummary,
+    TtsModelsResponse, TtsSpeechRequest, TtsSpeechResponse, UpdatePluginRequest, UpdateSkillRequest,
+    ValidatePluginResponse, WorkspaceResponse,
 };
 pub use client_app::{AppError, DistriClientApp, ToolListItem};
 pub use client_stream::{AgentStreamClient, StreamError, StreamItem, parse_sse_data};
