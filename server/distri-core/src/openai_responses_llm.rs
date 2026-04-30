@@ -244,15 +244,9 @@ impl OpenAIResponsesLLMExecutor {
                                             .unwrap_or_else(|_| "{}".to_string()),
                                     ),
                                     Part::File(file) => {
-                                        let name = match file {
-                                            FileType::Bytes { name, .. }
-                                            | FileType::Url { name, .. } => name.clone(),
-                                        };
-                                        let display =
-                                            name.unwrap_or_else(|| "<file>".to_string());
                                         text_parts.push(format!(
                                             "[File: {} ({})]",
-                                            display,
+                                            file.name().unwrap_or("<file>"),
                                             file.mime_type()
                                         ));
                                     }
@@ -343,11 +337,11 @@ impl OpenAIResponsesLLMExecutor {
                     if !output_text.is_empty() {
                         output_text.push('\n');
                     }
-                    let name = match file {
-                        FileType::Bytes { name, .. } | FileType::Url { name, .. } => name.clone(),
-                    };
-                    let display = name.unwrap_or_else(|| "<file>".to_string());
-                    output_text.push_str(&format!("[File: {} ({})]", display, file.mime_type()));
+                    output_text.push_str(&format!(
+                        "[File: {} ({})]",
+                        file.name().unwrap_or("<file>"),
+                        file.mime_type()
+                    ));
                 }
                 _ => {}
             }

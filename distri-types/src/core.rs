@@ -790,6 +790,13 @@ impl FileType {
             FileType::Bytes { mime_type, .. } | FileType::Url { mime_type, .. } => mime_type,
         }
     }
+
+    /// Borrow the optional display name regardless of variant.
+    pub fn name(&self) -> Option<&str> {
+        match self {
+            FileType::Bytes { name, .. } | FileType::Url { name, .. } => name.as_deref(),
+        }
+    }
 }
 
 /// Additional attributes for thread/task metadata.
