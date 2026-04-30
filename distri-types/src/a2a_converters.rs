@@ -77,16 +77,11 @@ impl TryFrom<Message> for crate::Message {
                     }
                 }
                 Part::File(f) => {
-                    let mime_type = f.mime_type();
-                    if let Some(mime_type) = mime_type {
-                        if mime_type.starts_with("image/") {
-                            let ft = file_object_to_filetype(f.file.clone());
-                            parts.push(crate::Part::Image(ft));
-                        } else {
-                            return Err(AgentError::UnsupportedFileType(mime_type.to_string()));
-                        }
+                    let ft = file_object_to_filetype(f.file.clone());
+                    if ft.mime_type().starts_with("image/") {
+                        parts.push(crate::Part::Image(ft));
                     } else {
-                        return Err(AgentError::UnsupportedFileType("unknown".to_string()));
+                        parts.push(crate::Part::File(ft));
                     }
                 }
             }
@@ -196,8 +191,11 @@ impl From<crate::Part> for Part {
                 file: filetype_to_fileobject(image),
                 metadata: None,
             }),
-
-            // handle all  the additional parts with a part_type
+            crate::Part::File(file) => Part::File(FilePart {
+                file: filetype_to_fileobject(file),
+                metadata: None,
+            }),
+            // handle all the additional parts with a part_type
             x => Part::Data(DataPart {
                 data: serde_json::to_value(x).unwrap(),
             }),
