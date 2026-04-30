@@ -22,7 +22,7 @@ use crate::{
     agent::{log::ModelLogger, AgentEventType, ExecutorContext},
     claude_client::{
         CacheControl, ClaudeClient, ClaudeContent, ClaudeMessage, ClaudeTool, ContentBlock,
-        CreateMessageRequest, ImageSource, MessageMetadata, ResponseContentBlock,
+        CreateMessageRequest, DocumentSource, ImageSource, MessageMetadata, ResponseContentBlock,
         StreamContentBlock, StreamDelta, StreamEvent, SystemBlock, SystemPrompt, ToolResultBlock,
         ToolResultContent,
     },
@@ -31,7 +31,7 @@ use crate::{
     AgentError,
 };
 use distri_parsers::{StreamParseResult, ToolCallParser};
-use distri_types::{LlmDefinition, ToolCallFormat};
+use distri_types::{FileType, LlmDefinition, ToolCallFormat};
 use futures::StreamExt;
 use serde_json::Value;
 use tracing::Instrument as _;
@@ -268,6 +268,7 @@ impl ClaudeLLMExecutor {
                         })
                     }
                 }),
+                Part::File(file) => Some(file_to_document_block(file)),
                 _ => None,
             })
             .collect();
@@ -348,6 +349,16 @@ impl ClaudeLLMExecutor {
                                     }
                                 }
                             }
+                        }
+                        Part::File(file) => {
+                            if !text_content.is_empty() {
+                                text_content.push('\n');
+                            }
+                            text_content.push_str(&format!(
+                                "[File: {} ({})]",
+                                file.name().unwrap_or("<file>"),
+                                file.mime_type()
+                            ));
                         }
                         Part::Data(data) => {
                             if !text_content.is_empty() {
@@ -1210,4 +1221,61 @@ fn get_secret_store(
         .orchestrator
         .as_ref()
         .and_then(|o| o.stores.secret_store.clone())
+}
+
+fn file_to_document_block(file: &FileType) -> ContentBlock {
+    let media_type = file.mime_type().to_string();
+    let source = match file {
+        FileType::Bytes { bytes, .. } => DocumentSource::Base64 {
+            media_type,
+            data: bytes.clone(),
+        },
+        FileType::Url { url, .. } => DocumentSource::Url { url: url.clone() },
+    };
+    ContentBlock::Document {
+        source,
+        cache_control: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn user_message_with_pdf_emits_document_block() {
+        let file = FileType::Bytes {
+            bytes: "JVBERi0xLjQK".to_string(),
+            mime_type: "application/pdf".to_string(),
+            name: None,
+        };
+        let block = file_to_document_block(&file);
+        match block {
+            ContentBlock::Document {
+                source: DocumentSource::Base64 { media_type, data },
+                ..
+            } => {
+                assert_eq!(media_type, "application/pdf");
+                assert_eq!(data, "JVBERi0xLjQK");
+            }
+            other => panic!("expected Document/Base64, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn user_message_with_pdf_url_emits_document_url_block() {
+        let file = FileType::Url {
+            url: "https://example.com/d.pdf".to_string(),
+            mime_type: "application/pdf".to_string(),
+            name: None,
+        };
+        let block = file_to_document_block(&file);
+        match block {
+            ContentBlock::Document {
+                source: DocumentSource::Url { url },
+                ..
+            } => assert_eq!(url, "https://example.com/d.pdf"),
+            other => panic!("expected Document/Url, got {:?}", other),
+        }
+    }
 }
