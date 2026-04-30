@@ -109,6 +109,8 @@ impl ExecutionResult {
                         mime_type
                     ),
                 },
+                // Minimal placeholder; richer rendering handled in later tasks.
+                Part::File(_) => "[File]".to_string(),
                 // Phase 6.2: Include artifact preview in observation
                 Part::Artifact(artifact) => {
                     let preview = artifact
@@ -209,6 +211,9 @@ impl ExecutionResult {
                 }
                 Part::Image(_) => {
                     Part::Text("[Image omitted from history to reduce context size]".to_string())
+                }
+                Part::File(_) => {
+                    Part::Text("[File omitted from history to reduce context size]".to_string())
                 }
                 Part::Artifact(artifact) => Part::Artifact(artifact.clone()),
             })
