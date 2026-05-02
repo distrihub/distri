@@ -511,6 +511,41 @@ impl OAuthHandler {
         auth_config: &AuthType,
         scopes: &[String],
     ) -> Result<String, AuthError> {
+        self.get_auth_url_inner(auth_entity, user_id, auth_config, scopes, None)
+            .await
+    }
+
+    /// Like [`get_auth_url`], but uses a caller-supplied provider instead of
+    /// resolving one from the provider registry. Used by per-connection
+    /// "bring your own keys" OAuth flows where the workspace admin has
+    /// supplied their own `client_id` / `client_secret` and the provider
+    /// instance is built ad-hoc on each call.
+    pub async fn get_auth_url_with_provider(
+        &self,
+        auth_entity: &str,
+        user_id: &str,
+        auth_config: &AuthType,
+        scopes: &[String],
+        provider_override: Arc<dyn AuthProvider>,
+    ) -> Result<String, AuthError> {
+        self.get_auth_url_inner(
+            auth_entity,
+            user_id,
+            auth_config,
+            scopes,
+            Some(provider_override),
+        )
+        .await
+    }
+
+    async fn get_auth_url_inner(
+        &self,
+        auth_entity: &str,
+        user_id: &str,
+        auth_config: &AuthType,
+        scopes: &[String],
+        provider_override: Option<Arc<dyn AuthProvider>>,
+    ) -> Result<String, AuthError> {
         tracing::debug!(
             "Getting auth URL for entity: {} user: {:?}",
             auth_entity,
@@ -555,8 +590,12 @@ impl OAuthHandler {
                 // Store the state
                 self.store.store_oauth2_state(state.clone()).await?;
 
-                // Get the appropriate provider using the auth_entity as provider name
-                let provider = self.get_provider(auth_entity).await?;
+                // Use the caller-supplied provider when present, else resolve
+                // from the registry by entity name.
+                let provider = match provider_override {
+                    Some(p) => p,
+                    None => self.get_provider(auth_entity).await?,
+                };
 
                 // Build the authorization URL
                 let mut auth_url = provider.build_auth_url(
@@ -584,6 +623,29 @@ impl OAuthHandler {
 
     /// Handle OAuth2 callback and exchange code for tokens
     pub async fn handle_callback(&self, code: &str, state: &str) -> Result<AuthSession, AuthError> {
+        self.handle_callback_inner(code, state, None).await
+    }
+
+    /// Like [`handle_callback`], but uses a caller-supplied provider for the
+    /// code exchange. Used for BYOK OAuth connections where the
+    /// `client_id` / `client_secret` are workspace-owned and the provider
+    /// instance is built ad-hoc.
+    pub async fn handle_callback_with_provider(
+        &self,
+        code: &str,
+        state: &str,
+        provider_override: Arc<dyn AuthProvider>,
+    ) -> Result<AuthSession, AuthError> {
+        self.handle_callback_inner(code, state, Some(provider_override))
+            .await
+    }
+
+    async fn handle_callback_inner(
+        &self,
+        code: &str,
+        state: &str,
+        provider_override: Option<Arc<dyn AuthProvider>>,
+    ) -> Result<AuthSession, AuthError> {
         tracing::debug!("Handling OAuth2 callback with state: {}", state);
 
         // Get and remove the state
@@ -618,8 +680,12 @@ impl OAuthHandler {
             ));
         };
 
-        // Get the appropriate provider
-        let provider = self.get_provider(&oauth2_state.provider_name).await?;
+        // Use the caller-supplied provider when present, else resolve from
+        // the registry by entity name.
+        let provider = match provider_override {
+            Some(p) => p,
+            None => self.get_provider(&oauth2_state.provider_name).await?,
+        };
 
         // Exchange the authorization code for tokens
         let redirect_uri = match &auth_config {
@@ -669,6 +735,30 @@ impl OAuthHandler {
         user_id: &str,
         auth_config: &AuthType,
     ) -> Result<AuthSession, AuthError> {
+        self.refresh_session_inner(auth_entity, user_id, auth_config, None)
+            .await
+    }
+
+    /// Like [`refresh_session`], but uses a caller-supplied provider for the
+    /// refresh request. Used for BYOK OAuth connections.
+    pub async fn refresh_session_with_provider(
+        &self,
+        auth_entity: &str,
+        user_id: &str,
+        auth_config: &AuthType,
+        provider_override: Arc<dyn AuthProvider>,
+    ) -> Result<AuthSession, AuthError> {
+        self.refresh_session_inner(auth_entity, user_id, auth_config, Some(provider_override))
+            .await
+    }
+
+    async fn refresh_session_inner(
+        &self,
+        auth_entity: &str,
+        user_id: &str,
+        auth_config: &AuthType,
+        provider_override: Option<Arc<dyn AuthProvider>>,
+    ) -> Result<AuthSession, AuthError> {
         tracing::debug!(
             "Refreshing session for entity: {} user: {:?}",
             auth_entity,
@@ -688,26 +778,20 @@ impl OAuthHandler {
             AuthError::TokenRefreshFailed("No refresh token available".to_string())
         })?;
 
+        let resolve_provider = || async {
+            match provider_override.clone() {
+                Some(p) => Ok(p),
+                None => self.get_provider(auth_entity).await,
+            }
+        };
+
         match auth_config {
             AuthType::OAuth2 {
                 flow_type: OAuth2FlowType::ClientCredentials,
                 ..
-            } => {
-                // For client credentials, get a new token instead of refreshing
-                let provider = self.get_provider(auth_entity).await?;
-                let new_session = provider.refresh_token(&refresh_token, auth_config).await?;
-
-                // Store the new session
-                self.store
-                    .store_session(auth_entity, user_id, new_session.clone())
-                    .await?;
-                Ok(new_session)
             }
-            auth_config @ AuthType::OAuth2 { .. } => {
-                // Get the appropriate provider
-                let provider = self.get_provider(auth_entity).await?;
-
-                // Refresh the token
+            | AuthType::OAuth2 { .. } => {
+                let provider = resolve_provider().await?;
                 let new_session = provider.refresh_token(&refresh_token, auth_config).await?;
 
                 // Store the new session
@@ -729,6 +813,30 @@ impl OAuthHandler {
         user_id: &str,
         auth_config: &AuthType,
     ) -> Result<Option<AuthSession>, AuthError> {
+        self.refresh_get_session_inner(auth_entity, user_id, auth_config, None)
+            .await
+    }
+
+    /// Like [`refresh_get_session`], but uses a caller-supplied provider for
+    /// the refresh request. Used for BYOK OAuth connections.
+    pub async fn refresh_get_session_with_provider(
+        &self,
+        auth_entity: &str,
+        user_id: &str,
+        auth_config: &AuthType,
+        provider_override: Arc<dyn AuthProvider>,
+    ) -> Result<Option<AuthSession>, AuthError> {
+        self.refresh_get_session_inner(auth_entity, user_id, auth_config, Some(provider_override))
+            .await
+    }
+
+    async fn refresh_get_session_inner(
+        &self,
+        auth_entity: &str,
+        user_id: &str,
+        auth_config: &AuthType,
+        provider_override: Option<Arc<dyn AuthProvider>>,
+    ) -> Result<Option<AuthSession>, AuthError> {
         match self.store.get_session(auth_entity, user_id).await? {
             Some(session) => {
                 if session.needs_refresh() {
@@ -738,7 +846,12 @@ impl OAuthHandler {
                         user_id
                     );
                     match self
-                        .refresh_session(auth_entity, user_id, auth_config)
+                        .refresh_session_inner(
+                            auth_entity,
+                            user_id,
+                            auth_config,
+                            provider_override,
+                        )
                         .await
                     {
                         Ok(refreshed_session) => {
