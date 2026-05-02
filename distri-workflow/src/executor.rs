@@ -277,8 +277,7 @@ impl<S: WorkflowStateStore, E: StepExecutor, K: EventSink> WorkflowRunner<S, E, 
                     })
                     .await;
 
-                let step_context =
-                    resolve::resolve_step_input(step.input.as_ref(), &run.context);
+                let step_context = resolve::resolve_step_input(step.input.as_ref(), &run.context);
                 let result = self.executor.execute(step, &step_context).await;
                 match result {
                     Ok(r) if r.status == StepStatus::Failed => {
@@ -393,9 +392,7 @@ impl<S: WorkflowStateStore, E: StepExecutor, K: EventSink> WorkflowRunner<S, E, 
         let run = self.store.load(workflow_id).await?.unwrap();
         if run.is_complete() {
             let mut w = run;
-            if w.is_stuck()
-                || w.step_runs.iter().any(|s| s.status == StepStatus::Blocked)
-            {
+            if w.is_stuck() || w.step_runs.iter().any(|s| s.status == StepStatus::Blocked) {
                 w.status = WorkflowStatus::Blocked;
             } else {
                 w.status = WorkflowStatus::Completed;
@@ -521,10 +518,7 @@ impl<S: WorkflowStateStore, E: StepExecutor, K: EventSink> WorkflowRunner<S, E, 
             .ok_or("Workflow not found")?;
 
         if run.status != WorkflowStatus::Paused {
-            return Err(format!(
-                "Workflow is not paused (status: {:?})",
-                run.status
-            ));
+            return Err(format!("Workflow is not paused (status: {:?})", run.status));
         }
 
         run.resume_step(step_id, input)?;

@@ -379,9 +379,7 @@ pub(crate) enum RegistryCommands {
         api_key: Option<String>,
     },
     /// Remove a registry by name.
-    Remove {
-        name: String,
-    },
+    Remove { name: String },
 }
 
 #[derive(Subcommand, Debug, Clone)]

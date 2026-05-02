@@ -39,7 +39,9 @@ pub async fn handle_push(client: &Distri, path: Option<PathBuf>, dry_run: bool) 
         match name {
             "agents" if root.is_dir() => return push_agents_dir(client, &root, dry_run).await,
             "skills" if root.is_dir() => return push_skills_dir(client, &root, dry_run).await,
-            "templates" if root.is_dir() => return push_templates_dir(client, &root, dry_run).await,
+            "templates" if root.is_dir() => {
+                return push_templates_dir(client, &root, dry_run).await
+            }
             _ => {}
         }
     }
@@ -124,9 +126,7 @@ async fn push_skills_dir(client: &Distri, dir: &Path, dry_run: bool) -> Result<(
         let p = entry.path();
         if p.is_dir() && is_skill_folder(&p) {
             push_skill_folder(client, &p, dry_run).await?;
-        } else if p.is_file()
-            && p.extension().and_then(|s| s.to_str()) == Some("md")
-        {
+        } else if p.is_file() && p.extension().and_then(|s| s.to_str()) == Some("md") {
             // Legacy single-file skill (pre-agentskills.io layout).
             push_skill_single_file(client, &p, dry_run).await?;
         }
@@ -354,11 +354,7 @@ async fn checkout_templates(client: &Distri, dir: &Path) -> Result<()> {
 pub async fn handle_search(query: String, registry: Option<String>) -> Result<()> {
     let cfg = RegistriesConfig::load_or_default()?;
     let to_search: Vec<&Registry> = match registry {
-        Some(name) => cfg
-            .registries
-            .iter()
-            .filter(|r| r.name == name)
-            .collect(),
+        Some(name) => cfg.registries.iter().filter(|r| r.name == name).collect(),
         None => cfg.registries.iter().collect(),
     };
     if to_search.is_empty() {
@@ -518,7 +514,9 @@ fn parse_registry_kind(s: &str) -> Result<RegistryKind> {
         "git" => Ok(RegistryKind::Git),
         "local" => Ok(RegistryKind::Local),
         "http" => Ok(RegistryKind::Http),
-        _ => anyhow::bail!("unknown registry kind '{}' (use skillsmp/github/git/local/http)", s),
+        _ => anyhow::bail!(
+            "unknown registry kind '{}' (use skillsmp/github/git/local/http)",
+            s
+        ),
     }
 }
-

@@ -419,10 +419,7 @@ async fn parse_skill_folder(dir: &Path) -> Result<CreateSkillRequest> {
     let (fm, body) = parse_skill_markdown(&raw, &skill_md)?;
 
     // Per the spec, `name` must equal the parent directory name.
-    let dir_name = dir
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or_default();
+    let dir_name = dir.file_name().and_then(|s| s.to_str()).unwrap_or_default();
     if fm.name != dir_name {
         anyhow::bail!(
             "{}: SKILL.md `name: {}` must equal parent directory name `{}`",

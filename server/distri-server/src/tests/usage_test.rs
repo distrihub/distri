@@ -65,9 +65,7 @@ mod tests {
         )
         .await;
 
-        let req = test::TestRequest::get()
-            .uri("/v1/usage/stats")
-            .to_request();
+        let req = test::TestRequest::get().uri("/v1/usage/stats").to_request();
         let resp = test::call_service(&app, req).await;
         assert_eq!(resp.status(), 200, "expected 200 got {}", resp.status());
 
@@ -86,13 +84,19 @@ mod tests {
         let totals = &body["totals"];
         assert_eq!(totals["messages"], 0);
         assert_eq!(
-            totals.get("input_tokens").or_else(|| totals.get("inputTokens"))
-                .and_then(|v| v.as_i64()).unwrap_or(0),
+            totals
+                .get("input_tokens")
+                .or_else(|| totals.get("inputTokens"))
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0),
             0
         );
         assert_eq!(
-            totals.get("total_tokens").or_else(|| totals.get("totalTokens"))
-                .and_then(|v| v.as_i64()).unwrap_or(0),
+            totals
+                .get("total_tokens")
+                .or_else(|| totals.get("totalTokens"))
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0),
             0
         );
 
@@ -149,10 +153,7 @@ mod tests {
         .await;
 
         let user_id = uuid::Uuid::new_v4();
-        let uri = format!(
-            "/v1/usage/stats?user_id={}&bucket=month",
-            user_id
-        );
+        let uri = format!("/v1/usage/stats?user_id={}&bucket=month", user_id);
         let req = test::TestRequest::get().uri(&uri).to_request();
         let resp = test::call_service(&app, req).await;
         // Should not 400 or 500 — cloud-only params are accepted.

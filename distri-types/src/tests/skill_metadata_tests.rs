@@ -25,7 +25,10 @@ fn skill_frontmatter_parse_full() {
     let fm: SkillFrontmatter = serde_yaml::from_str(yaml).unwrap();
     assert_eq!(fm.name, "web-search");
     assert_eq!(fm.license.as_deref(), Some("Apache-2.0"));
-    assert_eq!(fm.compatibility.as_deref(), Some("Designed for Claude Code"));
+    assert_eq!(
+        fm.compatibility.as_deref(),
+        Some("Designed for Claude Code")
+    );
     assert_eq!(fm.allowed_tools.as_deref(), Some("Bash(git:*) Read"));
     assert_eq!(fm.model(), Some("gpt-4.1"));
     assert_eq!(fm.max_tokens(), Some(3000));

@@ -1883,11 +1883,13 @@ dependencies = [
  "opentelemetry-otlp",
  "opentelemetry_sdk 0.28.0",
  "regex",
+ "serde_yaml",
  "tokio",
  "toml 0.9.12+spec-1.1.0",
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
+ "utoipa",
 ]
 
 [[package]]

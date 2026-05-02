@@ -16,7 +16,9 @@ use uuid::Uuid;
 /// `None` means no bucketing — all matching records are collapsed into a
 /// single row.  The postgres-specific helper (`pg_trunc`) lives in
 /// `distri-cloud` as a free function and is **not** part of this type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default, ToSchema, JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default, ToSchema, JsonSchema,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum Bucket {
     #[default]
