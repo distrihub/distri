@@ -4,9 +4,11 @@ pub mod context;
 pub mod openapi;
 pub mod routes;
 pub mod server;
-pub mod stores;
 
 pub mod ui_server;
+
+#[cfg(test)]
+mod stores;
 
 #[cfg(test)]
 mod tests;

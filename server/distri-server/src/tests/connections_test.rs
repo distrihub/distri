@@ -79,7 +79,6 @@ mod tests {
                         { "key": "TOKEN", "is_secret": true, "required": true }
                     ]
                 },
-                "skill_content": "# my-api\nDoes things.",
                 "secrets": { "TOKEN": "sk-test-123" }
             }))
             .to_request();
@@ -125,7 +124,6 @@ mod tests {
                     "type": "custom",
                     "fields": [{"key": "KEY", "is_secret": true, "required": true}]
                 },
-                "skill_content": "# list-test\n",
                 "secrets": { "KEY": "val" }
             }))
             .to_request();
@@ -170,7 +168,6 @@ mod tests {
                     "type": "custom",
                     "fields": [{"key": "KEY", "is_secret": true, "required": true}]
                 },
-                "skill_content": "# get-test\n",
                 "secrets": {}
             }))
             .to_request();
@@ -240,7 +237,6 @@ mod tests {
                     "type": "custom",
                     "fields": [{"key": "KEY", "is_secret": true, "required": true}]
                 },
-                "skill_content": "# original\n",
                 "secrets": {}
             }))
             .to_request();
@@ -288,7 +284,6 @@ mod tests {
                     "type": "custom",
                     "fields": [{"key": "KEY", "is_secret": true, "required": true}]
                 },
-                "skill_content": "# del-test\n",
                 "secrets": {}
             }))
             .to_request();
@@ -342,7 +337,6 @@ mod tests {
                     "type": "custom",
                     "fields": [{"key": "KEY", "is_secret": true, "required": true}]
                 },
-                "skill_content": "# long\n",
                 "secrets": {}
             }))
             .to_request();
@@ -372,7 +366,38 @@ mod tests {
                     "type": "custom",
                     "fields": []
                 },
-                "skill_content": "# empty\n",
+                "secrets": {}
+            }))
+            .to_request();
+        assert_eq!(test::call_service(&app, req).await.status(), 400);
+    }
+
+    // ── skill_content rejected ────────────────────────────────────────────
+
+    #[actix_web::test]
+    async fn test_create_connection_with_skill_content_returns_400() {
+        let orchestrator = make_orchestrator_with_conn_stores().await;
+        let server_config = ServerConfig::default();
+        let app = test::init_service(
+            App::new()
+                .app_data(web::Data::new(server_config))
+                .configure(|cfg| {
+                    cfg.app_data(web::Data::new(orchestrator))
+                        .service(web::scope("/v1").configure(crate::routes::distri));
+                }),
+        )
+        .await;
+
+        let req = test::TestRequest::post()
+            .uri("/v1/connections")
+            .set_json(json!({
+                "name": "with-skill",
+                "auth_scope": "workspace",
+                "auth_type": {
+                    "type": "custom",
+                    "fields": [{"key": "KEY", "is_secret": true, "required": true}]
+                },
+                "skill_content": "# with-skill\nDoes things.",
                 "secrets": {}
             }))
             .to_request();

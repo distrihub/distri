@@ -26,6 +26,7 @@ use utoipa::OpenApi;
         (name = "Sessions", description = "Key-value session storage"),
         (name = "Secrets", description = "Secret/API key management"),
         (name = "Skills", description = "Skill management"),
+        (name = "Connections", description = "Connection management (OAuth, custom credentials)"),
         (name = "Providers", description = "LLM provider configuration"),
         (name = "Models", description = "Available LLM models"),
         (name = "Prompt Templates", description = "Reusable prompt templates"),
@@ -97,6 +98,14 @@ use utoipa::OpenApi;
         crate::routes::prompt_templates::get_prompt_template,
         crate::routes::prompt_templates::update_prompt_template,
         crate::routes::prompt_templates::delete_prompt_template,
+        // Connections
+        crate::routes::connections::list_connections,
+        crate::routes::connections::get_connection,
+        crate::routes::connections::create_connection,
+        crate::routes::connections::update_connection,
+        crate::routes::connections::delete_connection,
+        crate::routes::connections::oauth_callback,
+        crate::routes::connections::get_token,
     ),
     components(schemas(
         // Route-level types
@@ -118,6 +127,14 @@ use utoipa::OpenApi;
         // Prompt template types
         crate::routes::prompt_templates::SyncPromptTemplatesRequest,
         crate::routes::prompt_templates::SyncPromptTemplatesResponse,
+        // Connection wire types
+        distri_types::api::connections::CreateConnectionRequest,
+        distri_types::api::connections::CreateConnectionResponse,
+        distri_types::api::connections::UpdateConnectionRequest,
+        distri_types::api::connections::OAuthCallbackRequest,
+        distri_types::api::connections::OAuthCallbackResponse,
+        distri_types::api::connections::TokenResponse,
+        distri_types::api::connections::ConnectionConfig,
     ))
 )]
 pub struct ServerApiDoc;

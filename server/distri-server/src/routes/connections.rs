@@ -9,14 +9,13 @@
 //! `None` the endpoint returns 503 — callers must wire an in-memory or
 //! SQLite-backed store before using these routes.
 
-use actix_web::{web, HttpResponse};
+use actix_web::{web, HttpRequest, HttpResponse};
 use distri_core::agent::AgentOrchestrator;
 use distri_types::api::connections::{
     ConnectionConfig, CreateConnectionRequest, CreateConnectionResponse, OAuthCallbackRequest,
     OAuthCallbackResponse, TokenResponse, UpdateConnectionRequest,
 };
 use distri_types::connections::{ConnectionStatus, ConnectionToken, NewConnection};
-use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::Arc;
@@ -30,7 +29,7 @@ pub struct DeleteConnectionResponse {
     pub connection_id: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct OAuthStateMapping {
     pub connection_id: String,
     pub provider: String,
@@ -87,6 +86,19 @@ pub fn configure_connection_routes(cfg: &mut web::ServiceConfig) {
 
 // ── GET /connections ──────────────────────────────────────────────────────
 
+#[utoipa::path(
+    get,
+    path = "/v1/connections",
+    tag = "Connections",
+    params(
+        ("include_skills" = bool, Query, description = "Include associated skill content in response"),
+    ),
+    responses(
+        (status = 200, description = "List of connections"),
+        (status = 503, description = "Connection store not configured"),
+        (status = 500, description = "Internal server error"),
+    )
+)]
 async fn list_connections(
     executor: web::Data<Arc<AgentOrchestrator>>,
     query: web::Query<ListConnectionsQuery>,
@@ -134,6 +146,18 @@ async fn list_connections(
 
 // ── GET /connections/{id} ─────────────────────────────────────────────────
 
+#[utoipa::path(
+    get,
+    path = "/v1/connections/{id}",
+    tag = "Connections",
+    params(("id" = String, Path, description = "Connection ID")),
+    responses(
+        (status = 200, description = "Connection retrieved"),
+        (status = 404, description = "Connection not found"),
+        (status = 503, description = "Connection store not configured"),
+        (status = 500, description = "Internal server error"),
+    )
+)]
 async fn get_connection(
     executor: web::Data<Arc<AgentOrchestrator>>,
     path: web::Path<String>,
@@ -156,7 +180,21 @@ async fn get_connection(
 
 // ── POST /connections ─────────────────────────────────────────────────────
 
+#[utoipa::path(
+    post,
+    path = "/v1/connections",
+    tag = "Connections",
+    request_body = CreateConnectionRequest,
+    responses(
+        (status = 200, description = "Connection created", body = CreateConnectionResponse),
+        (status = 400, description = "Validation error"),
+        (status = 403, description = "Forbidden auth type"),
+        (status = 503, description = "Connection store or OAuth not configured"),
+        (status = 500, description = "Internal server error"),
+    )
+)]
 async fn create_connection(
+    req: HttpRequest,
     executor: web::Data<Arc<AgentOrchestrator>>,
     payload: web::Json<CreateConnectionRequest>,
 ) -> HttpResponse {
@@ -170,8 +208,16 @@ async fn create_connection(
         auth_scope,
         auth_type,
         secrets,
-        skill_content: _skill_content,
+        skill_content,
     } = payload.into_inner();
+
+    // skill_content is not yet implemented for distri-server (single-tenant).
+    // TODO: implement skill upsert tied to the connection (Task 10 follow-up).
+    if skill_content.is_some() {
+        return HttpResponse::BadRequest().json(json!({
+            "error": "skill_content is not yet supported in distri-server"
+        }));
+    }
 
     // Name validation
     if name.is_empty() || name.len() > 64 {
@@ -295,12 +341,14 @@ async fn create_connection(
                             {
                                 tracing::warn!("Failed to store OAuth state mapping: {}", e);
                             } else {
-                                // Build a localhost setup_url for single-tenant.
-                                // state_param values from OAuth providers are already
-                                // URL-safe (hex/base64url), so no extra encoding needed.
+                                // Build the setup_url from the incoming request's host
+                                // so the URL works on any port or deployment.
+                                let conn_info = req.connection_info();
+                                let scheme = conn_info.scheme();
+                                let host = conn_info.host();
                                 setup_url = format!(
-                                    "http://localhost:7777/v1/connections/{}/oauth/setup?state={}",
-                                    connection.id, state_param
+                                    "{}://{}/v1/connections/{}/oauth/setup?state={}",
+                                    scheme, host, connection.id, state_param
                                 );
                             }
                         }
@@ -399,6 +447,20 @@ async fn create_connection(
 
 // ── PATCH /connections/{id} ───────────────────────────────────────────────
 
+#[utoipa::path(
+    patch,
+    path = "/v1/connections/{id}",
+    tag = "Connections",
+    params(("id" = String, Path, description = "Connection ID")),
+    request_body = UpdateConnectionRequest,
+    responses(
+        (status = 200, description = "Connection updated"),
+        (status = 400, description = "Validation error"),
+        (status = 404, description = "Connection not found"),
+        (status = 503, description = "Connection store not configured"),
+        (status = 500, description = "Internal server error"),
+    )
+)]
 async fn update_connection(
     executor: web::Data<Arc<AgentOrchestrator>>,
     path: web::Path<String>,
@@ -474,6 +536,19 @@ async fn update_connection(
 
 // ── DELETE /connections/{id} ──────────────────────────────────────────────
 
+#[utoipa::path(
+    delete,
+    path = "/v1/connections/{id}",
+    tag = "Connections",
+    params(("id" = String, Path, description = "Connection ID")),
+    responses(
+        (status = 200, description = "Connection deleted"),
+        (status = 403, description = "Cannot delete system connection"),
+        (status = 404, description = "Connection not found"),
+        (status = 503, description = "Connection store not configured"),
+        (status = 500, description = "Internal server error"),
+    )
+)]
 async fn delete_connection(
     executor: web::Data<Arc<AgentOrchestrator>>,
     path: web::Path<String>,
@@ -521,6 +596,17 @@ async fn delete_connection(
 
 // ── POST /connections/oauth/callback ──────────────────────────────────────
 
+#[utoipa::path(
+    post,
+    path = "/v1/connections/oauth/callback",
+    tag = "Connections",
+    request_body = OAuthCallbackRequest,
+    responses(
+        (status = 200, description = "OAuth callback processed", body = OAuthCallbackResponse),
+        (status = 400, description = "OAuth callback failed"),
+        (status = 503, description = "OAuth not configured"),
+    )
+)]
 async fn oauth_callback(
     executor: web::Data<Arc<AgentOrchestrator>>,
     payload: web::Json<OAuthCallbackRequest>,
@@ -592,6 +678,19 @@ async fn oauth_callback(
 
 // ── POST /connections/{id}/token ──────────────────────────────────────────
 
+#[utoipa::path(
+    post,
+    path = "/v1/connections/{id}/token",
+    tag = "Connections",
+    params(("id" = String, Path, description = "Connection ID")),
+    responses(
+        (status = 200, description = "Token retrieved", body = TokenResponse),
+        (status = 401, description = "Token expired and refresh failed"),
+        (status = 404, description = "Connection or token not found"),
+        (status = 503, description = "Connection store or token store not configured"),
+        (status = 500, description = "Internal server error"),
+    )
+)]
 async fn get_token(
     executor: web::Data<Arc<AgentOrchestrator>>,
     path: web::Path<String>,
@@ -670,11 +769,15 @@ async fn get_token(
         if let (Some(oauth_handler), Some(registry)) =
             (&executor.oauth_handler, &executor.stores.provider_registry)
         {
-            let auth_type = registry.get_auth_type(&connection.name).await;
+            // Use the provider name from auth_type, not connection.name which is the
+            // user-assigned label (e.g. "My Work Google Account").
+            // NOTE: cloud/src/handlers/connections.rs:936 has the same bug — fix in Task 10.
+            let provider = connection.auth_type.provider_name().to_string();
+            let auth_type = registry.get_auth_type(&provider).await;
             if let Some(at) = auth_type {
                 let oauth_user_id = connection.id.to_string();
                 match oauth_handler
-                    .refresh_get_session(&connection.name, &oauth_user_id, &at)
+                    .refresh_get_session(&provider, &oauth_user_id, &at)
                     .await
                 {
                     Ok(Some(refreshed)) => {
