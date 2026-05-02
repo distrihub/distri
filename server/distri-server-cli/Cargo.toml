@@ -40,6 +40,8 @@ tokio = { version = "1.0", features = ["full"] }
 regex = "1.5"
 toml = "0.9.5"
 dirs = "5.0"
+serde_yaml = "0.9"
+utoipa = { workspace = true }
 
 # Optional OTEL dependencies (enabled via `otel` feature)
 opentelemetry = { version = "0.28.0", optional = true }

@@ -22,4 +22,8 @@ pub struct Cli {
     /// Run headless (do not open the web UI automatically)
     #[clap(long, help = "Skip opening the web UI in your browser")]
     pub headless: bool,
+
+    /// Emit the OpenAPI spec to <PATH> as YAML and exit.
+    #[clap(long, help = "Write the OpenAPI spec to PATH as YAML and exit")]
+    pub emit_openapi: Option<std::path::PathBuf>,
 }

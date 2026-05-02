@@ -12,6 +12,17 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
 
+    // --emit-openapi: write spec to disk and exit without starting the server.
+    if let Some(path) = &cli.emit_openapi {
+        use distri_server::openapi::ServerApiDoc;
+        use utoipa::OpenApi;
+        let spec = ServerApiDoc::openapi();
+        let yaml = serde_yaml::to_string(&spec)?;
+        std::fs::write(path, yaml)?;
+        println!("Wrote OpenAPI spec to {}", path.display());
+        return Ok(());
+    }
+
     if cli.verbose {
         distri_core::logging::init_diesel_instrumentation();
     }
