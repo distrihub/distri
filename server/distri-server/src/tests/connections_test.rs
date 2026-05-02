@@ -403,31 +403,4 @@ mod tests {
             .to_request();
         assert_eq!(test::call_service(&app, req).await.status(), 400);
     }
-
-    // ── Store-not-configured path ─────────────────────────────────────────
-
-    #[actix_web::test]
-    async fn test_list_connections_without_store_returns_503() {
-        // Build orchestrator WITHOUT a connection store (the default)
-        let orchestrator = Arc::new(
-            AgentOrchestratorBuilder::default()
-                .with_store_config(test_store_config())
-                .build()
-                .await
-                .expect("orchestrator"),
-        );
-        let server_config = ServerConfig::default();
-        let app = test::init_service(
-            App::new()
-                .app_data(web::Data::new(server_config))
-                .configure(|cfg| {
-                    cfg.app_data(web::Data::new(orchestrator))
-                        .service(web::scope("/v1").configure(crate::routes::distri));
-                }),
-        )
-        .await;
-
-        let req = test::TestRequest::get().uri("/v1/connections").to_request();
-        assert_eq!(test::call_service(&app, req).await.status(), 503);
-    }
 }

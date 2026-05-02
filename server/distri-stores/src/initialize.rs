@@ -30,6 +30,8 @@ pub trait StoreFactory: Send + Sync {
     fn prompt_template_store(&self) -> Arc<dyn PromptTemplateStore>;
     fn secret_store(&self) -> Arc<dyn SecretStore>;
     fn skill_store(&self) -> Arc<dyn SkillStore>;
+    fn connection_store(&self) -> Arc<dyn ConnectionStore>;
+    fn connection_token_store(&self) -> Arc<dyn ConnectionTokenStore>;
 }
 
 impl<Conn> StoreFactory for DieselStoreBuilder<Conn>
@@ -80,6 +82,14 @@ where
 
     fn skill_store(&self) -> Arc<dyn SkillStore> {
         Arc::new(DieselStoreBuilder::skill_store(self)) as Arc<dyn SkillStore>
+    }
+
+    fn connection_store(&self) -> Arc<dyn ConnectionStore> {
+        Arc::new(DieselStoreBuilder::connection_store(self)) as Arc<dyn ConnectionStore>
+    }
+
+    fn connection_token_store(&self) -> Arc<dyn ConnectionTokenStore> {
+        Arc::new(DieselStoreBuilder::connection_token_store(self)) as Arc<dyn ConnectionTokenStore>
     }
 }
 
@@ -330,6 +340,9 @@ impl StoreBuilder {
             Arc::new(InMemoryExternalToolCallsStore::new()) as Arc<dyn ExternalToolCallsStore>
         });
 
+        let connection_store = Some(metadata_factory.connection_store());
+        let connection_token_store = Some(metadata_factory.connection_token_store());
+
         Ok(InitializedStores {
             session_store,
             agent_store,
@@ -343,8 +356,8 @@ impl StoreBuilder {
             prompt_template_store: Some(prompt_template_store),
             secret_store: Some(secret_store),
             skill_store,
-            connection_store: None,
-            connection_token_store: None,
+            connection_store,
+            connection_token_store,
             provider_registry: None,
         })
     }
