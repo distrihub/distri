@@ -1958,8 +1958,10 @@ dependencies = [
 name = "distri-workflow"
 version = "0.3.8"
 dependencies = [
+ "anyhow",
  "async-trait",
  "chrono",
+ "distri-types",
  "jsonschema 0.28.3",
  "serde",
  "serde_json",
