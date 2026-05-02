@@ -9,11 +9,14 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use distri_types::api::notes::{CreateNoteRequest, ListNotesQuery, NoteRecord, UpdateNoteRequest};
 use distri_types::api::spans::{SpanRecord, TraceRecord};
 use distri_types::connections::{
     AuthType, Connection, ConnectionStatus, ConnectionToken, NewConnection,
 };
-use distri_types::stores::{ConnectionStore, ConnectionTokenStore, SpanQuery, SpanStore};
+use distri_types::stores::{
+    ConnectionStore, ConnectionTokenStore, NoteStore, SpanQuery, SpanStore,
+};
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
@@ -318,5 +321,107 @@ impl SpanStore for InMemorySpanStore {
         records.truncate(limit as usize);
 
         Ok(records)
+    }
+}
+
+// ── In-memory NoteStore ───────────────────────────────────────────────────────
+
+/// In-process note store for OSS distri-server tests and dev mode.
+///
+/// Notes are stored in a `HashMap` keyed by UUID and are discarded on process
+/// exit.  Production deployments should use the SQLite-backed `DieselNoteStore`.
+pub struct InMemoryNoteStore {
+    notes: RwLock<HashMap<Uuid, NoteRecord>>,
+}
+
+impl InMemoryNoteStore {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self {
+            notes: RwLock::new(HashMap::new()),
+        })
+    }
+}
+
+impl Default for InMemoryNoteStore {
+    fn default() -> Self {
+        Self {
+            notes: RwLock::new(HashMap::new()),
+        }
+    }
+}
+
+#[async_trait]
+impl NoteStore for InMemoryNoteStore {
+    async fn list(&self, query: &ListNotesQuery) -> anyhow::Result<Vec<NoteRecord>> {
+        let map = self.notes.read().await;
+        let mut records: Vec<NoteRecord> = map.values().cloned().collect();
+
+        // Tag filter
+        if let Some(tag) = &query.tag {
+            records.retain(|n| n.tags.iter().any(|t| t == tag));
+        }
+
+        // Search filter
+        if let Some(search) = &query.search {
+            let lower = search.to_lowercase();
+            records.retain(|n| {
+                n.title.to_lowercase().contains(&lower) || n.content.to_lowercase().contains(&lower)
+            });
+        }
+
+        // Sort by updated_at descending
+        records.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        Ok(records)
+    }
+
+    async fn get(&self, id: Uuid) -> anyhow::Result<Option<NoteRecord>> {
+        Ok(self.notes.read().await.get(&id).cloned())
+    }
+
+    async fn create(&self, req: CreateNoteRequest) -> anyhow::Result<NoteRecord> {
+        let now = chrono::Utc::now();
+        let note = NoteRecord {
+            id: Uuid::new_v4(),
+            workspace_id: Uuid::nil(),
+            title: req.title,
+            content: req.content,
+            tags: req.tags,
+            created_by: None,
+            created_at: now,
+            updated_at: now,
+        };
+        self.notes.write().await.insert(note.id, note.clone());
+        Ok(note)
+    }
+
+    async fn update(&self, id: Uuid, req: UpdateNoteRequest) -> anyhow::Result<Option<NoteRecord>> {
+        let mut map = self.notes.write().await;
+        let note = match map.get_mut(&id) {
+            Some(n) => n,
+            None => return Ok(None),
+        };
+        if let Some(title) = req.title {
+            note.title = title;
+        }
+        if let Some(content) = req.content {
+            note.content = content;
+        }
+        if let Some(tags) = req.tags {
+            note.tags = tags;
+        }
+        note.updated_at = chrono::Utc::now();
+        Ok(Some(note.clone()))
+    }
+
+    async fn delete(&self, id: Uuid) -> anyhow::Result<bool> {
+        Ok(self.notes.write().await.remove(&id).is_some())
+    }
+
+    async fn search(&self, query: &str) -> anyhow::Result<Vec<NoteRecord>> {
+        self.list(&ListNotesQuery {
+            tag: None,
+            search: Some(query.to_string()),
+        })
+        .await
     }
 }

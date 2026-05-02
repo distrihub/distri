@@ -35,6 +35,7 @@ pub mod connections;
 mod files;
 mod llm_helpers;
 pub mod models;
+pub mod notes;
 pub mod prompt_templates;
 pub mod providers;
 pub mod secrets;
@@ -132,6 +133,8 @@ pub fn distri(cfg: &mut web::ServiceConfig) {
     .configure(models::configure_model_routes)
     // Connection management endpoints
     .configure(connections::configure_connection_routes)
+    // Notes CRUD endpoints
+    .configure(notes::configure_note_routes)
     // Spans / traces endpoints
     .configure(spans::configure_spans_routes)
     // Usage stats endpoint

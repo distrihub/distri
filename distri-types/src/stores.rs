@@ -73,6 +73,7 @@ pub struct InitializedStores {
     pub connection_token_store: Option<Arc<dyn ConnectionTokenStore>>,
     pub provider_registry: Option<Arc<dyn crate::auth::ProviderRegistry>>,
     pub span_store: Option<Arc<dyn SpanStore>>,
+    pub note_store: Option<Arc<dyn NoteStore>>,
 }
 impl InitializedStores {
     pub fn set_tool_auth_store(&mut self, tool_auth_store: Arc<dyn ToolAuthStore>) {
@@ -1367,6 +1368,43 @@ pub trait ConnectionTokenStore: Send + Sync + 'static {
     ) -> anyhow::Result<()>;
     async fn get_oauth_state(&self, state_key: &str) -> anyhow::Result<Option<serde_json::Value>>;
     async fn remove_oauth_state(&self, state_key: &str) -> anyhow::Result<()>;
+}
+
+// ========== Note Store ==========
+
+/// Persistence for workspace notes.
+///
+/// OSS: backed by SQLite via DieselNoteStore.
+/// Cloud: backed by Postgres via the existing NoteStore in distri-cloud.
+#[async_trait]
+pub trait NoteStore: Send + Sync + 'static {
+    /// List notes, optionally filtering by tag or full-text search.
+    async fn list(
+        &self,
+        query: &crate::api::notes::ListNotesQuery,
+    ) -> anyhow::Result<Vec<crate::api::notes::NoteRecord>>;
+
+    /// Fetch a single note by ID.
+    async fn get(&self, id: Uuid) -> anyhow::Result<Option<crate::api::notes::NoteRecord>>;
+
+    /// Create a new note.
+    async fn create(
+        &self,
+        req: crate::api::notes::CreateNoteRequest,
+    ) -> anyhow::Result<crate::api::notes::NoteRecord>;
+
+    /// Update an existing note; returns the updated record or `None` if not found.
+    async fn update(
+        &self,
+        id: Uuid,
+        req: crate::api::notes::UpdateNoteRequest,
+    ) -> anyhow::Result<Option<crate::api::notes::NoteRecord>>;
+
+    /// Delete a note. Returns `true` if the note existed and was deleted.
+    async fn delete(&self, id: Uuid) -> anyhow::Result<bool>;
+
+    /// Full-text search on title and content.
+    async fn search(&self, query: &str) -> anyhow::Result<Vec<crate::api::notes::NoteRecord>>;
 }
 
 // ========== Span Store ==========

@@ -31,6 +31,7 @@ use utoipa::OpenApi;
         (name = "Models", description = "Available LLM models"),
         (name = "Prompt Templates", description = "Reusable prompt templates"),
         (name = "Artifacts", description = "Task artifact storage"),
+        (name = "Notes", description = "Note CRUD"),
         (name = "Spans", description = "OTel span and trace read access"),
         (name = "Usage", description = "Usage stats aggregation"),
         (name = "Health", description = "Health checks"),
@@ -108,6 +109,12 @@ use utoipa::OpenApi;
         crate::routes::connections::delete_connection,
         crate::routes::connections::oauth_callback,
         crate::routes::connections::get_token,
+        // Notes
+        crate::routes::notes::list_notes,
+        crate::routes::notes::get_note,
+        crate::routes::notes::create_note,
+        crate::routes::notes::update_note,
+        crate::routes::notes::delete_note,
         // Spans / Traces
         crate::routes::spans::list_spans,
         crate::routes::spans::list_traces,
@@ -147,6 +154,12 @@ use utoipa::OpenApi;
         distri_types::api::spans::TraceRecord,
         distri_types::api::spans::SpansResponse,
         distri_types::api::spans::TracesResponse,
+        // Note wire types
+        distri_types::api::notes::NoteRecord,
+        distri_types::api::notes::CreateNoteRequest,
+        distri_types::api::notes::UpdateNoteRequest,
+        distri_types::api::notes::ListNotesQuery,
+        distri_types::api::notes::ListNotesResponse,
         // Usage wire types
         distri_types::api::usage::UsageStatsResponse,
         distri_types::api::usage::UsageTotals,

@@ -32,6 +32,7 @@ pub trait StoreFactory: Send + Sync {
     fn skill_store(&self) -> Arc<dyn SkillStore>;
     fn connection_store(&self) -> Arc<dyn ConnectionStore>;
     fn connection_token_store(&self) -> Arc<dyn ConnectionTokenStore>;
+    fn note_store(&self) -> Arc<dyn NoteStore>;
 }
 
 impl<Conn> StoreFactory for DieselStoreBuilder<Conn>
@@ -90,6 +91,10 @@ where
 
     fn connection_token_store(&self) -> Arc<dyn ConnectionTokenStore> {
         Arc::new(DieselStoreBuilder::connection_token_store(self)) as Arc<dyn ConnectionTokenStore>
+    }
+
+    fn note_store(&self) -> Arc<dyn NoteStore> {
+        Arc::new(DieselStoreBuilder::note_store(self)) as Arc<dyn NoteStore>
     }
 }
 
@@ -342,6 +347,7 @@ impl StoreBuilder {
 
         let connection_store = Some(metadata_factory.connection_store());
         let connection_token_store = Some(metadata_factory.connection_token_store());
+        let note_store = Some(metadata_factory.note_store());
 
         Ok(InitializedStores {
             session_store,
@@ -360,6 +366,7 @@ impl StoreBuilder {
             connection_token_store,
             provider_registry: None,
             span_store: None,
+            note_store,
         })
     }
 }
@@ -471,6 +478,7 @@ pub async fn create_ephemeral_execution_stores(
         connection_token_store: base_stores.connection_token_store.clone(),
         provider_registry: base_stores.provider_registry.clone(),
         span_store: base_stores.span_store.clone(),
+        note_store: base_stores.note_store.clone(),
     })
 }
 
@@ -517,5 +525,6 @@ pub async fn prepare_stores_for_execution(
         connection_token_store: base_stores.connection_token_store.clone(),
         provider_registry: base_stores.provider_registry.clone(),
         span_store: base_stores.span_store.clone(),
+        note_store: base_stores.note_store.clone(),
     })
 }

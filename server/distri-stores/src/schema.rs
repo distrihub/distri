@@ -309,6 +309,21 @@ diesel::table! {
     }
 }
 
+diesel::table! {
+    use diesel::sql_types::*;
+
+    notes (id) {
+        id -> Text,
+        workspace_id -> Text,
+        title -> Text,
+        content -> Text,
+        tags -> Text,           // JSON array
+        created_by -> Nullable<Text>,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+    }
+}
+
 diesel::allow_tables_to_appear_in_same_query!(
     agent_configs,
     threads,
@@ -331,4 +346,5 @@ diesel::allow_tables_to_appear_in_same_query!(
     connections,
     connection_tokens,
     connection_oauth_states,
+    notes,
 );

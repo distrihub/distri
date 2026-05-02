@@ -591,3 +591,40 @@ pub struct NewConnectionOAuthStateModel<'a> {
     pub state_json: &'a str,
     pub created_at: NaiveDateTime,
 }
+
+// ── Note models ────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Queryable, Identifiable, Selectable)]
+#[diesel(table_name = crate::schema::notes)]
+pub struct NoteModel {
+    pub id: String,
+    pub workspace_id: String,
+    pub title: String,
+    pub content: String,
+    pub tags: String, // JSON array
+    pub created_by: Option<String>,
+    pub created_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
+}
+
+#[derive(Debug, Clone, Insertable)]
+#[diesel(table_name = crate::schema::notes)]
+pub struct NewNoteModel<'a> {
+    pub id: &'a str,
+    pub workspace_id: &'a str,
+    pub title: &'a str,
+    pub content: &'a str,
+    pub tags: &'a str,
+    pub created_by: Option<&'a str>,
+    pub created_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
+}
+
+#[derive(Debug, Clone, AsChangeset)]
+#[diesel(table_name = crate::schema::notes)]
+pub struct NoteChangeset<'a> {
+    pub title: Option<&'a str>,
+    pub content: Option<&'a str>,
+    pub tags: Option<&'a str>,
+    pub updated_at: NaiveDateTime,
+}
