@@ -32,6 +32,7 @@ use utoipa::OpenApi;
         (name = "Prompt Templates", description = "Reusable prompt templates"),
         (name = "Artifacts", description = "Task artifact storage"),
         (name = "Spans", description = "OTel span and trace read access"),
+        (name = "Usage", description = "Usage stats aggregation"),
         (name = "Health", description = "Health checks"),
     ),
     paths(
@@ -110,6 +111,8 @@ use utoipa::OpenApi;
         // Spans / Traces
         crate::routes::spans::list_spans,
         crate::routes::spans::list_traces,
+        // Usage
+        crate::routes::usage::get_usage_stats,
     ),
     components(schemas(
         // Route-level types
@@ -144,6 +147,12 @@ use utoipa::OpenApi;
         distri_types::api::spans::TraceRecord,
         distri_types::api::spans::SpansResponse,
         distri_types::api::spans::TracesResponse,
+        // Usage wire types
+        distri_types::api::usage::UsageStatsResponse,
+        distri_types::api::usage::UsageTotals,
+        distri_types::api::usage::UsageBucket,
+        distri_types::api::usage::AppliedFilters,
+        distri_types::api::usage::Bucket,
     ))
 )]
 pub struct ServerApiDoc;

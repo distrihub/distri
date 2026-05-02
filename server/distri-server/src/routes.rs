@@ -42,6 +42,7 @@ pub mod session;
 pub mod skills;
 pub mod spans;
 pub mod tools;
+pub mod usage;
 
 pub fn all(cfg: &mut web::ServiceConfig) {
     cfg.configure(distri);
@@ -133,6 +134,8 @@ pub fn distri(cfg: &mut web::ServiceConfig) {
     .configure(connections::configure_connection_routes)
     // Spans / traces endpoints
     .configure(spans::configure_spans_routes)
+    // Usage stats endpoint
+    .configure(usage::configure_usage_routes)
     // Authentication endpoints
     .configure(auth_routes::configure_auth_routes);
 }
