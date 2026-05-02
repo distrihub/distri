@@ -108,8 +108,9 @@ async fn list_connections(
             .json(json!({"error": "Connection store not configured"}));
     };
 
-    // In single-tenant mode all connections are listed; no workspace filter.
-    match store.list_by_workspace("").await {
+    // In single-tenant mode all connections belong to the nil workspace UUID.
+    let nil_ws = uuid::Uuid::nil().to_string();
+    match store.list_by_workspace(&nil_ws).await {
         Ok(connections) => {
             if query.include_skills {
                 let Some(skill_store) = &executor.stores.skill_store else {
