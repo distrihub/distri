@@ -31,6 +31,7 @@ use utoipa::OpenApi;
         (name = "Models", description = "Available LLM models"),
         (name = "Prompt Templates", description = "Reusable prompt templates"),
         (name = "Artifacts", description = "Task artifact storage"),
+        (name = "Spans", description = "OTel span and trace read access"),
         (name = "Health", description = "Health checks"),
     ),
     paths(
@@ -106,6 +107,9 @@ use utoipa::OpenApi;
         crate::routes::connections::delete_connection,
         crate::routes::connections::oauth_callback,
         crate::routes::connections::get_token,
+        // Spans / Traces
+        crate::routes::spans::list_spans,
+        crate::routes::spans::list_traces,
     ),
     components(schemas(
         // Route-level types
@@ -135,6 +139,11 @@ use utoipa::OpenApi;
         distri_types::api::connections::OAuthCallbackResponse,
         distri_types::api::connections::TokenResponse,
         distri_types::api::connections::ConnectionConfig,
+        // Spans / Traces wire types
+        distri_types::api::spans::SpanRecord,
+        distri_types::api::spans::TraceRecord,
+        distri_types::api::spans::SpansResponse,
+        distri_types::api::spans::TracesResponse,
     ))
 )]
 pub struct ServerApiDoc;

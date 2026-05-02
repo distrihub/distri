@@ -40,6 +40,7 @@ pub mod providers;
 pub mod secrets;
 pub mod session;
 pub mod skills;
+pub mod spans;
 pub mod tools;
 
 pub fn all(cfg: &mut web::ServiceConfig) {
@@ -130,6 +131,8 @@ pub fn distri(cfg: &mut web::ServiceConfig) {
     .configure(models::configure_model_routes)
     // Connection management endpoints
     .configure(connections::configure_connection_routes)
+    // Spans / traces endpoints
+    .configure(spans::configure_spans_routes)
     // Authentication endpoints
     .configure(auth_routes::configure_auth_routes);
 }

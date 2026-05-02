@@ -72,6 +72,7 @@ pub struct InitializedStores {
     pub connection_store: Option<Arc<dyn ConnectionStore>>,
     pub connection_token_store: Option<Arc<dyn ConnectionTokenStore>>,
     pub provider_registry: Option<Arc<dyn crate::auth::ProviderRegistry>>,
+    pub span_store: Option<Arc<dyn SpanStore>>,
 }
 impl InitializedStores {
     pub fn set_tool_auth_store(&mut self, tool_auth_store: Arc<dyn ToolAuthStore>) {
@@ -929,7 +930,11 @@ pub struct SkillFrontmatter {
     #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
     pub metadata: std::collections::HashMap<String, String>,
     /// Maps to `allowed-tools` on the wire (per agentskills.io spec).
-    #[serde(default, rename = "allowed-tools", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        rename = "allowed-tools",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub allowed_tools: Option<String>,
 }
 
@@ -1362,6 +1367,40 @@ pub trait ConnectionTokenStore: Send + Sync + 'static {
     ) -> anyhow::Result<()>;
     async fn get_oauth_state(&self, state_key: &str) -> anyhow::Result<Option<serde_json::Value>>;
     async fn remove_oauth_state(&self, state_key: &str) -> anyhow::Result<()>;
+}
+
+// ========== Span Store ==========
+
+/// Query selector for listing spans.
+pub enum SpanQuery {
+    ByThreadId(String),
+    ByTraceId(String),
+}
+
+/// Persistence for OTel span records.
+///
+/// Cloud implements this on top of Postgres; distri-server ships an
+/// in-memory implementation that retains spans for the lifetime of the
+/// process.
+#[async_trait]
+pub trait SpanStore: Send + Sync + 'static {
+    /// Ingest a batch of spans (idempotent on trace_id + span_id).
+    async fn bulk_insert(&self, spans: Vec<crate::api::spans::SpanRecord>)
+    -> anyhow::Result<usize>;
+
+    /// Fetch all spans for a trace or thread, ordered by start_time_ns asc.
+    async fn list_spans(
+        &self,
+        workspace_id: &str,
+        query: SpanQuery,
+    ) -> anyhow::Result<Vec<crate::api::spans::SpanRecord>>;
+
+    /// Aggregate view: one row per trace (root span + per-trace stats).
+    async fn list_traces(
+        &self,
+        workspace_id: &str,
+        limit: i64,
+    ) -> anyhow::Result<Vec<crate::api::spans::TraceRecord>>;
 }
 
 #[cfg(test)]

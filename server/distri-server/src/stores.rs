@@ -9,10 +9,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use distri_types::api::spans::{SpanRecord, TraceRecord};
 use distri_types::connections::{
     AuthType, Connection, ConnectionStatus, ConnectionToken, NewConnection,
 };
-use distri_types::stores::{ConnectionStore, ConnectionTokenStore};
+use distri_types::stores::{ConnectionStore, ConnectionTokenStore, SpanQuery, SpanStore};
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
@@ -194,5 +195,128 @@ impl ConnectionTokenStore for InMemoryConnectionTokenStore {
     async fn remove_oauth_state(&self, state_key: &str) -> anyhow::Result<()> {
         self.oauth_states.write().await.remove(state_key);
         Ok(())
+    }
+}
+
+// ── In-memory SpanStore ───────────────────────────────────────────────────────
+
+/// In-process span store for OSS distri-server.
+///
+/// Retains all spans for the lifetime of the process (no persistence across
+/// restarts).  The distri CLI uses this to record OTel spans emitted during
+/// agent execution so that `distri traces` can display them locally.
+pub struct InMemorySpanStore {
+    spans: RwLock<Vec<SpanRecord>>,
+}
+
+impl InMemorySpanStore {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self {
+            spans: RwLock::new(Vec::new()),
+        })
+    }
+}
+
+impl Default for InMemorySpanStore {
+    fn default() -> Self {
+        Self {
+            spans: RwLock::new(Vec::new()),
+        }
+    }
+}
+
+#[async_trait]
+impl SpanStore for InMemorySpanStore {
+    async fn bulk_insert(&self, new_spans: Vec<SpanRecord>) -> anyhow::Result<usize> {
+        let mut store = self.spans.write().await;
+        let mut inserted = 0usize;
+        for span in new_spans {
+            // Idempotent: skip if (trace_id, span_id) already present
+            let exists = store
+                .iter()
+                .any(|s| s.trace_id == span.trace_id && s.span_id == span.span_id);
+            if !exists {
+                store.push(span);
+                inserted += 1;
+            }
+        }
+        Ok(inserted)
+    }
+
+    async fn list_spans(
+        &self,
+        _workspace_id: &str,
+        query: SpanQuery,
+    ) -> anyhow::Result<Vec<SpanRecord>> {
+        let store = self.spans.read().await;
+        let mut result: Vec<SpanRecord> = match query {
+            SpanQuery::ByThreadId(_) => {
+                // In-memory store doesn't track thread_id on span records (they
+                // come from the OTel exporter which doesn't carry thread context).
+                // Return empty to avoid surprising results.
+                vec![]
+            }
+            SpanQuery::ByTraceId(trace_id) => store
+                .iter()
+                .filter(|s| s.trace_id == trace_id)
+                .cloned()
+                .collect(),
+        };
+        result.sort_by_key(|s| s.start_time_ns);
+        Ok(result)
+    }
+
+    async fn list_traces(
+        &self,
+        _workspace_id: &str,
+        limit: i64,
+    ) -> anyhow::Result<Vec<TraceRecord>> {
+        let store = self.spans.read().await;
+
+        // Group spans by trace_id and find root spans (no parent_span_id)
+        let mut trace_map: HashMap<String, Vec<&SpanRecord>> = HashMap::new();
+        for span in store.iter() {
+            trace_map
+                .entry(span.trace_id.clone())
+                .or_default()
+                .push(span);
+        }
+
+        let mut records: Vec<TraceRecord> = trace_map
+            .into_iter()
+            .filter_map(|(trace_id, spans)| {
+                // Root span = no parent_span_id or empty parent_span_id
+                let root = spans.iter().find(|s| {
+                    s.parent_span_id
+                        .as_deref()
+                        .map(|p| p.is_empty())
+                        .unwrap_or(true)
+                })?;
+
+                let span_count = spans.len() as i64;
+                let start_time_ns = spans.iter().map(|s| s.start_time_ns).min()?;
+                let end_time_ns = spans.iter().map(|s| s.end_time_ns).max()?;
+
+                Some(TraceRecord {
+                    trace_id,
+                    name: root.name.clone(),
+                    start_time_ns,
+                    end_time_ns,
+                    span_count,
+                    thread_id: None,
+                    input_tokens: 0,
+                    total_cost: 0.0,
+                    step_count: 0,
+                    models: vec![],
+                    input_preview: None,
+                })
+            })
+            .collect();
+
+        // Sort by start_time_ns descending (most recent first)
+        records.sort_by(|a, b| b.start_time_ns.cmp(&a.start_time_ns));
+        records.truncate(limit as usize);
+
+        Ok(records)
     }
 }

@@ -359,6 +359,7 @@ impl StoreBuilder {
             connection_store,
             connection_token_store,
             provider_registry: None,
+            span_store: None,
         })
     }
 }
@@ -469,6 +470,7 @@ pub async fn create_ephemeral_execution_stores(
         connection_store: base_stores.connection_store.clone(),
         connection_token_store: base_stores.connection_token_store.clone(),
         provider_registry: base_stores.provider_registry.clone(),
+        span_store: base_stores.span_store.clone(),
     })
 }
 
@@ -514,5 +516,6 @@ pub async fn prepare_stores_for_execution(
         connection_store: base_stores.connection_store.clone(),
         connection_token_store: base_stores.connection_token_store.clone(),
         provider_registry: base_stores.provider_registry.clone(),
+        span_store: base_stores.span_store.clone(),
     })
 }
