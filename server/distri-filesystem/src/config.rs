@@ -89,6 +89,7 @@ impl ArtifactStorageConfig {
             Part::ToolCall(_) => false,
             Part::ToolResult(response) => response.parts.iter().any(|p| self.should_store(p)),
             Part::Image(_) => self.always_store_images,
+            Part::File(_) => false,
             Part::Artifact(_) => false,
         }
     }

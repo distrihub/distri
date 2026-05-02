@@ -292,6 +292,9 @@ impl ContextSizeManager {
                     // Images are roughly equivalent to ~170 tokens for vision models
                     total_tokens += 170;
                 }
+                crate::types::Part::File(_) => {
+                    total_tokens += 170;
+                }
                 crate::types::Part::Data(value) => {
                     let data_text = serde_json::to_string(value).unwrap_or_default();
                     let estimate = TokenEstimator::estimate_tokens(

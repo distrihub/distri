@@ -64,7 +64,7 @@ use async_openai::{
     Client,
 };
 use distri_parsers::{StreamParseResult, ToolCallParser};
-use distri_types::{LlmDefinition, ToolCallFormat};
+use distri_types::{FileType, LlmDefinition, ToolCallFormat};
 use futures::{Stream, StreamExt};
 use serde_json::{Map, Value};
 use tokio::sync::RwLock;
@@ -107,6 +107,48 @@ pub struct LLMExecutor {
 
 pub const MAX_RETRIES: i32 = 3;
 pub const DEFAULT_MODEL: &str = "gpt-4.1-mini";
+
+fn build_openai_file_part(
+    file: &FileType,
+) -> Option<async_openai::types::chat::ChatCompletionRequestUserMessageContentPart> {
+    use async_openai::types::chat::ChatCompletionRequestMessageContentPartFile;
+    let (file_data, filename) = match file {
+        FileType::Bytes { bytes, name, .. } => (Some(bytes.clone()), name.clone()),
+        FileType::Url { .. } => return None,
+    };
+
+    // FileObject has private fields with no Builder/setter in async-openai 0.32.x;
+    // construct it via JSON. Shape: { file_data?: String, file_id?: String, filename?: String }.
+    let mut obj = serde_json::Map::new();
+    if let Some(d) = file_data {
+        obj.insert("file_data".to_string(), serde_json::Value::String(d));
+    }
+    if let Some(n) = filename {
+        obj.insert("filename".to_string(), serde_json::Value::String(n));
+    }
+    let file_obj: async_openai::types::chat::FileObject =
+        serde_json::from_value(serde_json::Value::Object(obj))
+            .expect("hand-constructed FileObject JSON should always deserialize");
+
+    Some(
+        async_openai::types::chat::ChatCompletionRequestUserMessageContentPart::File(
+            ChatCompletionRequestMessageContentPartFile { file: file_obj },
+        ),
+    )
+}
+
+fn file_breadcrumb(file: &FileType) -> String {
+    let url_hint = match file {
+        FileType::Url { url, .. } => format!(" {}", url),
+        FileType::Bytes { .. } => String::new(),
+    };
+    format!(
+        "[File: {} ({}){}]",
+        file.name().unwrap_or("<file>"),
+        file.mime_type(),
+        url_hint
+    )
+}
 
 impl LLMExecutor {
     /// Static method to extract thoughts from content
@@ -1141,6 +1183,7 @@ impl LLMExecutor {
                     },
                 )
             }),
+            Part::File(file) => build_openai_file_part(file),
             _ => None,
         }
     }
@@ -1168,7 +1211,7 @@ impl LLMExecutor {
                             let parts: Vec<ChatCompletionRequestUserMessageContentPart> = m
                                 .parts
                                 .iter()
-                                .filter(|p| matches!(p, Part::Text(_) | Part::Image(_)))
+                                .filter(|p| matches!(p, Part::Text(_) | Part::Image(_) | Part::File(_)))
                                 .map(|p| self.map_part(p))
                                 .filter(|p| p.is_some())
                                 .map(|p| p.unwrap())
@@ -1275,6 +1318,15 @@ impl LLMExecutor {
                                                 text_content.push_str(&format!("[Artifact: {}] {}", artifact.file_id, artifact.summary()));
                                             }
                                         }
+                                        Part::File(file) => {
+                                            if !text_content.is_empty() {
+                                                text_content.push('\n');
+                                            }
+                                            text_content.push_str(&file_breadcrumb(file));
+                                            if let Some(part) = build_openai_file_part(file) {
+                                                image_parts.push(part);
+                                            }
+                                        }
                                         _ => {}
                                     }
                                 }
@@ -1357,6 +1409,17 @@ impl LLMExecutor {
                                             content_parts.push(ChatCompletionRequestUserMessageContentPart::Text(
                                                 ChatCompletionRequestMessageContentPartText { text },
                                             ));
+                                        }
+                                        Part::File(file) => {
+                                            if let Some(part) = build_openai_file_part(file) {
+                                                content_parts.push(part);
+                                            } else {
+                                                content_parts.push(ChatCompletionRequestUserMessageContentPart::Text(
+                                                    ChatCompletionRequestMessageContentPartText {
+                                                        text: file_breadcrumb(file),
+                                                    },
+                                                ));
+                                            }
                                         }
                                         _ => {}
                                     }
@@ -1694,5 +1757,60 @@ fn format_k(count: usize) -> String {
         format!("{:.1}k", count as f64 / 1000.0)
     } else {
         format!("{}", count)
+    }
+}
+
+#[cfg(test)]
+mod chat_file_tests {
+    use super::*;
+
+    #[test]
+    fn build_openai_file_part_emits_chat_file_for_bytes() {
+        let part = build_openai_file_part(&FileType::Bytes {
+            bytes: "JVBERi0xLjQK".to_string(),
+            mime_type: "application/pdf".to_string(),
+            name: Some("r.pdf".to_string()),
+        });
+        let part = part.expect("expected Some(File content part)");
+        let v = serde_json::to_value(&part).unwrap();
+        assert_eq!(v["type"], "file");
+        assert_eq!(v["file"]["file_data"], "JVBERi0xLjQK");
+        assert_eq!(v["file"]["filename"], "r.pdf");
+    }
+
+    #[test]
+    fn build_openai_file_part_returns_none_for_url() {
+        let part = build_openai_file_part(&FileType::Url {
+            url: "https://example.com/d.pdf".to_string(),
+            mime_type: "application/pdf".to_string(),
+            name: None,
+        });
+        assert!(
+            part.is_none(),
+            "URL files cannot be sent inline through Chat-Completions content"
+        );
+    }
+
+    #[test]
+    fn file_breadcrumb_includes_name_and_mime() {
+        let bc = file_breadcrumb(&FileType::Bytes {
+            bytes: "x".to_string(),
+            mime_type: "application/pdf".to_string(),
+            name: Some("r.pdf".to_string()),
+        });
+        assert!(bc.contains("r.pdf"), "breadcrumb missing name: {}", bc);
+        assert!(
+            bc.contains("application/pdf"),
+            "breadcrumb missing mime: {}",
+            bc
+        );
+
+        let bc2 = file_breadcrumb(&FileType::Url {
+            url: "https://example.com/d.pdf".to_string(),
+            mime_type: "application/pdf".to_string(),
+            name: None,
+        });
+        assert!(bc2.contains("application/pdf"));
+        assert!(bc2.contains("https://example.com/d.pdf"));
     }
 }

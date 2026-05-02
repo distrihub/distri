@@ -52,6 +52,11 @@ pub enum ContentBlock {
         #[serde(skip_serializing_if = "Option::is_none")]
         cache_control: Option<CacheControl>,
     },
+    Document {
+        source: DocumentSource,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
+    },
     #[serde(rename = "tool_use")]
     ToolUse {
         id: String,
@@ -89,6 +94,18 @@ pub struct ImageSource {
     pub source_type: String,
     pub media_type: String,
     pub data: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum DocumentSource {
+    Base64 {
+        media_type: String,
+        data: String,
+    },
+    Url {
+        url: String,
+    },
 }
 
 /// A message in the conversation
@@ -485,5 +502,40 @@ impl ClaudeClient {
         };
 
         Box::pin(stream)
+    }
+}
+
+#[cfg(test)]
+mod document_tests {
+    use super::*;
+
+    #[test]
+    fn document_block_base64_serializes_correctly() {
+        let block = ContentBlock::Document {
+            source: DocumentSource::Base64 {
+                media_type: "application/pdf".to_string(),
+                data: "JVBERi0xLjQK".to_string(),
+            },
+            cache_control: None,
+        };
+        let v = serde_json::to_value(&block).unwrap();
+        assert_eq!(v["type"], "document");
+        assert_eq!(v["source"]["type"], "base64");
+        assert_eq!(v["source"]["media_type"], "application/pdf");
+        assert_eq!(v["source"]["data"], "JVBERi0xLjQK");
+    }
+
+    #[test]
+    fn document_block_url_serializes_correctly() {
+        let block = ContentBlock::Document {
+            source: DocumentSource::Url {
+                url: "https://example.com/d.pdf".to_string(),
+            },
+            cache_control: None,
+        };
+        let v = serde_json::to_value(&block).unwrap();
+        assert_eq!(v["type"], "document");
+        assert_eq!(v["source"]["type"], "url");
+        assert_eq!(v["source"]["url"], "https://example.com/d.pdf");
     }
 }

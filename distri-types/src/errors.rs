@@ -28,8 +28,6 @@ pub enum AgentError {
     NotImplemented(String),
     #[error("Validation error: {0}")]
     Validation(String),
-    #[error("Unsupported file type: {0}")]
-    UnsupportedFileType(String),
     #[error("Halt: {0}")]
     Halt(String),
     #[error("Planning error: {0}")]

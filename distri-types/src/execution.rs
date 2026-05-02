@@ -109,6 +109,16 @@ impl ExecutionResult {
                         mime_type
                     ),
                 },
+                Part::File(file) => match file {
+                    FileType::Url { url, .. } => format!("[File: {}]", url),
+                    FileType::Bytes {
+                        name, mime_type, ..
+                    } => format!(
+                        "[File: {} ({})]",
+                        name.as_deref().unwrap_or("unnamed"),
+                        mime_type
+                    ),
+                },
                 // Phase 6.2: Include artifact preview in observation
                 Part::Artifact(artifact) => {
                     let preview = artifact
@@ -209,6 +219,9 @@ impl ExecutionResult {
                 }
                 Part::Image(_) => {
                     Part::Text("[Image omitted from history to reduce context size]".to_string())
+                }
+                Part::File(_) => {
+                    Part::Text("[File omitted from history to reduce context size]".to_string())
                 }
                 Part::Artifact(artifact) => Part::Artifact(artifact.clone()),
             })

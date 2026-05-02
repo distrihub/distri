@@ -19,7 +19,7 @@ use crate::{
     AgentError,
 };
 use distri_parsers::{StreamParseResult, ToolCallParser};
-use distri_types::{LlmDefinition, ModelProvider, ToolCallFormat};
+use distri_types::{FileType, LlmDefinition, ModelProvider, ToolCallFormat};
 use futures::StreamExt;
 use serde_json::Value;
 use tracing::Instrument as _;
@@ -243,6 +243,13 @@ impl OpenAIResponsesLLMExecutor {
                                         serde_json::to_string(data)
                                             .unwrap_or_else(|_| "{}".to_string()),
                                     ),
+                                    Part::File(file) => {
+                                        text_parts.push(format!(
+                                            "[File: {} ({})]",
+                                            file.name().unwrap_or("<file>"),
+                                            file.mime_type()
+                                        ));
+                                    }
                                     _ => {}
                                 }
                             }
@@ -281,6 +288,7 @@ impl OpenAIResponsesLLMExecutor {
                 Part::Image(file_type) => file_type
                     .as_image_url()
                     .map(|url| InputContentPart::InputImage { image_url: url }),
+                Part::File(file_type) => Some(file_type_to_input_file(file_type)),
                 _ => None,
             })
             .collect();
@@ -324,6 +332,16 @@ impl OpenAIResponsesLLMExecutor {
                             artifact.summary()
                         ));
                     }
+                }
+                Part::File(file) => {
+                    if !output_text.is_empty() {
+                        output_text.push('\n');
+                    }
+                    output_text.push_str(&format!(
+                        "[File: {} ({})]",
+                        file.name().unwrap_or("<file>"),
+                        file.mime_type()
+                    ));
                 }
                 _ => {}
             }
@@ -999,4 +1017,66 @@ fn get_secret_store(
         .orchestrator
         .as_ref()
         .and_then(|o| o.stores.secret_store.clone())
+}
+
+fn file_type_to_input_file(file: &FileType) -> InputContentPart {
+    match file {
+        FileType::Bytes { bytes, name, .. } => InputContentPart::InputFile {
+            file_data: Some(bytes.clone()),
+            file_url: None,
+            filename: name.clone(),
+        },
+        FileType::Url { url, name, .. } => InputContentPart::InputFile {
+            file_data: None,
+            file_url: Some(url.clone()),
+            filename: name.clone(),
+        },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn file_type_to_input_file_emits_data_for_bytes() {
+        let part = file_type_to_input_file(&FileType::Bytes {
+            bytes: "JVBERi0xLjQK".to_string(),
+            mime_type: "application/pdf".to_string(),
+            name: Some("r.pdf".to_string()),
+        });
+        match part {
+            InputContentPart::InputFile {
+                file_data,
+                file_url,
+                filename,
+            } => {
+                assert_eq!(file_data.as_deref(), Some("JVBERi0xLjQK"));
+                assert!(file_url.is_none());
+                assert_eq!(filename.as_deref(), Some("r.pdf"));
+            }
+            other => panic!("expected InputFile, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn file_type_to_input_file_emits_url_for_url() {
+        let part = file_type_to_input_file(&FileType::Url {
+            url: "https://example.com/d.pdf".to_string(),
+            mime_type: "application/pdf".to_string(),
+            name: None,
+        });
+        match part {
+            InputContentPart::InputFile {
+                file_data,
+                file_url,
+                filename,
+            } => {
+                assert!(file_data.is_none());
+                assert_eq!(file_url.as_deref(), Some("https://example.com/d.pdf"));
+                assert!(filename.is_none());
+            }
+            other => panic!("expected InputFile, got {:?}", other),
+        }
+    }
 }

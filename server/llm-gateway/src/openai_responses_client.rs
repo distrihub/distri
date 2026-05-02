@@ -46,6 +46,15 @@ pub enum InputContentPart {
     InputText { text: String },
     #[serde(rename = "input_image")]
     InputImage { image_url: String },
+    #[serde(rename = "input_file")]
+    InputFile {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        file_data: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        file_url: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        filename: Option<String>,
+    },
     #[serde(rename = "output_text")]
     OutputText { text: String },
 }
@@ -517,5 +526,38 @@ fn parse_typed_event(event_type: &str, data: &str) -> Option<Result<TypedStreamE
         _ => Some(Ok(TypedStreamEvent::Unknown {
             event_type: event_type.to_string(),
         })),
+    }
+}
+
+#[cfg(test)]
+mod input_file_tests {
+    use super::*;
+
+    #[test]
+    fn input_file_with_data_serializes_correctly() {
+        let part = InputContentPart::InputFile {
+            file_data: Some("JVBERi0xLjQK".to_string()),
+            file_url: None,
+            filename: Some("doc.pdf".to_string()),
+        };
+        let v = serde_json::to_value(&part).unwrap();
+        assert_eq!(v["type"], "input_file");
+        assert_eq!(v["file_data"], "JVBERi0xLjQK");
+        assert_eq!(v["filename"], "doc.pdf");
+        assert!(v.get("file_url").is_none(), "file_url should be skipped when None");
+    }
+
+    #[test]
+    fn input_file_with_url_serializes_correctly() {
+        let part = InputContentPart::InputFile {
+            file_data: None,
+            file_url: Some("https://example.com/d.pdf".to_string()),
+            filename: None,
+        };
+        let v = serde_json::to_value(&part).unwrap();
+        assert_eq!(v["type"], "input_file");
+        assert_eq!(v["file_url"], "https://example.com/d.pdf");
+        assert!(v.get("file_data").is_none());
+        assert!(v.get("filename").is_none());
     }
 }

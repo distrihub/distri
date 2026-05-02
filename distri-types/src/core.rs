@@ -142,6 +142,7 @@ pub enum Part {
     ToolCall(ToolCall),
     ToolResult(ToolResponse),
     Image(FileType),
+    File(FileType),
     Data(Value),
     /// Artifact stored in filesystem - reference + metadata for large content
     Artifact(FileMetadata),
@@ -154,6 +155,7 @@ impl Part {
             Part::ToolCall(_) => "tool_call".to_string(),
             Part::ToolResult(_) => "tool_result".to_string(),
             Part::Image(_) => "image".to_string(),
+            Part::File(_) => "file".to_string(),
             Part::Data(_) => "data".to_string(),
             Part::Artifact(_) => "artifact".to_string(),
         }
@@ -779,6 +781,20 @@ impl FileType {
             FileType::Bytes {
                 bytes, mime_type, ..
             } => Some(format!("data:{};base64,{}", mime_type, bytes)),
+        }
+    }
+
+    /// Borrow the MIME type regardless of variant.
+    pub fn mime_type(&self) -> &str {
+        match self {
+            FileType::Bytes { mime_type, .. } | FileType::Url { mime_type, .. } => mime_type,
+        }
+    }
+
+    /// Borrow the optional display name regardless of variant.
+    pub fn name(&self) -> Option<&str> {
+        match self {
+            FileType::Bytes { name, .. } | FileType::Url { name, .. } => name.as_deref(),
         }
     }
 }
