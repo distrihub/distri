@@ -29,7 +29,6 @@ mod tests {
                 description: Some("A test skill".to_string()),
                 content: "# Test\nDoes things.".to_string(),
                 tags: vec!["test".to_string()],
-                is_public: false,
 
                 model: Some("claude-sonnet-4-6".to_string()),
                 context: ContextExecutionType::Inline,
@@ -51,7 +50,6 @@ mod tests {
                 description: None,
                 content: "content".to_string(),
                 tags: vec![],
-                is_public: false,
 
                 model: None,
                 context: ContextExecutionType::default(),
@@ -74,7 +72,6 @@ mod tests {
                 description: Some("Runs in isolation".to_string()),
                 content: "# Fork skill\nDo deep work.".to_string(),
                 tags: vec!["fork".to_string()],
-                is_public: false,
 
                 model: Some("claude-opus-4-6".to_string()),
                 context: ContextExecutionType::Fork,
@@ -106,7 +103,6 @@ mod tests {
                 description: None,
                 content: "content".to_string(),
                 tags: vec![],
-                is_public: false,
 
                 model: None,
                 context: ContextExecutionType::Inline,
@@ -124,7 +120,7 @@ mod tests {
                     description: None,
                     content: None,
                     tags: None,
-                    is_public: None,
+
                     model: Some("gpt-4.1".to_string()),
                     context: Some(ContextExecutionType::Fork),
                 },
@@ -146,7 +142,6 @@ mod tests {
                 description: None,
                 content: "content".to_string(),
                 tags: vec![],
-                is_public: false,
 
                 model: None,
                 context: ContextExecutionType::Fork,
@@ -163,7 +158,7 @@ mod tests {
                     description: None,
                     content: None,
                     tags: None,
-                    is_public: None,
+
                     model: Some("claude-haiku-4-5".to_string()),
                     context: None, // not changing context
                 },

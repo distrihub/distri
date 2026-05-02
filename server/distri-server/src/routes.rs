@@ -31,6 +31,7 @@ use crate::auth_routes;
 use crate::context::UserContext;
 
 pub mod artifacts;
+pub mod connections;
 mod files;
 mod llm_helpers;
 pub mod models;
@@ -127,6 +128,8 @@ pub fn distri(cfg: &mut web::ServiceConfig) {
     .configure(providers::configure_provider_routes)
     .configure(skills::configure_skill_routes)
     .configure(models::configure_model_routes)
+    // Connection management endpoints
+    .configure(connections::configure_connection_routes)
     // Authentication endpoints
     .configure(auth_routes::configure_auth_routes);
 }
@@ -1575,8 +1578,7 @@ async fn create_agent(
                 }));
             }
             for factory in &tools.dynamic {
-                if let Err(e) =
-                    distri_core::tools::dynamic_factory::validate_dynamic_tool(factory)
+                if let Err(e) = distri_core::tools::dynamic_factory::validate_dynamic_tool(factory)
                 {
                     return HttpResponse::BadRequest().json(json!({ "error": e.to_string() }));
                 }

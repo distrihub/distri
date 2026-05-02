@@ -10,6 +10,7 @@ use crate::{
 
 use super::ExecutorContext;
 use crate::agent::hooks::inline::InlineHook;
+use distri_auth::OAuthHandler;
 use distri_filesystem::FileSystem;
 use distri_stores::{initialize_stores, InitializedStores};
 pub use distri_stores::{AgentStore, ThreadStore};
@@ -53,6 +54,9 @@ pub struct AgentOrchestrator {
     /// Unified runtime for event broadcasting + task coordination.
     /// Always initialized — InProcessRuntime by default, RedisRuntime for cloud.
     pub runtime: Arc<dyn crate::broadcast::AgentRuntime>,
+    /// Optional OAuth handler for the connections OAuth flow.
+    /// Present only when OAuth provider credentials have been configured.
+    pub oauth_handler: Option<Arc<OAuthHandler>>,
 }
 
 impl std::fmt::Debug for AgentOrchestrator {
@@ -96,6 +100,7 @@ pub struct AgentOrchestratorBuilder {
     system_hooks: Vec<Arc<dyn crate::agent::types::AgentHooks>>,
     runtime: Option<Arc<dyn crate::broadcast::AgentRuntime>>,
     background_runner: Option<Arc<dyn crate::runner::BackgroundRunner>>,
+    oauth_handler: Option<Arc<OAuthHandler>>,
 }
 
 impl AgentOrchestratorBuilder {
@@ -196,6 +201,14 @@ impl AgentOrchestratorBuilder {
         self
     }
 
+    /// Attach an OAuth handler for the connections OAuth flow.
+    /// When set, `POST /connections` with OAuth auth_type will generate a real
+    /// authorization URL and `POST /connections/oauth/callback` will exchange codes.
+    pub fn with_oauth_handler(mut self, handler: Arc<OAuthHandler>) -> Self {
+        self.oauth_handler = Some(handler);
+        self
+    }
+
     pub async fn build(self) -> anyhow::Result<AgentOrchestrator> {
         let browser_config = self.browser_config.unwrap_or_default();
 
@@ -271,6 +284,7 @@ impl AgentOrchestratorBuilder {
             hook_registry: HookRegistry::new(),
             runtime,
             background_runner: self.background_runner,
+            oauth_handler: self.oauth_handler,
         };
 
         // Sync system prompts to the store
