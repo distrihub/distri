@@ -26,10 +26,6 @@ impl Platform {
         format!("distri-server-{version}-{}-{}.tar.gz", self.os, self.arch)
     }
 
-    pub fn cli_artifact(&self, version: &str) -> String {
-        format!("distri-cli-{version}-{}-{}.tar.gz", self.os, self.arch)
-    }
-
     pub fn ui_artifact(version: &str) -> String {
         format!("distri-ui-{version}.tar.gz")
     }
@@ -50,7 +46,6 @@ mod tests {
     fn artifact_name_format() {
         let p = Platform { os: "darwin", arch: "arm64" };
         assert_eq!(p.server_artifact("0.5.3"), "distri-server-0.5.3-darwin-arm64.tar.gz");
-        assert_eq!(p.cli_artifact("0.5.3"), "distri-cli-0.5.3-darwin-arm64.tar.gz");
         assert_eq!(Platform::ui_artifact("0.5.7"), "distri-ui-0.5.7.tar.gz");
     }
 }

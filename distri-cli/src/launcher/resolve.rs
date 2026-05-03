@@ -61,7 +61,6 @@ async fn resolve_artifact(
     // 3. Locate matching asset + sha256 sidecar.
     let want_asset = match stream {
         Stream::Server => plat.server_artifact(&pick.0.to_string()),
-        Stream::Cli => plat.cli_artifact(&pick.0.to_string()),
         Stream::Ui => Platform::ui_artifact(&pick.0.to_string()),
     };
     let want_sha = format!("{want_asset}.sha256");
@@ -113,7 +112,7 @@ async fn resolve_artifact(
 
     // 5. Download + verify + extract into the cache layout.
     let dest = match stream {
-        Stream::Server | Stream::Cli => manifest::distri_home()?.join("bin"),
+        Stream::Server => manifest::distri_home()?.join("bin"),
         Stream::Ui => manifest::distri_home()?
             .join("ui")
             .join(pick.0.to_string()),
@@ -134,15 +133,6 @@ async fn resolve_artifact(
                 dest.join("distri-server")
             }
         }
-        Stream::Cli => {
-            let bin_name = format!("distri-cli-{}-{}-{}", pick.0, plat.os, plat.arch);
-            let candidate = dest.join(&bin_name);
-            if candidate.exists() {
-                candidate
-            } else {
-                dest.join("distri")
-            }
-        }
         Stream::Ui => dest.clone(),
     };
 
@@ -153,7 +143,7 @@ async fn resolve_artifact(
         path: path.clone(),
     };
     match stream {
-        Stream::Server | Stream::Cli => mf.server = Some(rec),
+        Stream::Server => mf.server = Some(rec),
         Stream::Ui => mf.ui = Some(rec),
     }
     manifest::write(&mf)?;
@@ -163,7 +153,7 @@ async fn resolve_artifact(
 
 fn current_record(mf: &Manifest, stream: Stream) -> Option<&EntryRecord> {
     match stream {
-        Stream::Server | Stream::Cli => mf.server.as_ref(),
+        Stream::Server => mf.server.as_ref(),
         Stream::Ui => mf.ui.as_ref(),
     }
 }
@@ -210,7 +200,6 @@ mod tests {
                 .map(|(n, u)| GhAsset {
                     name: n.into(),
                     browser_download_url: u.into(),
-                    size: 0,
                 })
                 .collect(),
         }
