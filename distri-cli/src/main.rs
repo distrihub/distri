@@ -240,6 +240,19 @@ enum Commands {
         #[clap(long)]
         no_browser: bool,
     },
+
+    /// Pull the latest distri-server and UI within the compat range.
+    Update {
+        /// Allow pre-release versions.
+        #[arg(long)]
+        pre: bool,
+    },
+
+    /// Print installed distri-cli, distri-server, and distri-ui versions.
+    Version,
+
+    /// Wipe ~/.distri/{bin,ui,cache}.
+    Uninstall,
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -861,6 +874,15 @@ async fn main() -> Result<()> {
         }
         Commands::Optimize { command } => {
             traces::handle_optimize_command(&client, command).await?;
+        }
+        Commands::Update { pre } => {
+            commands::update::run(pre).await?;
+        }
+        Commands::Version => {
+            commands::version::run()?;
+        }
+        Commands::Uninstall => {
+            commands::uninstall::run()?;
         }
         Commands::Serve { .. } => unreachable!("serve handled earlier"),
     }

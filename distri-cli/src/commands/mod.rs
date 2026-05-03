@@ -1,3 +1,7 @@
+pub mod uninstall;
+pub mod update;
+pub mod version;
+
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
