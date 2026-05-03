@@ -57,6 +57,41 @@ $Env:Path += ";$Env:LOCALAPPDATA\distri"
 
 ---
 
+## Run
+
+Once installed, start the server and web UI:
+
+```bash
+distri serve
+```
+
+The first run downloads the matching `distri-server` binary and UI bundle from
+[github.com/distrihub/distri/releases](https://github.com/distrihub/distri/releases)
+into `~/.distri/`. Opens your browser automatically to `http://localhost:7777`.
+
+### Serve options
+
+| Flag | Behavior |
+|------|----------|
+| `distri serve` | Default: resolve+spawn distri-server, serve the UI, open browser |
+| `--port 8080` | Override port (default 7777) |
+| `--no-ui` | API-only mode (no web interface) |
+| `--no-browser` | Don't auto-open the browser |
+| `--server-version 0.5.3` | Pin a specific server version |
+| `--ui-version 0.5.7` | Pin a specific UI version |
+
+### Lifecycle commands
+
+| Command | Behavior |
+|---------|----------|
+| `distri serve` | Resolve+spawn distri-server, serve the UI |
+| `distri update` | Pull the latest server + UI within the compat range |
+| `distri update --pre` | Allow pre-release versions |
+| `distri version` | Print installed CLI / server / UI versions |
+| `distri uninstall` | Wipe `~/.distri/{bin, ui, cache}` |
+
+---
+
 ## Quick Start
 
 ### Run a built-in agent
@@ -220,6 +255,19 @@ See the [DistriJS docs](https://distri.dev/docs/guides/client/guide-distri-provi
 
 ## CLI Reference
 
+### Server & UI
+
+```bash
+distri serve                        # Start server + UI on port 7777
+distri serve --port 8080            # Custom port
+distri serve --no-ui                # API-only
+distri update                       # Pull latest server + UI
+distri version                      # Show versions
+distri uninstall                    # Clean ~/.distri/
+```
+
+### Agent & skill management
+
 ```bash
 distri                              # Interactive TUI
 distri run --task "..." [--agent A] # Run a task
@@ -227,14 +275,22 @@ distri run --task "..." --remote    # Run in sandboxed container
 
 distri agents list / push / delete  # Manage agents
 distri skills list [-a] / push      # Manage skills
+```
+
+### Debugging & tools
+
+```bash
 distri traces list / show ID [-v]   # Debug with trace viewer
 distri tools list / invoke          # Inspect and test tools
+```
 
+### Connections & config
+
+```bash
 distri connections list / token     # OAuth connections
 distri secrets list / set / delete  # Manage secrets
 distri workflows run / push         # DAG workflows
 
-distri serve --port 8080            # Start API server
 distri login                        # Auth with Distri Cloud
 distri profile list / use / config  # Multi-profile management
 ```
