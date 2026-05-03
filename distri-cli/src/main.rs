@@ -9,6 +9,7 @@ use tokio::fs;
 mod chat;
 mod commands;
 mod launcher;
+mod manifest;
 mod config;
 mod credentials;
 mod input;
