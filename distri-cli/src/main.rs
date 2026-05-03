@@ -221,11 +221,24 @@ enum Commands {
     Serve {
         #[clap(long)]
         host: Option<String>,
-        #[clap(long)]
-        port: Option<u16>,
+        /// Port distri-server listens on.
+        #[clap(long, default_value_t = 7777)]
+        port: u16,
         /// Run headless (do not open the web UI automatically)
         #[clap(long, help = "Skip opening the web UI in your browser")]
         headless: bool,
+        /// Don't resolve or serve the UI bundle.
+        #[clap(long)]
+        no_ui: bool,
+        /// Pin a specific distri-server version (e.g. 0.3.8).
+        #[clap(long)]
+        server_version: Option<String>,
+        /// Pin a specific UI bundle version (e.g. 0.3.8).
+        #[clap(long)]
+        ui_version: Option<String>,
+        /// Don't open the browser after launch.
+        #[clap(long)]
+        no_browser: bool,
     },
 }
 
@@ -529,9 +542,23 @@ async fn main() -> Result<()> {
         host,
         port,
         headless,
+        no_ui,
+        server_version,
+        ui_version,
+        no_browser,
     } = &command
     {
-        run_distri_server(&cli, host.clone(), *port, *headless)?;
+        run_distri_server(
+            &cli,
+            host.clone(),
+            *port,
+            *headless,
+            *no_ui,
+            server_version.clone(),
+            ui_version.clone(),
+            *no_browser,
+        )
+        .await?;
         return Ok(());
     }
 
@@ -845,50 +872,89 @@ fn parse_cli_with_default_serve() -> Cli {
     Cli::parse()
 }
 
-fn run_distri_server(
+async fn run_distri_server(
     cli: &Cli,
     host: Option<String>,
-    port: Option<u16>,
+    port: u16,
     headless: bool,
+    no_ui: bool,
+    server_version: Option<String>,
+    ui_version: Option<String>,
+    no_browser: bool,
 ) -> Result<()> {
-    let mut cmd = Command::new(resolve_distri_server_binary());
+    // Resolve the server binary via the launcher (downloads if needed).
+    let server_opts = launcher::resolve::ResolveOpts {
+        pinned_version: server_version
+            .as_deref()
+            .map(semver::Version::parse)
+            .transpose()
+            .context("invalid --server-version")?,
+        allow_pre: false,
+        force_refresh: false,
+    };
+    let http = reqwest::Client::new();
+    eprintln!("Resolving distri-server binary...");
+    let server_bin = launcher::resolve::resolve_server(&http, &server_opts)
+        .await
+        .context("resolving distri-server")?;
+    eprintln!("Using distri-server: {}", server_bin.display());
 
-    if let Some(config) = &cli.config {
-        cmd.arg("--config").arg(config);
-    }
+    // Optionally resolve the UI bundle.
+    let ui_path = if no_ui {
+        None
+    } else {
+        let ui_opts = launcher::resolve::ResolveOpts {
+            pinned_version: ui_version
+                .as_deref()
+                .map(semver::Version::parse)
+                .transpose()
+                .context("invalid --ui-version")?,
+            allow_pre: false,
+            force_refresh: false,
+        };
+        eprintln!("Resolving UI bundle...");
+        match launcher::resolve::resolve_ui(&http, &ui_opts).await {
+            Ok(p) => {
+                eprintln!("Using UI bundle: {}", p.display());
+                Some(p)
+            }
+            Err(e) => {
+                eprintln!("Warning: could not resolve UI bundle ({e}); continuing without UI");
+                None
+            }
+        }
+    };
+
+    let mut cmd = Command::new(&server_bin);
+
     if cli.verbose {
         cmd.arg("--verbose");
     }
-    cmd.arg("serve");
-
     if let Some(host) = host {
         cmd.arg("--host").arg(host);
     }
-    if let Some(port) = port {
-        cmd.arg("--port").arg(port.to_string());
-    }
+    cmd.arg("--port").arg(port.to_string());
     if headless {
         cmd.arg("--headless");
     }
+    if let Some(ref p) = ui_path {
+        cmd.arg("--ui-dist").arg(p);
+    }
 
+    // Open browser before blocking on the child process.
+    if !no_browser && !headless {
+        let url = format!("http://localhost:{}/ui/", port);
+        eprintln!("Opening browser at {url}");
+        let _ = open::that(&url);
+    }
+
+    eprintln!("Starting distri-server: {}", server_bin.display());
     let status = cmd.status().with_context(|| "starting distri-server")?;
     if !status.success() {
         anyhow::bail!("distri-server exited with {}", status);
     }
 
     Ok(())
-}
-
-fn resolve_distri_server_binary() -> PathBuf {
-    if let Ok(mut path) = std::env::current_exe() {
-        let exe_name = format!("distri-server{}", std::env::consts::EXE_SUFFIX);
-        path.set_file_name(exe_name);
-        if path.exists() {
-            return path;
-        }
-    }
-
-    PathBuf::from(format!("distri-server{}", std::env::consts::EXE_SUFFIX))
 }
 
 /// Parse `--overrides` JSON into dynamic tool factories.

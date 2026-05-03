@@ -1676,6 +1676,7 @@ dependencies = [
  "glob",
  "hex",
  "inquire",
+ "open",
  "openssl",
  "regex",
  "reqwest 0.12.28",

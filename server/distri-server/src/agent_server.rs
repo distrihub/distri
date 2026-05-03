@@ -55,6 +55,7 @@ impl DistriAgentServer {
         host: Option<String>,
         port: Option<u16>,
         verbose: bool,
+        ui_dist: Option<std::path::PathBuf>,
     ) -> Result<()> {
         let service_name = self.service_name.clone();
 
@@ -69,8 +70,9 @@ impl DistriAgentServer {
         let ui_available = true;
         #[cfg(not(feature = "ui"))]
         let ui_available = {
-            let ui_path = "distri-server/static/ui";
-            std::path::Path::new(ui_path).exists()
+            // Prefer explicit --ui-dist path, then legacy hardcoded location.
+            let legacy_path = "distri-server/static/ui";
+            ui_dist.as_deref().map(|p| p.exists()).unwrap_or_else(|| std::path::Path::new(legacy_path).exists())
         };
 
         tracing::info!("🌐 Server ready! Access these endpoints:");
@@ -157,12 +159,21 @@ impl DistriAgentServer {
 
             #[cfg(not(feature = "ui"))]
             {
-                let ui_path = "distri-server/static/ui";
-                if std::path::Path::new(ui_path).exists() {
+                // Prefer explicit --ui-dist path, then legacy hardcoded location.
+                let legacy = std::path::PathBuf::from("distri-server/static/ui");
+                let resolved_ui: Option<std::path::PathBuf> = ui_dist
+                    .clone()
+                    .filter(|p| p.exists())
+                    .or_else(|| if legacy.exists() { Some(legacy) } else { None });
+
+                if let Some(ui_path) = resolved_ui {
+                    let assets_path = ui_path.join("assets");
+                    let logo_path = ui_path.join("distri-logo.svg");
+                    let index_path = ui_path.join("index.html");
                     app = app
                         // Serve static UI files under /ui
                         .service(
-                            Files::new("/ui", ui_path)
+                            Files::new("/ui", &ui_path)
                                 .index_file("index.html")
                                 .use_last_modified(true)
                                 .use_etag(true)
@@ -170,12 +181,18 @@ impl DistriAgentServer {
                         )
                         // Also serve assets at root level for absolute paths in HTML
                         .service(
-                            Files::new("/assets", format!("{}/assets", ui_path))
+                            Files::new("/assets", assets_path)
                                 .use_last_modified(true)
                                 .use_etag(true),
                         )
                         // Serve favicon/logo at root if it exists
-                        .route("/distri-logo.svg", web::get().to(serve_logo))
+                        .route(
+                            "/distri-logo.svg",
+                            web::get().to(move || {
+                                let logo_path = logo_path.clone();
+                                async move { serve_logo_from(logo_path).await }
+                            }),
+                        )
                         // Redirect /ui to /ui/ for proper routing
                         .route(
                             "/ui",
@@ -186,7 +203,13 @@ impl DistriAgentServer {
                             }),
                         )
                         // For SPA routing - serve index.html for any unmatched /ui/* routes
-                        .route("/ui/{path:.*}", web::get().to(serve_ui_fallback));
+                        .route(
+                            "/ui/{path:.*}",
+                            web::get().to(move || {
+                                let index_path = index_path.clone();
+                                async move { serve_ui_fallback_from(index_path).await }
+                            }),
+                        );
                 }
             }
 
@@ -210,26 +233,22 @@ async fn default_health_check(service_name: &str) -> ActixResult<HttpResponse> {
 
 /// Fallback handler for SPA routing - serves index.html for unmatched UI routes
 #[cfg(not(feature = "ui"))]
-async fn serve_ui_fallback() -> ActixResult<HttpResponse> {
-    let index_path = "distri-server/static/ui/index.html";
-
-    match std::fs::read_to_string(index_path) {
+async fn serve_ui_fallback_from(index_path: std::path::PathBuf) -> ActixResult<HttpResponse> {
+    match std::fs::read_to_string(&index_path) {
         Ok(content) => Ok(HttpResponse::Ok()
             .content_type("text/html; charset=utf-8")
             .body(content)),
         Err(_) => Ok(HttpResponse::NotFound().json(json!({
             "error": "UI not available",
-            "message": "Run './download_ui.sh' to download the UI files"
+            "message": "Run 'distri serve' to download the UI files"
         }))),
     }
 }
 
 /// Serve logo/favicon from UI directory
 #[cfg(not(feature = "ui"))]
-async fn serve_logo() -> ActixResult<HttpResponse> {
-    let logo_path = "distri-server/static/ui/distri-logo.svg";
-
-    match std::fs::read(logo_path) {
+async fn serve_logo_from(logo_path: std::path::PathBuf) -> ActixResult<HttpResponse> {
+    match std::fs::read(&logo_path) {
         Ok(content) => Ok(HttpResponse::Ok()
             .content_type("image/svg+xml")
             .body(content)),

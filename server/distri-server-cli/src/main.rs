@@ -50,6 +50,7 @@ async fn main() -> Result<()> {
             Some(cli.host),
             Some(cli.port),
             cli.verbose,
+            cli.ui_dist,
         )
         .await
 }
