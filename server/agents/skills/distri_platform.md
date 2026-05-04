@@ -44,9 +44,26 @@ Use the `distri_request` tool to manage platform resources. Input: `{path, metho
 |--------|------|-------------|
 | `GET` | `/connections` | List connected services |
 | `GET` | `/connections/providers` | List available OAuth providers |
-| `POST` | `/connections` | Initiate OAuth — body: `{ auth_type: "oauth", auth: { provider, scopes } }` |
+| `POST` | `/connections` | Create a connection (`custom` or `oauth`) |
 | `POST` | `/connections/{id}/token` | Get fresh access token |
 | `DELETE` | `/connections/{id}` | Disconnect |
+
+#### `POST /connections` (OSS schema)
+
+Use this payload shape exactly:
+
+- `name`: string
+- `auth_scope`: string (`"workspace"` for OSS)
+- `auth_type`: object
+  - Custom auth: `{ "type":"custom", "fields":[{ key, label?, is_secret, required }] }`
+  - OAuth auth: `{ "type":"oauth", "provider":"...", "scopes":[...] }`
+- `secrets`: object map (`{ field_key: value }`) for custom connections
+- `skill_content`: optional string (currently unsupported on OSS; omit unless requested)
+
+Do **not** send legacy shapes like:
+- `type: "rest"`
+- `config: { ... }`
+- `auth_scope` as an array
 
 To make authenticated API calls to connected services, use the `http_request` tool with `x-connection-id` header. Best for short text/JSON API responses — for large responses or binary data, use a browsr shell session instead.
 
@@ -75,4 +92,27 @@ Variables (`$VAR_NAME`) in url, headers, and body are auto-resolved from workspa
 
 // Connect Google
 { "path": "/connections", "method": "POST", "body": { "auth_type": "oauth", "auth": { "provider": "google", "scopes": ["drive", "spreadsheets"] } } }
+
+// Create custom/basic-style connection
+{
+  "path": "/connections",
+  "method": "POST",
+  "body": {
+    "name": "basketnews api",
+    "auth_scope": "workspace",
+    "auth_type": {
+      "type": "custom",
+      "fields": [
+        { "key": "base_url", "label": "Base URL", "is_secret": false, "required": true },
+        { "key": "username", "label": "Username", "is_secret": false, "required": true },
+        { "key": "password", "label": "Password", "is_secret": true, "required": true }
+      ]
+    },
+    "secrets": {
+      "base_url": "https://basketnews.lt/api.php",
+      "username": "fantasy",
+      "password": "<password>"
+    }
+  }
+}
 ```
