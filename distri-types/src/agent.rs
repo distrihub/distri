@@ -424,15 +424,15 @@ pub struct StandardDefinition {
     /// The name of the agent.
     pub name: String,
     /// A brief description of the agent's purpose.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub description: String,
 
-    /// The version of the agent.
-    #[serde(default = "default_agent_version")]
+    /// The version of the agent. Runtime falls back to `default_agent_version()`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
 
     /// Instructions for the agent - serves as an introduction defining what the agent is and does.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub instructions: String,
 
     /// Settings related to the model used by the agent.
@@ -443,14 +443,14 @@ pub struct StandardDefinition {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub analysis_model_settings: Option<ModelSettings>,
 
-    /// The size of the history to maintain for the agent.
-    #[serde(default = "default_history_size")]
+    /// The size of the history to maintain for the agent. Runtime falls back to `default_history_size()`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub history_size: Option<usize>,
     /// The new strategy configuration for the agent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub strategy: Option<AgentStrategy>,
     /// A2A-specific fields
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icon_url: Option<String>,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -473,15 +473,15 @@ pub struct StandardDefinition {
     pub connections: Vec<crate::connections::ConnectionRequirement>,
 
     /// List of sub-agents that this agent can transfer control to
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sub_agents: Vec<String>,
 
     /// Tool calling configuration
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_default_tool_format")]
     pub tool_format: ToolCallFormat,
 
     /// How tools are delivered to the LLM (all upfront vs on-demand search)
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_default_tool_delivery_mode")]
     pub tool_delivery_mode: ToolDeliveryMode,
 
     /// Tools configuration for this agent
@@ -604,6 +604,12 @@ fn default_compaction_enabled() -> bool {
 }
 fn is_true(v: &bool) -> bool {
     *v
+}
+fn is_default_tool_format(v: &ToolCallFormat) -> bool {
+    *v == ToolCallFormat::default()
+}
+fn is_default_tool_delivery_mode(v: &ToolDeliveryMode) -> bool {
+    *v == ToolDeliveryMode::default()
 }
 impl StandardDefinition {
     /// The set of runtimes this agent is allowed to run in.
@@ -1510,10 +1516,6 @@ fn is_default_api_format(f: &OpenAiApiFormat) -> bool {
     *f == OpenAiApiFormat::Auto
 }
 
-fn default_history_size() -> Option<usize> {
-    Some(5)
-}
-
 impl StandardDefinition {
     pub fn validate(&self) -> anyhow::Result<()> {
         // Basic validation - can be expanded
@@ -1800,6 +1802,53 @@ mod tests {
         };
         let json = serde_json::to_string(&settings).unwrap();
         assert!(!json.contains("max_tokens"));
+    }
+
+    #[test]
+    fn sparse_definition_round_trip_does_not_inject_defaults() {
+        // A user authors a minimal agent with only `name`. Parsing then
+        // re-serializing must not bake in `version`, `history_size`,
+        // `description`, `tool_format`, `tool_delivery_mode`, `sub_agents`,
+        // or `icon_url` — those are runtime-resolved defaults, not
+        // user-provided values.
+        let toml_in = r#"name = "minimal""#;
+        let def: StandardDefinition = toml::from_str(toml_in).unwrap();
+        let toml_out = toml::to_string(&def).unwrap();
+
+        for field in [
+            "version",
+            "history_size",
+            "description",
+            "tool_format",
+            "tool_delivery_mode",
+            "sub_agents",
+            "icon_url",
+        ] {
+            assert!(
+                !toml_out.contains(field),
+                "round-trip injected `{field}` into sparse definition:\n{toml_out}"
+            );
+        }
+    }
+
+    #[test]
+    fn explicit_values_survive_round_trip() {
+        // Conversely, fields the user *does* set must round-trip intact.
+        let toml_in = r#"
+name = "explicit"
+description = "a real description"
+version = "1.2.3"
+history_size = 7
+sub_agents = ["helper"]
+tool_format = "json_l"
+"#;
+        let def: StandardDefinition = toml::from_str(toml_in).unwrap();
+        let toml_out = toml::to_string(&def).unwrap();
+        assert!(toml_out.contains("description = \"a real description\""));
+        assert!(toml_out.contains("version = \"1.2.3\""));
+        assert!(toml_out.contains("history_size = 7"));
+        assert!(toml_out.contains("sub_agents = [\"helper\"]"));
+        assert!(toml_out.contains("tool_format = \"json_l\""));
     }
 
     #[test]

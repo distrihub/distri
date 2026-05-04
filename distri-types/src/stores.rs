@@ -1447,13 +1447,15 @@ mod tests {
 
     #[test]
     fn test_skills_list_response_deserialize_cloud_format() {
+        // Tolerates legacy marketplace fields (is_public, star_count, etc.)
+        // in the wire format — they're ignored, not deserialized.
         let json = r#"{"skills":[{"id":"abc","workspace_slug":"ws","name":"test","full_name":"ws/test","description":"desc","tags":["t"],"is_public":true,"is_system":false,"is_owner":true,"star_count":0,"clone_count":0,"is_starred":false,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}]}"#;
         let resp: SkillsListResponse = serde_json::from_str(json).unwrap();
         assert_eq!(resp.skills.len(), 1);
         assert_eq!(resp.skills[0].name, "test");
         assert_eq!(resp.skills[0].workspace_slug, "ws");
         assert_eq!(resp.skills[0].full_name, "ws/test");
-        assert!(resp.skills[0].is_public);
+        assert!(resp.skills[0].is_owner);
     }
 
     #[test]
@@ -1462,8 +1464,8 @@ mod tests {
         let resp: SkillsListResponse = serde_json::from_str(json).unwrap();
         assert_eq!(resp.skills[0].workspace_slug, "");
         assert_eq!(resp.skills[0].full_name, "");
-        assert!(!resp.skills[0].is_public);
         assert!(!resp.skills[0].is_owner);
+        assert!(!resp.skills[0].is_workspace);
     }
 
     #[test]
@@ -1476,13 +1478,8 @@ mod tests {
                 full_name: "local/my_skill".into(),
                 description: Some("A skill".into()),
                 tags: vec!["tag1".into()],
-                is_public: false,
-                is_system: false,
                 is_owner: true,
                 is_workspace: true,
-                star_count: 5,
-                clone_count: 2,
-                is_starred: true,
                 created_at: chrono::Utc::now(),
                 updated_at: chrono::Utc::now(),
             }],
@@ -1490,6 +1487,6 @@ mod tests {
         let json = serde_json::to_string(&resp).unwrap();
         let decoded: SkillsListResponse = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded.skills[0].name, "my_skill");
-        assert_eq!(decoded.skills[0].star_count, 5);
+        assert!(decoded.skills[0].is_workspace);
     }
 }

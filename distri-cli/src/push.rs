@@ -270,6 +270,14 @@ pub async fn handle_checkout(
 async fn checkout_agents(client: &Distri, dir: &Path) -> Result<()> {
     fs::create_dir_all(dir).await?;
     let agents = client.list_agents().await?;
+    // Workspace-owned only. Cloud responses include `is_workspace`; OSS server
+    // responses omit it (None) and that's still the caller's workspace by
+    // construction (no system/marketplace surface), so we treat `None` as a
+    // pass.
+    let agents = agents
+        .into_iter()
+        .filter(|a| a.is_workspace.unwrap_or(true))
+        .collect::<Vec<_>>();
     for agent in agents {
         match client.fetch_agent(&agent.name).await {
             Ok(Some(cfg)) => {
@@ -308,7 +316,10 @@ async fn checkout_skills(client: &Distri, dir: &Path) -> Result<()> {
         ..Default::default()
     };
     let resp = client.list_skills(&filter).await?;
-    for s in resp.skills {
+    // Defensive client-side filter — older servers may return system skills
+    // even when Workspace scope is requested.
+    let workspace_skills = resp.skills.into_iter().filter(|s| s.is_workspace);
+    for s in workspace_skills {
         let skill_dir = dir.join(&s.name);
         fs::create_dir_all(&skill_dir).await?;
         // Best-effort: re-fetch full record for content.
@@ -336,6 +347,9 @@ async fn checkout_skills(client: &Distri, dir: &Path) -> Result<()> {
 async fn checkout_templates(client: &Distri, dir: &Path) -> Result<()> {
     fs::create_dir_all(dir).await?;
     let templates = client.list_prompt_templates().await?;
+    // System templates are seeded read-only; they belong to no workspace and
+    // shouldn't be checked out as if the user authored them.
+    let templates = templates.into_iter().filter(|t| !t.is_system);
     for t in templates {
         let path = dir.join(format!("{}.hbs", t.name));
         fs::write(&path, &t.template).await?;

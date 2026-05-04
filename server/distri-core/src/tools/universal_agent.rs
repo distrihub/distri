@@ -102,9 +102,15 @@ pub(crate) struct CallAgentInput {
     /// System prompt for ad-hoc agent creation. When set without `agent`, creates a temporary agent.
     #[serde(default)]
     pub(crate) system_prompt: Option<String>,
-    /// Tool names to give the ad-hoc agent (only used with `system_prompt`).
+    /// Builtin tool names to give the ad-hoc agent (only used with `system_prompt`).
     #[serde(default)]
     pub(crate) tools: Option<Vec<String>>,
+    /// External tool names (or `["*"]` for all) the ad-hoc agent should
+    /// inherit from the parent session. Defaults to `["*"]` so ad-hoc + fork
+    /// matches claude-code's `useExactTools` semantics — child borrows
+    /// parent's full external tool pool unless the caller narrows it.
+    #[serde(default)]
+    pub(crate) external: Option<Vec<String>>,
     /// Model override for the ad-hoc agent.
     #[serde(default)]
     pub(crate) model: Option<String>,
@@ -186,7 +192,12 @@ impl Tool for UniversalAgentTool {
                 "tools": {
                     "type": "array",
                     "items": { "type": "string" },
-                    "description": "Tool names to give the ad-hoc agent (only with system_prompt)."
+                    "description": "Builtin tool names to give the ad-hoc agent (only with system_prompt)."
+                },
+                "external": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "External tool names (or [\"*\"] for all) the ad-hoc agent should inherit from the parent session. Defaults to [\"*\"] — child borrows the full parent tool pool unless narrowed."
                 },
                 "model": {
                     "type": "string",
@@ -307,34 +318,45 @@ async fn build_spec(
 
     // ── 3. Build overrides (ad-hoc branch only). ────────────────────────────
     let overrides = if input.system_prompt.is_some() {
-        // `_adhoc_base` sets `append_default_instructions = false`, so the
-        // rendered prompt is exactly whatever we put in `instructions`.
-        // When the caller supplies `system_prompt`, they often tell the model
-        // to produce text-only output ("Output only valid MDX", etc.), which
-        // causes the LLM to never call `final` — the agent loop then re-runs
-        // the same prompt, producing the same text, until `max_iterations`
-        // burns out. Force an explicit terminate-with-final reminder so the
-        // LLM knows to emit its answer via the `final` tool instead of free
-        // text.
+        // `_adhoc_base.md`'s body owns the worker contract (terminate via
+        // `final`, ignore inherited multi-step plans on fork, do not
+        // call_agent). We APPEND the caller's system_prompt as the actual
+        // assignment so the contract still reaches the model — overriding
+        // `instructions` would lose it. Fetch the seeded base body once and
+        // suffix it with the per-call assignment.
+        let base_instructions = orchestrator
+            .get_agent("_adhoc_base")
+            .await
+            .and_then(|cfg| match cfg {
+                distri_types::configuration::AgentConfig::StandardAgent(def) => Some(def.instructions),
+                _ => None,
+            })
+            .unwrap_or_default();
         let user_instructions = input.system_prompt.clone().unwrap_or_default();
-        let instructions = format!(
-            "{}\n\n\
-             # TERMINATION\n\
-             When your answer is ready, call the `final` tool with your\n\
-             complete output as the `result` parameter. Do NOT reply with\n\
-             free-form text — the caller will only receive whatever you\n\
-             pass to `final`. Every response must end with exactly one\n\
-             `final` tool call.",
-            user_instructions.trim_end()
-        );
+        let instructions = if base_instructions.trim().is_empty() {
+            user_instructions
+        } else {
+            format!("{}\n\n{}", base_instructions.trim_end(), user_instructions.trim())
+        };
 
         let mut o = DefinitionOverrides::default().with_instructions(instructions);
         if let Some(ref model) = input.model {
             o = o.with_model(model.clone());
         }
-        if let Some(ref tools) = input.tools {
+        // Build the override only when the caller actually overrode `tools` or
+        // `external` — otherwise we leave _adhoc_base's seeded ToolsConfig in
+        // place (which already declares `external = ["*"]`). Replacing it with
+        // a partial override would zero out fields the caller didn't touch.
+        if input.tools.is_some() || input.external.is_some() {
+            // Match `_adhoc_base.md`'s seeded defaults exactly: `final` only,
+            // no `call_agent` (caller must opt in to recursive workers — see
+            // the recursion-loop bug fixed when this default was tightened),
+            // and `external = ["*"]` to inherit the parent session's tools.
+            let builtin = input.tools.clone().unwrap_or_else(|| vec!["final".to_string()]);
+            let external = input.external.clone().unwrap_or_else(|| vec!["*".to_string()]);
             o = o.with_tools(distri_types::ToolsConfig {
-                builtin: tools.clone(),
+                builtin,
+                external: Some(external),
                 ..Default::default()
             });
         }

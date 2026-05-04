@@ -2082,6 +2082,13 @@ pub struct AgentListItem {
     pub description: Option<String>,
     #[serde(default)]
     pub id: Option<String>,
+    /// Cloud-only: true when the agent belongs to the caller's workspace.
+    /// Absent for OSS server responses.
+    #[serde(default)]
+    pub is_workspace: Option<bool>,
+    /// Cloud-only: true when the caller owns the agent.
+    #[serde(default)]
+    pub is_owner: Option<bool>,
 }
 
 // ========== Connections API ==========

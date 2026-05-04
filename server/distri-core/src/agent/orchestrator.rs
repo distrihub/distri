@@ -498,9 +498,19 @@ impl AgentOrchestrator {
             tools.push(final_tool);
         }
 
-        // Always register UniversalAgentTool — every agent can delegate
+        // Auto-register UniversalAgentTool ONLY when the agent definition's
+        // `tools.builtin` is empty or unset. An agent that explicitly enumerates
+        // its builtins (e.g. `_adhoc_base` with `builtin = ["final"]`, or a
+        // fork worker dispatched via `call_agent({tools: ["final"]})`) is
+        // opting out of delegation by design — adding `call_agent` back would
+        // re-enable the recursion loop the explicit list was meant to block.
         let has_call_agent = tools.iter().any(|t| t.get_name() == "call_agent");
-        if !has_call_agent {
+        let has_explicit_builtin = definition
+            .tools
+            .as_ref()
+            .map(|t| !t.builtin.is_empty())
+            .unwrap_or(false);
+        if !has_call_agent && !has_explicit_builtin {
             tools.push(Arc::new(crate::tools::UniversalAgentTool));
         }
 
