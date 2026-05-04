@@ -1,8 +1,9 @@
 use actix_cors::Cors;
 #[cfg(not(feature = "ui"))]
 use actix_files::Files;
+use actix_web::dev::Service;
 use actix_web::middleware::Logger;
-use actix_web::{web, App, HttpResponse, HttpServer, Result as ActixResult};
+use actix_web::{web, App, HttpMessage, HttpResponse, HttpServer, Result as ActixResult};
 #[cfg(feature = "ui")]
 use actix_web_static_files::ResourceFiles;
 use anyhow::Result;
@@ -14,6 +15,7 @@ use distri_types::configuration::ServerConfig;
 use serde_json::json;
 use std::sync::Arc;
 
+use crate::context::UserContext;
 use crate::routes;
 
 #[cfg(feature = "ui")]
@@ -100,6 +102,19 @@ impl DistriAgentServer {
             let verbose = Some(VerboseLog(verbose));
             let mut app = App::new()
                 .wrap(Logger::default())
+                .wrap_fn(move |req, srv| {
+                    if req.extensions().get::<UserContext>().is_none() {
+                        // OSS single-tenant default: inject a stable workspace_id so
+                        // agents declaring `connections` can resolve workspace-scoped
+                        // connections without cloud auth middleware.
+                        let ctx = UserContext::with_workspace(
+                            "local_dev_user".to_string(),
+                            Some(uuid::Uuid::nil().to_string()),
+                        );
+                        req.extensions_mut().insert(ctx);
+                    }
+                    srv.call(req)
+                })
                 .app_data(web::Data::new(server_config.clone()))
                 .wrap(
                     Cors::default()
