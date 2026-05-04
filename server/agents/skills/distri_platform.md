@@ -14,6 +14,9 @@ Use the `distri_request` tool to manage platform resources. Input: `{path, metho
 |--------|------|-------------|
 | `GET` | `/agents` | List all agents |
 | `GET` | `/agents/{id}` | Get agent details |
+| `POST` | `/agents` | Create/update an agent definition |
+| `PUT` | `/agents/{id}` | Update an existing agent |
+| `DELETE` | `/agents/{id}` | Delete an agent |
 
 ### Skills
 | Method | Path | Description |
@@ -54,6 +57,18 @@ Variables (`$VAR_NAME`) in url, headers, and body are auto-resolved from workspa
 ```json
 // List agents
 { "path": "/agents", "method": "GET" }
+
+// Create an agent
+{
+  "path": "/agents",
+  "method": "POST",
+  "body": {
+    "name": "cloud_doc_writer",
+    "description": "Creates text documents in connected cloud storage",
+    "instructions": "Use available connections to create text documents in the user's cloud storage.",
+    "tool_format": "provider"
+  }
+}
 
 // Create a skill
 { "path": "/skills", "method": "POST", "body": { "name": "my-skill", "content": "..." } }
