@@ -16,6 +16,7 @@ use distri_types::api::connections::{
     OAuthCallbackResponse, TokenResponse, UpdateConnectionRequest,
 };
 use distri_types::connections::{ConnectionStatus, ConnectionToken, NewConnection};
+use distri_types::stores::{ContextExecutionType, NewSkill};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::Arc;
@@ -64,6 +65,39 @@ fn extract_state_from_url(url: &str) -> Option<String> {
         }
     }
     None
+}
+
+fn connection_skill_name(connection_name: &str) -> String {
+    let mut out = String::with_capacity(connection_name.len() + 12);
+    out.push_str("connection-");
+    let mut prev_dash = false;
+    for ch in connection_name.chars() {
+        let ok = ch.is_ascii_lowercase() || ch.is_ascii_digit();
+        let mapped = if ok {
+            ch
+        } else if ch.is_ascii_uppercase() {
+            ch.to_ascii_lowercase()
+        } else {
+            '-'
+        };
+        if mapped == '-' {
+            if !prev_dash {
+                out.push('-');
+            }
+            prev_dash = true;
+        } else {
+            out.push(mapped);
+            prev_dash = false;
+        }
+    }
+    while out.ends_with('-') {
+        out.pop();
+    }
+    if out == "connection" {
+        "connection-skill".to_string()
+    } else {
+        out
+    }
 }
 
 // ── Route registration ────────────────────────────────────────────────────
@@ -212,14 +246,6 @@ async fn create_connection(
         skill_content,
     } = payload.into_inner();
 
-    // skill_content is not yet implemented for distri-server (single-tenant).
-    // TODO: implement skill upsert tied to the connection (Task 10 follow-up).
-    if skill_content.is_some() {
-        return HttpResponse::BadRequest().json(json!({
-            "error": "skill_content is not yet supported in distri-server"
-        }));
-    }
-
     // Name validation
     if name.is_empty() || name.len() > 64 {
         return HttpResponse::BadRequest()
@@ -238,6 +264,35 @@ async fn create_connection(
         return HttpResponse::BadRequest().json(json!({
             "error": "connections cannot have auth_scope=public — public channels don't need a connection"
         }));
+    }
+
+    let mut skill_id = Uuid::nil();
+    if let Some(content) = skill_content.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        let Some(skill_store) = &executor.stores.skill_store else {
+            return HttpResponse::ServiceUnavailable()
+                .json(json!({"error": "skill store not configured"}));
+        };
+        let skill_name = connection_skill_name(&name);
+        let req = NewSkill {
+            name: skill_name.clone(),
+            description: Some(format!("Connection helper skill for {}", name)),
+            content: content.to_string(),
+            tags: vec!["connection".to_string()],
+            model: None,
+            context: ContextExecutionType::Inline,
+        };
+        let rec = match skill_store.upsert_by_name(req).await {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::error!("Failed to upsert connection skill: {}", e);
+                return HttpResponse::InternalServerError()
+                    .json(json!({"error": "Failed to save connection skill"}));
+            }
+        };
+        skill_id = Uuid::parse_str(&rec.id).unwrap_or_else(|_| {
+            tracing::warn!("Skill '{}' returned non-UUID id '{}'", rec.name, rec.id);
+            Uuid::nil()
+        });
     }
 
     match &auth_type {
@@ -288,7 +343,7 @@ async fn create_connection(
 
             let new_conn = NewConnection {
                 workspace_id: Uuid::nil(),
-                skill_id: Uuid::nil(),
+                skill_id,
                 name: name.clone(),
                 status: ConnectionStatus::Pending,
                 config: serde_json::to_value(ConnectionConfig {
@@ -380,7 +435,7 @@ async fn create_connection(
 
             let new_conn = NewConnection {
                 workspace_id: Uuid::nil(),
-                skill_id: Uuid::nil(),
+                skill_id,
                 name: name.clone(),
                 status: ConnectionStatus::Connected,
                 config: serde_json::to_value(ConnectionConfig {

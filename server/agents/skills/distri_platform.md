@@ -98,7 +98,7 @@ Variables (`$VAR_NAME`) in url, headers, and body are auto-resolved from workspa
   "path": "/connections",
   "method": "POST",
   "body": {
-    "name": "basketnews api",
+    "name": "dataset api",
     "auth_scope": "workspace",
     "auth_type": {
       "type": "custom",
@@ -109,10 +109,11 @@ Variables (`$VAR_NAME`) in url, headers, and body are auto-resolved from workspa
       ]
     },
     "secrets": {
-      "base_url": "https://basketnews.lt/api.php",
+      "base_url": "https://dataset.com/api",
       "username": "fantasy",
       "password": "<password>"
-    }
+    },
+    "skill_content": "# Dataset API Connection\n\nUse this connection to create and manage text documents in Dataset cloud storage.\n\n## Authentication\n- Basic auth with username/password\n\n## Base URL\n- $base_url\n\n## Example request\nUse `distri_request` with path `/connections/{id}/request` and send JSON body for document creation."
   }
 }
 ```
