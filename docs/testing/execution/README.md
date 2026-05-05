@@ -45,16 +45,16 @@ for the storage vs display compaction rules.
 
 ## One-time setup
 
-1. **A running `distri-cloud` server** on `localhost:1341` with the latest
+1. **A running `distri-server`** on `localhost:1341` with the latest
    binary (it must include the `default.rs::handle_tools_action`
    duplication-removal fix and the `compact_for_storage` keeps-images
-   fix). If the binary on disk is newer than the running process,
-   rebuild and restart:
+   fix). Rebuild + restart if the binary on disk is newer than the
+   running process:
 
    ```sh
-   cargo build -p distri-cloud
-   # restart your launch process; e.g. if you tee logs:
-   #   target/debug/distri-cloud 2>&1 | tee /tmp/distri-server.log
+   cargo build -p distri-server
+   # then restart however you launch it; e.g. with tee'd logs:
+   #   target/debug/distri-server 2>&1 | tee /tmp/distri-server.log
    ```
 
 2. **A fresh CLI binary** with the image-aware `Read` tool:
@@ -148,7 +148,7 @@ clearly succeeded:
 
 | Symptom | Likely cause | Where to look |
 |---|---|---|
-| Final result is generic ("a man in a suit", "I cannot identify…") | Image didn't reach the model. | `default.rs:107` duplication is back, OR `compact_for_storage` is stripping images. Re-grep both call sites; rebuild + restart the cloud binary. |
+| Final result is generic ("a man in a suit", "I cannot identify…") | Image didn't reach the model. | `default.rs:107` duplication is back, OR `compact_for_storage` is stripping images. Re-grep both call sites; rebuild + restart `distri-server`. |
 | Trace export shows `inner_parts=['data']` and the model fails | Image stripped from the tool_result before the LLM call. | Check the running binary's `compact_for_storage` keeps `Part::Image`. (Test in `distri-types/src/tests/tool_result_storage_tests.rs::compact_for_storage_keeps_inline_image` pins this.) |
 | `distri traces show <id>` returns "No spans found" | Wrong workspace context. | `set -a && source .env && set +a` then retry. |
 | `distri push` succeeds but the server doesn't see the new agent | The CLI hit a different workspace than the server. | Check `DISTRI_WORKSPACE_ID` matches what the server logs say it loaded the agent under (`Found agent: … workspace=…`). |
@@ -186,9 +186,8 @@ clearly succeeded:
 
 ## Note on paths
 
-All shell snippets in this doc are relative to the `distri-cloud` repo
-root. Run them from your checkout directory; don't substitute absolute
-paths.
+All shell snippets are relative to the repo root. Don't substitute
+absolute paths.
 
 
 
@@ -209,15 +208,14 @@ Streaming agent 'image_test_agent' via http://localhost:1341/v1
 
 Donald Trump
 
-distri-cloud on  feat/oss-rearchitecture +/- [📦📝🤷✓] via  v23.3.0 via 󱘗 v1.93.1 took 8s
-❯ distri traces show --latest
+$ distri traces show --latest
 
   Trace: execute image_test_agent (cef11446b97efa18)
   11 spans · 7.3s · 6.7ktokens · $0.0014
   ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
   [Agent] image_test_agent  f51ac174bfce9543    3.3k↑
-    → Identify the person in /Users/vivek/projects/distri/distri-cloud/docs/testing/execution/test_image.p...
+    → Identify the person in docs/testing/execution/test_image.p...
     ← Donald Trump
           ████████████████████████████████████████████████████████████████████████████████ 7.3s
     [Step] Step 0  8f567e2dcd4a3c37
@@ -225,7 +223,7 @@ distri-cloud on  feat/oss-rearchitecture +/- [📦📝🤷✓] via  v23.3.
       [Plan] Planning (initial)  2affe6bc0535ef51
              ███████████████████████████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ 3.6s
     [LLM] qwen3.6-plus  9e157f0cc23cb758    1.3k↑  $0.000600
-      → Identify the person in /Users/vivek/projects/distri/distri-cloud/docs/testing/execution/test_image.p...
+      → Identify the person in docs/testing/execution/test_image.p...
       ← detect_image_person
           █░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ 5ms
     [Tool] load_skill  d62e3b4c90caa33b
@@ -234,7 +232,7 @@ distri-cloud on  feat/oss-rearchitecture +/- [📦📝🤷✓] via  v23.3.
     [Step] Step 1  8bb03012813c1e28
            ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░██░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ 208ms
     [Tool] Read  ca91f6c5dc077bd3
-      ← /Users/vivek/projects/distri/distri-cloud/docs/testing/execution/test_image.png
+      ← docs/testing/execution/test_image.png
            ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░█░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ 48ms
     [Step] Step 2  06582cc5ead4617b
            ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░█░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ 5ms
@@ -249,7 +247,7 @@ distri-cloud on  feat/oss-rearchitecture +/- [📦📝🤷✓] via  v23.3.
   ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
   INPUT:
-  Identify the person in /Users/vivek/projects/distri/distri-cloud/docs/testing/execution/test_image.png
+  Identify the person in docs/testing/execution/test_image.png
 
   OUTPUT:
   Donald Trump
