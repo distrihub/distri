@@ -4,7 +4,12 @@
 mod cancel_task_test;
 #[cfg(test)]
 mod thread_tokens_test;
-use std::{collections::HashMap, fmt::Display, sync::Arc};
+use std::{
+    collections::HashMap,
+    fmt::Display,
+    path::Path,
+    sync::Arc,
+};
 
 use crate::models::*;
 use crate::schema::{
@@ -480,9 +485,38 @@ impl DieselStorePool<diesel_async::AsyncPgConnection> {
     }
 }
 
+/// Ensures parent directories exist for file-backed SQLite URLs so opening the DB can create the file.
+#[cfg(feature = "sqlite")]
+fn ensure_sqlite_parent_dir_exists(database_url: &str) -> Result<()> {
+    if database_url.contains(":memory:") || database_url.contains("mode=memory") {
+        return Ok(());
+    }
+    let path_part = database_url.split('?').next().unwrap_or(database_url);
+    let path_part = path_part.strip_prefix("file:").unwrap_or(path_part);
+    // `file:///absolute/path` becomes `///absolute/path` after stripping `file:`.
+    let path_part = match path_part.strip_prefix("//") {
+        Some(rest) if rest.starts_with('/') => rest,
+        _ => path_part,
+    };
+    let path = Path::new(path_part);
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).with_context(|| {
+                format!(
+                    "failed to create database directory {}",
+                    parent.display()
+                )
+            })?;
+        }
+    }
+    Ok(())
+}
+
 #[cfg(feature = "sqlite")]
 async fn run_migrations(database_url: &str) -> Result<()> {
     tracing::debug!("Running migrations for database: {}", database_url);
+
+    ensure_sqlite_parent_dir_exists(database_url)?;
 
     // Create a temporary connection pool to run migrations
     let manager = SqliteManager::new(database_url);

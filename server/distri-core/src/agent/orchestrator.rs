@@ -295,10 +295,9 @@ impl AgentOrchestratorBuilder {
             }
         }
 
-        // Default system agents (distri, distri_runner, distri_browser_runner)
-        // are seeded by cloud/src/state.rs::seed_default_agents() on startup,
-        // not by the orchestrator. This keeps the orchestrator generic —
-        // callers decide which agents live in their store.
+        // Default bundled agents: cloud uses `seed_default_agents()`; OSS
+        // `distri-server-cli` calls `seed::seed_bundled_defaults()` after build.
+        // The orchestrator stays generic — callers decide store population.
 
         Ok(orchestrator)
     }

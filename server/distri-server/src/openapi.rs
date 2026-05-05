@@ -90,6 +90,7 @@ use utoipa::OpenApi;
         crate::routes::skills::update_skill,
         crate::routes::skills::delete_skill,
         // Providers
+        crate::routes::providers::list_providers,
         crate::routes::providers::upsert_provider,
         crate::routes::providers::delete_provider,
         crate::routes::providers::get_default_model,
