@@ -197,34 +197,68 @@ async fn resolve_custom(
     fields: &[distri_types::connections::CustomField],
     ctx: &ResolveCtx<'_>,
 ) -> Result<ResolvedConnection, String> {
-    let secret_store = ctx
-        .stores
-        .secret_store
-        .as_ref()
-        .ok_or_else(|| "secret store not configured".to_string())?;
-
     let provider = connection.auth_type.provider_name().to_string();
     let mut env_vars = HashMap::new();
     let mut missing = Vec::new();
 
-    // Secret key format is `connection.<id>.<field_key>` — see
-    // `connection_configure::connection_secret_key` on the cloud side.
-    for field in fields {
-        let key = format!("connection.{}.{}", connection.id, field.key);
-        match secret_store.get(&key).await {
-            Ok(Some(record)) => {
-                // Use the field key exactly as declared — no implicit
-                // connection-name prefix. Connection authors control the env
-                // var name by choosing the field key (e.g. `ZIPPY_PUBLISH_KEY`).
-                let env_name = field.key.to_uppercase();
-                env_vars.insert(env_name, record.value);
-            }
-            Ok(None) => {
-                if field.required {
-                    missing.push(field.key.clone());
+    // Prefer OSS custom-token bundle in connection_token_store (written by
+    // POST /connections for AuthType::Custom). Fallback to legacy
+    // secret_store keys (`connection.<id>.<field_key>`) for compatibility.
+    let mut token_bundle: Option<serde_json::Map<String, serde_json::Value>> = None;
+    if let Some(token_store) = ctx.stores.connection_token_store.as_ref() {
+        match token_store.get_token(&connection.id.to_string()).await {
+            Ok(Some(token)) => {
+                if let Ok(serde_json::Value::Object(map)) =
+                    serde_json::from_str::<serde_json::Value>(&token.access_token)
+                {
+                    token_bundle = Some(map);
                 }
             }
-            Err(e) => return Err(format!("failed to get secret '{}': {e}", key)),
+            Ok(None) => {}
+            Err(e) => {
+                return Err(format!(
+                    "failed to read custom connection token bundle for '{}': {}",
+                    connection.name, e
+                ))
+            }
+        }
+    }
+
+    for field in fields {
+        // Use the field key exactly as declared — no implicit
+        // connection-name prefix. Connection authors control the env
+        // var name by choosing the field key (e.g. `ZIPPY_PUBLISH_KEY`).
+        let env_name = field.key.to_uppercase();
+
+        let mut resolved_value: Option<String> = None;
+
+        if let Some(bundle) = token_bundle.as_ref() {
+            if let Some(v) = bundle.get(&field.key).and_then(|v| v.as_str()) {
+                if !v.is_empty() {
+                    resolved_value = Some(v.to_string());
+                }
+            }
+        }
+
+        if resolved_value.is_none() {
+            if let Some(secret_store) = ctx.stores.secret_store.as_ref() {
+                let key = format!("connection.{}.{}", connection.id, field.key);
+                match secret_store.get(&key).await {
+                    Ok(Some(record)) => {
+                        resolved_value = Some(record.value);
+                    }
+                    Ok(None) => {}
+                    Err(e) => return Err(format!("failed to get secret '{}': {e}", key)),
+                }
+            }
+        }
+
+        match resolved_value {
+            Some(v) => {
+                env_vars.insert(env_name, v);
+            }
+            None if field.required => missing.push(field.key.clone()),
+            None => {}
         }
     }
 
