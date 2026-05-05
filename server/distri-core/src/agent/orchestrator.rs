@@ -641,10 +641,17 @@ impl AgentOrchestrator {
                             })
                             .await;
 
-                        // Add skill tool: load_skill
+                        // Add skill tools: load_skill (inline reference) +
+                        // run_skill (fork-into-skill worker). Both depend on
+                        // the skill store, so they're registered together
+                        // whenever the agent has available_skills declared.
                         context
-                            .extend_tools(vec![Arc::new(crate::tools::skill_script::LoadSkillTool)
-                                as Arc<dyn Tool>])
+                            .extend_tools(vec![
+                                Arc::new(crate::tools::skill_script::LoadSkillTool)
+                                    as Arc<dyn Tool>,
+                                Arc::new(crate::tools::run_skill::RunSkillTool)
+                                    as Arc<dyn Tool>,
+                            ])
                             .await;
                     }
                 }

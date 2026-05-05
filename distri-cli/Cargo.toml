@@ -40,6 +40,7 @@ sha2 = "0.10"
 semver = "1.0"
 hex = "0.4"
 open = "5"
+base64 = "0.22"
 
 [dev-dependencies]
 tempfile = "3"

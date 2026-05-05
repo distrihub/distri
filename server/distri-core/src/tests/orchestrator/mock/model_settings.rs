@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use distri_types::configuration::AgentConfig;
-use distri_types::{Message, ModelSettings};
+use distri_types::ModelSettings;
 
 use crate::tests::helpers::test_store_config;
 use crate::{agent::parse_agent_markdown_content, AgentOrchestrator, AgentOrchestratorBuilder};

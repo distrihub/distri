@@ -104,7 +104,16 @@ impl AgentExecutor {
 
             match tools_response {
                 Ok(tools_response) => {
-                    parts.extend(tools_response.parts);
+                    // Each ToolResponse already carries its parts (Data,
+                    // Image, Text, …) inside `tool_response.parts`. Flat
+                    // copies on the assistant side are dead weight: the
+                    // formatter would route them onto the assistant
+                    // message, where the LLM client silently drops Image
+                    // parts (`llm.rs:1226-1262` has no Part::Image branch
+                    // for assistant messages). The image_url follow-up
+                    // user message is built FROM the tool message's
+                    // tool_response.parts (`llm.rs:1290-1304`), so the
+                    // Image needs to live there only.
                     for tool_response in tools_response.tool_responses {
                         parts.push(Part::ToolResult(tool_response));
                     }
@@ -201,13 +210,7 @@ impl AgentExecutor {
             })
             .await;
 
-        let flattened_parts = processed_tool_results
-            .iter()
-            .flat_map(|result| result.parts.clone())
-            .collect();
-
         Ok(ToolResultResponse {
-            parts: flattened_parts,
             tool_responses: processed_tool_results,
             input_required,
         })
@@ -773,7 +776,6 @@ async fn execute_executor_context_tool(
 
 #[derive(Default)]
 pub struct ToolResultResponse {
-    pub parts: Vec<Part>,
     pub tool_responses: Vec<ToolResponse>,
     pub input_required: bool,
 }

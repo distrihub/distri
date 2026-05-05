@@ -70,12 +70,8 @@ impl UnifiedPlanner {
         // Determine template based on prompt strategy (same logic as in plan method)
         let user_template = self.get_template_from_registry(&context, "user").await?;
         let template = match self.agent_def.append_default_instructions {
-            Some(false) => {
-                // Use override_prompt if provided, otherwise default planning template
-                self.agent_def.instructions.clone()
-            }
+            Some(false) => self.agent_def.instructions.clone(),
             _ => {
-                // Use agent instructions directly as handlebars template
                 let mut instructions = self.agent_def.instructions.clone();
                 let planning_template =
                     self.get_template_from_registry(context, "planning").await?;
@@ -136,15 +132,10 @@ impl PlanningStrategy for UnifiedPlanner {
                 code_planner.plan(message, context).await
             }
             crate::types::ExecutionMode::Tools => {
-                // Determine template based on prompt strategy
                 let user_template = self.get_template_from_registry(&context, "user").await?;
                 let template = match self.agent_def.append_default_instructions {
-                    Some(false) => {
-                        // Use override_prompt if provided, otherwise default planning template
-                        self.agent_def.instructions.clone()
-                    }
+                    Some(false) => self.agent_def.instructions.clone(),
                     _ => {
-                        // Use agent instructions directly as handlebars template
                         let mut instructions = self.agent_def.instructions.clone();
                         let planning_template = self
                             .get_template_from_registry(&context, "planning")

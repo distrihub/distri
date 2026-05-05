@@ -1029,6 +1029,18 @@ impl ExecutorContext {
         }
         forked_context.hook_registry = Arc::new(RwLock::new(None));
 
+        // The parent's `tools` field is an `Arc<RwLock<Vec<...>>>` — `self.clone()`
+        // copies the Arc handle, so without this reset the parent and child
+        // would SHARE the same tools vector. That's how a forked worker ended up
+        // with `run_skill` (and previously `call_agent`) in its tool list even
+        // though its own agent definition didn't declare them: the orchestrator
+        // had `extend_tools`-ed them onto the parent's vec at setup time, and
+        // the child saw them through the shared Arc → re-emitted the inherited
+        // dispatch instruction → infinite fork recursion. Give the child a
+        // fresh empty `tools` Arc so the orchestrator's per-agent setup pass
+        // populates ONLY what the child's own definition asked for.
+        forked_context.tools = Arc::new(RwLock::new(Vec::new()));
+
         forked_context
     }
 

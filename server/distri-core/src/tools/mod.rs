@@ -30,6 +30,7 @@ pub mod resolve;
 pub mod send_message;
 pub mod simulator;
 pub mod skill_script;
+pub mod run_skill;
 pub mod tool_search;
 pub mod universal_agent;
 pub use builtin::{get_builtin_tools, ConsoleLogTool, DistriExecuteCodeTool, FinalTool};
@@ -127,6 +128,7 @@ pub fn cast_to_executor_context_tool(
         "execute_shell" => Ok(Box::new(shell::ExecuteShellTool)),
         "stop_shell" => Ok(Box::new(shell::StopShellTool)),
         "load_skill" => Ok(Box::new(skill_script::LoadSkillTool)),
+        "run_skill" => Ok(Box::new(run_skill::RunSkillTool)),
         // Code execution
         "distri_execute_code" => Ok(Box::new(DistriExecuteCodeTool)),
         // Tool discovery

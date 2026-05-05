@@ -1048,6 +1048,135 @@ mod tests {
         assert!(messages.is_empty());
     }
 
+    fn sample_image_tool_result_entry(
+        step_id: &str,
+        timestamp: i64,
+        image_marker: &str,
+    ) -> ScratchpadEntry {
+        use distri_types::{FileType, ToolResponse};
+        let tool_result = ToolResponse {
+            tool_call_id: format!("tc-{}", step_id),
+            tool_name: "db_get".to_string(),
+            parts: vec![
+                Part::Data(json!({"id": step_id})),
+                Part::Image(FileType::Bytes {
+                    bytes: image_marker.to_string(),
+                    mime_type: "image/jpeg".to_string(),
+                    name: None,
+                }),
+            ],
+            parts_metadata: None,
+        };
+        ScratchpadEntry {
+            timestamp,
+            entry_type: ScratchpadEntryType::Execution(ExecutionHistoryEntry {
+                thread_id: "thread".to_string(),
+                task_id: "task".to_string(),
+                run_id: "run".to_string(),
+                execution_result: ExecutionResult {
+                    step_id: step_id.to_string(),
+                    parts: vec![Part::ToolResult(tool_result)],
+                    status: ExecutionStatus::Success,
+                    reason: None,
+                    timestamp,
+                },
+                stored_at: timestamp,
+            }),
+            task_id: "task".to_string(),
+            parent_task_id: None,
+            entry_kind: Some("execution".to_string()),
+        }
+    }
+
+    /// Pins the §3 invariant in `docs/execution/scratchpad.md`: the LATEST
+    /// execution entry's tool result keeps its inline image; older entries
+    /// have it replaced with the placeholder text.
+    ///
+    /// If this regresses, a worker that just `db_get`-ed an image (e.g.
+    /// the importer) will be unable to OCR it on the next planning turn —
+    /// the LLM client only sees a placeholder string instead of a real
+    /// `image_url` content part.
+    #[test]
+    fn latest_execution_entry_preserves_inline_image_older_strips_it() {
+        use distri_types::FileType;
+        let entries = vec![
+            sample_image_tool_result_entry("step-old", 1, "OLD-IMAGE-BYTES"),
+            sample_image_tool_result_entry("step-latest", 2, "LATEST-IMAGE-BYTES"),
+        ];
+
+        let messages = MessageFormatter::build_native_history_messages(&entries);
+        // Two execution entries → each renders as one assistant + one tool
+        // message via execution_result_to_messages, giving 4 messages total.
+        assert!(
+            messages.len() >= 2,
+            "expected at least two messages from two execution entries; got {}",
+            messages.len()
+        );
+
+        // Find the tool messages; each carries a single ToolResponse.
+        let tool_msgs: Vec<_> = messages
+            .iter()
+            .filter(|m| matches!(m.role, MessageRole::Tool))
+            .collect();
+        assert_eq!(tool_msgs.len(), 2, "expected one tool message per entry");
+
+        // The OLDER tool message: image should be stripped to placeholder.
+        let older_inner_parts = match &tool_msgs[0].parts[0] {
+            Part::ToolResult(tr) => &tr.parts,
+            other => panic!("expected ToolResult; got {:?}", other),
+        };
+        let old_has_placeholder = older_inner_parts.iter().any(|p| match p {
+            Part::Text(t) => t.contains("Image omitted"),
+            _ => false,
+        });
+        assert!(
+            old_has_placeholder,
+            "older entry's image should be stripped at history; parts = {:?}",
+            older_inner_parts
+        );
+
+        // The LATEST tool message: image should be present verbatim.
+        let latest_inner_parts = match &tool_msgs[1].parts[0] {
+            Part::ToolResult(tr) => &tr.parts,
+            other => panic!("expected ToolResult; got {:?}", other),
+        };
+        let latest_image_bytes = latest_inner_parts.iter().find_map(|p| match p {
+            Part::Image(FileType::Bytes { bytes, .. }) => Some(bytes.clone()),
+            _ => None,
+        });
+        assert_eq!(
+            latest_image_bytes.as_deref(),
+            Some("LATEST-IMAGE-BYTES"),
+            "latest entry's image must be intact for the next LLM turn; parts = {:?}",
+            latest_inner_parts
+        );
+    }
+
+    /// With a single execution entry there's nothing older to strip; the
+    /// image must be preserved.
+    #[test]
+    fn single_execution_entry_keeps_inline_image() {
+        use distri_types::FileType;
+        let entries = vec![sample_image_tool_result_entry("only", 1, "ONLY-BYTES")];
+        let messages = MessageFormatter::build_native_history_messages(&entries);
+        let tool_msg = messages
+            .iter()
+            .find(|m| matches!(m.role, MessageRole::Tool))
+            .expect("expected one tool message");
+        let inner = match &tool_msg.parts[0] {
+            Part::ToolResult(tr) => &tr.parts,
+            _ => panic!("expected ToolResult"),
+        };
+        let has_image = inner.iter().any(|p| match p {
+            Part::Image(FileType::Bytes { bytes, .. }) => bytes == "ONLY-BYTES",
+            _ => false,
+        });
+        assert!(
+            has_image,
+            "single (latest) entry must retain its inline image"
+        );
+    }
+
     #[test]
     fn native_history_compacts_only_until_n_minus_1() {
         let entries = vec![

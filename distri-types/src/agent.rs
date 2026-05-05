@@ -814,6 +814,7 @@ pub const VALID_BUILTIN_TOOLS: &[&str] = &[
     // Tool discovery
     "tool_search",
     "load_skill",
+    "run_skill",
     // Connection & secrets
     "inject_connection_env",
     // Logging
@@ -834,6 +835,7 @@ pub const CORE_TOOLS: &[&str] = &[
     "execute_shell",
     "start_shell",
     "load_skill",
+    "run_skill",
 ];
 
 /// Default threshold: defer tools when total count exceeds this.

@@ -15,6 +15,7 @@ use serde_json::json;
 const SAFE_TOOLS: &[&str] = &[
     "tool_search",
     "load_skill",
+    "run_skill",
     "search",        // web search (read-only)
     "browsr_scrape", // web scrape (read-only)
     "final",

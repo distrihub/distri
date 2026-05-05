@@ -91,34 +91,33 @@ pub enum CallMode {
     Transfer,
 }
 
-/// Input struct for the `call_agent` tool.
-#[derive(Debug, serde::Deserialize)]
+/// Input struct for the `call_agent` tool. Serializable so internal callers
+/// (e.g. `RunSkillTool`) can construct it as a typed value and round-trip
+/// through `serde_json::to_value` instead of hand-building a JSON map.
+#[derive(Debug, Default, serde::Deserialize, serde::Serialize)]
 pub(crate) struct CallAgentInput {
     /// Name of the agent to call. If omitted, an ad-hoc agent is created from `system_prompt`.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) agent: Option<String>,
     /// The task/prompt to send to the agent.
     pub(crate) prompt: String,
     /// System prompt for ad-hoc agent creation. When set without `agent`, creates a temporary agent.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) system_prompt: Option<String>,
     /// Builtin tool names to give the ad-hoc agent (only used with `system_prompt`).
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) tools: Option<Vec<String>>,
     /// External tool names (or `["*"]` for all) the ad-hoc agent should
     /// inherit from the parent session. Defaults to `["*"]` so ad-hoc + fork
     /// matches claude-code's `useExactTools` semantics — child borrows
     /// parent's full external tool pool unless the caller narrows it.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) external: Option<Vec<String>>,
-    /// Model override for the ad-hoc agent.
-    #[serde(default)]
-    pub(crate) model: Option<String>,
     /// Description for the ad-hoc agent.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) description: Option<String>,
     /// Optional name for the background agent (used by `send_message` for routing).
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) name: Option<String>,
     /// How to invoke the agent. See tool description for semantics.
     #[serde(default)]
@@ -328,7 +327,9 @@ async fn build_spec(
             .get_agent("_adhoc_base")
             .await
             .and_then(|cfg| match cfg {
-                distri_types::configuration::AgentConfig::StandardAgent(def) => Some(def.instructions),
+                distri_types::configuration::AgentConfig::StandardAgent(def) => {
+                    Some(def.instructions)
+                }
                 _ => None,
             })
             .unwrap_or_default();
@@ -336,13 +337,14 @@ async fn build_spec(
         let instructions = if base_instructions.trim().is_empty() {
             user_instructions
         } else {
-            format!("{}\n\n{}", base_instructions.trim_end(), user_instructions.trim())
+            format!(
+                "{}\n\n{}",
+                base_instructions.trim_end(),
+                user_instructions.trim()
+            )
         };
 
         let mut o = DefinitionOverrides::default().with_instructions(instructions);
-        if let Some(ref model) = input.model {
-            o = o.with_model(model.clone());
-        }
         // Build the override only when the caller actually overrode `tools` or
         // `external` — otherwise we leave _adhoc_base's seeded ToolsConfig in
         // place (which already declares `external = ["*"]`). Replacing it with
@@ -352,8 +354,14 @@ async fn build_spec(
             // no `call_agent` (caller must opt in to recursive workers — see
             // the recursion-loop bug fixed when this default was tightened),
             // and `external = ["*"]` to inherit the parent session's tools.
-            let builtin = input.tools.clone().unwrap_or_else(|| vec!["final".to_string()]);
-            let external = input.external.clone().unwrap_or_else(|| vec!["*".to_string()]);
+            let builtin = input
+                .tools
+                .clone()
+                .unwrap_or_else(|| vec!["final".to_string()]);
+            let external = input
+                .external
+                .clone()
+                .unwrap_or_else(|| vec!["*".to_string()]);
             o = o.with_tools(distri_types::ToolsConfig {
                 builtin,
                 external: Some(external),

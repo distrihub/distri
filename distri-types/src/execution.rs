@@ -146,11 +146,20 @@ impl ExecutionResult {
         txt
     }
 
-    /// Compact execution results before storing in scratchpad/history used for prompt construction.
+    /// Compact execution results for the prompt history slice.
     ///
-    /// This keeps high-signal fields (tool ids/status/artifact refs) while stripping or truncating
-    /// large payloads that would otherwise bloat subsequent model calls.
+    /// `strip_inline_files = true` replaces `Image` / `File` parts with text
+    /// placeholders — appropriate for entries that are NOT the latest tool
+    /// result, where we don't want N copies of the same image fattening
+    /// every subsequent turn. `strip_inline_files = false` keeps the
+    /// inline bytes — appropriate at storage time and for the latest
+    /// tool result, so the very next planning turn can actually see the
+    /// image the tool just returned.
     pub fn compact_for_history(&self) -> Self {
+        self.compact_for_history_with(true)
+    }
+
+    pub fn compact_for_history_with(&self, strip_inline_files: bool) -> Self {
         const MAX_TEXT_CHARS: usize = 2_000;
         const MAX_JSON_CHARS: usize = 4_000;
 
@@ -201,11 +210,11 @@ impl ExecutionResult {
                         .map(|tool_part| match tool_part {
                             Part::Text(text) => Part::Text(truncate(text, MAX_TEXT_CHARS)),
                             Part::Data(data) => Part::Data(compact_json(data, MAX_JSON_CHARS)),
-                            // Keep artifact references; drop inline images from rolling context.
-                            Part::Image(_) => Part::Text(
+                            Part::Image(image) if strip_inline_files => Part::Text(
                                 "[Image omitted from history; use artifact/reference if needed]"
                                     .to_string(),
                             ),
+                            Part::Image(image) => Part::Image(image.clone()),
                             other => other.clone(),
                         })
                         .collect();
@@ -217,12 +226,14 @@ impl ExecutionResult {
                         parts_metadata: None,
                     })
                 }
-                Part::Image(_) => {
+                Part::Image(_) if strip_inline_files => {
                     Part::Text("[Image omitted from history to reduce context size]".to_string())
                 }
-                Part::File(_) => {
+                Part::Image(image) => Part::Image(image.clone()),
+                Part::File(_) if strip_inline_files => {
                     Part::Text("[File omitted from history to reduce context size]".to_string())
                 }
+                Part::File(file) => Part::File(file.clone()),
                 Part::Artifact(artifact) => Part::Artifact(artifact.clone()),
             })
             .collect();
@@ -247,9 +258,13 @@ impl ExecutionResult {
         self
     }
 
-    /// Compact for storage: applies `compact_for_history()` + `with_empty_guard()`.
+    /// Compact for storage. Truncates oversized text/JSON but **keeps inline
+    /// images and files**, so the very next planning turn can still see the
+    /// image a tool just returned. Display-time compaction
+    /// (`compact_for_history`, called by the formatter for non-latest
+    /// scratchpad entries) is what strips images from the rolling context.
     pub fn compact_for_storage(&self) -> Self {
-        self.compact_for_history().with_empty_guard()
+        self.compact_for_history_with(false).with_empty_guard()
     }
 }
 
@@ -650,7 +665,13 @@ mod tests {
     #[test]
     fn test_compact_for_history_filters_save_false_and_truncates_large_parts() {
         let mut parts_metadata = std::collections::HashMap::new();
-        parts_metadata.insert(1, crate::PartMetadata { save: false });
+        parts_metadata.insert(
+            1,
+            crate::PartMetadata {
+                save: false,
+                ..Default::default()
+            },
+        );
 
         let tool_response = ToolResponse {
             tool_call_id: "call-1".to_string(),
