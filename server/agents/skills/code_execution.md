@@ -1,6 +1,6 @@
 ---
-name = "code_execution"
-description = "How to use the browsr shell for code execution — Python, bash, JS in sandboxed containers"
+name: code_execution
+description: "How to use the browsr shell for code execution — Python, bash, JS in sandboxed containers"
 ---
 
 # Code Execution (Browsr Shell)
