@@ -80,6 +80,7 @@ pub fn distri(cfg: &mut web::ServiceConfig) {
     // Webhook endpoint for triggering agents
     // Thread endpoints
     .service(web::resource("/threads").route(web::get().to(list_threads_handler)))
+    .service(web::resource("/threads/detailed").route(web::get().to(list_detailed_threads_handler)))
     .service(web::resource("/threads/agents").route(web::get().to(list_agents_by_usage)))
     .service(
         web::resource("/threads/{thread_id}/messages").route(web::get().to(get_thread_messages)),
@@ -1135,6 +1136,21 @@ async fn list_threads_handler(
 
 #[utoipa::path(
     get,
+    path = "/v1/threads/detailed",
+    tag = "Threads",
+    responses((status = 200, description = "List detailed threads"))
+)]
+async fn list_detailed_threads_handler(
+    query: web::Query<ListThreadsQuery>,
+    coordinator: web::Data<Arc<AgentOrchestrator>>,
+) -> HttpResponse {
+    // OSS compatibility: detailed currently reuses the standard thread list shape,
+    // which already includes agent/user/channel/token fields expected by home UI.
+    list_threads_handler(query, coordinator).await
+}
+
+#[utoipa::path(
+    get,
     path = "/v1/threads/agents",
     tag = "Threads",
     responses((status = 200, description = "List agents by usage"))
@@ -1146,9 +1162,50 @@ async fn list_agents_by_usage(
     let search = query.get("search").map(|s| s.as_str());
     match coordinator.get_agents_by_usage(search).await {
         Ok(agents) => HttpResponse::Ok().json(agents),
-        Err(e) => HttpResponse::InternalServerError().json(json!({
-            "error": format!("Failed to get agents by usage: {}", e)
-        })),
+        Err(e) => {
+            tracing::warn!(
+                error = ?e,
+                "get_agents_by_usage failed; falling back to counts from /threads"
+            );
+            let filter = distri_types::stores::ThreadListFilter {
+                search: search.map(|s| s.to_string()),
+                ..Default::default()
+            };
+            match coordinator.list_threads(&filter, Some(5000), Some(0)).await {
+                Ok(response) => {
+                    let mut by_agent: std::collections::HashMap<String, (String, i64)> =
+                        std::collections::HashMap::new();
+                    for t in response.threads {
+                        let entry = by_agent
+                            .entry(t.agent_id.clone())
+                            .or_insert((t.agent_name.clone(), 0));
+                        entry.1 += 1;
+                    }
+                    let mut agents: Vec<distri_types::stores::AgentUsageInfo> = by_agent
+                        .into_iter()
+                        .map(|(agent_id, (agent_name, thread_count))| {
+                            distri_types::stores::AgentUsageInfo {
+                                agent_id,
+                                agent_name,
+                                thread_count,
+                            }
+                        })
+                        .collect();
+                    agents.sort_by(|a, b| {
+                        b.thread_count
+                            .cmp(&a.thread_count)
+                            .then_with(|| a.agent_name.cmp(&b.agent_name))
+                    });
+                    HttpResponse::Ok().json(agents)
+                }
+                Err(fallback_err) => HttpResponse::InternalServerError().json(json!({
+                    "error": format!(
+                        "Failed to get agents by usage: {} (fallback failed: {})",
+                        e, fallback_err
+                    )
+                })),
+            }
+        }
     }
 }
 
