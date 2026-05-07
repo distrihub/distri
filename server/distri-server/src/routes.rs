@@ -9,6 +9,7 @@ use distri_core::a2a::A2AHandler;
 use distri_core::agent::{parse_agent_markdown_content, AgentOrchestrator};
 use distri_core::secrets::SecretResolver;
 use distri_core::types::UpdateThreadRequest;
+use distri_core::workspace_defaults::load_workspace_default_model_settings;
 use distri_core::{AgentError, MessageFilter};
 use distri_types::configuration::AgentConfigWithTools;
 use distri_types::configuration::ServerConfig;
@@ -44,6 +45,7 @@ pub mod skills;
 pub mod spans;
 pub mod tools;
 pub mod usage;
+pub mod workspaces;
 
 pub fn all(cfg: &mut web::ServiceConfig) {
     cfg.configure(distri);
@@ -124,6 +126,7 @@ pub fn distri(cfg: &mut web::ServiceConfig) {
     // Configuration endpoints
     .service(web::resource("/device").route(web::get().to(get_device_info)))
     .service(web::resource("/home/stats").route(web::get().to(get_home_stats)))
+    .configure(workspaces::configure_workspace_routes)
     .configure(prompt_templates::configure_prompt_template_routes)
     // HTTP request proxy — resolves secrets/connections server-side
     .service(web::resource("/request").route(web::post().to(proxy_request_handler)))
@@ -736,10 +739,17 @@ async fn a2a_handler(
         .unwrap_or_else(|| ("local_dev_user".to_string(), None));
 
     // Workspace-level default model settings, injected by cloud middleware.
-    let workspace_model_settings = http_request
+    let workspace_model_settings = if let Some(ms) = http_request
         .extensions()
         .get::<distri_types::ModelSettings>()
-        .cloned();
+        .cloned()
+    {
+        Some(ms)
+    } else if let Some(ms) = load_workspace_default_model_settings(executor).await {
+        Some(ms)
+    } else {
+        None
+    };
 
     let result = handler
         .handle_jsonrpc(
@@ -933,10 +943,17 @@ async fn llm_execute(
     all_messages.extend(payload.messages.clone());
 
     // Load agent model settings if agent_id is provided, then workspace settings.
-    let workspace_model_settings = http_request
+    let workspace_model_settings = if let Some(ms) = http_request
         .extensions()
         .get::<distri_types::ModelSettings>()
-        .cloned();
+        .cloned()
+    {
+        Some(ms)
+    } else if let Some(ms) = load_workspace_default_model_settings(executor.get_ref()).await {
+        Some(ms)
+    } else {
+        None
+    };
 
     let base_model_settings: Option<ModelSettings> =
         llm_helpers::load_agent_model_settings(&executor, payload.agent_id.as_deref())

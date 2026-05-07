@@ -24,6 +24,7 @@ pub mod types {
     pub use distri_types::*;
 }
 pub mod hooks;
+pub mod workspace_defaults;
 mod hooks_runtime;
 pub use distri_auth::UserContext;
 pub use distri_stores::*;
