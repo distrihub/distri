@@ -447,6 +447,15 @@ pub async fn execute_tool_calls_with_timeout(
                 .await
             {
                 Ok(rx) => {
+                    tracing::info!(
+                        target: "ext_tool.register",
+                        task_id = %context.task_id,
+                        agent_id = %context.agent_id,
+                        parent_task_id = %context.parent_task_id.as_deref().unwrap_or("-"),
+                        tool_call_id = %tool_call.tool_call_id,
+                        tool_name = %tool_call.tool_name,
+                        "registered pending external tool call (waiting for browser)"
+                    );
                     pending_receivers.insert(tool_call.tool_call_id.clone(), rx);
                 }
                 Err(e) => {
@@ -651,10 +660,14 @@ async fn handle_external_tool_inline(
     pre_registered_rx: Option<tokio::sync::oneshot::Receiver<distri_types::ToolResponse>>,
 ) -> ToolResultWithSkip {
     tracing::info!(
-        "Waiting for tool response: {}, {} (timeout: {}s)",
-        tool_call.tool_name,
-        tool_call.tool_call_id,
-        timeout.as_secs()
+        target: "ext_tool.wait",
+        task_id = %context.task_id,
+        agent_id = %context.agent_id,
+        parent_task_id = %context.parent_task_id.as_deref().unwrap_or("-"),
+        tool_call_id = %tool_call.tool_call_id,
+        tool_name = %tool_call.tool_name,
+        timeout_s = timeout.as_secs(),
+        "waiting for browser to complete external tool"
     );
 
     // Use tool_call_id as the session ID
@@ -690,9 +703,15 @@ async fn handle_external_tool_inline(
     match result {
         Ok(Ok(tool_response)) => {
             // Got a response from the client
-            tracing::debug!(
-                "Received external tool response for tool call: {}",
-                tool_call_id
+            tracing::info!(
+                target: "ext_tool.resolve",
+                task_id = %context.task_id,
+                agent_id = %context.agent_id,
+                parent_task_id = %context.parent_task_id.as_deref().unwrap_or("-"),
+                tool_call_id = %tool_call_id,
+                tool_name = %tool_call.tool_name,
+                outcome = "ok",
+                "browser delivered external tool response"
             );
 
             // Emit tool execution end event
@@ -710,8 +729,14 @@ async fn handle_external_tool_inline(
         Ok(Err(_)) => {
             // Channel was closed (sender dropped)
             tracing::warn!(
-                "External tool channel closed for tool call: {}",
-                tool_call_id
+                target: "ext_tool.resolve",
+                task_id = %context.task_id,
+                agent_id = %context.agent_id,
+                parent_task_id = %context.parent_task_id.as_deref().unwrap_or("-"),
+                tool_call_id = %tool_call_id,
+                tool_name = %tool_call.tool_name,
+                outcome = "channel_closed",
+                "external tool channel closed before browser responded"
             );
 
             // Clean up the session in the store
@@ -737,7 +762,17 @@ async fn handle_external_tool_inline(
         }
         Err(_) => {
             // Timeout occurred
-            tracing::warn!("External tool timeout for tool call: {}", tool_call_id);
+            tracing::warn!(
+                target: "ext_tool.resolve",
+                task_id = %context.task_id,
+                agent_id = %context.agent_id,
+                parent_task_id = %context.parent_task_id.as_deref().unwrap_or("-"),
+                tool_call_id = %tool_call_id,
+                tool_name = %tool_call.tool_name,
+                outcome = "timeout",
+                timeout_s = timeout.as_secs(),
+                "external tool TIMED OUT — browser never responded"
+            );
 
             // Clean up the session in the store
             if let Err(e) = store.remove_tool_call(&tool_call_id).await {

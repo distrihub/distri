@@ -151,18 +151,17 @@ fn build_prompt_omits_args_block_when_empty() {
 }
 
 #[test]
-fn parse_mode_defaults_to_in_process() {
-    // Default = InProcess: matches claude-code's SkillTool semantics
-    // (skill = focused isolated worker, no parent history bleed). `fork`
-    // remains explicitly available but is opt-in — see
-    // `docs/backlog/fork-as-first-class-strategy.md` for the design.
-    assert_eq!(parse_mode(None), CallMode::InProcess);
-    assert_eq!(parse_mode(Some("in_process")), CallMode::InProcess);
+fn parse_mode_defaults_to_fork() {
+    // Default = Fork: parent dispatches one tool_call per work item in a
+    // single turn and the children run as parallel sub-agents (the
+    // fan-out shape used by zippy_grade_browser → zippy_importer).
+    assert_eq!(parse_mode(None), CallMode::Fork);
     assert_eq!(parse_mode(Some("fork")), CallMode::Fork);
+    assert_eq!(parse_mode(Some("in_process")), CallMode::InProcess);
     assert_eq!(parse_mode(Some("offload")), CallMode::Offload);
     assert_eq!(parse_mode(Some("transfer")), CallMode::Transfer);
-    // Unknown → InProcess (typo-safe).
-    assert_eq!(parse_mode(Some("garbage")), CallMode::InProcess);
+    // Unknown → Fork (typo-safe).
+    assert_eq!(parse_mode(Some("garbage")), CallMode::Fork);
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -226,6 +225,7 @@ impl BackgroundRunner for CountingRunner {
                     context_budget: None,
                 },
                 task_id: tid.clone(),
+                parent_task_id: None,
                 agent_id: "test-agent".to_string(),
                 user_id: None,
                 identifier_id: None,
@@ -299,6 +299,7 @@ fn build_parent_ctx(
     let ctx = ExecutorContext {
         agent_id: agent_id.to_string(),
         task_id: uuid::Uuid::new_v4().to_string(),
+        parent_task_id: None,
         thread_id: uuid::Uuid::new_v4().to_string(),
         run_id: uuid::Uuid::new_v4().to_string(),
         user_id: "test-user".to_string(),
@@ -588,6 +589,7 @@ async fn child_context_query_returns_copied_parent_history() {
     let child_ctx = Arc::new(ExecutorContext {
         agent_id: "_adhoc_base".to_string(),
         task_id: child_task_id.clone(),
+        parent_task_id: None,
         thread_id: parent_ctx.thread_id.clone(),
         run_id: uuid::Uuid::new_v4().to_string(),
         user_id: parent_ctx.user_id.clone(),
@@ -652,21 +654,13 @@ async fn child_context_query_returns_copied_parent_history() {
     );
 }
 
-/// **`in_process` is the default for `run_skill`** — verify that omitting
-/// `mode` does not copy parent history into the child task. This is the
-/// claude-code SkillTool contract: skill = focused isolated worker, no
-/// parent history bleed (which is what caused the LLM to mimic stringified
-/// parent tool_calls in the earlier fork-mode regression).
-///
-/// Pre-populates parent task with sentinel messages, dispatches without
-/// `mode`, and asserts:
-/// - The child task exists (dispatch happened) and has `parent_task_id` set.
-/// - The child task does NOT contain the parent's pre-populated messages
-///   (no fork-time copy).
-/// - The dispatched user-message bytes still include the substituted args
-///   (interpolation works regardless of mode).
+/// **Explicit `mode: "in_process"`** — verify that opting INTO in_process
+/// does not copy parent history into the child task. The default mode for
+/// `run_skill` is `fork` (parallel fan-out), but callers that want a fresh,
+/// blocking, history-isolated worker can pass `mode: "in_process"`. This
+/// test pins that contract: in_process = no parent history copy.
 #[tokio::test]
-async fn run_skill_in_process_default_does_not_copy_parent_history() {
+async fn run_skill_explicit_in_process_does_not_copy_parent_history() {
     let (orch, runner) = build_orch().await;
     insert_test_skill(&orch).await;
     register_caller(
@@ -708,12 +702,13 @@ async fn run_skill_in_process_default_does_not_copy_parent_history() {
     }
 
     let tool = RunSkillTool;
-    // No `mode` field — exercises the default (which is `in_process`).
+    // Explicit `mode: "in_process"` (default is fork).
     let call = ToolCall {
         tool_call_id: uuid::Uuid::new_v4().to_string(),
         tool_name: "run_skill".to_string(),
         input: json!({
             "skill_id": "test_fork_skill",
+            "mode": "in_process",
             "args": { "tag": "INPROCESS-VAL" },
         }),
     };
@@ -826,4 +821,88 @@ async fn run_skill_fork_without_args_does_not_crash() {
     .expect("run_skill dispatch should succeed without args");
     assert!(!result.is_empty());
     assert_eq!(runner.counter.load(Ordering::SeqCst), 1);
+}
+
+/// Regression: parent and fork must NOT share `current_plan` (or any other
+/// per-execution Arc). Previously `ExecutorContext::fork()` did `self.clone()`
+/// without rebuilding the per-step Arcs, so the fork inherited the parent's
+/// in-flight plan. When the parent's planner had emitted N parallel
+/// tool_calls, the fork's `agent_loop` saw N steps in `current_plan` and
+/// tried to execute all N — each failing because the fork's tool list lacked
+/// `run_skill`. The visible symptom was N "Tool 'run_skill' not found"
+/// errors at fork start with no LLM call recorded.
+#[tokio::test]
+async fn fork_isolates_current_plan_from_parent() {
+    use crate::agent::context::{ForkOptions, ForkType};
+    use distri_types::{AgentPlan, PlanStep};
+
+    let (orch, _runner) = build_orch().await;
+    register_caller(&orch, "iso_parent", vec!["*".to_string()]).await;
+
+    let (parent_ctx, _rx) = build_parent_ctx(&orch, "iso_parent");
+
+    // Seed the parent with a 4-step plan (the fork-fan-out shape).
+    let plan = AgentPlan::new(vec![
+        PlanStep {
+            id: "s1".to_string(),
+            thought: None,
+            action: distri_types::Action::ToolCalls { tool_calls: vec![] },
+        },
+        PlanStep {
+            id: "s2".to_string(),
+            thought: None,
+            action: distri_types::Action::ToolCalls { tool_calls: vec![] },
+        },
+    ]);
+    parent_ctx.set_current_plan(Some(plan)).await;
+    assert_eq!(
+        parent_ctx
+            .get_current_plan()
+            .await
+            .map(|p| p.steps.len())
+            .unwrap_or(0),
+        2,
+        "parent plan should be set"
+    );
+
+    let child = parent_ctx
+        .fork(ForkOptions {
+            fork_type: ForkType::NewTask,
+            copy_history_limit: None,
+        })
+        .await;
+
+    // The fork must start with NO plan — otherwise its agent_loop will
+    // execute the parent's stale steps before its own LLM call.
+    assert!(
+        child.get_current_plan().await.is_none(),
+        "fork must not inherit parent's current_plan"
+    );
+
+    // Mutating the fork's plan must not write through to the parent's plan
+    // (proves the Arcs are distinct, not just the contents nulled out).
+    let child_plan = AgentPlan::new(vec![PlanStep {
+        id: "child_only".to_string(),
+        thought: None,
+        action: distri_types::Action::ToolCalls { tool_calls: vec![] },
+    }]);
+    child.set_current_plan(Some(child_plan)).await;
+    assert_eq!(
+        parent_ctx
+            .get_current_plan()
+            .await
+            .map(|p| p.steps.len())
+            .unwrap_or(0),
+        2,
+        "writing to child's plan must not corrupt parent's plan"
+    );
+    assert_eq!(
+        child
+            .get_current_plan()
+            .await
+            .map(|p| p.steps.len())
+            .unwrap_or(0),
+        1,
+        "child's own plan must be visible to child"
+    );
 }

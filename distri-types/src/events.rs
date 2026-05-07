@@ -33,6 +33,11 @@ pub struct AgentEvent {
     pub run_id: String,
     pub event: AgentEventType,
     pub task_id: String,
+    /// Ancestor task that dispatched this run. `None` for root tasks.
+    /// Lets consumers reconstruct the task tree from the event stream
+    /// (and route sub-agent events to the right node in the FE store).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_task_id: Option<String>,
     pub agent_id: String,
     /// User ID for usage tracking
     #[serde(default)]
@@ -59,10 +64,47 @@ impl AgentEvent {
             thread_id: thread_id.to_string(),
             run_id: String::new(),
             task_id: String::new(),
+            parent_task_id: None,
             user_id: None,
             identifier_id: None,
             workspace_id: None,
             channel_id: None,
+        }
+    }
+}
+
+/// Typed payload that goes into the A2A `TaskStatusUpdateEvent.metadata` field
+/// for every event the server emits. Carries the routing fields the wire
+/// envelope (A2A) doesn't model — `parent_task_id` (for the FE/CLI task tree)
+/// and `agent_id` (for tool-registry lookups on sub-agent events).
+///
+/// Use `from_event` / `to_agent_event` to round-trip without loose-JSON
+/// extraction. The A2A `TaskStatusUpdateEvent` itself is not extended —
+/// everything Distri-specific lives inside this typed body.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AgentEventEnvelope {
+    /// The event variant inline (`type = "..."`, plus variant fields).
+    /// `serde(flatten)` keeps the wire shape readable.
+    #[serde(flatten)]
+    pub event: AgentEventType,
+    /// Definition name of the agent that emitted this event. For sub-agent
+    /// events relayed through a parent's stream, this is the sub-agent's
+    /// name — the stream's URL agent_id is the parent's, so consumers need
+    /// this to look up tool registries / display names per-event.
+    pub agent_id: String,
+    /// Dispatching task for sub-agent events. Absent for root-task events.
+    /// Lets the consumer route per-task without modifying the A2A spec.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_task_id: Option<String>,
+}
+
+impl AgentEventEnvelope {
+    /// Build an envelope from a full `AgentEvent` for serialization.
+    pub fn from_event(event: &AgentEvent) -> Self {
+        Self {
+            event: event.event.clone(),
+            agent_id: event.agent_id.clone(),
+            parent_task_id: event.parent_task_id.clone(),
         }
     }
 }
@@ -260,6 +302,7 @@ impl AgentEvent {
             run_id: uuid::Uuid::new_v4().to_string(),
             event,
             task_id: uuid::Uuid::new_v4().to_string(),
+            parent_task_id: None,
             agent_id: "default".to_string(),
             user_id: None,
             identifier_id: None,
@@ -280,6 +323,7 @@ impl AgentEvent {
             thread_id,
             run_id,
             task_id,
+            parent_task_id: None,
             event,
             agent_id,
             user_id: None,

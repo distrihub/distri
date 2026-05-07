@@ -415,18 +415,61 @@ async fn build_spec(
                 })
                 .await;
             child.agent_id = agent_name.clone();
+            // `fork()` clones `parent_task_id` from `self`, which means a
+            // top-level dispatch (zippy_browser → fork) ends up with
+            // child.parent_task_id == None. The formatter's scratchpad
+            // loader (`formatter.rs:374-380`) then falls into the
+            // "top-level" branch and reads EVERY scratchpad entry in the
+            // thread — including the parent's in-flight tool_calls — which
+            // the fork's LLM mimics, producing the run_skill→run_skill
+            // recursion we just hit. Pin parent_task_id explicitly so the
+            // formatter restricts scratchpad reads to the fork's own task.
+            child.parent_task_id = Some(parent_ctx.task_id.clone());
 
             // Copy parent's message history into the child task so the fork
             // can pick up where the parent left off.
+            //
+            // **Orphan filter.** When the parent emits N parallel tool_calls
+            // in one turn (the fork-fan-out shape), each child's history
+            // copy would otherwise include the OTHER N-1 tool_calls as
+            // orphans (no matching ToolResult yet). The formatter would
+            // then stringify them ("Tool Call -> X with input: Y") and the
+            // child LLM mimics them, infinite loop.
+            //
+            // First pass: collect every tool_call_id that DOES have a
+            // matching ToolResult somewhere in the parent's slice. Anything
+            // outside that set is in-flight and must not be copied.
             let parent_history = parent_ctx
                 .get_current_task_message_history()
                 .await
                 .unwrap_or_default();
+            let responded_ids: std::collections::HashSet<String> = parent_history
+                .iter()
+                .flat_map(|m| m.parts.iter())
+                .filter_map(|p| match p {
+                    distri_types::Part::ToolResult(r) => Some(r.tool_call_id.clone()),
+                    _ => None,
+                })
+                .collect();
             for msg in &parent_history {
+                let filtered_parts: Vec<_> = msg
+                    .parts
+                    .iter()
+                    .filter(|p| match p {
+                        distri_types::Part::ToolCall(tc) => {
+                            responded_ids.contains(&tc.tool_call_id)
+                        }
+                        _ => true,
+                    })
+                    .cloned()
+                    .collect();
+                if filtered_parts.is_empty() {
+                    continue;
+                }
                 let store_msg = distri_types::Message {
                     id: msg.id.clone(),
                     name: msg.name.clone(),
-                    parts: msg.parts.clone(),
+                    parts: filtered_parts,
                     role: msg.role.clone(),
                     created_at: msg.created_at,
                     agent_id: msg.agent_id.clone(),
@@ -445,10 +488,14 @@ async fn build_spec(
 
     // ── 7. Build prompt text + message per mode. ────────────────────────────
     let prompt_text = match mode {
-        CallMode::Fork => format!(
-            "[Forked from parent agent '{}'. Continue with the following task:]\n\n{}",
-            parent_ctx.agent_id, input.prompt
-        ),
+        // Fork: pass the caller's prompt verbatim. We used to prefix it with
+        // "[Forked from parent agent '<name>']. Continue with the following
+        // task:" but that header set the LLM up to think it should mimic
+        // parent behaviour (dispatching its own forks, copying the parent's
+        // tool-call pattern). The fork's job is the assignment text below
+        // and nothing else; the worker contract in `_adhoc_base.md` already
+        // tells it what "fork" means.
+        CallMode::Fork => input.prompt.clone(),
         CallMode::Transfer => {
             if input.prompt.is_empty() {
                 let history = parent_ctx
@@ -565,12 +612,48 @@ async fn dispatch(
 
             use futures_util::StreamExt;
             while let Some(event) = stream.next().await {
-                parent_ctx.emit(event.event.clone()).await;
+                // Diagnostic: log every event we relay from a child to its
+                // parent. This is what lets the browser see the child's
+                // external tool_calls (for in_process / fork dispatches).
+                // If a child tool_call event arrives at the server but
+                // never reaches the browser, the gap is between this log
+                // line and the SSE subscriber on the parent's task. If
+                // this line is silent for a tool_call you expected, the
+                // child isn't broadcasting it.
                 if matches!(
+                    &event.event,
+                    crate::agent::types::AgentEventType::ToolCalls { .. }
+                        | crate::agent::types::AgentEventType::ToolResults { .. }
+                        | crate::agent::types::AgentEventType::RunFinished { .. }
+                        | crate::agent::types::AgentEventType::RunError { .. }
+                ) {
+                    tracing::info!(
+                        target: "dispatch.relay",
+                        parent_task_id = %parent_ctx.task_id,
+                        child_task_id = %spec.task_id,
+                        agent = %spec.agent_name,
+                        event = ?std::mem::discriminant(&event.event),
+                        "relay child→parent"
+                    );
+                }
+
+                let is_terminal = matches!(
                     &event.event,
                     crate::agent::types::AgentEventType::RunFinished { .. }
                         | crate::agent::types::AgentEventType::RunError { .. }
-                ) {
+                );
+
+                // `relay_event` preserves the child's `task_id` and
+                // `parent_task_id` on the wire envelope (vs. `emit()`
+                // which would rewrite both to point at the parent). The
+                // browser routes events by `event.task_id`, so a fork's
+                // tool_call shows up scoped under that fork — not under
+                // the parent — which is what lets `chatStateStore`
+                // attribute pending tool calls per-task and avoid the
+                // "fork 1 RunFinished closes the SSE → fork 2 dropped"
+                // cascade.
+                parent_ctx.relay_event(event.clone()).await;
+                if is_terminal {
                     break;
                 }
             }

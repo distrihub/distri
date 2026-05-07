@@ -385,6 +385,7 @@ impl ExecutorContext {
             run_id: self.run_id.clone(),
             agent_id: self.agent_id.clone(),
             task_id: self.task_id.clone(),
+            parent_task_id: self.parent_task_id.clone(),
             event,
             user_id: Some(self.user_id.clone()),
             identifier_id: self.identifier_id.clone(),
@@ -442,6 +443,57 @@ impl ExecutorContext {
         self.emit(AgentEventType::DiagnosticLog { message }).await;
     }
 
+    /// Relay a fully-formed AgentEvent (typically from a child run) onto
+    /// THIS context's stream WITHOUT rewriting the envelope. Use this in
+    /// the dispatch relay loop so the browser sees a sub-agent's tool_calls
+    /// stamped with the CHILD's `task_id` (and `parent_task_id` pointing at
+    /// us), instead of having the child's IDs overwritten by `emit()`.
+    ///
+    /// Persistence: saved under THIS task_id (the parent's) so the parent's
+    /// task event-feed is the unified history a subscriber on the parent's
+    /// task can replay. The saved event's envelope still carries the
+    /// child's IDs — consumers route on `event.task_id`, not the
+    /// subscription key.
+    pub async fn relay_event(&self, event: AgentEvent) {
+        let tx = {
+            let guard = self.event_tx.as_ref().cloned();
+            guard.as_ref().cloned()
+        };
+        if let Some(tx) = tx {
+            let _ = tx.send(event.clone()).await;
+        }
+
+        if let Some(orchestrator) = &self.orchestrator {
+            for hook in &orchestrator.system_hooks {
+                if let Err(e) = hook.on_event(&event).await {
+                    tracing::warn!("System hook on_event failed (relay): {}", e);
+                }
+            }
+            let hooks = orchestrator.hooks.read().await;
+            for hook in hooks.values() {
+                if let Err(e) = hook.on_event(&event).await {
+                    tracing::warn!("Hook on_event failed (relay): {}", e);
+                }
+            }
+        }
+
+        // Skip persisting text deltas (matches `emit()`).
+        if matches!(event.event, AgentEventType::TextMessageContent { .. }) {
+            return;
+        }
+
+        if let Some(orchestrator) = &self.orchestrator {
+            if let Err(e) = orchestrator
+                .stores
+                .task_store
+                .add_event_to_task(&self.task_id, event)
+                .await
+            {
+                tracing::error!("Failed to save relayed event: {}", e);
+            }
+        }
+    }
+
     /// Emit event to parent agent only (for subagent communication)
     pub async fn emit_parent(&self, event: AgentEventType) {
         let parent_tx = {
@@ -456,6 +508,7 @@ impl ExecutorContext {
                 run_id: self.run_id.clone(),
                 agent_id: self.agent_id.clone(),
                 task_id: self.task_id.clone(),
+                parent_task_id: self.parent_task_id.clone(),
                 event,
                 user_id: Some(self.user_id.clone()),
                 identifier_id: self.identifier_id.clone(),
@@ -1040,6 +1093,22 @@ impl ExecutorContext {
         // fresh empty `tools` Arc so the orchestrator's per-agent setup pass
         // populates ONLY what the child's own definition asked for.
         forked_context.tools = Arc::new(RwLock::new(Vec::new()));
+
+        // `self.clone()` also Arc-clones every other RwLock-wrapped field, which
+        // means the fork shares the parent's `current_plan`, `final_result`,
+        // `task_status`, etc. That bit us hard: when the parent's planner
+        // produced N parallel `run_skill` tool_calls, its `current_plan` had N
+        // steps queued. The fork inherited that Arc and the fork's agent_loop
+        // read N steps out of the shared plan BEFORE making its own LLM call,
+        // tried to execute each one (and failed N times because the fork
+        // doesn't have `run_skill` in its own tool list). Reset every
+        // per-execution Arc so the fork starts as a clean slate. The parent
+        // keeps its own state via the original Arcs.
+        forked_context.current_plan = Arc::new(RwLock::new(None));
+        forked_context.final_result = Arc::new(RwLock::new(None));
+        forked_context.task_status = Arc::new(RwLock::new(None));
+        forked_context.current_step_id = Arc::new(RwLock::new(None));
+        forked_context.current_message_id = Arc::new(RwLock::new(None));
 
         forked_context
     }

@@ -61,8 +61,8 @@ impl distri_types::Tool for RunSkillTool {
                 "mode": {
                     "type": "string",
                     "enum": ["in_process", "fork", "offload"],
-                    "default": "in_process",
-                    "description": "How to invoke the worker. `in_process` (default) — fresh context, just the skill body + assignment, no parent history bleed. Matches claude-code's SkillTool: each skill is an isolated focused worker. `fork` inherits parent history (use sparingly — parent's in-flight sibling tool calls become noise the LLM mimics). `offload` is fire-and-forget."
+                    "default": "fork",
+                    "description": "How to invoke the worker. `fork` (default) — child runs as a parallel sub-agent in its own task; parent dispatches multiple in one turn for fan-out. `in_process` — fresh context, parent blocks on each call (serial). `offload` — fire-and-forget."
                 }
             }
         })
@@ -219,18 +219,19 @@ impl ExecutorContextTool for RunSkillTool {
     }
 }
 
-/// Map our string-typed `mode` field to `CallMode`. Defaults to `in_process`
-/// (matches claude-code's SkillTool: skill = focused isolated worker, no parent
-/// history bleed). Unknown/typo values fall back to the same default rather than
-/// erroring — keeps the caller side typo-safe.
+/// Map our string-typed `mode` field to `CallMode`. Defaults to `fork` —
+/// parent dispatches one tool_call per work item in a single turn and the
+/// children run as parallel sub-agents (the fan-out shape). Unknown/typo
+/// values fall back to the same default rather than erroring — keeps the
+/// caller side typo-safe.
 pub(crate) fn parse_mode(mode: Option<&str>) -> super::universal_agent::CallMode {
     use super::universal_agent::CallMode;
-    match mode.unwrap_or("in_process") {
+    match mode.unwrap_or("fork") {
         "in_process" => CallMode::InProcess,
         "fork" => CallMode::Fork,
         "offload" => CallMode::Offload,
         "transfer" => CallMode::Transfer,
-        _ => CallMode::InProcess,
+        _ => CallMode::Fork,
     }
 }
 

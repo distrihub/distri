@@ -122,25 +122,25 @@ impl AgentEventBroadcaster for InProcessBroadcaster {
         let mut rx = self.get_or_create_sender(task_id).subscribe();
 
         // Chain replay events followed by live events using async-stream
-        let stream = async_stream::stream! {
-            // Replay buffered events
+        let raw = async_stream::stream! {
             for event in replay {
                 yield event;
             }
-            // Then stream live events
             loop {
                 match rx.recv().await {
                     Ok(event) => yield event,
                     Err(broadcast::error::RecvError::Lagged(n)) => {
                         tracing::warn!("Broadcaster subscriber lagged by {} events", n);
-                        // Continue receiving — some events were lost
                     }
                     Err(broadcast::error::RecvError::Closed) => break,
                 }
             }
         };
 
-        Ok(Box::pin(stream))
+        // Apply the shared scoped-terminate filter so this impl matches the
+        // Redis impl's semantics (stream auto-closes on the subscribed
+        // task's own terminal — sub-agent terminals pass through).
+        Ok(Box::pin(super::until_own_terminal(raw, task_id.to_string())))
     }
 
     async fn set_parent_run(&self, inner_task_id: &str, outer_run_id: &str) -> anyhow::Result<()> {

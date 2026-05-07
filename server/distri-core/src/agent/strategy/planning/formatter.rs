@@ -376,6 +376,15 @@ impl<'a> MessageFormatter<'a> {
                 .get_entries(&context.thread_id, &context.task_id, Some(limit))
                 .await
                 .unwrap_or_default();
+            tracing::info!(
+                target: "scratchpad.load",
+                agent = %context.agent_id,
+                task_id = %context.task_id,
+                parent_task_id = %context.parent_task_id.as_deref().unwrap_or(""),
+                branch = "subtask",
+                count = entries.len(),
+                "scratchpad load"
+            );
             return Ok(entries);
         }
 
@@ -385,6 +394,14 @@ impl<'a> MessageFormatter<'a> {
             .get_all_entries(&context.thread_id, Some(limit))
             .await
             .unwrap_or_default();
+        tracing::info!(
+            target: "scratchpad.load",
+            agent = %context.agent_id,
+            task_id = %context.task_id,
+            branch = "top_level",
+            count = entries.len(),
+            "scratchpad load"
+        );
         Ok(entries)
     }
 
@@ -594,19 +611,32 @@ impl<'a> MessageFormatter<'a> {
         }
 
         if !assistant_parts.is_empty() {
-            let assistant_parts = assistant_parts
+            // Orphan ToolCall (no matching ToolResult): DROP it.
+            //
+            // Old behaviour: stringify as `"Tool Call -> {name} with input:
+            // {json}"`. That format is indistinguishable from a prompt
+            // template the LLM is supposed to follow, so the model
+            // faithfully re-emits the same call on the next turn — even if
+            // the tool isn't in its tool set ("Tool 'run_skill' not found"
+            // recursion). The text fallback was load-bearing for the
+            // run_skill fan-out failure mode: a fork's LLM hallucinates one
+            // run_skill call → tool not found → ExecutionResult with an
+            // orphan ToolCall lands in scratchpad → next planning turn
+            // stringifies it → LLM mimics → recursion.
+            //
+            // Real fix: drop the orphan part entirely. If after dropping
+            // the assistant message has no parts, omit the assistant
+            // message altogether.
+            let assistant_parts: Vec<_> = assistant_parts
                 .into_iter()
-                .map(|part| match part {
-                    Part::ToolCall(tool_call) => {
-                        if responded_tool_ids.contains(&tool_call.tool_call_id) {
-                            Part::ToolCall(tool_call)
-                        } else {
-                            Part::Text(Self::format_tool_call(&tool_call))
-                        }
-                    }
-                    other => other,
+                .filter(|part| match part {
+                    Part::ToolCall(tc) => responded_tool_ids.contains(&tc.tool_call_id),
+                    _ => true,
                 })
                 .collect();
+            if assistant_parts.is_empty() {
+                return messages;
+            }
             let mut assistant_message = crate::types::Message::default();
             assistant_message.role = MessageRole::Assistant;
             assistant_message.created_at = history_result.timestamp;

@@ -67,22 +67,38 @@ pub trait AgentEventBroadcaster: Send + Sync + 'static {
     /// Returns a stream that yields all events for the task — including the
     /// terminal `RunFinished` or `RunError` event — and then closes.
     async fn follow_stream(&self, task_id: &str) -> anyhow::Result<BoxStream<'static, AgentEvent>> {
-        let mut inner = self.subscribe(task_id).await?;
+        let inner = self.subscribe(task_id).await?;
+        Ok(Box::pin(until_own_terminal(inner, task_id.to_string())))
+    }
+}
 
-        let stream = async_stream::stream! {
-            while let Some(event) = inner.next().await {
-                let is_terminal = matches!(
+/// Wrap a raw event stream so it auto-closes the moment the SUBSCRIBED
+/// task's own `RunFinished` or `RunError` arrives. Sub-agent terminal
+/// events (`event.task_id != subscribed_task_id`) flow through but DON'T
+/// close the stream — that's load-bearing for parent SSE subscriptions
+/// that need to keep receiving events after a fork finishes. Shared
+/// between in-memory and Redis broadcaster impls so both have identical
+/// terminate semantics.
+pub fn until_own_terminal<S>(
+    stream: S,
+    subscribed_task_id: String,
+) -> impl futures_util::Stream<Item = AgentEvent>
+where
+    S: futures_util::Stream<Item = AgentEvent> + Send + 'static,
+{
+    async_stream::stream! {
+        futures_util::pin_mut!(stream);
+        while let Some(event) = stream.next().await {
+            let is_own_terminal = event.task_id == subscribed_task_id
+                && matches!(
                     &event.event,
                     AgentEventType::RunFinished { .. } | AgentEventType::RunError { .. }
                 );
-                yield event;
-                if is_terminal {
-                    break;
-                }
+            yield event;
+            if is_own_terminal {
+                break;
             }
-        };
-
-        Ok(Box::pin(stream))
+        }
     }
 }
 

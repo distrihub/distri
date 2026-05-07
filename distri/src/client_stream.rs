@@ -499,24 +499,24 @@ impl AgentStreamClient {
     }
 }
 
-/// Build an AgentEvent from SSE metadata.
-/// Extracts `_agent_id` (agent name) injected by the server, falling back
-/// to the stream URL's agent_id.
+/// Build an AgentEvent from SSE metadata. The server serializes a typed
+/// `AgentEventEnvelope` into the A2A `metadata` field — we deserialize the
+/// same struct here, no per-key JSON extraction. `agent_id` falls back to
+/// the stream's URL agent_id only if the envelope ships an empty string
+/// (defensive for older payloads).
 fn build_agent_event(
     stream_agent_id: &str,
     meta: &serde_json::Value,
     context_id: Option<String>,
     task_id: Option<String>,
 ) -> Option<AgentEvent> {
-    let event_type: AgentEventType = serde_json::from_value(meta.clone()).ok()?;
+    let envelope: distri_types::AgentEventEnvelope = serde_json::from_value(meta.clone()).ok()?;
 
-    // Server injects _agent_id (= definition.name) into event metadata.
-    // This is the correct name for tool registry lookups, especially for sub-agents.
-    let agent_id = meta
-        .get("_agent_id")
-        .and_then(|v| v.as_str())
-        .unwrap_or(stream_agent_id)
-        .to_string();
+    let agent_id = if envelope.agent_id.is_empty() {
+        stream_agent_id.to_string()
+    } else {
+        envelope.agent_id
+    };
 
     let thread_id = context_id.unwrap_or_else(|| "unknown_thread".to_string());
     let task_id = task_id.unwrap_or_else(|| "unknown_task".to_string());
@@ -526,7 +526,8 @@ fn build_agent_event(
         thread_id,
         run_id: stream_agent_id.to_string(),
         task_id,
-        event: event_type,
+        parent_task_id: envelope.parent_task_id,
+        event: envelope.event,
         agent_id,
         user_id: None,
         identifier_id: None,

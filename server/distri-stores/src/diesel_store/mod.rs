@@ -4,12 +4,7 @@
 mod cancel_task_test;
 #[cfg(test)]
 mod thread_tokens_test;
-use std::{
-    collections::HashMap,
-    fmt::Display,
-    path::Path,
-    sync::Arc,
-};
+use std::{collections::HashMap, fmt::Display, sync::Arc};
 
 use crate::models::*;
 use crate::schema::{
@@ -488,6 +483,7 @@ impl DieselStorePool<diesel_async::AsyncPgConnection> {
 /// Ensures parent directories exist for file-backed SQLite URLs so opening the DB can create the file.
 #[cfg(feature = "sqlite")]
 fn ensure_sqlite_parent_dir_exists(database_url: &str) -> Result<()> {
+    use std::path::Path;
     if database_url.contains(":memory:") || database_url.contains("mode=memory") {
         return Ok(());
     }
@@ -502,10 +498,7 @@ fn ensure_sqlite_parent_dir_exists(database_url: &str) -> Result<()> {
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
             std::fs::create_dir_all(parent).with_context(|| {
-                format!(
-                    "failed to create database directory {}",
-                    parent.display()
-                )
+                format!("failed to create database directory {}", parent.display())
             })?;
         }
     }

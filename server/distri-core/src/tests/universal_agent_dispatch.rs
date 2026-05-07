@@ -145,6 +145,7 @@ impl BackgroundRunner for FinalizingTestRunner {
                     context_budget: None,
                 },
                 task_id: task_id.clone(),
+                parent_task_id: None,
                 agent_id: "test-agent".to_string(),
                 user_id: None,
                 identifier_id: None,
@@ -251,6 +252,7 @@ fn build_parent_ctx(
     let ctx = ExecutorContext {
         agent_id: agent_id.to_string(),
         task_id: uuid::Uuid::new_v4().to_string(),
+        parent_task_id: None,
         thread_id: uuid::Uuid::new_v4().to_string(),
         run_id: uuid::Uuid::new_v4().to_string(),
         user_id: "test-user".to_string(),

@@ -1277,10 +1277,17 @@ impl AgentOrchestrator {
 
         tokio::spawn(async move {
             while let Some(event) = event_rx.recv().await {
+                // "Terminal" here means THIS task's own run finishing —
+                // not a sub-agent's. Sub-agent RunFinished/RunError
+                // events are relayed through this same event_tx (via
+                // `parent_ctx.relay_event`) so they share the channel,
+                // but the parent's drain loop must keep going until ITS
+                // own RunFinished arrives. Compare on `event.task_id ==
+                // task_id` instead of just matching the variant.
                 let is_terminal = matches!(
                     &event.event,
                     AgentEventType::RunFinished { .. } | AgentEventType::RunError { .. }
-                );
+                ) && event.task_id == task_id;
 
                 // Auto-complete inline hooks
                 if let AgentEventType::InlineHookRequested { ref request } = event.event {
@@ -1303,9 +1310,26 @@ impl AgentOrchestrator {
                     }
                 }
 
-                // Publish to broadcaster
-                let event_task_id = event.task_id.clone();
-                let _ = runtime.broadcaster().publish(&event_task_id, event).await;
+                // Publish to broadcaster keyed on THIS relay's registered
+                // task_id (the parent of any relayed sub-agent event), NOT
+                // the envelope's `event.task_id`.
+                //
+                // Why: the dispatch relay loop in `universal_agent.rs`
+                // subscribes to the CHILD's broadcaster topic and forwards
+                // each child event to the parent's stream via
+                // `parent_ctx.relay_event` — which writes the event (with
+                // its child task_id intact) into the parent's event_tx.
+                // If we then re-publish on `broadcaster[event.task_id]`
+                // (= child_task_id), the relay loop's own subscription on
+                // that topic re-receives it, re-relays, infinite loop.
+                //
+                // Publishing on `task_id` (the registered, parent-side
+                // key) routes the event to the SSE consumer subscribed
+                // to the parent's task — which is where the browser
+                // listens — without feeding the loop. The envelope still
+                // carries `event.task_id = child_task_id` so consumers
+                // route per-task correctly.
+                let _ = runtime.broadcaster().publish(&task_id, event).await;
 
                 if is_terminal {
                     let _ = runtime.coordinator().complete_task(&task_id).await;
@@ -1572,11 +1596,20 @@ impl AgentOrchestrator {
         tool_call_id: &str,
         tool_response: distri_types::ToolResponse,
     ) -> Result<(), String> {
-        self.stores
+        let outcome = self
+            .stores
             .external_tool_calls_store
             .complete_external_tool_call(tool_call_id, tool_response)
             .await
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string());
+        tracing::info!(
+            target: "ext_tool.complete",
+            tool_call_id = %tool_call_id,
+            ok = outcome.is_ok(),
+            error = %outcome.as_ref().err().cloned().unwrap_or_default(),
+            "browser POST /complete-tool received"
+        );
+        outcome
     }
 
     pub async fn complete_inline_hook(

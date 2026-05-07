@@ -17,7 +17,6 @@ const BUNDLED_AGENTS: &[(&str, &str)] = &[
     ("_adhoc_base", include_str!("../../agents/_adhoc_base.md")),
     ("plan", include_str!("../../agents/plan.md")),
     ("explore", include_str!("../../agents/explore.md")),
-    ("coder", include_str!("../../agents/coder.md")),
 ];
 
 /// Bundled skills under `distri/server/agents/skills/`.
