@@ -1,6 +1,6 @@
 ---
-name = "distri-debug"
-description = "Debug and test Distri agent connection flows against cloud"
+name: distri-debug
+description: "Debug and test Distri agent connection flows against cloud"
 ---
 
 # Distri Debug & Test Skill
