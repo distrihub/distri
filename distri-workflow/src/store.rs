@@ -116,9 +116,7 @@ impl WorkflowStateStore for InMemoryStore {
 
             // Also merge context_updates for backward compat
             if let Some(updates) = result.context_updates {
-                if let (Some(ctx), Some(upd)) =
-                    (run.context.as_object_mut(), updates.as_object())
-                {
+                if let (Some(ctx), Some(upd)) = (run.context.as_object_mut(), updates.as_object()) {
                     for (k, v) in upd {
                         ctx.insert(k.clone(), v.clone());
                     }

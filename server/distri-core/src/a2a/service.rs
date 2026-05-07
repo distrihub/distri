@@ -222,14 +222,17 @@ impl A2AService {
             ..
         } = session;
 
-        // Drain events to completion. The background execution path publishes
-        // a terminal RunFinished/RunError on the broadcaster when done.
+        // Drain events to completion. Only the ROOT run's terminal event
+        // ends this drain — sub-agent RunFinished/RunError frames are
+        // intermediate (the parent is still going). Same root-only check
+        // we apply on the SSE streaming path.
         futures_util::pin_mut!(event_stream);
         while let Some(event) = futures_util::StreamExt::next(&mut event_stream).await {
-            if matches!(
+            let is_root_terminal = matches!(
                 &event.event,
                 AgentEventType::RunFinished { .. } | AgentEventType::RunError { .. }
-            ) {
+            ) && event.parent_task_id.is_none();
+            if is_root_terminal {
                 break;
             }
         }
@@ -493,16 +496,24 @@ impl A2AService {
             futures_util::pin_mut!(event_stream);
             let mut saw_terminal = false;
             while let Some(event) = futures_util::StreamExt::next(&mut event_stream).await {
-                let is_terminal = matches!(
+                // Only the ROOT run's terminal event closes this SSE
+                // stream. A sub-agent finishing (event.parent_task_id is
+                // Some) is intermediate — the parent run is still going
+                // and may dispatch more forks, each of which needs to
+                // reach the browser. Pre-fix, ANY RunFinished broke the
+                // loop; first fork's finish closed the stream and every
+                // subsequent fork's tool_calls timed out at 120s without
+                // the browser ever seeing them.
+                let is_root_terminal = matches!(
                     &event.event,
                     AgentEventType::RunFinished { .. } | AgentEventType::RunError { .. }
-                );
+                ) && event.parent_task_id.is_none();
                 let msg = map_agent_event(&event);
                 yield Ok::<_, std::convert::Infallible>(SseMessage::success_frame(
                     req_id.clone(),
                     serde_json::to_value(msg).unwrap_or_default(),
                 ));
-                if is_terminal {
+                if is_root_terminal {
                     saw_terminal = true;
                     break;
                 }

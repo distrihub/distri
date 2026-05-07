@@ -16,9 +16,7 @@ use distri_types::{AgentEvent, Part, ToolCall, ToolDefinition, ToolResponse};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::{
-    COLOR_BRIGHT_GREEN, COLOR_BRIGHT_MAGENTA, COLOR_BRIGHT_YELLOW, COLOR_RESET,
-};
+use crate::{COLOR_BRIGHT_GREEN, COLOR_BRIGHT_MAGENTA, COLOR_BRIGHT_YELLOW, COLOR_RESET};
 
 /// Register all local CLI tools and return their definitions (with prompts).
 pub fn register_all(
@@ -276,4 +274,3 @@ pub fn register_execute_command(
         },
     );
 }
-

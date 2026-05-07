@@ -91,28 +91,33 @@ pub enum CallMode {
     Transfer,
 }
 
-/// Input struct for the `call_agent` tool.
-#[derive(Debug, serde::Deserialize)]
+/// Input struct for the `call_agent` tool. Serializable so internal callers
+/// (e.g. `RunSkillTool`) can construct it as a typed value and round-trip
+/// through `serde_json::to_value` instead of hand-building a JSON map.
+#[derive(Debug, Default, serde::Deserialize, serde::Serialize)]
 pub(crate) struct CallAgentInput {
     /// Name of the agent to call. If omitted, an ad-hoc agent is created from `system_prompt`.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) agent: Option<String>,
     /// The task/prompt to send to the agent.
     pub(crate) prompt: String,
     /// System prompt for ad-hoc agent creation. When set without `agent`, creates a temporary agent.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) system_prompt: Option<String>,
-    /// Tool names to give the ad-hoc agent (only used with `system_prompt`).
-    #[serde(default)]
+    /// Builtin tool names to give the ad-hoc agent (only used with `system_prompt`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) tools: Option<Vec<String>>,
-    /// Model override for the ad-hoc agent.
-    #[serde(default)]
-    pub(crate) model: Option<String>,
+    /// External tool names (or `["*"]` for all) the ad-hoc agent should
+    /// inherit from the parent session. Defaults to `["*"]` so ad-hoc + fork
+    /// matches claude-code's `useExactTools` semantics — child borrows
+    /// parent's full external tool pool unless the caller narrows it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) external: Option<Vec<String>>,
     /// Description for the ad-hoc agent.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) description: Option<String>,
     /// Optional name for the background agent (used by `send_message` for routing).
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) name: Option<String>,
     /// How to invoke the agent. See tool description for semantics.
     #[serde(default)]
@@ -186,7 +191,12 @@ impl Tool for UniversalAgentTool {
                 "tools": {
                     "type": "array",
                     "items": { "type": "string" },
-                    "description": "Tool names to give the ad-hoc agent (only with system_prompt)."
+                    "description": "Builtin tool names to give the ad-hoc agent (only with system_prompt)."
+                },
+                "external": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "External tool names (or [\"*\"] for all) the ad-hoc agent should inherit from the parent session. Defaults to [\"*\"] — child borrows the full parent tool pool unless narrowed."
                 },
                 "model": {
                     "type": "string",
@@ -307,34 +317,54 @@ async fn build_spec(
 
     // ── 3. Build overrides (ad-hoc branch only). ────────────────────────────
     let overrides = if input.system_prompt.is_some() {
-        // `_adhoc_base` sets `append_default_instructions = false`, so the
-        // rendered prompt is exactly whatever we put in `instructions`.
-        // When the caller supplies `system_prompt`, they often tell the model
-        // to produce text-only output ("Output only valid MDX", etc.), which
-        // causes the LLM to never call `final` — the agent loop then re-runs
-        // the same prompt, producing the same text, until `max_iterations`
-        // burns out. Force an explicit terminate-with-final reminder so the
-        // LLM knows to emit its answer via the `final` tool instead of free
-        // text.
+        // `_adhoc_base.md`'s body owns the worker contract (terminate via
+        // `final`, ignore inherited multi-step plans on fork, do not
+        // call_agent). We APPEND the caller's system_prompt as the actual
+        // assignment so the contract still reaches the model — overriding
+        // `instructions` would lose it. Fetch the seeded base body once and
+        // suffix it with the per-call assignment.
+        let base_instructions = orchestrator
+            .get_agent("_adhoc_base")
+            .await
+            .and_then(|cfg| match cfg {
+                distri_types::configuration::AgentConfig::StandardAgent(def) => {
+                    Some(def.instructions)
+                }
+                _ => None,
+            })
+            .unwrap_or_default();
         let user_instructions = input.system_prompt.clone().unwrap_or_default();
-        let instructions = format!(
-            "{}\n\n\
-             # TERMINATION\n\
-             When your answer is ready, call the `final` tool with your\n\
-             complete output as the `result` parameter. Do NOT reply with\n\
-             free-form text — the caller will only receive whatever you\n\
-             pass to `final`. Every response must end with exactly one\n\
-             `final` tool call.",
-            user_instructions.trim_end()
-        );
+        let instructions = if base_instructions.trim().is_empty() {
+            user_instructions
+        } else {
+            format!(
+                "{}\n\n{}",
+                base_instructions.trim_end(),
+                user_instructions.trim()
+            )
+        };
 
         let mut o = DefinitionOverrides::default().with_instructions(instructions);
-        if let Some(ref model) = input.model {
-            o = o.with_model(model.clone());
-        }
-        if let Some(ref tools) = input.tools {
+        // Build the override only when the caller actually overrode `tools` or
+        // `external` — otherwise we leave _adhoc_base's seeded ToolsConfig in
+        // place (which already declares `external = ["*"]`). Replacing it with
+        // a partial override would zero out fields the caller didn't touch.
+        if input.tools.is_some() || input.external.is_some() {
+            // Match `_adhoc_base.md`'s seeded defaults exactly: `final` only,
+            // no `call_agent` (caller must opt in to recursive workers — see
+            // the recursion-loop bug fixed when this default was tightened),
+            // and `external = ["*"]` to inherit the parent session's tools.
+            let builtin = input
+                .tools
+                .clone()
+                .unwrap_or_else(|| vec!["final".to_string()]);
+            let external = input
+                .external
+                .clone()
+                .unwrap_or_else(|| vec!["*".to_string()]);
             o = o.with_tools(distri_types::ToolsConfig {
-                builtin: tools.clone(),
+                builtin,
+                external: Some(external),
                 ..Default::default()
             });
         }
@@ -385,18 +415,61 @@ async fn build_spec(
                 })
                 .await;
             child.agent_id = agent_name.clone();
+            // `fork()` clones `parent_task_id` from `self`, which means a
+            // top-level dispatch (zippy_browser → fork) ends up with
+            // child.parent_task_id == None. The formatter's scratchpad
+            // loader (`formatter.rs:374-380`) then falls into the
+            // "top-level" branch and reads EVERY scratchpad entry in the
+            // thread — including the parent's in-flight tool_calls — which
+            // the fork's LLM mimics, producing the run_skill→run_skill
+            // recursion we just hit. Pin parent_task_id explicitly so the
+            // formatter restricts scratchpad reads to the fork's own task.
+            child.parent_task_id = Some(parent_ctx.task_id.clone());
 
             // Copy parent's message history into the child task so the fork
             // can pick up where the parent left off.
+            //
+            // **Orphan filter.** When the parent emits N parallel tool_calls
+            // in one turn (the fork-fan-out shape), each child's history
+            // copy would otherwise include the OTHER N-1 tool_calls as
+            // orphans (no matching ToolResult yet). The formatter would
+            // then stringify them ("Tool Call -> X with input: Y") and the
+            // child LLM mimics them, infinite loop.
+            //
+            // First pass: collect every tool_call_id that DOES have a
+            // matching ToolResult somewhere in the parent's slice. Anything
+            // outside that set is in-flight and must not be copied.
             let parent_history = parent_ctx
                 .get_current_task_message_history()
                 .await
                 .unwrap_or_default();
+            let responded_ids: std::collections::HashSet<String> = parent_history
+                .iter()
+                .flat_map(|m| m.parts.iter())
+                .filter_map(|p| match p {
+                    distri_types::Part::ToolResult(r) => Some(r.tool_call_id.clone()),
+                    _ => None,
+                })
+                .collect();
             for msg in &parent_history {
+                let filtered_parts: Vec<_> = msg
+                    .parts
+                    .iter()
+                    .filter(|p| match p {
+                        distri_types::Part::ToolCall(tc) => {
+                            responded_ids.contains(&tc.tool_call_id)
+                        }
+                        _ => true,
+                    })
+                    .cloned()
+                    .collect();
+                if filtered_parts.is_empty() {
+                    continue;
+                }
                 let store_msg = distri_types::Message {
                     id: msg.id.clone(),
                     name: msg.name.clone(),
-                    parts: msg.parts.clone(),
+                    parts: filtered_parts,
                     role: msg.role.clone(),
                     created_at: msg.created_at,
                     agent_id: msg.agent_id.clone(),
@@ -415,10 +488,14 @@ async fn build_spec(
 
     // ── 7. Build prompt text + message per mode. ────────────────────────────
     let prompt_text = match mode {
-        CallMode::Fork => format!(
-            "[Forked from parent agent '{}'. Continue with the following task:]\n\n{}",
-            parent_ctx.agent_id, input.prompt
-        ),
+        // Fork: pass the caller's prompt verbatim. We used to prefix it with
+        // "[Forked from parent agent '<name>']. Continue with the following
+        // task:" but that header set the LLM up to think it should mimic
+        // parent behaviour (dispatching its own forks, copying the parent's
+        // tool-call pattern). The fork's job is the assignment text below
+        // and nothing else; the worker contract in `_adhoc_base.md` already
+        // tells it what "fork" means.
+        CallMode::Fork => input.prompt.clone(),
         CallMode::Transfer => {
             if input.prompt.is_empty() {
                 let history = parent_ctx
@@ -535,12 +612,48 @@ async fn dispatch(
 
             use futures_util::StreamExt;
             while let Some(event) = stream.next().await {
-                parent_ctx.emit(event.event.clone()).await;
+                // Diagnostic: log every event we relay from a child to its
+                // parent. This is what lets the browser see the child's
+                // external tool_calls (for in_process / fork dispatches).
+                // If a child tool_call event arrives at the server but
+                // never reaches the browser, the gap is between this log
+                // line and the SSE subscriber on the parent's task. If
+                // this line is silent for a tool_call you expected, the
+                // child isn't broadcasting it.
                 if matches!(
+                    &event.event,
+                    crate::agent::types::AgentEventType::ToolCalls { .. }
+                        | crate::agent::types::AgentEventType::ToolResults { .. }
+                        | crate::agent::types::AgentEventType::RunFinished { .. }
+                        | crate::agent::types::AgentEventType::RunError { .. }
+                ) {
+                    tracing::info!(
+                        target: "dispatch.relay",
+                        parent_task_id = %parent_ctx.task_id,
+                        child_task_id = %spec.task_id,
+                        agent = %spec.agent_name,
+                        event = ?std::mem::discriminant(&event.event),
+                        "relay child→parent"
+                    );
+                }
+
+                let is_terminal = matches!(
                     &event.event,
                     crate::agent::types::AgentEventType::RunFinished { .. }
                         | crate::agent::types::AgentEventType::RunError { .. }
-                ) {
+                );
+
+                // `relay_event` preserves the child's `task_id` and
+                // `parent_task_id` on the wire envelope (vs. `emit()`
+                // which would rewrite both to point at the parent). The
+                // browser routes events by `event.task_id`, so a fork's
+                // tool_call shows up scoped under that fork — not under
+                // the parent — which is what lets `chatStateStore`
+                // attribute pending tool calls per-task and avoid the
+                // "fork 1 RunFinished closes the SSE → fork 2 dropped"
+                // cascade.
+                parent_ctx.relay_event(event.clone()).await;
+                if is_terminal {
                     break;
                 }
             }

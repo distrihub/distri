@@ -9,6 +9,7 @@ pub mod workspace;
 use std::{path::Path, sync::Arc};
 
 mod cli;
+mod seed;
 pub mod logging;
 
 pub use cli::Cli;
@@ -68,6 +69,7 @@ pub async fn init_orchestrator(
         .await?;
 
     let orchestrator = Arc::new(orchestrator);
+    seed::seed_bundled_defaults(orchestrator.as_ref()).await?;
     register_workspace_agents(&orchestrator, workspace_path).await?;
 
     Ok(orchestrator)

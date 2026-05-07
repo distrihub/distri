@@ -72,6 +72,8 @@ pub struct InitializedStores {
     pub connection_store: Option<Arc<dyn ConnectionStore>>,
     pub connection_token_store: Option<Arc<dyn ConnectionTokenStore>>,
     pub provider_registry: Option<Arc<dyn crate::auth::ProviderRegistry>>,
+    pub span_store: Option<Arc<dyn SpanStore>>,
+    pub note_store: Option<Arc<dyn NoteStore>>,
 }
 impl InitializedStores {
     pub fn set_tool_auth_store(&mut self, tool_auth_store: Arc<dyn ToolAuthStore>) {
@@ -929,7 +931,11 @@ pub struct SkillFrontmatter {
     #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
     pub metadata: std::collections::HashMap<String, String>,
     /// Maps to `allowed-tools` on the wire (per agentskills.io spec).
-    #[serde(default, rename = "allowed-tools", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        rename = "allowed-tools",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub allowed_tools: Option<String>,
 }
 
@@ -1364,19 +1370,92 @@ pub trait ConnectionTokenStore: Send + Sync + 'static {
     async fn remove_oauth_state(&self, state_key: &str) -> anyhow::Result<()>;
 }
 
+// ========== Note Store ==========
+
+/// Persistence for workspace notes.
+///
+/// OSS: backed by SQLite via DieselNoteStore.
+/// Cloud: backed by Postgres via the existing NoteStore in distri-cloud.
+#[async_trait]
+pub trait NoteStore: Send + Sync + 'static {
+    /// List notes, optionally filtering by tag or full-text search.
+    async fn list(
+        &self,
+        query: &crate::api::notes::ListNotesQuery,
+    ) -> anyhow::Result<Vec<crate::api::notes::NoteRecord>>;
+
+    /// Fetch a single note by ID.
+    async fn get(&self, id: Uuid) -> anyhow::Result<Option<crate::api::notes::NoteRecord>>;
+
+    /// Create a new note.
+    async fn create(
+        &self,
+        req: crate::api::notes::CreateNoteRequest,
+    ) -> anyhow::Result<crate::api::notes::NoteRecord>;
+
+    /// Update an existing note; returns the updated record or `None` if not found.
+    async fn update(
+        &self,
+        id: Uuid,
+        req: crate::api::notes::UpdateNoteRequest,
+    ) -> anyhow::Result<Option<crate::api::notes::NoteRecord>>;
+
+    /// Delete a note. Returns `true` if the note existed and was deleted.
+    async fn delete(&self, id: Uuid) -> anyhow::Result<bool>;
+
+    /// Full-text search on title and content.
+    async fn search(&self, query: &str) -> anyhow::Result<Vec<crate::api::notes::NoteRecord>>;
+}
+
+// ========== Span Store ==========
+
+/// Query selector for listing spans.
+pub enum SpanQuery {
+    ByThreadId(String),
+    ByTraceId(String),
+}
+
+/// Persistence for OTel span records.
+///
+/// Cloud implements this on top of Postgres; distri-server ships an
+/// in-memory implementation that retains spans for the lifetime of the
+/// process.
+#[async_trait]
+pub trait SpanStore: Send + Sync + 'static {
+    /// Ingest a batch of spans (idempotent on trace_id + span_id).
+    async fn bulk_insert(&self, spans: Vec<crate::api::spans::SpanRecord>)
+    -> anyhow::Result<usize>;
+
+    /// Fetch all spans for a trace or thread, ordered by start_time_ns asc.
+    async fn list_spans(
+        &self,
+        workspace_id: &str,
+        query: SpanQuery,
+    ) -> anyhow::Result<Vec<crate::api::spans::SpanRecord>>;
+
+    /// Aggregate view: one row per trace (root span + per-trace stats).
+    async fn list_traces(
+        &self,
+        workspace_id: &str,
+        limit: i64,
+    ) -> anyhow::Result<Vec<crate::api::spans::TraceRecord>>;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn test_skills_list_response_deserialize_cloud_format() {
+        // Tolerates legacy marketplace fields (is_public, star_count, etc.)
+        // in the wire format — they're ignored, not deserialized.
         let json = r#"{"skills":[{"id":"abc","workspace_slug":"ws","name":"test","full_name":"ws/test","description":"desc","tags":["t"],"is_public":true,"is_system":false,"is_owner":true,"star_count":0,"clone_count":0,"is_starred":false,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}]}"#;
         let resp: SkillsListResponse = serde_json::from_str(json).unwrap();
         assert_eq!(resp.skills.len(), 1);
         assert_eq!(resp.skills[0].name, "test");
         assert_eq!(resp.skills[0].workspace_slug, "ws");
         assert_eq!(resp.skills[0].full_name, "ws/test");
-        assert!(resp.skills[0].is_public);
+        assert!(resp.skills[0].is_owner);
     }
 
     #[test]
@@ -1385,8 +1464,8 @@ mod tests {
         let resp: SkillsListResponse = serde_json::from_str(json).unwrap();
         assert_eq!(resp.skills[0].workspace_slug, "");
         assert_eq!(resp.skills[0].full_name, "");
-        assert!(!resp.skills[0].is_public);
         assert!(!resp.skills[0].is_owner);
+        assert!(!resp.skills[0].is_workspace);
     }
 
     #[test]
@@ -1399,13 +1478,8 @@ mod tests {
                 full_name: "local/my_skill".into(),
                 description: Some("A skill".into()),
                 tags: vec!["tag1".into()],
-                is_public: false,
-                is_system: false,
                 is_owner: true,
                 is_workspace: true,
-                star_count: 5,
-                clone_count: 2,
-                is_starred: true,
                 created_at: chrono::Utc::now(),
                 updated_at: chrono::Utc::now(),
             }],
@@ -1413,6 +1487,6 @@ mod tests {
         let json = serde_json::to_string(&resp).unwrap();
         let decoded: SkillsListResponse = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded.skills[0].name, "my_skill");
-        assert_eq!(decoded.skills[0].star_count, 5);
+        assert!(decoded.skills[0].is_workspace);
     }
 }

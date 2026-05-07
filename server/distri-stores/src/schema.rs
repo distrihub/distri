@@ -266,6 +266,64 @@ diesel::joinable!(session_entries -> threads (thread_id));
 diesel::joinable!(scratchpad_entries -> threads (thread_id));
 diesel::joinable!(message_reads -> threads (thread_id));
 diesel::joinable!(message_votes -> threads (thread_id));
+diesel::table! {
+    use diesel::sql_types::*;
+    use crate::schema::types::Jsonb;
+
+    connections (id) {
+        id -> Text,
+        workspace_id -> Text,
+        skill_id -> Text,
+        name -> Text,
+        status -> Text,
+        config -> Jsonb,
+        connected_by -> Nullable<Text>,
+        auth_scope -> Text,
+        auth_type -> Jsonb,
+        is_system -> Integer,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+    }
+}
+
+diesel::table! {
+    use diesel::sql_types::*;
+    use crate::schema::types::Jsonb;
+
+    connection_tokens (connection_id) {
+        connection_id -> Text,
+        token_json -> Jsonb,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+    }
+}
+
+diesel::table! {
+    use diesel::sql_types::*;
+    use crate::schema::types::Jsonb;
+
+    connection_oauth_states (state_key) {
+        state_key -> Text,
+        state_json -> Jsonb,
+        created_at -> Timestamp,
+    }
+}
+
+diesel::table! {
+    use diesel::sql_types::*;
+
+    notes (id) {
+        id -> Text,
+        workspace_id -> Text,
+        title -> Text,
+        content -> Text,
+        tags -> Text,           // JSON array
+        created_by -> Nullable<Text>,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+    }
+}
+
 diesel::allow_tables_to_appear_in_same_query!(
     agent_configs,
     threads,
@@ -285,4 +343,8 @@ diesel::allow_tables_to_appear_in_same_query!(
     skills,
     message_reads,
     message_votes,
+    connections,
+    connection_tokens,
+    connection_oauth_states,
+    notes,
 );

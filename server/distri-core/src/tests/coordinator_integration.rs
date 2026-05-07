@@ -37,6 +37,7 @@ fn make_event(task_id: &str, event_type: AgentEventType) -> AgentEvent {
         run_id: "test-run".to_string(),
         event: event_type,
         task_id: task_id.to_string(),
+        parent_task_id: None,
         agent_id: "test-agent".to_string(),
         user_id: None,
         identifier_id: None,

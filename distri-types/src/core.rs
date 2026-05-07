@@ -190,7 +190,7 @@ pub struct AdditionalParts {
 }
 
 /// Metadata for individual message parts.
-/// Used to control part behavior such as persistence.
+/// Used to control part behavior such as persistence and rendering.
 #[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, Default, PartialEq, ToSchema)]
 pub struct PartMetadata {
     /// If false, this part will be filtered out before saving to the database.
@@ -198,6 +198,15 @@ pub struct PartMetadata {
     /// Defaults to true.
     #[serde(default = "default_save")]
     pub save: bool,
+    /// If true, this part is "developer context" — the model still receives it,
+    /// but chat UIs should skip it when rendering the message. Independent of
+    /// `save`: a developer part can still be persisted (so it stays in the
+    /// model's conversation history across turns) while never appearing in the
+    /// transcript. Common pairing for big inline payloads (e.g. attached
+    /// images, dumped context blocks): `{ developer: true, save: false }`.
+    /// Defaults to false.
+    #[serde(default)]
+    pub developer: bool,
 }
 
 fn default_save() -> bool {

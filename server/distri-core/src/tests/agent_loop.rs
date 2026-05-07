@@ -6,41 +6,32 @@ use crate::AgentOrchestratorBuilder;
 
 // ── Agent definition parsing ────────────────────────────────────
 
-// code_executor.md removed from the repo (replaced by coder.md); see parse_coder_agent below.
+// coder.md was removed (dormant — replaced by distri_runner / distri_browser_runner).
+// The parse-fixture tests below now use distri_runner.md.
 
 #[tokio::test]
-async fn parse_coder_agent() {
-    let content = include_str!("../../../agents/coder.md");
+async fn parse_runner_agent() {
+    let content = include_str!("../../../agents/distri_runner.md");
     let def = parse_agent_markdown_content(content).await.unwrap();
-    assert_eq!(def.name, "coder");
+    assert_eq!(def.name, "distri_runner");
     assert!(def.max_iterations.unwrap() >= 10);
     let tools = def
         .tools
         .as_ref()
-        .expect("coder agent should have tools config");
+        .expect("distri_runner agent should have tools config");
     assert!(tools.builtin.contains(&"final".to_string()));
-    assert!(tools.builtin.contains(&"start_shell".to_string()));
-    // Filesystem tools are no longer builtins — they should be provided as external tools
+    // Filesystem tools must not be builtins — they live as external tools.
     assert!(
         !tools.builtin.iter().any(|t| t.starts_with("fs_")),
-        "coder agent should not have fs_ tools as builtins"
+        "distri_runner should not have fs_ tools as builtins"
     );
-    assert!(
-        !tools.builtin.contains(&"apply_diff".to_string()),
-        "coder agent should not have apply_diff as builtin"
-    );
-    // External tools should list specific filesystem tool names
     let external = tools
         .external
         .as_ref()
-        .expect("coder should have external tools");
-    assert!(
-        external.contains(&"fs_read_file".to_string()),
-        "coder agent should list fs_read_file as external tool"
-    );
+        .expect("distri_runner should have external tools");
     assert!(
         external.contains(&"execute_command".to_string()),
-        "coder agent should list execute_command as external tool"
+        "distri_runner should list execute_command as external tool"
     );
 }
 
@@ -78,7 +69,7 @@ async fn parse_distri_agent() {
 
 #[tokio::test]
 async fn agent_definition_has_instructions() {
-    let content = include_str!("../../../agents/coder.md");
+    let content = include_str!("../../../agents/distri_runner.md");
     let def = parse_agent_markdown_content(content).await.unwrap();
     assert!(!def.instructions.is_empty());
 }
@@ -96,7 +87,7 @@ async fn orchestrator_builds_with_defaults() {
 
 #[tokio::test]
 async fn orchestrator_registers_agent() {
-    let content = include_str!("../../../agents/coder.md");
+    let content = include_str!("../../../agents/distri_runner.md");
     let def = parse_agent_markdown_content(content).await.unwrap();
     let name = def.name.clone();
 
@@ -138,7 +129,7 @@ async fn orchestrator_registers_multiple_agents() {
             .unwrap(),
     );
 
-    let coder_def = parse_agent_markdown_content(include_str!("../../../agents/coder.md"))
+    let runner_def = parse_agent_markdown_content(include_str!("../../../agents/distri_runner.md"))
         .await
         .unwrap();
     let distri_def = parse_agent_markdown_content(include_str!("../../../agents/distri.md"))
@@ -146,7 +137,7 @@ async fn orchestrator_registers_multiple_agents() {
         .unwrap();
 
     orchestrator
-        .register_agent_definition(coder_def)
+        .register_agent_definition(runner_def)
         .await
         .unwrap();
     orchestrator
@@ -154,7 +145,7 @@ async fn orchestrator_registers_multiple_agents() {
         .await
         .unwrap();
 
-    assert!(orchestrator.get_agent("coder").await.is_some());
+    assert!(orchestrator.get_agent("distri_runner").await.is_some());
     assert!(orchestrator.get_agent("distri").await.is_some());
 }
 

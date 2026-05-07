@@ -2,9 +2,9 @@ use crate::agent::parse_agent_markdown_content;
 
 #[tokio::test]
 async fn parse_agent_definition() {
-    // deepresearch.md was removed; verify the generic parse path against coder.md.
-    let content = include_str!("../../../agents/coder.md");
+    // Verify the generic parse path against distri.md (the canonical orchestrator agent).
+    let content = include_str!("../../../agents/distri.md");
     let agent_definition = parse_agent_markdown_content(content).await.unwrap();
-    assert_eq!(agent_definition.name, "coder");
+    assert_eq!(agent_definition.name, "distri");
     assert!(agent_definition.max_iterations.unwrap() >= 10);
 }

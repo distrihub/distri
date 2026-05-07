@@ -31,14 +31,18 @@ use diesel_async::pooled_connection::{AsyncDieselConnectionManager, PoolableConn
 use diesel_async::sync_connection_wrapper::SyncConnectionWrapper;
 use diesel_migrations::{EmbeddedMigrations, embed_migrations};
 use distri_types::auth::{AuthError, AuthSecret, AuthSession, OAuth2State, ToolAuthStore};
+use distri_types::connections::{
+    AuthScope, AuthType, Connection, ConnectionStatus, ConnectionToken, NewConnection,
+};
 use distri_types::stores::SessionSummary;
 use distri_types::stores::{
-    AgentStatsInfo, AgentStore, AgentUsageInfo, ExternalToolCallsStore, FilterMessageType,
-    MemoryStore, MessageFilter, MessageReadStatus, MessageVote, MessageVoteSummary,
-    NewPromptTemplate, NewSecret, NewSkill, PromptTemplateRecord, PromptTemplateStore,
-    ScratchpadStore, SecretRecord, SecretStore, SessionMemory, SessionStore, SkillRecord,
-    SkillStore, TaskStore, ThreadListFilter, ThreadListResponse, ThreadStore, UpdatePromptTemplate,
-    UpdateSkill, VoteMessageRequest, VoteType,
+    AgentStatsInfo, AgentStore, AgentUsageInfo, ConnectionStore, ConnectionTokenStore,
+    ExternalToolCallsStore, FilterMessageType, MemoryStore, MessageFilter, MessageReadStatus,
+    MessageVote, MessageVoteSummary, NewPromptTemplate, NewSecret, NewSkill, NoteStore,
+    PromptTemplateRecord, PromptTemplateStore, ScratchpadStore, SecretRecord, SecretStore,
+    SessionMemory, SessionStore, SkillRecord, SkillStore, TaskStore, ThreadListFilter,
+    ThreadListResponse, ThreadStore, UpdatePromptTemplate, UpdateSkill, VoteMessageRequest,
+    VoteType,
 };
 use distri_types::{
     AgentError, AgentEvent, AgentEventType, CreateThreadRequest, Message, ScratchpadEntry, Task,
@@ -476,9 +480,36 @@ impl DieselStorePool<diesel_async::AsyncPgConnection> {
     }
 }
 
+/// Ensures parent directories exist for file-backed SQLite URLs so opening the DB can create the file.
+#[cfg(feature = "sqlite")]
+fn ensure_sqlite_parent_dir_exists(database_url: &str) -> Result<()> {
+    use std::path::Path;
+    if database_url.contains(":memory:") || database_url.contains("mode=memory") {
+        return Ok(());
+    }
+    let path_part = database_url.split('?').next().unwrap_or(database_url);
+    let path_part = path_part.strip_prefix("file:").unwrap_or(path_part);
+    // `file:///absolute/path` becomes `///absolute/path` after stripping `file:`.
+    let path_part = match path_part.strip_prefix("//") {
+        Some(rest) if rest.starts_with('/') => rest,
+        _ => path_part,
+    };
+    let path = Path::new(path_part);
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).with_context(|| {
+                format!("failed to create database directory {}", parent.display())
+            })?;
+        }
+    }
+    Ok(())
+}
+
 #[cfg(feature = "sqlite")]
 async fn run_migrations(database_url: &str) -> Result<()> {
     tracing::debug!("Running migrations for database: {}", database_url);
+
+    ensure_sqlite_parent_dir_exists(database_url)?;
 
     // Create a temporary connection pool to run migrations
     let manager = SqliteManager::new(database_url);
@@ -3168,6 +3199,18 @@ where
     pub fn skill_store(&self) -> DieselSkillStore<Conn> {
         DieselSkillStore::new(self.pool.clone_store_pool())
     }
+
+    pub fn connection_store(&self) -> DieselConnectionStore<Conn> {
+        DieselConnectionStore::new(self.pool.clone_store_pool())
+    }
+
+    pub fn connection_token_store(&self) -> DieselConnectionTokenStore<Conn> {
+        DieselConnectionTokenStore::new(self.pool.clone_store_pool())
+    }
+
+    pub fn note_store(&self) -> DieselNoteStore<Conn> {
+        DieselNoteStore::new(self.pool.clone_store_pool())
+    }
 }
 
 // ========== Prompt Template Store ==========
@@ -3863,5 +3906,630 @@ impl DieselStoreBuilder<diesel_async::AsyncPgConnection> {
         Ok(Self {
             pool: DieselStorePool::new_postgres(database_url, max_connections).await?,
         })
+    }
+}
+
+// ========== Connection Store ==========
+
+fn to_connection(model: ConnectionModel) -> anyhow::Result<Connection> {
+    let status: ConnectionStatus = serde_json::from_value(serde_json::Value::String(model.status))
+        .map_err(|e| anyhow::anyhow!("invalid status: {}", e))?;
+    let auth_scope: AuthScope = serde_json::from_value(serde_json::Value::String(model.auth_scope))
+        .map_err(|e| anyhow::anyhow!("invalid auth_scope: {}", e))?;
+    let auth_type: AuthType = serde_json::from_str(&model.auth_type)
+        .map_err(|e| anyhow::anyhow!("invalid auth_type: {}", e))?;
+    let config: serde_json::Value = serde_json::from_str(&model.config)
+        .map_err(|e| anyhow::anyhow!("invalid config: {}", e))?;
+    let id = uuid::Uuid::parse_str(&model.id).map_err(|e| anyhow::anyhow!("invalid id: {}", e))?;
+    let workspace_id = uuid::Uuid::parse_str(&model.workspace_id)
+        .map_err(|e| anyhow::anyhow!("invalid workspace_id: {}", e))?;
+    let skill_id = uuid::Uuid::parse_str(&model.skill_id)
+        .map_err(|e| anyhow::anyhow!("invalid skill_id: {}", e))?;
+    let connected_by = model
+        .connected_by
+        .as_deref()
+        .map(uuid::Uuid::parse_str)
+        .transpose()
+        .map_err(|e| anyhow::anyhow!("invalid connected_by: {}", e))?;
+
+    Ok(Connection {
+        id,
+        workspace_id,
+        skill_id,
+        name: model.name,
+        status,
+        config,
+        connected_by,
+        auth_scope,
+        auth_type,
+        is_system: model.is_system != 0,
+        created_at: from_naive(model.created_at),
+        updated_at: from_naive(model.updated_at),
+    })
+}
+
+pub struct DieselConnectionStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    pool: DieselStorePool<Conn>,
+}
+
+impl<Conn> DieselConnectionStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    pub fn new(pool: DieselStorePool<Conn>) -> Self {
+        Self { pool }
+    }
+
+    async fn conn(&self) -> Result<DieselConn<'_, Conn>> {
+        self.pool
+            .get()
+            .await
+            .context("failed to acquire diesel connection for connections")
+    }
+}
+
+#[async_trait]
+impl<Conn> ConnectionStore for DieselConnectionStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    async fn create(&self, new_conn: NewConnection) -> anyhow::Result<Connection> {
+        use crate::schema::connections::dsl::*;
+        let mut conn = self.conn().await?;
+        let now = Utc::now().naive_utc();
+        let new_id = Uuid::new_v4().to_string();
+        let ws_id = new_conn.workspace_id.to_string();
+        let sk_id = new_conn.skill_id.to_string();
+        let status_str = serde_json::to_string(&new_conn.status)
+            .map_err(|e| anyhow::anyhow!("serialize status: {}", e))?;
+        // serde_json::to_string wraps strings in quotes; unwrap to plain text
+        let status_str = status_str.trim_matches('"').to_string();
+        let config_str = serde_json::to_string(&new_conn.config)
+            .map_err(|e| anyhow::anyhow!("serialize config: {}", e))?;
+        let auth_scope_str = serde_json::to_string(&new_conn.auth_scope)
+            .map_err(|e| anyhow::anyhow!("serialize auth_scope: {}", e))?;
+        let auth_scope_str = auth_scope_str.trim_matches('"').to_string();
+        let auth_type_str = serde_json::to_string(&new_conn.auth_type)
+            .map_err(|e| anyhow::anyhow!("serialize auth_type: {}", e))?;
+        let connected_by_str = new_conn.connected_by.map(|u| u.to_string());
+
+        let model = crate::models::NewConnectionModel {
+            id: &new_id,
+            workspace_id: &ws_id,
+            skill_id: &sk_id,
+            name: &new_conn.name,
+            status: &status_str,
+            config: &config_str,
+            connected_by: connected_by_str.as_deref(),
+            auth_scope: &auth_scope_str,
+            auth_type: &auth_type_str,
+            is_system: if new_conn.is_system { 1 } else { 0 },
+            created_at: now,
+            updated_at: now,
+        };
+
+        diesel::insert_into(connections)
+            .values(&model)
+            .execute(&mut conn)
+            .await?;
+
+        let result = connections
+            .filter(id.eq(&new_id))
+            .select(crate::models::ConnectionModel::as_select())
+            .first::<crate::models::ConnectionModel>(&mut conn)
+            .await?;
+
+        to_connection(result)
+    }
+
+    async fn get_by_id(&self, conn_id: &str) -> anyhow::Result<Option<Connection>> {
+        use crate::schema::connections::dsl::*;
+        let mut conn = self.conn().await?;
+        let result = connections
+            .filter(id.eq(conn_id))
+            .select(crate::models::ConnectionModel::as_select())
+            .first::<crate::models::ConnectionModel>(&mut conn)
+            .await
+            .optional()?;
+        result.map(to_connection).transpose()
+    }
+
+    async fn list_by_workspace(&self, ws_id: &str) -> anyhow::Result<Vec<Connection>> {
+        use crate::schema::connections::dsl::*;
+        let mut conn = self.conn().await?;
+        let results = connections
+            .filter(workspace_id.eq(ws_id))
+            .select(crate::models::ConnectionModel::as_select())
+            .load::<crate::models::ConnectionModel>(&mut conn)
+            .await?;
+        results.into_iter().map(to_connection).collect()
+    }
+
+    async fn update_status(
+        &self,
+        conn_id: &str,
+        new_status: ConnectionStatus,
+    ) -> anyhow::Result<()> {
+        use crate::schema::connections::dsl::*;
+        let mut conn = self.conn().await?;
+        let now = Utc::now().naive_utc();
+        let status_str = serde_json::to_string(&new_status)
+            .map_err(|e| anyhow::anyhow!("serialize status: {}", e))?;
+        let status_str = status_str.trim_matches('"').to_string();
+        diesel::update(connections.filter(id.eq(conn_id)))
+            .set((status.eq(&status_str), updated_at.eq(now)))
+            .execute(&mut conn)
+            .await?;
+        Ok(())
+    }
+
+    async fn update_skill_id(&self, conn_id: &str, new_skill_id: Uuid) -> anyhow::Result<()> {
+        use crate::schema::connections::dsl::*;
+        let mut conn = self.conn().await?;
+        let now = Utc::now().naive_utc();
+        let sk_id = new_skill_id.to_string();
+        diesel::update(connections.filter(id.eq(conn_id)))
+            .set((skill_id.eq(&sk_id), updated_at.eq(now)))
+            .execute(&mut conn)
+            .await?;
+        Ok(())
+    }
+
+    async fn update(
+        &self,
+        conn_id: &str,
+        new_name: Option<String>,
+        new_auth_type: Option<AuthType>,
+    ) -> anyhow::Result<Connection> {
+        use crate::schema::connections::dsl::*;
+        let mut conn = self.conn().await?;
+        let now = Utc::now().naive_utc();
+        let auth_type_str = new_auth_type
+            .as_ref()
+            .map(|at| serde_json::to_string(at))
+            .transpose()
+            .map_err(|e| anyhow::anyhow!("serialize auth_type: {}", e))?;
+        let changeset = crate::models::ConnectionChangeset {
+            name: new_name.as_deref(),
+            status: None,
+            auth_type: auth_type_str.as_deref(),
+            skill_id: None,
+            updated_at: now,
+        };
+        diesel::update(connections.filter(id.eq(conn_id)))
+            .set(&changeset)
+            .execute(&mut conn)
+            .await?;
+        let result = connections
+            .filter(id.eq(conn_id))
+            .select(crate::models::ConnectionModel::as_select())
+            .first::<crate::models::ConnectionModel>(&mut conn)
+            .await?;
+        to_connection(result)
+    }
+
+    async fn delete(&self, conn_id: &str) -> anyhow::Result<()> {
+        use crate::schema::connections::dsl::*;
+        let mut conn = self.conn().await?;
+        diesel::delete(connections.filter(id.eq(conn_id)))
+            .execute(&mut conn)
+            .await?;
+        Ok(())
+    }
+
+    async fn get_by_provider(
+        &self,
+        ws_id: &str,
+        provider: &str,
+    ) -> anyhow::Result<Option<Connection>> {
+        // Load all connections for the workspace and filter by provider in Rust.
+        // The auth_type is stored as JSON so we can't easily query it in SQL.
+        let all = self.list_by_workspace(ws_id).await?;
+        let found = all.into_iter().find(|c| match &c.auth_type {
+            AuthType::OAuth { provider: p, .. } => p == provider,
+            _ => false,
+        });
+        Ok(found)
+    }
+}
+
+// ========== Connection Token Store ==========
+
+pub struct DieselConnectionTokenStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    pool: DieselStorePool<Conn>,
+}
+
+impl<Conn> DieselConnectionTokenStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    pub fn new(pool: DieselStorePool<Conn>) -> Self {
+        Self { pool }
+    }
+
+    async fn conn(&self) -> Result<DieselConn<'_, Conn>> {
+        self.pool
+            .get()
+            .await
+            .context("failed to acquire diesel connection for connection tokens")
+    }
+}
+
+#[async_trait]
+impl<Conn> ConnectionTokenStore for DieselConnectionTokenStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    async fn store_token(&self, conn_id: &str, token: ConnectionToken) -> anyhow::Result<()> {
+        use crate::schema::connection_tokens::dsl::*;
+        let mut conn = self.conn().await?;
+        let now = Utc::now().naive_utc();
+        let token_json_str =
+            serde_json::to_string(&token).map_err(|e| anyhow::anyhow!("serialize token: {}", e))?;
+        let model = crate::models::NewConnectionTokenModel {
+            connection_id: conn_id,
+            token_json: &token_json_str,
+            created_at: now,
+            updated_at: now,
+        };
+        diesel::insert_into(connection_tokens)
+            .values(&model)
+            .on_conflict(connection_id)
+            .do_update()
+            .set(&model)
+            .execute(&mut conn)
+            .await?;
+        Ok(())
+    }
+
+    async fn get_token(&self, conn_id: &str) -> anyhow::Result<Option<ConnectionToken>> {
+        use crate::schema::connection_tokens::dsl::*;
+        let mut conn = self.conn().await?;
+        let result = connection_tokens
+            .filter(connection_id.eq(conn_id))
+            .select(crate::models::ConnectionTokenModel::as_select())
+            .first::<crate::models::ConnectionTokenModel>(&mut conn)
+            .await
+            .optional()?;
+        result
+            .map(|m| {
+                serde_json::from_str::<ConnectionToken>(&m.token_json)
+                    .map_err(|e| anyhow::anyhow!("deserialize token: {}", e))
+            })
+            .transpose()
+    }
+
+    async fn remove_token(&self, conn_id: &str) -> anyhow::Result<()> {
+        use crate::schema::connection_tokens::dsl::*;
+        let mut conn = self.conn().await?;
+        diesel::delete(connection_tokens.filter(connection_id.eq(conn_id)))
+            .execute(&mut conn)
+            .await?;
+        Ok(())
+    }
+
+    async fn store_oauth_state(
+        &self,
+        state_key_val: &str,
+        state: serde_json::Value,
+    ) -> anyhow::Result<()> {
+        use crate::schema::connection_oauth_states::dsl::*;
+        let mut conn = self.conn().await?;
+        let now = Utc::now().naive_utc();
+        let state_json_str =
+            serde_json::to_string(&state).map_err(|e| anyhow::anyhow!("serialize state: {}", e))?;
+        let model = crate::models::NewConnectionOAuthStateModel {
+            state_key: state_key_val,
+            state_json: &state_json_str,
+            created_at: now,
+        };
+        diesel::insert_into(connection_oauth_states)
+            .values(&model)
+            .on_conflict(state_key)
+            .do_update()
+            .set(state_json.eq(&state_json_str))
+            .execute(&mut conn)
+            .await?;
+        Ok(())
+    }
+
+    async fn get_oauth_state(
+        &self,
+        state_key_val: &str,
+    ) -> anyhow::Result<Option<serde_json::Value>> {
+        use crate::schema::connection_oauth_states::dsl::*;
+        let mut conn = self.conn().await?;
+        let result = connection_oauth_states
+            .filter(state_key.eq(state_key_val))
+            .select(crate::models::ConnectionOAuthStateModel::as_select())
+            .first::<crate::models::ConnectionOAuthStateModel>(&mut conn)
+            .await
+            .optional()?;
+        result
+            .map(|m| {
+                serde_json::from_str::<serde_json::Value>(&m.state_json)
+                    .map_err(|e| anyhow::anyhow!("deserialize state: {}", e))
+            })
+            .transpose()
+    }
+
+    async fn remove_oauth_state(&self, state_key_val: &str) -> anyhow::Result<()> {
+        use crate::schema::connection_oauth_states::dsl::*;
+        let mut conn = self.conn().await?;
+        diesel::delete(connection_oauth_states.filter(state_key.eq(state_key_val)))
+            .execute(&mut conn)
+            .await?;
+        Ok(())
+    }
+}
+
+// ========== Note Store ==========
+
+fn to_note_record(
+    model: crate::models::NoteModel,
+) -> anyhow::Result<distri_types::api::notes::NoteRecord> {
+    let tags: Vec<String> = serde_json::from_str(&model.tags).unwrap_or_default();
+    let id = Uuid::parse_str(&model.id).map_err(|e| anyhow::anyhow!("invalid note id: {}", e))?;
+    let workspace_id = Uuid::parse_str(&model.workspace_id)
+        .map_err(|e| anyhow::anyhow!("invalid workspace_id: {}", e))?;
+    let created_by = model
+        .created_by
+        .as_deref()
+        .map(|s| Uuid::parse_str(s))
+        .transpose()
+        .map_err(|e| anyhow::anyhow!("invalid created_by: {}", e))?;
+    Ok(distri_types::api::notes::NoteRecord {
+        id,
+        workspace_id,
+        title: model.title,
+        content: model.content,
+        tags,
+        created_by,
+        created_at: from_naive(model.created_at),
+        updated_at: from_naive(model.updated_at),
+    })
+}
+
+pub struct DieselNoteStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    pool: DieselStorePool<Conn>,
+}
+
+impl<Conn> DieselNoteStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    pub fn new(pool: DieselStorePool<Conn>) -> Self {
+        Self { pool }
+    }
+
+    async fn conn(&self) -> Result<DieselConn<'_, Conn>> {
+        self.pool
+            .get()
+            .await
+            .context("failed to acquire diesel connection for notes")
+    }
+}
+
+#[async_trait]
+impl<Conn> NoteStore for DieselNoteStore<Conn>
+where
+    Conn: DieselBackendConnection,
+    diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
+    diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
+    <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
+{
+    async fn list(
+        &self,
+        query: &distri_types::api::notes::ListNotesQuery,
+    ) -> anyhow::Result<Vec<distri_types::api::notes::NoteRecord>> {
+        use crate::schema::notes::dsl::*;
+        let mut conn = self.conn().await?;
+
+        // We load all notes for the nil workspace and filter in-process for tag/search.
+        // For production volumes this is fine — notes are few and local.
+        let nil_ws = Uuid::nil().to_string();
+        let rows = notes
+            .filter(workspace_id.eq(&nil_ws))
+            .order_by(updated_at.desc())
+            .select(crate::models::NoteModel::as_select())
+            .load::<crate::models::NoteModel>(&mut conn)
+            .await
+            .context("failed to list notes")?;
+
+        let records: Vec<distri_types::api::notes::NoteRecord> = rows
+            .into_iter()
+            .map(to_note_record)
+            .collect::<anyhow::Result<Vec<_>>>()?;
+
+        // Apply tag filter
+        let records = if let Some(tag) = &query.tag {
+            records
+                .into_iter()
+                .filter(|n| n.tags.iter().any(|t| t == tag))
+                .collect()
+        } else {
+            records
+        };
+
+        // Apply search filter
+        let records = if let Some(search) = &query.search {
+            let search_lower = search.to_lowercase();
+            records
+                .into_iter()
+                .filter(|n| {
+                    n.title.to_lowercase().contains(&search_lower)
+                        || n.content.to_lowercase().contains(&search_lower)
+                })
+                .collect()
+        } else {
+            records
+        };
+
+        Ok(records)
+    }
+
+    async fn get(
+        &self,
+        note_id: Uuid,
+    ) -> anyhow::Result<Option<distri_types::api::notes::NoteRecord>> {
+        use crate::schema::notes::dsl::*;
+        let mut conn = self.conn().await?;
+        let note_id_str = note_id.to_string();
+        let result = notes
+            .filter(id.eq(&note_id_str))
+            .select(crate::models::NoteModel::as_select())
+            .first::<crate::models::NoteModel>(&mut conn)
+            .await
+            .optional()
+            .context("failed to get note")?;
+        result.map(to_note_record).transpose()
+    }
+
+    async fn create(
+        &self,
+        req: distri_types::api::notes::CreateNoteRequest,
+    ) -> anyhow::Result<distri_types::api::notes::NoteRecord> {
+        use crate::schema::notes::dsl::*;
+        let mut conn = self.conn().await?;
+        let now = Utc::now().naive_utc();
+        let new_id = Uuid::new_v4().to_string();
+        let nil_ws = Uuid::nil().to_string();
+        let tags_json = serde_json::to_string(&req.tags)
+            .map_err(|e| anyhow::anyhow!("serialize tags: {}", e))?;
+
+        let model = crate::models::NewNoteModel {
+            id: &new_id,
+            workspace_id: &nil_ws,
+            title: &req.title,
+            content: &req.content,
+            tags: &tags_json,
+            created_by: None,
+            created_at: now,
+            updated_at: now,
+        };
+
+        diesel::insert_into(notes)
+            .values(&model)
+            .execute(&mut conn)
+            .await
+            .context("failed to insert note")?;
+
+        let result = notes
+            .filter(id.eq(&new_id))
+            .select(crate::models::NoteModel::as_select())
+            .first::<crate::models::NoteModel>(&mut conn)
+            .await
+            .context("failed to fetch inserted note")?;
+
+        to_note_record(result)
+    }
+
+    async fn update(
+        &self,
+        note_id: Uuid,
+        req: distri_types::api::notes::UpdateNoteRequest,
+    ) -> anyhow::Result<Option<distri_types::api::notes::NoteRecord>> {
+        use crate::schema::notes::dsl::*;
+        let mut conn = self.conn().await?;
+        let note_id_str = note_id.to_string();
+        let now = Utc::now().naive_utc();
+
+        // Check existence first
+        let exists = notes
+            .filter(id.eq(&note_id_str))
+            .select(id)
+            .first::<String>(&mut conn)
+            .await
+            .optional()
+            .context("failed to check note existence")?;
+
+        if exists.is_none() {
+            return Ok(None);
+        }
+
+        let tags_json = req
+            .tags
+            .as_ref()
+            .map(|t| serde_json::to_string(t))
+            .transpose()
+            .map_err(|e| anyhow::anyhow!("serialize tags: {}", e))?;
+
+        let changeset = crate::models::NoteChangeset {
+            title: req.title.as_deref(),
+            content: req.content.as_deref(),
+            tags: tags_json.as_deref(),
+            updated_at: now,
+        };
+
+        diesel::update(notes.filter(id.eq(&note_id_str)))
+            .set(&changeset)
+            .execute(&mut conn)
+            .await
+            .context("failed to update note")?;
+
+        let result = notes
+            .filter(id.eq(&note_id_str))
+            .select(crate::models::NoteModel::as_select())
+            .first::<crate::models::NoteModel>(&mut conn)
+            .await
+            .context("failed to fetch updated note")?;
+
+        to_note_record(result).map(Some)
+    }
+
+    async fn delete(&self, note_id: Uuid) -> anyhow::Result<bool> {
+        use crate::schema::notes::dsl::*;
+        let mut conn = self.conn().await?;
+        let note_id_str = note_id.to_string();
+        let count = diesel::delete(notes.filter(id.eq(&note_id_str)))
+            .execute(&mut conn)
+            .await
+            .context("failed to delete note")?;
+        Ok(count > 0)
+    }
+
+    async fn search(
+        &self,
+        query: &str,
+    ) -> anyhow::Result<Vec<distri_types::api::notes::NoteRecord>> {
+        // Delegate to list() with the search field set.
+        self.list(&distri_types::api::notes::ListNotesQuery {
+            tag: None,
+            search: Some(query.to_string()),
+        })
+        .await
     }
 }

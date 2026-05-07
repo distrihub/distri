@@ -10,6 +10,7 @@ use crate::{
 
 use super::ExecutorContext;
 use crate::agent::hooks::inline::InlineHook;
+use distri_auth::OAuthHandler;
 use distri_filesystem::FileSystem;
 use distri_stores::{initialize_stores, InitializedStores};
 pub use distri_stores::{AgentStore, ThreadStore};
@@ -53,6 +54,9 @@ pub struct AgentOrchestrator {
     /// Unified runtime for event broadcasting + task coordination.
     /// Always initialized — InProcessRuntime by default, RedisRuntime for cloud.
     pub runtime: Arc<dyn crate::broadcast::AgentRuntime>,
+    /// Optional OAuth handler for the connections OAuth flow.
+    /// Present only when OAuth provider credentials have been configured.
+    pub oauth_handler: Option<Arc<OAuthHandler>>,
 }
 
 impl std::fmt::Debug for AgentOrchestrator {
@@ -96,6 +100,7 @@ pub struct AgentOrchestratorBuilder {
     system_hooks: Vec<Arc<dyn crate::agent::types::AgentHooks>>,
     runtime: Option<Arc<dyn crate::broadcast::AgentRuntime>>,
     background_runner: Option<Arc<dyn crate::runner::BackgroundRunner>>,
+    oauth_handler: Option<Arc<OAuthHandler>>,
 }
 
 impl AgentOrchestratorBuilder {
@@ -196,6 +201,14 @@ impl AgentOrchestratorBuilder {
         self
     }
 
+    /// Attach an OAuth handler for the connections OAuth flow.
+    /// When set, `POST /connections` with OAuth auth_type will generate a real
+    /// authorization URL and `POST /connections/oauth/callback` will exchange codes.
+    pub fn with_oauth_handler(mut self, handler: Arc<OAuthHandler>) -> Self {
+        self.oauth_handler = Some(handler);
+        self
+    }
+
     pub async fn build(self) -> anyhow::Result<AgentOrchestrator> {
         let browser_config = self.browser_config.unwrap_or_default();
 
@@ -271,6 +284,7 @@ impl AgentOrchestratorBuilder {
             hook_registry: HookRegistry::new(),
             runtime,
             background_runner: self.background_runner,
+            oauth_handler: self.oauth_handler,
         };
 
         // Sync system prompts to the store
@@ -281,10 +295,9 @@ impl AgentOrchestratorBuilder {
             }
         }
 
-        // Default system agents (distri, distri_runner, distri_browser_runner)
-        // are seeded by cloud/src/state.rs::seed_default_agents() on startup,
-        // not by the orchestrator. This keeps the orchestrator generic —
-        // callers decide which agents live in their store.
+        // Default bundled agents: cloud uses `seed_default_agents()`; OSS
+        // `distri-server-cli` calls `seed::seed_bundled_defaults()` after build.
+        // The orchestrator stays generic — callers decide store population.
 
         Ok(orchestrator)
     }
@@ -484,9 +497,19 @@ impl AgentOrchestrator {
             tools.push(final_tool);
         }
 
-        // Always register UniversalAgentTool — every agent can delegate
+        // Auto-register UniversalAgentTool ONLY when the agent definition's
+        // `tools.builtin` is empty or unset. An agent that explicitly enumerates
+        // its builtins (e.g. `_adhoc_base` with `builtin = ["final"]`, or a
+        // fork worker dispatched via `call_agent({tools: ["final"]})`) is
+        // opting out of delegation by design — adding `call_agent` back would
+        // re-enable the recursion loop the explicit list was meant to block.
         let has_call_agent = tools.iter().any(|t| t.get_name() == "call_agent");
-        if !has_call_agent {
+        let has_explicit_builtin = definition
+            .tools
+            .as_ref()
+            .map(|t| !t.builtin.is_empty())
+            .unwrap_or(false);
+        if !has_call_agent && !has_explicit_builtin {
             tools.push(Arc::new(crate::tools::UniversalAgentTool));
         }
 
@@ -617,10 +640,17 @@ impl AgentOrchestrator {
                             })
                             .await;
 
-                        // Add skill tool: load_skill
+                        // Add skill tools: load_skill (inline reference) +
+                        // run_skill (fork-into-skill worker). Both depend on
+                        // the skill store, so they're registered together
+                        // whenever the agent has available_skills declared.
                         context
-                            .extend_tools(vec![Arc::new(crate::tools::skill_script::LoadSkillTool)
-                                as Arc<dyn Tool>])
+                            .extend_tools(vec![
+                                Arc::new(crate::tools::skill_script::LoadSkillTool)
+                                    as Arc<dyn Tool>,
+                                Arc::new(crate::tools::run_skill::RunSkillTool)
+                                    as Arc<dyn Tool>,
+                            ])
                             .await;
                     }
                 }
@@ -1247,10 +1277,17 @@ impl AgentOrchestrator {
 
         tokio::spawn(async move {
             while let Some(event) = event_rx.recv().await {
+                // "Terminal" here means THIS task's own run finishing —
+                // not a sub-agent's. Sub-agent RunFinished/RunError
+                // events are relayed through this same event_tx (via
+                // `parent_ctx.relay_event`) so they share the channel,
+                // but the parent's drain loop must keep going until ITS
+                // own RunFinished arrives. Compare on `event.task_id ==
+                // task_id` instead of just matching the variant.
                 let is_terminal = matches!(
                     &event.event,
                     AgentEventType::RunFinished { .. } | AgentEventType::RunError { .. }
-                );
+                ) && event.task_id == task_id;
 
                 // Auto-complete inline hooks
                 if let AgentEventType::InlineHookRequested { ref request } = event.event {
@@ -1273,9 +1310,26 @@ impl AgentOrchestrator {
                     }
                 }
 
-                // Publish to broadcaster
-                let event_task_id = event.task_id.clone();
-                let _ = runtime.broadcaster().publish(&event_task_id, event).await;
+                // Publish to broadcaster keyed on THIS relay's registered
+                // task_id (the parent of any relayed sub-agent event), NOT
+                // the envelope's `event.task_id`.
+                //
+                // Why: the dispatch relay loop in `universal_agent.rs`
+                // subscribes to the CHILD's broadcaster topic and forwards
+                // each child event to the parent's stream via
+                // `parent_ctx.relay_event` — which writes the event (with
+                // its child task_id intact) into the parent's event_tx.
+                // If we then re-publish on `broadcaster[event.task_id]`
+                // (= child_task_id), the relay loop's own subscription on
+                // that topic re-receives it, re-relays, infinite loop.
+                //
+                // Publishing on `task_id` (the registered, parent-side
+                // key) routes the event to the SSE consumer subscribed
+                // to the parent's task — which is where the browser
+                // listens — without feeding the loop. The envelope still
+                // carries `event.task_id = child_task_id` so consumers
+                // route per-task correctly.
+                let _ = runtime.broadcaster().publish(&task_id, event).await;
 
                 if is_terminal {
                     let _ = runtime.coordinator().complete_task(&task_id).await;
@@ -1542,11 +1596,20 @@ impl AgentOrchestrator {
         tool_call_id: &str,
         tool_response: distri_types::ToolResponse,
     ) -> Result<(), String> {
-        self.stores
+        let outcome = self
+            .stores
             .external_tool_calls_store
             .complete_external_tool_call(tool_call_id, tool_response)
             .await
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string());
+        tracing::info!(
+            target: "ext_tool.complete",
+            tool_call_id = %tool_call_id,
+            ok = outcome.is_ok(),
+            error = %outcome.as_ref().err().cloned().unwrap_or_default(),
+            "browser POST /complete-tool received"
+        );
+        outcome
     }
 
     pub async fn complete_inline_hook(

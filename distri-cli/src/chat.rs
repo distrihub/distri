@@ -17,12 +17,12 @@ use tokio::sync::RwLock;
 
 use crate::config::{load_last_model, save_last_model};
 use crate::input::{DistriHelper, ToggleToolsHandler};
-use distri::message::{build_connections_context, build_message_params};
 use crate::threads::{
     load_last_thread, print_thread_history, resolve_resume_arg, save_last_thread,
 };
 use crate::tools::{register_all, register_approval_handler};
 use crate::{COLOR_BRIGHT_GREEN, COLOR_GRAY, COLOR_RESET};
+use distri::message::{build_connections_context, build_message_params};
 
 #[derive(Debug, Clone)]
 pub enum SlashCommandResult {

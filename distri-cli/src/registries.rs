@@ -82,8 +82,7 @@ impl RegistriesConfig {
         }
         let raw = std::fs::read_to_string(&path)
             .with_context(|| format!("reading {}", path.display()))?;
-        serde_json::from_str(&raw)
-            .with_context(|| format!("parsing {}", path.display()))
+        serde_json::from_str(&raw).with_context(|| format!("parsing {}", path.display()))
     }
 
     pub fn save(&self) -> Result<()> {
@@ -92,8 +91,7 @@ impl RegistriesConfig {
             std::fs::create_dir_all(parent).ok();
         }
         let raw = serde_json::to_string_pretty(self)?;
-        std::fs::write(&path, raw)
-            .with_context(|| format!("writing {}", path.display()))
+        std::fs::write(&path, raw).with_context(|| format!("writing {}", path.display()))
     }
 
     /// Default registries shipped with the CLI.
@@ -291,12 +289,7 @@ async fn search_github(reg: &Registry, query: &str) -> Result<Vec<DiscoveredSkil
                 .replace("github.com", "raw.githubusercontent.com")
                 .replace("/blob/", "/");
             // Skill name is the parent folder of SKILL.md.
-            let name = i
-                .path
-                .rsplit('/')
-                .nth(1)
-                .unwrap_or(&i.path)
-                .to_string();
+            let name = i.path.rsplit('/').nth(1).unwrap_or(&i.path).to_string();
             DiscoveredSkill {
                 name,
                 description: None,

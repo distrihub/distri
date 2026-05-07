@@ -24,6 +24,7 @@ target/*
 .turbo/*
 .distri/
 releases/*
+release-out/
 distri-home/node_modules/** 
 
 samples/maps-demo/.env

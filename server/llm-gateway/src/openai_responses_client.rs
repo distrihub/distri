@@ -544,7 +544,10 @@ mod input_file_tests {
         assert_eq!(v["type"], "input_file");
         assert_eq!(v["file_data"], "JVBERi0xLjQK");
         assert_eq!(v["filename"], "doc.pdf");
-        assert!(v.get("file_url").is_none(), "file_url should be skipped when None");
+        assert!(
+            v.get("file_url").is_none(),
+            "file_url should be skipped when None"
+        );
     }
 
     #[test]

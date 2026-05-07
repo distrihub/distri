@@ -1,6 +1,6 @@
 ---
-name = "distri_platform"
-description = "Full Distri platform control — manage agents, skills, secrets, threads, connections via distri_request HTTP tool"
+name: distri_platform
+description: "Full Distri platform control — manage agents, skills, secrets, threads, connections via distri_request HTTP tool"
 ---
 
 # Distri Platform

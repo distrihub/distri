@@ -507,3 +507,124 @@ pub struct MessageVoteChangeset<'a> {
     pub comment: Option<Option<&'a str>>,
     pub updated_at: NaiveDateTime,
 }
+
+// ── Connection models ──────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Queryable, Identifiable, Selectable)]
+#[diesel(table_name = connections)]
+pub struct ConnectionModel {
+    pub id: String,
+    pub workspace_id: String,
+    pub skill_id: String,
+    pub name: String,
+    pub status: String,
+    pub config: String,
+    pub connected_by: Option<String>,
+    pub auth_scope: String,
+    pub auth_type: String,
+    pub is_system: i32,
+    pub created_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
+}
+
+#[derive(Debug, Clone, Insertable)]
+#[diesel(table_name = connections)]
+pub struct NewConnectionModel<'a> {
+    pub id: &'a str,
+    pub workspace_id: &'a str,
+    pub skill_id: &'a str,
+    pub name: &'a str,
+    pub status: &'a str,
+    pub config: &'a str,
+    pub connected_by: Option<&'a str>,
+    pub auth_scope: &'a str,
+    pub auth_type: &'a str,
+    pub is_system: i32,
+    pub created_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
+}
+
+#[derive(Debug, Clone, AsChangeset)]
+#[diesel(table_name = connections)]
+pub struct ConnectionChangeset<'a> {
+    pub name: Option<&'a str>,
+    pub status: Option<&'a str>,
+    pub auth_type: Option<&'a str>,
+    pub skill_id: Option<&'a str>,
+    pub updated_at: NaiveDateTime,
+}
+
+// ── ConnectionToken models ─────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Queryable, Identifiable, Selectable)]
+#[diesel(table_name = connection_tokens, primary_key(connection_id))]
+pub struct ConnectionTokenModel {
+    pub connection_id: String,
+    pub token_json: String,
+    pub created_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
+}
+
+#[derive(Debug, Clone, Insertable, AsChangeset)]
+#[diesel(table_name = connection_tokens)]
+pub struct NewConnectionTokenModel<'a> {
+    pub connection_id: &'a str,
+    pub token_json: &'a str,
+    pub created_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
+}
+
+// ── ConnectionOAuthState models ────────────────────────────────────────────
+
+#[derive(Debug, Clone, Queryable, Identifiable, Selectable)]
+#[diesel(table_name = connection_oauth_states, primary_key(state_key))]
+pub struct ConnectionOAuthStateModel {
+    pub state_key: String,
+    pub state_json: String,
+    pub created_at: NaiveDateTime,
+}
+
+#[derive(Debug, Clone, Insertable)]
+#[diesel(table_name = connection_oauth_states)]
+pub struct NewConnectionOAuthStateModel<'a> {
+    pub state_key: &'a str,
+    pub state_json: &'a str,
+    pub created_at: NaiveDateTime,
+}
+
+// ── Note models ────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Queryable, Identifiable, Selectable)]
+#[diesel(table_name = crate::schema::notes)]
+pub struct NoteModel {
+    pub id: String,
+    pub workspace_id: String,
+    pub title: String,
+    pub content: String,
+    pub tags: String, // JSON array
+    pub created_by: Option<String>,
+    pub created_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
+}
+
+#[derive(Debug, Clone, Insertable)]
+#[diesel(table_name = crate::schema::notes)]
+pub struct NewNoteModel<'a> {
+    pub id: &'a str,
+    pub workspace_id: &'a str,
+    pub title: &'a str,
+    pub content: &'a str,
+    pub tags: &'a str,
+    pub created_by: Option<&'a str>,
+    pub created_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
+}
+
+#[derive(Debug, Clone, AsChangeset)]
+#[diesel(table_name = crate::schema::notes)]
+pub struct NoteChangeset<'a> {
+    pub title: Option<&'a str>,
+    pub content: Option<&'a str>,
+    pub tags: Option<&'a str>,
+    pub updated_at: NaiveDateTime,
+}

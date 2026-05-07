@@ -3,34 +3,127 @@ name: release
 on:
   push:
     tags:
-      - "v*"
-    branches:
-      - "chore/release"
+      - 'cli-v*'
+      - 'server-v*'
+      - 'ui-v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build (e.g. cli-v0.5.0, server-v0.5.3, ui-v0.5.7)'
+        required: true
 
 permissions:
   contents: write
 
 jobs:
-  create-draft-release:
-    runs-on: ubuntu-latest
+  ###########################################################
+  build-cli:
+    if: startsWith(github.ref, 'refs/tags/cli-v') || startsWith(github.event.inputs.tag, 'cli-v')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            target: aarch64-apple-darwin
+          - os: macos-14
+            target: x86_64-apple-darwin
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-22.04
+            target: aarch64-unknown-linux-gnu
+          - os: windows-2022
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
-
-      - name: Build release changelog
-        id: changelog
-        uses: mikepenz/release-changelog-builder-action@v5
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          configurationJson: "{}"
-
-      - name: Create draft GitHub release
+          targets: ${{ matrix.target }}
+      - name: Install cross-compilation deps (linux aarch64)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+          mkdir -p .cargo
+          cat >> .cargo/config.toml <<EOF
+          [target.aarch64-unknown-linux-gnu]
+          linker = "aarch64-linux-gnu-gcc"
+          EOF
+      - name: Build CLI release artifact
+        shell: bash
+        run: bash scripts/build-cli-release.sh ${{ matrix.target }}
+      - name: Upload artifacts to release
         uses: softprops/action-gh-release@v2
         with:
-          body: ${{steps.changelog.outputs.changelog}}
-          draft: true
-          repository: distrihub/distri
-          tag_name: ${{ github.ref_name }}
-          name: ${{ github.ref_name }}
-          make_latest: true
+          files: |
+            release-out/*.tar.gz
+            release-out/*.sha256
+
+  ###########################################################
+  build-server:
+    if: startsWith(github.ref, 'refs/tags/server-v') || startsWith(github.event.inputs.tag, 'server-v')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-14,    target: aarch64-apple-darwin }
+          - { os: macos-14,    target: x86_64-apple-darwin }
+          - { os: ubuntu-22.04, target: x86_64-unknown-linux-gnu }
+          - { os: ubuntu-22.04, target: aarch64-unknown-linux-gnu }
+          - { os: windows-2022, target: x86_64-pc-windows-msvc }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Install cross-compilation deps (linux aarch64)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+          mkdir -p .cargo
+          cat >> .cargo/config.toml <<EOF
+          [target.aarch64-unknown-linux-gnu]
+          linker = "aarch64-linux-gnu-gcc"
+          EOF
+      - name: Build server release artifact
+        shell: bash
+        run: bash scripts/build-server-release.sh ${{ matrix.target }}
+      - name: Upload artifacts to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release-out/*.tar.gz
+            release-out/*.sha256
+
+  ###########################################################
+  build-ui:
+    if: startsWith(github.ref, 'refs/tags/ui-v') || startsWith(github.event.inputs.tag, 'ui-v')
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - name: Install workspace
+        run: pnpm install --frozen-lockfile
+        working-directory: distrijs
+      - name: Pack UI dist
+        run: pnpm pack-dist
+        working-directory: distrijs/apps/ui
+      - name: Upload artifacts to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            distrijs/apps/ui/release-out/*.tar.gz
+            distrijs/apps/ui/release-out/*.sha256

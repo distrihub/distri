@@ -8,4 +8,7 @@ pub mod server;
 pub mod ui_server;
 
 #[cfg(test)]
+mod stores;
+
+#[cfg(test)]
 mod tests;

@@ -26,10 +26,14 @@ use utoipa::OpenApi;
         (name = "Sessions", description = "Key-value session storage"),
         (name = "Secrets", description = "Secret/API key management"),
         (name = "Skills", description = "Skill management"),
+        (name = "Connections", description = "Connection management (OAuth, custom credentials)"),
         (name = "Providers", description = "LLM provider configuration"),
         (name = "Models", description = "Available LLM models"),
         (name = "Prompt Templates", description = "Reusable prompt templates"),
         (name = "Artifacts", description = "Task artifact storage"),
+        (name = "Notes", description = "Note CRUD"),
+        (name = "Spans", description = "OTel span and trace read access"),
+        (name = "Usage", description = "Usage stats aggregation"),
         (name = "Health", description = "Health checks"),
     ),
     paths(
@@ -86,6 +90,7 @@ use utoipa::OpenApi;
         crate::routes::skills::update_skill,
         crate::routes::skills::delete_skill,
         // Providers
+        crate::routes::providers::list_providers,
         crate::routes::providers::upsert_provider,
         crate::routes::providers::delete_provider,
         crate::routes::providers::get_default_model,
@@ -97,6 +102,25 @@ use utoipa::OpenApi;
         crate::routes::prompt_templates::get_prompt_template,
         crate::routes::prompt_templates::update_prompt_template,
         crate::routes::prompt_templates::delete_prompt_template,
+        // Connections
+        crate::routes::connections::list_connections,
+        crate::routes::connections::get_connection,
+        crate::routes::connections::create_connection,
+        crate::routes::connections::update_connection,
+        crate::routes::connections::delete_connection,
+        crate::routes::connections::oauth_callback,
+        crate::routes::connections::get_token,
+        // Notes
+        crate::routes::notes::list_notes,
+        crate::routes::notes::get_note,
+        crate::routes::notes::create_note,
+        crate::routes::notes::update_note,
+        crate::routes::notes::delete_note,
+        // Spans / Traces
+        crate::routes::spans::list_spans,
+        crate::routes::spans::list_traces,
+        // Usage
+        crate::routes::usage::get_usage_stats,
     ),
     components(schemas(
         // Route-level types
@@ -118,6 +142,31 @@ use utoipa::OpenApi;
         // Prompt template types
         crate::routes::prompt_templates::SyncPromptTemplatesRequest,
         crate::routes::prompt_templates::SyncPromptTemplatesResponse,
+        // Connection wire types
+        distri_types::api::connections::CreateConnectionRequest,
+        distri_types::api::connections::CreateConnectionResponse,
+        distri_types::api::connections::UpdateConnectionRequest,
+        distri_types::api::connections::OAuthCallbackRequest,
+        distri_types::api::connections::OAuthCallbackResponse,
+        distri_types::api::connections::TokenResponse,
+        distri_types::api::connections::ConnectionConfig,
+        // Spans / Traces wire types
+        distri_types::api::spans::SpanRecord,
+        distri_types::api::spans::TraceRecord,
+        distri_types::api::spans::SpansResponse,
+        distri_types::api::spans::TracesResponse,
+        // Note wire types
+        distri_types::api::notes::NoteRecord,
+        distri_types::api::notes::CreateNoteRequest,
+        distri_types::api::notes::UpdateNoteRequest,
+        distri_types::api::notes::ListNotesQuery,
+        distri_types::api::notes::ListNotesResponse,
+        // Usage wire types
+        distri_types::api::usage::UsageStatsResponse,
+        distri_types::api::usage::UsageTotals,
+        distri_types::api::usage::UsageBucket,
+        distri_types::api::usage::AppliedFilters,
+        distri_types::api::usage::Bucket,
     ))
 )]
 pub struct ServerApiDoc;

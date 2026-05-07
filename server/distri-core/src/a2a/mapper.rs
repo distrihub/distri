@@ -4,6 +4,7 @@ use distri_a2a::{
     EventKind, Message, MessageKind, TaskArtifactUpdateEvent, TaskState, TaskStatus,
     TaskStatusUpdateEvent,
 };
+use distri_types::AgentEventEnvelope;
 use uuid::Uuid;
 
 use crate::{
@@ -26,15 +27,12 @@ pub fn map_final_result(result: &InvokeResult, context: Arc<ExecutorContext>) ->
     })
 }
 pub fn map_agent_event(event: &AgentEvent) -> MessageKind {
-    let mut meta = serde_json::to_value(event.event.clone()).unwrap_or_default();
-    // Include agent_id (name) in metadata so clients can resolve tool registries
-    // for the correct agent, including sub-agents.
-    if let Some(obj) = meta.as_object_mut() {
-        obj.insert(
-            "_agent_id".to_string(),
-            serde_json::Value::String(event.agent_id.clone()),
-        );
-    }
+    // Serialize the typed Distri envelope (event + agent_id + parent_task_id)
+    // into the A2A `metadata` field. The A2A `TaskStatusUpdateEvent` itself
+    // stays pristine — anything Distri-specific lives inside this body so we
+    // don't extend the spec types or hand-build JSON keys with `_` prefixes.
+    let envelope = AgentEventEnvelope::from_event(event);
+    let meta = serde_json::to_value(&envelope).unwrap_or_default();
 
     // Create task from event data to use correct task_id
     let event_task = crate::types::Task {
@@ -43,7 +41,14 @@ pub fn map_agent_event(event: &AgentEvent) -> MessageKind {
         ..Default::default()
     };
 
-    let mut message = match &event.event {
+    // A sub-agent's RunFinished/RunError is NOT the end of the parent's
+    // SSE stream. Only mark `is_final: true` when this event came from
+    // the root task (no parent_task_id). Otherwise an SSE consumer
+    // (browser) would treat the first fork's finish as `final: true`,
+    // close the connection, and miss every subsequent fork's events.
+    let is_root_run = event.parent_task_id.is_none();
+
+    let message = match &event.event {
         AgentEventType::StepStarted { .. }
         | AgentEventType::StepCompleted { .. }
         | AgentEventType::PlanPruned { .. } => MessageKind::TaskStatusUpdate(to_a2a_task_update(
@@ -66,13 +71,13 @@ pub fn map_agent_event(event: &AgentEvent) -> MessageKind {
                 &event_task,
             ))
         }
-        // Run completion events - mark as final
+        // Run completion events: only the ROOT run terminates the stream.
         AgentEventType::RunFinished { .. } | AgentEventType::RunError { .. } => {
             MessageKind::TaskStatusUpdate(to_a2a_task_update(
                 &TaskEvent {
                     event: event.event.clone(),
                     created_at: event.timestamp.timestamp_millis(),
-                    is_final: true,
+                    is_final: is_root_run,
                 },
                 &event_task,
             ))
@@ -86,6 +91,8 @@ pub fn map_agent_event(event: &AgentEvent) -> MessageKind {
             &event_task,
         )),
     };
+
+    let mut message = message;
     message.set_update_props(meta, event.thread_id.clone());
     message
 }

@@ -138,9 +138,7 @@ impl WorkflowStepExecutionStore for InMemoryWorkflowStepExecutionStore {
             .iter_mut()
             .find(|r| r.run_task_id == run_task_id && r.step_id == step_id)
             .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "step execution not found: run={run_task_id}, step={step_id}"
-                )
+                anyhow::anyhow!("step execution not found: run={run_task_id}, step={step_id}")
             })?;
         if let Some(s) = update.status {
             row.status = s;

@@ -27,7 +27,11 @@ fn part_file_round_trips_through_json() {
     let decoded: Part = serde_json::from_str(&json).unwrap();
 
     match decoded {
-        Part::File(FileType::Url { url, mime_type, name }) => {
+        Part::File(FileType::Url {
+            url,
+            mime_type,
+            name,
+        }) => {
             assert_eq!(url, "https://example.com/doc.pdf");
             assert_eq!(mime_type, "application/pdf");
             assert_eq!(name, None);
@@ -63,7 +67,9 @@ fn filetype_mime_type_accessor_works_for_both_variants() {
     assert_eq!(u.mime_type(), "text/csv");
 }
 
-use distri_a2a::{FileObject as A2AFileObject, FilePart as A2AFilePart, Part as A2APart, Message as A2AMessage};
+use distri_a2a::{
+    FileObject as A2AFileObject, FilePart as A2AFilePart, Message as A2AMessage, Part as A2APart,
+};
 
 #[test]
 fn a2a_pdf_inbound_becomes_part_file() {
@@ -84,7 +90,11 @@ fn a2a_pdf_inbound_becomes_part_file() {
     let distri_msg: crate::Message = a2a_msg.try_into().unwrap();
     assert_eq!(distri_msg.parts.len(), 1);
     match &distri_msg.parts[0] {
-        Part::File(FileType::Bytes { bytes, mime_type, name }) => {
+        Part::File(FileType::Bytes {
+            bytes,
+            mime_type,
+            name,
+        }) => {
             assert_eq!(bytes, "JVBERi0xLjQK");
             assert_eq!(mime_type, "application/pdf");
             assert_eq!(name.as_deref(), Some("doc.pdf"));
@@ -153,7 +163,11 @@ fn distri_part_file_outbound_becomes_a2a_file() {
     let a2a_part: A2APart = distri_part.into();
     match a2a_part {
         A2APart::File(fp) => match fp.file {
-            A2AFileObject::WithUri { uri, mime_type, name } => {
+            A2AFileObject::WithUri {
+                uri,
+                mime_type,
+                name,
+            } => {
                 assert_eq!(uri, "https://example.com/r.pdf");
                 assert_eq!(mime_type.as_deref(), Some("application/pdf"));
                 assert_eq!(name.as_deref(), Some("r.pdf"));
