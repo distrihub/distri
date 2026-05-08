@@ -1821,7 +1821,6 @@ where
     }
 
     async fn add_event_to_task(&self, task_id: &str, event: AgentEvent) -> Result<()> {
-        let mut connection = self.conn().await?;
         let task_event = serialize_agent_event(event);
         let payload =
             serde_json::to_string(&task_event).context("failed to serialize task event")?;
@@ -1833,13 +1832,35 @@ where
             created_at: task_event.created_at,
         };
 
-        diesel::insert_into(task_messages::table)
-            .values(&new_message)
-            .execute(&mut connection)
-            .await
-            .context("failed to insert task event")?;
+        const MAX_ATTEMPTS: u32 = 4;
+        let mut last_err: Option<anyhow::Error> = None;
+        for attempt in 1..=MAX_ATTEMPTS {
+            let mut connection = self.conn().await?;
+            match diesel::insert_into(task_messages::table)
+                .values(&new_message)
+                .execute(&mut connection)
+                .await
+            {
+                Ok(_) => return Ok(()),
+                Err(err) => {
+                    let err_text = err.to_string();
+                    let is_sqlite_lock = err_text.contains("database is locked")
+                        || err_text.contains("database table is locked")
+                        || err_text.contains("SQLITE_BUSY");
+                    if is_sqlite_lock && attempt < MAX_ATTEMPTS {
+                        let backoff_ms = 25_u64 * (attempt as u64);
+                        tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
+                        continue;
+                    }
+                    last_err = Some(err.into());
+                    break;
+                }
+            }
+        }
 
-        Ok(())
+        Err(last_err
+            .unwrap_or_else(|| anyhow::anyhow!("unknown insert failure"))
+            .context("failed to insert task event"))
     }
 
     async fn update_task_status(&self, task_id: &str, status: TaskStatus) -> Result<()> {

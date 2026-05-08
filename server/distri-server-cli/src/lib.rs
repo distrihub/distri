@@ -58,15 +58,31 @@ pub async fn init_orchestrator(
         Arc::new(distri_filesystem::create_file_system(fs_config).await?)
     };
 
-    let orchestrator = AgentOrchestratorBuilder::default()
+    let local_runner =
+        distri_server::local_process_remote_runner::maybe_dev_mode_runner(
+            distri_types::RuntimeMode::Cli,
+        )?;
+
+    let mut builder = AgentOrchestratorBuilder::default()
         .with_browser_config(BrowsrClientConfig::default())
         .with_stores(stores)
         .with_prompt_registry(prompt_registry)
         .with_store_config(store_config)
         .with_session_storage_path(workspace_path.join(".distri/session_storage"))
-        .with_workspace_filesystem(workspace_fs)
-        .build()
-        .await?;
+        .with_workspace_filesystem(workspace_fs);
+
+    if let Some(runner) = &local_runner {
+        builder = builder.with_background_runner(runner.clone());
+        tracing::info!(
+            "DEV_MODE=true: enabled LocalProcessRemoteRunner for local --remote dispatch"
+        );
+    }
+
+    let orchestrator = builder.build().await?;
+
+    if let Some(runner) = &local_runner {
+        runner.attach_broadcaster(orchestrator.runtime.broadcaster_arc());
+    }
 
     let orchestrator = Arc::new(orchestrator);
     seed::seed_bundled_defaults(orchestrator.as_ref()).await?;

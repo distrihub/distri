@@ -396,6 +396,24 @@ impl AgentLoop {
                     current_plan_ref.steps.len()
                 )));
             if let Err(e) = step {
+                // Planner may auto-finalize text-only responses and return an
+                // empty step list. In that case, treat plan exhaustion as a
+                // normal completion if final_result is already set.
+                if context.get_final_result().await.is_some() {
+                    verbose_log!(
+                        context.verbose,
+                        "Plan exhausted with final_result already set; completing without replan"
+                    );
+                    context
+                        .emit(AgentEventType::StepCompleted {
+                            step_id: iteration_step_id.clone(),
+                            success: true,
+                            context_budget: None,
+                            usage: Some(context.get_step_usage().await),
+                        })
+                        .await;
+                    break;
+                }
                 tracing::error!("ERROR: Needs to replan: {}", e);
                 context.set_current_plan(None).await;
                 current_plan = None;
@@ -728,14 +746,15 @@ impl AgentLoop {
         if let Some(crate::types::TaskStatus::InputRequired) = context.get_status().await {
             return Ok(());
         }
-        if history.is_empty() {
+        // Planner can auto-finalize text-only responses (without emitting an
+        // executable step). In that case history is empty but final_result is
+        // set, and we should treat completion as valid.
+        let has_final_call = context.get_final_result().await.is_some();
+        if history.is_empty() && !has_final_call {
             return Err(AgentError::Planning(
                 "Agent completed without executing any steps".to_string(),
             ));
         }
-
-        // Check if any execution result is marked as final
-        let has_final_call = context.get_final_result().await.is_some();
 
         // If no final tool was called, check if all steps completed successfully
         if !has_final_call {

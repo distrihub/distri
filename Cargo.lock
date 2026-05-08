@@ -1844,6 +1844,7 @@ dependencies = [
  "chrono",
  "dashmap 5.5.3",
  "dirs 5.0.1",
+ "distri",
  "distri-a2a",
  "distri-auth",
  "distri-core",
