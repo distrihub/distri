@@ -1,16 +1,20 @@
 use async_trait::async_trait;
 use distri_types::RuntimeMode;
 
+pub mod local_process;
+pub use local_process::LocalProcessRemoteRunner;
+
 /// Trait for running agent execution in the background.
 ///
 /// When `spawn()` is called, the implementation starts agent execution
 /// and returns immediately. The caller monitors progress by subscribing
 /// to the `AgentEventBroadcaster` for the given task_id.
 ///
-/// Implementations live outside distri-core:
-/// - `cloud::runner::LocalProcessRemoteRunner`: runs tasks via the `distri`
-///   client library against the same server process. Used in DEV_MODE=true
-///   for local --remote runs without spawning a sandbox container.
+/// Implementations:
+/// - [`LocalProcessRemoteRunner`] (this crate): runs tasks via the
+///   `distri` client library against the same server process. Used by both
+///   cloud (`LOCAL_SANDBOX_MODE=true`) and OSS distri-server when no
+///   sandboxed runtime is configured.
 /// - `cloud::runner::SandboxLauncher`: production path — spawns a browsr
 ///   container with distri-cli and lets the container drive the A2A service.
 #[async_trait]
