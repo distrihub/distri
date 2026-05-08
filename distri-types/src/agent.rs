@@ -1165,66 +1165,74 @@ impl ModelProvider {
         }
     }
 
-    /// Returns the required secret keys for this provider.
-    pub fn required_secret_keys(&self) -> Vec<&'static str> {
+    /// The canonical secret-store key under which this provider's API key
+    /// lives.
+    ///
+    /// **Single source of truth.** Every layer that needs to look up or
+    /// validate the API key MUST go through this method — the gateway
+    /// (`ProviderClientConfig`), workspace-level resolution
+    /// (`WorkspaceStore::resolve_model_settings`), and the validator
+    /// (`required_secret_keys`) all rely on it. The UI's user-facing key list
+    /// in `default_models.json` is kept in sync with this via a unit test.
+    pub fn api_key_secret(&self) -> &'static str {
         match self {
-            ModelProvider::OpenAI {} => vec!["OPENAI_API_KEY"],
-            ModelProvider::OpenAICompatible { api_key, .. } => {
-                if api_key.is_some() {
-                    vec![]
-                } else {
-                    vec!["OPENAI_API_KEY"]
-                }
-            }
-            ModelProvider::AzureOpenAI { api_key, .. } => {
-                if api_key.is_some() {
-                    vec![]
-                } else {
-                    vec!["AZURE_OPENAI_API_KEY"]
-                }
-            }
-            ModelProvider::Anthropic { api_key, .. } => {
-                if api_key.is_some() {
-                    vec![]
-                } else {
-                    vec!["ANTHROPIC_API_KEY"]
-                }
-            }
-            ModelProvider::Gemini { api_key, .. } => {
-                if api_key.is_some() {
-                    vec![]
-                } else {
-                    vec!["GEMINI_API_KEY"]
-                }
-            }
-            ModelProvider::AzureAiFoundry { api_key, .. } => {
-                if api_key.is_some() {
-                    vec![]
-                } else {
-                    vec!["AZURE_AI_FOUNDRY_API_KEY"]
-                }
-            }
-            ModelProvider::AwsBedrock { api_key, .. } => {
-                if api_key.is_some() {
-                    vec![]
-                } else {
-                    vec!["AWS_ACCESS_KEY_ID"]
-                }
-            }
-            ModelProvider::GoogleVertex { api_key, .. } => {
-                if api_key.is_some() {
-                    vec![]
-                } else {
-                    vec!["GOOGLE_VERTEX_API_KEY"]
-                }
-            }
-            ModelProvider::AlibabaCloud { api_key, .. } => {
-                if api_key.is_some() {
-                    vec![]
-                } else {
-                    vec!["DASHSCOPE_API_KEY"]
-                }
-            }
+            ModelProvider::OpenAI {} => "OPENAI_API_KEY",
+            // Custom OpenAI-compatible providers all share the OPENAI_API_KEY
+            // fallback; per-provider keys are passed inline on the provider
+            // config, not stored in the secret store under a different name.
+            ModelProvider::OpenAICompatible { .. } => "OPENAI_API_KEY",
+            ModelProvider::AzureOpenAI { .. } => "AZURE_OPENAI_API_KEY",
+            ModelProvider::Anthropic { .. } => "ANTHROPIC_API_KEY",
+            ModelProvider::Gemini { .. } => "GEMINI_API_KEY",
+            ModelProvider::AzureAiFoundry { .. } => "AZURE_AI_FOUNDRY_API_KEY",
+            // AWS Bedrock authenticates with sigv4 — AWS_ACCESS_KEY_ID is the
+            // primary key the gateway looks up; AWS_SECRET_ACCESS_KEY and
+            // AWS_REGION are looked up alongside but are not "the" api_key.
+            ModelProvider::AwsBedrock { .. } => "AWS_ACCESS_KEY_ID",
+            ModelProvider::GoogleVertex { .. } => "GOOGLE_VERTEX_API_KEY",
+            ModelProvider::AlibabaCloud { .. } => "DASHSCOPE_API_KEY",
+        }
+    }
+
+    /// The canonical secret-store key for this provider's endpoint URL, or
+    /// `None` if the provider has a fixed endpoint baked into the variant.
+    ///
+    /// Only providers that require a tenant-specific endpoint (Azure, Bedrock,
+    /// Vertex) return `Some`; everything else uses a default base URL.
+    pub fn endpoint_secret(&self) -> Option<&'static str> {
+        match self {
+            ModelProvider::AzureOpenAI { .. } => Some("AZURE_OPENAI_ENDPOINT"),
+            ModelProvider::AzureAiFoundry { .. } => Some("AZURE_AI_FOUNDRY_ENDPOINT"),
+            ModelProvider::AwsBedrock { .. } => Some("AWS_BEDROCK_ENDPOINT"),
+            ModelProvider::GoogleVertex { .. } => Some("GOOGLE_VERTEX_ENDPOINT"),
+            ModelProvider::OpenAI {}
+            | ModelProvider::OpenAICompatible { .. }
+            | ModelProvider::Anthropic { .. }
+            | ModelProvider::Gemini { .. }
+            | ModelProvider::AlibabaCloud { .. } => None,
+        }
+    }
+
+    /// Returns the required secret keys for this provider — i.e. keys that
+    /// must resolve via the secret store or environment for the LLM call to
+    /// succeed. If the provider has an inline `api_key` already configured on
+    /// the provider variant, no secret lookup is required.
+    pub fn required_secret_keys(&self) -> Vec<&'static str> {
+        let api_key_present = match self {
+            ModelProvider::OpenAI {} => false,
+            ModelProvider::OpenAICompatible { api_key, .. }
+            | ModelProvider::AzureOpenAI { api_key, .. }
+            | ModelProvider::Gemini { api_key, .. }
+            | ModelProvider::AzureAiFoundry { api_key, .. }
+            | ModelProvider::AwsBedrock { api_key, .. }
+            | ModelProvider::GoogleVertex { api_key, .. }
+            | ModelProvider::AlibabaCloud { api_key, .. } => api_key.is_some(),
+            ModelProvider::Anthropic { api_key, .. } => api_key.is_some(),
+        };
+        if api_key_present {
+            vec![]
+        } else {
+            vec![self.api_key_secret()]
         }
     }
 
@@ -2415,5 +2423,164 @@ tool_format = "json_l"
             result.inner.parameters,
             Some(serde_json::json!({"key": "agent"}))
         );
+    }
+
+    /// Lock the canonical API-key secret name for every provider variant.
+    /// Three layers depend on this: gateway (`provider_config.rs`),
+    /// validator (`required_secret_keys`), and workspace resolution
+    /// (`cloud::WorkspaceStore::resolve_model_settings`). They all flow
+    /// through `ModelProvider::api_key_secret()` — keep this list in sync
+    /// with `default_models.json` (asserted in
+    /// `test_api_key_secret_matches_default_models_json`).
+    #[test]
+    fn test_api_key_secret_canonical_names() {
+        assert_eq!(ModelProvider::OpenAI {}.api_key_secret(), "OPENAI_API_KEY");
+        assert_eq!(
+            ModelProvider::Anthropic {
+                base_url: None,
+                api_key: None,
+            }
+            .api_key_secret(),
+            "ANTHROPIC_API_KEY"
+        );
+        assert_eq!(
+            ModelProvider::Gemini {
+                base_url: ModelProvider::gemini_base_url(),
+                api_key: None,
+            }
+            .api_key_secret(),
+            "GEMINI_API_KEY"
+        );
+        assert_eq!(
+            ModelProvider::AzureOpenAI {
+                base_url: String::new(),
+                api_key: None,
+                deployment: "x".into(),
+                api_version: ModelProvider::azure_api_version(),
+            }
+            .api_key_secret(),
+            "AZURE_OPENAI_API_KEY"
+        );
+        assert_eq!(
+            ModelProvider::AzureAiFoundry {
+                base_url: String::new(),
+                api_key: None,
+            }
+            .api_key_secret(),
+            "AZURE_AI_FOUNDRY_API_KEY"
+        );
+        assert_eq!(
+            ModelProvider::AwsBedrock {
+                base_url: String::new(),
+                api_key: None,
+            }
+            .api_key_secret(),
+            "AWS_ACCESS_KEY_ID"
+        );
+        assert_eq!(
+            ModelProvider::GoogleVertex {
+                base_url: String::new(),
+                api_key: None,
+                project_id: None,
+            }
+            .api_key_secret(),
+            "GOOGLE_VERTEX_API_KEY"
+        );
+        assert_eq!(
+            ModelProvider::AlibabaCloud {
+                base_url: ModelProvider::alibaba_cloud_base_url(),
+                api_key: None,
+            }
+            .api_key_secret(),
+            "DASHSCOPE_API_KEY"
+        );
+        assert_eq!(
+            ModelProvider::OpenAICompatible {
+                base_url: String::new(),
+                api_key: None,
+                project_id: None,
+            }
+            .api_key_secret(),
+            "OPENAI_API_KEY"
+        );
+    }
+
+    /// `default_models.json` drives the UI's secret editor (via
+    /// `/v1/providers`). For every built-in provider listed there, the first
+    /// `*_API_KEY` entry MUST equal what `ModelProvider::api_key_secret()`
+    /// returns — otherwise the UI will tell users to enter a secret name
+    /// that the backend won't look up. This test catches drift.
+    #[test]
+    fn test_api_key_secret_matches_default_models_json() {
+        let providers = ModelProvider::all_provider_definitions();
+        let cases: &[(&str, ModelProvider)] = &[
+            ("openai", ModelProvider::OpenAI {}),
+            (
+                "anthropic",
+                ModelProvider::Anthropic {
+                    base_url: None,
+                    api_key: None,
+                },
+            ),
+            (
+                "gemini",
+                ModelProvider::Gemini {
+                    base_url: ModelProvider::gemini_base_url(),
+                    api_key: None,
+                },
+            ),
+            (
+                "azure_ai_foundry",
+                ModelProvider::AzureAiFoundry {
+                    base_url: String::new(),
+                    api_key: None,
+                },
+            ),
+            (
+                "aws_bedrock",
+                ModelProvider::AwsBedrock {
+                    base_url: String::new(),
+                    api_key: None,
+                },
+            ),
+            (
+                "google_vertex",
+                ModelProvider::GoogleVertex {
+                    base_url: String::new(),
+                    api_key: None,
+                    project_id: None,
+                },
+            ),
+            (
+                "alibaba_cloud",
+                ModelProvider::AlibabaCloud {
+                    base_url: ModelProvider::alibaba_cloud_base_url(),
+                    api_key: None,
+                },
+            ),
+        ];
+
+        for (id, variant) in cases {
+            let def = providers
+                .iter()
+                .find(|p| p.id == *id)
+                .unwrap_or_else(|| panic!("provider '{}' missing from default_models.json", id));
+            let first_api_key_in_json = def
+                .keys
+                .iter()
+                .map(|k| k.key.as_str())
+                .find(|k| k.ends_with("_API_KEY") || *k == "AWS_ACCESS_KEY_ID")
+                .unwrap_or_else(|| {
+                    panic!("provider '{}' has no API key entry in default_models.json", id)
+                });
+            assert_eq!(
+                first_api_key_in_json,
+                variant.api_key_secret(),
+                "provider '{}': default_models.json key {:?} != api_key_secret() {:?}",
+                id,
+                first_api_key_in_json,
+                variant.api_key_secret(),
+            );
+        }
     }
 }

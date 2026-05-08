@@ -22,10 +22,15 @@ pub struct ProviderClientConfig {
 
 impl From<&ModelProvider> for ProviderClientConfig {
     fn from(provider: &ModelProvider) -> Self {
+        // Secret name is owned by `ModelProvider::api_key_secret()` — every
+        // layer that resolves an API key flows through it. Don't hardcode
+        // strings here; that's how the workspace_store / gateway / validator
+        // got out of sync in the first place.
+        let api_key_secret = provider.api_key_secret();
         match provider {
             ModelProvider::OpenAI {} => Self {
                 base_url: ModelProvider::openai_base_url(),
-                api_key_secret: "OPENAI_API_KEY",
+                api_key_secret,
                 inline_api_key: None,
                 project_id: None,
                 extra_headers: HashMap::new(),
@@ -36,7 +41,7 @@ impl From<&ModelProvider> for ProviderClientConfig {
                 base_url: base_url
                     .clone()
                     .unwrap_or_else(|| "https://api.anthropic.com".to_string()),
-                api_key_secret: "ANTHROPIC_API_KEY",
+                api_key_secret,
                 inline_api_key: api_key.clone(),
                 project_id: None,
                 extra_headers: HashMap::new(),
@@ -54,7 +59,7 @@ impl From<&ModelProvider> for ProviderClientConfig {
                     base_url.trim_end_matches('/'),
                     deployment
                 ),
-                api_key_secret: "AZURE_OPENAI_API_KEY",
+                api_key_secret,
                 inline_api_key: api_key.clone(),
                 project_id: None,
                 extra_headers: HashMap::new(),
@@ -63,7 +68,7 @@ impl From<&ModelProvider> for ProviderClientConfig {
             },
             ModelProvider::Gemini { base_url, api_key } => Self {
                 base_url: base_url.clone(),
-                api_key_secret: "GEMINI_API_KEY",
+                api_key_secret,
                 inline_api_key: api_key.clone(),
                 project_id: None,
                 extra_headers: HashMap::new(),
@@ -72,7 +77,7 @@ impl From<&ModelProvider> for ProviderClientConfig {
             },
             ModelProvider::AzureAiFoundry { base_url, api_key } => Self {
                 base_url: format!("{}/openai/v1", base_url.trim_end_matches('/')),
-                api_key_secret: "AZURE_AI_FOUNDRY_API_KEY",
+                api_key_secret,
                 inline_api_key: api_key.clone(),
                 project_id: None,
                 extra_headers: HashMap::new(),
@@ -81,7 +86,7 @@ impl From<&ModelProvider> for ProviderClientConfig {
             },
             ModelProvider::AwsBedrock { base_url, api_key } => Self {
                 base_url: base_url.clone(),
-                api_key_secret: "AWS_ACCESS_KEY_ID",
+                api_key_secret,
                 inline_api_key: api_key.clone(),
                 project_id: None,
                 extra_headers: HashMap::new(),
@@ -94,7 +99,7 @@ impl From<&ModelProvider> for ProviderClientConfig {
                 project_id,
             } => Self {
                 base_url: base_url.clone(),
-                api_key_secret: "GOOGLE_VERTEX_API_KEY",
+                api_key_secret,
                 inline_api_key: api_key.clone(),
                 project_id: project_id.clone(),
                 extra_headers: HashMap::new(),
@@ -107,7 +112,7 @@ impl From<&ModelProvider> for ProviderClientConfig {
                 project_id,
             } => Self {
                 base_url: base_url.clone(),
-                api_key_secret: "OPENAI_API_KEY",
+                api_key_secret,
                 inline_api_key: api_key.clone(),
                 project_id: project_id.clone(),
                 extra_headers: HashMap::new(),
@@ -116,7 +121,7 @@ impl From<&ModelProvider> for ProviderClientConfig {
             },
             ModelProvider::AlibabaCloud { base_url, api_key } => Self {
                 base_url: base_url.clone(),
-                api_key_secret: "DASHSCOPE_API_KEY",
+                api_key_secret,
                 inline_api_key: api_key.clone(),
                 project_id: None,
                 extra_headers: HashMap::new(),
