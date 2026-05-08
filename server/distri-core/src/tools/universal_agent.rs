@@ -345,6 +345,22 @@ async fn build_spec(
         };
 
         let mut o = DefinitionOverrides::default().with_instructions(instructions);
+
+        // Pin the runtime based on the parent's runtime mode. `_adhoc_base`'s
+        // tooling depends entirely on the calling session's `external = ["*"]`
+        // wildcard inheritance — it has no provider tools of its own. The CLI
+        // runtime is the only one whose default toolset (Bash/Read/Write/Edit/
+        // Glob/Grep + skill-loaded tools) ships those externally. Cloud and
+        // Browser callers therefore must dispatch the worker through a
+        // `BackgroundRunner` that provides CLI (cloud's `SandboxLauncher` does
+        // exactly this; the OSS distri-server has no runner and will surface a
+        // clear error). The runtime override is what triggers that dispatch
+        // in `AgentOrchestrator::call_agent_stream`. Leaving the worker
+        // unconstrained when the parent is in CLI keeps it in-process.
+        if !matches!(parent_ctx.runtime_mode, distri_types::RuntimeMode::Cli) {
+            o = o.with_runtime(vec![distri_types::RuntimeMode::Cli]);
+        }
+
         // Build the override only when the caller actually overrode `tools` or
         // `external` — otherwise we leave _adhoc_base's seeded ToolsConfig in
         // place (which already declares `external = ["*"]`). Replacing it with

@@ -872,35 +872,21 @@ impl AgentOrchestrator {
             &context.default_model_settings,
         );
 
-        // Wildcard external-tools sanity check: an agent that declares
-        // `external = ["*"]` is asking the client to ship at least one tool.
-        // An empty client list silently produces an LLM with zero external tools
-        // and confusing downstream errors — fail fast at request entry.
-        if let distri_types::configuration::AgentConfig::StandardAgent(ref def) = agent_config {
-            if let Some(tools_cfg) = def.tools.as_ref() {
-                if let Some(ext) = tools_cfg.external.as_ref() {
-                    if ext.iter().any(|t| t == "*") && context.external_tools_count().await == 0 {
-                        return Err(AgentError::Session(format!(
-                            "Agent '{}' declares external = [\"*\"] but no external tools \
-                             were provided by the client. The client must ship at least one \
-                             external tool in ExecutorContextMetadata.external_tools.",
-                            def.name
-                        )));
-                    }
-                }
-            }
-        }
-
         // Runtime-constraint dispatch. If the agent declares any runtime
         // constraints and the current ExecutorContext.runtime_mode is not in
         // the allowed list, route through RemoteAgent — but only if a
         // BackgroundRunner is configured whose provided_runtime is in the
         // allowed list. Otherwise fail fast with a clear error.
         //
-        // Note: this check runs BEFORE `validate_agent_model` because
-        // remote-dispatched agents configure their model inside the sandbox
-        // (via the inner distri-cli's own settings) — the outer orchestrator
-        // does not need a model for the dispatch path.
+        // **Order matters.** This must run BEFORE the wildcard external-tools
+        // check below: remote-dispatched agents have their tools satisfied
+        // by the inner distri-cli inside the sandbox, so the outer cloud
+        // orchestrator must NOT validate the wildcard locally — it would
+        // wrongly reject `_adhoc_base`-style agents (declared with
+        // `external = ["*"]` and `runtime = ["cli"]`) just because the cloud
+        // client doesn't ship any tools. Same reasoning as the
+        // `validate_agent_model` skip: the model and the tools both live
+        // inside the sandbox.
         if let distri_types::configuration::AgentConfig::StandardAgent(ref definition) =
             agent_config
         {
@@ -931,6 +917,26 @@ impl AgentOrchestrator {
                     hooks,
                 };
                 return agent.invoke_stream(message, context).await;
+            }
+        }
+
+        // Wildcard external-tools sanity check (in-process path only): an
+        // agent that declares `external = ["*"]` is asking the client to
+        // ship at least one tool. An empty client list silently produces an
+        // LLM with zero external tools and confusing downstream errors —
+        // fail fast at request entry.
+        if let distri_types::configuration::AgentConfig::StandardAgent(ref def) = agent_config {
+            if let Some(tools_cfg) = def.tools.as_ref() {
+                if let Some(ext) = tools_cfg.external.as_ref() {
+                    if ext.iter().any(|t| t == "*") && context.external_tools_count().await == 0 {
+                        return Err(AgentError::Session(format!(
+                            "Agent '{}' declares external = [\"*\"] but no external tools \
+                             were provided by the client. The client must ship at least one \
+                             external tool in ExecutorContextMetadata.external_tools.",
+                            def.name
+                        )));
+                    }
+                }
             }
         }
 
