@@ -195,7 +195,7 @@ async fn list_agents(
         .unwrap_or_default();
 
     let runner_provides = executor
-        .background_runner
+        .remote_task_runner
         .as_ref()
         .map(|r| r.provided_runtime());
     let caller_runtime = query.runtime.clone();

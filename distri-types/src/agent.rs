@@ -543,7 +543,7 @@ pub struct StandardDefinition {
     ///
     /// - empty / omitted → runs in any runtime (default).
     /// - `["cli"]` → only runs when `ExecutorContext.runtime_mode == Cli`,
-    ///   OR via a `BackgroundRunner` providing `Cli` (e.g. `SandboxLauncher`
+    ///   OR via a `RemoteTaskRunner` providing `Cli` (e.g. `SandboxLauncher`
     ///   spawning `distri-cli` inside a browsr container).
     /// - `["cli", "cloud"]` → runs in either Cli or Cloud, but not Browser.
     ///
@@ -620,7 +620,7 @@ impl StandardDefinition {
     }
 
     /// Whether this agent can execute given the caller's `current` runtime,
-    /// optionally with a `BackgroundRunner` providing an alternative runtime
+    /// optionally with a `RemoteTaskRunner` providing an alternative runtime
     /// via remote dispatch.
     ///
     /// Returns true when:

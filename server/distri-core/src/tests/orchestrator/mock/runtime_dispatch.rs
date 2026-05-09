@@ -4,7 +4,7 @@
 //!
 //! 1. **Direct `call_agent_stream` dispatch decision** —
 //!    [`AgentOrchestrator::call_agent_stream`] must:
-//!      - route through the configured `BackgroundRunner` when the agent's
+//!      - route through the configured `RemoteTaskRunner` when the agent's
 //!        `runtime` constraint is unsatisfiable in the current
 //!        `ExecutorContext.runtime_mode` AND a runner provides a matching
 //!        runtime,
@@ -38,7 +38,7 @@ use crate::agent::types::AgentEvent;
 use crate::agent::ExecutorContext;
 use crate::broadcast::in_process::{InProcessBroadcaster, InProcessRuntime};
 use crate::broadcast::AgentEventBroadcaster;
-use crate::runner::BackgroundRunner;
+use crate::runner::RemoteTaskRunner;
 use crate::tests::helpers::test_store_config;
 use crate::tools::universal_agent::{CallAgentInput, UniversalAgentTool};
 use crate::tools::ExecutorContextTool;
@@ -79,7 +79,7 @@ impl RecordingRunner {
 }
 
 #[async_trait]
-impl BackgroundRunner for RecordingRunner {
+impl RemoteTaskRunner for RecordingRunner {
     async fn spawn(
         &self,
         task_id: String,
@@ -157,7 +157,7 @@ async fn build_orch_with_runner(
         AgentOrchestratorBuilder::default()
             .with_stores(base.stores.clone())
             .with_runtime(runtime)
-            .with_background_runner(Arc::new(runner.clone()))
+            .with_remote_task_runner(Arc::new(runner.clone()))
             .build()
             .await
             .unwrap(),

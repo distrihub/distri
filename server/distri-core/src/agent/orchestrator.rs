@@ -50,7 +50,7 @@ pub struct AgentOrchestrator {
     pub system_hooks: Vec<Arc<dyn crate::agent::types::AgentHooks>>,
 
     /// Optional background runner for async agent execution (deepagent containers).
-    pub background_runner: Option<Arc<dyn crate::runner::BackgroundRunner>>,
+    pub remote_task_runner: Option<Arc<dyn crate::runner::RemoteTaskRunner>>,
     /// Unified runtime for event broadcasting + task coordination.
     /// Always initialized — InProcessRuntime by default, RedisRuntime for cloud.
     pub runtime: Arc<dyn crate::broadcast::AgentRuntime>,
@@ -99,7 +99,7 @@ pub struct AgentOrchestratorBuilder {
     hooks: Option<HashMap<String, Arc<dyn crate::agent::types::AgentHooks>>>,
     system_hooks: Vec<Arc<dyn crate::agent::types::AgentHooks>>,
     runtime: Option<Arc<dyn crate::broadcast::AgentRuntime>>,
-    background_runner: Option<Arc<dyn crate::runner::BackgroundRunner>>,
+    remote_task_runner: Option<Arc<dyn crate::runner::RemoteTaskRunner>>,
     oauth_handler: Option<Arc<OAuthHandler>>,
 }
 
@@ -193,11 +193,11 @@ impl AgentOrchestratorBuilder {
         self
     }
 
-    pub fn with_background_runner(
+    pub fn with_remote_task_runner(
         mut self,
-        runner: Arc<dyn crate::runner::BackgroundRunner>,
+        runner: Arc<dyn crate::runner::RemoteTaskRunner>,
     ) -> Self {
-        self.background_runner = Some(runner);
+        self.remote_task_runner = Some(runner);
         self
     }
 
@@ -283,7 +283,7 @@ impl AgentOrchestratorBuilder {
             inline_hooks: Arc::new(dashmap::DashMap::new()),
             hook_registry: HookRegistry::new(),
             runtime,
-            background_runner: self.background_runner,
+            remote_task_runner: self.remote_task_runner,
             oauth_handler: self.oauth_handler,
         };
 
@@ -875,7 +875,7 @@ impl AgentOrchestrator {
         // Runtime-constraint dispatch. If the agent declares any runtime
         // constraints and the current ExecutorContext.runtime_mode is not in
         // the allowed list, route through RemoteAgent — but only if a
-        // BackgroundRunner is configured whose provided_runtime is in the
+        // RemoteTaskRunner is configured whose provided_runtime is in the
         // allowed list. Otherwise fail fast with a clear error.
         //
         // **Order matters.** This must run BEFORE the wildcard external-tools
@@ -892,7 +892,7 @@ impl AgentOrchestrator {
         {
             let allowed = definition.allowed_runtimes();
             if !allowed.is_empty() && !allowed.iter().any(|rt| rt == &context.runtime_mode) {
-                let Some(runner) = &self.background_runner else {
+                let Some(runner) = &self.remote_task_runner else {
                     return Err(AgentError::Session(format!(
                         "Agent '{}' requires runtime {:?} but the current runtime is {:?} \
                          and no background runner is configured to provide it.",

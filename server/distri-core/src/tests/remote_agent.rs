@@ -11,24 +11,24 @@ use crate::{
         types::{AgentEvent, AgentHooks, BaseAgent},
     },
     broadcast::{in_process::InProcessBroadcaster, AgentEventBroadcaster},
-    runner::BackgroundRunner,
+    runner::RemoteTaskRunner,
     types::{Message, StandardDefinition},
     AgentError,
 };
 
 // ── Mocks ──────────────────────────────────────────────────────────────────
 
-/// Mock BackgroundRunner that publishes a configurable sequence of events to
+/// Mock RemoteTaskRunner that publishes a configurable sequence of events to
 /// the broadcaster when `spawn()` is called, simulating a container execution.
 #[derive(Clone)]
-struct MockBackgroundRunner {
+struct MockRemoteTaskRunner {
     broadcaster: Arc<InProcessBroadcaster>,
     /// Events to publish (in order) when `spawn()` is called.
     /// The task_id passed to `spawn()` is used as the key.
     events: Vec<AgentEventType>,
 }
 
-impl MockBackgroundRunner {
+impl MockRemoteTaskRunner {
     fn new(broadcaster: Arc<InProcessBroadcaster>, events: Vec<AgentEventType>) -> Self {
         Self {
             broadcaster,
@@ -38,7 +38,7 @@ impl MockBackgroundRunner {
 }
 
 #[async_trait]
-impl BackgroundRunner for MockBackgroundRunner {
+impl RemoteTaskRunner for MockRemoteTaskRunner {
     async fn spawn(
         &self,
         task_id: String,
@@ -169,7 +169,7 @@ async fn test_event_forwarding_basic() {
         run_finished(),
     ];
 
-    let runner = MockBackgroundRunner::new(broadcaster.clone(), events);
+    let runner = MockRemoteTaskRunner::new(broadcaster.clone(), events);
     let agent = RemoteAgent {
         definition: test_definition(),
         runner: Arc::new(runner),
@@ -210,7 +210,7 @@ async fn test_final_tool_capture() {
         run_finished(),
     ];
 
-    let runner = MockBackgroundRunner::new(broadcaster.clone(), events);
+    let runner = MockRemoteTaskRunner::new(broadcaster.clone(), events);
     let agent = RemoteAgent {
         definition: test_definition(),
         runner: Arc::new(runner),
@@ -249,7 +249,7 @@ async fn test_missing_terminal_emits_run_error() {
         diagnostic_log("started but never finished"),
     ];
 
-    let runner = MockBackgroundRunner::new(real_broadcaster.clone(), events);
+    let runner = MockRemoteTaskRunner::new(real_broadcaster.clone(), events);
     let agent = RemoteAgent {
         definition: test_definition(),
         runner: Arc::new(runner),
@@ -286,7 +286,7 @@ async fn test_terminates_on_run_error() {
         run_error("container crashed"),
     ];
 
-    let runner = MockBackgroundRunner::new(broadcaster.clone(), events);
+    let runner = MockRemoteTaskRunner::new(broadcaster.clone(), events);
     let agent = RemoteAgent {
         definition: test_definition(),
         runner: Arc::new(runner),
@@ -318,7 +318,7 @@ async fn test_echo_loop_prevention() {
         run_finished(),
     ];
 
-    let runner = MockBackgroundRunner::new(broadcaster.clone(), events);
+    let runner = MockRemoteTaskRunner::new(broadcaster.clone(), events);
     let agent = RemoteAgent {
         definition: test_definition(),
         runner: Arc::new(runner),
@@ -344,7 +344,7 @@ async fn test_echo_loop_prevention() {
         );
     }
 
-    // The broadcaster should have events under the inner_task_id (from MockBackgroundRunner),
+    // The broadcaster should have events under the inner_task_id (from MockRemoteTaskRunner),
     // but those events should NOT have the outer_task_id. The inner events are a separate
     // channel, preventing echo loops.
     // We can't easily inspect the inner_task_id since it's a random UUID generated inside
@@ -358,7 +358,7 @@ async fn test_no_final_tool_returns_none_content() {
     let broadcaster = InProcessBroadcaster::new_shared();
     let events = vec![AgentEventType::RunStarted {}, run_finished()];
 
-    let runner = MockBackgroundRunner::new(broadcaster.clone(), events);
+    let runner = MockRemoteTaskRunner::new(broadcaster.clone(), events);
     let agent = RemoteAgent {
         definition: test_definition(),
         runner: Arc::new(runner),
@@ -400,7 +400,7 @@ async fn test_final_tool_among_multiple_tool_calls() {
         run_finished(),
     ];
 
-    let runner = MockBackgroundRunner::new(broadcaster.clone(), events);
+    let runner = MockRemoteTaskRunner::new(broadcaster.clone(), events);
     let agent = RemoteAgent {
         definition: test_definition(),
         runner: Arc::new(runner),
@@ -425,7 +425,7 @@ async fn test_final_tool_among_multiple_tool_calls() {
 #[tokio::test]
 async fn test_remote_agent_metadata() {
     let broadcaster = InProcessBroadcaster::new_shared();
-    let runner = MockBackgroundRunner::new(broadcaster.clone(), vec![run_finished()]);
+    let runner = MockRemoteTaskRunner::new(broadcaster.clone(), vec![run_finished()]);
     let agent = RemoteAgent {
         definition: StandardDefinition {
             name: "my_remote_agent".to_string(),
@@ -449,7 +449,7 @@ async fn test_remote_agent_metadata() {
 #[tokio::test]
 async fn test_remote_agent_dag() {
     let broadcaster = InProcessBroadcaster::new_shared();
-    let runner = MockBackgroundRunner::new(broadcaster.clone(), vec![]);
+    let runner = MockRemoteTaskRunner::new(broadcaster.clone(), vec![]);
     let agent = RemoteAgent {
         definition: StandardDefinition {
             name: "dag_agent".to_string(),
@@ -467,7 +467,7 @@ async fn test_remote_agent_dag() {
     assert_eq!(dag.nodes[0].node_type, "remote_agent");
 }
 
-/// MockBackgroundRunner returns error → RemoteAgent returns AgentError::Session.
+/// MockRemoteTaskRunner returns error → RemoteAgent returns AgentError::Session.
 #[tokio::test]
 async fn test_spawn_failure_returns_session_error() {
     let broadcaster = InProcessBroadcaster::new_shared();
@@ -502,7 +502,7 @@ async fn test_spawn_failure_returns_session_error() {
 struct FailingRunner;
 
 #[async_trait]
-impl BackgroundRunner for FailingRunner {
+impl RemoteTaskRunner for FailingRunner {
     async fn spawn(
         &self,
         _task_id: String,
@@ -542,7 +542,7 @@ impl SpawnCountingRunner {
 }
 
 #[async_trait]
-impl BackgroundRunner for SpawnCountingRunner {
+impl RemoteTaskRunner for SpawnCountingRunner {
     async fn spawn(
         &self,
         task_id: String,
@@ -595,12 +595,12 @@ impl BackgroundRunner for SpawnCountingRunner {
 //      matched the agent's `[Cli]` allowed list, so it skipped the sandbox path.
 //
 // These tests pin the orchestrator's contract: with `remote = true` (or
-// `runtime = ["cli"]`), Cloud callers MUST be dispatched via the BackgroundRunner;
+// `runtime = ["cli"]`), Cloud callers MUST be dispatched via the RemoteTaskRunner;
 // Cli callers MUST execute in-process. The CLI-side bugs are tested in
 // `distri-cli/src/message.rs::tests`.
 
 #[tokio::test]
-async fn orchestrator_routes_cloud_caller_to_background_runner_when_agent_is_remote() {
+async fn orchestrator_routes_cloud_caller_to_remote_task_runner_when_agent_is_remote() {
     use crate::broadcast::in_process::InProcessRuntime;
     use crate::tests::helpers::test_store_config;
     use crate::AgentOrchestratorBuilder;
@@ -629,7 +629,7 @@ async fn orchestrator_routes_cloud_caller_to_background_runner_when_agent_is_rem
         AgentOrchestratorBuilder::default()
             .with_store_config(test_store_config())
             .with_runtime(runtime)
-            .with_background_runner(Arc::new(runner))
+            .with_remote_task_runner(Arc::new(runner))
             .build()
             .await
             .unwrap(),
@@ -644,7 +644,7 @@ async fn orchestrator_routes_cloud_caller_to_background_runner_when_agent_is_rem
     orchestrator.register_agent_definition(def).await.unwrap();
 
     // Caller declares Cloud runtime — should NOT match `[Cli]` allowed list,
-    // should fall through to the BackgroundRunner.
+    // should fall through to the RemoteTaskRunner.
     let (ctx, _rx) = test_context_with_runtime(&orchestrator, RuntimeMode::Cloud);
 
     let result = orchestrator
@@ -659,7 +659,7 @@ async fn orchestrator_routes_cloud_caller_to_background_runner_when_agent_is_rem
     assert_eq!(
         counter.load(std::sync::atomic::Ordering::SeqCst),
         1,
-        "Cloud caller against a remote=true agent must dispatch via BackgroundRunner exactly once"
+        "Cloud caller against a remote=true agent must dispatch via RemoteTaskRunner exactly once"
     );
     assert!(
         result.is_ok(),
@@ -680,7 +680,7 @@ async fn orchestrator_runs_in_process_when_caller_already_provides_required_runt
     let orchestrator = Arc::new(
         AgentOrchestratorBuilder::default()
             .with_store_config(test_store_config())
-            .with_background_runner(Arc::new(runner))
+            .with_remote_task_runner(Arc::new(runner))
             .build()
             .await
             .unwrap(),
@@ -714,7 +714,7 @@ async fn orchestrator_runs_in_process_when_caller_already_provides_required_runt
     assert_eq!(
         counter.load(std::sync::atomic::Ordering::SeqCst),
         0,
-        "Cli caller against a remote=true agent must NOT fork to BackgroundRunner — it already provides Cli runtime"
+        "Cli caller against a remote=true agent must NOT fork to RemoteTaskRunner — it already provides Cli runtime"
     );
 }
 

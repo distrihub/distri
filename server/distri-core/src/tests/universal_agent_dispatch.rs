@@ -2,7 +2,7 @@
 //!
 //! Covers all four `CallMode` variants (InProcess, Fork, Offload, Transfer),
 //! ad-hoc non-persistence, access control, deprecated flag mapping, and the
-//! remote dispatch path via a `BackgroundRunner`.
+//! remote dispatch path via a `RemoteTaskRunner`.
 //!
 //! Strategy:
 //! - Full agent execution requires an LLM, which our MockLLMExecutor can't
@@ -32,7 +32,7 @@ use crate::agent::types::AgentEvent;
 use crate::agent::ExecutorContext;
 use crate::broadcast::in_process::{InProcessBroadcaster, InProcessRuntime};
 use crate::broadcast::AgentEventBroadcaster;
-use crate::runner::BackgroundRunner;
+use crate::runner::RemoteTaskRunner;
 use crate::tests::helpers::test_store_config;
 use crate::tools::universal_agent::{CallMode, UniversalAgentTool};
 use crate::tools::ExecutorContextTool;
@@ -46,7 +46,7 @@ use distri_types::{
 
 // ── Test runner ──────────────────────────────────────────────────────────────
 
-/// A `BackgroundRunner` that:
+/// A `RemoteTaskRunner` that:
 /// 1. Counts `spawn()` calls (atomic counter)
 /// 2. Optionally delays before publishing the terminal event
 /// 3. Publishes a synthesized `RunFinished` event on the shared broadcaster
@@ -102,7 +102,7 @@ impl FinalizingTestRunner {
 }
 
 #[async_trait]
-impl BackgroundRunner for FinalizingTestRunner {
+impl RemoteTaskRunner for FinalizingTestRunner {
     async fn spawn(
         &self,
         task_id: String,
@@ -209,7 +209,7 @@ async fn build_orchestrator_with_runner(
         AgentOrchestratorBuilder::default()
             .with_stores(base.stores.clone())
             .with_runtime(runtime)
-            .with_background_runner(Arc::new(runner.clone()))
+            .with_remote_task_runner(Arc::new(runner.clone()))
             .build()
             .await
             .unwrap(),
@@ -712,11 +712,11 @@ async fn mode_transfer_sets_parents_final_result_and_emits_handover() {
     );
 }
 
-// ── 7a.9 remote dispatch goes through the registered BackgroundRunner ────────
+// ── 7a.9 remote dispatch goes through the registered RemoteTaskRunner ────────
 
 /// When an agent declares `runtime = [Cloud]` and the caller is in `Cli`
 /// runtime, the orchestrator must hand dispatch to the registered
-/// `BackgroundRunner`. We assert that by using a `FinalizingTestRunner`
+/// `RemoteTaskRunner`. We assert that by using a `FinalizingTestRunner`
 /// (counts spawn calls) and checking its counter after the dispatch.
 ///
 /// This replaces the old `InProcessRemoteRunner`-driven test. That runner's
@@ -750,11 +750,11 @@ async fn remote_dispatch_when_agent_requires_different_runtime() {
     .await
     .expect("remote dispatch must terminate (not hang)");
 
-    // Dispatch must have touched the BackgroundRunner at least once — that's
+    // Dispatch must have touched the RemoteTaskRunner at least once — that's
     // the whole point of the runtime-mismatch path.
     assert!(
         runner.counter.load(Ordering::SeqCst) >= 1,
-        "remote dispatch must invoke BackgroundRunner::spawn"
+        "remote dispatch must invoke RemoteTaskRunner::spawn"
     );
     // Must also terminate (with Ok or an expected Err — we don't pin the
     // shape, just non-hang behavior).

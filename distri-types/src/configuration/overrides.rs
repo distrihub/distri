@@ -24,7 +24,7 @@ pub struct DefinitionOverrides {
     /// `StandardDefinition.runtime` wholesale. The `--remote` CLI flag is
     /// sugar for `Some(vec![RuntimeMode::Cloud])` — when the caller's
     /// current runtime doesn't match, the orchestrator routes via the
-    /// configured `BackgroundRunner`.
+    /// configured `RemoteTaskRunner`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<Vec<String>>)]
     pub runtime: Option<Vec<RuntimeMode>>,
@@ -93,7 +93,7 @@ impl DefinitionOverrides {
 
     /// Sugar for the `--remote` CLI flag: forces runtime = [Cloud] so the
     /// orchestrator routes the invocation through a cloud-providing
-    /// BackgroundRunner.
+    /// RemoteTaskRunner.
     pub fn with_remote(mut self, remote: bool) -> Self {
         if remote {
             self.runtime = Some(vec![RuntimeMode::Cloud]);

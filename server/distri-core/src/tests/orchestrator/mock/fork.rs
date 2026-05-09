@@ -10,7 +10,7 @@
 //! - **Dispatch wiring.** A real orchestrator (in-memory SQLite stores) +
 //!   `FinalizingTestRunner` so the `_adhoc_base` fork target lights up
 //!   without an LLM. Verifies that `RunSkillTool::execute_with_executor_context`
-//!   actually reaches the `BackgroundRunner::spawn` boundary with the right
+//!   actually reaches the `RemoteTaskRunner::spawn` boundary with the right
 //!   shape (substituted body + args dump in user message).
 //!
 //! For the real-LLM end-to-end version see `tests/orchestrator/smoke/fork.rs`.
@@ -27,7 +27,7 @@ use crate::agent::types::AgentEvent;
 use crate::agent::ExecutorContext;
 use crate::broadcast::in_process::{InProcessBroadcaster, InProcessRuntime};
 use crate::broadcast::AgentEventBroadcaster;
-use crate::runner::BackgroundRunner;
+use crate::runner::RemoteTaskRunner;
 use crate::tests::helpers::test_store_config;
 use crate::tools::run_skill::{
     build_prompt_with_args, escape_handlebars_in_value, interpolate_args, parse_mode, RunSkillTool,
@@ -166,11 +166,11 @@ fn parse_mode_defaults_to_fork() {
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Dispatch-wiring test. Real orchestrator + in-memory SkillStore +
-// FinalizingTestRunner so the fork lights up the BackgroundRunner without
+// FinalizingTestRunner so the fork lights up the RemoteTaskRunner without
 // needing an LLM.
 // ──────────────────────────────────────────────────────────────────────────────
 
-/// `BackgroundRunner` that counts spawn calls and captures the dispatched
+/// `RemoteTaskRunner` that counts spawn calls and captures the dispatched
 /// `task` text — minimal enough to verify both that the dispatch path was
 /// taken AND that the user-message payload is shaped correctly (args dump
 /// for `RunSkillTool::build_prompt_with_args`).
@@ -194,7 +194,7 @@ impl CountingRunner {
 }
 
 #[async_trait]
-impl BackgroundRunner for CountingRunner {
+impl RemoteTaskRunner for CountingRunner {
     async fn spawn(
         &self,
         task_id: String,
@@ -263,7 +263,7 @@ async fn build_orch() -> (Arc<AgentOrchestrator>, CountingRunner) {
         AgentOrchestratorBuilder::default()
             .with_stores(base.stores.clone())
             .with_runtime(runtime)
-            .with_background_runner(Arc::new(runner.clone()))
+            .with_remote_task_runner(Arc::new(runner.clone()))
             .build()
             .await
             .unwrap(),
@@ -344,7 +344,7 @@ async fn insert_test_skill(orch: &Arc<AgentOrchestrator>) {
 ///   (B) **Substituted user message.** The new user message that the child
 ///       agent will see is constructed by `build_prompt_with_args`
 ///       (skill_id directive + args JSON dump). For a remote-runtime fork it
-///       lands as the third arg to `BackgroundRunner::spawn`; for a local
+///       lands as the third arg to `RemoteTaskRunner::spawn`; for a local
 ///       fork it's added by the child's agent_loop via `save_message`. The
 ///       `_adhoc_base` agent is registered with `runtime = [Cloud]` here so
 ///       we assert against the spawn arg.
@@ -421,7 +421,7 @@ async fn run_skill_fork_dispatch_propagates_args_and_history() {
     assert_eq!(
         runner.counter.load(Ordering::SeqCst),
         1,
-        "expected exactly one BackgroundRunner::spawn"
+        "expected exactly one RemoteTaskRunner::spawn"
     );
 
     // Locate the child task (same thread, different task_id).
@@ -464,7 +464,7 @@ async fn run_skill_fork_dispatch_propagates_args_and_history() {
     // ── (B) SUBSTITUTED USER MESSAGE ────────────────────────────────────────
     // The user message added by the child's agent_loop for a remote fork
     // doesn't land in the local task store — the remote runtime owns
-    // persistence. Assert against `BackgroundRunner::spawn`'s `task` arg,
+    // persistence. Assert against `RemoteTaskRunner::spawn`'s `task` arg,
     // which IS the user-message bytes.
     let task_text = runner
         .last_task_text

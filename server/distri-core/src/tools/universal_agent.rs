@@ -611,7 +611,7 @@ async fn dispatch(
     orchestrator.spawn_task_relay(spec.task_id.clone(), event_rx);
 
     // ── Spawn the execution (consults runtime constraints; routes to
-    //    RemoteAgent/BackgroundRunner automatically when needed). ────────────
+    //    RemoteAgent/RemoteTaskRunner automatically when needed). ────────────
     let user_id = parent_ctx.user_id.clone();
     let workspace_id = parent_ctx
         .workspace_id

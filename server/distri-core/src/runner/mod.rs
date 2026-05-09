@@ -18,7 +18,7 @@ pub use local_process::LocalProcessRemoteRunner;
 /// - `cloud::runner::SandboxLauncher`: production path — spawns a browsr
 ///   container with distri-cli and lets the container drive the A2A service.
 #[async_trait]
-pub trait BackgroundRunner: Send + Sync + 'static {
+pub trait RemoteTaskRunner: Send + Sync + 'static {
     /// Spawn agent execution in the background. Returns immediately.
     ///
     /// The caller should subscribe to the broadcaster for `task_id` to receive
