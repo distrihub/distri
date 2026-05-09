@@ -495,6 +495,49 @@ impl AgentOrchestrator {
         Ok(task_id)
     }
 
+    /// Cancel a task and every descendant task that hangs off it via
+    /// `parent_task_id`. Two coordinated steps:
+    ///
+    ///   1. `task_store.cancel_task_cascade(id)` — durable record. The
+    ///      recursive CTE walks the parent_task_id graph and flips
+    ///      every reachable non-terminal row to Canceled in one
+    ///      statement, returning the rows it touched.
+    ///   2. For each row returned in step 1, `coordinator.cancel(id)`
+    ///      — fires the in-memory `CancellationSignal` (cooperative
+    ///      abort the agent loop already polls). Already-cancelled
+    ///      signals are idempotent.
+    ///
+    /// The signal cascade lives at the orchestrator layer rather than
+    /// inside `AgentTaskCoordinator` because the coordinator can be
+    /// in-process or Redis-backed; the parent→children edge lives in
+    /// the SQL `tasks` table either way, so iterating the DB cascade
+    /// result handles both topologies uniformly.
+    pub async fn cancel_task(&self, task_id: &str) -> Result<(), AgentError> {
+        let cancelled = self
+            .stores
+            .task_store
+            .cancel_task_cascade(task_id)
+            .await
+            .map_err(|e| AgentError::Session(format!("cancel_task_cascade failed: {e}")))?;
+
+        let coordinator = self.coordinator();
+        for task in &cancelled {
+            // Errors from coordinator.cancel are best-effort: the
+            // durable record (DB row) is already Canceled; if the
+            // in-memory signal was missing (task already terminal /
+            // never registered locally) the warn is enough.
+            if let Err(e) = coordinator.cancel(&task.id).await {
+                tracing::warn!(
+                    target: "invoke.cancel",
+                    task_id = %task.id,
+                    error = %e,
+                    "coordinator.cancel failed during cascade",
+                );
+            }
+        }
+        Ok(())
+    }
+
     /// Build the child ExecutorContext + persist its row with the
     /// typed Invocation blob (Local executor case). The row goes in at
     /// `status=Running`, `remote=false`; the agent loop's RunFinished
