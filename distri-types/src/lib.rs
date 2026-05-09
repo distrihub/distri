@@ -19,6 +19,7 @@ pub mod context;
 mod core;
 mod errors;
 pub mod events;
+pub mod invocation;
 
 mod mcp;
 pub use mcp::{McpServerMetadata, TransportType};
