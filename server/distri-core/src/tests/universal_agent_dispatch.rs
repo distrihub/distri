@@ -38,6 +38,7 @@ use crate::tools::universal_agent::{CallMode, UniversalAgentTool};
 use crate::tools::ExecutorContextTool;
 use crate::types::ToolCall;
 use crate::{AgentOrchestrator, AgentOrchestratorBuilder};
+use distri_types::stores::CreateTaskInput;
 use distri_types::{
     AgentEventType, Message as TMessage, MessageRole, Part, RuntimeMode, StandardDefinition,
     TaskStatus,
@@ -789,7 +790,11 @@ async fn get_thread_includes_active_task_id() {
     orchestrator
         .stores
         .task_store
-        .create_task(&thread.id, Some(&task_id), Some(TaskStatus::Running))
+        .create_task(
+            CreateTaskInput::local(&thread.id)
+                .with_id(&task_id)
+                .with_status(TaskStatus::Running),
+        )
         .await
         .unwrap();
 

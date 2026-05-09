@@ -20,6 +20,7 @@ use crate::a2a::{agent_error_to_jsonrpc, SseMessage};
 use crate::tests::helpers::test_store_config;
 use crate::{AgentError, AgentOrchestratorBuilder};
 use distri_a2a::{JsonRpcRequest, TaskState};
+use distri_types::stores::CreateTaskInput;
 use distri_types::{CreateThreadRequest, TaskStatus};
 
 async fn build_service() -> Arc<A2AService> {
@@ -57,7 +58,11 @@ async fn cancel_task_idempotent() {
     orchestrator
         .stores
         .task_store
-        .create_task(&thread.id, Some(&task_id), Some(TaskStatus::Running))
+        .create_task(
+            CreateTaskInput::local(&thread.id)
+                .with_id(&task_id)
+                .with_status(TaskStatus::Running),
+        )
         .await
         .unwrap();
 
@@ -88,7 +93,11 @@ async fn cancel_task_idempotent() {
     orchestrator
         .stores
         .task_store
-        .create_task(&thread.id, Some(&completed_id), Some(TaskStatus::Running))
+        .create_task(
+            CreateTaskInput::local(&thread.id)
+                .with_id(&completed_id)
+                .with_status(TaskStatus::Running),
+        )
         .await
         .unwrap();
     orchestrator
@@ -133,7 +142,11 @@ async fn resubscribe_after_terminal_synthesizes_final_event() {
     orchestrator
         .stores
         .task_store
-        .create_task(&thread.id, Some(&task_id), Some(TaskStatus::Running))
+        .create_task(
+            CreateTaskInput::local(&thread.id)
+                .with_id(&task_id)
+                .with_status(TaskStatus::Running),
+        )
         .await
         .unwrap();
     orchestrator

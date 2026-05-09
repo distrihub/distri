@@ -10,10 +10,100 @@ use tokio::sync::oneshot;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
+use crate::invocation::{Executor, RunnerKind};
 use crate::{
     AgentEvent, CreateThreadRequest, Message, Task, TaskMessage, TaskStatus, Thread,
     UpdateThreadRequest,
 };
+
+/// Inputs to [`TaskStore::create_task`]. Carries the Invocation-shaped fields
+/// that get persisted into the new `tasks.executor` / `runner_kind` /
+/// `remote_task_id` / `spec` columns.
+///
+/// Use [`CreateTaskInput::local`] for the most common case (a local-executor
+/// task with no remote backing); use [`CreateTaskInput::with_remote`] to
+/// chain `executor = remote_*` + `runner_kind` + `remote_task_id` in one
+/// call (the three are coupled; the DB CHECK constraint rejects partial
+/// states).
+#[derive(Debug, Clone)]
+pub struct CreateTaskInput {
+    pub thread_id: String,
+    pub task_id: Option<String>,
+    pub status: Option<TaskStatus>,
+    pub parent_task_id: Option<String>,
+    /// Local => no runner; Remote { runner } => one of Sandbox / Loopback.
+    pub executor: Executor,
+    /// Inner task_id used by the remote orchestrator. Must be `Some` when
+    /// `executor` is `Remote`; must be `None` when `Local`. Enforced at the
+    /// DB layer by `tasks_executor_consistency`.
+    pub remote_task_id: Option<String>,
+    /// Serialized [`Invocation`](crate::invocation::Invocation). Stored as
+    /// JSONB in Pg / TEXT in sqlite. Default is `{}` when no spec yet —
+    /// the orchestrator will fill this in once invoke() is wired.
+    pub spec: serde_json::Value,
+}
+
+impl CreateTaskInput {
+    /// Local-executor task. `task_id`/`status`/`parent_task_id`/`spec` are
+    /// chained via the `with_*` builders.
+    pub fn local(thread_id: impl Into<String>) -> Self {
+        Self {
+            thread_id: thread_id.into(),
+            task_id: None,
+            status: None,
+            parent_task_id: None,
+            executor: Executor::Local,
+            remote_task_id: None,
+            spec: serde_json::Value::Object(Default::default()),
+        }
+    }
+
+    pub fn with_id(mut self, task_id: impl Into<String>) -> Self {
+        self.task_id = Some(task_id.into());
+        self
+    }
+
+    pub fn with_status(mut self, status: TaskStatus) -> Self {
+        self.status = Some(status);
+        self
+    }
+
+    pub fn with_parent(mut self, parent_task_id: impl Into<String>) -> Self {
+        self.parent_task_id = Some(parent_task_id.into());
+        self
+    }
+
+    pub fn with_spec(mut self, spec: serde_json::Value) -> Self {
+        self.spec = spec;
+        self
+    }
+
+    /// Switches the task to a remote executor. `runner` selects which
+    /// orchestrator runs the loop; `remote_task_id` is the inner id that
+    /// orchestrator will assign / has assigned.
+    pub fn with_remote(
+        mut self,
+        runner: RunnerKind,
+        remote_task_id: impl Into<String>,
+    ) -> Self {
+        self.executor = Executor::Remote { runner };
+        self.remote_task_id = Some(remote_task_id.into());
+        self
+    }
+}
+
+/// Maps [`Executor`] to the two `tasks` columns
+/// (`executor TEXT`, `runner_kind TEXT NULL`). The DB CHECK constraint
+/// `tasks_executor_consistency` rejects rows that violate the
+/// local-no-runner / remote-has-runner invariant — this helper produces
+/// only valid pairs.
+pub fn executor_columns(exec: &Executor) -> (&'static str, Option<&'static str>) {
+    match exec {
+        Executor::Local => ("local", None),
+        Executor::Remote { runner: RunnerKind::Sandbox } => ("remote_sandbox", Some("sandbox")),
+        Executor::Remote { runner: RunnerKind::Loopback } => ("remote_loopback", Some("loopback")),
+    }
+}
 
 // Redis and PostgreSQL stores moved to distri-stores crate
 
@@ -233,22 +323,24 @@ pub struct MessageFilter {
 // Task Store trait for A2A task management
 #[async_trait]
 pub trait TaskStore: Send + Sync {
-    fn init_task(
-        &self,
-        context_id: &str,
-        task_id: Option<&str>,
-        status: Option<TaskStatus>,
-    ) -> Task {
-        let task_id = task_id.unwrap_or(&Uuid::new_v4().to_string()).to_string();
+    /// Build (but do not persist) a Task row from a [`CreateTaskInput`]. The
+    /// returned struct is what the implementations will hand back from
+    /// `create_task` once the row has been inserted.
+    fn init_task(&self, input: &CreateTaskInput) -> Task {
+        let task_id = input
+            .task_id
+            .clone()
+            .unwrap_or_else(|| Uuid::new_v4().to_string());
         Task {
             id: task_id,
-            status: status.unwrap_or(TaskStatus::Pending),
+            status: input.status.clone().unwrap_or(TaskStatus::Pending),
             created_at: chrono::Utc::now().timestamp_millis(),
             updated_at: chrono::Utc::now().timestamp_millis(),
-            thread_id: context_id.to_string(),
-            parent_task_id: None,
+            thread_id: input.thread_id.clone(),
+            parent_task_id: input.parent_task_id.clone(),
         }
     }
+
     async fn get_or_create_task(
         &self,
         thread_id: &str,
@@ -257,19 +349,19 @@ pub trait TaskStore: Send + Sync {
         match self.get_task(task_id).await? {
             Some(task) => task,
             None => {
-                self.create_task(thread_id, Some(task_id), Some(TaskStatus::Running))
-                    .await?
+                self.create_task(
+                    CreateTaskInput::local(thread_id)
+                        .with_id(task_id)
+                        .with_status(TaskStatus::Running),
+                )
+                .await?
             }
         };
 
         Ok(())
     }
-    async fn create_task(
-        &self,
-        context_id: &str,
-        task_id: Option<&str>,
-        task_status: Option<TaskStatus>,
-    ) -> anyhow::Result<Task>;
+
+    async fn create_task(&self, input: CreateTaskInput) -> anyhow::Result<Task>;
     async fn get_task(&self, task_id: &str) -> anyhow::Result<Option<Task>>;
     async fn update_task_status(&self, task_id: &str, status: TaskStatus) -> anyhow::Result<()>;
     async fn add_event_to_task(&self, task_id: &str, event: AgentEvent) -> anyhow::Result<()>;

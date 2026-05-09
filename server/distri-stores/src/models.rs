@@ -110,6 +110,10 @@ pub struct NewTaskModel<'a> {
     pub status: &'a str,
     pub created_at: i64,
     pub updated_at: i64,
+    pub executor: &'a str,
+    pub runner_kind: Option<&'a str>,
+    pub remote_task_id: Option<&'a str>,
+    pub spec: &'a str,
 }
 
 #[derive(Debug, Clone, AsChangeset)]

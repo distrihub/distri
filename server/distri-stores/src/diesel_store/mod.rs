@@ -1771,26 +1771,29 @@ where
     diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
     <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
 {
-    async fn create_task(
-        &self,
-        context_id: &str,
-        task_id: Option<&str>,
-        task_status: Option<TaskStatus>,
-    ) -> Result<Task> {
+    async fn create_task(&self, input: distri_types::stores::CreateTaskInput) -> Result<Task> {
         let mut connection = self.conn().await?;
-        let task_id = task_id
-            .map(ToOwned::to_owned)
+        let task_id = input
+            .task_id
+            .clone()
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-        let status = task_status.unwrap_or(TaskStatus::Pending);
+        let status = input.status.unwrap_or(TaskStatus::Pending);
         let now = Utc::now().timestamp_millis();
+        let (executor_str, runner_str) = distri_types::stores::executor_columns(&input.executor);
+        let spec_text = serde_json::to_string(&input.spec)
+            .context("failed to serialize task spec")?;
 
         let new_task = NewTaskModel {
             id: &task_id,
-            thread_id: context_id,
-            parent_task_id: None,
+            thread_id: &input.thread_id,
+            parent_task_id: input.parent_task_id.as_deref(),
             status: task_status_to_str(&status),
             created_at: now,
             updated_at: now,
+            executor: executor_str,
+            runner_kind: runner_str,
+            remote_task_id: input.remote_task_id.as_deref(),
+            spec: &spec_text,
         };
 
         diesel::insert_into(tasks::table)
@@ -1801,8 +1804,8 @@ where
 
         Ok(Task {
             id: task_id,
-            thread_id: context_id.to_string(),
-            parent_task_id: None,
+            thread_id: input.thread_id,
+            parent_task_id: input.parent_task_id,
             status,
             created_at: now,
             updated_at: now,
