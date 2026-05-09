@@ -31,11 +31,13 @@ pub mod send_message;
 pub mod simulator;
 pub mod skill_script;
 pub mod run_skill;
+pub mod supervisor;
 pub mod tool_search;
 pub mod universal_agent;
 pub use builtin::{get_builtin_tools, ConsoleLogTool, DistriExecuteCodeTool, FinalTool};
 pub use inject_env::InjectConnectionEnvTool;
 pub use send_message::SendMessageTool;
+pub use supervisor::{CancelTaskTool, GetTaskTool, ListMyTasksTool, WaitTaskTool};
 pub use tool_search::ToolSearchTool;
 pub use universal_agent::UniversalAgentTool;
 

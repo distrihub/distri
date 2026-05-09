@@ -35,6 +35,10 @@ pub fn get_builtin_tools() -> Vec<Arc<dyn Tool>> {
         Arc::new(DistriExecuteCodeTool) as Arc<dyn Tool>,
         Arc::new(crate::tools::inject_env::InjectConnectionEnvTool) as Arc<dyn Tool>,
         Arc::new(SaveArtifactTool) as Arc<dyn Tool>,
+        Arc::new(crate::tools::supervisor::GetTaskTool) as Arc<dyn Tool>,
+        Arc::new(crate::tools::supervisor::WaitTaskTool) as Arc<dyn Tool>,
+        Arc::new(crate::tools::supervisor::CancelTaskTool) as Arc<dyn Tool>,
+        Arc::new(crate::tools::supervisor::ListMyTasksTool) as Arc<dyn Tool>,
     ]
 }
 

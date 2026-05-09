@@ -17,6 +17,7 @@ mod orchestrator;
 pub mod otel_hooks_test;
 mod remote_agent;
 mod request_tool;
+mod supervisor_tools;
 mod tool_result_format;
 mod tool_result_persistence;
 pub mod trace_replay;
