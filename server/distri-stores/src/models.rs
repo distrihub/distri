@@ -84,9 +84,7 @@ pub struct ThreadChangeset<'a> {
     pub last_context_budget: Option<Option<&'a str>>,
 }
 
-#[derive(
-    Debug, Clone, Queryable, Identifiable, Selectable, Associations, Insertable, AsChangeset,
-)]
+#[derive(Debug, Clone, Queryable, Identifiable, Selectable, Associations)]
 #[diesel(table_name = tasks)]
 #[diesel(belongs_to(ThreadModel, foreign_key = thread_id))]
 pub struct TaskModel {
@@ -96,6 +94,11 @@ pub struct TaskModel {
     pub status: String,
     pub created_at: i64,
     pub updated_at: i64,
+    pub executor: String,
+    pub runner_kind: Option<String>,
+    pub remote_task_id: Option<String>,
+    pub ended_at: Option<i64>,
+    pub spec: String,
 }
 
 #[derive(Debug, Clone, Insertable)]
