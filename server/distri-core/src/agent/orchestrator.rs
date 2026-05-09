@@ -963,6 +963,180 @@ impl AgentOrchestrator {
         agent.invoke_stream(message, context).await
     }
 
+    /// Single unified entry point for sub-agent dispatch.
+    ///
+    /// Takes a typed [`Invocation`](distri_types::invocation::Invocation),
+    /// validates it, persists a child task row with the typed invocation
+    /// blob, runs the agent loop(s), and returns an
+    /// [`InvocationResult`](distri_types::invocation::InvocationResult)
+    /// shaped per `invocation.join`.
+    ///
+    /// This is the long-term replacement for `call_agent_stream` +
+    /// `UniversalAgentTool` + `RunSkillTool::mode = …`. As of Commit B
+    /// only **`Join::Single` + `Executor::Local` + `ContextScope::Independent`**
+    /// is wired; the other axes return `NotImplemented` until subsequent
+    /// commits land their dispatch logic.
+    pub async fn invoke(
+        self: &Arc<Self>,
+        invocation: distri_types::invocation::Invocation,
+        parent_ctx: Arc<ExecutorContext>,
+    ) -> Result<distri_types::invocation::InvocationResult, AgentError> {
+        use distri_types::invocation::{Executor, ExecutorHint, InvocationResult, Join};
+
+        invocation
+            .validate()
+            .map_err(|e| AgentError::Validation(e.to_string()))?;
+
+        // Resolve executor (Auto: defaults to Local; Force: respect).
+        // Per-target overrides take precedence over the invocation default.
+        let resolve_executor = |hint: &ExecutorHint| -> Executor {
+            match hint {
+                ExecutorHint::Auto => Executor::Local,
+                ExecutorHint::Force(e) => e.clone(),
+            }
+        };
+
+        // Persist the entire typed Invocation as the canonical record.
+        // Targets/context/join/executor/tools all live in the JSONB blob.
+        let invocation_blob = serde_json::to_value(&invocation).map_err(|e| {
+            AgentError::Session(format!("failed to serialize invocation: {e}"))
+        })?;
+
+        match invocation.join {
+            Join::Single => {
+                // Validation already checked targets.len() == 1.
+                let target = invocation
+                    .targets
+                    .first()
+                    .cloned()
+                    .ok_or_else(|| AgentError::Validation("invocation has no target".into()))?;
+
+                let executor = match &target.executor {
+                    Some(hint) => resolve_executor(hint),
+                    None => resolve_executor(&invocation.executor),
+                };
+
+                if !matches!(&invocation.context, distri_types::invocation::ContextScope::Independent) {
+                    return Err(AgentError::NotImplemented(format!(
+                        "ContextScope::{:?} dispatch not yet wired in invoke(); coming in a follow-up commit",
+                        invocation.context
+                    )));
+                }
+                if !matches!(executor, Executor::Local) {
+                    return Err(AgentError::NotImplemented(
+                        "Executor::Remote dispatch not yet wired in invoke(); coming in a follow-up commit"
+                            .into(),
+                    ));
+                }
+
+                let result = self
+                    .invoke_local_independent(target, &invocation_blob, &parent_ctx)
+                    .await?;
+                Ok(InvocationResult::Scalar { result })
+            }
+            Join::All => Err(AgentError::NotImplemented(
+                "Join::All dispatch not yet wired in invoke()".into(),
+            )),
+            Join::Detached => Err(AgentError::NotImplemented(
+                "Join::Detached dispatch not yet wired in invoke()".into(),
+            )),
+        }
+    }
+
+    /// Single-target Local + Independent dispatch. Creates the child task
+    /// row with the typed invocation persisted, runs the agent loop, then
+    /// reads the result back.
+    async fn invoke_local_independent(
+        self: &Arc<Self>,
+        target: distri_types::invocation::Target,
+        invocation_blob: &serde_json::Value,
+        parent_ctx: &Arc<ExecutorContext>,
+    ) -> Result<distri_types::invocation::AgentResult, AgentError> {
+        use distri_types::invocation::{AgentRef, AgentResult};
+        use distri_types::stores::CreateTaskInput;
+
+        // Resolve agent_id. AdHoc routes through the existing `_adhoc_base`
+        // pattern with a `DefinitionOverrides` carrying system_prompt + tools;
+        // for now (Commit B), only Named is wired so AdHoc reaches the
+        // existing UniversalAgentTool path through a follow-up commit. We
+        // still accept AdHoc here so the type validates, but the dispatch
+        // pulls the agent_id from `_adhoc_base`.
+        let (agent_id, definition_overrides) = match &target.agent {
+            AgentRef::Named { agent_id } => (agent_id.clone(), None),
+            AgentRef::AdHoc {
+                system_prompt,
+                tools,
+            } => {
+                // `instructions` is the field that replaces the agent's
+                // system prompt; tools replaces the ToolsConfig wholesale.
+                let overrides = distri_types::configuration::DefinitionOverrides {
+                    instructions: Some(system_prompt.clone()),
+                    tools: tools.clone(),
+                    ..Default::default()
+                };
+                ("_adhoc_base".to_string(), Some(overrides))
+            }
+        };
+
+        // Build the child ExecutorContext (fresh task_id, parent_task_id
+        // pointing at the caller's task).
+        let child_ctx = Arc::new(parent_ctx.new_task(&agent_id).await);
+
+        // Persist the child task row with the typed Invocation as the
+        // canonical record. The agent loop's `get_or_create_task` will
+        // find this row and skip its own create.
+        self.stores
+            .task_store
+            .create_task(
+                CreateTaskInput::local(&child_ctx.thread_id)
+                    .with_id(&child_ctx.task_id)
+                    .with_status(distri_types::TaskStatus::Running)
+                    .with_parent(&parent_ctx.task_id)
+                    .with_invocation(invocation_blob.clone()),
+            )
+            .await
+            .map_err(|e| AgentError::Session(format!("failed to persist child task: {e}")))?;
+
+        // Drive the agent loop via the existing dispatch path.
+        let invoke_result = self
+            .call_agent_stream(
+                &agent_id,
+                target.message,
+                child_ctx.clone(),
+                definition_overrides,
+            )
+            .await?;
+
+        // Pull the final result out of the child context (set by the
+        // `final` tool). Falls back to InvokeResult.content text if no
+        // structured final was emitted.
+        let final_value = match child_ctx.get_final_result().await {
+            Some(v) => v,
+            None => invoke_result
+                .content
+                .clone()
+                .map(serde_json::Value::String)
+                .unwrap_or(serde_json::Value::Null),
+        };
+
+        // Read terminal status from the store.
+        let status = self
+            .stores
+            .task_store
+            .get_task(&child_ctx.task_id)
+            .await
+            .ok()
+            .flatten()
+            .map(|t| t.status)
+            .unwrap_or(distri_types::TaskStatus::Completed);
+
+        Ok(AgentResult {
+            content: final_value,
+            task_id: child_ctx.task_id.clone(),
+            status,
+        })
+    }
+
     pub async fn run_inline_agent(
         &self,
         agent_config: distri_types::configuration::AgentConfig,

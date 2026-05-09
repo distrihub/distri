@@ -9,6 +9,7 @@ mod deferred_tools_integration;
 mod definition;
 mod fixture_scenarios;
 pub mod helpers;
+mod invoke_entry;
 mod llm;
 pub mod mock_llm;
 mod orchestrator;

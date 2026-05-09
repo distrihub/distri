@@ -21,7 +21,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::agent::ToolsConfig;
-use crate::core::Message;
+use crate::core::{Message, TaskStatus};
 
 // ── Top-level invocation ──────────────────────────────────────────────────
 
@@ -265,22 +265,10 @@ pub enum InvocationResult {
     TaskIds { task_ids: Vec<String> },
 }
 
-// ── Task status (used by supervisor tools + storage) ──────────────────────
-
-/// Lifecycle state of a task. Persisted in `tasks.status` for queryability.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum TaskStatus {
-    /// Loop running (LLM call in flight, tool executing, or relaying
-    /// events from a remote sub-task).
-    Running,
-    /// Loop finished cleanly via `final` tool call.
-    Done,
-    /// Loop terminated via `RunError`.
-    Error,
-    /// Cancelled via `cancel_task` or parent-cancel cascade.
-    Cancelled,
-}
+// `TaskStatus` is re-exported from `crate::core::TaskStatus` — the same
+// enum the schema column `tasks.status` and the existing TaskStore /
+// A2AService stack uses. There's no separate Invocation-specific status
+// taxonomy; that drift would just produce two enums to keep in sync.
 
 /// Snapshot returned by the supervisor tools (`get_task`, `list_my_tasks`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -589,7 +577,7 @@ mod tests {
             result: AgentResult {
                 content: serde_json::json!({"text": "ok"}),
                 task_id: "t1".into(),
-                status: TaskStatus::Done,
+                status: TaskStatus::Completed,
             },
         };
         let v = serde_json::to_value(&r).unwrap();
