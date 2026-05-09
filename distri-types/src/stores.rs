@@ -16,36 +16,39 @@ use crate::{
     UpdateThreadRequest,
 };
 
-/// Inputs to [`TaskStore::create_task`]. Carries the Invocation-shaped fields
-/// that get persisted into the new `tasks.executor` / `runner_kind` /
-/// `remote_task_id` / `spec` columns.
+/// Inputs to [`TaskStore::create_task`]. Carries the Invocation-shaped
+/// fields that get persisted into the new tasks columns
+/// (`executor`, `inner_task_id`, `invocation`).
 ///
-/// Use [`CreateTaskInput::local`] for the most common case (a local-executor
-/// task with no remote backing); use [`CreateTaskInput::with_remote`] to
-/// chain `executor = remote_*` + `runner_kind` + `remote_task_id` in one
-/// call (the three are coupled; the DB CHECK constraint rejects partial
-/// states).
+/// Use [`CreateTaskInput::local`] for the most common case (a local
+/// executor with no inner task); use [`CreateTaskInput::with_remote`]
+/// to set both `executor = remote_*` and `inner_task_id` together.
 #[derive(Debug, Clone)]
 pub struct CreateTaskInput {
     pub thread_id: String,
     pub task_id: Option<String>,
     pub status: Option<TaskStatus>,
     pub parent_task_id: Option<String>,
-    /// Local => no runner; Remote { runner } => one of Sandbox / Loopback.
+    /// Local => the loop runs in this orchestrator; Remote { runner }
+    /// => the loop runs on a Sandbox / Loopback runner. The runner is
+    /// not denormalized to a separate column — it's encoded in the
+    /// `executor` string ("remote_sandbox" / "remote_loopback") and
+    /// available in full typed form via the `invocation` blob.
     pub executor: Executor,
-    /// Inner task_id used by the remote orchestrator. Must be `Some` when
-    /// `executor` is `Remote`; must be `None` when `Local`. Enforced at the
-    /// DB layer by `tasks_executor_consistency`.
-    pub remote_task_id: Option<String>,
-    /// Serialized [`Invocation`](crate::invocation::Invocation). Stored as
-    /// JSONB in Pg / TEXT in sqlite. Default is `{}` when no spec yet —
-    /// the orchestrator will fill this in once invoke() is wired.
-    pub spec: serde_json::Value,
+    /// task_id on the inner orchestrator. Must be `None` when
+    /// `executor` is `Local` (DB CHECK enforces). May be `None`
+    /// transiently for remote rows — between row insert and the
+    /// runner assigning its inner id.
+    pub inner_task_id: Option<String>,
+    /// Serialized [`Invocation`](crate::invocation::Invocation). The
+    /// canonical record of what was requested. Stored as JSONB in Pg /
+    /// TEXT in sqlite. Default is `{}` until invoke() is wired.
+    pub invocation: serde_json::Value,
 }
 
 impl CreateTaskInput {
-    /// Local-executor task. `task_id`/`status`/`parent_task_id`/`spec` are
-    /// chained via the `with_*` builders.
+    /// Local-executor task. `task_id` / `status` / `parent_task_id` /
+    /// `invocation` are chained via the `with_*` builders.
     pub fn local(thread_id: impl Into<String>) -> Self {
         Self {
             thread_id: thread_id.into(),
@@ -53,8 +56,8 @@ impl CreateTaskInput {
             status: None,
             parent_task_id: None,
             executor: Executor::Local,
-            remote_task_id: None,
-            spec: serde_json::Value::Object(Default::default()),
+            inner_task_id: None,
+            invocation: serde_json::Value::Object(Default::default()),
         }
     }
 
@@ -73,35 +76,33 @@ impl CreateTaskInput {
         self
     }
 
-    pub fn with_spec(mut self, spec: serde_json::Value) -> Self {
-        self.spec = spec;
+    pub fn with_invocation(mut self, invocation: serde_json::Value) -> Self {
+        self.invocation = invocation;
         self
     }
 
     /// Switches the task to a remote executor. `runner` selects which
-    /// orchestrator runs the loop; `remote_task_id` is the inner id that
-    /// orchestrator will assign / has assigned.
+    /// orchestrator runs the loop; `inner_task_id` is the id that
+    /// orchestrator has assigned (or will assign) to its inner task.
     pub fn with_remote(
         mut self,
         runner: RunnerKind,
-        remote_task_id: impl Into<String>,
+        inner_task_id: impl Into<String>,
     ) -> Self {
         self.executor = Executor::Remote { runner };
-        self.remote_task_id = Some(remote_task_id.into());
+        self.inner_task_id = Some(inner_task_id.into());
         self
     }
 }
 
-/// Maps [`Executor`] to the two `tasks` columns
-/// (`executor TEXT`, `runner_kind TEXT NULL`). The DB CHECK constraint
-/// `tasks_executor_consistency` rejects rows that violate the
-/// local-no-runner / remote-has-runner invariant — this helper produces
-/// only valid pairs.
-pub fn executor_columns(exec: &Executor) -> (&'static str, Option<&'static str>) {
+/// Maps [`Executor`] to the `tasks.executor` column value.
+/// The runner is encoded in the suffix; there is no separate
+/// `runner_kind` column.
+pub fn executor_column(exec: &Executor) -> &'static str {
     match exec {
-        Executor::Local => ("local", None),
-        Executor::Remote { runner: RunnerKind::Sandbox } => ("remote_sandbox", Some("sandbox")),
-        Executor::Remote { runner: RunnerKind::Loopback } => ("remote_loopback", Some("loopback")),
+        Executor::Local => "local",
+        Executor::Remote { runner: RunnerKind::Sandbox } => "remote_sandbox",
+        Executor::Remote { runner: RunnerKind::Loopback } => "remote_loopback",
     }
 }
 

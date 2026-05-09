@@ -95,10 +95,9 @@ pub struct TaskModel {
     pub created_at: i64,
     pub updated_at: i64,
     pub executor: String,
-    pub runner_kind: Option<String>,
-    pub remote_task_id: Option<String>,
+    pub inner_task_id: Option<String>,
     pub ended_at: Option<i64>,
-    pub spec: String,
+    pub invocation: String,
 }
 
 #[derive(Debug, Clone, Insertable)]
@@ -111,9 +110,8 @@ pub struct NewTaskModel<'a> {
     pub created_at: i64,
     pub updated_at: i64,
     pub executor: &'a str,
-    pub runner_kind: Option<&'a str>,
-    pub remote_task_id: Option<&'a str>,
-    pub spec: &'a str,
+    pub inner_task_id: Option<&'a str>,
+    pub invocation: &'a str,
 }
 
 #[derive(Debug, Clone, AsChangeset)]

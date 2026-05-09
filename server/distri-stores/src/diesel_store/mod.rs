@@ -1779,9 +1779,9 @@ where
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         let status = input.status.unwrap_or(TaskStatus::Pending);
         let now = Utc::now().timestamp_millis();
-        let (executor_str, runner_str) = distri_types::stores::executor_columns(&input.executor);
-        let spec_text = serde_json::to_string(&input.spec)
-            .context("failed to serialize task spec")?;
+        let executor_str = distri_types::stores::executor_column(&input.executor);
+        let invocation_text = serde_json::to_string(&input.invocation)
+            .context("failed to serialize invocation")?;
 
         let new_task = NewTaskModel {
             id: &task_id,
@@ -1791,9 +1791,8 @@ where
             created_at: now,
             updated_at: now,
             executor: executor_str,
-            runner_kind: runner_str,
-            remote_task_id: input.remote_task_id.as_deref(),
-            spec: &spec_text,
+            inner_task_id: input.inner_task_id.as_deref(),
+            invocation: &invocation_text,
         };
 
         diesel::insert_into(tasks::table)
