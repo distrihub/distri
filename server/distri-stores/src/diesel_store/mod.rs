@@ -1894,6 +1894,60 @@ where
             .ok_or_else(|| anyhow!("task not found after cancel"))
     }
 
+    async fn cancel_task_cascade(&self, root_task_id: &str) -> Result<Vec<Task>> {
+        let mut connection = self.conn().await?;
+        let now = Utc::now().timestamp_millis();
+
+        #[derive(diesel::QueryableByName)]
+        struct CanceledRow {
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            id: String,
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            thread_id: String,
+            #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
+            parent_task_id: Option<String>,
+            #[diesel(sql_type = diesel::sql_types::BigInt)]
+            created_at: i64,
+            #[diesel(sql_type = diesel::sql_types::BigInt)]
+            updated_at: i64,
+        }
+
+        // Sqlite supports recursive CTEs and `UPDATE ... RETURNING` (>= 3.35).
+        let rows: Vec<CanceledRow> = diesel::sql_query(
+            r"
+            WITH RECURSIVE descendants(id) AS (
+                SELECT id FROM tasks WHERE id = ?
+                UNION ALL
+                SELECT t.id FROM tasks t
+                  JOIN descendants d ON t.parent_task_id = d.id
+            )
+            UPDATE tasks
+               SET status = 'canceled', updated_at = ?, ended_at = ?
+             WHERE id IN (SELECT id FROM descendants)
+               AND status NOT IN ('completed', 'failed', 'canceled')
+            RETURNING id, thread_id, parent_task_id, created_at, updated_at
+            ",
+        )
+        .bind::<diesel::sql_types::Text, _>(root_task_id)
+        .bind::<diesel::sql_types::BigInt, _>(now)
+        .bind::<diesel::sql_types::BigInt, _>(now)
+        .get_results(&mut connection)
+        .await
+        .context("failed to cancel task cascade")?;
+
+        Ok(rows
+            .into_iter()
+            .map(|r| Task {
+                id: r.id,
+                thread_id: r.thread_id,
+                parent_task_id: r.parent_task_id,
+                status: TaskStatus::Canceled,
+                created_at: r.created_at,
+                updated_at: r.updated_at,
+            })
+            .collect())
+    }
+
     async fn add_message_to_task(&self, task_id: &str, message: &Message) -> Result<()> {
         let mut connection = self.conn().await?;
 

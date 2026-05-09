@@ -367,6 +367,19 @@ pub trait TaskStore: Send + Sync {
     async fn add_event_to_task(&self, task_id: &str, event: AgentEvent) -> anyhow::Result<()>;
     async fn add_message_to_task(&self, task_id: &str, message: &Message) -> anyhow::Result<()>;
     async fn cancel_task(&self, task_id: &str) -> anyhow::Result<Task>;
+
+    /// Cancel `root_task_id` and every task whose `parent_task_id` chain
+    /// leads back to it, in one transaction.
+    ///
+    /// Idempotent on terminal rows: tasks already in `Completed`, `Failed`,
+    /// or `Canceled` are left untouched. The returned `Vec<Task>` contains
+    /// the rows that were actually transitioned to `Canceled` — the caller
+    /// uses this to publish corresponding cancel events on the broadcaster
+    /// so live in-process loops can stop.
+    ///
+    /// The cascade is implemented via a recursive CTE on the `parent_task_id`
+    /// edge; the `idx_tasks_parent_id` index keeps the walk cheap.
+    async fn cancel_task_cascade(&self, root_task_id: &str) -> anyhow::Result<Vec<Task>>;
     async fn list_tasks(&self, thread_id: Option<&str>) -> anyhow::Result<Vec<Task>>;
 
     async fn get_history(
