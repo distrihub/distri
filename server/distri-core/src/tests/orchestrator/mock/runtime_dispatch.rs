@@ -256,6 +256,69 @@ fn build_ctx(
     })
 }
 
+/// Synthetic external tool — `is_external() == true` so it counts toward
+/// `parent_ctx.external_tools_count()`. Stand-in for the browser/db tools
+/// a JS client registers on a `zippy_browser`-style session.
+#[derive(Debug)]
+struct FakeExternalTool;
+
+#[async_trait::async_trait]
+impl distri_types::Tool for FakeExternalTool {
+    fn get_name(&self) -> String {
+        "fake_external".to_string()
+    }
+    fn get_description(&self) -> String {
+        "fake external tool for tests".to_string()
+    }
+    fn get_parameters(&self) -> serde_json::Value {
+        serde_json::json!({"type": "object", "properties": {}})
+    }
+    fn is_external(&self) -> bool {
+        true
+    }
+    async fn execute(
+        &self,
+        _tool_call: distri_types::ToolCall,
+        _context: Arc<distri_types::ToolContext>,
+    ) -> Result<Vec<distri_types::Part>, anyhow::Error> {
+        // Tests don't actually invoke the tool — `external_tools_count` only
+        // looks at `is_external()`. Returning an error here would fire only
+        // if a test accidentally drove the LLM through this tool.
+        Err(anyhow::anyhow!("fake_external should not be executed"))
+    }
+}
+
+/// Same as `build_ctx` but pre-populates `dynamic_tools` with a single
+/// external tool so `external_tools_count() == 1` — mirrors what
+/// `ExecutorContextMetadata.external_tools` shipped from a JS client lands
+/// as in production.
+async fn build_ctx_with_external_tools(
+    orch: &Arc<AgentOrchestrator>,
+    agent_id: &str,
+    runtime_mode: RuntimeMode,
+) -> Arc<ExecutorContext> {
+    use tokio::sync::RwLock;
+    let (tx, _rx) = mpsc::channel(256);
+    let dynamic_tools: Arc<RwLock<Vec<Arc<dyn distri_types::Tool>>>> = Arc::new(RwLock::new(
+        vec![Arc::new(FakeExternalTool) as Arc<dyn distri_types::Tool>],
+    ));
+    let ctx = ExecutorContext {
+        agent_id: agent_id.to_string(),
+        task_id: uuid::Uuid::new_v4().to_string(),
+        parent_task_id: None,
+        thread_id: uuid::Uuid::new_v4().to_string(),
+        run_id: uuid::Uuid::new_v4().to_string(),
+        user_id: "test-user".to_string(),
+        event_tx: Some(Arc::new(tx)),
+        orchestrator: Some(orch.clone()),
+        runtime_mode,
+        dynamic_tools: Some(dynamic_tools),
+        ..Default::default()
+    };
+    debug_assert_eq!(ctx.external_tools_count().await, 1);
+    Arc::new(ctx)
+}
+
 fn user_message() -> Message {
     Message::user("hello".to_string(), None)
 }
@@ -415,6 +478,49 @@ async fn adhoc_from_cloud_parent_pins_runtime_to_cli_via_universal_agent() {
     assert_eq!(
         runner.last_agent_name.lock().await.clone().as_deref(),
         Some("_adhoc_base")
+    );
+}
+
+/// **Regression for the `zippy_browser` flow.** A non-CLI parent that
+/// already ships its own external tools (browser/db tools registered by
+/// the JS client) must NOT pin the ad-hoc worker to CLI — otherwise every
+/// `run_skill` call from `zippy_browser` would punt to a sandbox where
+/// none of the parent's actual tools (browser handles, DB connections)
+/// exist. The worker should run in-process and inherit the parent's
+/// tools via `external = ["*"]`.
+#[tokio::test]
+async fn adhoc_from_browser_with_external_tools_runs_in_process_not_sandbox() {
+    let (orch, runner) = build_orch_with_runner(RuntimeMode::Cli).await;
+    register_adhoc_base(&orch).await;
+    register_parent(&orch, "browser_parent").await;
+    let parent_ctx =
+        build_ctx_with_external_tools(&orch, "browser_parent", RuntimeMode::Cloud).await;
+
+    let input = CallAgentInput {
+        agent: None,
+        prompt: "do the thing".to_string(),
+        system_prompt: Some("You are a worker.".to_string()),
+        tools: None,
+        external: None,
+        description: None,
+        name: None,
+        mode: crate::tools::universal_agent::CallMode::InProcess,
+        reason: None,
+    };
+    let tool_call = ToolCall {
+        tool_call_id: uuid::Uuid::new_v4().to_string(),
+        tool_name: "call_agent".to_string(),
+        input: serde_json::to_value(&input).unwrap(),
+    };
+    let _ = UniversalAgentTool
+        .execute_with_executor_context(tool_call, parent_ctx)
+        .await;
+    assert_eq!(
+        runner.spawn_count(),
+        0,
+        "parent had external tools to inherit; the worker must stay in-process \
+         (the bug: spawn_count was 1, dispatching browser tools to a CLI sandbox \
+         where they don't exist)"
     );
 }
 

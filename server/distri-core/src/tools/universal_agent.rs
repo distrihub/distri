@@ -346,18 +346,37 @@ async fn build_spec(
 
         let mut o = DefinitionOverrides::default().with_instructions(instructions);
 
-        // Pin the runtime based on the parent's runtime mode. `_adhoc_base`'s
-        // tooling depends entirely on the calling session's `external = ["*"]`
-        // wildcard inheritance — it has no provider tools of its own. The CLI
-        // runtime is the only one whose default toolset (Bash/Read/Write/Edit/
-        // Glob/Grep + skill-loaded tools) ships those externally. Cloud and
-        // Browser callers therefore must dispatch the worker through a
-        // `BackgroundRunner` that provides CLI (cloud's `SandboxLauncher` does
-        // exactly this; the OSS distri-server has no runner and will surface a
-        // clear error). The runtime override is what triggers that dispatch
-        // in `AgentOrchestrator::call_agent_stream`. Leaving the worker
-        // unconstrained when the parent is in CLI keeps it in-process.
-        if !matches!(parent_ctx.runtime_mode, distri_types::RuntimeMode::Cli) {
+        // Pin the runtime to CLI **only when the parent has no external tools
+        // for the wildcard to inherit**. `_adhoc_base` is `external = ["*"]`,
+        // so its capability comes from whatever the calling session
+        // registered:
+        //
+        // - **Browser parents that ship their own tools** (e.g.
+        //   `zippy_browser` with db_* + browser tools registered by the JS
+        //   client) — wildcard inherits those tools in-process. Forcing a
+        //   CLI sandbox here is wrong: the sandbox has no access to the
+        //   client's browser handles or DB connections, the work would
+        //   silently lose context, and a single browser-side request would
+        //   spin up a container for nothing. Leave the override unset so
+        //   the worker runs in-process.
+        // - **Cloud server-side calls with no client tools** (the system
+        //   `distri` agent answering a Telegram bot, …) — `external_tools_count`
+        //   is 0, the wildcard can't be satisfied locally, and the cloud's
+        //   `SandboxLauncher` provides CLI. Pin runtime → CLI so the
+        //   orchestrator dispatches the worker into the sandbox where the
+        //   inner `distri-cli`'s default tools (Bash/Read/Write/Edit/Glob/
+        //   Grep + skill-loaded tools) make the wildcard meaningful.
+        // - **CLI parents** — already in CLI; no override needed.
+        //
+        // Earlier this function pinned `runtime = ["cli"]` for any non-CLI
+        // parent, which routed every browser-initiated `run_skill` call
+        // through a sandbox. The bug surfaced when `zippy_browser`'s
+        // `run_skill({...})` produced a `SandboxLauncher::spawn` instead of
+        // an in-process child.
+        let parent_external_tools = parent_ctx.external_tools_count().await;
+        let needs_remote_dispatch = parent_external_tools == 0
+            && !matches!(parent_ctx.runtime_mode, distri_types::RuntimeMode::Cli);
+        if needs_remote_dispatch {
             o = o.with_runtime(vec![distri_types::RuntimeMode::Cli]);
         }
 
