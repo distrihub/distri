@@ -6,6 +6,7 @@ pub mod context_size_manager;
 pub mod debug;
 pub mod file;
 pub mod hooks;
+pub mod invoke;
 pub mod log;
 pub mod memory;
 pub mod orchestrator;

@@ -137,27 +137,6 @@ async fn invoke_rejects_single_with_two_targets() {
 // ── Not-yet-wired axes return NotImplemented ────────────────────────────
 
 #[tokio::test]
-async fn invoke_join_all_returns_not_implemented() {
-    let orch = build_orch_with_agent("worker").await;
-    let ctx = build_parent_ctx(&orch, "worker");
-    let inv = Invocation::all(vec![target_named("worker", "go")]);
-    let err = orch.invoke(inv, ctx).await.expect_err("All not wired yet");
-    assert!(format!("{err}").contains("Join::All"));
-}
-
-#[tokio::test]
-async fn invoke_join_detached_returns_not_implemented() {
-    let orch = build_orch_with_agent("worker").await;
-    let ctx = build_parent_ctx(&orch, "worker");
-    let inv = Invocation::detached(vec![target_named("worker", "go")]);
-    let err = orch
-        .invoke(inv, ctx)
-        .await
-        .expect_err("Detached not wired yet");
-    assert!(format!("{err}").contains("Join::Detached"));
-}
-
-#[tokio::test]
 async fn invoke_remote_executor_returns_not_implemented() {
     let orch = build_orch_with_agent("worker").await;
     let ctx = build_parent_ctx(&orch, "worker");
@@ -184,6 +163,100 @@ async fn invoke_inherited_context_returns_not_implemented() {
         .await
         .expect_err("Inherited not wired yet");
     assert!(format!("{err}").contains("Inherited") || format!("{err}").contains("ContextScope"));
+}
+
+// ── Join::All — fan-out + ordered Vector ────────────────────────────────
+
+/// `Join::All` with N targets persists N child task rows synchronously
+/// before any agent loop starts AND returns N AgentResults in input
+/// order. We can't run the actual loops without an LLM, so we look at
+/// what the test CAN observe deterministically: the rows it created.
+///
+/// Strategy: spawn invoke() in a tokio::task, give the persist step a
+/// moment to run (it happens inside each spawned target before
+/// call_agent_stream is reached), then snapshot the store. We don't
+/// await the join handle — the loops will fail with no-LLM and that's
+/// fine, the test is about the persistence + parent_task_id linkage.
+#[tokio::test]
+async fn invoke_all_persists_one_child_row_per_target() {
+    let orch = build_orch_with_agent("worker").await;
+    let parent_ctx = build_parent_ctx(&orch, "worker");
+    let parent_task_id = parent_ctx.task_id.clone();
+    let thread_id = parent_ctx.thread_id.clone();
+
+    let inv = Invocation::all(vec![
+        target_named("worker", "task A"),
+        target_named("worker", "task B"),
+        target_named("worker", "task C"),
+    ]);
+
+    // Drive invoke() in the background and wait for the inner loops
+    // to fail (no LLM). The persist step happens BEFORE the loops, so
+    // by the time invoke() returns Err, the rows are durable.
+    let _ = orch.invoke(inv, parent_ctx.clone()).await;
+
+    let all_tasks = orch
+        .stores
+        .task_store
+        .list_tasks(Some(&thread_id))
+        .await
+        .expect("list_tasks");
+    let children: Vec<_> = all_tasks
+        .iter()
+        .filter(|t| t.parent_task_id.as_deref() == Some(&parent_task_id))
+        .collect();
+    assert_eq!(
+        children.len(),
+        3,
+        "Join::All with 3 targets must persist 3 child rows; got {}",
+        children.len()
+    );
+    for child in children {
+        assert_eq!(child.thread_id, thread_id);
+    }
+}
+
+// ── Join::Detached — synchronous persist, background spawn ──────────────
+
+/// `Join::Detached` returns task_ids immediately. Each task_id must be
+/// addressable via `get_task` BEFORE invoke() returns — that's the
+/// supervisor-tools contract. The agent loop runs in the background;
+/// without an LLM it'll error out, but the row write is synchronous so
+/// the contract holds.
+#[tokio::test]
+async fn invoke_detached_returns_task_ids_addressable_immediately() {
+    let orch = build_orch_with_agent("worker").await;
+    let parent_ctx = build_parent_ctx(&orch, "worker");
+    let parent_task_id = parent_ctx.task_id.clone();
+
+    let inv = Invocation::detached(vec![
+        target_named("worker", "bg-1"),
+        target_named("worker", "bg-2"),
+    ]);
+
+    let result = orch
+        .invoke(inv, parent_ctx.clone())
+        .await
+        .expect("Detached must succeed synchronously");
+
+    let task_ids = match result {
+        InvocationResult::TaskIds { task_ids } => task_ids,
+        other => panic!("expected TaskIds, got {other:?}"),
+    };
+    assert_eq!(task_ids.len(), 2);
+
+    // Every returned id is addressable RIGHT NOW.
+    for tid in &task_ids {
+        let row = orch
+            .stores
+            .task_store
+            .get_task(tid)
+            .await
+            .expect("get_task")
+            .unwrap_or_else(|| panic!("task {tid} must be addressable on return"));
+        assert_eq!(row.parent_task_id.as_deref(), Some(parent_task_id.as_str()));
+        assert_eq!(row.status, TaskStatus::Running);
+    }
 }
 
 // ── Persistence: child row gets the typed Invocation ────────────────────
