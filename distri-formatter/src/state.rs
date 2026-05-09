@@ -107,9 +107,14 @@ pub fn format_tool_call(name: &str, input: &serde_json::Value) -> String {
         // Claude Code-style local tools
         "Bash" => {
             let cmd = str_field("command");
-            // Show first line, truncated
+            // Show first line, truncated. Escape embedded `"` so a command
+            // like `python3 -c "print('hi')"` doesn't render with an
+            // unbalanced quote after truncation cuts the inner string. The
+            // rendered form is for display only; not meant to be a faithful
+            // shell-escape, just a visually clean preview.
             let first_line = cmd.lines().next().unwrap_or(&cmd);
-            format!("Bash(\"{}\")", truncate(first_line, 80))
+            let escaped = first_line.replace('"', "\\\"");
+            format!("Bash(\"{}\")", truncate(&escaped, 80))
         }
         "Read" => {
             let path = str_field("file_path");
@@ -226,6 +231,19 @@ pub fn format_tool_call(name: &str, input: &serde_json::Value) -> String {
                 .and_then(|v| v.as_str())
                 .unwrap_or("in_process");
             format!("call_agent(\"{}\", mode: {})", truncate(&agent, 40), mode)
+        }
+        "run_skill" => {
+            // `run_skill` previously fell through to the default JSON-dump
+            // arm, which produced unreadable lines like
+            // `run_skill({"mode":"fork","prompt":"…truncated…)` in chat
+            // surfaces. Mirror `call_agent`'s style — show what the user
+            // actually cares about: which skill, what mode.
+            let skill = str_field("skill_id");
+            let mode = input
+                .get("mode")
+                .and_then(|v| v.as_str())
+                .unwrap_or("fork");
+            format!("run_skill(\"{}\", mode: {})", truncate(&skill, 40), mode)
         }
         "final" | "reflect" | "console_log" => format!("{}(...)", name),
         _ => {
