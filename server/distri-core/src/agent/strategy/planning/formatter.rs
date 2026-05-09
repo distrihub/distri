@@ -77,6 +77,7 @@ impl<'a> MessageFormatter<'a> {
         let reasoning_depth_name = Self::reasoning_depth_name(self.strategy);
         let execution_mode_name = Self::execution_mode_name(self.strategy);
         let tool_format_name = Self::tool_format_name(self.agent_def);
+        let runtime_mode_name = Self::runtime_mode_name(&context.runtime_mode);
 
         let current_steps = context.get_usage().await.current_iteration;
         let max_steps = self.agent_def.max_iterations.unwrap_or(MAX_ITERATIONS);
@@ -143,6 +144,7 @@ impl<'a> MessageFormatter<'a> {
             tool_prompt_list: tool_prompt_entries,
             deferred_tools_listing,
             channel_kind: context.channel_kind.clone(),
+            runtime_mode: runtime_mode_name,
         };
 
         let template_to_use = hook_state
@@ -289,6 +291,19 @@ impl<'a> MessageFormatter<'a> {
         match strategy.get_execution_mode() {
             crate::types::ExecutionMode::Tools => "tools",
             crate::types::ExecutionMode::Code { .. } => "code",
+        }
+    }
+
+    /// Lower-snake-case name for `RuntimeMode`, matching the
+    /// `#[serde(rename_all = "snake_case")]` form used everywhere the mode
+    /// crosses a wire (agent definition `runtime` field, span attributes,
+    /// telemetry). Templates branch off this string via
+    /// `{{#if (eq runtime_mode "cli")}}` / `{{#if (eq runtime_mode "cloud")}}`.
+    fn runtime_mode_name(mode: &distri_types::RuntimeMode) -> &'static str {
+        match mode {
+            distri_types::RuntimeMode::Cli => "cli",
+            distri_types::RuntimeMode::Cloud => "cloud",
+            distri_types::RuntimeMode::Browser => "browser",
         }
     }
 
