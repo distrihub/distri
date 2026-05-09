@@ -872,47 +872,36 @@ impl AgentOrchestrator {
             &context.default_model_settings,
         );
 
-        // Runtime-constraint dispatch. If the agent declares any runtime
-        // constraints and the current ExecutorContext.runtime_mode is not in
-        // the allowed list, route through RemoteAgent — but only if a
-        // RemoteTaskRunner is configured whose provided_runtime is in the
-        // allowed list. Otherwise fail fast with a clear error.
+        // Runtime-constraint dispatch decision. Single source of truth
+        // lives in `crate::agent::invoke::decide_dispatch` — both this
+        // legacy entry and the typed `invoke()` entry route through it,
+        // so the local-vs-remote logic stays consistent.
         //
-        // **Order matters.** This must run BEFORE the wildcard external-tools
-        // check below: remote-dispatched agents have their tools satisfied
-        // by the inner distri-cli inside the sandbox, so the outer cloud
-        // orchestrator must NOT validate the wildcard locally — it would
-        // wrongly reject `_adhoc_base`-style agents (declared with
-        // `external = ["*"]` and `runtime = ["cli"]`) just because the cloud
-        // client doesn't ship any tools. Same reasoning as the
-        // `validate_agent_model` skip: the model and the tools both live
-        // inside the sandbox.
+        // **Order matters.** This must run BEFORE the wildcard
+        // external-tools check below: remote-dispatched agents have
+        // their tools satisfied by the inner distri-cli inside the
+        // sandbox, so the outer orchestrator must NOT validate the
+        // wildcard locally — it would wrongly reject `_adhoc_base`-style
+        // agents (declared with `external = ["*"]` and `runtime =
+        // ["cli"]`) just because the cloud client doesn't ship any
+        // tools. Same reasoning as the `validate_agent_model` skip:
+        // the model and the tools both live inside the sandbox.
         if let distri_types::configuration::AgentConfig::StandardAgent(ref definition) =
             agent_config
         {
-            let allowed = definition.allowed_runtimes();
-            if !allowed.is_empty() && !allowed.iter().any(|rt| rt == &context.runtime_mode) {
-                let Some(runner) = &self.remote_task_runner else {
-                    return Err(AgentError::Session(format!(
-                        "Agent '{}' requires runtime {:?} but the current runtime is {:?} \
-                         and no background runner is configured to provide it.",
-                        definition.name, allowed, context.runtime_mode
-                    )));
-                };
-                let provided = runner.provided_runtime();
-                if !allowed.iter().any(|rt| rt == &provided) {
-                    return Err(AgentError::Session(format!(
-                        "Agent '{}' requires runtime {:?} but the only available background \
-                         runner provides {:?}.",
-                        definition.name, allowed, provided
-                    )));
-                }
+            let plan = crate::agent::invoke::decide_dispatch(
+                definition,
+                &context.runtime_mode,
+                &distri_types::invocation::ExecutorHint::Auto,
+                self.remote_task_runner.as_ref(),
+            )?;
+            if let crate::agent::invoke::DispatchPlan::Remote { runner } = plan {
                 let hooks: Arc<dyn crate::agent::types::AgentHooks> = Arc::new(
                     crate::agent::hooks::CombinedHooks::new(self.system_hooks.clone()),
                 );
                 let agent = crate::agent::remote::RemoteAgent {
                     definition: definition.clone(),
-                    runner: runner.clone(),
+                    runner,
                     broadcaster: self.runtime.broadcaster_arc(),
                     hooks,
                 };

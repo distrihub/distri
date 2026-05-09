@@ -392,8 +392,8 @@ async fn cloud_ctx_no_runtime_constraint_still_rejects_wildcard_misconfig() {
     assert_eq!(runner.spawn_count(), 0);
 }
 
-/// **Cloud parent + `runtime = ["cli"]` + no runner configured** → fail
-/// fast with the "no background runner is configured" message.
+/// **Cloud parent + `runtime = ["cli"]` + no runner initializer
+/// configured** → fail fast.
 #[tokio::test]
 async fn cloud_ctx_no_runner_with_cli_runtime_constraint_errors() {
     let orch = build_orch_without_runner().await;
@@ -406,8 +406,8 @@ async fn cloud_ctx_no_runner_with_cli_runtime_constraint_errors() {
         .expect_err("must fail when no runner is configured for required runtime");
     let msg = format!("{err:?}");
     assert!(
-        msg.contains("no background runner is configured"),
-        "expected 'no background runner is configured' in error; got {msg}"
+        msg.contains("no runner initializer is configured"),
+        "expected 'no runner initializer is configured' in error; got {msg}"
     );
 }
 

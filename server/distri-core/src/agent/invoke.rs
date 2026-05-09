@@ -29,10 +29,89 @@ use distri_types::invocation::{
     AgentRef, AgentResult, Executor, ExecutorHint, Invocation, InvocationResult, Join, Target,
 };
 use distri_types::stores::CreateTaskInput;
+use distri_types::{RuntimeMode, StandardDefinition};
 
 use crate::agent::orchestrator::AgentOrchestrator;
 use crate::agent::ExecutorContext;
+use crate::runner::RemoteTaskRunner;
 use crate::AgentError;
+
+// ── Dispatch decision (shared with `call_agent_stream`) ──────────────────
+
+/// How a single agent invocation will be launched. Computed once per
+/// target by [`decide_dispatch`] and consumed by either the in-process
+/// `StandardAgent` path or the [`crate::agent::remote::RemoteAgent`]
+/// relay.
+pub(crate) enum DispatchPlan {
+    /// Drive the agent loop in this orchestrator.
+    Local,
+    /// Hand off to the env-wide [`RemoteTaskRunner`]. The caller spawns
+    /// against a fresh inner task_id and relays events onto the outer
+    /// task's broadcaster.
+    Remote { runner: Arc<dyn RemoteTaskRunner> },
+}
+
+/// Decide how to launch a target given the agent's runtime constraint
+/// and the caller's `ExecutorHint`. Single source of truth for the
+/// runtime-mode dispatch logic — both `invoke()` (typed) and the legacy
+/// `call_agent_stream` (untyped) call into this.
+///
+/// Resolution order:
+///   1. `ExecutorHint::Force(Local)` → `DispatchPlan::Local`.
+///   2. `ExecutorHint::Force(Remote { .. })` → `DispatchPlan::Remote`
+///      (errors if no runner configured).
+///   3. `ExecutorHint::Auto`:
+///      - Agent has no runtime constraint, OR parent's runtime is in
+///        the allowed list → `Local`.
+///      - Otherwise need `Remote`: requires a runner whose
+///        `provided_runtime` is in the allowed list. Errors clearly
+///        if no runner / wrong runner.
+pub(crate) fn decide_dispatch(
+    agent_def: &StandardDefinition,
+    parent_runtime: &RuntimeMode,
+    executor_hint: &ExecutorHint,
+    runner: Option<&Arc<dyn RemoteTaskRunner>>,
+) -> Result<DispatchPlan, AgentError> {
+    match executor_hint {
+        ExecutorHint::Force(Executor::Local) => Ok(DispatchPlan::Local),
+        ExecutorHint::Force(Executor::Remote { .. }) => {
+            let runner = runner.ok_or_else(|| {
+                AgentError::Session(format!(
+                    "Agent '{}' was invoked with Executor::Force(Remote) but no \
+                     RemoteTaskRunner is configured for this orchestrator",
+                    agent_def.name
+                ))
+            })?;
+            Ok(DispatchPlan::Remote {
+                runner: runner.clone(),
+            })
+        }
+        ExecutorHint::Auto => {
+            let allowed = agent_def.allowed_runtimes();
+            if allowed.is_empty() || allowed.iter().any(|r| r == parent_runtime) {
+                return Ok(DispatchPlan::Local);
+            }
+            let runner = runner.ok_or_else(|| {
+                AgentError::Session(format!(
+                    "Agent '{}' requires runtime {:?} but the current runtime is {:?} \
+                     and no runner initializer is configured to provide it.",
+                    agent_def.name, allowed, parent_runtime
+                ))
+            })?;
+            let provided = runner.provided_runtime();
+            if !allowed.iter().any(|r| r == &provided) {
+                return Err(AgentError::Session(format!(
+                    "Agent '{}' requires runtime {:?} but the only available background \
+                     runner provides {:?}.",
+                    agent_def.name, allowed, provided
+                )));
+            }
+            Ok(DispatchPlan::Remote {
+                runner: runner.clone(),
+            })
+        }
+    }
+}
 
 impl AgentOrchestrator {
     /// Single unified entry point for sub-agent dispatch.
@@ -53,22 +132,21 @@ impl AgentOrchestrator {
         let invocation_blob = serde_json::to_value(&invocation)
             .map_err(|e| AgentError::Session(format!("failed to serialize invocation: {e}")))?;
 
-        // Validate the per-target axes once up front. Every Join shape
-        // shares the same constraints today: Independent context only,
-        // Local executor only — the other axes light up in subsequent
-        // commits.
+        // Per-target dispatch: independent ContextScope only for now
+        // (Inherited / Shared land in Commit G). The Local-vs-Remote
+        // decision is made by `decide_dispatch`, which inspects the
+        // agent's runtime constraint + the invocation's ExecutorHint.
         ensure_independent_context(&invocation)?;
-        ensure_local_executor_for_all_targets(&invocation)?;
 
         match invocation.join {
             Join::Single => {
                 let target = invocation
                     .targets
-                    .into_iter()
-                    .next()
+                    .first()
+                    .cloned()
                     .ok_or_else(|| AgentError::Validation("invocation has no target".into()))?;
                 let result = self
-                    .invoke_local_independent(target, &invocation_blob, &parent_ctx)
+                    .dispatch_target_sync(target, &invocation, &invocation_blob, &parent_ctx)
                     .await?;
                 Ok(InvocationResult::Scalar { result })
             }
@@ -78,17 +156,15 @@ impl AgentOrchestrator {
                 // `invocation.targets` indices). Per-target failures
                 // fail the whole invocation — the parent's tool-call
                 // gets a single error rather than a partial Vector.
-                // Future refinement could surface per-target errors as
-                // InvocationResult fields, but that's a public-API
-                // change that should land deliberately, not as a
-                // by-product of fan-out wiring.
                 let mut handles = Vec::with_capacity(invocation.targets.len());
-                for target in invocation.targets {
+                for target in invocation.targets.iter().cloned() {
                     let blob = invocation_blob.clone();
                     let parent_ctx = parent_ctx.clone();
                     let orch = self.clone();
+                    let invocation = invocation.clone();
                     handles.push(tokio::spawn(async move {
-                        orch.invoke_local_independent(target, &blob, &parent_ctx).await
+                        orch.dispatch_target_sync(target, &invocation, &blob, &parent_ctx)
+                            .await
                     }));
                 }
 
@@ -105,19 +181,108 @@ impl AgentOrchestrator {
                 // Spawn each target's loop in the background and return
                 // task_ids immediately. Parent gets `Vec<task_id>` in
                 // input order; the supervisor tools (`wait_task`,
-                // `get_task`) take it from there. Persistence happens
-                // synchronously inside this fn so the returned ids are
-                // already addressable by `get_task` before invoke()
-                // returns; only the agent loop runs in the background.
+                // `get_task`) take it from there.
                 let mut task_ids = Vec::with_capacity(invocation.targets.len());
-                for target in invocation.targets {
+                for target in invocation.targets.iter().cloned() {
                     let task_id = self
-                        .detach_local_independent(target, &invocation_blob, &parent_ctx)
+                        .dispatch_target_detached(
+                            target,
+                            &invocation,
+                            &invocation_blob,
+                            &parent_ctx,
+                        )
                         .await?;
                     task_ids.push(task_id);
                 }
                 Ok(InvocationResult::TaskIds { task_ids })
             }
+        }
+    }
+
+    /// Synchronous per-target dispatch. Decides Local vs Remote via
+    /// `decide_dispatch`, then drives the appropriate path and waits
+    /// for terminal.
+    async fn dispatch_target_sync(
+        self: &Arc<Self>,
+        target: Target,
+        invocation: &Invocation,
+        invocation_blob: &serde_json::Value,
+        parent_ctx: &Arc<ExecutorContext>,
+    ) -> Result<AgentResult, AgentError> {
+        let plan = self.plan_for_target(invocation, &target, parent_ctx).await?;
+        match plan {
+            DispatchPlan::Local => {
+                self.invoke_local_independent(target, invocation_blob, parent_ctx)
+                    .await
+            }
+            DispatchPlan::Remote { runner } => {
+                self.invoke_remote_independent(target, invocation_blob, parent_ctx, runner)
+                    .await
+            }
+        }
+    }
+
+    /// Detached per-target dispatch. Persists the row + spawns the loop
+    /// in the background. Returns the outer task_id immediately.
+    async fn dispatch_target_detached(
+        self: &Arc<Self>,
+        target: Target,
+        invocation: &Invocation,
+        invocation_blob: &serde_json::Value,
+        parent_ctx: &Arc<ExecutorContext>,
+    ) -> Result<String, AgentError> {
+        let plan = self.plan_for_target(invocation, &target, parent_ctx).await?;
+        match plan {
+            DispatchPlan::Local => {
+                self.detach_local_independent(target, invocation_blob, parent_ctx)
+                    .await
+            }
+            DispatchPlan::Remote { runner } => {
+                self.detach_remote_independent(target, invocation_blob, parent_ctx, runner)
+                    .await
+            }
+        }
+    }
+
+    /// Look up the agent's StandardDefinition + run `decide_dispatch`.
+    async fn plan_for_target(
+        self: &Arc<Self>,
+        invocation: &Invocation,
+        target: &Target,
+        parent_ctx: &Arc<ExecutorContext>,
+    ) -> Result<DispatchPlan, AgentError> {
+        let resolved = ResolvedTarget::from_target(target);
+        let def = self.standard_definition(&resolved.agent_id).await?;
+        let hint = target
+            .executor
+            .clone()
+            .unwrap_or_else(|| invocation.executor.clone());
+        decide_dispatch(
+            &def,
+            &parent_ctx.runtime_mode,
+            &hint,
+            self.remote_task_runner.as_ref(),
+        )
+    }
+
+    /// Fetch the agent's `StandardDefinition` from the registry. Errors
+    /// uniformly when the agent is missing or is a non-standard type
+    /// (workflow, etc — those don't dispatch via `RemoteTaskRunner`).
+    async fn standard_definition(
+        self: &Arc<Self>,
+        agent_id: &str,
+    ) -> Result<StandardDefinition, AgentError> {
+        let cfg = self
+            .get_agent(agent_id)
+            .await
+            .ok_or_else(|| AgentError::NotFound(format!("Agent {agent_id} not found")))?;
+        match cfg {
+            distri_types::configuration::AgentConfig::StandardAgent(def) => Ok(def),
+            other => Err(AgentError::Validation(format!(
+                "agent '{agent_id}' is not a StandardAgent ({:?}); invoke() can only \
+                 dispatch StandardAgents",
+                std::mem::discriminant(&other)
+            ))),
         }
     }
 
@@ -177,6 +342,115 @@ impl AgentOrchestrator {
         })
     }
 
+    /// Single-target Remote + Independent dispatch. Persists the row
+    /// with `remote = true` + the typed Invocation blob, builds a
+    /// [`RemoteAgent`](crate::agent::remote::RemoteAgent) wrapping the
+    /// resolved [`RemoteTaskRunner`], and drives its invoke_stream.
+    /// `RemoteAgent::invoke_inner` allocates its own inner_task_id
+    /// internally and forwards events from the inner broadcaster onto
+    /// the outer task's broadcaster — same path the legacy
+    /// `call_agent_stream` already uses.
+    async fn invoke_remote_independent(
+        self: &Arc<Self>,
+        target: Target,
+        invocation_blob: &serde_json::Value,
+        parent_ctx: &Arc<ExecutorContext>,
+        runner: Arc<dyn RemoteTaskRunner>,
+    ) -> Result<AgentResult, AgentError> {
+        let resolved = ResolvedTarget::from_target(&target);
+        let def = self.standard_definition(&resolved.agent_id).await?;
+        let child_ctx = self
+            .persist_child_task_remote(&resolved, invocation_blob, parent_ctx)
+            .await?;
+
+        let hooks: Arc<dyn crate::agent::types::AgentHooks> = Arc::new(
+            crate::agent::hooks::CombinedHooks::new(self.system_hooks.clone()),
+        );
+        let agent = crate::agent::remote::RemoteAgent {
+            definition: def,
+            runner,
+            broadcaster: self.runtime.broadcaster_arc(),
+            hooks,
+        };
+        let invoke_result = crate::agent::types::BaseAgent::invoke_stream(
+            &agent,
+            target.message,
+            child_ctx.clone(),
+        )
+        .await?;
+
+        let final_value = match child_ctx.get_final_result().await {
+            Some(v) => v,
+            None => invoke_result
+                .content
+                .clone()
+                .map(serde_json::Value::String)
+                .unwrap_or(serde_json::Value::Null),
+        };
+
+        let status = self
+            .stores
+            .task_store
+            .get_task(&child_ctx.task_id)
+            .await
+            .ok()
+            .flatten()
+            .map(|t| t.status)
+            .unwrap_or(distri_types::TaskStatus::Completed);
+
+        Ok(AgentResult {
+            content: final_value,
+            task_id: child_ctx.task_id.clone(),
+            status,
+        })
+    }
+
+    /// Detached Remote dispatch — same row write as `invoke_remote_independent`
+    /// but spawns the relay in the background and returns immediately.
+    async fn detach_remote_independent(
+        self: &Arc<Self>,
+        target: Target,
+        invocation_blob: &serde_json::Value,
+        parent_ctx: &Arc<ExecutorContext>,
+        runner: Arc<dyn RemoteTaskRunner>,
+    ) -> Result<String, AgentError> {
+        let resolved = ResolvedTarget::from_target(&target);
+        let def = self.standard_definition(&resolved.agent_id).await?;
+        let child_ctx = self
+            .persist_child_task_remote(&resolved, invocation_blob, parent_ctx)
+            .await?;
+        let task_id = child_ctx.task_id.clone();
+
+        let orch = self.clone();
+        let message = target.message;
+        tokio::spawn(async move {
+            let hooks: Arc<dyn crate::agent::types::AgentHooks> = Arc::new(
+                crate::agent::hooks::CombinedHooks::new(orch.system_hooks.clone()),
+            );
+            let agent = crate::agent::remote::RemoteAgent {
+                definition: def,
+                runner,
+                broadcaster: orch.runtime.broadcaster_arc(),
+                hooks,
+            };
+            if let Err(e) = crate::agent::types::BaseAgent::invoke_stream(
+                &agent,
+                message,
+                child_ctx,
+            )
+            .await
+            {
+                tracing::warn!(
+                    target: "invoke.detached",
+                    error = %e,
+                    "detached remote invocation loop failed",
+                );
+            }
+        });
+
+        Ok(task_id)
+    }
+
     /// Detached counterpart of [`invoke_local_independent`]. Persists
     /// the child task row synchronously (so the returned id is
     /// immediately addressable by `get_task` / supervisor tools), then
@@ -222,8 +496,8 @@ impl AgentOrchestrator {
     }
 
     /// Build the child ExecutorContext + persist its row with the
-    /// typed Invocation blob. Shared by the sync and detached paths.
-    /// The row goes in at status=Running; the agent loop's RunFinished
+    /// typed Invocation blob (Local executor case). The row goes in at
+    /// `status=Running`, `remote=false`; the agent loop's RunFinished
     /// or RunError handlers transition it to a terminal state.
     async fn persist_child_task(
         self: &Arc<Self>,
@@ -244,6 +518,48 @@ impl AgentOrchestrator {
             )
             .await
             .map_err(|e| AgentError::Session(format!("failed to persist child task: {e}")))?;
+
+        Ok(child_ctx)
+    }
+
+    /// Remote variant. Pre-allocates the inner task_id (the id the
+    /// `RemoteTaskRunner` publishes events under) and writes it to the
+    /// row's `inner_task_id` column up front. The CHECK constraint
+    /// `tasks_remote_consistency` allows `remote=true` with NULL
+    /// inner_task_id — we fill it eagerly anyway so supervisor tools
+    /// have the outer↔inner relay pointer immediately.
+    ///
+    /// Today's `RemoteAgent::invoke_inner` allocates its OWN inner id
+    /// internally; that means the value we persist here and the value
+    /// the runner publishes under are different. That's a known
+    /// inconsistency we'll resolve in a follow-up that threads
+    /// `inner_task_id` into RemoteAgent so it uses ours instead of
+    /// allocating its own. For now the row's `inner_task_id` is
+    /// reserved and will become authoritative once that wire-through
+    /// lands.
+    async fn persist_child_task_remote(
+        self: &Arc<Self>,
+        resolved: &ResolvedTarget,
+        invocation_blob: &serde_json::Value,
+        parent_ctx: &Arc<ExecutorContext>,
+    ) -> Result<Arc<ExecutorContext>, AgentError> {
+        let child_ctx = Arc::new(parent_ctx.new_task(&resolved.agent_id).await);
+        let inner_task_id = uuid::Uuid::new_v4().to_string();
+
+        self.stores
+            .task_store
+            .create_task(
+                CreateTaskInput::local(&child_ctx.thread_id)
+                    .with_id(&child_ctx.task_id)
+                    .with_status(distri_types::TaskStatus::Running)
+                    .with_parent(&parent_ctx.task_id)
+                    .with_remote(&inner_task_id)
+                    .with_invocation(invocation_blob.clone()),
+            )
+            .await
+            .map_err(|e| {
+                AgentError::Session(format!("failed to persist remote child task: {e}"))
+            })?;
 
         Ok(child_ctx)
     }
@@ -285,15 +601,6 @@ impl ResolvedTarget {
     }
 }
 
-/// Resolve [`ExecutorHint`] to the concrete [`Executor`]: `Auto` falls
-/// back to `Local`; `Force` is respected verbatim.
-fn resolve_executor(hint: &ExecutorHint) -> Executor {
-    match hint {
-        ExecutorHint::Auto => Executor::Local,
-        ExecutorHint::Force(e) => e.clone(),
-    }
-}
-
 fn ensure_independent_context(invocation: &Invocation) -> Result<(), AgentError> {
     if !matches!(
         invocation.context,
@@ -303,21 +610,6 @@ fn ensure_independent_context(invocation: &Invocation) -> Result<(), AgentError>
             "ContextScope::{:?} dispatch not yet wired in invoke(); coming in a follow-up commit",
             invocation.context
         )));
-    }
-    Ok(())
-}
-
-fn ensure_local_executor_for_all_targets(invocation: &Invocation) -> Result<(), AgentError> {
-    for (idx, target) in invocation.targets.iter().enumerate() {
-        let executor = match &target.executor {
-            Some(hint) => resolve_executor(hint),
-            None => resolve_executor(&invocation.executor),
-        };
-        if !matches!(executor, Executor::Local) {
-            return Err(AgentError::NotImplemented(format!(
-                "Executor::Remote dispatch not yet wired in invoke() (target #{idx}); coming in a follow-up commit"
-            )));
-        }
     }
     Ok(())
 }
