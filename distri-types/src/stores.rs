@@ -380,6 +380,25 @@ pub trait TaskStore: Send + Sync {
     /// The cascade is implemented via a recursive CTE on the `parent_task_id`
     /// edge; the `idx_tasks_parent_id` index keeps the walk cheap.
     async fn cancel_task_cascade(&self, root_task_id: &str) -> anyhow::Result<Vec<Task>>;
+
+    /// Read-only walk of the parent_task_id graph rooted at `root_task_id`,
+    /// returning the root + every descendant. Used by the `list_my_tasks`
+    /// supervisor tool when scoped to a sub-tree, and by `wait_task` to
+    /// wait on the whole sub-tree of a Detached invocation.
+    ///
+    /// Order is breadth-first by descendant depth (root first); within a
+    /// level the order is implementation-defined.
+    async fn list_descendant_tasks(&self, root_task_id: &str) -> anyhow::Result<Vec<Task>>;
+
+    /// All non-terminal tasks. When `thread_id` is `Some`, scopes to that
+    /// thread (inputs of `list_my_tasks` from a thread-scoped supervisor);
+    /// otherwise returns every running task visible to the caller (cloud
+    /// tenant isolation still applies).
+    ///
+    /// "Running" here means the schema status `running` — tasks in `pending`,
+    /// `input_required`, or terminal states are excluded. The partial index
+    /// `idx_tasks_running` covers this query.
+    async fn list_running_tasks(&self, thread_id: Option<&str>) -> anyhow::Result<Vec<Task>>;
     async fn list_tasks(&self, thread_id: Option<&str>) -> anyhow::Result<Vec<Task>>;
 
     async fn get_history(

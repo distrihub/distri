@@ -2000,6 +2000,78 @@ where
         Ok(rows.into_iter().map(to_task).collect())
     }
 
+    async fn list_descendant_tasks(&self, root_task_id: &str) -> Result<Vec<Task>> {
+        let mut connection = self.conn().await?;
+
+        #[derive(diesel::QueryableByName)]
+        struct Row {
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            id: String,
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            thread_id: String,
+            #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
+            parent_task_id: Option<String>,
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            status: String,
+            #[diesel(sql_type = diesel::sql_types::BigInt)]
+            created_at: i64,
+            #[diesel(sql_type = diesel::sql_types::BigInt)]
+            updated_at: i64,
+            #[diesel(sql_type = diesel::sql_types::Integer)]
+            depth: i32,
+        }
+
+        let rows: Vec<Row> = diesel::sql_query(
+            r"
+            WITH RECURSIVE descendants(id, depth) AS (
+                SELECT id, 0 FROM tasks WHERE id = ?
+                UNION ALL
+                SELECT t.id, d.depth + 1 FROM tasks t
+                  JOIN descendants d ON t.parent_task_id = d.id
+            )
+            SELECT t.id, t.thread_id, t.parent_task_id, t.status,
+                   t.created_at, t.updated_at, d.depth
+              FROM tasks t
+              JOIN descendants d ON t.id = d.id
+             ORDER BY d.depth ASC, t.created_at ASC
+            ",
+        )
+        .bind::<diesel::sql_types::Text, _>(root_task_id)
+        .get_results(&mut connection)
+        .await
+        .context("failed to list descendant tasks")?;
+
+        Ok(rows
+            .into_iter()
+            .map(|r| Task {
+                id: r.id,
+                thread_id: r.thread_id,
+                parent_task_id: r.parent_task_id,
+                status: task_status_from_str(&r.status),
+                created_at: r.created_at,
+                updated_at: r.updated_at,
+            })
+            .collect())
+    }
+
+    async fn list_running_tasks(&self, thread_id: Option<&str>) -> Result<Vec<Task>> {
+        let mut connection = self.conn().await?;
+        let mut query = tasks::table
+            .filter(tasks::status.eq("running"))
+            .into_boxed();
+        if let Some(tid) = thread_id {
+            query = query.filter(tasks::thread_id.eq(tid));
+        }
+
+        let rows = query
+            .order(tasks::created_at.asc())
+            .load::<TaskModel>(&mut connection)
+            .await
+            .context("failed to list running tasks")?;
+
+        Ok(rows.into_iter().map(to_task).collect())
+    }
+
     async fn get_history(
         &self,
         thread_id: &str,
