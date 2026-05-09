@@ -1779,7 +1779,6 @@ where
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         let status = input.status.unwrap_or(TaskStatus::Pending);
         let now = Utc::now().timestamp_millis();
-        let executor_str = distri_types::stores::executor_column(&input.executor);
         let invocation_text = serde_json::to_string(&input.invocation)
             .context("failed to serialize invocation")?;
 
@@ -1790,7 +1789,7 @@ where
             status: task_status_to_str(&status),
             created_at: now,
             updated_at: now,
-            executor: executor_str,
+            remote: input.remote,
             inner_task_id: input.inner_task_id.as_deref(),
             invocation: &invocation_text,
         };

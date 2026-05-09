@@ -94,7 +94,7 @@ pub struct TaskModel {
     pub status: String,
     pub created_at: i64,
     pub updated_at: i64,
-    pub executor: String,
+    pub remote: bool,
     pub inner_task_id: Option<String>,
     pub ended_at: Option<i64>,
     pub invocation: String,
@@ -109,7 +109,7 @@ pub struct NewTaskModel<'a> {
     pub status: &'a str,
     pub created_at: i64,
     pub updated_at: i64,
-    pub executor: &'a str,
+    pub remote: bool,
     pub inner_task_id: Option<&'a str>,
     pub invocation: &'a str,
 }

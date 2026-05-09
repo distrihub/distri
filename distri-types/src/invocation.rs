@@ -141,6 +141,13 @@ pub enum Join {
 /// **Note**: the loop is ALWAYS server-side — clients (browser SDK,
 /// distri-cli) only execute external tools, not agent loops. So the only
 /// real distinction is "this orchestrator" vs "another orchestrator".
+///
+/// Note that the *kind* of remote runner (sandbox / loopback / k8s / fly /
+/// …) is NOT a closed enum here. Adding a new runner is purely an
+/// orchestrator-side concern — register a new
+/// [`RunnerInitializer`](crate::stores::dummy_phantom) under a fresh
+/// [`RunnerConfig::kind`] string and the schema is unchanged. The DB only
+/// records `remote = true|false`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Executor {
@@ -150,25 +157,53 @@ pub enum Executor {
     /// tool-result POSTs).
     Local,
 
-    /// Another orchestrator runs the loop. We dispatch via a
-    /// [`BackgroundRunner`](crate::stores::dummy_phantom) — typically a
-    /// browsr container running distri-cli. We follow its A2A stream and
-    /// relay events back onto our task's broadcaster channel. The remote
-    /// orchestrator owns its own scratchpad, compaction, and tool
-    /// execution; we are just transport.
-    Remote { runner: RunnerKind },
+    /// Another orchestrator runs the loop. The `RunnerConfig` selects
+    /// which runner (`kind` is the registry key) and carries the
+    /// implementation-specific config the registered
+    /// [`RunnerInitializer`] parses. We follow the runner's A2A stream
+    /// and relay events back onto our task's broadcaster.
+    Remote { runner: RunnerConfig },
 }
 
-/// Which runner provides a Remote execution.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum RunnerKind {
-    /// Browsr container running distri-cli (cloud's `SandboxLauncher`).
-    Sandbox,
-    /// Loopback HTTP to another orchestrator instance — typically the
-    /// same server, used in DEV_MODE / OSS distri-server. Today's
-    /// `LocalProcessRemoteRunner`.
-    Loopback,
+/// How to start a remote runner. The `kind` field is dispatched against
+/// the orchestrator's `RunnerInitializer` registry; `config` is the
+/// initializer's private payload (image name, k8s namespace, sandbox
+/// flags, ...). The orchestrator does not interpret `config`.
+///
+/// Examples (the strings are conventions, not a closed set):
+/// - `{ "kind": "sandbox", "config": { "image": "..." } }` — browsr
+///   container running distri-cli.
+/// - `{ "kind": "loopback", "config": {} }` — loopback HTTP to another
+///   orchestrator instance (DEV_MODE / OSS distri-server).
+/// - `{ "kind": "k8s", "config": { "namespace": "...", "image": "..." } }` —
+///   future Kubernetes runner.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RunnerConfig {
+    /// Registry key for the [`RunnerInitializer`] that knows how to
+    /// start and talk to this runner.
+    pub kind: String,
+    /// Initializer-private payload. Default `{}` for runners that need
+    /// no config beyond their kind.
+    #[serde(default = "default_config_value")]
+    pub config: serde_json::Value,
+}
+
+fn default_config_value() -> serde_json::Value {
+    serde_json::Value::Object(Default::default())
+}
+
+impl RunnerConfig {
+    pub fn new(kind: impl Into<String>) -> Self {
+        Self {
+            kind: kind.into(),
+            config: default_config_value(),
+        }
+    }
+
+    pub fn with_config(mut self, config: serde_json::Value) -> Self {
+        self.config = config;
+        self
+    }
 }
 
 /// What the caller HINTS for axis 3. Final decision is the orchestrator's:
@@ -526,16 +561,26 @@ mod tests {
     }
 
     #[test]
-    fn serde_executor_remote_carries_runner_kind() {
+    fn serde_executor_remote_carries_runner_config() {
         let inv = Invocation::single(named("w"))
             .with_executor(ExecutorHint::Force(Executor::Remote {
-                runner: RunnerKind::Sandbox,
+                runner: RunnerConfig::new("sandbox")
+                    .with_config(serde_json::json!({ "image": "distri-cli:latest" })),
             }));
         let v = serde_json::to_value(&inv).unwrap();
-        // ExecutorHint::Force(Executor::Remote { runner })
         assert_eq!(v["executor"]["kind"], "force");
         assert_eq!(v["executor"]["type"], "remote");
-        assert_eq!(v["executor"]["runner"], "sandbox");
+        assert_eq!(v["executor"]["runner"]["kind"], "sandbox");
+        assert_eq!(v["executor"]["runner"]["config"]["image"], "distri-cli:latest");
+        // Round-trip back to typed.
+        let back: Invocation = serde_json::from_value(v).unwrap();
+        match back.executor {
+            ExecutorHint::Force(Executor::Remote { runner }) => {
+                assert_eq!(runner.kind, "sandbox");
+                assert_eq!(runner.config["image"], "distri-cli:latest");
+            }
+            other => panic!("expected Force(Remote {{..}}); got {other:?}"),
+        }
     }
 
     #[test]

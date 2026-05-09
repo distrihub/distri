@@ -6,4 +6,4 @@ DROP INDEX IF EXISTS idx_tasks_parent_id;
 ALTER TABLE tasks DROP COLUMN invocation;
 ALTER TABLE tasks DROP COLUMN ended_at;
 ALTER TABLE tasks DROP COLUMN inner_task_id;
-ALTER TABLE tasks DROP COLUMN executor;
+ALTER TABLE tasks DROP COLUMN remote;

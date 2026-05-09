@@ -10,38 +10,41 @@ use tokio::sync::oneshot;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-use crate::invocation::{Executor, RunnerKind};
 use crate::{
     AgentEvent, CreateThreadRequest, Message, Task, TaskMessage, TaskStatus, Thread,
     UpdateThreadRequest,
 };
 
-/// Inputs to [`TaskStore::create_task`]. Carries the Invocation-shaped
-/// fields that get persisted into the new tasks columns
-/// (`executor`, `inner_task_id`, `invocation`).
+/// Inputs to [`TaskStore::create_task`]. The schema records only
+/// (`remote`, `inner_task_id`, `ended_at`, `invocation`) for the
+/// Invocation half — `remote` is the fast filter, the typed Executor +
+/// RunnerConfig live inside `invocation`. Adding a new runner kind
+/// (k8s, fly, …) does NOT require a schema migration; ship a new
+/// [`RunnerInitializer`] keyed by [`RunnerConfig::kind`].
 ///
-/// Use [`CreateTaskInput::local`] for the most common case (a local
-/// executor with no inner task); use [`CreateTaskInput::with_remote`]
-/// to set both `executor = remote_*` and `inner_task_id` together.
+/// Use [`CreateTaskInput::local`] for a local-executor task; chain
+/// [`CreateTaskInput::with_remote`] to flip `remote` to true and set
+/// `inner_task_id` together.
 #[derive(Debug, Clone)]
 pub struct CreateTaskInput {
     pub thread_id: String,
     pub task_id: Option<String>,
     pub status: Option<TaskStatus>,
     pub parent_task_id: Option<String>,
-    /// Local => the loop runs in this orchestrator; Remote { runner }
-    /// => the loop runs on a Sandbox / Loopback runner. The runner is
-    /// not denormalized to a separate column — it's encoded in the
-    /// `executor` string ("remote_sandbox" / "remote_loopback") and
-    /// available in full typed form via the `invocation` blob.
-    pub executor: Executor,
+    /// `true` when another orchestrator runs the loop. Equivalent to
+    /// `Executor::Remote { runner }` in the in-memory `Invocation`. The
+    /// runner kind/config is NOT denormalized into the schema — it
+    /// lives only in the `invocation` blob, dispatched at runtime via
+    /// the `RunnerInitializer` registry.
+    pub remote: bool,
     /// task_id on the inner orchestrator. Must be `None` when
-    /// `executor` is `Local` (DB CHECK enforces). May be `None`
+    /// `remote == false` (DB CHECK enforces). May be `None`
     /// transiently for remote rows — between row insert and the
     /// runner assigning its inner id.
     pub inner_task_id: Option<String>,
     /// Serialized [`Invocation`](crate::invocation::Invocation). The
-    /// canonical record of what was requested. Stored as JSONB in Pg /
+    /// canonical record of what was requested, including the typed
+    /// `Executor` and any `RunnerConfig`. Stored as JSONB in Pg /
     /// TEXT in sqlite. Default is `{}` until invoke() is wired.
     pub invocation: serde_json::Value,
 }
@@ -55,7 +58,7 @@ impl CreateTaskInput {
             task_id: None,
             status: None,
             parent_task_id: None,
-            executor: Executor::Local,
+            remote: false,
             inner_task_id: None,
             invocation: serde_json::Value::Object(Default::default()),
         }
@@ -81,28 +84,13 @@ impl CreateTaskInput {
         self
     }
 
-    /// Switches the task to a remote executor. `runner` selects which
-    /// orchestrator runs the loop; `inner_task_id` is the id that
-    /// orchestrator has assigned (or will assign) to its inner task.
-    pub fn with_remote(
-        mut self,
-        runner: RunnerKind,
-        inner_task_id: impl Into<String>,
-    ) -> Self {
-        self.executor = Executor::Remote { runner };
+    /// Marks the task as remote-executed and sets the inner task id
+    /// the runner has assigned. The runner kind + its private config
+    /// live in `invocation` (typed `Executor::Remote { runner }`).
+    pub fn with_remote(mut self, inner_task_id: impl Into<String>) -> Self {
+        self.remote = true;
         self.inner_task_id = Some(inner_task_id.into());
         self
-    }
-}
-
-/// Maps [`Executor`] to the `tasks.executor` column value.
-/// The runner is encoded in the suffix; there is no separate
-/// `runner_kind` column.
-pub fn executor_column(exec: &Executor) -> &'static str {
-    match exec {
-        Executor::Local => "local",
-        Executor::Remote { runner: RunnerKind::Sandbox } => "remote_sandbox",
-        Executor::Remote { runner: RunnerKind::Loopback } => "remote_loopback",
     }
 }
 
