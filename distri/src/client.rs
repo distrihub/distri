@@ -755,29 +755,8 @@ impl Distri {
         {
             return Err(ClientError::InvalidResponse(err.to_string()));
         }
-        let Some(result) = body.get("result").cloned() else {
-            return Ok(Vec::new());
-        };
-
-        let kinds: Vec<MessageKind> =
-            if let Ok(single) = serde_json::from_value::<MessageKind>(result.clone()) {
-                vec![single]
-            } else if let Ok(list) = serde_json::from_value::<Vec<MessageKind>>(result) {
-                list
-            } else {
-                return Err(ClientError::InvalidResponse(
-                    "Unexpected response format from message/send".into(),
-                ));
-            };
-
-        kinds
-            .into_iter()
-            .filter_map(|k| match convert_kind(k) {
-                Ok(Some(msg)) => Some(Ok(msg)),
-                Ok(None) => None,
-                Err(e) => Some(Err(e)),
-            })
-            .collect()
+        let result = body.get("result").cloned().unwrap_or(serde_json::Value::Null);
+        parse_invoke_result(result)
     }
 
     /// Stream an agent, invoking the SSE endpoint with the last message.
@@ -828,29 +807,8 @@ impl Distri {
         {
             return Err(ClientError::InvalidResponse(err.to_string()));
         }
-        let Some(result) = body.get("result").cloned() else {
-            return Ok(Vec::new());
-        };
-
-        let kinds: Vec<MessageKind> =
-            if let Ok(single) = serde_json::from_value::<MessageKind>(result.clone()) {
-                vec![single]
-            } else if let Ok(list) = serde_json::from_value::<Vec<MessageKind>>(result) {
-                list
-            } else {
-                return Err(ClientError::InvalidResponse(
-                    "Unexpected response format from message/send".into(),
-                ));
-            };
-
-        kinds
-            .into_iter()
-            .filter_map(|k| match convert_kind(k) {
-                Ok(Some(msg)) => Some(Ok(msg)),
-                Ok(None) => None,
-                Err(e) => Some(Err(e)),
-            })
-            .collect()
+        let result = body.get("result").cloned().unwrap_or(serde_json::Value::Null);
+        parse_invoke_result(result)
     }
 
     /// Stream an agent with additional options (dynamic_sections, dynamic_values, etc.).
@@ -1487,6 +1445,66 @@ fn convert_kind(kind: MessageKind) -> Result<Option<Message>, ClientError> {
             .map_err(|e| ClientError::InvalidResponse(e.to_string())),
         _ => Ok(None),
     }
+}
+
+/// Parse the `result` value of a `message/send` RPC into a list of
+/// Distri `Message`s. Tolerant to four wire shapes:
+///
+/// - **`MessageKind` enum** (single OSS-server frame: `Message`,
+///   `TaskStatusUpdate`, or `Artifact`)
+/// - **`Vec<MessageKind>`** (OSS server batch reply)
+/// - **`Task` envelope** (`{"kind": "task", "status": {"message": …}}`).
+///   This is what the cloud server returns from blocking `message/send`
+///   — `result.status.message` carries the agent's reply.
+/// - **null** → empty list.
+fn parse_invoke_result(result: serde_json::Value) -> Result<Vec<Message>, ClientError> {
+    if result.is_null() {
+        return Ok(Vec::new());
+    }
+
+    // Cloud returns Task envelope; pull `status.message` out and feed
+    // it through the existing MessageKind path.
+    if result.get("kind").and_then(|v| v.as_str()) == Some("task") {
+        let msg_value = result.get("status").and_then(|s| s.get("message")).cloned();
+        let Some(msg_value) = msg_value else {
+            return Ok(Vec::new());
+        };
+        let kind: MessageKind = serde_json::from_value(serde_json::json!({
+            "kind": "message",
+            "messageId": msg_value.get("messageId").cloned().unwrap_or(serde_json::Value::Null),
+            "role": msg_value.get("role").cloned().unwrap_or(serde_json::Value::Null),
+            "parts": msg_value.get("parts").cloned().unwrap_or(serde_json::Value::Array(Vec::new())),
+            "contextId": msg_value.get("contextId").cloned().unwrap_or(serde_json::Value::Null),
+            "taskId": msg_value.get("taskId").cloned().unwrap_or(serde_json::Value::Null),
+            "metadata": msg_value.get("metadata").cloned().unwrap_or(serde_json::Value::Null),
+        }))
+        .map_err(|e| {
+            ClientError::InvalidResponse(format!(
+                "failed to extract Task.status.message: {e}"
+            ))
+        })?;
+        return Ok(convert_kind(kind)?.into_iter().collect());
+    }
+
+    let kinds: Vec<MessageKind> =
+        if let Ok(single) = serde_json::from_value::<MessageKind>(result.clone()) {
+            vec![single]
+        } else if let Ok(list) = serde_json::from_value::<Vec<MessageKind>>(result) {
+            list
+        } else {
+            return Err(ClientError::InvalidResponse(
+                "Unexpected response format from message/send".into(),
+            ));
+        };
+
+    kinds
+        .into_iter()
+        .filter_map(|k| match convert_kind(k) {
+            Ok(Some(msg)) => Some(Ok(msg)),
+            Ok(None) => None,
+            Err(e) => Some(Err(e)),
+        })
+        .collect()
 }
 
 #[derive(Debug, Serialize)]
