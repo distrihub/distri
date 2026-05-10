@@ -18,6 +18,7 @@
 //! is just `targets.len() == 1`. Validation rejects combinations that
 //! don't make sense (e.g. `Join::Single` with 2 targets).
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::agent::ToolsConfig;
@@ -87,7 +88,7 @@ pub enum AgentRef {
 // ── Axis 1: ContextScope ──────────────────────────────────────────────────
 
 /// What the child task sees when it starts its first LLM turn.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ContextScope {
     /// Fresh task, empty history. Self-contained workers (one-shot

@@ -3,10 +3,12 @@ use std::sync::Arc;
 use anyhow::Result;
 use distri_types::dynamic_tool::DynamicToolFactory;
 use distri_types::http_request::{HttpFactoryConfig, HttpFactoryToolInput};
+use distri_types::mock_tool::MockFactoryConfig;
 use distri_types::{Part, Tool, ToolContext};
 use serde_json::json;
 
 use crate::agent::ExecutorContext;
+use crate::tools::mock_tool::build_mock_tool;
 use crate::tools::request::execute_http_request;
 use crate::tools::resolve::ResolveContext;
 use crate::tools::ExecutorContextTool;
@@ -27,6 +29,17 @@ pub fn create_dynamic_tool(factory: &DynamicToolFactory) -> Result<Arc<dyn Execu
                 description: factory.description.clone(),
             }))
         }
+        "mock" => {
+            let config: MockFactoryConfig = serde_json::from_value(factory.config.clone())
+                .map_err(|e| {
+                    anyhow::anyhow!("Invalid mock factory config for '{}': {}", factory.name, e)
+                })?;
+            Ok(build_mock_tool(
+                factory.name.clone(),
+                config,
+                factory.description.clone(),
+            ))
+        }
         other => anyhow::bail!(
             "Unknown dynamic tool factory type '{}' for tool '{}'",
             other,
@@ -46,6 +59,17 @@ pub fn validate_dynamic_tool(factory: &DynamicToolFactory) -> Result<()> {
             if config.base_url.is_empty() {
                 anyhow::bail!("Dynamic tool '{}': base_url cannot be empty", factory.name);
             }
+            Ok(())
+        }
+        "mock" => {
+            // Cheap structural validation — body checks happen via the
+            // typed deserialise. A missing scenario id is allowed (the
+            // factory falls back to a generic stub) so authors can
+            // experiment with custom inline configs.
+            let _: MockFactoryConfig = serde_json::from_value(factory.config.clone())
+                .map_err(|e| {
+                    anyhow::anyhow!("Invalid mock factory config for '{}': {}", factory.name, e)
+                })?;
             Ok(())
         }
         other => anyhow::bail!(

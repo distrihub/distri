@@ -1,41 +1,42 @@
-//! `invoke_agent` — single LLM-facing tool. Always synchronous: control
-//! returns to the caller with the sub-agent's result(s).
+//! `invoke_agent` — single LLM-facing tool. Dispatches one sub-agent
+//! synchronously and returns its result. Fan-out is achieved by
+//! emitting multiple `invoke_agent` tool_calls in one assistant turn
+//! — providers that support parallel tool calls (Anthropic, OpenAI,
+//! Gemini) execute them concurrently. Matches Claude Code's `Task`
+//! tool ergonomics.
 //!
-//! ## Wire shape
-//!
-//! Two equivalent shapes the LLM may emit:
+//! ## Wire shape — three flat fields
 //!
 //! ```jsonc
-//! // Single dispatch (the common case)
-//! {
-//!   "agent": { "type": "named", "agent_id": "deepagent" },
-//!   "message": { "role": "user", "parts": [{"part_type": "text", "data": "..."}] }
-//! }
-//!
-//! // Fan-out: N targets in parallel, results in input order
-//! {
-//!   "targets": [
-//!     { "agent": {...}, "message": {...} },
-//!     { "agent": {...}, "message": {...} }
-//!   ]
-//! }
+//! { "prompt": "Identify the person in /tmp/img.png", "agent": "distri_runner" }
+//! { "prompt": "id is 3", "system": "You are a leaf worker. Write the id and final." }
+//! { "prompt": "summarise this PR" }   // dispatches to the default code agent
 //! ```
 //!
-//! No `join` field — single dispatch returns `Scalar`, fan-out returns
-//! `Vector`. There is no LLM-facing detached mode: fire-and-forget /
-//! task watching is a CLIENT concern (CLI/TUI/SDK), driven via the API
-//! and the supervisor primitives, not via an agent tool call.
+//! - `prompt` — required string. The work for the sub-agent.
+//! - `agent` — optional registered agent name. Defaults to the
+//!   runtime-resolved code agent (`distri_runner` for Cli/Cloud,
+//!   `distri_browser_runner` for Browser).
+//! - `system` — optional ad-hoc system prompt. The worker extends
+//!   `_adhoc_base.md`'s body (final / load_skill semantics, output
+//!   conventions) and the LLM's `system` is appended below it.
+//!
+//! Mutually exclusive: pass at most one of `agent` / `system`. The
+//! orchestrator hard-codes everything else (Join, ExecutorHint,
+//! ContextScope, ToolPolicy) — the LLM never thinks about runner
+//! choice or context scope.
 //!
 //! ## Output
 //!
-//! [`InvocationResult`](distri_types::invocation::InvocationResult) —
-//! `Scalar` for single, `Vector` for fan-out. Returned as one
-//! `Part::Data` carrying the JSON.
+//! [`InvocationResult::Scalar`](distri_types::invocation::InvocationResult)
+//! — single dispatch, single result. Returned as one `Part::Data`.
 
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use serde_json::{json, Value};
+use schemars::JsonSchema;
+use serde::Deserialize;
+use serde_json::Value;
 
 use crate::agent::ExecutorContext;
 use crate::tools::ExecutorContextTool;
@@ -46,62 +47,95 @@ use distri_types::invocation::{
 use distri_types::Message;
 use distri_types::{Part, RuntimeMode, Tool, ToolCall, ToolContext};
 
-/// LLM-facing input. Accepts either the single-dispatch shorthand
-/// (`agent` + `message`) or the fan-out form (`targets: [...]`).
-#[derive(Debug, serde::Deserialize)]
+// ── LLM-facing input ──────────────────────────────────────────────────────
+//
+// Three flat fields. `JsonSchema` is derived so `get_parameters()`
+// cannot drift from `Deserialize`. `deny_unknown_fields` rejects any
+// hallucinated field (`targets`, `context`, `join`, `executor`, `wait`,
+// `message`, …) up front.
+//
+// Everything the LLM does NOT control is hard-coded below:
+//   - `Join::Single` (one tool call → one result; fan-out via parallel
+//     tool_calls).
+//   - `ExecutorHint::Auto` (orchestrator picks runner from agent
+//     constraints + caller runtime).
+//   - `ContextScope::Independent` (worker starts with a fresh history;
+//     anything it needs from the parent is in `prompt`).
+//   - `ToolPolicy::Inherit` (worker inherits parent's external tools).
+
+/// LLM-facing input for `invoke_agent`. Three flat fields; everything
+/// else is filled by the orchestrator.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct InvokeAgentInput {
-    #[serde(default)]
-    agent: Option<AgentRef>,
-    #[serde(default)]
-    message: Option<Message>,
-    #[serde(default)]
-    targets: Option<Vec<Target>>,
-    #[serde(default)]
-    context: ContextScope,
-    #[serde(default)]
-    executor: ExecutorHint,
-    #[serde(default)]
-    tools: ToolPolicy,
+    /// What the sub-agent should do. Required. Plain text — no need
+    /// to wrap it in any role/parts/Message structure.
+    prompt: String,
+
+    /// Optional registered agent name (e.g. "distri_runner",
+    /// "explore"). Omit to dispatch to the default code/runner agent
+    /// for the current runtime.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    agent: Option<String>,
+
+    /// Optional ad-hoc system prompt. The worker uses `_adhoc_base.md`'s
+    /// body as scaffolding and appends this text below it. Mutually
+    /// exclusive with `agent`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    system: Option<String>,
 }
 
 impl InvokeAgentInput {
-    fn into_invocation(self) -> Result<Invocation, String> {
-        let targets = match (self.targets, self.agent, self.message) {
-            (Some(ts), None, None) if !ts.is_empty() => ts,
-            (None, Some(agent), Some(message)) => vec![Target {
-                agent,
-                message,
-                executor: None,
-            }],
-            (Some(_), Some(_), _) | (Some(_), _, Some(_)) => {
+    fn into_invocation(self, parent_runtime: &RuntimeMode) -> Result<Invocation, String> {
+        if self.prompt.trim().is_empty() {
+            return Err("`prompt` must be a non-empty string".into());
+        }
+
+        let agent = match (self.agent, self.system) {
+            (Some(_), Some(_)) => {
                 return Err(
-                    "specify either single-dispatch ({agent, message}) OR fan-out ({targets: [...]}) — not both"
+                    "specify either `agent` (registered agent) OR `system` (ad-hoc worker), not both"
                         .into(),
                 );
             }
-            (None, Some(_), None) | (None, None, Some(_)) => {
-                return Err("single dispatch requires both `agent` and `message`".into());
-            }
-            (Some(ts), None, None) if ts.is_empty() => {
-                return Err("`targets` is empty; pass at least one target".into());
-            }
-            _ => return Err("missing `agent`+`message` (single) or `targets` (fan-out)".into()),
+            (Some(agent_id), None) => AgentRef::Named { agent_id },
+            (None, Some(system)) => AgentRef::AdHoc {
+                system_prompt: system,
+                tools: None,
+            },
+            (None, None) => AgentRef::Named {
+                agent_id: resolve_code_agent(parent_runtime).to_string(),
+            },
         };
 
-        let join = if targets.len() == 1 {
-            Join::Single
-        } else {
-            Join::All
+        let target = Target {
+            agent,
+            message: Message::user(self.prompt, None),
+            executor: None,
         };
 
         Ok(Invocation {
-            targets,
-            context: self.context,
-            join,
-            executor: self.executor,
-            tools: self.tools,
+            targets: vec![target],
+            context: ContextScope::Independent,
+            join: Join::Single,
+            executor: ExecutorHint::Auto,
+            tools: ToolPolicy::default(),
         })
     }
+}
+
+/// Generate the LLM-facing JSON Schema by deriving it from
+/// [`InvokeAgentInput`]. Single source of truth — the schema can never
+/// drift from the deserializer.
+fn invoke_agent_parameters_schema() -> Value {
+    let schema = schemars::schema_for!(InvokeAgentInput);
+    serde_json::to_value(&schema).unwrap_or_else(|_| {
+        // schema_for! always succeeds for a derived schema; the
+        // serialise step is infallible for plain JSON. This branch is
+        // unreachable; fall back to an empty object so a hypothetical
+        // failure doesn't crash the agent loop.
+        serde_json::json!({"type": "object"})
+    })
 }
 
 // ── Agent-access policy ──────────────────────────────────────────────────
@@ -174,54 +208,21 @@ impl Tool for InvokeAgentTool {
     }
 
     fn get_description(&self) -> String {
-        "Dispatch one or more sub-agents and wait for their results. \
-         Pass a single `agent`+`message` to dispatch one sub-agent (the \
-         common case). Pass `targets: [...]` with N entries to fan out \
-         to N sub-agents in parallel — the call returns once all of \
-         them finish, results in input order. Dispatch is always \
-         synchronous: control returns to you with the result(s)."
+        "Dispatch one sub-agent to do a focused piece of work and wait \
+         for its result. Pass `prompt` (required) plus optionally \
+         `agent` (a registered agent name) OR `system` (an ad-hoc \
+         system prompt for a one-off worker). To run several sub-tasks \
+         in parallel, emit multiple `invoke_agent` tool calls in a \
+         single assistant turn — they are executed concurrently and \
+         each returns its own result."
             .to_string()
     }
 
     fn get_parameters(&self) -> Value {
-        // LLM-facing surface kept deliberately small. Two shapes:
-        //   1) Single dispatch:  { agent, message, executor?, context?, tools? }
-        //   2) Fan-out:          { targets: [{ agent, message, ... }, ...] }
-        // No `join` — dispatch is always sync; orchestrator picks Single
-        // when there's one target and All when there are several.
-        // Detached / fire-and-forget is a CLIENT concern (CLI/TUI), not
-        // an agent-facing primitive.
-        json!({
-            "type": "object",
-            "properties": {
-                "agent": {
-                    "type": "object",
-                    "description": "Single-dispatch shorthand. Either { type: 'named', agent_id: '...' } or { type: 'ad_hoc', system_prompt: '...', tools?: { ... } }."
-                },
-                "message": {
-                    "type": "object",
-                    "description": "Single-dispatch shorthand. The Message to send. { role: 'user', parts: [{ part_type: 'text', data: '...' }] }."
-                },
-                "targets": {
-                    "type": "array",
-                    "description": "Fan-out form. N targets dispatched in parallel; results returned in input order. Each: { agent, message, executor?, context?, tools? }.",
-                    "items": { "type": "object" }
-                },
-                "context": {
-                    "type": "string",
-                    "enum": ["independent", "inherited", "shared"],
-                    "description": "What the child sees on first turn. 'independent' = fresh history (default)."
-                },
-                "executor": {
-                    "type": "object",
-                    "description": "ExecutorHint. { kind: 'auto' | 'force', type?: 'local' | 'remote', runner?: { kind, config } }"
-                },
-                "tools": {
-                    "type": "object",
-                    "description": "ToolPolicy. { kind: 'inherit' | 'exact' | 'none', ... }"
-                }
-            }
-        })
+        // Schema is derived from `InvokeAgentInput` via schemars — single
+        // source of truth, cannot drift from the deserializer. Three
+        // flat fields: `prompt` (required), `agent`, `system`.
+        invoke_agent_parameters_schema()
     }
 
     fn needs_executor_context(&self) -> bool {
@@ -249,7 +250,7 @@ impl ExecutorContextTool for InvokeAgentTool {
                 AgentError::ToolExecution(format!("invoke_agent: invalid input: {e}"))
             })?;
         let invocation = raw
-            .into_invocation()
+            .into_invocation(&context.runtime_mode)
             .map_err(|e| AgentError::ToolExecution(format!("invoke_agent: {e}")))?;
         let orch = context.get_orchestrator()?;
         let result = orch.invoke(invocation, context.clone()).await?;

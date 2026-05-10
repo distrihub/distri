@@ -68,6 +68,7 @@ pub mod api;
 pub mod connections;
 pub mod dynamic_tool;
 pub mod http_request;
+pub mod mock_tool;
 pub mod resolve;
 
 pub mod models;

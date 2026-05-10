@@ -26,6 +26,7 @@ pub(crate) mod builtin;
 pub mod dynamic_factory;
 pub mod inject_env;
 pub mod invoke_agent;
+pub mod mock_tool;
 pub mod request;
 pub mod resolve;
 pub mod send_message;

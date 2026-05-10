@@ -664,10 +664,14 @@ impl ResolvedTarget {
                 system_prompt,
                 tools,
             } => {
-                // `instructions` is the field that replaces the agent's
-                // system prompt; `tools` replaces the ToolsConfig wholesale.
+                // The LLM-supplied `system_prompt` is APPENDED to
+                // `_adhoc_base.md`'s body — the worker keeps the
+                // distri scaffolding (final / load_skill semantics,
+                // output conventions) and the caller's text adds
+                // task-specific direction below it. `tools`, when
+                // provided, replaces the base ToolsConfig wholesale.
                 let overrides = distri_types::configuration::DefinitionOverrides {
-                    instructions: Some(system_prompt.clone()),
+                    instructions_append: Some(system_prompt.clone()),
                     tools: tools.clone(),
                     ..Default::default()
                 };

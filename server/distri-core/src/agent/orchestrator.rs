@@ -829,6 +829,7 @@ impl AgentOrchestrator {
             definition_overrides,
             &context.default_model_settings,
         );
+        self.hydrate_agent_model_settings(&mut agent_config).await?;
         Self::validate_agent_model(&agent_config)?;
 
         let declared_definition = match &agent_config {
@@ -873,6 +874,7 @@ impl AgentOrchestrator {
             definition_overrides,
             &context.default_model_settings,
         );
+        self.hydrate_agent_model_settings(&mut agent_config).await?;
 
         // Runtime-constraint dispatch decision. Single source of truth
         // lives in `crate::agent::invoke::decide_dispatch` — both this
@@ -1454,6 +1456,35 @@ impl AgentOrchestrator {
                 // Workflow agents don't require model settings
             }
         }
+        Ok(())
+    }
+
+    /// After [`apply_agent_overrides`] picks the final (provider, model)
+    /// pair, hydrate any empty credentials (`api_key`, `base_url`) by
+    /// calling [`ModelSettings::hydrate_creds`] against the workspace
+    /// secret store. The same hydration runs for the workspace's
+    /// default model in `WorkspaceStore::resolve_model_settings`, so
+    /// every ModelSettings handed to the LLM client — whether it came
+    /// from the workspace default, an agent's `[model_settings]` pin,
+    /// or a runtime override — goes through identical secret
+    /// resolution.
+    pub async fn hydrate_agent_model_settings(
+        &self,
+        agent_config: &mut distri_types::configuration::AgentConfig,
+    ) -> Result<(), AgentError> {
+        let definition = match agent_config {
+            distri_types::configuration::AgentConfig::StandardAgent(def) => def,
+            distri_types::configuration::AgentConfig::WorkflowAgent(_) => return Ok(()),
+        };
+        let Some(ref mut ms) = definition.model_settings else {
+            return Ok(());
+        };
+        let Some(secret_store) = self.stores.secret_store.as_ref() else {
+            return Ok(());
+        };
+        ms.hydrate_creds(secret_store.as_ref())
+            .await
+            .map_err(AgentError::InvalidConfiguration)?;
         Ok(())
     }
 

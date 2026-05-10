@@ -14,6 +14,7 @@ mod invoke_agent_tool;
 mod invoke_entry;
 mod llm;
 pub mod mock_llm;
+mod mock_tool;
 mod orchestrator;
 pub mod otel_hooks_test;
 mod remote_agent;

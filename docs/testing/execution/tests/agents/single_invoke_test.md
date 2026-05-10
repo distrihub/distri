@@ -1,7 +1,7 @@
 ---
 name = "single_invoke_test"
 version = "1.0.0"
-description = "Smallest possible invoke_agent test: Single + Local + Named, no skills, no fan-out, no tools beyond final/invoke_agent. If this hangs, the bug is in the invoke() entry path itself, not the spawn fan-out."
+description = "Smallest possible invoke_agent test: one Named dispatch, no fan-out, no skills, no tools beyond final/invoke_agent. If this hangs, the bug is in the invoke() entry path itself."
 append_default_instructions = false
 max_iterations = 4
 tool_format = "provider"
@@ -13,17 +13,14 @@ builtin = ["final", "invoke_agent"]
 
 # Single invoke_agent test
 
-User says "go". Dispatch ONE worker via invoke_agent with Join::Single, wait for the result, then final.
+User says "go". Dispatch ONE worker via `invoke_agent`, wait for the result, then `final`.
 
 ## Procedure
 
-1. Call `invoke_agent` once, single-dispatch shorthand:
+1. Call `invoke_agent` with the worker's id and prompt:
 
    ```json
-   {
-     "agent": {"type": "named", "agent_id": "fanout_worker_agent"},
-     "message": {"role": "user", "parts": [{"part_type": "text", "data": "id is 99"}]}
-   }
+   {"prompt": "id is 99", "agent": "fanout_worker_agent"}
    ```
 
 2. Take the worker's result and pass it straight to `final`.
