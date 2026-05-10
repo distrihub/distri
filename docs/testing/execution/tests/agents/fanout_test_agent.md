@@ -23,7 +23,7 @@ You receive a user task that contains N integer ids (1..N). Your job: dispatch N
 
 1. Pull every integer id out of the user's task.
 
-2. In a SINGLE assistant turn, call `invoke_agent` ONCE with `join: "all"` and N targets — one AdHoc target per id. Each AdHoc target MUST scope its tools to exactly `["final", "load_skill", "Write"]` so the worker can't deviate into shell exploration, file globbing, etc. Include the id in the user message:
+2. In a SINGLE assistant turn, call `invoke_agent` ONCE with `join: "all"` and N AdHoc targets. Each AdHoc target inlines the FULL worker behavior in `system_prompt` (no `load_skill` round-trip — weak models like qwen don't reliably sequence load_skill before action), and scopes tools to exactly `["final", "Write"]`:
 
    ```json
    {
@@ -33,11 +33,8 @@ You receive a user task that contains N integer ids (1..N). Your job: dispatch N
        {
          "agent": {
            "type": "ad_hoc",
-           "system_prompt": "You are a leaf worker. Call load_skill({skill_id: \"fanout_worker\"}) first; then follow the loaded instructions exactly. One Write, one final, no loops, no sub-dispatches.",
-           "tools": {
-             "builtin": ["final", "load_skill"],
-             "external": ["Write"]
-           }
+           "system_prompt": "You are a leaf worker. The user message contains a single integer id (e.g. 'id is 3'). Your only job: call Write({file_path: \"/tmp/fanout-<id>.txt\", content: \"done-<id>\"}) ONCE; then call final({result: \"ok-<id>\"}) ONCE. Do NOT call any other tool. Do NOT loop. If you see other ids in your context, ignore them.",
+           "tools": {"builtin": ["final"], "external": ["Write"]}
          },
          "message": {
            "role": "user",

@@ -20,7 +20,7 @@ All tests use the same workload: write `N` marker files at `/tmp/fanout-<id>.txt
 |---------|--------|----------------------|---------------------------|---------------------------|-------|
 | A (Single, 1 worker)     | ✅ | `/tmp/fanout-99.txt`                                | 568 / 146 (worker)       | 655 / 53, 1.1K / 211, 1.2K / 89 (parent) | Cleanest. |
 | B (All, 3 workers)        | ✅ | `/tmp/fanout-1..3.txt`                              | 567 / 122 × 3 (workers)  | 1.2K / 312 (parent collects), 1.5K / 48 (final) | Recommended for fan-out. |
-| C (AdHoc + load_skill)    | ⚠️ | none in 1st run; `/tmp/task_X_result.json` instead  | 445 / 52..624 (workers)  | 1.5K / 466 (parent), 2.1K / 62 (final) | Worker LLM didn't reliably call `load_skill` even with constrained tools. Needs richer system_prompt. |
+| C (AdHoc + inline body)   | ✅ | `/tmp/fanout-4..6.txt`                              | 500 / 110..135 × 3       | 1.6K / 678 (parent), 2.3K / 53 (final) | AdHoc now inlines the FULL worker prompt (no `load_skill` round-trip — see C deep-dive for why). |
 | D (Detached, 5 workers)   | ✅ | `/tmp/fanout-1..5.txt`                              | 567 / 109..149 × 5       | 2.1K / 390, 3.1K / 45 (parent supervisor) | Best for long-running jobs. |
 | E (tool_search)           | ❌ | none                                                | 998 / 122, 1.4K / 57, 1.5K / 70 (parent retries) | `tool_search` returned 0 tools — `invoke_agent` isn't registered in the deferred-discoverable index yet. Gap to fix. |
 
@@ -64,21 +64,27 @@ parent → final("ok: N=3")
 - **Worker prompt cost:** 567 tokens × 3 in parallel; total wall-clock = the SLOWEST worker, not the sum.
 - **Total tokens:** ~1.2K parent dispatch + (567+122) × 3 workers + 1.5K parent final ≈ **5K total tokens, ~12 s wall-clock**.
 
-### C. Fan-out + AdHoc + load_skill — flexible but harder to control
+### C. Fan-out + AdHoc + inline body — for one-off workers
 
 ```
 parent → invoke_agent({join: "all", targets: [
-  {agent: {type: "ad_hoc", system_prompt: "...load_skill('fanout_worker') and apply...",
-          tools: {builtin: ["final","load_skill"], external: ["Write"]}},
+  {agent: {type: "ad_hoc",
+           system_prompt: "<FULL worker behavior inlined here>",
+           tools: {builtin: ["final"], external: ["Write"]}},
    message: "id is 4"}, ...
 ]})
 ```
 
-**What goes wrong without `tools` constraint:** the AdHoc target inherits `_adhoc_base`'s `external = ["*"]` wildcard, so the worker sees every tool the parent session has (`Read`, `Bash`, `Grep`, `Glob`, `Write`, …). The LLM with that toolset doesn't reliably call `load_skill` — it goes exploring with `Bash`/`Read` instead. Two of three workers in our run wrote markers; the third spent 90s reading random JSONs from `.distri/requests/`.
+**Why we inline the full worker behavior instead of using `load_skill`:** weak LLMs (qwen3.6-plus, the workspace's default here) don't reliably sequence `load_skill` before action. Earlier iterations of this variant had the AdHoc system_prompt say "Call load_skill('fanout_worker') first, then follow it" — about half of qwen's worker LLMs SKIPPED the load_skill call and went straight to writing whatever they imagined. With Claude or GPT-4 this pattern works fine; with qwen it doesn't.
 
-**With `tools: { builtin: ["final","load_skill"], external: ["Write"] }`:** workers stop deviating, but a smaller LLM (qwen3.6-plus here) STILL skipped `load_skill` and just called `Write` directly with hallucinated content (`{"task_id": 4, "result": "16"}`). The `system_prompt` was too short to bind the LLM to the load-then-apply pattern.
+**Two cleaner alternatives we tested:**
 
-**Verdict:** AdHoc + load_skill is technically expressive but operationally fragile. Use only when the skill body genuinely needs to be parameterized at call-time AND you control the worker LLM closely. **For 99% of cases, register the skill as a Named agent (B) and dispatch by name.**
+1. **Tools-constrained AdHoc** (`tools: { kind: "exact", tools: [...] }` with only the tools the worker can possibly need): solves the "worker explores `Bash`/`Read`/`Grep` instead of doing the job" failure mode (we observed this without the constraint — 1 of 3 workers spent 90s reading random JSONs from `.distri/requests/` because it had `Bash`/`Read` available via `_adhoc_base`'s wildcard `external = ["*"]`).
+2. **Inline the skill body** (current): no round-trip to `load_skill` at all; the parent's invoke_agent target carries the worker's full behavior in `system_prompt`. Trades parent-prompt size for reliability.
+
+**Verdict:** AdHoc with **inline body + `tools: { kind: "exact", ... }`** is reliable on weak LLMs. AdHoc + `load_skill` only works on strong LLMs (Claude, GPT-4). **For most use cases, register the skill as a Named agent (Variant B) and dispatch by name** — same reliability as inline AdHoc, smaller parent prompt, and worker definition is reusable across calls.
+
+The same general lesson: **trust the LLM model you're targeting, not an idealized one.** Weak models need more constrained tool sets and inline instructions; strong models can follow load-then-apply patterns just fine.
 
 ### D. Detached + supervisor tools — the long-running pattern
 
@@ -114,7 +120,7 @@ When fixed, this variant should yield the smallest parent prompt of all four —
 | Synchronous one-off delegation | **A** Single + Named |
 | Parallel fan-out to known agents | **B** All + Named ✅ default |
 | Background / long-running jobs you'll wait on later | **D** Detached + supervisor |
-| Skill-driven workers where the skill body is the contract | **C** AdHoc + `load_skill` (with `tools: exact`) |
+| Truly one-off worker (won't be reused) parameterized at call time | **C** AdHoc + inline body + `tools: exact` |
 | Smaller default prompts for an agent with many tools | **E** tool_search (once `invoke_agent` is indexed) |
 
 ---
@@ -205,9 +211,30 @@ cancel_task({id: "<root>"})  // cascades + fires CancellationSignal for in-proce
 
 ---
 
+## Default model — qwen3.6-plus and what it taught us
+
+The workspace this report ran against had `default_model = qwen3.6-plus` (Alibaba DashScope). Qwen-class models are weaker at tool-call sequencing than Claude/GPT-4. Specific failure modes observed:
+
+1. **Empty `tool_call_id` on stream chunks** — Alibaba's stream sends `Some("")` on arguments-delta chunks (only the first chunk has the real id). Our accumulator was overwriting the captured id with empty, breaking the `tool_call_id ↔ tool_result` correlation. Fixed in `llm.rs:717`.
+2. **Skip-step hallucination** — given `[final, load_skill, Write]` and a system_prompt that says "Call load_skill first", qwen sometimes skips load_skill and Writes directly with imagined content. Stronger LLMs follow the prompt. We worked around it by inlining the worker's full behavior in the AdHoc system_prompt (no load_skill step).
+3. **Tool exploration when wildcard external = ["*"]** — qwen reaches for `Bash`/`Read`/`Grep` when they're visible. Constraining via `tools: { kind: "exact", ... }` fixes it.
+
+**Implication for the framework:** every variant must pass on the weakest provider you support. If you target qwen, design tests against qwen's failure modes. **Don't pretend a stronger model fixes a fragile prompt.** Either pin a stronger model on the agent definitions (`model_settings.model = "claude-sonnet-4"`) OR design the prompts/tools to be robust on the weak baseline.
+
+## Deferred tool loading — used correctly
+
+`ToolDeliveryMode::Deferred` is the default in distri. It splits tools into:
+
+- **Core tools** (always full-schema): `final`, `invoke_agent`, `tool_search`, `write_todos`, `execute_shell`, `start_shell`, `load_skill`. These are the dispatch + control tools an agent always needs visible.
+- **Deferred tools** (name + description only): everything else (`Read`, `Bash`, `Grep`, `Glob`, …). Their full schemas appear only when the agent explicitly searches via `tool_search`.
+
+**Important: `invoke_agent` is core, not deferred.** It's the primary dispatch primitive — every agent that delegates needs it visible upfront. The supervisor tools (`get_task`, `wait_task`, `cancel_task`, `list_my_tasks`) are also core for the same reason.
+
+The variant E gap (`tool_search("invoke_agent")` returns 0) means `tool_search` searches a different index than `CORE_TOOLS`. To unblock variant E we need `invoke_agent` registered as a discoverable name — separate fix.
+
 ## Open issues / follow-ups
 
-1. **`invoke_agent` and supervisor tools should be deferred-discoverable.** Currently `tool_search("invoke_agent")` returns 0. Either add them to the deferred index OR mark them as discoverable-by-name when they're registered as builtins.
+1. **`invoke_agent` and supervisor tools should be discoverable via `tool_search`.** Currently `tool_search("invoke_agent")` returns 0 — they're in `CORE_TOOLS` but not in the searchable index. Either add them to the search index OR auto-load core tools on startup so they don't need search.
 2. **Default `DB_MAX_CONNECTIONS` is too low for fan-out.** With pool=3, three Detached workers + parent SSE deadlocks. Bumped to 20 in `.env` for testing — production sizing should be `≥ (max parallel agents per request) × 2 + active SSE streams`.
 3. **AdHoc workers need stronger system_prompts.** The `tools: { kind: "exact", ... }` constraint helps but doesn't bind the LLM to the load-then-apply pattern. Consider a fixed scaffold like "STEP 1: call load_skill, STEP 2: follow it" or just register the skill as a Named agent.
 4. **`tool_call_id empty; generating fallback uuid` warnings on Alibaba/qwen.** Fixed in the streaming accumulator (`llm.rs:717`) — Alibaba sends `Some("")` on arguments-delta chunks which was overwriting the real id from the first chunk.
@@ -215,22 +242,59 @@ cancel_task({id: "<root>"})  // cascades + fires CancellationSignal for in-proce
 
 ---
 
-## Architectural debate captured for the next session
+## Architectural debate (acted-on in this report's follow-up)
 
 Comparing our `Invocation` axis matrix to claude-code / Google ADK / Anthropic API parallel tool use:
 
 | Axis | Our model | Claude Code | ADK | Anthropic API |
 |------|-----------|-------------|-----|---------------|
-| Sync vs detached | `Join::Single` / `All` / `Detached` | always sync | always sync (`AgentTool`); long-running via `LongRunningFunctionTool` | always sync |
+| Sync vs detached | `Join::Single` / `All` / `Detached` | always sync (`Task`) | always sync (`AgentTool`); long-running via `LongRunningFunctionTool` | always sync |
 | Context inheritance | `ContextScope::Independent` / `Inherited` / `Shared` | always Independent | always Independent | always Independent |
-| Parallelism | `Join::All` with N targets | N tool calls in one turn | workflow DAG | N tool calls in one turn |
+| Parallelism | `Join::All` with N targets in one tool call | N `Task` tool calls in one turn | workflow DAG | N tool calls in one turn |
 
-**Implication:** `ContextScope` should drop entirely from the LLM-facing surface — `Independent` only. `Join::All` is redundant with N parallel tool calls. The simplest possible LLM-facing tool is:
+### Debate
+
+**Q1: Drop `ContextScope` (always Independent)?**
+
+| Pro | Con |
+|---|---|
+| Matches CC + ADK + Anthropic API (zero exceptions in the comparison set) | "Consultant" / handover use cases want parent history visible |
+| `Inherited` / `Shared` cause hard-to-debug context entanglement | The original `RunSkillTool::mode = "fork"` had a real use case |
+| If parent history is needed, pass it explicitly in the message — strictly better (caller controls what's relevant) | More work for the caller in the rare cases that genuinely want full inheritance |
+
+**Verdict: drop `ContextScope` from the LLM-facing tool. Independent only.** Keep as internal type for canonical record. If handover is genuinely needed it deserves its own primitive (`transfer_to_agent`) — the `context: shared` flag is too implicit.
+
+**Q2: Collapse `Join::All` → emit N tool calls in one turn?**
+
+| Pro | Con |
+|---|---|
+| Matches Anthropic API parallel tool use; LLMs are already trained on this | Bundled `Vector` is easier for an LLM to reason about "all done" |
+| Each result lands as separate `tool_result` for incremental processing | Small token overhead for N tool_result wrappers vs 1 Vector |
+| Simpler tool surface — no `join` field to advertise | LLM has to count incoming `tool_result`s to know all targets returned |
+
+**Verdict: drop `Join::All` from the LLM-facing tool.** "All done" is a non-issue — LLMs count tool_results fine. Token saving (~50 tokens × N) is negligible. Match the existing pattern.
+
+**Q3: Keep `wait: bool` for sync vs detached, or split into 2 tools?**
+
+| Pro single-tool-with-bool | Pro two-tools |
+|---|---|
+| Fewer tools advertised → smaller default prompt | Two tools signal intent more clearly |
+| Boolean fits the "do you want a result or a handle" shape | LLMs sometimes get confused by optional booleans |
+
+**Verdict: single tool with `wait: bool`** (default `true`). One fewer tool to advertise.
+
+### Resulting LLM-facing surface
 
 ```
-invoke_agent({agent: {...}, message: {...}, wait?: bool = true})
+invoke_agent({
+  agent: { type: "named", agent_id: "..." } | { type: "ad_hoc", system_prompt: "...", tools?: ... },
+  message: { role: "user", parts: [...] },
+  wait?: bool = true     // false → returns task_id immediately
+})
 ```
 
-Where `wait: false` ≡ Detached. The current 3-axis matrix stays as the internal canonical type for analytics + replay, but the LLM only sees `agent + message + wait`.
+That's it. No `context`, no `join`, no `executor`. Three fields the LLM has to think about.
 
-Plan to act on this in the follow-up branch.
+Internal canonical `Invocation` struct keeps the full axes (for analytics, replay, and the schema's `invocation` JSONB column). The LLM-facing tool is a thin projection.
+
+**Status: this report's follow-up branch will execute Q1 + Q2 + Q3. The internal Invocation type remains backward-compatible.**
