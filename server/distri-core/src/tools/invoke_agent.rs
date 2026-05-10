@@ -50,7 +50,64 @@ use crate::agent::ExecutorContext;
 use crate::tools::ExecutorContextTool;
 use crate::AgentError;
 use distri_types::invocation::Invocation;
-use distri_types::{Part, Tool, ToolCall, ToolContext};
+use distri_types::{Part, RuntimeMode, Tool, ToolCall, ToolContext};
+
+// ── Agent-access policy ──────────────────────────────────────────────────
+//
+// These helpers govern WHICH agents an invoking agent is allowed to dispatch
+// via `invoke_agent`. They moved here from the deleted `universal_agent`
+// module — same semantics, same callers.
+
+/// Built-in agent names that are always available regardless of `sub_agents`
+/// config. Seeded by cloud's `seed_default_agents()` on startup.
+pub const ALWAYS_AVAILABLE_BUILTINS: &[&str] = &[
+    "distri",
+    "distri_runner",
+    "distri_browser_runner",
+    // Ad-hoc agent base: invoke_agent with AgentRef::AdHoc resolves here
+    // and applies overrides at dispatch time.
+    "_adhoc_base",
+    "plan",
+    "explore",
+];
+
+/// Strip the `_system/` namespace prefix if present. Cloud seeds system
+/// agents under the bare name (`plan`, `explore`); standalone server seeds
+/// the prefixed form. Normalising lets either form match.
+pub fn strip_system_prefix(name: &str) -> &str {
+    name.strip_prefix("_system/").unwrap_or(name)
+}
+
+/// Whether an agent is dispatchable from the calling agent's context.
+///
+/// Accessible if:
+/// - It's in [`ALWAYS_AVAILABLE_BUILTINS`] (either form), OR
+/// - The caller's `sub_agents` contains `"*"`, OR
+/// - It's explicitly listed in the caller's `sub_agents`.
+pub fn is_agent_accessible(agent_name: &str, sub_agents: &[String]) -> bool {
+    let stripped = strip_system_prefix(agent_name);
+    if ALWAYS_AVAILABLE_BUILTINS.contains(&agent_name)
+        || ALWAYS_AVAILABLE_BUILTINS.contains(&stripped)
+    {
+        return true;
+    }
+    if sub_agents.iter().any(|sa| sa == "*") {
+        return true;
+    }
+    sub_agents
+        .iter()
+        .any(|sa| sa == agent_name || sa == stripped || strip_system_prefix(sa) == stripped)
+}
+
+/// Resolve the logical "code" alias to a concrete system agent based on the
+/// caller's runtime. Browser → `distri_browser_runner`; Cli / Cloud →
+/// `distri_runner`.
+pub fn resolve_code_agent(runtime_mode: &RuntimeMode) -> &'static str {
+    match runtime_mode {
+        RuntimeMode::Browser => "distri_browser_runner",
+        RuntimeMode::Cli | RuntimeMode::Cloud => "distri_runner",
+    }
+}
 
 /// LLM-facing dispatch tool. Takes a typed Invocation, routes it
 /// through `AgentOrchestrator::invoke()`, returns the typed

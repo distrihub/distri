@@ -714,8 +714,20 @@ impl LLMExecutor {
                                     .entry(tool_call.index as usize)
                                     .or_insert_with(PartialToolCall::default);
 
-                                if let Some(id) = tool_call.id.clone() {
-                                    entry.id = Some(id);
+                                // Only set the id from a chunk that actually
+                                // carries one. Some providers (notably
+                                // Alibaba's qwen) send `Some("")` on the
+                                // arguments-delta chunks which would
+                                // overwrite the real id captured from the
+                                // first chunk and force the
+                                // `ensure_tool_call_ids` fallback to
+                                // synthesize a UUID — breaking the
+                                // tool_call_id ↔ tool_result correlation
+                                // the LLM expects on the next turn.
+                                if let Some(id) = tool_call.id.as_ref() {
+                                    if !id.is_empty() {
+                                        entry.id = Some(id.clone());
+                                    }
                                 }
 
                                 if let Some(function) = &tool_call.function {

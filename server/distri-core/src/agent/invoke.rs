@@ -156,16 +156,34 @@ impl AgentOrchestrator {
                 // `invocation.targets` indices). Per-target failures
                 // fail the whole invocation — the parent's tool-call
                 // gets a single error rather than a partial Vector.
+                //
+                // The spawned tasks must re-establish the tenant
+                // context (TenantTaskStore / TenantAgentStore look up
+                // `with_user_and_workspace` task-local). Without the
+                // wrapper the spawned task runs with current_user=None
+                // and every store lookup fails silently, surfacing as
+                // a "stream failed: error decoding response body" on
+                // the CLI.
+                let user_id = parent_ctx.user_id.clone();
+                let ws_uuid = parent_ctx
+                    .workspace_id
+                    .as_deref()
+                    .and_then(|s| uuid::Uuid::parse_str(s).ok());
                 let mut handles = Vec::with_capacity(invocation.targets.len());
                 for target in invocation.targets.iter().cloned() {
                     let blob = invocation_blob.clone();
                     let parent_ctx = parent_ctx.clone();
                     let orch = self.clone();
                     let invocation = invocation.clone();
-                    handles.push(tokio::spawn(async move {
-                        orch.dispatch_target_sync(target, &invocation, &blob, &parent_ctx)
-                            .await
-                    }));
+                    let user_id = user_id.clone();
+                    handles.push(tokio::spawn(distri_auth::context::with_user_and_workspace(
+                        user_id,
+                        ws_uuid,
+                        async move {
+                            orch.dispatch_target_sync(target, &invocation, &blob, &parent_ctx)
+                                .await
+                        },
+                    )));
                 }
 
                 let mut results = Vec::with_capacity(handles.len());
@@ -423,30 +441,39 @@ impl AgentOrchestrator {
 
         let orch = self.clone();
         let message = target.message;
-        tokio::spawn(async move {
-            let hooks: Arc<dyn crate::agent::types::AgentHooks> = Arc::new(
-                crate::agent::hooks::CombinedHooks::new(orch.system_hooks.clone()),
-            );
-            let agent = crate::agent::remote::RemoteAgent {
-                definition: def,
-                runner,
-                broadcaster: orch.runtime.broadcaster_arc(),
-                hooks,
-            };
-            if let Err(e) = crate::agent::types::BaseAgent::invoke_stream(
-                &agent,
-                message,
-                child_ctx,
-            )
-            .await
-            {
-                tracing::warn!(
-                    target: "invoke.detached",
-                    error = %e,
-                    "detached remote invocation loop failed",
+        let user_id = parent_ctx.user_id.clone();
+        let ws_uuid = parent_ctx
+            .workspace_id
+            .as_deref()
+            .and_then(|s| uuid::Uuid::parse_str(s).ok());
+        tokio::spawn(distri_auth::context::with_user_and_workspace(
+            user_id,
+            ws_uuid,
+            async move {
+                let hooks: Arc<dyn crate::agent::types::AgentHooks> = Arc::new(
+                    crate::agent::hooks::CombinedHooks::new(orch.system_hooks.clone()),
                 );
-            }
-        });
+                let agent = crate::agent::remote::RemoteAgent {
+                    definition: def,
+                    runner,
+                    broadcaster: orch.runtime.broadcaster_arc(),
+                    hooks,
+                };
+                if let Err(e) = crate::agent::types::BaseAgent::invoke_stream(
+                    &agent,
+                    message,
+                    child_ctx,
+                )
+                .await
+                {
+                    tracing::warn!(
+                        target: "invoke.detached",
+                        error = %e,
+                        "detached remote invocation loop failed",
+                    );
+                }
+            },
+        ));
 
         Ok(task_id)
     }
@@ -479,18 +506,27 @@ impl AgentOrchestrator {
         let definition_overrides = resolved.definition_overrides;
         let message = target.message;
         let orch = self.clone();
-        tokio::spawn(async move {
-            if let Err(e) = orch
-                .call_agent_stream(&agent_id, message, child_ctx, definition_overrides)
-                .await
-            {
-                tracing::warn!(
-                    target: "invoke.detached",
-                    error = %e,
-                    "detached invocation loop failed"
-                );
-            }
-        });
+        let user_id = parent_ctx.user_id.clone();
+        let ws_uuid = parent_ctx
+            .workspace_id
+            .as_deref()
+            .and_then(|s| uuid::Uuid::parse_str(s).ok());
+        tokio::spawn(distri_auth::context::with_user_and_workspace(
+            user_id,
+            ws_uuid,
+            async move {
+                if let Err(e) = orch
+                    .call_agent_stream(&agent_id, message, child_ctx, definition_overrides)
+                    .await
+                {
+                    tracing::warn!(
+                        target: "invoke.detached",
+                        error = %e,
+                        "detached invocation loop failed"
+                    );
+                }
+            },
+        ));
 
         Ok(task_id)
     }

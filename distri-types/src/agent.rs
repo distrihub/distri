@@ -798,7 +798,13 @@ pub const VALID_BUILTIN_TOOLS: &[&str] = &[
     // Agent control
     "final",
     "reflect",
-    "call_agent",
+    // Sub-agent dispatch (typed Invocation; replaces call_agent + run_skill).
+    "invoke_agent",
+    // Supervisor tools — query / wait / cancel / list children.
+    "get_task",
+    "wait_task",
+    "cancel_task",
+    "list_my_tasks",
     // Browser & scraping
     "browsr_scrape",
     "browsr_browser",
@@ -813,8 +819,9 @@ pub const VALID_BUILTIN_TOOLS: &[&str] = &[
     "distri_execute_code",
     // Tool discovery
     "tool_search",
+    // Skills (load body into current agent context; sub-agents call this
+    // themselves after being dispatched via invoke_agent).
     "load_skill",
-    "run_skill",
     // Connection & secrets
     "inject_connection_env",
     // Logging
@@ -829,13 +836,12 @@ pub const VALID_BUILTIN_TOOLS: &[&str] = &[
 /// These are the most commonly used tools that agents need immediately.
 pub const CORE_TOOLS: &[&str] = &[
     "final",
-    "call_agent",
+    "invoke_agent",
     "tool_search",
     "write_todos",
     "execute_shell",
     "start_shell",
     "load_skill",
-    "run_skill",
 ];
 
 /// Default threshold: defer tools when total count exceeds this.

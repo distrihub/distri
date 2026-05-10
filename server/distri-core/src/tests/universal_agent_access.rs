@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::agent::context::{ForkOptions, ForkType};
 use crate::agent::ExecutorContext;
-use crate::tools::universal_agent::{
+use crate::tools::invoke_agent::{
     is_agent_accessible, resolve_code_agent, ALWAYS_AVAILABLE_BUILTINS,
 };
 use crate::AgentOrchestratorBuilder;

@@ -497,20 +497,22 @@ impl AgentOrchestrator {
             tools.push(final_tool);
         }
 
-        // Auto-register UniversalAgentTool ONLY when the agent definition's
-        // `tools.builtin` is empty or unset. An agent that explicitly enumerates
-        // its builtins (e.g. `_adhoc_base` with `builtin = ["final"]`, or a
-        // fork worker dispatched via `call_agent({tools: ["final"]})`) is
-        // opting out of delegation by design — adding `call_agent` back would
-        // re-enable the recursion loop the explicit list was meant to block.
-        let has_call_agent = tools.iter().any(|t| t.get_name() == "call_agent");
+        // Auto-register InvokeAgentTool ONLY when the agent definition's
+        // `tools.builtin` is empty or unset. An agent that explicitly
+        // enumerates its builtins (e.g. `_adhoc_base` with
+        // `builtin = ["final"]`, or a worker dispatched via
+        // `invoke_agent({tools: { kind: "exact", tools: ["final"] }})`) is
+        // opting out of delegation by design — adding `invoke_agent` back
+        // would re-enable the recursion loop the explicit list was meant
+        // to block.
+        let has_invoke = tools.iter().any(|t| t.get_name() == "invoke_agent");
         let has_explicit_builtin = definition
             .tools
             .as_ref()
             .map(|t| !t.builtin.is_empty())
             .unwrap_or(false);
-        if !has_call_agent && !has_explicit_builtin {
-            tools.push(Arc::new(crate::tools::UniversalAgentTool));
+        if !has_invoke && !has_explicit_builtin {
+            tools.push(Arc::new(crate::tools::InvokeAgentTool));
         }
 
         let is_browser_agent =
@@ -640,17 +642,17 @@ impl AgentOrchestrator {
                             })
                             .await;
 
-                        // Add skill tools: load_skill (inline reference) +
-                        // run_skill (fork-into-skill worker). Both depend on
-                        // the skill store, so they're registered together
-                        // whenever the agent has available_skills declared.
+                        // Add `load_skill` for inline skill reference
+                        // (loads body into current agent context). Per the
+                        // claude-code split, "use skill X in a sub-agent"
+                        // is the parent calling `invoke_agent` with a
+                        // prompt that says "load skill X and do Y" —
+                        // sub-agent then calls `load_skill` itself.
                         context
-                            .extend_tools(vec![
-                                Arc::new(crate::tools::skill_script::LoadSkillTool)
-                                    as Arc<dyn Tool>,
-                                Arc::new(crate::tools::run_skill::RunSkillTool)
-                                    as Arc<dyn Tool>,
-                            ])
+                            .extend_tools(vec![Arc::new(
+                                crate::tools::skill_script::LoadSkillTool,
+                            )
+                                as Arc<dyn Tool>])
                             .await;
                     }
                 }
@@ -668,7 +670,7 @@ impl AgentOrchestrator {
                     let mut sub_agent_lines = Vec::new();
 
                     // Always-available system agents
-                    for builtin_name in crate::tools::universal_agent::ALWAYS_AVAILABLE_BUILTINS {
+                    for builtin_name in crate::tools::invoke_agent::ALWAYS_AVAILABLE_BUILTINS {
                         if let Some(agent_cfg) = self.get_agent(builtin_name).await {
                             let desc = match agent_cfg {
                                 distri_types::configuration::AgentConfig::StandardAgent(def) => {
@@ -691,7 +693,7 @@ impl AgentOrchestrator {
                     // Track names we've already listed so explicit entries and
                     // the wildcard expansion don't collide.
                     let mut listed: std::collections::HashSet<String> =
-                        crate::tools::universal_agent::ALWAYS_AVAILABLE_BUILTINS
+                        crate::tools::invoke_agent::ALWAYS_AVAILABLE_BUILTINS
                             .iter()
                             .map(|s| s.to_string())
                             .collect();

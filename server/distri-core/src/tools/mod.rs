@@ -31,17 +31,14 @@ pub mod resolve;
 pub mod send_message;
 pub mod simulator;
 pub mod skill_script;
-pub mod run_skill;
 pub mod supervisor;
 pub mod tool_search;
-pub mod universal_agent;
 pub use builtin::{get_builtin_tools, ConsoleLogTool, DistriExecuteCodeTool, FinalTool};
 pub use inject_env::InjectConnectionEnvTool;
 pub use invoke_agent::InvokeAgentTool;
 pub use send_message::SendMessageTool;
 pub use supervisor::{CancelTaskTool, GetTaskTool, ListMyTasksTool, WaitTaskTool};
 pub use tool_search::ToolSearchTool;
-pub use universal_agent::UniversalAgentTool;
 
 #[derive(Debug, Clone)]
 pub struct DynExecutorTool {
@@ -132,7 +129,6 @@ pub fn cast_to_executor_context_tool(
         "execute_shell" => Ok(Box::new(shell::ExecuteShellTool)),
         "stop_shell" => Ok(Box::new(shell::StopShellTool)),
         "load_skill" => Ok(Box::new(skill_script::LoadSkillTool)),
-        "run_skill" => Ok(Box::new(run_skill::RunSkillTool)),
         // Code execution
         "distri_execute_code" => Ok(Box::new(DistriExecuteCodeTool)),
         // Tool discovery
@@ -141,8 +137,13 @@ pub fn cast_to_executor_context_tool(
         "inject_connection_env" => Ok(Box::new(inject_env::InjectConnectionEnvTool)),
         // Artifact sharing (reads a file, persists via ArtifactWrapper, returns Part::Artifact)
         "save_artifact" => Ok(Box::new(save_artifact::SaveArtifactTool)),
-        // Universal agent tool
-        "call_agent" => Ok(Box::new(UniversalAgentTool)),
+        // Sub-agent dispatch via typed Invocation (replaces call_agent / run_skill).
+        "invoke_agent" => Ok(Box::new(InvokeAgentTool)),
+        // Supervisor tools — query / wait / cancel / list children spawned via invoke_agent.
+        "get_task" => Ok(Box::new(GetTaskTool)),
+        "wait_task" => Ok(Box::new(WaitTaskTool)),
+        "cancel_task" => Ok(Box::new(CancelTaskTool)),
+        "list_my_tasks" => Ok(Box::new(ListMyTasksTool)),
         // Inter-agent communication
         "send_message" => Ok(Box::new(SendMessageTool)),
         _ => Err(AgentError::ToolExecution(format!(
