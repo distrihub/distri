@@ -44,7 +44,7 @@ run_test_contains() {
     echo "FAIL (exit ${exit_code})"
     ERRORS="${ERRORS}\n  FAIL: ${name}\n    Command: $*\n    Output: ${output}\n"
     FAILED=$((FAILED + 1))
-  elif echo "${output}" | grep -qi -- "${expected}"; then
+  elif echo "${output}" | grep -qiF -- "${expected}"; then
     echo "OK"; PASSED=$((PASSED + 1))
   else
     echo "FAIL (expected '${expected}' not found)"
@@ -60,10 +60,18 @@ skip_test() {
 
 # Guards: skip the rest of the file silently if a precondition is missing.
 require_real_llm() {
-  if [[ -z "${OPENAI_API_KEY:-}" && -z "${ANTHROPIC_API_KEY:-}" ]]; then
-    skip_test "$(basename "$0")" "no provider key in .env"
-    summary
-    exit 0
+  # On cloud, provider keys live server-side in the workspace, so the
+  # local env doesn't need them. On opensource we need a key locally.
+  if [[ "${SKIP_REAL_LLM:-0}" == "1" ]]; then
+    skip_test "$(basename "$0")" "SKIP_REAL_LLM=1"
+    summary; exit 0
+  fi
+  local backend="${DISTRI_BACKEND:-cloud}"
+  if [[ "${backend}" == "opensource" \
+        && -z "${OPENAI_API_KEY:-}" \
+        && -z "${ANTHROPIC_API_KEY:-}" ]]; then
+    skip_test "$(basename "$0")" "opensource backend with no provider key in env"
+    summary; exit 0
   fi
 }
 
@@ -77,8 +85,22 @@ require_cloud() {
 
 require_server() {
   local url="${DISTRI_BASE_URL:-http://localhost:1341/v1}"
-  if ! curl -sf "${url%/v1}/health" >/dev/null 2>&1 \
-     && ! curl -sf "${url%/v1}/healthz" >/dev/null 2>&1; then
+  local root="${url%/v1}"
+  # /health and /healthz both 404 on some cloud configs but the API is
+  # still up; treat *any* HTTP response (even 4xx) as "server reachable",
+  # only `Connection refused` / DNS failure means down.
+  local code
+  code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
+    "${root}/health" 2>/dev/null || echo "000")
+  if [[ "${code}" == "000" ]]; then
+    code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
+      "${root}/healthz" 2>/dev/null || echo "000")
+  fi
+  if [[ "${code}" == "000" ]]; then
+    code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
+      "${url}/agents" 2>/dev/null || echo "000")
+  fi
+  if [[ "${code}" == "000" ]]; then
     skip_test "$(basename "$0")" "no server at ${url}"
     summary
     exit 0

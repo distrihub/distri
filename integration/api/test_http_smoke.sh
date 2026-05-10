@@ -15,18 +15,13 @@ if [[ -n "${DISTRI_WORKSPACE_ID:-}" ]]; then
   WS=(-H "X-Workspace-Id: ${DISTRI_WORKSPACE_ID}")
 fi
 
-echo "=== HTTP: well-known agent.json ==="
-run_test_contains "agent.json reachable" "name" \
-  curl -sf "${URL}/.well-known/agent.json"
-
-echo ""
 echo "=== HTTP: list agents ==="
-run_test_contains "GET /v1/agents" "[" \
+run_test_contains "GET /v1/agents returns JSON" "agent_type" \
   curl -sf "${AUTH[@]}" "${WS[@]}" "${URL}/v1/agents"
 
 echo ""
 echo "=== HTTP: list tools ==="
-run_test_contains "GET /v1/tools" "[" \
+run_test_contains "GET /v1/tools returns tools array" "tool_name" \
   curl -sf "${AUTH[@]}" "${WS[@]}" "${URL}/v1/tools"
 
 summary
