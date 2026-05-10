@@ -852,7 +852,12 @@ impl AgentOrchestrator {
         Ok(result)
     }
 
-    pub(crate) async fn call_agent_stream(
+    /// Dispatch entry point used by `UniversalAgentTool` and the integration
+    /// test harness in `distri-cloud/cloud/tests`. Performs runtime
+    /// resolution + (if needed) hands the call to a `BackgroundRunner`.
+    /// Promoted from `pub(crate)` because cloud-side dispatch tests need
+    /// to assert on this directly without spinning up an LLM.
+    pub async fn call_agent_stream(
         &self,
         agent_id: &str,
         message: Message,
