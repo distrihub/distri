@@ -274,27 +274,59 @@ Comparing our `Invocation` axis matrix to claude-code / Google ADK / Anthropic A
 
 **Verdict: drop `Join::All` from the LLM-facing tool.** "All done" is a non-issue — LLMs count tool_results fine. Token saving (~50 tokens × N) is negligible. Match the existing pattern.
 
-**Q3: Keep `wait: bool` for sync vs detached, or split into 2 tools?**
+**Q3: Sync vs detached — where does this decision live?**
 
-| Pro single-tool-with-bool | Pro two-tools |
+| Pro: LLM picks via tool param (`wait: bool`) | Pro: caller picks via request metadata |
 |---|---|
-| Fewer tools advertised → smaller default prompt | Two tools signal intent more clearly |
-| Boolean fits the "do you want a result or a handle" shape | LLMs sometimes get confused by optional booleans |
+| Agent has runtime context the caller might lack (estimated job duration) | The decision is a deployment/UX concern, not content. CLI vs Slack-bot vs batch job each have different defaults |
+| Fewer surfaces to plumb | LLM doesn't have to guess what environment it's running in |
+| | LLM-facing tool stays minimal: `{agent, message}` — the simplest possible dispatch |
+| | Caller can default per-thread / per-channel without prompt engineering |
 
-**Verdict: single tool with `wait: bool`** (default `true`). One fewer tool to advertise.
+**Verdict: caller picks via request metadata.** The LLM emits `invoke_agent({agent, message})` and the orchestrator reads `metadata.execution_mode` to decide sync vs detached for that turn. If a future use case needs runtime choice by the agent, ship a separate `set_execution_mode` tool the agent calls explicitly — but that's a different concern.
 
 ### Resulting LLM-facing surface
 
 ```
 invoke_agent({
-  agent: { type: "named", agent_id: "..." } | { type: "ad_hoc", system_prompt: "...", tools?: ... },
-  message: { role: "user", parts: [...] },
-  wait?: bool = true     // false → returns task_id immediately
+  agent: { type: "named", agent_id: "..." }
+       | { type: "ad_hoc", system_prompt: "...", tools?: ... },
+  message: { role: "user", parts: [...] }
 })
 ```
 
-That's it. No `context`, no `join`, no `executor`. Three fields the LLM has to think about.
+**Two fields.** No `context`, no `join`, no `executor`, no `wait`.
 
-Internal canonical `Invocation` struct keeps the full axes (for analytics, replay, and the schema's `invocation` JSONB column). The LLM-facing tool is a thin projection.
+The orchestrator picks the actual `Join` from `metadata.execution_mode`:
+- `"sync"` (default) → `Join::Single` per tool call. LLM gets the result back as `tool_result`.
+- `"detached"` → `Join::Detached`. LLM gets `{task_id}` and uses supervisor tools (`get_task`, `wait_task`, `cancel_task`) to manage the background work.
 
-**Status: this report's follow-up branch will execute Q1 + Q2 + Q3. The internal Invocation type remains backward-compatible.**
+Parallelism comes from the LLM emitting **N invoke_agent calls in one assistant turn** — matches Anthropic API parallel tool use exactly. The orchestrator dispatches each call concurrently per the session's execution_mode.
+
+Internal canonical `Invocation` struct keeps the full axes (for analytics, replay, and the schema's `invocation` JSONB column). The LLM-facing tool is a minimal projection.
+
+### 3-surface implementation plan for `metadata.execution_mode`
+
+The mode lives in `MessageSendParams.metadata.execution_mode` and propagates as follows:
+
+1. **API / Rust side**
+   - Add `execution_mode: Option<ExecutionMode>` to the metadata payload deserialized in `a2a/stream.rs`'s message-send handler. `ExecutionMode = Sync | Detached`.
+   - Thread it onto the parent's `ExecutorContext` (new field `execution_mode: ExecutionMode`).
+   - In `agent::invoke::invoke()`, read it from `parent_ctx.execution_mode`. The current `Join::Single | All | Detached` comes from this — no LLM input.
+   - Drop `join` from `InvokeAgentTool`'s parameter schema; drop the `Join` field from the typed `Invocation` the LLM ever sees (it remains in the persisted JSONB). LLM tool call shape becomes the 2-field form above.
+
+2. **distrijs (`@distri/core` + `@distri/react`)**
+   - Add `executionMode?: 'sync' | 'detached'` to `useChat` options.
+   - Plumb to `DistriClient.sendMessage` as `metadata.execution_mode`.
+   - Default `'sync'`. Background/long-running clients (workflow runners, scheduled tasks) opt into `'detached'`.
+
+3. **distri-cli**
+   - Add `--detached` / `--sync` flags to `distri run`. Default: `--sync` (interactive CLI is sync by nature).
+   - When `--detached`, the CLI prints the task_id from the first response and exits, rather than streaming events. A separate `distri tasks watch <id>` (or `wait`) follows up.
+
+### Out of scope for this report (later)
+
+- A `set_execution_mode` tool the agent itself can call mid-run (e.g., "this looks long, switch to detached"). Useful in 5% of cases; design later.
+- Per-target execution mode (one target detached, another sync in the same fan-out). Force the caller to express that as two separate tool calls.
+
+**Status:** Q1 + Q2 + Q3 are all corrections to the LLM-facing surface only. The internal `Invocation` struct, the `tasks.invocation` JSONB column, and the orchestrator's dispatch primitives stay the same. The follow-up branch is purely a projection change + the metadata plumbing on the 3 surfaces above.
