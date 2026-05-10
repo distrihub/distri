@@ -552,7 +552,12 @@ pub struct Task {
     pub updated_at: i64,
 }
 
+/// Lifecycle state of a task. Snake-case in JSON to match the
+/// `tasks.status` schema column ("pending" / "running" /
+/// "input_required" / "completed" / "failed" / "canceled") and the
+/// SDK's typed `AgentTaskStatus` enum.
 #[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, PartialEq, Default, ToSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum TaskStatus {
     #[default]
     Pending,

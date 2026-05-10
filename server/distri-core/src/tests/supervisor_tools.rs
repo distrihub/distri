@@ -114,7 +114,7 @@ async fn get_task_returns_row_for_existing_id() {
     assert_eq!(data["id"], child_a);
     assert_eq!(data["thread_id"], thread_id);
     assert_eq!(data["parent_task_id"], root);
-    assert_eq!(data["status"], "Running");
+    assert_eq!(data["status"], "running");
 }
 
 #[tokio::test]
@@ -249,7 +249,7 @@ async fn wait_task_returns_immediately_for_already_terminal() {
         .expect("wait ok");
     let data = data_payload(&parts);
     assert_eq!(data["id"], child_a);
-    assert_eq!(data["status"], "Completed");
+    assert_eq!(data["status"], "completed");
     assert_eq!(data["timed_out"], false);
 }
 
@@ -305,7 +305,7 @@ async fn wait_task_blocks_until_terminal_event_arrives() {
         .expect("wait ok");
     let data = data_payload(&parts);
     assert_eq!(data["id"], child_a);
-    assert_eq!(data["status"], "Completed");
+    assert_eq!(data["status"], "completed");
 }
 
 #[tokio::test]
@@ -323,5 +323,5 @@ async fn wait_task_reports_timeout_when_no_terminal_event() {
     let data = data_payload(&parts);
     assert_eq!(data["timed_out"], true);
     // Row is still Running.
-    assert_eq!(data["status"], "Running");
+    assert_eq!(data["status"], "running");
 }
