@@ -39,6 +39,7 @@ pub fn get_builtin_tools() -> Vec<Arc<dyn Tool>> {
         Arc::new(crate::tools::supervisor::WaitTaskTool) as Arc<dyn Tool>,
         Arc::new(crate::tools::supervisor::CancelTaskTool) as Arc<dyn Tool>,
         Arc::new(crate::tools::supervisor::ListMyTasksTool) as Arc<dyn Tool>,
+        Arc::new(crate::tools::invoke_agent::InvokeAgentTool) as Arc<dyn Tool>,
     ]
 }
 
