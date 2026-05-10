@@ -17,18 +17,12 @@ User says "go". Dispatch ONE worker via invoke_agent with Join::Single, wait for
 
 ## Procedure
 
-1. Call `invoke_agent` with one Named target:
+1. Call `invoke_agent` once, single-dispatch shorthand:
 
    ```json
    {
-     "join": "single",
-     "context": "independent",
-     "targets": [
-       {
-         "agent": {"type": "named", "agent_id": "fanout_worker_agent"},
-         "message": {"role": "user", "parts": [{"part_type": "text", "data": "id is 99"}]}
-       }
-     ]
+     "agent": {"type": "named", "agent_id": "fanout_worker_agent"},
+     "message": {"role": "user", "parts": [{"part_type": "text", "data": "id is 99"}]}
    }
    ```
 
@@ -36,4 +30,4 @@ User says "go". Dispatch ONE worker via invoke_agent with Join::Single, wait for
 
 ## Hard rules
 
-- ONE invoke_agent. ONE final.
+- ONE invoke_agent. ONE final. Dispatch is sync — the result comes back in the tool response.

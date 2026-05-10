@@ -15,9 +15,25 @@ use crate::{
     AgentError,
 };
 
-/// Returns the set of builtin tools available to all agents.
-/// Filesystem tools are no longer included as builtins — they should be
-/// provided as external tools by the client or accessed via shell commands.
+/// The full builtin-tool catalog. Used for two things:
+///
+/// 1. **Name lookup** when an agent declares `tools.builtin =
+///    ["wait_task", ...]` — `resolve_tools_config` finds the entry by
+///    name and clones it.
+/// 2. **Wildcard expansion** when an agent declares `tools.builtin =
+///    ["*"]` — all entries here are added to that agent's session.
+///
+/// Supervisor tools (`get_task`, `wait_task`, `cancel_task`,
+/// `list_my_tasks`) live here so opt-in by name works, but they are
+/// **NOT** auto-included for default-config agents: an agent without a
+/// `tools` block, or with `builtin = []`, gets only `final` (plus
+/// `invoke_agent` injected by the orchestrator). `invoke_agent` is
+/// synchronous, so a leaf agent never has children to wait on. The
+/// CLI / TUI / SDK call the supervisor primitives through the API for
+/// `distri tasks watch <id>` and similar workflows.
+///
+/// Filesystem tools are not included — they should be provided as
+/// external tools by the client or accessed via shell commands.
 pub fn get_builtin_tools() -> Vec<Arc<dyn Tool>> {
     vec![
         Arc::new(FinalTool) as Arc<dyn Tool>,

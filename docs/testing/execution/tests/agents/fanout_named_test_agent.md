@@ -19,11 +19,10 @@ You receive a user task that contains N integer ids. Dispatch N parallel sub-age
 
 1. Pull every integer id out of the user's task.
 
-2. In a SINGLE assistant turn, call `invoke_agent` ONCE with `join: "all"` and N targets — one Named target per id. The agent_id is `fanout_worker_agent`; the id goes in the user message:
+2. In a SINGLE assistant turn, call `invoke_agent` ONCE with N targets in the fan-out form — one Named target per id. The agent_id is `fanout_worker_agent`; the id goes in the user message:
 
    ```json
    {
-     "join": "all",
      "context": "independent",
      "targets": [
        {
@@ -33,6 +32,8 @@ You receive a user task that contains N integer ids. Dispatch N parallel sub-age
      ]
    }
    ```
+
+   Dispatch is sync — control returns to you only after all N targets finish.
 
 3. Once all N have returned, call `final({ result: "ok: N=<count of returned results>" })`.
 

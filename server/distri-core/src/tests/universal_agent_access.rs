@@ -136,8 +136,8 @@ async fn test_call_agent_tool_always_registered() {
 
     let tool_names: Vec<String> = resolved.all_tools.iter().map(|t| t.get_name()).collect();
     assert!(
-        tool_names.contains(&"call_agent".to_string()),
-        "call_agent must always be registered in get_agent_tools, got: {:?}",
+        tool_names.contains(&"invoke_agent".to_string()),
+        "invoke_agent must always be registered in get_agent_tools, got: {:?}",
         tool_names
     );
 }
@@ -209,10 +209,11 @@ async fn test_no_call_name_tools_registered() {
 
     let tool_names: Vec<String> = resolved.all_tools.iter().map(|t| t.get_name()).collect();
 
-    // There should be NO per-agent call_<name> tools
+    // There should be NO per-agent call_<name> tools — those were the
+    // legacy dispatch surface, replaced by invoke_agent.
     let call_name_tools: Vec<&String> = tool_names
         .iter()
-        .filter(|n| n.starts_with("call_") && *n != "call_agent")
+        .filter(|n| n.starts_with("call_"))
         .collect();
     assert!(
         call_name_tools.is_empty(),
@@ -220,9 +221,9 @@ async fn test_no_call_name_tools_registered() {
         call_name_tools
     );
 
-    // But call_agent should be present
+    // invoke_agent is the single LLM-facing dispatch surface now.
     assert!(
-        tool_names.contains(&"call_agent".to_string()),
-        "call_agent must be present instead of call_<name> tools"
+        tool_names.contains(&"invoke_agent".to_string()),
+        "invoke_agent must be present as the single dispatch tool"
     );
 }

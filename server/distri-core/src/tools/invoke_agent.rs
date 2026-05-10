@@ -1,45 +1,36 @@
-//! `invoke_agent` — single LLM-facing tool that takes a typed
-//! [`Invocation`](distri_types::invocation::Invocation) and routes it
-//! through [`AgentOrchestrator::invoke()`].
-//!
-//! This is the long-term replacement for the trio of legacy dispatch
-//! tools (`UniversalAgentTool` / `call_agent` + `RunSkillTool::mode = …`
-//! + `new_task` / `new_thread`). It exposes the full Invocation axis
-//! matrix in one tool: targets / context / join / executor / tools.
+//! `invoke_agent` — single LLM-facing tool. Always synchronous: control
+//! returns to the caller with the sub-agent's result(s).
 //!
 //! ## Wire shape
 //!
-//! Input is an `Invocation` JSON. The legacy tools take a flat
-//! `{prompt, mode, agent, system_prompt, tools, …}` shape; this tool
-//! takes the typed shape directly so the LLM (and SDKs that build on
-//! top) speak the same vocabulary as the orchestrator's internals:
+//! Two equivalent shapes the LLM may emit:
 //!
 //! ```jsonc
-//! // Single + Local (replaces call_agent({mode: "in_process"}))
+//! // Single dispatch (the common case)
 //! {
-//!   "join": "single",
-//!   "context": "independent",
-//!   "executor": { "kind": "auto" },
-//!   "targets": [
-//!     {
-//!       "agent": { "type": "named", "agent_id": "deepagent" },
-//!       "message": { "id": "...", "role": "user", "parts": [...] }
-//!     }
-//!   ]
+//!   "agent": { "type": "named", "agent_id": "deepagent" },
+//!   "message": { "role": "user", "parts": [{"part_type": "text", "data": "..."}] }
 //! }
 //!
-//! // All + Detached (a fan-out the legacy CallMode couldn't express)
+//! // Fan-out: N targets in parallel, results in input order
 //! {
-//!   "join": "all",
-//!   "targets": [ {...}, {...}, {...} ]
+//!   "targets": [
+//!     { "agent": {...}, "message": {...} },
+//!     { "agent": {...}, "message": {...} }
+//!   ]
 //! }
 //! ```
+//!
+//! No `join` field — single dispatch returns `Scalar`, fan-out returns
+//! `Vector`. There is no LLM-facing detached mode: fire-and-forget /
+//! task watching is a CLIENT concern (CLI/TUI/SDK), driven via the API
+//! and the supervisor primitives, not via an agent tool call.
 //!
 //! ## Output
 //!
 //! [`InvocationResult`](distri_types::invocation::InvocationResult) —
-//! `Scalar` for `Single`, `Vector` for `All`, `TaskIds` for `Detached`.
-//! Returned as a single `Part::Data` carrying the JSON.
+//! `Scalar` for single, `Vector` for fan-out. Returned as one
+//! `Part::Data` carrying the JSON.
 
 use std::sync::Arc;
 
@@ -49,8 +40,69 @@ use serde_json::{json, Value};
 use crate::agent::ExecutorContext;
 use crate::tools::ExecutorContextTool;
 use crate::AgentError;
-use distri_types::invocation::Invocation;
+use distri_types::invocation::{
+    AgentRef, ContextScope, ExecutorHint, Invocation, Join, Target, ToolPolicy,
+};
+use distri_types::Message;
 use distri_types::{Part, RuntimeMode, Tool, ToolCall, ToolContext};
+
+/// LLM-facing input. Accepts either the single-dispatch shorthand
+/// (`agent` + `message`) or the fan-out form (`targets: [...]`).
+#[derive(Debug, serde::Deserialize)]
+struct InvokeAgentInput {
+    #[serde(default)]
+    agent: Option<AgentRef>,
+    #[serde(default)]
+    message: Option<Message>,
+    #[serde(default)]
+    targets: Option<Vec<Target>>,
+    #[serde(default)]
+    context: ContextScope,
+    #[serde(default)]
+    executor: ExecutorHint,
+    #[serde(default)]
+    tools: ToolPolicy,
+}
+
+impl InvokeAgentInput {
+    fn into_invocation(self) -> Result<Invocation, String> {
+        let targets = match (self.targets, self.agent, self.message) {
+            (Some(ts), None, None) if !ts.is_empty() => ts,
+            (None, Some(agent), Some(message)) => vec![Target {
+                agent,
+                message,
+                executor: None,
+            }],
+            (Some(_), Some(_), _) | (Some(_), _, Some(_)) => {
+                return Err(
+                    "specify either single-dispatch ({agent, message}) OR fan-out ({targets: [...]}) — not both"
+                        .into(),
+                );
+            }
+            (None, Some(_), None) | (None, None, Some(_)) => {
+                return Err("single dispatch requires both `agent` and `message`".into());
+            }
+            (Some(ts), None, None) if ts.is_empty() => {
+                return Err("`targets` is empty; pass at least one target".into());
+            }
+            _ => return Err("missing `agent`+`message` (single) or `targets` (fan-out)".into()),
+        };
+
+        let join = if targets.len() == 1 {
+            Join::Single
+        } else {
+            Join::All
+        };
+
+        Ok(Invocation {
+            targets,
+            context: self.context,
+            join,
+            executor: self.executor,
+            tools: self.tools,
+        })
+    }
+}
 
 // ── Agent-access policy ──────────────────────────────────────────────────
 //
@@ -122,35 +174,43 @@ impl Tool for InvokeAgentTool {
     }
 
     fn get_description(&self) -> String {
-        "Dispatch one or more sub-agents using the typed Invocation \
-         model. Use this instead of the legacy call_agent / run_skill \
-         tools — it covers the full axis matrix (targets / context / \
-         join / executor / tools) and returns a typed result shaped \
-         per `join` (Scalar / Vector / TaskIds).".to_string()
+        "Dispatch one or more sub-agents and wait for their results. \
+         Pass a single `agent`+`message` to dispatch one sub-agent (the \
+         common case). Pass `targets: [...]` with N entries to fan out \
+         to N sub-agents in parallel — the call returns once all of \
+         them finish, results in input order. Dispatch is always \
+         synchronous: control returns to you with the result(s)."
+            .to_string()
     }
 
     fn get_parameters(&self) -> Value {
-        // The full Invocation schema is large; we describe the top-level
-        // axes here and rely on the typed deserializer to validate the
-        // rest. The LLM sees the field names + the enums it cares about
-        // most (join / context / executor.kind).
+        // LLM-facing surface kept deliberately small. Two shapes:
+        //   1) Single dispatch:  { agent, message, executor?, context?, tools? }
+        //   2) Fan-out:          { targets: [{ agent, message, ... }, ...] }
+        // No `join` — dispatch is always sync; orchestrator picks Single
+        // when there's one target and All when there are several.
+        // Detached / fire-and-forget is a CLIENT concern (CLI/TUI), not
+        // an agent-facing primitive.
         json!({
             "type": "object",
             "properties": {
+                "agent": {
+                    "type": "object",
+                    "description": "Single-dispatch shorthand. Either { type: 'named', agent_id: '...' } or { type: 'ad_hoc', system_prompt: '...', tools?: { ... } }."
+                },
+                "message": {
+                    "type": "object",
+                    "description": "Single-dispatch shorthand. The Message to send. { role: 'user', parts: [{ part_type: 'text', data: '...' }] }."
+                },
                 "targets": {
                     "type": "array",
-                    "description": "1..N targets. Each: { agent: { type, ... }, message: { ... }, executor?: { kind, ... } }",
+                    "description": "Fan-out form. N targets dispatched in parallel; results returned in input order. Each: { agent, message, executor?, context?, tools? }.",
                     "items": { "type": "object" }
                 },
                 "context": {
                     "type": "string",
                     "enum": ["independent", "inherited", "shared"],
-                    "description": "What the child task sees on first turn. 'independent' = fresh history."
-                },
-                "join": {
-                    "type": "string",
-                    "enum": ["single", "all", "detached"],
-                    "description": "How the parent waits. 'single' = 1 target, returns Scalar. 'all' = await all, returns Vector. 'detached' = spawn-and-return task_ids."
+                    "description": "What the child sees on first turn. 'independent' = fresh history (default)."
                 },
                 "executor": {
                     "type": "object",
@@ -160,8 +220,7 @@ impl Tool for InvokeAgentTool {
                     "type": "object",
                     "description": "ToolPolicy. { kind: 'inherit' | 'exact' | 'none', ... }"
                 }
-            },
-            "required": ["targets"]
+            }
         })
     }
 
@@ -185,10 +244,13 @@ impl ExecutorContextTool for InvokeAgentTool {
         tool_call: ToolCall,
         context: Arc<ExecutorContext>,
     ) -> Result<Vec<Part>, AgentError> {
-        let invocation: Invocation =
+        let raw: InvokeAgentInput =
             serde_json::from_value(tool_call.input.clone()).map_err(|e| {
-                AgentError::ToolExecution(format!("invoke_agent: invalid Invocation: {e}"))
+                AgentError::ToolExecution(format!("invoke_agent: invalid input: {e}"))
             })?;
+        let invocation = raw
+            .into_invocation()
+            .map_err(|e| AgentError::ToolExecution(format!("invoke_agent: {e}")))?;
         let orch = context.get_orchestrator()?;
         let result = orch.invoke(invocation, context.clone()).await?;
         let json = serde_json::to_value(&result)

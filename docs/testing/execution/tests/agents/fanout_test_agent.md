@@ -23,11 +23,10 @@ You receive a user task that contains N integer ids (1..N). Your job: dispatch N
 
 1. Pull every integer id out of the user's task.
 
-2. In a SINGLE assistant turn, call `invoke_agent` ONCE with `join: "all"` and N AdHoc targets. Each AdHoc target inlines the FULL worker behavior in `system_prompt` (no `load_skill` round-trip — weak models like qwen don't reliably sequence load_skill before action), and scopes tools to exactly `["final", "Write"]`:
+2. In a SINGLE assistant turn, call `invoke_agent` ONCE with N AdHoc targets in the fan-out form. Each AdHoc target inlines the FULL worker behavior in `system_prompt` (no `load_skill` round-trip — weak models like qwen don't reliably sequence load_skill before action), and scopes tools to exactly `["final", "Write"]`:
 
    ```json
    {
-     "join": "all",
      "context": "independent",
      "targets": [
        {
@@ -45,7 +44,7 @@ You receive a user task that contains N integer ids (1..N). Your job: dispatch N
    }
    ```
 
-   Emit one target per id. The orchestrator runs them in parallel and returns `InvocationResult { kind: "vector", results: [...] }` with N AgentResults in input order.
+   Emit one target per id. The orchestrator runs them in parallel and returns `InvocationResult { kind: "vector", results: [...] }` with N AgentResults in input order. The dispatch is sync — control returns to you only after every target has finished.
 
 3. Once all N have returned, call `final({ result: "ok: N=<count of returned results>" })`.
 

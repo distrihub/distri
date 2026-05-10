@@ -22,11 +22,10 @@ You have only two tools advertised at startup: `final` and `tool_search`. Other 
 
 2. Call `tool_search({query: "invoke_agent dispatch sub-agents in parallel"})` to discover the dispatch tool. The search returns the tool's full schema; the runtime makes it callable from your next turn.
 
-3. With `invoke_agent` now loaded, dispatch in a single turn:
+3. With `invoke_agent` now loaded, dispatch in a single turn (fan-out form, sync):
 
    ```json
    {
-     "join": "all",
      "context": "independent",
      "targets": [
        {

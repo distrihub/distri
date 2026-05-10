@@ -52,44 +52,105 @@ fn user_message_value(text: &str) -> serde_json::Value {
 }
 
 /// invoke_agent advertises a stable name + description + non-empty
-/// parameter schema. These are part of the public LLM-facing
-/// contract; renaming the tool is a breaking change for every agent
-/// definition that lists `invoke_agent` in `tools.builtin`.
+/// parameter schema. The schema exposes both the single-dispatch
+/// shorthand (`agent` + `message`) and the fan-out form (`targets`).
+/// No `join` field — dispatch is always sync; orchestrator infers
+/// Single vs All from target count. No `required` either — either
+/// shape is accepted.
 #[test]
 fn invoke_agent_tool_metadata_is_stable() {
     let t = InvokeAgentTool;
     assert_eq!(t.get_name(), "invoke_agent");
     let desc = t.get_description();
-    assert!(desc.contains("Invocation"));
+    assert!(desc.to_lowercase().contains("sub-agent"));
     let params = t.get_parameters();
     assert_eq!(params["type"], "object");
+    assert!(params["properties"]["agent"].is_object());
+    assert!(params["properties"]["message"].is_object());
     assert!(params["properties"]["targets"].is_object());
-    assert!(params["properties"]["join"].is_object());
-    assert!(params["required"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|v| v == "targets"));
+    assert!(
+        params["properties"]["join"].is_null(),
+        "join must NOT appear in the LLM-facing schema; got: {:?}",
+        params["properties"]["join"]
+    );
     assert!(t.needs_executor_context());
 }
 
-/// Detached + Local round-trips through the tool: typed Invocation
-/// arrives, returns InvocationResult::TaskIds with the addressable
-/// task_ids. Persistence is verified through the store side-channel.
+/// Single-dispatch shorthand: the LLM passes `{agent, message}` (no
+/// targets array) and the tool internally infers `Join::Single`,
+/// persisting exactly one child task. Drives through to the agent
+/// loop, which fails with `InvalidConfiguration` because no model is
+/// wired in this stripped-down test setup — but the persistence side
+/// effect happens BEFORE that, which is what we want to pin.
 #[tokio::test]
-async fn invoke_agent_tool_routes_detached_local() {
+async fn invoke_agent_tool_single_shorthand_persists_one_child() {
+    use distri_types::stores::TaskStore;
+
     let orch = build_orch_with_agent("worker").await;
     let ctx = parent_ctx(&orch, "worker");
     let parent_task_id = ctx.task_id.clone();
+    // The parent task must exist for descendant lookup to find it.
+    orch.stores
+        .task_store
+        .create_task(
+            distri_types::stores::CreateTaskInput::local(ctx.thread_id.clone())
+                .with_id(parent_task_id.clone()),
+        )
+        .await
+        .expect("seed parent task");
 
     let tool_call = ToolCall {
-        tool_call_id: "tc-1".to_string(),
+        tool_call_id: "tc-single".to_string(),
         tool_name: "invoke_agent".to_string(),
         input: json!({
-            "join": "detached",
+            "agent": { "type": "named", "agent_id": "worker" },
+            "message": user_message_value("go-1")
+        }),
+    };
+    let _ = InvokeAgentTool
+        .execute_with_executor_context(tool_call, ctx)
+        .await; // Result drives the agent loop; we only care about persistence.
+
+    let descendants = orch
+        .stores
+        .task_store
+        .list_descendant_tasks(&parent_task_id)
+        .await
+        .unwrap();
+    let children: Vec<_> = descendants
+        .into_iter()
+        .filter(|t| t.id != parent_task_id)
+        .collect();
+    assert_eq!(
+        children.len(),
+        1,
+        "single dispatch must persist exactly one child; got {children:?}"
+    );
+}
+
+/// Fan-out form: `targets: [...]` with N entries. Tool internally
+/// infers `Join::All` and persists N children before the loops run.
+#[tokio::test]
+async fn invoke_agent_tool_fanout_form_persists_n_children() {
+    use distri_types::stores::TaskStore;
+
+    let orch = build_orch_with_agent("worker").await;
+    let ctx = parent_ctx(&orch, "worker");
+    let parent_task_id = ctx.task_id.clone();
+    orch.stores
+        .task_store
+        .create_task(
+            distri_types::stores::CreateTaskInput::local(ctx.thread_id.clone())
+                .with_id(parent_task_id.clone()),
+        )
+        .await
+        .expect("seed parent task");
+
+    let tool_call = ToolCall {
+        tool_call_id: "tc-fan".to_string(),
+        tool_name: "invoke_agent".to_string(),
+        input: json!({
             "context": "independent",
-            "executor": { "kind": "auto" },
-            "tools": { "kind": "inherit" },
             "targets": [
                 {
                     "agent": { "type": "named", "agent_id": "worker" },
@@ -102,44 +163,63 @@ async fn invoke_agent_tool_routes_detached_local() {
             ]
         }),
     };
-    let parts = InvokeAgentTool
+    let _ = InvokeAgentTool
         .execute_with_executor_context(tool_call, ctx)
-        .await
-        .expect("invoke_agent ok");
-    let data = parts
-        .iter()
-        .find_map(|p| match p {
-            Part::Data(v) => Some(v),
-            _ => None,
-        })
-        .expect("Part::Data response");
-    assert_eq!(data["kind"], "task_ids");
-    let task_ids: Vec<&str> = data["task_ids"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|v| v.as_str().unwrap())
-        .collect();
-    assert_eq!(task_ids.len(), 2);
+        .await;
 
-    // Each task_id is addressable in the store with parent linkage.
-    for tid in &task_ids {
-        let row = orch
-            .stores
-            .task_store
-            .get_task(tid)
-            .await
-            .unwrap()
-            .expect("row");
-        assert_eq!(row.parent_task_id.as_deref(), Some(parent_task_id.as_str()));
-    }
+    let descendants = orch
+        .stores
+        .task_store
+        .list_descendant_tasks(&parent_task_id)
+        .await
+        .unwrap();
+    let children: Vec<_> = descendants
+        .into_iter()
+        .filter(|t| t.id != parent_task_id)
+        .collect();
+    assert_eq!(
+        children.len(),
+        2,
+        "fan-out with 2 targets must persist 2 children; got {children:?}"
+    );
 }
 
-/// Malformed Invocation input → ToolExecution error rather than a
-/// panic. Validates that the deserializer error path is the one the
-/// LLM-facing tool surfaces.
+/// Mixing the two shapes (passing both `agent` and `targets`) is
+/// rejected with a clear error rather than silently picking one.
 #[tokio::test]
-async fn invoke_agent_tool_rejects_malformed_input() {
+async fn invoke_agent_tool_rejects_mixed_input() {
+    let orch = build_orch_with_agent("worker").await;
+    let ctx = parent_ctx(&orch, "worker");
+
+    let tool_call = ToolCall {
+        tool_call_id: "tc-mixed".to_string(),
+        tool_name: "invoke_agent".to_string(),
+        input: json!({
+            "agent": { "type": "named", "agent_id": "worker" },
+            "message": user_message_value("hi"),
+            "targets": [
+                {
+                    "agent": { "type": "named", "agent_id": "worker" },
+                    "message": user_message_value("hi-2")
+                }
+            ]
+        }),
+    };
+    let err = InvokeAgentTool
+        .execute_with_executor_context(tool_call, ctx)
+        .await
+        .expect_err("mixed shapes must error");
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("single-dispatch") && msg.contains("fan-out"),
+        "expected guidance about the two shapes; got: {msg}"
+    );
+}
+
+/// Empty input → ToolExecution error rather than a panic. The LLM
+/// must pass at least one shape's fields.
+#[tokio::test]
+async fn invoke_agent_tool_rejects_empty_input() {
     let orch = build_orch_with_agent("worker").await;
     let ctx = parent_ctx(&orch, "worker");
 
@@ -151,10 +231,10 @@ async fn invoke_agent_tool_rejects_malformed_input() {
     let err = InvokeAgentTool
         .execute_with_executor_context(tool_call, ctx)
         .await
-        .expect_err("malformed input must error");
+        .expect_err("empty input must error");
     let msg = format!("{err}");
     assert!(
-        msg.contains("invalid Invocation") || msg.contains("missing field"),
-        "expected deserializer error; got: {msg}"
+        msg.contains("missing"),
+        "expected guidance about missing fields; got: {msg}"
     );
 }

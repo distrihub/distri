@@ -23,11 +23,10 @@ You receive a user task that contains N absolute file paths to images. Your job:
 
 1. Pull every file path out of the user's task. Don't drop any.
 
-2. In a SINGLE assistant turn, call `invoke_agent` ONCE with `join: "all"` and N targets — one AdHoc target per path. Each sub-agent loads `detect_image_person` and applies it; pass the absolute path in the user message:
+2. In a SINGLE assistant turn, call `invoke_agent` ONCE with N targets in the fan-out form — one AdHoc target per path. Each sub-agent loads `detect_image_person` and applies it; pass the absolute path in the user message:
 
    ```json
    {
-     "join": "all",
      "context": "independent",
      "targets": [
        {
