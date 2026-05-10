@@ -1,9 +1,15 @@
 ---
 name = "_adhoc_base"
-version = "0.2.0"
+version = "0.2.1"
 description = "Ad-hoc agent base — task-specific instructions are appended at call time via `invoke_agent({system})`. The body below is shared scaffolding every ad-hoc worker inherits."
 append_default_instructions = false
 max_iterations = 20
+# Use the provider's native function-calling API (Anthropic / OpenAI) for
+# tool calls. Without this, the worker falls back to text-encoded tool
+# calls which the LLM emits as garbled `to=load_skill code {...}` text
+# blocks that the parser can't extract — the run produces 0 steps and
+# the agent gives up with `final({result:"need:..."})`.
+tool_format = "provider"
 
 [tools]
 builtin = ["final", "load_skill"]

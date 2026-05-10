@@ -418,6 +418,24 @@ pub enum RuntimeMode {
     Browser,
 }
 
+impl RuntimeMode {
+    /// Canonical wire/template name (matches `#[serde(rename_all =
+    /// "snake_case")]`). Single source of truth for template
+    /// substitution (`{{runtime_mode}}` / `{{#if (eq runtime_mode
+    /// "cli")}}`), span attributes, and any string-keyed runtime
+    /// dispatch table. Both
+    /// `agent::strategy::planning::formatter` and
+    /// `tools::skill_script::LoadSkillTool` use this so a future
+    /// rename can't desync the system prompt from the skill body.
+    pub fn as_template_name(&self) -> &'static str {
+        match self {
+            Self::Cli => "cli",
+            Self::Cloud => "cloud",
+            Self::Browser => "browser",
+        }
+    }
+}
+
 /// Agent definition - complete configuration for an agent
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 pub struct StandardDefinition {
@@ -840,8 +858,12 @@ pub const VALID_BUILTIN_TOOLS: &[&str] = &[
     "console_log",
     // Artifacts & filesystem
     "artifact_tool",
-    // Todos
-    "todos",
+    // Todos — the tool's `Tool::get_name()` returns `write_todos`, so
+    // any agent definition that declared `builtin = ["todos"]` was
+    // silently broken (`resolve_tools_config` filters
+    // `get_builtin_tools()` by name and finds nothing). Single
+    // canonical name across validation / dispatch / skill bodies.
+    "write_todos",
 ];
 
 /// Tools that always get full schemas, never deferred.

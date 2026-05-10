@@ -269,7 +269,11 @@ impl AgentOrchestrator {
         target: &Target,
         parent_ctx: &Arc<ExecutorContext>,
     ) -> Result<DispatchPlan, AgentError> {
-        let resolved = ResolvedTarget::from_target(target);
+        // Plan-only path: only `agent_id` is read off the resolved
+        // target. Tool inheritance is irrelevant here — pass `None` to
+        // skip the extra lookup.
+        let _ = parent_ctx;
+        let resolved = ResolvedTarget::from_target(target, None);
         let def = self.standard_definition(&resolved.agent_id).await?;
         let hint = target
             .executor
@@ -304,6 +308,25 @@ impl AgentOrchestrator {
         }
     }
 
+    /// Look up the parent's `ToolsConfig` so an `AgentRef::AdHoc` child
+    /// inherits the same builtin / external / dynamic / mcp tools the
+    /// parent had. Mirrors claude-code's invariant: the agent holding
+    /// the conversation has all the tools it needs *before* any skill
+    /// body is injected. Returns `None` when the parent's agent_id
+    /// doesn't resolve (loopback dispatch from a non-standard caller),
+    /// in which case the AdHoc worker falls back to `_adhoc_base.md`'s
+    /// declared defaults.
+    async fn parent_tools_for_inheritance(
+        self: &Arc<Self>,
+        parent_ctx: &Arc<ExecutorContext>,
+    ) -> Option<distri_types::ToolsConfig> {
+        let cfg = self.get_agent(&parent_ctx.agent_id).await?;
+        match cfg {
+            distri_types::configuration::AgentConfig::StandardAgent(def) => def.tools,
+            _ => None,
+        }
+    }
+
     /// Single-target Local + Independent dispatch. Creates the child
     /// task row with the typed invocation persisted, runs the agent
     /// loop, then reads the result back.
@@ -313,7 +336,8 @@ impl AgentOrchestrator {
         invocation_blob: &serde_json::Value,
         parent_ctx: &Arc<ExecutorContext>,
     ) -> Result<AgentResult, AgentError> {
-        let resolved = ResolvedTarget::from_target(&target);
+        let inherited = self.parent_tools_for_inheritance(parent_ctx).await;
+        let resolved = ResolvedTarget::from_target(&target, inherited);
         let child_ctx = self
             .persist_child_task(&resolved, invocation_blob, parent_ctx)
             .await?;
@@ -375,7 +399,8 @@ impl AgentOrchestrator {
         parent_ctx: &Arc<ExecutorContext>,
         runner: Arc<dyn RemoteTaskRunner>,
     ) -> Result<AgentResult, AgentError> {
-        let resolved = ResolvedTarget::from_target(&target);
+        let inherited = self.parent_tools_for_inheritance(parent_ctx).await;
+        let resolved = ResolvedTarget::from_target(&target, inherited);
         let def = self.standard_definition(&resolved.agent_id).await?;
         let child_ctx = self
             .persist_child_task_remote(&resolved, invocation_blob, parent_ctx)
@@ -432,7 +457,8 @@ impl AgentOrchestrator {
         parent_ctx: &Arc<ExecutorContext>,
         runner: Arc<dyn RemoteTaskRunner>,
     ) -> Result<String, AgentError> {
-        let resolved = ResolvedTarget::from_target(&target);
+        let inherited = self.parent_tools_for_inheritance(parent_ctx).await;
+        let resolved = ResolvedTarget::from_target(&target, inherited);
         let def = self.standard_definition(&resolved.agent_id).await?;
         let child_ctx = self
             .persist_child_task_remote(&resolved, invocation_blob, parent_ctx)
@@ -496,7 +522,8 @@ impl AgentOrchestrator {
         invocation_blob: &serde_json::Value,
         parent_ctx: &Arc<ExecutorContext>,
     ) -> Result<String, AgentError> {
-        let resolved = ResolvedTarget::from_target(&target);
+        let inherited = self.parent_tools_for_inheritance(parent_ctx).await;
+        let resolved = ResolvedTarget::from_target(&target, inherited);
         let child_ctx = self
             .persist_child_task(&resolved, invocation_blob, parent_ctx)
             .await?;
@@ -654,7 +681,19 @@ struct ResolvedTarget {
 }
 
 impl ResolvedTarget {
-    fn from_target(target: &Target) -> Self {
+    /// Resolve a [`Target`] into the (agent_id, definition_overrides)
+    /// pair the orchestrator dispatches against.
+    ///
+    /// `inherited_tools` is the parent agent's resolved `ToolsConfig`,
+    /// computed once per dispatch via
+    /// [`AgentOrchestrator::parent_tools_for_inheritance`]. AdHoc
+    /// children inherit it when the caller didn't pass an explicit
+    /// `tools` override on the AgentRef. This makes the worker's tool
+    /// universe match the parent's automatically — no per-call config,
+    /// no LLM-facing `tools` field — so any skill the worker loads can
+    /// rely on the same builtins (`write_todos`, `invoke_agent`, …) the
+    /// parent had.
+    fn from_target(target: &Target, inherited_tools: Option<distri_types::ToolsConfig>) -> Self {
         match &target.agent {
             AgentRef::Named { agent_id } => Self {
                 agent_id: agent_id.clone(),
@@ -668,11 +707,17 @@ impl ResolvedTarget {
                 // `_adhoc_base.md`'s body — the worker keeps the
                 // distri scaffolding (final / load_skill semantics,
                 // output conventions) and the caller's text adds
-                // task-specific direction below it. `tools`, when
-                // provided, replaces the base ToolsConfig wholesale.
+                // task-specific direction below it.
+                //
+                // `tools`: explicit per-target tools win when the
+                // caller passed any. Otherwise the worker inherits the
+                // parent's full ToolsConfig. Falls back to
+                // `_adhoc_base.md`'s declared defaults only when
+                // neither is available.
+                let effective_tools = tools.clone().or(inherited_tools);
                 let overrides = distri_types::configuration::DefinitionOverrides {
                     instructions_append: Some(system_prompt.clone()),
-                    tools: tools.clone(),
+                    tools: effective_tools,
                     ..Default::default()
                 };
                 Self {

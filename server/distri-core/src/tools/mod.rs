@@ -287,9 +287,27 @@ pub async fn resolve_tools_config(
             }
         }
         for builtin_name in require_tool_names {
-            if let Some(tool) = builtin_tools.iter().find(|t| t.get_name() == *builtin_name) {
-                all_tools.push(tool.clone());
-            }
+            // Hard-fail when the agent declares a builtin name that
+            // isn't in `get_builtin_tools()`. Silent-drop hid the
+            // 2026-05-10 `"todos"` vs `"write_todos"` typo across four
+            // shipped agent definitions: `VALID_BUILTIN_TOOLS` accepted
+            // the name, this resolver couldn't find a matching tool,
+            // and the agent ran missing the tool with no error in the
+            // logs. Listing what IS available makes the right rename
+            // obvious from the error message alone.
+            let tool = builtin_tools
+                .iter()
+                .find(|t| t.get_name() == *builtin_name)
+                .ok_or_else(|| {
+                    let available: Vec<String> =
+                        builtin_tools.iter().map(|t| t.get_name()).collect();
+                    anyhow::anyhow!(
+                        "agent declares `tools.builtin = [\"{builtin_name}\"]` but no \
+                         such builtin tool is registered. Available builtins: {}.",
+                        available.join(", ")
+                    )
+                })?;
+            all_tools.push(tool.clone());
         }
     }
 

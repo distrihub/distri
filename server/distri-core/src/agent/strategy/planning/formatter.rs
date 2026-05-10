@@ -300,11 +300,10 @@ impl<'a> MessageFormatter<'a> {
     /// telemetry). Templates branch off this string via
     /// `{{#if (eq runtime_mode "cli")}}` / `{{#if (eq runtime_mode "cloud")}}`.
     fn runtime_mode_name(mode: &distri_types::RuntimeMode) -> &'static str {
-        match mode {
-            distri_types::RuntimeMode::Cli => "cli",
-            distri_types::RuntimeMode::Cloud => "cloud",
-            distri_types::RuntimeMode::Browser => "browser",
-        }
+        // Single source of truth lives on `RuntimeMode` itself so the
+        // skill renderer (`tools::skill_script`) and span attribute
+        // emitters can't drift from this formatter.
+        mode.as_template_name()
     }
 
     fn tool_format_name(agent_def: &crate::types::StandardDefinition) -> &'static str {
@@ -527,14 +526,18 @@ impl<'a> MessageFormatter<'a> {
             .iter()
             .rposition(|entry| matches!(entry.entry_type, ScratchpadEntryType::Execution(_)));
 
+        // `latest_execution_index` is no longer consulted — every
+        // execution result is formatted in full. Per-turn truncation
+        // belonged to a redundant safety-net path; total context
+        // overflow is owned by `context_size_manager`. See the
+        // matching comment in `scratchpad.rs::format_scratchpad`.
+        let _ = latest_execution_index;
         scratchpad_entries
             .iter()
-            .enumerate()
-            .flat_map(|(idx, entry)| match &entry.entry_type {
+            .flat_map(|entry| match &entry.entry_type {
                 ScratchpadEntryType::PlanStep(_) => Vec::new(),
                 ScratchpadEntryType::Execution(exec_entry) => {
-                    let use_compaction = Some(idx) != latest_execution_index;
-                    Self::execution_result_to_messages(&exec_entry.execution_result, use_compaction)
+                    Self::execution_result_to_messages(&exec_entry.execution_result, false)
                 }
                 ScratchpadEntryType::Task(_) => Vec::new(),
                 ScratchpadEntryType::Summary(summary) => {
@@ -811,7 +814,14 @@ fn log_prompt(agent_id: &str, prompt: &str) {
     }
 }
 
-async fn render_prompt(
+/// Render a Handlebars template against the agent's prompt registry.
+/// Lazily resolves any referenced `{{> partial}}` from the DB before
+/// rendering. Public-in-crate so [`crate::tools::skill_script`] can
+/// route loaded skill bodies through the same render pipeline the
+/// agent uses for its own system prompt — keeps `{{runtime_mode}}` /
+/// `{{#if (eq runtime_mode "cli")}}` resolution identical regardless
+/// of who's emitting the template text.
+pub(crate) async fn render_prompt(
     context: &Arc<ExecutorContext>,
     template: &str,
     template_data: &TemplateData<'_>,

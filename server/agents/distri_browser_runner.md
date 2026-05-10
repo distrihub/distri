@@ -11,7 +11,7 @@ runtime = "browser"
 [tools]
 builtin = [
   "final",
-  "todos",
+  "write_todos",
   "search", "browsr_scrape",
   "load_skill", "tool_search",
   "distri_request",

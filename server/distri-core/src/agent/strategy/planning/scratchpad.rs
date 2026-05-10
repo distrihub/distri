@@ -46,15 +46,11 @@ pub fn format_scratchpad_with_task_filter(
     } else {
         filtered_entries
     };
-    let latest_execution_index = entries_to_use
-        .iter()
-        .rposition(|entry| matches!(entry.entry_type, ScratchpadEntryType::Execution(_)));
-
     // Format scratchpad with proper ReAct structure
     let mut scratchpad = String::new();
     let mut current_task_id: Option<String> = None;
 
-    for (entry_index, entry) in entries_to_use.iter().enumerate() {
+    for entry in entries_to_use.iter() {
         match &entry.entry_type {
             ScratchpadEntryType::Task(task) => {
                 let task_text = task
@@ -91,11 +87,20 @@ pub fn format_scratchpad_with_task_filter(
                 }
             }
             ScratchpadEntryType::Execution(exec_entry) => {
-                let observation_result = if Some(entry_index) == latest_execution_index {
-                    exec_entry.execution_result.clone()
-                } else {
-                    exec_entry.execution_result.compact_for_history()
-                };
+                // Pass execution results through verbatim. The previous
+                // per-turn `compact_for_history` (2_000-char text /
+                // 4_000-char JSON cap on every non-latest entry) was a
+                // text-blind safety net that silently stripped the
+                // middle of large instructional results — most
+                // notably `load_skill` bodies that the agent NEEDS to
+                // see in full on subsequent turns. Total context
+                // overflow is the responsibility of
+                // `context_size_manager` (tier-1 mechanical / tier-2
+                // semantic / tier-3 reset, gated by usage_ratio
+                // thresholds), not of every prompt build. Tools that
+                // emit genuinely huge blobs (a Read of a 50MB file)
+                // should self-cap at emit time.
+                let observation_result = exec_entry.execution_result.clone();
 
                 // Add task separator when task changes
                 if current_task_id.as_ref() != Some(&exec_entry.task_id) {

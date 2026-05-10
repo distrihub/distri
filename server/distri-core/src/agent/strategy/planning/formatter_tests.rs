@@ -239,11 +239,17 @@
     /// have it replaced with the placeholder text.
     ///
     /// If this regresses, a worker that just `db_get`-ed an image (e.g.
-    /// the importer) will be unable to OCR it on the next planning turn —
-    /// the LLM client only sees a placeholder string instead of a real
-    /// `image_url` content part.
+    /// All execution entries — latest AND older — must carry their
+    /// inline images verbatim. The previous per-turn
+    /// `compact_for_history` was deleted (see
+    /// `docs/specs/2026-05-10-tool-output-bounds-and-context-compaction.md`):
+    /// it stripped older images to a `[Image omitted…]` placeholder,
+    /// which broke OCR / vision flows where the LLM needs the full
+    /// pixel buffer two turns later. Bounding tool output is now the
+    /// emitting tool's responsibility (planned: `Tool::output_budget`),
+    /// not the prompt builder's.
     #[test]
-    fn latest_execution_entry_preserves_inline_image_older_strips_it() {
+    fn native_history_preserves_inline_images_for_every_entry() {
         use distri_types::FileType;
         let entries = vec![
             sample_image_tool_result_entry("step-old", 1, "OLD-IMAGE-BYTES"),
@@ -251,51 +257,39 @@
         ];
 
         let messages = MessageFormatter::build_native_history_messages(&entries);
-        // Two execution entries → each renders as one assistant + one tool
-        // message via execution_result_to_messages, giving 4 messages total.
-        assert!(
-            messages.len() >= 2,
-            "expected at least two messages from two execution entries; got {}",
-            messages.len()
-        );
-
-        // Find the tool messages; each carries a single ToolResponse.
         let tool_msgs: Vec<_> = messages
             .iter()
             .filter(|m| matches!(m.role, MessageRole::Tool))
             .collect();
         assert_eq!(tool_msgs.len(), 2, "expected one tool message per entry");
 
-        // The OLDER tool message: image should be stripped to placeholder.
-        let older_inner_parts = match &tool_msgs[0].parts[0] {
-            Part::ToolResult(tr) => &tr.parts,
-            other => panic!("expected ToolResult; got {:?}", other),
-        };
-        let old_has_placeholder = older_inner_parts.iter().any(|p| match p {
-            Part::Text(t) => t.contains("Image omitted"),
-            _ => false,
-        });
-        assert!(
-            old_has_placeholder,
-            "older entry's image should be stripped at history; parts = {:?}",
-            older_inner_parts
-        );
-
-        // The LATEST tool message: image should be present verbatim.
-        let latest_inner_parts = match &tool_msgs[1].parts[0] {
-            Part::ToolResult(tr) => &tr.parts,
-            other => panic!("expected ToolResult; got {:?}", other),
-        };
-        let latest_image_bytes = latest_inner_parts.iter().find_map(|p| match p {
-            Part::Image(FileType::Bytes { bytes, .. }) => Some(bytes.clone()),
-            _ => None,
-        });
-        assert_eq!(
-            latest_image_bytes.as_deref(),
-            Some("LATEST-IMAGE-BYTES"),
-            "latest entry's image must be intact for the next LLM turn; parts = {:?}",
-            latest_inner_parts
-        );
+        for (msg, expected_bytes) in tool_msgs
+            .iter()
+            .zip(["OLD-IMAGE-BYTES", "LATEST-IMAGE-BYTES"])
+        {
+            let inner_parts = match &msg.parts[0] {
+                Part::ToolResult(tr) => &tr.parts,
+                other => panic!("expected ToolResult; got {:?}", other),
+            };
+            let has_placeholder = inner_parts.iter().any(|p| match p {
+                Part::Text(t) => t.contains("Image omitted"),
+                _ => false,
+            });
+            assert!(
+                !has_placeholder,
+                "{expected_bytes}: per-turn compaction was removed; \
+                 image must NOT be replaced by a placeholder; parts = {inner_parts:?}"
+            );
+            let image_bytes = inner_parts.iter().find_map(|p| match p {
+                Part::Image(FileType::Bytes { bytes, .. }) => Some(bytes.clone()),
+                _ => None,
+            });
+            assert_eq!(
+                image_bytes.as_deref(),
+                Some(expected_bytes),
+                "every entry's image must arrive intact at the LLM"
+            );
+        }
     }
 
     /// With a single execution entry there's nothing older to strip; the
@@ -323,8 +317,14 @@
         );
     }
 
+    /// Older execution entries must NOT be wrapped in the
+    /// `compact_for_history` `{ "truncated": true, "preview": … }`
+    /// envelope that the deleted per-turn compactor used to apply.
+    /// Both entries are equally full-fidelity; bounding the size of a
+    /// runaway tool output happens at the tool's emit site, not in the
+    /// prompt builder.
     #[test]
-    fn native_history_compacts_only_until_n_minus_1() {
+    fn native_history_does_not_compact_older_entries() {
         let entries = vec![
             sample_large_execution_entry("step-1", 1),
             sample_large_execution_entry("step-2", 2),
@@ -333,25 +333,21 @@
         let messages = MessageFormatter::build_native_history_messages(&entries);
         assert_eq!(messages.len(), 2);
 
-        let first_data = messages[0]
-            .parts
-            .iter()
-            .find_map(|part| match part {
-                Part::Data(value) => Some(value.clone()),
-                _ => None,
-            })
-            .expect("first message should contain data part");
-        assert_eq!(first_data["truncated"], json!(true));
-
-        let second_data = messages[1]
-            .parts
-            .iter()
-            .find_map(|part| match part {
-                Part::Data(value) => Some(value.clone()),
-                _ => None,
-            })
-            .expect("second message should contain data part");
-        assert!(second_data.get("truncated").is_none());
+        for (idx, msg) in messages.iter().enumerate() {
+            let data = msg
+                .parts
+                .iter()
+                .find_map(|part| match part {
+                    Part::Data(value) => Some(value.clone()),
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("message {idx} should contain a data part"));
+            assert!(
+                data.get("truncated").is_none(),
+                "message {idx} must NOT be wrapped in a `truncated` envelope; \
+                 per-turn compaction was removed. data = {data:?}"
+            );
+        }
     }
 
     #[tokio::test]
