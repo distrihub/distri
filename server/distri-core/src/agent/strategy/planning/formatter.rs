@@ -783,14 +783,6 @@ impl<'a> MessageFormatter<'a> {
         user_message
     }
 
-    fn format_tool_call(tool_call: &ToolCall) -> String {
-        format!(
-            "Tool Call -> {} with input: {}",
-            tool_call.tool_name,
-            serde_json::to_string(&tool_call.input).unwrap_or_else(|_| "{}".to_string())
-        )
-    }
-
     fn is_observation_text(text: &str) -> bool {
         let trimmed = text.trim();
         trimmed.starts_with("Observation:") || trimmed.starts_with("Action:")

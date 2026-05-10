@@ -15,7 +15,7 @@ reasoning_depth = "deep"
 type = "tools"
 
 [tools]
-builtin = ["tool_search", "load_skill", "distri_request"]
+builtin = ["invoke_agent", "tool_search", "load_skill", "distri_request"]
 
 [[available_skills]]
 id = "*"
