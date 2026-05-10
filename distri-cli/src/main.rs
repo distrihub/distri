@@ -23,8 +23,9 @@ mod traces;
 
 use chat::run_interactive_chat;
 use commands::{
-    handle_connections_command, handle_profile_command, handle_prompts_command,
-    handle_secrets_command, handle_skills_command, push_file,
+    handle_connections_command, handle_models_command, handle_profile_command,
+    handle_prompts_command, handle_providers_command, handle_secrets_command,
+    handle_skills_command, push_file,
 };
 use config::resolve_workspace;
 use distri::run::{build_run_params, resolve_agent_name, RunOptions};
@@ -179,6 +180,16 @@ enum Commands {
     Secrets {
         #[clap(subcommand)]
         command: Option<SecretsCommands>,
+    },
+    /// LLM provider management — configure, list, delete workspace providers
+    Providers {
+        #[clap(subcommand)]
+        command: Option<ProvidersCommands>,
+    },
+    /// Model management — get/set the workspace's default model
+    Models {
+        #[clap(subcommand)]
+        command: Option<ModelsCommands>,
     },
     /// Thread management commands (defaults to list)
     Threads {
@@ -437,6 +448,55 @@ pub(crate) enum SecretsCommands {
         #[clap(help = "Secret key")]
         key: String,
     },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub(crate) enum ProvidersCommands {
+    /// List configured providers (default).
+    List,
+    /// Create or update a provider — saves the provided secrets
+    /// against the canonical key names the provider expects (e.g.
+    /// `--secret AZURE_AI_FOUNDRY_API_KEY=…
+    ///  --secret AZURE_AI_FOUNDRY_ENDPOINT=…` for `azure_ai_foundry`).
+    /// Pass `--default-model "<provider>/<model>"` to also pin the
+    /// workspace default in the same call.
+    Set {
+        /// Provider id (e.g. `openai`, `azure_ai_foundry`,
+        /// `custom_microsoft_foundry`).
+        provider_id: String,
+        /// `KEY=VALUE` pairs — repeat for multiple secrets.
+        #[clap(long = "secret", value_parser = parse_kv)]
+        secrets: Vec<(String, String)>,
+        /// Optional `provider/model` to set as the workspace default
+        /// model in the same call.
+        #[clap(long)]
+        default_model: Option<String>,
+    },
+    /// Delete a provider — clears its secrets and (for custom
+    /// providers) the `workspace.settings.custom_providers` entry.
+    Delete {
+        provider_id: String,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub(crate) enum ModelsCommands {
+    /// List models grouped by provider, with configuration status (default).
+    List,
+    /// Get the workspace's default model.
+    GetDefault,
+    /// Set the workspace's default model. Format: `provider/model`
+    /// (e.g. `azure_ai_foundry/gpt-5.4`). Pass an empty string to
+    /// clear.
+    SetDefault {
+        provider_model: String,
+    },
+}
+
+fn parse_kv(s: &str) -> Result<(String, String), String> {
+    s.split_once('=')
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .ok_or_else(|| format!("expected `KEY=VALUE`, got `{s}`"))
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -863,6 +923,14 @@ async fn main() -> Result<()> {
         Commands::Secrets { command } => {
             let command = command.unwrap_or(SecretsCommands::List);
             handle_secrets_command(&client, command).await?;
+        }
+        Commands::Providers { command } => {
+            let command = command.unwrap_or(ProvidersCommands::List);
+            handle_providers_command(&client, command).await?;
+        }
+        Commands::Models { command } => {
+            let command = command.unwrap_or(ModelsCommands::List);
+            handle_models_command(&client, command).await?;
         }
         Commands::Threads { command } => {
             let command = command.unwrap_or(ThreadsCommands::List);

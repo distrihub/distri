@@ -2311,7 +2311,8 @@ impl Distri {
         }
     }
 
-    /// List available OAuth providers and their configuration.
+    /// List available OAuth connection providers and their configuration.
+    /// (For LLM/model providers see [`list_model_providers`].)
     pub async fn list_providers(&self) -> Result<Vec<ProviderInfo>, ClientError> {
         let url = format!("{}/connections/providers", self.base_url);
         let resp = self.http.get(&url).send().await?;
@@ -2322,6 +2323,25 @@ impl Distri {
             Err(ClientError::InvalidResponse(format!(
                 "failed to list providers: {}",
                 text
+            )))
+        }
+    }
+
+    /// List LLM model provider definitions for this workspace, including
+    /// each provider's required secret keys and the catalog of models
+    /// that provider exposes. The cloud merges built-in providers with
+    /// any `custom_providers` entries from the workspace settings.
+    pub async fn list_model_providers(
+        &self,
+    ) -> Result<Vec<distri_types::ModelProviderDefinition>, ClientError> {
+        let url = format!("{}/providers", self.base_url);
+        let resp = self.http.get(&url).send().await?;
+        if resp.status().is_success() {
+            Ok(resp.json().await?)
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!(
+                "failed to list model providers: {text}"
             )))
         }
     }
@@ -2385,6 +2405,78 @@ impl Distri {
         } else {
             Ok(None)
         }
+    }
+
+    /// Upsert a workspace LLM provider via `POST /v1/providers`. Saves
+    /// the provided `secrets` against the canonical key names the
+    /// provider expects (`<PROVIDER>_API_KEY` /
+    /// `<PROVIDER>_ENDPOINT` / etc.) and writes any custom config to
+    /// `workspace.settings.custom_providers`. Pass `default_model =
+    /// Some("provider/model")` to also set the workspace default in
+    /// the same call (or `Some("")` to clear it).
+    ///
+    /// Returns the parsed [`UpsertProviderResponse`] from the server
+    /// (`{provider_id, secrets_saved, config_saved}`).
+    pub async fn upsert_provider(
+        &self,
+        request: distri_types::stores::UpsertProviderRequest,
+    ) -> Result<distri_types::stores::UpsertProviderResponse, ClientError> {
+        let url = format!("{}/providers", self.base_url);
+        let resp = self.http.post(&url).json(&request).send().await?;
+        if resp.status().is_success() {
+            Ok(resp.json().await?)
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!(
+                "failed to upsert provider: {}",
+                text
+            )))
+        }
+    }
+
+    /// Delete a workspace provider via `DELETE /v1/providers/{provider_id}`.
+    /// Removes its configured secrets and (for custom providers) the
+    /// `workspace.settings.custom_providers` entry. Built-in provider
+    /// definitions (openai, azure_ai_foundry, etc.) remain in the
+    /// catalog — only the workspace's *configuration* is cleared.
+    pub async fn delete_provider(&self, provider_id: &str) -> Result<(), ClientError> {
+        let url = format!(
+            "{}/providers/{}",
+            self.base_url,
+            urlencoding::encode(provider_id)
+        );
+        let resp = self.http.delete(&url).send().await?;
+        if resp.status().is_success() {
+            Ok(())
+        } else {
+            let text = resp.text().await.unwrap_or_default();
+            Err(ClientError::InvalidResponse(format!(
+                "failed to delete provider {provider_id}: {text}"
+            )))
+        }
+    }
+
+    /// Set the workspace's default LLM model (`provider/model` form, e.g.
+    /// `azure_ai_foundry/gpt-5.4`). Routed through the provider upsert
+    /// flow with no secret changes — sets just the `default_model`
+    /// field on `workspace.settings`. Pass an empty string to clear.
+    pub async fn set_default_model(&self, provider_model: &str) -> Result<(), ClientError> {
+        let request = distri_types::stores::UpsertProviderRequest {
+            // Pass the provider id derived from the model string so the
+            // server can validate; the secrets map is empty so nothing
+            // sensitive is touched.
+            provider_id: provider_model
+                .split_once('/')
+                .map(|(p, _)| p.to_string())
+                .unwrap_or_else(|| provider_model.to_string()),
+            secrets: std::collections::HashMap::new(),
+            config: None,
+            custom_models: None,
+            default_model: Some(provider_model.to_string()),
+            connection_provider: None,
+        };
+        self.upsert_provider(request).await?;
+        Ok(())
     }
 
     /// List custom connection providers from workspace settings.
