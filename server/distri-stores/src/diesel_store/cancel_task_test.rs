@@ -2,7 +2,7 @@
 #[cfg(feature = "sqlite")]
 mod tests {
     use crate::diesel_store::DieselStoreBuilder;
-    use distri_types::stores::{TaskStore, ThreadStore};
+    use distri_types::stores::{CreateTaskInput, TaskStore, ThreadStore};
     use distri_types::{CreateThreadRequest, TaskStatus};
 
     async fn test_store() -> DieselStoreBuilder<crate::diesel_store::SqliteConnectionWrapper> {
@@ -42,7 +42,11 @@ mod tests {
         // surface).
         let task_id = format!("task-{}", uuid::Uuid::new_v4());
         let _task = task_store
-            .create_task(&thread.id, Some(&task_id), Some(TaskStatus::Running))
+            .create_task(
+                CreateTaskInput::local(&thread.id)
+                    .with_id(&task_id)
+                    .with_status(TaskStatus::Running),
+            )
             .await
             .expect("create task");
         task_store
@@ -88,7 +92,11 @@ mod tests {
 
         let task_id = format!("task-{}", uuid::Uuid::new_v4());
         task_store
-            .create_task(&thread.id, Some(&task_id), Some(TaskStatus::Running))
+            .create_task(
+                CreateTaskInput::local(&thread.id)
+                    .with_id(&task_id)
+                    .with_status(TaskStatus::Running),
+            )
             .await
             .expect("create task");
 

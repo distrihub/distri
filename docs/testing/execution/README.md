@@ -34,11 +34,17 @@ for the storage vs display compaction rules.
 
 ## Files
 
+> **Fixtures moved.** As of 2026-05-10 the agent + skill markdowns and
+> the `test_image*.png` files live in
+> [`integration-tests/fixtures/`](../../../../integration-tests/fixtures/)
+> next to the Rust regression suite. The shell-driven flow below still
+> works — just point `distri push` at the new directory.
+
 | Path | Role |
 |---|---|
-| `docs/testing/execution/test_image.png` | Test fixture. A photo of Donald Trump (filename intentionally generic — must not leak the answer to the model). |
-| `docs/testing/execution/tests/agents/image_test_agent.md` | Test agent. Has `final`, `load_skill` (builtin) + `Read` (CLI external tool). References `detect_image_person` skill via `available_skills`. |
-| `docs/testing/execution/tests/skills/detect_image_person.md` | Leaf-worker skill. Body tells the agent to call `Read` on the path, look at the returned image, and `final({"result": "<name>"})`. |
+| `integration-tests/fixtures/test_image.png` | Test fixture. A photo of Donald Trump (filename intentionally generic — must not leak the answer to the model). |
+| `integration-tests/fixtures/agents/image_test_agent.md` | Test agent. Has `final`, `load_skill` (builtin) + `Read` (CLI external tool). References `detect_image_person` skill via `available_skills`. |
+| `integration-tests/fixtures/skills/detect_image_person.md` | Leaf-worker skill. Body tells the agent to call `Read` on the path, look at the returned image, and `final({"result": "<name>"})`. |
 | `distri-cli/src/tools/read.rs` | CLI `Read` tool. Auto-detects image extensions and returns `Part::Image` instead of trying to UTF-8-decode bytes as text. |
 
 ---
@@ -77,10 +83,13 @@ for the storage vs display compaction rules.
 4. **Agent + skill pushed once** to the server:
 
    ```sh
-   distri push docs/testing/execution/tests
+   distri push integration-tests/fixtures
    ```
 
-   Subsequent edits to either file → re-run the same command.
+   Subsequent edits to either file → re-run the same command. The same
+   files are pushed automatically by the Rust regression suite via
+   `integration_tests::fixtures::{push_agent, push_skill}` — see
+   [`integration-tests/README.md`](../../../../integration-tests/README.md).
 
 ---
 
@@ -88,7 +97,7 @@ for the storage vs display compaction rules.
 
 ```sh
 distri run --agent image_test_agent \
-  --task "Identify the person in docs/testing/execution/test_image.png"
+  --task "Identify the person in integration-tests/fixtures/test_image.png"
 ```
 
 The agent extracts the path from the user task and calls `Read` on it.

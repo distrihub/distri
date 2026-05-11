@@ -39,8 +39,14 @@ impl ExecutionResult {
     }
 
     pub fn as_observation(&self) -> String {
-        const MAX_DATA_CHARS: usize = 500;
-        const MAX_TEXT_CHARS: usize = 1000;
+        // No per-turn truncation. The function used to chop
+        // `Part::Text` at 1_000 chars and `Part::Data` /
+        // `Part::ToolResult` at 500 — that silently strips skill
+        // bodies, large tool outputs, and anything else the LLM needs
+        // verbatim on the next turn. Bounding is the emitting tool's
+        // job (planned: `Tool::output_budget`), not the prompt
+        // builder's. See
+        // `docs/specs/2026-05-10-tool-output-bounds-and-context-compaction.md`.
 
         // Phase 6.4: Empty result guard — prevents model issues with empty tool results
         let has_content = self.parts.iter().any(|p| match p {
@@ -59,45 +65,15 @@ impl ExecutionResult {
             .parts
             .iter()
             .map(|p| match p {
-                Part::Text(text) => {
-                    if text.len() > MAX_TEXT_CHARS {
-                        let truncated: String = text.chars().take(MAX_TEXT_CHARS).collect();
-                        format!("{}... [truncated, {} total chars]", truncated, text.len())
-                    } else {
-                        text.clone()
-                    }
-                }
+                Part::Text(text) => text.clone(),
                 Part::ToolCall(tool_call) => format!(
                     "Action: {} with {}",
                     tool_call.tool_name,
                     serde_json::to_string(&tool_call.input).unwrap_or_default()
                 ),
-                Part::Data(data) => {
-                    let serialized = serde_json::to_string(&data).unwrap_or_default();
-                    if serialized.len() > MAX_DATA_CHARS {
-                        let truncated: String = serialized.chars().take(MAX_DATA_CHARS).collect();
-                        format!(
-                            "{}... [truncated, {} total chars]",
-                            truncated,
-                            serialized.len()
-                        )
-                    } else {
-                        serialized
-                    }
-                }
+                Part::Data(data) => serde_json::to_string(&data).unwrap_or_default(),
                 Part::ToolResult(tool_result) => {
-                    let serialized =
-                        serde_json::to_string(&tool_result.result()).unwrap_or_default();
-                    if serialized.len() > MAX_DATA_CHARS {
-                        let truncated: String = serialized.chars().take(MAX_DATA_CHARS).collect();
-                        format!(
-                            "{}... [truncated, {} total chars]",
-                            truncated,
-                            serialized.len()
-                        )
-                    } else {
-                        serialized
-                    }
+                    serde_json::to_string(&tool_result.result()).unwrap_or_default()
                 }
                 Part::Image(image) => match image {
                     FileType::Url { url, .. } => format!("[Image: {}]", url),

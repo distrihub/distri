@@ -149,6 +149,70 @@ impl TodoList {
             self.items.push(item);
         }
     }
+
+    /// Diff `self` (the new list, after a `write_todos` overwrite)
+    /// against `prev` (the list as it was before this call). Match
+    /// items by `title` (the LLM passes them through as `content`,
+    /// stable across calls). Items present in both with the same
+    /// status are dropped; everything else is reported.
+    ///
+    /// Used by the CLI / web renderer to show only what *changed*
+    /// in this `write_todos` call, instead of dumping the full list
+    /// every time.
+    pub fn diff_against(&self, prev: &TodoList) -> Vec<TodoChange> {
+        let mut changes = Vec::new();
+        for item in &self.items {
+            match prev.items.iter().find(|p| p.title == item.title) {
+                None => changes.push(TodoChange {
+                    kind: TodoChangeKind::Added,
+                    content: item.title.clone(),
+                    status: item.status.clone(),
+                    prev_status: None,
+                }),
+                Some(p) if p.status != item.status => changes.push(TodoChange {
+                    kind: TodoChangeKind::StatusChanged,
+                    content: item.title.clone(),
+                    status: item.status.clone(),
+                    prev_status: Some(p.status.clone()),
+                }),
+                _ => {}
+            }
+        }
+        for item in &prev.items {
+            if !self.items.iter().any(|c| c.title == item.title) {
+                changes.push(TodoChange {
+                    kind: TodoChangeKind::Removed,
+                    content: item.title.clone(),
+                    status: item.status.clone(),
+                    prev_status: None,
+                });
+            }
+        }
+        changes
+    }
+}
+
+/// One mutation in a `write_todos` call, computed by
+/// [`TodoList::diff_against`]. Lets the CLI/web renderer show only
+/// the items that actually changed instead of re-dumping the full
+/// list every time the LLM invokes the tool.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TodoChangeKind {
+    Added,
+    StatusChanged,
+    Removed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct TodoChange {
+    pub kind: TodoChangeKind,
+    pub content: String,
+    pub status: TodoStatus,
+    /// Status the item had before this call. `None` for `Added` /
+    /// `Removed`; `Some(prev)` for `StatusChanged`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prev_status: Option<TodoStatus>,
 }
 
 /// Thread-safe wrapper around TodoList for use in ExecutorContext

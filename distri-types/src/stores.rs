@@ -15,6 +15,85 @@ use crate::{
     UpdateThreadRequest,
 };
 
+/// Inputs to [`TaskStore::create_task`]. The schema records only
+/// (`remote`, `inner_task_id`, `ended_at`, `invocation`) for the
+/// Invocation half — `remote` is the fast filter, the typed Executor +
+/// RunnerConfig live inside `invocation`. Adding a new runner kind
+/// (k8s, fly, …) does NOT require a schema migration; ship a new
+/// [`RunnerInitializer`] keyed by [`RunnerConfig::kind`].
+///
+/// Use [`CreateTaskInput::local`] for a local-executor task; chain
+/// [`CreateTaskInput::with_remote`] to flip `remote` to true and set
+/// `inner_task_id` together.
+#[derive(Debug, Clone)]
+pub struct CreateTaskInput {
+    pub thread_id: String,
+    pub task_id: Option<String>,
+    pub status: Option<TaskStatus>,
+    pub parent_task_id: Option<String>,
+    /// `true` when another orchestrator runs the loop. Equivalent to
+    /// `Executor::Remote { runner }` in the in-memory `Invocation`. The
+    /// runner kind/config is NOT denormalized into the schema — it
+    /// lives only in the `invocation` blob, dispatched at runtime via
+    /// the `RunnerInitializer` registry.
+    pub remote: bool,
+    /// task_id on the inner orchestrator. Must be `None` when
+    /// `remote == false` (DB CHECK enforces). May be `None`
+    /// transiently for remote rows — between row insert and the
+    /// runner assigning its inner id.
+    pub inner_task_id: Option<String>,
+    /// Serialized [`Invocation`](crate::invocation::Invocation). The
+    /// canonical record of what was requested, including the typed
+    /// `Executor` and any `RunnerConfig`. Stored as JSONB in Pg /
+    /// TEXT in sqlite. Default is `{}` until invoke() is wired.
+    pub invocation: serde_json::Value,
+}
+
+impl CreateTaskInput {
+    /// Local-executor task. `task_id` / `status` / `parent_task_id` /
+    /// `invocation` are chained via the `with_*` builders.
+    pub fn local(thread_id: impl Into<String>) -> Self {
+        Self {
+            thread_id: thread_id.into(),
+            task_id: None,
+            status: None,
+            parent_task_id: None,
+            remote: false,
+            inner_task_id: None,
+            invocation: serde_json::Value::Object(Default::default()),
+        }
+    }
+
+    pub fn with_id(mut self, task_id: impl Into<String>) -> Self {
+        self.task_id = Some(task_id.into());
+        self
+    }
+
+    pub fn with_status(mut self, status: TaskStatus) -> Self {
+        self.status = Some(status);
+        self
+    }
+
+    pub fn with_parent(mut self, parent_task_id: impl Into<String>) -> Self {
+        self.parent_task_id = Some(parent_task_id.into());
+        self
+    }
+
+    pub fn with_invocation(mut self, invocation: serde_json::Value) -> Self {
+        self.invocation = invocation;
+        self
+    }
+
+    /// Marks the task as remote-executed and sets the inner task id
+    /// the runner has assigned. The runner kind + its private config
+    /// live in `invocation` (typed `Executor::Remote { runner }`).
+    pub fn with_remote(mut self, inner_task_id: impl Into<String>) -> Self {
+        self.remote = true;
+        self.inner_task_id = Some(inner_task_id.into());
+        self
+    }
+}
+
 // Redis and PostgreSQL stores moved to distri-stores crate
 
 /// Filter for listing threads
@@ -233,22 +312,24 @@ pub struct MessageFilter {
 // Task Store trait for A2A task management
 #[async_trait]
 pub trait TaskStore: Send + Sync {
-    fn init_task(
-        &self,
-        context_id: &str,
-        task_id: Option<&str>,
-        status: Option<TaskStatus>,
-    ) -> Task {
-        let task_id = task_id.unwrap_or(&Uuid::new_v4().to_string()).to_string();
+    /// Build (but do not persist) a Task row from a [`CreateTaskInput`]. The
+    /// returned struct is what the implementations will hand back from
+    /// `create_task` once the row has been inserted.
+    fn init_task(&self, input: &CreateTaskInput) -> Task {
+        let task_id = input
+            .task_id
+            .clone()
+            .unwrap_or_else(|| Uuid::new_v4().to_string());
         Task {
             id: task_id,
-            status: status.unwrap_or(TaskStatus::Pending),
+            status: input.status.clone().unwrap_or(TaskStatus::Pending),
             created_at: chrono::Utc::now().timestamp_millis(),
             updated_at: chrono::Utc::now().timestamp_millis(),
-            thread_id: context_id.to_string(),
-            parent_task_id: None,
+            thread_id: input.thread_id.clone(),
+            parent_task_id: input.parent_task_id.clone(),
         }
     }
+
     async fn get_or_create_task(
         &self,
         thread_id: &str,
@@ -257,24 +338,56 @@ pub trait TaskStore: Send + Sync {
         match self.get_task(task_id).await? {
             Some(task) => task,
             None => {
-                self.create_task(thread_id, Some(task_id), Some(TaskStatus::Running))
-                    .await?
+                self.create_task(
+                    CreateTaskInput::local(thread_id)
+                        .with_id(task_id)
+                        .with_status(TaskStatus::Running),
+                )
+                .await?
             }
         };
 
         Ok(())
     }
-    async fn create_task(
-        &self,
-        context_id: &str,
-        task_id: Option<&str>,
-        task_status: Option<TaskStatus>,
-    ) -> anyhow::Result<Task>;
+
+    async fn create_task(&self, input: CreateTaskInput) -> anyhow::Result<Task>;
     async fn get_task(&self, task_id: &str) -> anyhow::Result<Option<Task>>;
     async fn update_task_status(&self, task_id: &str, status: TaskStatus) -> anyhow::Result<()>;
     async fn add_event_to_task(&self, task_id: &str, event: AgentEvent) -> anyhow::Result<()>;
     async fn add_message_to_task(&self, task_id: &str, message: &Message) -> anyhow::Result<()>;
     async fn cancel_task(&self, task_id: &str) -> anyhow::Result<Task>;
+
+    /// Cancel `root_task_id` and every task whose `parent_task_id` chain
+    /// leads back to it, in one transaction.
+    ///
+    /// Idempotent on terminal rows: tasks already in `Completed`, `Failed`,
+    /// or `Canceled` are left untouched. The returned `Vec<Task>` contains
+    /// the rows that were actually transitioned to `Canceled` — the caller
+    /// uses this to publish corresponding cancel events on the broadcaster
+    /// so live in-process loops can stop.
+    ///
+    /// The cascade is implemented via a recursive CTE on the `parent_task_id`
+    /// edge; the `idx_tasks_parent_id` index keeps the walk cheap.
+    async fn cancel_task_cascade(&self, root_task_id: &str) -> anyhow::Result<Vec<Task>>;
+
+    /// Read-only walk of the parent_task_id graph rooted at `root_task_id`,
+    /// returning the root + every descendant. Used by the `list_my_tasks`
+    /// supervisor tool when scoped to a sub-tree, and by `wait_task` to
+    /// wait on the whole sub-tree of a Detached invocation.
+    ///
+    /// Order is breadth-first by descendant depth (root first); within a
+    /// level the order is implementation-defined.
+    async fn list_descendant_tasks(&self, root_task_id: &str) -> anyhow::Result<Vec<Task>>;
+
+    /// All non-terminal tasks. When `thread_id` is `Some`, scopes to that
+    /// thread (inputs of `list_my_tasks` from a thread-scoped supervisor);
+    /// otherwise returns every running task visible to the caller (cloud
+    /// tenant isolation still applies).
+    ///
+    /// "Running" here means the schema status `running` — tasks in `pending`,
+    /// `input_required`, or terminal states are excluded. The partial index
+    /// `idx_tasks_running` covers this query.
+    async fn list_running_tasks(&self, thread_id: Option<&str>) -> anyhow::Result<Vec<Task>>;
     async fn list_tasks(&self, thread_id: Option<&str>) -> anyhow::Result<Vec<Task>>;
 
     async fn get_history(

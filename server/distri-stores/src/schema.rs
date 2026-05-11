@@ -50,6 +50,10 @@ diesel::table! {
         status -> Text,
         created_at -> BigInt,
         updated_at -> BigInt,
+        remote -> Bool,
+        inner_task_id -> Nullable<Text>,
+        ended_at -> Nullable<BigInt>,
+        invocation -> Text,
     }
 }
 

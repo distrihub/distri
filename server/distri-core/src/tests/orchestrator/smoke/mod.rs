@@ -14,4 +14,6 @@
 //! OPENAI_API_KEY=sk-... cargo test -p distri-core orchestrator::smoke -- --ignored --nocapture
 //! ```
 
-pub mod fork;
+// All current smoke tests gated `run_skill` fork dispatch which has been
+// deleted. New invoke()-based smoke tests will go here once the e2e
+// surface for `invoke_agent` settles.

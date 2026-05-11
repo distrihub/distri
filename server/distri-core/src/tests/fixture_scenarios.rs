@@ -148,7 +148,7 @@ async fn programmatic_fixture_works() {
                 output_content: "I'll delegate this to the coder agent.".to_string(),
                 tool_calls: vec![RecordedToolCall {
                     tool_call_id: "tc-delegate".to_string(),
-                    tool_name: "call_agent".to_string(),
+                    tool_name: "invoke_agent".to_string(),
                     input: serde_json::json!({
                         "agent": "coder",
                         "task": "Deploy the application"
@@ -185,7 +185,7 @@ async fn programmatic_fixture_works() {
         .execute(&Vec::<crate::types::Message>::new())
         .await
         .unwrap();
-    assert_eq!(r1.tool_calls[0].tool_name, "call_agent");
+    assert_eq!(r1.tool_calls[0].tool_name, "invoke_agent");
 
     let r2 = executor
         .execute(&Vec::<crate::types::Message>::new())

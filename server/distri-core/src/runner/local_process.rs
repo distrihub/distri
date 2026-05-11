@@ -1,4 +1,4 @@
-//! `LocalProcessRemoteRunner` — `BackgroundRunner` implementation that runs
+//! `LocalProcessRemoteRunner` — `RemoteTaskRunner` implementation that runs
 //! `--remote` calls via the `distri` client library in-process, going
 //! through the SAME code path the distri CLI uses (`distri::run::run_agent`).
 //! No docker container, no subprocess — but the full HTTP/SSE + A2A
@@ -25,7 +25,7 @@
 //! ```ignore
 //! let runner = Arc::new(LocalProcessRemoteRunner::from_env(RuntimeMode::Cli)?);
 //! let orchestrator = AgentOrchestratorBuilder::default()
-//!     .with_background_runner(runner.clone())
+//!     .with_remote_task_runner(runner.clone())
 //!     .build().await?;
 //! runner.attach_broadcaster(orchestrator.runtime.broadcaster_arc());
 //! ```
@@ -43,9 +43,9 @@ use distri::{AgentStreamClient, Distri};
 use distri_types::{AgentEvent, AgentEventType, DistriConfig, RuntimeMode};
 
 use crate::broadcast::AgentEventBroadcaster;
-use crate::runner::BackgroundRunner;
+use crate::runner::RemoteTaskRunner;
 
-/// `BackgroundRunner` that drives `--remote` calls through the `distri`
+/// `RemoteTaskRunner` that drives `--remote` calls through the `distri`
 /// client library against the same server process. DEV_MODE=true only.
 pub struct LocalProcessRemoteRunner {
     platform_client: Distri,
@@ -109,7 +109,7 @@ impl LocalProcessRemoteRunner {
 }
 
 #[async_trait]
-impl BackgroundRunner for LocalProcessRemoteRunner {
+impl RemoteTaskRunner for LocalProcessRemoteRunner {
     async fn spawn(
         &self,
         task_id: String,

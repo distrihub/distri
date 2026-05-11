@@ -14,8 +14,19 @@ pub struct DefinitionOverrides {
     pub max_tokens: Option<u32>,
     /// Override max iterations
     pub max_iterations: Option<usize>,
-    /// Override instructions
+    /// Override instructions wholesale. Replaces the agent definition's
+    /// `instructions` field. Used by callers who want full control over
+    /// the system prompt (e.g. recipe-style agent presets).
     pub instructions: Option<String>,
+
+    /// Append to the agent definition's instructions instead of
+    /// replacing them. Used by `invoke_agent` when the LLM passes a
+    /// `system` prompt for an ad-hoc worker — the worker keeps the
+    /// `_adhoc_base.md` scaffolding (distri output conventions, `final`
+    /// usage, `load_skill` semantics) and the LLM-supplied text is
+    /// appended below it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instructions_append: Option<String>,
 
     /// Override browser usage flag
     pub use_browser: Option<bool>,
@@ -24,7 +35,7 @@ pub struct DefinitionOverrides {
     /// `StandardDefinition.runtime` wholesale. The `--remote` CLI flag is
     /// sugar for `Some(vec![RuntimeMode::Cloud])` — when the caller's
     /// current runtime doesn't match, the orchestrator routes via the
-    /// configured `BackgroundRunner`.
+    /// configured `RemoteTaskRunner`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<Vec<String>>)]
     pub runtime: Option<Vec<RuntimeMode>>,
@@ -81,6 +92,11 @@ impl DefinitionOverrides {
         self
     }
 
+    pub fn with_instructions_append(mut self, suffix: String) -> Self {
+        self.instructions_append = Some(suffix);
+        self
+    }
+
     pub fn with_browser_enabled(mut self, enabled: bool) -> Self {
         self.use_browser = Some(enabled);
         self
@@ -93,7 +109,7 @@ impl DefinitionOverrides {
 
     /// Sugar for the `--remote` CLI flag: forces runtime = [Cloud] so the
     /// orchestrator routes the invocation through a cloud-providing
-    /// BackgroundRunner.
+    /// RemoteTaskRunner.
     pub fn with_remote(mut self, remote: bool) -> Self {
         if remote {
             self.runtime = Some(vec![RuntimeMode::Cloud]);

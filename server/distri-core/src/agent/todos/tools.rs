@@ -81,6 +81,18 @@ impl ExecutorContextTool for TodosTool {
             .map_err(|e| AgentError::ToolExecution(format!("Invalid todo parameters: {}", e)))?;
 
         let task_id = context.parent_task_id.as_ref().unwrap_or(&context.task_id);
+        let session_store = context.get_session_store()?;
+
+        // Snapshot the previous list so we can diff against it; the
+        // tool itself replaces everything, so without this snapshot
+        // there's no way to tell the renderer which items actually
+        // changed in this call.
+        let prev_list: TodoList = session_store
+            .get(task_id, "todos")
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_default();
 
         let mut todo_list = TodoList::new();
         let simple_todos = params.todos.unwrap_or_default();
@@ -88,9 +100,9 @@ impl ExecutorContextTool for TodosTool {
 
         let formatted_todos = todo_list.format_display();
         let todo_count = todo_list.items.len();
+        let changes = todo_list.diff_against(&prev_list);
 
-        context
-            .get_session_store()?
+        session_store
             .set(task_id, "todos", &todo_list)
             .await
             .map_err(|e| AgentError::Session(format!("Failed to set todos in session: {}", e)))?;
@@ -104,6 +116,7 @@ impl ExecutorContextTool for TodosTool {
                     "write_todos".to_string()
                 },
                 todo_count,
+                changes,
             })
             .await;
 

@@ -220,6 +220,53 @@ fn format_token_count(count: usize) -> String {
     }
 }
 /// Print a compact `↳ Xk in, Xk out [· Xk cached] [· $0.0031] [· model]` usage line.
+/// Render one [`TodoChange`] as a single line.
+///
+/// Examples:
+///   `+ □ Wire up auth`           (added)
+///   `~ □→◐ Wire up auth`         (status changed)
+///   `- ■ Old TODO removed`       (removed)
+///
+/// The icon is the same one [`TodoList::format_display`] uses, so a
+/// reader can scan the change line and the full list (when the
+/// renderer falls back to it) without context-switching the
+/// vocabulary.
+fn format_todo_change(ch: &distri_types::todos::TodoChange) -> String {
+    use distri_types::todos::TodoChangeKind;
+    // Bright green for adds; printer.rs doesn't already import a
+    // green constant so define it inline here.
+    const COLOR_GREEN: &str = "\x1b[92m";
+    let icon = status_icon(&ch.status);
+    match ch.kind {
+        TodoChangeKind::Added => {
+            format!("{}+{} {} {}", COLOR_GREEN, COLOR_RESET, icon, ch.content)
+        }
+        TodoChangeKind::Removed => {
+            format!("{}-{} {} {}", COLOR_GRAY, COLOR_RESET, icon, ch.content)
+        }
+        TodoChangeKind::StatusChanged => {
+            let prev_icon = ch
+                .prev_status
+                .as_ref()
+                .map(status_icon)
+                .unwrap_or("?");
+            format!(
+                "{}~{} {}→{} {}",
+                COLOR_YELLOW, COLOR_RESET, prev_icon, icon, ch.content
+            )
+        }
+    }
+}
+
+fn status_icon(s: &distri_types::todos::TodoStatus) -> &'static str {
+    use distri_types::todos::TodoStatus;
+    match s {
+        TodoStatus::Done => "■",
+        TodoStatus::InProgress => "◐",
+        TodoStatus::Open => "□",
+    }
+}
+
 fn print_usage_line(u: &distri_types::RunUsage) {
     let input = format_token_count(u.input_tokens as usize);
     let output = format_token_count(u.output_tokens as usize);
@@ -306,6 +353,13 @@ pub struct MessageState {
     pub is_streaming: bool,
     pub is_complete: bool,
     pub step_id: Option<String>,
+    /// `true` once we've actually printed the `◆ <name>: ` (or
+    /// `<role>: `) prefix line. We defer printing it until the first
+    /// content delta arrives so that messages with no body (the
+    /// agent went straight from `TextMessageStart` to a tool call,
+    /// common for sub-task workers) don't leave a trailing-space
+    /// blank line in the CLI output.
+    pub prefix_printed: bool,
 }
 
 #[derive(Debug, Default)]
@@ -642,12 +696,26 @@ impl EventPrinter {
                 );
             }
             AgentEventType::TodosUpdated {
-                formatted_todos, ..
+                formatted_todos,
+                changes,
+                ..
             } => {
-                println!(
-                    "{}Todos updated{}:\n{}",
-                    COLOR_GRAY, COLOR_RESET, formatted_todos
-                );
+                if changes.is_empty() {
+                    // Either the very first write_todos call (no
+                    // prior list to diff against) or an older
+                    // server that doesn't ship `changes`. Fall back
+                    // to dumping the full list — same behavior as
+                    // before this field existed.
+                    println!(
+                        "{}Todos updated{}:\n{}",
+                        COLOR_GRAY, COLOR_RESET, formatted_todos
+                    );
+                } else {
+                    println!("{}Todos updated{}:", COLOR_GRAY, COLOR_RESET);
+                    for ch in changes {
+                        println!("  {}", format_todo_change(ch));
+                    }
+                }
             }
             AgentEventType::AgentHandover {
                 from_agent,
@@ -711,10 +779,39 @@ impl EventPrinter {
             is_streaming: true,
             is_complete: false,
             step_id: None,
+            prefix_printed: false,
         };
         self.state.messages.insert(message_id.to_string(), message);
         self.state.current_message_id = Some(message_id.to_string());
+        // Prefix is printed lazily on the first content delta — see
+        // append_message + the `prefix_printed` field doc on MessageState.
+    }
 
+    fn append_message(&mut self, message_id: &str, delta: &str) {
+        // Snapshot the bits we need under the borrow, then drop it
+        // before calling `print_message_prefix` (which takes `&self`).
+        let needs_prefix_role = self
+            .state
+            .messages
+            .get(message_id)
+            .filter(|m| !m.prefix_printed)
+            .map(|m| m.role.clone());
+        if let Some(role) = needs_prefix_role {
+            self.print_message_prefix(&role);
+            if let Some(msg) = self.state.messages.get_mut(message_id) {
+                msg.prefix_printed = true;
+            }
+        }
+        if let Some(msg) = self.state.messages.get_mut(message_id) {
+            msg.content.push_str(delta);
+            print!("{delta}");
+            let _ = std::io::Write::flush(&mut std::io::stdout());
+        }
+    }
+
+    /// Print the `◆ <agent>: ` (assistant) or `<role>: ` (other)
+    /// prefix. Lifted out of `start_message` so we can defer it.
+    fn print_message_prefix(&self, role: &MessageRole) {
         match role {
             MessageRole::Assistant => {
                 let name = self
@@ -737,19 +834,16 @@ impl EventPrinter {
         }
     }
 
-    fn append_message(&mut self, message_id: &str, delta: &str) {
-        if let Some(msg) = self.state.messages.get_mut(message_id) {
-            msg.content.push_str(delta);
-            print!("{delta}");
-            let _ = std::io::Write::flush(&mut std::io::stdout());
-        }
-    }
-
     fn finish_message(&mut self, message_id: &str) {
         if let Some(msg) = self.state.messages.get_mut(message_id) {
             msg.is_streaming = false;
             msg.is_complete = true;
-            println!();
+            // Only emit a trailing newline if we actually opened a
+            // line for this message. Silent start→end pairs (agent
+            // went straight to a tool call) leave nothing behind.
+            if msg.prefix_printed {
+                println!();
+            }
         }
         if self
             .state
