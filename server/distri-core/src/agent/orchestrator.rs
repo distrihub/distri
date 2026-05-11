@@ -461,13 +461,25 @@ impl AgentOrchestrator {
         definition: &crate::types::StandardDefinition,
         external_tools: &[Arc<dyn Tool>],
     ) -> Result<crate::tools::ResolvedTools, AgentError> {
+        self.get_agent_tools_with_pool(definition, external_tools, None)
+            .await
+    }
+
+    /// Pool-aware variant: include MCP tools discovered through the pool.
+    pub async fn get_agent_tools_with_pool(
+        &self,
+        definition: &crate::types::StandardDefinition,
+        external_tools: &[Arc<dyn Tool>],
+        mcp_pool: Option<Arc<crate::servers::McpClientPool>>,
+    ) -> Result<crate::tools::ResolvedTools, AgentError> {
         // Use new tools configuration if available, fallback to old mcp_servers
         let tools_config = definition.tools.clone().unwrap_or(ToolsConfig::default());
 
-        let mut resolved = crate::tools::resolve_tools_with_deferral(
+        let mut resolved = crate::tools::resolve_tools_with_deferral_and_pool(
             &tools_config,
             self.mcp_registry.clone(),
             external_tools,
+            mcp_pool,
         )
         .await
         .map_err(|e| AgentError::ToolExecution(e.to_string()))?;
@@ -549,7 +561,13 @@ impl AgentOrchestrator {
                         None => vec![],
                     }
                 };
-                let resolved = self.get_agent_tools(&definition, &external_tools).await?;
+                let resolved = self
+                    .get_agent_tools_with_pool(
+                        &definition,
+                        &external_tools,
+                        context.mcp_client_pool.clone(),
+                    )
+                    .await?;
                 let deferred_names: std::collections::HashSet<String> = resolved
                     .deferred_tools
                     .iter()

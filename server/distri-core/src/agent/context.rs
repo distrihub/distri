@@ -171,6 +171,12 @@ pub struct ExecutorContext {
     /// proxy). The orchestrator uses this post-run to warn when an agent
     /// declared `connections: [...]` but never used them.
     pub connections_used: Arc<RwLock<HashSet<String>>>,
+    /// Live MCP client pool for this execution. Populated by the orchestrator
+    /// from workspace settings (or directly by callers like the standalone
+    /// CLI). The agent loop's tool resolver enumerates remote tools through
+    /// this pool, and `McpToolAdapter::execute_with_executor_context`
+    /// dispatches `tools/call` through it.
+    pub mcp_client_pool: Option<Arc<crate::servers::McpClientPool>>,
 }
 
 impl std::fmt::Debug for ExecutorContext {
@@ -242,6 +248,7 @@ impl Default for ExecutorContext {
             mailbox: None,
             is_sandbox: false,
             connections_used: Arc::new(RwLock::new(HashSet::new())),
+            mcp_client_pool: None,
         }
     }
 }
@@ -1171,6 +1178,7 @@ impl ExecutorContext {
             mailbox: self.mailbox.clone(),
             is_sandbox: self.is_sandbox,
             connections_used: self.connections_used.clone(),
+            mcp_client_pool: self.mcp_client_pool.clone(),
         };
 
         (inner_context, inner_rx)

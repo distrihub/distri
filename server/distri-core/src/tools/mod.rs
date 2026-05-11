@@ -26,6 +26,7 @@ pub(crate) mod builtin;
 pub mod dynamic_factory;
 pub mod inject_env;
 pub mod invoke_agent;
+pub mod mcp_tool;
 pub mod mock_tool;
 pub mod request;
 pub mod resolve;
@@ -102,16 +103,20 @@ pub fn cast_to_executor_context_tool(
 ) -> Result<Box<dyn ExecutorContextTool>, AgentError> {
     let tool_name = tool.get_name();
 
-    // Check if it's an MCP tool first
+    use std::any::Any;
+
+    // MCP-backed tools: dispatch through their concrete adapter.
     if tool.is_mcp() {
-        // MCP tools should use execute_tool_with_executor_context instead
+        if let Some(adapter) =
+            (tool as &dyn Any).downcast_ref::<mcp_tool::McpToolAdapter>()
+        {
+            return Ok(Box::new(adapter.clone()));
+        }
         return Err(AgentError::ToolExecution(format!(
-            "MCP tool '{}' should use execute_tool_with_executor_context instead",
-            tool_name
+            "tool '{tool_name}' reports is_mcp() but is not an McpToolAdapter"
         )));
     }
 
-    use std::any::Any;
     if let Some(dyn_tool) = (tool as &dyn Any).downcast_ref::<DynExecutorTool>() {
         return Ok(Box::new(dyn_tool.clone()));
     }
@@ -270,6 +275,19 @@ pub async fn resolve_tools_config(
     _registry: Arc<RwLock<McpServerRegistry>>,
     external_tools: &[Arc<dyn Tool>],
 ) -> Result<Vec<Arc<dyn Tool>>> {
+    resolve_tools_config_with_pool(config, _registry, external_tools, None).await
+}
+
+/// Same as [`resolve_tools_config`] but allows callers to supply a live
+/// `McpClientPool` so remote MCP servers are discovered and their tools
+/// included as `McpToolAdapter`s. Connection errors are logged and skipped —
+/// they shouldn't prevent the agent from running its non-MCP tools.
+pub async fn resolve_tools_config_with_pool(
+    config: &ToolsConfig,
+    _registry: Arc<RwLock<McpServerRegistry>>,
+    external_tools: &[Arc<dyn Tool>],
+    mcp_pool: Option<Arc<crate::servers::McpClientPool>>,
+) -> Result<Vec<Arc<dyn Tool>>> {
     let mut all_tools = Vec::new();
 
     // Add all builtin tools (both required and user-configured)
@@ -351,9 +369,79 @@ pub async fn resolve_tools_config(
         }
     }
 
-    // MCP tools are resolved at runtime via the MCP registry; no static resolution here.
+    // Resolve MCP tools: connect to each configured server, list tools, and
+    // adapt the ones that match the agent's include/exclude globs.
+    if let Some(pool) = mcp_pool {
+        if !config.mcp.is_empty() {
+            for mcp_cfg in &config.mcp {
+                let server_name = &mcp_cfg.server;
+                let client = match pool.connect_named(server_name).await {
+                    Ok(c) => c,
+                    Err(e) => {
+                        tracing::warn!(
+                            server = %server_name,
+                            error = ?e,
+                            "MCP server connect failed; tools from this server are unavailable"
+                        );
+                        continue;
+                    }
+                };
+                let tools = match client.list_tools().await {
+                    Ok(t) => t,
+                    Err(e) => {
+                        tracing::warn!(
+                            server = %server_name,
+                            error = ?e,
+                            "MCP server list_tools failed"
+                        );
+                        continue;
+                    }
+                };
+                for handle in tools {
+                    if !mcp_filter_matches(&handle.name, &mcp_cfg.include, &mcp_cfg.exclude) {
+                        continue;
+                    }
+                    // Namespace remote tool names by server so two servers with
+                    // a `search` tool can coexist. Convention: `<server>__<tool>`.
+                    let exposed_name = format!("{}__{}", server_name, handle.name);
+                    all_tools.push(Arc::new(mcp_tool::McpToolAdapter::new(
+                        handle,
+                        exposed_name,
+                    )));
+                }
+            }
+        }
+    }
 
     Ok(all_tools)
+}
+
+/// Glob-style include/exclude filter for MCP tool names.
+/// - Empty `include` means "all".
+/// - `exclude` always wins on a hit.
+fn mcp_filter_matches(name: &str, include: &[String], exclude: &[String]) -> bool {
+    let included = include.is_empty()
+        || include
+            .iter()
+            .any(|pat| glob_matches(name, pat));
+    let excluded = exclude
+        .iter()
+        .any(|pat| glob_matches(name, pat));
+    included && !excluded
+}
+
+fn glob_matches(text: &str, pattern: &str) -> bool {
+    if pattern == "*" || pattern == text {
+        return true;
+    }
+    if let Some(idx) = pattern.find('*') {
+        let prefix = &pattern[..idx];
+        let suffix = &pattern[idx + 1..];
+        return text.starts_with(prefix)
+            && text.ends_with(suffix)
+            && text.len() >= prefix.len() + suffix.len();
+    }
+    false
 }
 
 /// Resolve tools with deferred loading support.
@@ -369,10 +457,22 @@ pub async fn resolve_tools_with_deferral(
     registry: Arc<RwLock<McpServerRegistry>>,
     external_tools: &[Arc<dyn Tool>],
 ) -> Result<ResolvedTools> {
+    resolve_tools_with_deferral_and_pool(config, registry, external_tools, None).await
+}
+
+/// Same as [`resolve_tools_with_deferral`] but routes through the pool-aware
+/// resolver so MCP tools are included.
+pub async fn resolve_tools_with_deferral_and_pool(
+    config: &ToolsConfig,
+    registry: Arc<RwLock<McpServerRegistry>>,
+    external_tools: &[Arc<dyn Tool>],
+    mcp_pool: Option<Arc<crate::servers::McpClientPool>>,
+) -> Result<ResolvedTools> {
     use distri_types::{ToolDeliveryMode, CORE_TOOLS};
 
     // First resolve all tools normally
-    let all_tools = resolve_tools_config(config, registry, external_tools).await?;
+    let all_tools =
+        resolve_tools_config_with_pool(config, registry, external_tools, mcp_pool).await?;
 
     let total_count = all_tools.len();
     let effective_mode = config.effective_delivery_mode(total_count);
