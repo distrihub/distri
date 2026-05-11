@@ -80,6 +80,16 @@ pub struct TemplateData<'a> {
     /// to a chat surface (web direct, CLI, A2A).
     #[serde(default)]
     pub channel_kind: Option<String>,
+    /// Runtime mode this agent is executing under. One of `"cli"`,
+    /// `"cloud"`, `"browser"`, or `""` if the formatter wasn't given a
+    /// runtime to advertise. Use to conditionally render runtime-specific
+    /// guidance — filesystem-access copy in CLI, sandbox-dispatch hints in
+    /// Cloud, browser-tool callouts in Browser. Templates can branch with
+    /// `{{#if (eq runtime_mode "cli")}}…{{/if}}`. Built from
+    /// `ExecutorContext.runtime_mode` in
+    /// `agent::strategy::planning::formatter::build_messages`.
+    #[serde(default)]
+    pub runtime_mode: &'a str,
 }
 
 /// A single tool's prompt entry for template iteration.
@@ -822,6 +832,7 @@ mod tests {
             tool_prompt_list: vec![],
             deferred_tools_listing: None,
             channel_kind: None,
+            runtime_mode: "",
         };
         let msgs = build_prompt_messages(
             &registry,

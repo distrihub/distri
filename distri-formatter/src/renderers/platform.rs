@@ -71,9 +71,12 @@ pub fn render_platform_tool(result: &ToolResponse) {
             }
         }
         "tool_search" => {
-            let count = data
-                .and_then(|d| d.as_array())
-                .map(|a| a.len())
+            // `tool_search` returns its payload as `Part::Text(json_string)`
+            // (the LLM consumes the JSON directly). Parse it to surface the
+            // count rather than always printing 0.
+            let count = text
+                .and_then(|t| serde_json::from_str::<serde_json::Value>(t).ok())
+                .and_then(|v| v.get("tools_found").and_then(|n| n.as_u64()))
                 .unwrap_or(0);
             println!(
                 "{}{}Found {} tools{}",

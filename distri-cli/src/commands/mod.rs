@@ -10,8 +10,8 @@ use distri::{CreateSkillRequest, Distri};
 use tokio::fs;
 
 use crate::{
-    ConnectionsCommands, ProfileCommands, ProfileConfigCommands, PromptsCommands, SecretsCommands,
-    SkillsCommands, COLOR_BRIGHT_GREEN, COLOR_GRAY, COLOR_RESET,
+    ConnectionsCommands, ModelsCommands, ProfileCommands, ProfileConfigCommands, PromptsCommands,
+    ProvidersCommands, SecretsCommands, SkillsCommands, COLOR_BRIGHT_GREEN, COLOR_GRAY, COLOR_RESET,
 };
 
 fn mask_api_key(key: &str) -> String {
@@ -572,6 +572,86 @@ pub async fn handle_secrets_command(client: &Distri, command: SecretsCommands) -
         SecretsCommands::Delete { key } => {
             client.delete_secret(&key).await?;
             println!("Secret '{}' deleted.", key);
+        }
+    }
+    Ok(())
+}
+
+pub async fn handle_providers_command(
+    client: &Distri,
+    command: ProvidersCommands,
+) -> Result<()> {
+    match command {
+        ProvidersCommands::List => {
+            let providers = client.list_model_providers().await?;
+            if providers.is_empty() {
+                println!("No providers configured.");
+            } else {
+                for p in providers {
+                    let custom = if p.is_custom { " (custom)" } else { "" };
+                    println!("{:30} {}{}", p.id, p.label, custom);
+                }
+            }
+        }
+        ProvidersCommands::Set {
+            provider_id,
+            secrets,
+            default_model,
+        } => {
+            let request = distri_types::stores::UpsertProviderRequest {
+                provider_id: provider_id.clone(),
+                secrets: secrets.into_iter().collect(),
+                config: None,
+                custom_models: None,
+                default_model,
+                connection_provider: None,
+            };
+            let resp = client.upsert_provider(request).await?;
+            println!(
+                "Provider '{}' set (secrets_saved={}, config_saved={}).",
+                resp.provider_id, resp.secrets_saved, resp.config_saved
+            );
+        }
+        ProvidersCommands::Delete { provider_id } => {
+            client.delete_provider(&provider_id).await?;
+            println!("Provider '{}' deleted.", provider_id);
+        }
+    }
+    Ok(())
+}
+
+pub async fn handle_models_command(client: &Distri, command: ModelsCommands) -> Result<()> {
+    match command {
+        ModelsCommands::List => {
+            let models = client.list_models().await?;
+            if models.is_empty() {
+                println!("No models available.");
+            } else {
+                for provider in models {
+                    let status = if provider.configured { "✓" } else { " " };
+                    println!(
+                        "{} {} ({})",
+                        status,
+                        provider.provider_id,
+                        provider.provider_label
+                    );
+                    for m in &provider.models {
+                        println!("    {}", m.id);
+                    }
+                }
+            }
+        }
+        ModelsCommands::GetDefault => match client.get_default_model().await? {
+            Some(m) => println!("{m}"),
+            None => println!("(no default model configured)"),
+        },
+        ModelsCommands::SetDefault { provider_model } => {
+            client.set_default_model(&provider_model).await?;
+            if provider_model.is_empty() {
+                println!("Default model cleared.");
+            } else {
+                println!("Default model set to '{provider_model}'.");
+            }
         }
     }
     Ok(())

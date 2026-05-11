@@ -275,6 +275,15 @@ mod tests {
         assert!(result.unwrap_err().contains("no token"));
     }
 
+    /// `DefaultResolver::resolve` defensively returns
+    /// `"connection store not configured"` when `stores.connection_store`
+    /// is `None`. Since the OSS rearch (PR #93, 2026-05-07),
+    /// `initialize_stores` always populates the connection stores from the
+    /// metadata factory, so the only way to reach the defensive check is
+    /// to explicitly clear the store. We do so here to keep the guard
+    /// pinned — if a future refactor accidentally makes the field non-Option,
+    /// or moves the resolver onto a typed handle that can't be None, this
+    /// test breaks and forces the author to think about the behavior change.
     #[tokio::test]
     async fn resolve_no_connection_stores_returns_error() {
         let db_name = uuid::Uuid::new_v4();
@@ -288,10 +297,15 @@ mod tests {
             },
             ..Default::default()
         };
-        let stores = distri_stores::initialize_stores(&config).await.unwrap();
-        // connection_store and connection_token_store are None
+        let mut stores = distri_stores::initialize_stores(&config).await.unwrap();
+        stores.connection_store = None;
+        stores.connection_token_store = None;
+
         let result = resolve_connection_token(&uuid::Uuid::new_v4().to_string(), &stores).await;
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("not configured"));
+        let err = result.expect_err("must error when connection_store is None");
+        assert!(
+            err.contains("not configured"),
+            "expected 'not configured' in error; got: {err}"
+        );
     }
 }

@@ -15,11 +15,12 @@ use serde_json::json;
 const SAFE_TOOLS: &[&str] = &[
     "tool_search",
     "load_skill",
-    "run_skill",
-    "search",        // web search (read-only)
-    "browsr_scrape", // web scrape (read-only)
+    "get_task",       // read-only supervisor query
+    "list_my_tasks",  // read-only
+    "search",         // web search (read-only)
+    "browsr_scrape",  // web scrape (read-only)
     "final",
-    "write_todos", // todos are session-scoped, safe
+    "write_todos",    // todos are session-scoped, safe
 ];
 
 /// Check if a tool is safe to execute for real in dry-run mode.

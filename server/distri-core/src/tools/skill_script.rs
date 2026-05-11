@@ -96,16 +96,46 @@ impl ExecutorContextTool for LoadSkillTool {
                     content_len = skill.content.len(),
                     "Loading skill inline — injecting into current context"
                 );
+
+                // Render the skill body via the SAME pipeline the
+                // formatter uses for the agent's own system prompt
+                // (`render_prompt` resolves `{{> partial}}` references
+                // against the registry, then renders). Reusing it
+                // means `{{runtime_mode}}` / `{{#if (eq runtime_mode
+                // "cli")}}…{{/if}}` resolve identically regardless of
+                // who emitted the template text. Render failure (almost
+                // always a typo / unbalanced `{{` in the skill body)
+                // bubbles up as a `ToolExecution` error so the skill
+                // author sees the real problem instead of an LLM run
+                // that silently misbehaves around an unrendered template.
+                let template_data = distri_types::prompt::TemplateData {
+                    runtime_mode: context.runtime_mode.as_template_name(),
+                    ..Default::default()
+                };
+                let rendered_body = crate::agent::strategy::planning::formatter::render_prompt(
+                    &context,
+                    &skill.content,
+                    &template_data,
+                )
+                .await
+                .map_err(|e| {
+                    AgentError::ToolExecution(format!(
+                        "load_skill('{skill_id}'): template render failed: {e}. \
+                         Check the skill body for unbalanced `{{{{` / `}}}}` or \
+                         references to a partial that isn't registered."
+                    ))
+                })?;
+
                 // Return full content with no truncation. The agent incorporates it
                 // directly into the current conversation turn. If the skill specifies
                 // a model override, surface it as a note so the agent is aware.
                 let content = if let Some(ref model) = skill.model {
                     format!(
                         "{}\n\n<!-- skill preferred model: {} -->",
-                        skill.content, model
+                        rendered_body, model
                     )
                 } else {
-                    skill.content.clone()
+                    rendered_body
                 };
                 // Track skill for post-compaction re-injection
                 {

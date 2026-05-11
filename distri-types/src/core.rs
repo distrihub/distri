@@ -213,17 +213,31 @@ fn default_save() -> bool {
     true
 }
 
+fn default_message_id() -> String {
+    uuid::Uuid::new_v4().to_string()
+}
+
+fn default_created_at() -> i64 {
+    chrono::Utc::now().timestamp_millis()
+}
+
 /// Mapping of part indices to their metadata.
 /// Used in message metadata to specify per-part behavior.
 pub type PartsMetadata = std::collections::HashMap<usize, PartMetadata>;
 
 #[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, ToSchema)]
 pub struct Message {
+    /// On deserialize, defaults to a fresh UUID when omitted — LLM-emitted
+    /// payloads (`invoke_agent` targets, etc.) don't fill this. Always
+    /// present on serialize.
+    #[serde(default = "default_message_id")]
     pub id: String,
     pub name: Option<String>,
     pub role: MessageRole,
     #[schema(value_type = Vec<Object>)]
     pub parts: Vec<Part>,
+    /// Defaults to current epoch-ms when omitted on deserialize.
+    #[serde(default = "default_created_at")]
     pub created_at: i64,
     /// The ID of the agent that generated this message (for Assistant messages)
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -552,7 +566,12 @@ pub struct Task {
     pub updated_at: i64,
 }
 
+/// Lifecycle state of a task. Snake-case in JSON to match the
+/// `tasks.status` schema column ("pending" / "running" /
+/// "input_required" / "completed" / "failed" / "canceled") and the
+/// SDK's typed `AgentTaskStatus` enum.
 #[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, PartialEq, Default, ToSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum TaskStatus {
     #[default]
     Pending,

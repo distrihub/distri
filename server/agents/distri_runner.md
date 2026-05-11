@@ -11,7 +11,7 @@ runtime = "cli"
 [tools]
 builtin = [
   "final",
-  "todos",
+  "write_todos",
   "search", "browsr_scrape",
   "save_artifact",
   "load_skill", "tool_search",

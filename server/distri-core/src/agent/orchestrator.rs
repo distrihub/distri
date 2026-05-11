@@ -50,7 +50,7 @@ pub struct AgentOrchestrator {
     pub system_hooks: Vec<Arc<dyn crate::agent::types::AgentHooks>>,
 
     /// Optional background runner for async agent execution (deepagent containers).
-    pub background_runner: Option<Arc<dyn crate::runner::BackgroundRunner>>,
+    pub remote_task_runner: Option<Arc<dyn crate::runner::RemoteTaskRunner>>,
     /// Unified runtime for event broadcasting + task coordination.
     /// Always initialized — InProcessRuntime by default, RedisRuntime for cloud.
     pub runtime: Arc<dyn crate::broadcast::AgentRuntime>,
@@ -99,7 +99,7 @@ pub struct AgentOrchestratorBuilder {
     hooks: Option<HashMap<String, Arc<dyn crate::agent::types::AgentHooks>>>,
     system_hooks: Vec<Arc<dyn crate::agent::types::AgentHooks>>,
     runtime: Option<Arc<dyn crate::broadcast::AgentRuntime>>,
-    background_runner: Option<Arc<dyn crate::runner::BackgroundRunner>>,
+    remote_task_runner: Option<Arc<dyn crate::runner::RemoteTaskRunner>>,
     oauth_handler: Option<Arc<OAuthHandler>>,
 }
 
@@ -193,11 +193,11 @@ impl AgentOrchestratorBuilder {
         self
     }
 
-    pub fn with_background_runner(
+    pub fn with_remote_task_runner(
         mut self,
-        runner: Arc<dyn crate::runner::BackgroundRunner>,
+        runner: Arc<dyn crate::runner::RemoteTaskRunner>,
     ) -> Self {
-        self.background_runner = Some(runner);
+        self.remote_task_runner = Some(runner);
         self
     }
 
@@ -283,7 +283,7 @@ impl AgentOrchestratorBuilder {
             inline_hooks: Arc::new(dashmap::DashMap::new()),
             hook_registry: HookRegistry::new(),
             runtime,
-            background_runner: self.background_runner,
+            remote_task_runner: self.remote_task_runner,
             oauth_handler: self.oauth_handler,
         };
 
@@ -497,20 +497,22 @@ impl AgentOrchestrator {
             tools.push(final_tool);
         }
 
-        // Auto-register UniversalAgentTool ONLY when the agent definition's
-        // `tools.builtin` is empty or unset. An agent that explicitly enumerates
-        // its builtins (e.g. `_adhoc_base` with `builtin = ["final"]`, or a
-        // fork worker dispatched via `call_agent({tools: ["final"]})`) is
-        // opting out of delegation by design — adding `call_agent` back would
-        // re-enable the recursion loop the explicit list was meant to block.
-        let has_call_agent = tools.iter().any(|t| t.get_name() == "call_agent");
+        // Auto-register InvokeAgentTool ONLY when the agent definition's
+        // `tools.builtin` is empty or unset. An agent that explicitly
+        // enumerates its builtins (e.g. `_adhoc_base` with
+        // `builtin = ["final"]`, or a worker dispatched via
+        // `invoke_agent({tools: { kind: "exact", tools: ["final"] }})`) is
+        // opting out of delegation by design — adding `invoke_agent` back
+        // would re-enable the recursion loop the explicit list was meant
+        // to block.
+        let has_invoke = tools.iter().any(|t| t.get_name() == "invoke_agent");
         let has_explicit_builtin = definition
             .tools
             .as_ref()
             .map(|t| !t.builtin.is_empty())
             .unwrap_or(false);
-        if !has_call_agent && !has_explicit_builtin {
-            tools.push(Arc::new(crate::tools::UniversalAgentTool));
+        if !has_invoke && !has_explicit_builtin {
+            tools.push(Arc::new(crate::tools::InvokeAgentTool));
         }
 
         let is_browser_agent =
@@ -640,17 +642,17 @@ impl AgentOrchestrator {
                             })
                             .await;
 
-                        // Add skill tools: load_skill (inline reference) +
-                        // run_skill (fork-into-skill worker). Both depend on
-                        // the skill store, so they're registered together
-                        // whenever the agent has available_skills declared.
+                        // Add `load_skill` for inline skill reference
+                        // (loads body into current agent context). Per the
+                        // claude-code split, "use skill X in a sub-agent"
+                        // is the parent calling `invoke_agent` with a
+                        // prompt that says "load skill X and do Y" —
+                        // sub-agent then calls `load_skill` itself.
                         context
-                            .extend_tools(vec![
-                                Arc::new(crate::tools::skill_script::LoadSkillTool)
-                                    as Arc<dyn Tool>,
-                                Arc::new(crate::tools::run_skill::RunSkillTool)
-                                    as Arc<dyn Tool>,
-                            ])
+                            .extend_tools(vec![Arc::new(
+                                crate::tools::skill_script::LoadSkillTool,
+                            )
+                                as Arc<dyn Tool>])
                             .await;
                     }
                 }
@@ -668,7 +670,7 @@ impl AgentOrchestrator {
                     let mut sub_agent_lines = Vec::new();
 
                     // Always-available system agents
-                    for builtin_name in crate::tools::universal_agent::ALWAYS_AVAILABLE_BUILTINS {
+                    for builtin_name in crate::tools::invoke_agent::ALWAYS_AVAILABLE_BUILTINS {
                         if let Some(agent_cfg) = self.get_agent(builtin_name).await {
                             let desc = match agent_cfg {
                                 distri_types::configuration::AgentConfig::StandardAgent(def) => {
@@ -691,7 +693,7 @@ impl AgentOrchestrator {
                     // Track names we've already listed so explicit entries and
                     // the wildcard expansion don't collide.
                     let mut listed: std::collections::HashSet<String> =
-                        crate::tools::universal_agent::ALWAYS_AVAILABLE_BUILTINS
+                        crate::tools::invoke_agent::ALWAYS_AVAILABLE_BUILTINS
                             .iter()
                             .map(|s| s.to_string())
                             .collect();
@@ -827,6 +829,7 @@ impl AgentOrchestrator {
             definition_overrides,
             &context.default_model_settings,
         );
+        self.hydrate_agent_model_settings(&mut agent_config).await?;
         Self::validate_agent_model(&agent_config)?;
 
         let declared_definition = match &agent_config {
@@ -871,11 +874,50 @@ impl AgentOrchestrator {
             definition_overrides,
             &context.default_model_settings,
         );
+        self.hydrate_agent_model_settings(&mut agent_config).await?;
 
-        // Wildcard external-tools sanity check: an agent that declares
-        // `external = ["*"]` is asking the client to ship at least one tool.
-        // An empty client list silently produces an LLM with zero external tools
-        // and confusing downstream errors — fail fast at request entry.
+        // Runtime-constraint dispatch decision. Single source of truth
+        // lives in `crate::agent::invoke::decide_dispatch` — both this
+        // legacy entry and the typed `invoke()` entry route through it,
+        // so the local-vs-remote logic stays consistent.
+        //
+        // **Order matters.** This must run BEFORE the wildcard
+        // external-tools check below: remote-dispatched agents have
+        // their tools satisfied by the inner distri-cli inside the
+        // sandbox, so the outer orchestrator must NOT validate the
+        // wildcard locally — it would wrongly reject `_adhoc_base`-style
+        // agents (declared with `external = ["*"]` and `runtime =
+        // ["cli"]`) just because the cloud client doesn't ship any
+        // tools. Same reasoning as the `validate_agent_model` skip:
+        // the model and the tools both live inside the sandbox.
+        if let distri_types::configuration::AgentConfig::StandardAgent(ref definition) =
+            agent_config
+        {
+            let plan = crate::agent::invoke::decide_dispatch(
+                definition,
+                &context.runtime_mode,
+                &distri_types::invocation::ExecutorHint::Auto,
+                self.remote_task_runner.as_ref(),
+            )?;
+            if let crate::agent::invoke::DispatchPlan::Remote { runner } = plan {
+                let hooks: Arc<dyn crate::agent::types::AgentHooks> = Arc::new(
+                    crate::agent::hooks::CombinedHooks::new(self.system_hooks.clone()),
+                );
+                let agent = crate::agent::remote::RemoteAgent {
+                    definition: definition.clone(),
+                    runner,
+                    broadcaster: self.runtime.broadcaster_arc(),
+                    hooks,
+                };
+                return agent.invoke_stream(message, context).await;
+            }
+        }
+
+        // Wildcard external-tools sanity check (in-process path only): an
+        // agent that declares `external = ["*"]` is asking the client to
+        // ship at least one tool. An empty client list silently produces an
+        // LLM with zero external tools and confusing downstream errors —
+        // fail fast at request entry.
         if let distri_types::configuration::AgentConfig::StandardAgent(ref def) = agent_config {
             if let Some(tools_cfg) = def.tools.as_ref() {
                 if let Some(ext) = tools_cfg.external.as_ref() {
@@ -888,49 +930,6 @@ impl AgentOrchestrator {
                         )));
                     }
                 }
-            }
-        }
-
-        // Runtime-constraint dispatch. If the agent declares any runtime
-        // constraints and the current ExecutorContext.runtime_mode is not in
-        // the allowed list, route through RemoteAgent — but only if a
-        // BackgroundRunner is configured whose provided_runtime is in the
-        // allowed list. Otherwise fail fast with a clear error.
-        //
-        // Note: this check runs BEFORE `validate_agent_model` because
-        // remote-dispatched agents configure their model inside the sandbox
-        // (via the inner distri-cli's own settings) — the outer orchestrator
-        // does not need a model for the dispatch path.
-        if let distri_types::configuration::AgentConfig::StandardAgent(ref definition) =
-            agent_config
-        {
-            let allowed = definition.allowed_runtimes();
-            if !allowed.is_empty() && !allowed.iter().any(|rt| rt == &context.runtime_mode) {
-                let Some(runner) = &self.background_runner else {
-                    return Err(AgentError::Session(format!(
-                        "Agent '{}' requires runtime {:?} but the current runtime is {:?} \
-                         and no background runner is configured to provide it.",
-                        definition.name, allowed, context.runtime_mode
-                    )));
-                };
-                let provided = runner.provided_runtime();
-                if !allowed.iter().any(|rt| rt == &provided) {
-                    return Err(AgentError::Session(format!(
-                        "Agent '{}' requires runtime {:?} but the only available background \
-                         runner provides {:?}.",
-                        definition.name, allowed, provided
-                    )));
-                }
-                let hooks: Arc<dyn crate::agent::types::AgentHooks> = Arc::new(
-                    crate::agent::hooks::CombinedHooks::new(self.system_hooks.clone()),
-                );
-                let agent = crate::agent::remote::RemoteAgent {
-                    definition: definition.clone(),
-                    runner: runner.clone(),
-                    broadcaster: self.runtime.broadcaster_arc(),
-                    hooks,
-                };
-                return agent.invoke_stream(message, context).await;
             }
         }
 
@@ -956,6 +955,10 @@ impl AgentOrchestrator {
 
         agent.invoke_stream(message, context).await
     }
+
+    // The unified `invoke()` entry point for typed Invocation dispatch
+    // lives in the sibling `agent::invoke` module — see that file for
+    // the impl block. Method resolution finds `orch.invoke(...)` there.
 
     pub async fn run_inline_agent(
         &self,
@@ -1453,6 +1456,35 @@ impl AgentOrchestrator {
                 // Workflow agents don't require model settings
             }
         }
+        Ok(())
+    }
+
+    /// After [`apply_agent_overrides`] picks the final (provider, model)
+    /// pair, hydrate any empty credentials (`api_key`, `base_url`) by
+    /// calling [`ModelSettings::hydrate_creds`] against the workspace
+    /// secret store. The same hydration runs for the workspace's
+    /// default model in `WorkspaceStore::resolve_model_settings`, so
+    /// every ModelSettings handed to the LLM client — whether it came
+    /// from the workspace default, an agent's `[model_settings]` pin,
+    /// or a runtime override — goes through identical secret
+    /// resolution.
+    pub async fn hydrate_agent_model_settings(
+        &self,
+        agent_config: &mut distri_types::configuration::AgentConfig,
+    ) -> Result<(), AgentError> {
+        let definition = match agent_config {
+            distri_types::configuration::AgentConfig::StandardAgent(def) => def,
+            distri_types::configuration::AgentConfig::WorkflowAgent(_) => return Ok(()),
+        };
+        let Some(ref mut ms) = definition.model_settings else {
+            return Ok(());
+        };
+        let Some(secret_store) = self.stores.secret_store.as_ref() else {
+            return Ok(());
+        };
+        ms.hydrate_creds(secret_store.as_ref())
+            .await
+            .map_err(AgentError::InvalidConfiguration)?;
         Ok(())
     }
 

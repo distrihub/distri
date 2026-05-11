@@ -418,6 +418,24 @@ pub enum RuntimeMode {
     Browser,
 }
 
+impl RuntimeMode {
+    /// Canonical wire/template name (matches `#[serde(rename_all =
+    /// "snake_case")]`). Single source of truth for template
+    /// substitution (`{{runtime_mode}}` / `{{#if (eq runtime_mode
+    /// "cli")}}`), span attributes, and any string-keyed runtime
+    /// dispatch table. Both
+    /// `agent::strategy::planning::formatter` and
+    /// `tools::skill_script::LoadSkillTool` use this so a future
+    /// rename can't desync the system prompt from the skill body.
+    pub fn as_template_name(&self) -> &'static str {
+        match self {
+            Self::Cli => "cli",
+            Self::Cloud => "cloud",
+            Self::Browser => "browser",
+        }
+    }
+}
+
 /// Agent definition - complete configuration for an agent
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 pub struct StandardDefinition {
@@ -543,7 +561,7 @@ pub struct StandardDefinition {
     ///
     /// - empty / omitted → runs in any runtime (default).
     /// - `["cli"]` → only runs when `ExecutorContext.runtime_mode == Cli`,
-    ///   OR via a `BackgroundRunner` providing `Cli` (e.g. `SandboxLauncher`
+    ///   OR via a `RemoteTaskRunner` providing `Cli` (e.g. `SandboxLauncher`
     ///   spawning `distri-cli` inside a browsr container).
     /// - `["cli", "cloud"]` → runs in either Cli or Cloud, but not Browser.
     ///
@@ -620,7 +638,7 @@ impl StandardDefinition {
     }
 
     /// Whether this agent can execute given the caller's `current` runtime,
-    /// optionally with a `BackgroundRunner` providing an alternative runtime
+    /// optionally with a `RemoteTaskRunner` providing an alternative runtime
     /// via remote dispatch.
     ///
     /// Returns true when:
@@ -754,6 +772,18 @@ impl StandardDefinition {
             self.instructions = instructions;
         }
 
+        // Append to instructions (for `invoke_agent({system: ...})` —
+        // keeps the agent's base scaffolding and adds the caller's text
+        // below it, separated by a blank line).
+        if let Some(suffix) = overrides.instructions_append {
+            if self.instructions.is_empty() {
+                self.instructions = suffix;
+            } else {
+                self.instructions.push_str("\n\n");
+                self.instructions.push_str(&suffix);
+            }
+        }
+
         if let Some(runtime) = overrides.runtime {
             self.runtime = runtime;
         }
@@ -798,7 +828,13 @@ pub const VALID_BUILTIN_TOOLS: &[&str] = &[
     // Agent control
     "final",
     "reflect",
-    "call_agent",
+    // Sub-agent dispatch (typed Invocation; replaces call_agent + run_skill).
+    "invoke_agent",
+    // Supervisor tools — query / wait / cancel / list children.
+    "get_task",
+    "wait_task",
+    "cancel_task",
+    "list_my_tasks",
     // Browser & scraping
     "browsr_scrape",
     "browsr_browser",
@@ -813,29 +849,33 @@ pub const VALID_BUILTIN_TOOLS: &[&str] = &[
     "distri_execute_code",
     // Tool discovery
     "tool_search",
+    // Skills (load body into current agent context; sub-agents call this
+    // themselves after being dispatched via invoke_agent).
     "load_skill",
-    "run_skill",
     // Connection & secrets
     "inject_connection_env",
     // Logging
     "console_log",
     // Artifacts & filesystem
     "artifact_tool",
-    // Todos
-    "todos",
+    // Todos — the tool's `Tool::get_name()` returns `write_todos`, so
+    // any agent definition that declared `builtin = ["todos"]` was
+    // silently broken (`resolve_tools_config` filters
+    // `get_builtin_tools()` by name and finds nothing). Single
+    // canonical name across validation / dispatch / skill bodies.
+    "write_todos",
 ];
 
 /// Tools that always get full schemas, never deferred.
 /// These are the most commonly used tools that agents need immediately.
 pub const CORE_TOOLS: &[&str] = &[
     "final",
-    "call_agent",
+    "invoke_agent",
     "tool_search",
     "write_todos",
     "execute_shell",
     "start_shell",
     "load_skill",
-    "run_skill",
 ];
 
 /// Default threshold: defer tools when total count exceeds this.
@@ -1133,6 +1173,39 @@ impl ModelProvider {
         "https://dashscope-intl.aliyuncs.com/compatible-mode/v1".to_string()
     }
 
+    /// Mutable reference to this provider's `api_key` slot, if any.
+    /// Plain OpenAI returns `None` because it uses an env var directly.
+    pub fn api_key_slot_mut(&mut self) -> Option<&mut Option<String>> {
+        match self {
+            Self::OpenAI {} => None,
+            Self::OpenAICompatible { api_key, .. }
+            | Self::AzureOpenAI { api_key, .. }
+            | Self::Anthropic { api_key, .. }
+            | Self::Gemini { api_key, .. }
+            | Self::AzureAiFoundry { api_key, .. }
+            | Self::AwsBedrock { api_key, .. }
+            | Self::GoogleVertex { api_key, .. }
+            | Self::AlibabaCloud { api_key, .. } => Some(api_key),
+        }
+    }
+
+    /// Mutable reference to this provider's `base_url` slot when it
+    /// participates in endpoint-secret hydration. Anthropic's
+    /// `Option<String>` base_url is excluded — it has a default and no
+    /// endpoint secret. Plain OpenAI has no base_url field.
+    pub fn base_url_slot_mut(&mut self) -> Option<&mut String> {
+        match self {
+            Self::AzureOpenAI { base_url, .. }
+            | Self::AzureAiFoundry { base_url, .. }
+            | Self::AwsBedrock { base_url, .. }
+            | Self::GoogleVertex { base_url, .. }
+            | Self::Gemini { base_url, .. }
+            | Self::OpenAICompatible { base_url, .. }
+            | Self::AlibabaCloud { base_url, .. } => Some(base_url),
+            Self::OpenAI {} | Self::Anthropic { .. } => None,
+        }
+    }
+
     /// Returns the provider type enum for this provider.
     pub fn provider_type(&self) -> crate::models::ProviderType {
         match self {
@@ -1165,66 +1238,74 @@ impl ModelProvider {
         }
     }
 
-    /// Returns the required secret keys for this provider.
-    pub fn required_secret_keys(&self) -> Vec<&'static str> {
+    /// The canonical secret-store key under which this provider's API key
+    /// lives.
+    ///
+    /// **Single source of truth.** Every layer that needs to look up or
+    /// validate the API key MUST go through this method — the gateway
+    /// (`ProviderClientConfig`), workspace-level resolution
+    /// (`WorkspaceStore::resolve_model_settings`), and the validator
+    /// (`required_secret_keys`) all rely on it. The UI's user-facing key list
+    /// in `default_models.json` is kept in sync with this via a unit test.
+    pub fn api_key_secret(&self) -> &'static str {
         match self {
-            ModelProvider::OpenAI {} => vec!["OPENAI_API_KEY"],
-            ModelProvider::OpenAICompatible { api_key, .. } => {
-                if api_key.is_some() {
-                    vec![]
-                } else {
-                    vec!["OPENAI_API_KEY"]
-                }
-            }
-            ModelProvider::AzureOpenAI { api_key, .. } => {
-                if api_key.is_some() {
-                    vec![]
-                } else {
-                    vec!["AZURE_OPENAI_API_KEY"]
-                }
-            }
-            ModelProvider::Anthropic { api_key, .. } => {
-                if api_key.is_some() {
-                    vec![]
-                } else {
-                    vec!["ANTHROPIC_API_KEY"]
-                }
-            }
-            ModelProvider::Gemini { api_key, .. } => {
-                if api_key.is_some() {
-                    vec![]
-                } else {
-                    vec!["GEMINI_API_KEY"]
-                }
-            }
-            ModelProvider::AzureAiFoundry { api_key, .. } => {
-                if api_key.is_some() {
-                    vec![]
-                } else {
-                    vec!["AZURE_AI_FOUNDRY_API_KEY"]
-                }
-            }
-            ModelProvider::AwsBedrock { api_key, .. } => {
-                if api_key.is_some() {
-                    vec![]
-                } else {
-                    vec!["AWS_ACCESS_KEY_ID"]
-                }
-            }
-            ModelProvider::GoogleVertex { api_key, .. } => {
-                if api_key.is_some() {
-                    vec![]
-                } else {
-                    vec!["GOOGLE_VERTEX_API_KEY"]
-                }
-            }
-            ModelProvider::AlibabaCloud { api_key, .. } => {
-                if api_key.is_some() {
-                    vec![]
-                } else {
-                    vec!["DASHSCOPE_API_KEY"]
-                }
-            }
+            ModelProvider::OpenAI {} => "OPENAI_API_KEY",
+            // Custom OpenAI-compatible providers all share the OPENAI_API_KEY
+            // fallback; per-provider keys are passed inline on the provider
+            // config, not stored in the secret store under a different name.
+            ModelProvider::OpenAICompatible { .. } => "OPENAI_API_KEY",
+            ModelProvider::AzureOpenAI { .. } => "AZURE_OPENAI_API_KEY",
+            ModelProvider::Anthropic { .. } => "ANTHROPIC_API_KEY",
+            ModelProvider::Gemini { .. } => "GEMINI_API_KEY",
+            ModelProvider::AzureAiFoundry { .. } => "AZURE_AI_FOUNDRY_API_KEY",
+            // AWS Bedrock authenticates with sigv4 — AWS_ACCESS_KEY_ID is the
+            // primary key the gateway looks up; AWS_SECRET_ACCESS_KEY and
+            // AWS_REGION are looked up alongside but are not "the" api_key.
+            ModelProvider::AwsBedrock { .. } => "AWS_ACCESS_KEY_ID",
+            ModelProvider::GoogleVertex { .. } => "GOOGLE_VERTEX_API_KEY",
+            ModelProvider::AlibabaCloud { .. } => "DASHSCOPE_API_KEY",
+        }
+    }
+
+    /// The canonical secret-store key for this provider's endpoint URL, or
+    /// `None` if the provider has a fixed endpoint baked into the variant.
+    ///
+    /// Only providers that require a tenant-specific endpoint (Azure, Bedrock,
+    /// Vertex) return `Some`; everything else uses a default base URL.
+    pub fn endpoint_secret(&self) -> Option<&'static str> {
+        match self {
+            ModelProvider::AzureOpenAI { .. } => Some("AZURE_OPENAI_ENDPOINT"),
+            ModelProvider::AzureAiFoundry { .. } => Some("AZURE_AI_FOUNDRY_ENDPOINT"),
+            ModelProvider::AwsBedrock { .. } => Some("AWS_BEDROCK_ENDPOINT"),
+            ModelProvider::GoogleVertex { .. } => Some("GOOGLE_VERTEX_ENDPOINT"),
+            ModelProvider::OpenAI {}
+            | ModelProvider::OpenAICompatible { .. }
+            | ModelProvider::Anthropic { .. }
+            | ModelProvider::Gemini { .. }
+            | ModelProvider::AlibabaCloud { .. } => None,
+        }
+    }
+
+    /// Returns the required secret keys for this provider — i.e. keys that
+    /// must resolve via the secret store or environment for the LLM call to
+    /// succeed. If the provider has an inline `api_key` already configured on
+    /// the provider variant, no secret lookup is required.
+    pub fn required_secret_keys(&self) -> Vec<&'static str> {
+        let api_key_present = match self {
+            ModelProvider::OpenAI {} => false,
+            ModelProvider::OpenAICompatible { api_key, .. }
+            | ModelProvider::AzureOpenAI { api_key, .. }
+            | ModelProvider::Gemini { api_key, .. }
+            | ModelProvider::AzureAiFoundry { api_key, .. }
+            | ModelProvider::AwsBedrock { api_key, .. }
+            | ModelProvider::GoogleVertex { api_key, .. }
+            | ModelProvider::AlibabaCloud { api_key, .. } => api_key.is_some(),
+            ModelProvider::Anthropic { api_key, .. } => api_key.is_some(),
+        };
+        if api_key_present {
+            vec![]
+        } else {
+            vec![self.api_key_secret()]
         }
     }
 
@@ -1335,6 +1416,82 @@ impl ModelSettings {
         }
     }
 
+    /// Fill empty `api_key` and `base_url` fields on this provider by
+    /// looking up the canonical secret keys
+    /// ([`ModelProvider::api_key_secret`] /
+    /// [`ModelProvider::endpoint_secret`]) in the workspace secret
+    /// store. **Single source of truth** for provider credential
+    /// resolution — both the workspace's default-model resolution and
+    /// the orchestrator's per-task agent resolution call this so any
+    /// provider-pinned ModelSettings (workspace default OR agent
+    /// override) gets the same hydration treatment.
+    ///
+    /// Errors if a required endpoint secret is missing
+    /// (`AzureOpenAI` / `AzureAiFoundry` / `AwsBedrock` /
+    /// `GoogleVertex` all need a tenant-specific endpoint that has no
+    /// safe default — silently dropping it produces an unparseable
+    /// base URL and a downstream client panic). Missing api_keys
+    /// downgrade to a warning since some providers can fall back to
+    /// other auth (env vars, IAM roles, etc.).
+    pub async fn hydrate_creds(
+        &mut self,
+        secret_store: &dyn crate::stores::SecretStore,
+    ) -> Result<(), String> {
+        let provider_label = self.inner.provider.provider_id().to_string();
+        let api_key_secret = self.inner.provider.api_key_secret();
+        let endpoint_secret = self.inner.provider.endpoint_secret();
+
+        // api_key — fill if the slot is currently None.
+        if let Some(slot) = self.inner.provider.api_key_slot_mut() {
+            if slot.is_none() {
+                match secret_store.get(api_key_secret).await {
+                    Ok(Some(secret)) => *slot = Some(secret.value),
+                    Ok(None) => tracing::warn!(
+                        "{} secret not found for provider '{}'",
+                        api_key_secret,
+                        provider_label
+                    ),
+                    Err(e) => tracing::error!(
+                        "failed to fetch {} for provider '{}': {}",
+                        api_key_secret,
+                        provider_label,
+                        e
+                    ),
+                }
+            }
+        }
+
+        // base_url — fill if the slot is currently empty AND the
+        // provider exposes an endpoint_secret. Hard-error for
+        // endpoint-required providers when the secret is missing.
+        if let Some(endpoint_key) = endpoint_secret {
+            if let Some(slot) = self.inner.provider.base_url_slot_mut() {
+                if slot.is_empty() {
+                    match secret_store.get(endpoint_key).await {
+                        Ok(Some(secret)) => *slot = secret.value,
+                        Ok(None) => {
+                            return Err(format!(
+                                "{} secret not set for provider '{}'. \
+                                 Configure the workspace's '{}' provider \
+                                 (POST /v1/providers) before pinning a model \
+                                 with this provider prefix.",
+                                endpoint_key, provider_label, provider_label
+                            ));
+                        }
+                        Err(e) => {
+                            return Err(format!(
+                                "failed to fetch {} for provider '{}': {e}",
+                                endpoint_key, provider_label
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     /// Parse a "provider/model" string (e.g. "anthropic/claude-sonnet-4") into ModelSettings.
     /// Returns None if the format is invalid.
     /// For custom providers (prefixed with "custom_"), returns an OpenAICompatible provider
@@ -1387,12 +1544,24 @@ impl ModelSettings {
                 api_key: None,
                 project_id: None,
             },
-            // Unknown providers — treat as OpenAI-compatible
-            _ => ModelProvider::OpenAICompatible {
-                base_url: String::new(),
-                api_key: None,
-                project_id: None,
-            },
+            // Unknown provider — error out instead of silently falling
+            // through to OpenAI-compatible. The previous behaviour
+            // (silent fallback) caused agent definitions like
+            // `model = "azure_foundry/gpt-5.4"` to typo'd → resolve to
+            // a generic OpenAI-compatible client and silently load the
+            // workspace's default provider's credentials, with no
+            // signal to the caller that their agent's model pin was
+            // ignored.
+            _ => {
+                return Err(format!(
+                    "unknown model provider prefix '{provider_str}' in '{s}'. \
+                     Recognised prefixes: openai, anthropic, azure_openai, \
+                     azure (alias for azure_openai), gemini, azure_ai_foundry, \
+                     aws_bedrock, google_vertex, alibaba_cloud, custom_*. \
+                     Pass just the model name with no slash to use the \
+                     workspace's default provider."
+                ));
+            }
         };
         Ok(Some(Self {
             model: model_id.to_string(),
@@ -1664,6 +1833,29 @@ pub async fn parse_agent_markdown_content(content: &str) -> Result<StandardDefin
 
     // Set the instructions in the agent definition
     agent_def.instructions = instructions;
+
+    // Resolve `provider/model` prefix on `model_settings.model`. When the
+    // agent author writes `model = "azure_ai_foundry/gpt-5.4"` we need
+    // to (a) split the prefix, (b) set `provider` explicitly so
+    // ModelSettings::merge() doesn't fall back to the workspace default
+    // provider, and (c) rewrite `model` to just the bare model name.
+    // Unknown prefixes error out — the caller is making a clearly
+    // invalid claim ("dispatch to provider X") that must not silently
+    // fall back to "use whatever the workspace default is".
+    if let Some(ref mut ms) = agent_def.model_settings {
+        if ms.model.contains('/') {
+            let resolved = ModelSettings::from_provider_model_str(&ms.model)
+                .map_err(AgentError::Validation)?
+                .ok_or_else(|| {
+                    AgentError::Validation(format!(
+                        "agent '{}': invalid model_settings.model '{}' — empty model name after the provider prefix",
+                        agent_def.name, ms.model
+                    ))
+                })?;
+            ms.model = resolved.model;
+            ms.inner.provider = resolved.inner.provider;
+        }
+    }
 
     Ok(agent_def)
 }
@@ -2415,5 +2607,164 @@ tool_format = "json_l"
             result.inner.parameters,
             Some(serde_json::json!({"key": "agent"}))
         );
+    }
+
+    /// Lock the canonical API-key secret name for every provider variant.
+    /// Three layers depend on this: gateway (`provider_config.rs`),
+    /// validator (`required_secret_keys`), and workspace resolution
+    /// (`cloud::WorkspaceStore::resolve_model_settings`). They all flow
+    /// through `ModelProvider::api_key_secret()` — keep this list in sync
+    /// with `default_models.json` (asserted in
+    /// `test_api_key_secret_matches_default_models_json`).
+    #[test]
+    fn test_api_key_secret_canonical_names() {
+        assert_eq!(ModelProvider::OpenAI {}.api_key_secret(), "OPENAI_API_KEY");
+        assert_eq!(
+            ModelProvider::Anthropic {
+                base_url: None,
+                api_key: None,
+            }
+            .api_key_secret(),
+            "ANTHROPIC_API_KEY"
+        );
+        assert_eq!(
+            ModelProvider::Gemini {
+                base_url: ModelProvider::gemini_base_url(),
+                api_key: None,
+            }
+            .api_key_secret(),
+            "GEMINI_API_KEY"
+        );
+        assert_eq!(
+            ModelProvider::AzureOpenAI {
+                base_url: String::new(),
+                api_key: None,
+                deployment: "x".into(),
+                api_version: ModelProvider::azure_api_version(),
+            }
+            .api_key_secret(),
+            "AZURE_OPENAI_API_KEY"
+        );
+        assert_eq!(
+            ModelProvider::AzureAiFoundry {
+                base_url: String::new(),
+                api_key: None,
+            }
+            .api_key_secret(),
+            "AZURE_AI_FOUNDRY_API_KEY"
+        );
+        assert_eq!(
+            ModelProvider::AwsBedrock {
+                base_url: String::new(),
+                api_key: None,
+            }
+            .api_key_secret(),
+            "AWS_ACCESS_KEY_ID"
+        );
+        assert_eq!(
+            ModelProvider::GoogleVertex {
+                base_url: String::new(),
+                api_key: None,
+                project_id: None,
+            }
+            .api_key_secret(),
+            "GOOGLE_VERTEX_API_KEY"
+        );
+        assert_eq!(
+            ModelProvider::AlibabaCloud {
+                base_url: ModelProvider::alibaba_cloud_base_url(),
+                api_key: None,
+            }
+            .api_key_secret(),
+            "DASHSCOPE_API_KEY"
+        );
+        assert_eq!(
+            ModelProvider::OpenAICompatible {
+                base_url: String::new(),
+                api_key: None,
+                project_id: None,
+            }
+            .api_key_secret(),
+            "OPENAI_API_KEY"
+        );
+    }
+
+    /// `default_models.json` drives the UI's secret editor (via
+    /// `/v1/providers`). For every built-in provider listed there, the first
+    /// `*_API_KEY` entry MUST equal what `ModelProvider::api_key_secret()`
+    /// returns — otherwise the UI will tell users to enter a secret name
+    /// that the backend won't look up. This test catches drift.
+    #[test]
+    fn test_api_key_secret_matches_default_models_json() {
+        let providers = ModelProvider::all_provider_definitions();
+        let cases: &[(&str, ModelProvider)] = &[
+            ("openai", ModelProvider::OpenAI {}),
+            (
+                "anthropic",
+                ModelProvider::Anthropic {
+                    base_url: None,
+                    api_key: None,
+                },
+            ),
+            (
+                "gemini",
+                ModelProvider::Gemini {
+                    base_url: ModelProvider::gemini_base_url(),
+                    api_key: None,
+                },
+            ),
+            (
+                "azure_ai_foundry",
+                ModelProvider::AzureAiFoundry {
+                    base_url: String::new(),
+                    api_key: None,
+                },
+            ),
+            (
+                "aws_bedrock",
+                ModelProvider::AwsBedrock {
+                    base_url: String::new(),
+                    api_key: None,
+                },
+            ),
+            (
+                "google_vertex",
+                ModelProvider::GoogleVertex {
+                    base_url: String::new(),
+                    api_key: None,
+                    project_id: None,
+                },
+            ),
+            (
+                "alibaba_cloud",
+                ModelProvider::AlibabaCloud {
+                    base_url: ModelProvider::alibaba_cloud_base_url(),
+                    api_key: None,
+                },
+            ),
+        ];
+
+        for (id, variant) in cases {
+            let def = providers
+                .iter()
+                .find(|p| p.id == *id)
+                .unwrap_or_else(|| panic!("provider '{}' missing from default_models.json", id));
+            let first_api_key_in_json = def
+                .keys
+                .iter()
+                .map(|k| k.key.as_str())
+                .find(|k| k.ends_with("_API_KEY") || *k == "AWS_ACCESS_KEY_ID")
+                .unwrap_or_else(|| {
+                    panic!("provider '{}' has no API key entry in default_models.json", id)
+                });
+            assert_eq!(
+                first_api_key_in_json,
+                variant.api_key_secret(),
+                "provider '{}': default_models.json key {:?} != api_key_secret() {:?}",
+                id,
+                first_api_key_in_json,
+                variant.api_key_secret(),
+            );
+        }
     }
 }

@@ -11,7 +11,7 @@ use crate::{
         InvokeResult,
     },
     broadcast::AgentEventBroadcaster,
-    runner::BackgroundRunner,
+    runner::RemoteTaskRunner,
     tools::FinalTool,
     types::{Message, StandardDefinition},
     AgentError,
@@ -38,7 +38,7 @@ use crate::{
 #[derive(Clone)]
 pub struct RemoteAgent {
     pub definition: StandardDefinition,
-    pub runner: Arc<dyn BackgroundRunner>,
+    pub runner: Arc<dyn RemoteTaskRunner>,
     pub broadcaster: Arc<dyn AgentEventBroadcaster>,
     /// System hooks (e.g. OtelHooks) — called to create the invoke_agent span
     /// so RemoteAgent traces appear in the same hierarchy as StandardAgent traces.

@@ -19,6 +19,7 @@ pub mod context;
 mod core;
 mod errors;
 pub mod events;
+pub mod invocation;
 
 mod mcp;
 pub use mcp::{McpServerMetadata, TransportType};
@@ -67,6 +68,7 @@ pub mod api;
 pub mod connections;
 pub mod dynamic_tool;
 pub mod http_request;
+pub mod mock_tool;
 pub mod resolve;
 
 pub mod models;
