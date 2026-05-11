@@ -256,6 +256,14 @@ pub enum AgentEventType {
         formatted_todos: String,
         action: String,
         todo_count: usize,
+        /// Per-call diff: which items got added, had their status
+        /// changed, or were removed. Empty when the renderer can't
+        /// or didn't compute it (e.g. the very first `write_todos`
+        /// call has no prior list to diff against — every item is
+        /// `Added`). Renderers should prefer rendering this list
+        /// when non-empty and fall back to `formatted_todos`.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        changes: Vec<crate::todos::TodoChange>,
     },
 
     // Context management events

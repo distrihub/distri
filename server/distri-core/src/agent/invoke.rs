@@ -322,7 +322,9 @@ impl AgentOrchestrator {
     ) -> Option<distri_types::ToolsConfig> {
         let cfg = self.get_agent(&parent_ctx.agent_id).await?;
         match cfg {
-            distri_types::configuration::AgentConfig::StandardAgent(def) => def.tools,
+            distri_types::configuration::AgentConfig::StandardAgent(def) => {
+                def.tools.map(filter_for_subtask)
+            }
             _ => None,
         }
     }
@@ -727,6 +729,17 @@ impl ResolvedTarget {
             }
         }
     }
+}
+
+/// Strip tools that should NOT cross from a parent into a worker
+/// dispatched via `invoke_agent`. Currently a single-element list:
+/// `write_todos`. Workers that inherit it create and update their
+/// own top-level todos, which pollute the parent's todo state and
+/// defeat the point of using `invoke_agent` for isolation.
+fn filter_for_subtask(mut tools: distri_types::ToolsConfig) -> distri_types::ToolsConfig {
+    const NON_INHERITED: &[&str] = &["write_todos"];
+    tools.builtin.retain(|name| !NON_INHERITED.contains(&name.as_str()));
+    tools
 }
 
 fn ensure_independent_context(invocation: &Invocation) -> Result<(), AgentError> {
