@@ -15,7 +15,7 @@ use crate::tools::ExecutorContextTool;
 use crate::types::ToolCall;
 use crate::AgentError;
 use distri_types::tool::ToolContext;
-use distri_types::{Part, Tool};
+use distri_types::{Part, ResourceLink, Tool};
 
 #[derive(Debug, Clone)]
 pub struct McpToolAdapter {
@@ -115,6 +115,81 @@ impl ExecutorContextTool for McpToolAdapter {
                 self.handle.server, self.handle.name, result.text
             )));
         }
-        Ok(vec![Part::Text(result.text)])
+
+        let mut parts: Vec<Part> = Vec::new();
+        if !result.text.is_empty() {
+            parts.push(Part::Text(result.text.clone()));
+        }
+        parts.extend(extract_resource_links(&result.raw));
+        if parts.is_empty() {
+            parts.push(Part::Text(String::new()));
+        }
+        Ok(parts)
     }
+}
+
+/// Walk the raw `tools/call` response and pull out any MCP resource
+/// references (per-content-item or top-level `_meta.ui`). Surfaces them as
+/// `Part::ResourceLink` so chat hosts that understand MCP-Apps (distrijs,
+/// Claude, ChatGPT) can render the `ui://` resource in a sandboxed iframe
+/// instead of showing only the flattened text fallback.
+fn extract_resource_links(raw: &serde_json::Value) -> Vec<Part> {
+    let mut out: Vec<Part> = Vec::new();
+    if let Some(content) = raw.get("content").and_then(|v| v.as_array()) {
+        for item in content {
+            let kind = item.get("type").and_then(|v| v.as_str()).unwrap_or("");
+            if kind != "resource" && kind != "resource_link" {
+                continue;
+            }
+            let resource = item.get("resource").unwrap_or(item);
+            let uri = resource
+                .get("uri")
+                .and_then(|v| v.as_str())
+                .map(str::to_string);
+            let Some(uri) = uri else { continue };
+            let mime_type = resource
+                .get("mimeType")
+                .and_then(|v| v.as_str())
+                .map(str::to_string);
+            let text = resource
+                .get("text")
+                .and_then(|v| v.as_str())
+                .map(str::to_string);
+            let meta = item.get("_meta").cloned();
+            out.push(Part::ResourceLink(ResourceLink {
+                uri,
+                mime_type,
+                text,
+                meta,
+            }));
+        }
+    }
+
+    // Top-level `_meta.ui.resourceUri` — promote to a synthetic ResourceLink
+    // when the server uses the result-level meta convention but no
+    // per-content-item resource entry. This is the shape Zippy's MCP server
+    // emits for `zippy.compose`.
+    let already_has = |uri: &str| {
+        out.iter().any(|p| match p {
+            Part::ResourceLink(r) => r.uri == uri,
+            _ => false,
+        })
+    };
+    if let Some(top_meta) = raw.get("_meta") {
+        if let Some(ui_uri) = top_meta
+            .get("ui")
+            .and_then(|v| v.get("resourceUri"))
+            .and_then(|v| v.as_str())
+        {
+            if !already_has(ui_uri) {
+                out.push(Part::ResourceLink(ResourceLink {
+                    uri: ui_uri.to_string(),
+                    mime_type: Some("text/html;profile=mcp-app".to_string()),
+                    text: None,
+                    meta: Some(top_meta.clone()),
+                }));
+            }
+        }
+    }
+    out
 }

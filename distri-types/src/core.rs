@@ -146,6 +146,11 @@ pub enum Part {
     Data(Value),
     /// Artifact stored in filesystem - reference + metadata for large content
     Artifact(FileMetadata),
+    /// MCP resource reference returned by a tool. Used to surface
+    /// `ui://`-scheme resources from MCP-Apps tools so chat hosts (distrijs,
+    /// Claude, ChatGPT) can fetch and render them in a sandboxed iframe
+    /// instead of seeing only the flattened text fallback.
+    ResourceLink(ResourceLink),
 }
 
 impl Part {
@@ -158,8 +163,30 @@ impl Part {
             Part::File(_) => "file".to_string(),
             Part::Data(_) => "data".to_string(),
             Part::Artifact(_) => "artifact".to_string(),
+            Part::ResourceLink(_) => "resource_link".to_string(),
         }
     }
+}
+
+/// MCP resource reference. Mirrors the shape an MCP server returns under
+/// `tools/call`'s `content[].resource`, plus the `_meta` blob that hosts use
+/// to discover MCP-Apps UI capabilities (`_meta.ui.resourceUri`).
+#[derive(Debug, Serialize, Deserialize, Clone, JsonSchema, PartialEq)]
+pub struct ResourceLink {
+    /// Resource URI (e.g. `ui://zippy/new/<id>` for MCP-Apps).
+    pub uri: String,
+    /// MIME type the server claims for this resource. MCP-Apps hosts look
+    /// for `text/html;profile=mcp-app` to decide whether to iframe it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+    /// Optional text fallback to show to users / models when the host can't
+    /// render the resource (e.g. CLI clients).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    /// Server-supplied `_meta` object. Hosts inspect `_meta.ui.resourceUri`
+    /// + sizing hints here without us having to model every MCP extension.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub meta: Option<Value>,
 }
 
 /// Instruction for how to handle additional parts
