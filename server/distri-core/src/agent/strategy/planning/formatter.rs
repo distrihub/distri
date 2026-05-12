@@ -614,6 +614,9 @@ impl<'a> MessageFormatter<'a> {
                 Part::Artifact(artifact) => {
                     assistant_parts.push(Part::Artifact(artifact.clone()));
                 }
+                Part::ResourceLink(link) => {
+                    assistant_parts.push(Part::ResourceLink(link.clone()));
+                }
             }
         }
 

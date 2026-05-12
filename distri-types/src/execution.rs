@@ -112,6 +112,10 @@ impl ExecutionResult {
                         artifact.file_id, preview, stats_info
                     )
                 }
+                Part::ResourceLink(link) => match link.text.as_deref() {
+                    Some(text) if !text.is_empty() => text.to_string(),
+                    _ => format!("[Resource: {}]", link.uri),
+                },
             })
             .collect::<Vec<_>>()
             .join("\n");
@@ -211,6 +215,7 @@ impl ExecutionResult {
                 }
                 Part::File(file) => Part::File(file.clone()),
                 Part::Artifact(artifact) => Part::Artifact(artifact.clone()),
+                Part::ResourceLink(link) => Part::ResourceLink(link.clone()),
             })
             .collect();
 
