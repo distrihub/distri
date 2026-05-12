@@ -4069,6 +4069,7 @@ fn to_connection(model: ConnectionModel) -> anyhow::Result<Connection> {
         connected_by,
         auth_scope,
         auth_type,
+        kind: distri_types::connections::ConnectionKind::Default,
         is_system: model.is_system != 0,
         created_at: from_naive(model.created_at),
         updated_at: from_naive(model.updated_at),

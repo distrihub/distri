@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-use crate::connections::{AuthScope, AuthType, Connection};
+use crate::connections::{AuthScope, AuthType, Connection, ConnectionKind};
 
 /// Stored in `Connection.config` to carry provider-level metadata.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
@@ -68,6 +68,12 @@ pub struct CreateConnectionRequest {
     /// built-in OAuth providers that ship a template.
     #[serde(default)]
     pub skill_content: Option<String>,
+    /// What surface this connection exposes. `Default` (the default) makes
+    /// the connection auth-only; `Mcp { ... }` additionally makes it a
+    /// remote MCP tool source whose tools are exposed to agents that
+    /// reference its `name` in `ToolsConfig.mcp[].server`.
+    #[serde(default)]
+    pub kind: ConnectionKind,
 }
 
 /// PATCH body for updating a connection. Both fields optional; at least one

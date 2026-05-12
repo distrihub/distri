@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
+use crate::McpClientTransport;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ConnectionAuthType {
@@ -178,6 +180,87 @@ impl AuthType {
     }
 }
 
+/// What capability surface a connection exposes.
+///
+/// `Default` is the historical behavior: auth-only — the connection contributes
+/// credentials to the agent's env vars or to the outbound HTTP proxy.
+///
+/// `Mcp` makes the connection *also* a remote tool source. Agents reference it
+/// by `Connection.name` in `ToolsConfig.mcp[].server`; the executor builds an
+/// `McpClientPool` from every `kind = Mcp` connection in scope, with auth
+/// (`auth_type`) injected as the transport's bearer header at connect time.
+///
+/// Auth and capability are orthogonal: the same OAuth provider can back both a
+/// `Default` GitHub connection (REST proxy) and a `Mcp` GitHub connection
+/// (Streamable HTTP) — they're two rows that share `auth_type.provider`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ConnectionKind {
+    Default,
+    Mcp {
+        #[serde(flatten)]
+        mcp: McpConnectionSpec,
+    },
+}
+
+impl Default for ConnectionKind {
+    fn default() -> Self {
+        Self::Default
+    }
+}
+
+impl ConnectionKind {
+    pub fn is_mcp(&self) -> bool {
+        matches!(self, Self::Mcp { .. })
+    }
+    pub fn as_mcp(&self) -> Option<&McpConnectionSpec> {
+        match self {
+            Self::Mcp { mcp } => Some(mcp),
+            _ => None,
+        }
+    }
+    pub fn kind_str(&self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::Mcp { .. } => "mcp",
+        }
+    }
+}
+
+/// MCP-specific configuration carried on `ConnectionKind::Mcp`.
+///
+/// The transport is restricted to remote variants in the UI (Streamable HTTP /
+/// SSE) — stdio is intentionally not user-configurable because connections are
+/// meant to be portable across hosts. `extra_headers` are merged with the
+/// resolver-injected `Authorization` header at connect time.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub struct McpConnectionSpec {
+    pub transport: McpClientTransport,
+    /// Optional human description shown in the UI list.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Include/exclude glob patterns applied to discovered tool names.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_filter: Option<McpToolFilter>,
+    /// Whether the server is enabled for tool resolution.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, ToSchema, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub struct McpToolFilter {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub include: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exclude: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
 pub struct Connection {
     pub id: Uuid,
@@ -194,6 +277,11 @@ pub struct Connection {
     pub auth_scope: AuthScope,
     /// How the connection authenticates to the downstream API.
     pub auth_type: AuthType,
+    /// What surface this connection exposes (auth-only vs MCP tool source).
+    /// Defaults to `Default` for backward-compat with existing rows that
+    /// didn't carry the field.
+    #[serde(default)]
+    pub kind: ConnectionKind,
     /// Platform-seeded connections (e.g. the `distri` connection) carry is_system=true
     /// and are write-protected from user mutations.
     #[serde(default)]
@@ -211,7 +299,18 @@ pub struct NewConnection {
     pub auth_scope: AuthScope,
     pub auth_type: AuthType,
     #[serde(default)]
+    pub kind: ConnectionKind,
+    #[serde(default)]
     pub is_system: bool,
+}
+
+impl Connection {
+    pub fn is_mcp(&self) -> bool {
+        self.kind.is_mcp()
+    }
+    pub fn mcp_spec(&self) -> Option<&McpConnectionSpec> {
+        self.kind.as_mcp()
+    }
 }
 
 /// Typed OAuth token — replaces raw serde_json::Value.

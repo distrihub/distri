@@ -357,6 +357,7 @@ async fn create_connection(
                     provider: provider.clone(),
                     scopes: final_scopes.clone(),
                 },
+                kind: distri_types::connections::ConnectionKind::Default,
                 is_system: false,
             };
 
@@ -446,6 +447,7 @@ async fn create_connection(
                 connected_by: None,
                 auth_scope,
                 auth_type: auth_type.clone(),
+                kind: distri_types::connections::ConnectionKind::Default,
                 is_system: false,
             };
 
