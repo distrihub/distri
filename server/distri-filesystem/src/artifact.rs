@@ -226,6 +226,8 @@ impl ArtifactWrapper {
             Part::Image(_) => format!("{}.json", uuid::Uuid::new_v4()),
             Part::File(_) => format!("{}.json", uuid::Uuid::new_v4()),
             Part::Artifact(part) => return Ok(Part::Artifact(part.clone())),
+            // Resource links are tiny references — never store as artifact.
+            Part::ResourceLink(link) => return Ok(Part::ResourceLink(link.clone())),
         };
 
         let content_str = match &part {
@@ -235,7 +237,7 @@ impl ArtifactWrapper {
             Part::ToolResult(response) => serde_json::to_string_pretty(response)?,
             Part::Image(file_type) => serde_json::to_string_pretty(file_type)?,
             Part::File(file_type) => serde_json::to_string_pretty(file_type)?,
-            Part::Artifact(_) => unreachable!(),
+            Part::Artifact(_) | Part::ResourceLink(_) => unreachable!(),
         };
 
         self.save_artifact(&filename, &content_str).await?;
@@ -254,7 +256,7 @@ impl ArtifactWrapper {
                 Part::ToolResult(_) => Some("application/json".to_string()),
                 Part::Image(_) => Some("application/json".to_string()),
                 Part::File(_) => Some("application/json".to_string()),
-                Part::Artifact(_) => unreachable!(),
+                Part::Artifact(_) | Part::ResourceLink(_) => unreachable!(),
             },
             original_filename: None,
             created_at: chrono::Utc::now(),

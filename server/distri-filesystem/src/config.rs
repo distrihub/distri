@@ -91,6 +91,8 @@ impl ArtifactStorageConfig {
             Part::Image(_) => self.always_store_images,
             Part::File(_) => false,
             Part::Artifact(_) => false,
+            // Resource links are tiny references — never artifact-store.
+            Part::ResourceLink(_) => false,
         }
     }
 }
