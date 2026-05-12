@@ -41,6 +41,26 @@ pub struct MediaAttachment {
     pub artifact_path: Option<String>,
 }
 
+/// Channel-agnostic button hint emitted by a renderer. Senders map these
+/// onto their platform's native interactive primitive — Telegram inline
+/// keyboards (URL / WebApp buttons), WhatsApp CTA-URL messages, Discord
+/// link buttons, etc.
+///
+/// Producers (formatters) push these alongside text when an event surfaces
+/// a follow-up action, e.g. a `Part::ResourceLink` returned by an MCP-Apps
+/// tool gets emitted as a `WebApp` hint so Telegram can render the
+/// `web_app` inline button that opens the iframe inside its mini-app
+/// viewer, while WhatsApp falls back to a plain URL button.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum RendererButton {
+    /// Opens a URL in the user's default browser. Universally supported.
+    Url { label: String, url: String },
+    /// Opens a URL as a Telegram WebApp (in-chat mini-app iframe). Channels
+    /// without WebApp support degrade to a plain `Url` button.
+    WebApp { label: String, url: String },
+}
+
 /// What a surface renderer produces after handling events.
 #[derive(Debug)]
 pub enum RendererOutput {
@@ -61,6 +81,11 @@ pub enum RendererOutput {
         text: String,
         parse_mode: ParseMode,
         media: Vec<MediaAttachment>,
+        /// Interactive buttons the channel can render alongside the text.
+        /// Empty for plain text output. Channels without inline-keyboard
+        /// support flatten these to "Label: URL" lines (see distri-gateway
+        /// WhatsApp/Discord senders).
+        buttons: Vec<RendererButton>,
         #[doc(hidden)]
         is_streaming_text: bool,
     },
