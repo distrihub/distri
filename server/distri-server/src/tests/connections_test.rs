@@ -5,7 +5,7 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::stores::{InMemoryConnectionStore, InMemoryConnectionTokenStore};
+    use crate::stores::{InMemoryConnectionStore, InMemoryCredentialTokenStore};
     use actix_web::{test, web, App};
     use distri_core::initialize_stores;
     use distri_core::AgentOrchestratorBuilder;
@@ -32,14 +32,14 @@ mod tests {
 
     async fn make_orchestrator_with_conn_stores() -> Arc<distri_core::agent::AgentOrchestrator> {
         let conn_store = InMemoryConnectionStore::new();
-        let token_store = InMemoryConnectionTokenStore::new();
+        let token_store = InMemoryCredentialTokenStore::new();
 
         let mut stores = initialize_stores(&test_store_config())
             .await
             .expect("stores");
         stores.connection_store =
             Some(conn_store as Arc<dyn distri_types::stores::ConnectionStore>);
-        stores.connection_token_store =
+        stores.credential_token_store =
             Some(token_store as Arc<dyn distri_types::stores::ConnectionTokenStore>);
 
         Arc::new(

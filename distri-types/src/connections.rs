@@ -93,60 +93,12 @@ impl std::str::FromStr for AuthScope {
     }
 }
 
-/// How a connection authenticates to the downstream API.
-///
-/// OAuth and Custom are user-creatable. DistriNative is system-seeded only —
-/// it represents the platform-internal distri connection used by the official bot.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum AuthType {
-    /// Standard OAuth flow via the distri OAuth provider registry.
-    /// Explicit rename so serde doesn't snake_case `OAuth` → `o_auth`.
-    #[serde(rename = "oauth")]
-    OAuth {
-        provider: String,
-        #[serde(default)]
-        scopes: Vec<String>,
-    },
-    /// User-defined key/value field schema. The admin declares the shape; values
-    /// are collected separately (inline at create time for Workspace scope, or
-    /// via the configure URL for User scope) and stored as rows in the
-    /// `secrets` table under key `connection.<id>.<field_key>`.
-    Custom {
-        #[serde(default)]
-        fields: Vec<CustomField>,
-    },
-    /// Platform-internal: the seeded distri connection used by the official bot.
-    /// No configuration — the caller's distri session token is proxied through.
-    DistriNative,
-    /// MCP Authorization spec (2025-03-26) OAuth: discovery + optional
-    /// dynamic client registration + authorization-code flow with PKCE and
-    /// the RFC 8707 `resource` indicator pointing at the MCP server URL.
-    ///
-    /// Use this instead of `OAuth { provider }` when the MCP server
-    /// advertises its own authorization server via
-    /// `WWW-Authenticate`/`oauth-protected-resource`, rather than reusing
-    /// a provider that's already in the distri OAuth registry.
-    ///
-    /// Tokens land in the same `secrets`/Redis store keyed by
-    /// `connection.<id>.access_token` as standard OAuth tokens, so the
-    /// resolver and refresh paths are reused unchanged.
-    McpOAuth {
-        /// Optional explicit authorization-server issuer URL. When absent
-        /// the cloud discovers it from the MCP server's
-        /// `oauth-protected-resource` response at connect time.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        issuer_url: Option<String>,
-        #[serde(default)]
-        scopes: Vec<String>,
-        /// When true, the cloud will attempt RFC 7591 Dynamic Client
-        /// Registration against the discovered authorization server.
-        #[serde(default = "default_true")]
-        dynamic_register: bool,
-    },
-}
+// NOTE: `AuthType` moved to `crate::credentials::CredentialMaterial` in the
+// credential-separation refactor. A Connection now references a Credential by
+// `credential_id` instead of carrying auth inline. See
+// `docs/specs/credential-separation.md`.
 
-/// One configurable field on a Custom connection.
+/// One configurable field on a Custom credential.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
 pub struct CustomField {
     /// Stable identifier used as the secret key suffix (e.g. `api_key`).
@@ -164,50 +116,6 @@ pub struct CustomField {
 
 fn default_required() -> bool {
     true
-}
-
-impl AuthType {
-    /// Provider name used for skill template lookup and connection display.
-    pub fn provider_name(&self) -> &str {
-        match self {
-            Self::OAuth { provider, .. } => provider.as_str(),
-            Self::Custom { .. } => "custom",
-            Self::DistriNative => "distri",
-            Self::McpOAuth { .. } => "mcp_oauth",
-        }
-    }
-
-    pub fn is_oauth(&self) -> bool {
-        matches!(self, Self::OAuth { .. } | Self::McpOAuth { .. })
-    }
-
-    pub fn is_custom(&self) -> bool {
-        matches!(self, Self::Custom { .. })
-    }
-
-    pub fn is_distri_native(&self) -> bool {
-        matches!(self, Self::DistriNative)
-    }
-
-    pub fn is_mcp_oauth(&self) -> bool {
-        matches!(self, Self::McpOAuth { .. })
-    }
-
-    /// Shorthand for iterating required Custom fields (empty for OAuth/DistriNative).
-    pub fn custom_required_fields(&self) -> Vec<&CustomField> {
-        match self {
-            Self::Custom { fields } => fields.iter().filter(|f| f.required).collect(),
-            _ => vec![],
-        }
-    }
-
-    /// All Custom fields regardless of required-ness.
-    pub fn custom_fields(&self) -> &[CustomField] {
-        match self {
-            Self::Custom { fields } => fields,
-            _ => &[],
-        }
-    }
 }
 
 /// What capability surface a connection exposes.
@@ -305,11 +213,11 @@ pub struct Connection {
     /// Who is allowed to use this connection. Workspace = platform members,
     /// EndUser = external actors resolved via a handshake.
     pub auth_scope: AuthScope,
-    /// How the connection authenticates to the downstream API.
-    pub auth_type: AuthType,
+    /// FK into `credentials.id`. Every Connection has a Credential — including
+    /// system-seeded `DistriNative` rows, which FK to a platform-seeded
+    /// credential. The resolver pipeline is `connection → credential → token`.
+    pub credential_id: Uuid,
     /// What surface this connection exposes (auth-only vs MCP tool source).
-    /// Defaults to `Default` for backward-compat with existing rows that
-    /// didn't carry the field.
     #[serde(default)]
     pub kind: ConnectionKind,
     /// Platform-seeded connections (e.g. the `distri` connection) carry is_system=true
@@ -327,7 +235,7 @@ pub struct NewConnection {
     pub config: serde_json::Value,
     pub connected_by: Option<Uuid>,
     pub auth_scope: AuthScope,
-    pub auth_type: AuthType,
+    pub credential_id: Uuid,
     #[serde(default)]
     pub kind: ConnectionKind,
     #[serde(default)]
@@ -343,29 +251,10 @@ impl Connection {
     }
 }
 
-/// Typed OAuth token — replaces raw serde_json::Value.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
-pub struct ConnectionToken {
-    pub access_token: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub refresh_token: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub expires_at: Option<DateTime<Utc>>,
-    #[serde(default = "default_token_type")]
-    pub token_type: String,
-    #[serde(default)]
-    pub scopes: Vec<String>,
-}
-
-fn default_token_type() -> String {
-    "Bearer".to_string()
-}
-
-impl ConnectionToken {
-    pub fn is_expired(&self) -> bool {
-        self.expires_at.map(|exp| exp < Utc::now()).unwrap_or(false)
-    }
-}
+// NOTE: `ConnectionToken` moved to `crate::credentials::CredentialToken`. Tokens
+// are now keyed by credential_id (not connection_id) so the same token can be
+// shared between Connections that point at the same Credential, and so Bots
+// can read a User's token via `gate_credential_id`.
 
 /// Describes an HTTP request that the gateway should make to verify a user's
 /// identity against an external service. Stored in `connection.config` under
@@ -398,8 +287,9 @@ impl Connection {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema, Default)]
 pub struct ConnectionRequirement {
     /// Match by provider name (preferred): "google", "slack", ...
-    /// Resolved against `AuthType::OAuth.provider` / `AuthType::Custom` (name match)
-    /// / `AuthType::DistriNative` (provider_name == "distri").
+    /// Resolved against the linked `Credential`'s
+    /// `CredentialMaterial::Oauth.provider`, the Credential's name for
+    /// `Custom`, and `"distri"` for `DistriNative`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider: Option<String>,
 

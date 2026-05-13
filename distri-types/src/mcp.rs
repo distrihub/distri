@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use utoipa::ToSchema;
 
-use crate::AuthType;
+use crate::auth::AuthType;
 
 #[async_trait::async_trait]
 pub trait ServerTrait: Send + Sync {

@@ -1928,16 +1928,24 @@ async fn resolve_declared_connections(
                 // Hide the system-seeded DistriNative connection from the
                 // listing so the LLM doesn't mistake it for a third-party
                 // service to call on the user's behalf.
-                if matches!(
-                    c.auth_type,
-                    distri_types::connections::AuthType::DistriNative
-                ) {
+                let cred = if let Some(cs) = stores.credential_store.as_ref() {
+                    cs.get_by_id(&c.credential_id.to_string()).await.ok().flatten()
+                } else {
+                    None
+                };
+                if cred
+                    .as_ref()
+                    .map(|cr| cr.material.is_distri_native())
+                    .unwrap_or(false)
+                {
                     continue;
                 }
-                let provider_tag = match &c.auth_type {
-                    distri_types::connections::AuthType::OAuth {
-                        provider, scopes, ..
-                    } => format!(", provider: {}, scopes: [{}]", provider, scopes.join(", ")),
+                let provider_tag = match cred.as_ref().map(|cr| &cr.material) {
+                    Some(distri_types::credentials::CredentialMaterial::Oauth {
+                        provider,
+                        scopes,
+                        ..
+                    }) => format!(", provider: {}, scopes: [{}]", provider, scopes.join(", ")),
                     _ => String::new(),
                 };
                 connected_lines.push(format!(
@@ -1948,23 +1956,42 @@ async fn resolve_declared_connections(
             continue;
         }
 
-        // Locate the matching connection.
+        // Locate the matching connection — join through credentials when matching by provider.
         let matched: Option<Connection> = if let Some(id) = req.connection_id {
             ws_connections.iter().find(|c| c.id == id).cloned()
         } else if let Some(provider) = req.provider.as_deref() {
-            ws_connections
-                .iter()
-                .find(|c| match &c.auth_type {
-                    distri_types::connections::AuthType::OAuth { provider: p, .. } => p == provider,
-                    distri_types::connections::AuthType::Custom { .. } => c.name == provider,
-                    distri_types::connections::AuthType::DistriNative => provider == "distri",
-                    distri_types::connections::AuthType::McpOAuth { .. } => {
-                        // McpOAuth connections match by connection name (the
-                        // synthesized "provider" string from the resolver).
+            // Walk the connection set, resolving each one's credential to get
+            // its material/provider. `provider == "distri"` short-circuits via
+            // a name fallback for the DistriNative system row.
+            let mut found = None;
+            for c in ws_connections.iter() {
+                let cred = if let Some(cs) = stores.credential_store.as_ref() {
+                    cs.get_by_id(&c.credential_id.to_string()).await.ok().flatten()
+                } else {
+                    None
+                };
+                let matches_provider = match cred.as_ref().map(|cr| &cr.material) {
+                    Some(distri_types::credentials::CredentialMaterial::Oauth {
+                        provider: p,
+                        ..
+                    }) => p == provider,
+                    Some(distri_types::credentials::CredentialMaterial::Custom { .. }) => {
+                        c.name == provider
+                    }
+                    Some(distri_types::credentials::CredentialMaterial::DistriNative) => {
+                        provider == "distri"
+                    }
+                    Some(distri_types::credentials::CredentialMaterial::McpOauth { .. }) => {
                         c.name == provider || provider == "mcp_oauth"
                     }
-                })
-                .cloned()
+                    None => c.name == provider,
+                };
+                if matches_provider {
+                    found = Some(c.clone());
+                    break;
+                }
+            }
+            found
         } else {
             return Err(AgentError::Validation(format!(
                 "Agent '{}' has a connection requirement with neither provider nor connection_id",
@@ -1991,11 +2018,20 @@ async fn resolve_declared_connections(
             continue;
         };
 
-        // Scope check (OAuth).
+        // Scope check (OAuth). Reads the linked Credential's material.
+        let credential_for_scope = if let Some(cs) = stores.credential_store.as_ref() {
+            cs.get_by_id(&connection.credential_id.to_string())
+                .await
+                .ok()
+                .flatten()
+        } else {
+            None
+        };
         if !req.scopes.is_empty() {
-            if let distri_types::connections::AuthType::OAuth {
-                scopes: granted, ..
-            } = &connection.auth_type
+            if let Some(distri_types::credentials::CredentialMaterial::Oauth {
+                scopes: granted,
+                ..
+            }) = credential_for_scope.as_ref().map(|c| &c.material)
             {
                 let missing_scopes: Vec<&String> = req
                     .scopes
@@ -2018,7 +2054,8 @@ async fn resolve_declared_connections(
             }
         }
 
-        // Resolve and merge env vars.
+        // Resolve and merge env vars. Note the resolver takes credential_id,
+        // not connection_id.
         let mut resolve_ctx = ResolveCtx::new(stores).with_workspace(&workspace_id);
         resolve_ctx = resolve_ctx.with_user(context.user_id.as_str());
         if let Some(ev) = req.env_var.as_deref() {
@@ -2026,7 +2063,7 @@ async fn resolve_declared_connections(
         }
 
         match DefaultResolver
-            .resolve(&connection.id.to_string(), &resolve_ctx)
+            .resolve(&connection.credential_id.to_string(), &resolve_ctx)
             .await
         {
             Ok(resolved) => {
@@ -2036,10 +2073,10 @@ async fn resolve_declared_connections(
                         env_vars.insert(k.clone(), v.clone());
                     }
                 }
-                let scopes_tag = match &connection.auth_type {
-                    distri_types::connections::AuthType::OAuth { scopes, .. } => {
-                        format!(", scopes: [{}]", scopes.join(", "))
-                    }
+                let scopes_tag = match credential_for_scope.as_ref().map(|c| &c.material) {
+                    Some(distri_types::credentials::CredentialMaterial::Oauth {
+                        scopes, ..
+                    }) => format!(", scopes: [{}]", scopes.join(", ")),
                     _ => String::new(),
                 };
                 connected_lines.push(format!(

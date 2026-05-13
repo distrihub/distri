@@ -31,12 +31,11 @@ use diesel_async::pooled_connection::{AsyncDieselConnectionManager, PoolableConn
 use diesel_async::sync_connection_wrapper::SyncConnectionWrapper;
 use diesel_migrations::{EmbeddedMigrations, embed_migrations};
 use distri_types::auth::{AuthError, AuthSecret, AuthSession, OAuth2State, ToolAuthStore};
-use distri_types::connections::{
-    AuthScope, AuthType, Connection, ConnectionStatus, ConnectionToken, NewConnection,
-};
+use distri_types::connections::{AuthScope, Connection, ConnectionStatus, NewConnection};
+use distri_types::credentials::{CredentialMaterial, CredentialToken};
 use distri_types::stores::SessionSummary;
 use distri_types::stores::{
-    AgentStatsInfo, AgentStore, AgentUsageInfo, ConnectionStore, ConnectionTokenStore,
+    AgentStatsInfo, AgentStore, AgentUsageInfo, ConnectionStore, CredentialTokenStore,
     ExternalToolCallsStore, FilterMessageType, MemoryStore, MessageFilter, MessageReadStatus,
     MessageVote, MessageVoteSummary, NewPromptTemplate, NewSecret, NewSkill, NoteStore,
     PromptTemplateRecord, PromptTemplateStore, ScratchpadStore, SecretRecord, SecretStore,
@@ -3331,8 +3330,8 @@ where
         DieselConnectionStore::new(self.pool.clone_store_pool())
     }
 
-    pub fn connection_token_store(&self) -> DieselConnectionTokenStore<Conn> {
-        DieselConnectionTokenStore::new(self.pool.clone_store_pool())
+    pub fn connection_token_store(&self) -> DieselCredentialTokenStore<Conn> {
+        DieselCredentialTokenStore::new(self.pool.clone_store_pool())
     }
 
     pub fn note_store(&self) -> DieselNoteStore<Conn> {
@@ -4043,8 +4042,12 @@ fn to_connection(model: ConnectionModel) -> anyhow::Result<Connection> {
         .map_err(|e| anyhow::anyhow!("invalid status: {}", e))?;
     let auth_scope: AuthScope = serde_json::from_value(serde_json::Value::String(model.auth_scope))
         .map_err(|e| anyhow::anyhow!("invalid auth_scope: {}", e))?;
-    let auth_type: AuthType = serde_json::from_str(&model.auth_type)
-        .map_err(|e| anyhow::anyhow!("invalid auth_type: {}", e))?;
+    // The diesel-backed schema still carries the legacy `auth_type` TEXT
+    // column (OSS migrations didn't grow a credentials table). The runtime
+    // synthesizes `credential_id = Uuid::nil()` for these rows; callers that
+    // need real Credential resolution must inject a `credential_store`
+    // (cloud does this via `PgCredentialStore`).
+    let _legacy_auth_type_json = &model.auth_type;
     let config: serde_json::Value = serde_json::from_str(&model.config)
         .map_err(|e| anyhow::anyhow!("invalid config: {}", e))?;
     let id = uuid::Uuid::parse_str(&model.id).map_err(|e| anyhow::anyhow!("invalid id: {}", e))?;
@@ -4068,7 +4071,7 @@ fn to_connection(model: ConnectionModel) -> anyhow::Result<Connection> {
         config,
         connected_by,
         auth_scope,
-        auth_type,
+        credential_id: uuid::Uuid::nil(),
         kind: distri_types::connections::ConnectionKind::Default,
         is_system: model.is_system != 0,
         created_at: from_naive(model.created_at),
@@ -4129,8 +4132,11 @@ where
         let auth_scope_str = serde_json::to_string(&new_conn.auth_scope)
             .map_err(|e| anyhow::anyhow!("serialize auth_scope: {}", e))?;
         let auth_scope_str = auth_scope_str.trim_matches('"').to_string();
-        let auth_type_str = serde_json::to_string(&new_conn.auth_type)
-            .map_err(|e| anyhow::anyhow!("serialize auth_type: {}", e))?;
+        // OSS diesel-store still has an `auth_type` TEXT column — the
+        // credential_id-only NewConnection doesn't carry material here, so we
+        // write an empty JSON placeholder. The cloud path uses
+        // `PgConnectionStore` + `PgCredentialStore` and never touches this.
+        let auth_type_str = "{}".to_string();
         let connected_by_str = new_conn.connected_by.map(|u| u.to_string());
 
         let model = crate::models::NewConnectionModel {
@@ -4219,20 +4225,14 @@ where
         &self,
         conn_id: &str,
         new_name: Option<String>,
-        new_auth_type: Option<AuthType>,
     ) -> anyhow::Result<Connection> {
         use crate::schema::connections::dsl::*;
         let mut conn = self.conn().await?;
         let now = Utc::now().naive_utc();
-        let auth_type_str = new_auth_type
-            .as_ref()
-            .map(|at| serde_json::to_string(at))
-            .transpose()
-            .map_err(|e| anyhow::anyhow!("serialize auth_type: {}", e))?;
         let changeset = crate::models::ConnectionChangeset {
             name: new_name.as_deref(),
             status: None,
-            auth_type: auth_type_str.as_deref(),
+            auth_type: None,
             skill_id: None,
             updated_at: now,
         };
@@ -4262,20 +4262,18 @@ where
         ws_id: &str,
         provider: &str,
     ) -> anyhow::Result<Option<Connection>> {
-        // Load all connections for the workspace and filter by provider in Rust.
-        // The auth_type is stored as JSON so we can't easily query it in SQL.
+        // OSS diesel-store no longer carries provider/material on the
+        // Connection row — the cloud path resolves provider through the
+        // credentials table via `PgConnectionStore`. Match by name as a
+        // best-effort fallback for legacy callers.
         let all = self.list_by_workspace(ws_id).await?;
-        let found = all.into_iter().find(|c| match &c.auth_type {
-            AuthType::OAuth { provider: p, .. } => p == provider,
-            _ => false,
-        });
-        Ok(found)
+        Ok(all.into_iter().find(|c| c.name == provider))
     }
 }
 
 // ========== Connection Token Store ==========
 
-pub struct DieselConnectionTokenStore<Conn>
+pub struct DieselCredentialTokenStore<Conn>
 where
     Conn: DieselBackendConnection,
     diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
@@ -4285,7 +4283,7 @@ where
     pool: DieselStorePool<Conn>,
 }
 
-impl<Conn> DieselConnectionTokenStore<Conn>
+impl<Conn> DieselCredentialTokenStore<Conn>
 where
     Conn: DieselBackendConnection,
     diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
@@ -4305,14 +4303,14 @@ where
 }
 
 #[async_trait]
-impl<Conn> ConnectionTokenStore for DieselConnectionTokenStore<Conn>
+impl<Conn> CredentialTokenStore for DieselCredentialTokenStore<Conn>
 where
     Conn: DieselBackendConnection,
     diesel::dsl::select<diesel::dsl::AsExprOf<i32, diesel::sql_types::Integer>>: ExecuteDsl<Conn>,
     diesel::query_builder::SqlQuery: QueryFragment<<Conn as AsyncConnectionCore>::Backend>,
     <Conn as AsyncConnectionCore>::Backend: diesel::backend::DieselReserveSpecialization,
 {
-    async fn store_token(&self, conn_id: &str, token: ConnectionToken) -> anyhow::Result<()> {
+    async fn store_token(&self, conn_id: &str, token: CredentialToken) -> anyhow::Result<()> {
         use crate::schema::connection_tokens::dsl::*;
         let mut conn = self.conn().await?;
         let now = Utc::now().naive_utc();
@@ -4334,7 +4332,7 @@ where
         Ok(())
     }
 
-    async fn get_token(&self, conn_id: &str) -> anyhow::Result<Option<ConnectionToken>> {
+    async fn get_token(&self, conn_id: &str) -> anyhow::Result<Option<CredentialToken>> {
         use crate::schema::connection_tokens::dsl::*;
         let mut conn = self.conn().await?;
         let result = connection_tokens
@@ -4345,7 +4343,7 @@ where
             .optional()?;
         result
             .map(|m| {
-                serde_json::from_str::<ConnectionToken>(&m.token_json)
+                serde_json::from_str::<CredentialToken>(&m.token_json)
                     .map_err(|e| anyhow::anyhow!("deserialize token: {}", e))
             })
             .transpose()

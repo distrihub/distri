@@ -49,14 +49,28 @@ pub async fn resolve_all(
 /// Thin wrapper over the unified [`crate::connections::DefaultResolver`] —
 /// kept for backwards compatibility with direct callers. New code should use
 /// the resolver directly so it also handles `Custom` and `DistriNative`.
+///
+/// Follows the connection → credential link before resolving.
 pub async fn resolve_connection_token(
     connection_id: &str,
     stores: &distri_types::stores::InitializedStores,
 ) -> Result<(String, String), String> {
-    use crate::connections::{ConnectionResolver, DefaultResolver, ResolveCtx};
+    use crate::connections::{CredentialResolver, DefaultResolver, ResolveCtx};
+
+    let conn_store = stores
+        .connection_store
+        .as_ref()
+        .ok_or_else(|| "connection store not configured".to_string())?;
+    let connection = conn_store
+        .get_by_id(connection_id)
+        .await
+        .map_err(|e| format!("failed to get connection: {e}"))?
+        .ok_or_else(|| format!("connection '{}' not found", connection_id))?;
 
     let ctx = ResolveCtx::new(stores);
-    let resolved = DefaultResolver.resolve(connection_id, &ctx).await?;
+    let resolved = DefaultResolver
+        .resolve(&connection.credential_id.to_string(), &ctx)
+        .await?;
 
     let access_token = resolved
         .http_headers
@@ -77,7 +91,10 @@ pub async fn resolve_connection_token(
 mod tests {
     use super::*;
     use distri_types::connections::*;
-    use distri_types::stores::{ConnectionStore, ConnectionTokenStore};
+    use distri_types::credentials::{
+        Credential, CredentialMaterial, CredentialStatus, CredentialToken, NewCredential,
+    };
+    use distri_types::stores::{ConnectionStore, CredentialStore, CredentialTokenStore};
 
     // -- Minimal in-memory stores for testing --
 
@@ -86,6 +103,45 @@ mod tests {
     impl TestConnectionStore {
         fn with(connections: Vec<Connection>) -> Self {
             Self(tokio::sync::RwLock::new(connections))
+        }
+    }
+
+    struct TestCredentialStore(tokio::sync::RwLock<Vec<Credential>>);
+
+    impl TestCredentialStore {
+        fn with(credentials: Vec<Credential>) -> Self {
+            Self(tokio::sync::RwLock::new(credentials))
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl CredentialStore for TestCredentialStore {
+        async fn create(&self, _c: NewCredential) -> anyhow::Result<Credential> {
+            unimplemented!()
+        }
+        async fn get_by_id(&self, id: &str) -> anyhow::Result<Option<Credential>> {
+            let id = uuid::Uuid::parse_str(id)?;
+            Ok(self.0.read().await.iter().find(|c| c.id == id).cloned())
+        }
+        async fn list_by_workspace(&self, _ws: &str) -> anyhow::Result<Vec<Credential>> {
+            unimplemented!()
+        }
+        async fn update_status(&self, _id: &str, _s: CredentialStatus) -> anyhow::Result<()> {
+            unimplemented!()
+        }
+        async fn update(
+            &self,
+            _id: &str,
+            _name: Option<String>,
+            _material: Option<CredentialMaterial>,
+        ) -> anyhow::Result<Credential> {
+            unimplemented!()
+        }
+        async fn delete(&self, _id: &str) -> anyhow::Result<()> {
+            unimplemented!()
+        }
+        async fn get_by_provider(&self, _ws: &str, _p: &str) -> anyhow::Result<Option<Credential>> {
+            unimplemented!()
         }
     }
 
@@ -112,7 +168,6 @@ mod tests {
             &self,
             _id: &str,
             _name: Option<String>,
-            _auth_type: Option<distri_types::connections::AuthType>,
         ) -> anyhow::Result<Connection> {
             unimplemented!()
         }
@@ -124,21 +179,21 @@ mod tests {
         }
     }
 
-    struct TestTokenStore(tokio::sync::RwLock<std::collections::HashMap<String, ConnectionToken>>);
+    struct TestTokenStore(tokio::sync::RwLock<std::collections::HashMap<String, CredentialToken>>);
 
     impl TestTokenStore {
-        fn with(tokens: Vec<(String, ConnectionToken)>) -> Self {
+        fn with(tokens: Vec<(String, CredentialToken)>) -> Self {
             Self(tokio::sync::RwLock::new(tokens.into_iter().collect()))
         }
     }
 
     #[async_trait::async_trait]
-    impl ConnectionTokenStore for TestTokenStore {
-        async fn store_token(&self, id: &str, token: ConnectionToken) -> anyhow::Result<()> {
+    impl CredentialTokenStore for TestTokenStore {
+        async fn store_token(&self, id: &str, token: CredentialToken) -> anyhow::Result<()> {
             self.0.write().await.insert(id.to_string(), token);
             Ok(())
         }
-        async fn get_token(&self, id: &str) -> anyhow::Result<Option<ConnectionToken>> {
+        async fn get_token(&self, id: &str) -> anyhow::Result<Option<CredentialToken>> {
             Ok(self.0.read().await.get(id).cloned())
         }
         async fn remove_token(&self, _id: &str) -> anyhow::Result<()> {
@@ -157,7 +212,8 @@ mod tests {
 
     async fn make_stores(
         conn_store: Arc<dyn ConnectionStore>,
-        token_store: Arc<dyn ConnectionTokenStore>,
+        cred_store: Arc<dyn CredentialStore>,
+        token_store: Arc<dyn CredentialTokenStore>,
     ) -> distri_types::stores::InitializedStores {
         let db_name = uuid::Uuid::new_v4();
         let config = distri_types::configuration::StoreConfig {
@@ -172,11 +228,30 @@ mod tests {
         };
         let mut stores = distri_stores::initialize_stores(&config).await.unwrap();
         stores.connection_store = Some(conn_store);
-        stores.connection_token_store = Some(token_store);
+        stores.credential_store = Some(cred_store);
+        stores.credential_token_store = Some(token_store);
         stores
     }
 
-    fn test_connection(id: uuid::Uuid) -> Connection {
+    fn test_credential(id: uuid::Uuid, provider: &str) -> Credential {
+        Credential {
+            id,
+            workspace_id: uuid::Uuid::new_v4(),
+            name: provider.to_string(),
+            auth_scope: AuthScope::Workspace,
+            material: CredentialMaterial::Oauth {
+                provider: provider.to_string(),
+                scopes: vec![],
+            },
+            status: CredentialStatus::Connected,
+            is_system: false,
+            created_by: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        }
+    }
+
+    fn test_connection_with_cred(id: uuid::Uuid, credential_id: uuid::Uuid) -> Connection {
         Connection {
             id,
             workspace_id: uuid::Uuid::new_v4(),
@@ -188,29 +263,50 @@ mod tests {
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
             auth_scope: AuthScope::Workspace,
-            auth_type: AuthType::OAuth {
-                provider: "google".to_string(),
-                scopes: vec![],
-            },
+            credential_id,
+            kind: distri_types::connections::ConnectionKind::Default,
             is_system: false,
         }
     }
 
+    fn build_fixture(
+        valid_token: bool,
+        with_token: bool,
+    ) -> (uuid::Uuid, Connection, Credential, Vec<(String, CredentialToken)>) {
+        let conn_id = uuid::Uuid::new_v4();
+        let cred_id = uuid::Uuid::new_v4();
+        let cred = test_credential(cred_id, "google");
+        let conn = test_connection_with_cred(conn_id, cred_id);
+        let tokens = if with_token {
+            let exp = if valid_token {
+                chrono::Utc::now() + chrono::Duration::hours(1)
+            } else {
+                chrono::Utc::now() - chrono::Duration::hours(1)
+            };
+            vec![(
+                cred_id.to_string(),
+                CredentialToken {
+                    access_token: "ya29.valid-google-token".to_string(),
+                    refresh_token: Some("1//refresh".to_string()),
+                    expires_at: Some(exp),
+                    token_type: "Bearer".to_string(),
+                    scopes: vec!["calendar".to_string()],
+                },
+            )]
+        } else {
+            vec![]
+        };
+        (conn_id, conn, cred, tokens)
+    }
+
     #[tokio::test]
     async fn resolve_valid_token() {
-        let conn_id = uuid::Uuid::new_v4();
-        let conn = test_connection(conn_id);
-        let token = ConnectionToken {
-            access_token: "ya29.valid-google-token".to_string(),
-            refresh_token: Some("1//refresh".to_string()),
-            expires_at: Some(chrono::Utc::now() + chrono::Duration::hours(1)),
-            token_type: "Bearer".to_string(),
-            scopes: vec!["calendar".to_string()],
-        };
+        let (conn_id, conn, cred, tokens) = build_fixture(true, true);
 
         let stores = make_stores(
             Arc::new(TestConnectionStore::with(vec![conn])),
-            Arc::new(TestTokenStore::with(vec![(conn_id.to_string(), token)])),
+            Arc::new(TestCredentialStore::with(vec![cred])),
+            Arc::new(TestTokenStore::with(tokens)),
         )
         .await;
 
@@ -223,19 +319,12 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_expired_token_returns_error() {
-        let conn_id = uuid::Uuid::new_v4();
-        let conn = test_connection(conn_id);
-        let token = ConnectionToken {
-            access_token: "ya29.expired-token".to_string(),
-            refresh_token: Some("1//refresh".to_string()),
-            expires_at: Some(chrono::Utc::now() - chrono::Duration::hours(1)),
-            token_type: "Bearer".to_string(),
-            scopes: vec![],
-        };
+        let (conn_id, conn, cred, tokens) = build_fixture(false, true);
 
         let stores = make_stores(
             Arc::new(TestConnectionStore::with(vec![conn])),
-            Arc::new(TestTokenStore::with(vec![(conn_id.to_string(), token)])),
+            Arc::new(TestCredentialStore::with(vec![cred])),
+            Arc::new(TestTokenStore::with(tokens)),
         )
         .await;
 
@@ -250,6 +339,7 @@ mod tests {
     async fn resolve_missing_connection_returns_error() {
         let stores = make_stores(
             Arc::new(TestConnectionStore::with(vec![])),
+            Arc::new(TestCredentialStore::with(vec![])),
             Arc::new(TestTokenStore::with(vec![])),
         )
         .await;
@@ -261,11 +351,11 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_missing_token_returns_error() {
-        let conn_id = uuid::Uuid::new_v4();
-        let conn = test_connection(conn_id);
+        let (conn_id, conn, cred, _) = build_fixture(true, false);
 
         let stores = make_stores(
             Arc::new(TestConnectionStore::with(vec![conn])),
+            Arc::new(TestCredentialStore::with(vec![cred])),
             Arc::new(TestTokenStore::with(vec![])),
         )
         .await;
@@ -275,15 +365,9 @@ mod tests {
         assert!(result.unwrap_err().contains("no token"));
     }
 
-    /// `DefaultResolver::resolve` defensively returns
-    /// `"connection store not configured"` when `stores.connection_store`
-    /// is `None`. Since the OSS rearch (PR #93, 2026-05-07),
-    /// `initialize_stores` always populates the connection stores from the
-    /// metadata factory, so the only way to reach the defensive check is
-    /// to explicitly clear the store. We do so here to keep the guard
-    /// pinned — if a future refactor accidentally makes the field non-Option,
-    /// or moves the resolver onto a typed handle that can't be None, this
-    /// test breaks and forces the author to think about the behavior change.
+    /// Defensive guard — when `stores.connection_store` is None, the wrapper
+    /// errors before touching the resolver. Kept pinned so a future refactor
+    /// that makes the field non-Option has to think about the behavior change.
     #[tokio::test]
     async fn resolve_no_connection_stores_returns_error() {
         let db_name = uuid::Uuid::new_v4();
@@ -299,7 +383,8 @@ mod tests {
         };
         let mut stores = distri_stores::initialize_stores(&config).await.unwrap();
         stores.connection_store = None;
-        stores.connection_token_store = None;
+        stores.credential_store = None;
+        stores.credential_token_store = None;
 
         let result = resolve_connection_token(&uuid::Uuid::new_v4().to_string(), &stores).await;
         let err = result.expect_err("must error when connection_store is None");

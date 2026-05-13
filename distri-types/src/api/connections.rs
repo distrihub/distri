@@ -11,7 +11,8 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-use crate::connections::{AuthScope, AuthType, Connection, ConnectionKind};
+use crate::connections::{AuthScope, Connection, ConnectionKind};
+use crate::credentials::CredentialMaterial;
 
 /// Stored in `Connection.config` to carry provider-level metadata.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
@@ -45,11 +46,33 @@ pub struct OAuthCallbackRequest {
     pub state: String,
 }
 
+/// How a `POST /v1/connections` body references the auth material.
+///
+/// `Existing` reuses a previously-created Credential (the path used by the
+/// Connection Detail page and the Bot wizard once it's surfaced).
+///
+/// `Inline` lets the New Connection dialog create a Credential and a
+/// Connection in one transaction so the user doesn't have to pre-create the
+/// Credential row.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum CredentialRef {
+    Existing {
+        credential_id: Uuid,
+    },
+    Inline {
+        material: CredentialMaterial,
+        #[serde(default)]
+        secrets: HashMap<String, String>,
+    },
+}
+
 /// Unified request body for creating a connection.
 ///
-/// One shape covers all auth types. `DistriNative` is not accepted — that
-/// variant is reserved for the platform-seeded `distri` connection and rejected
-/// at handler level.
+/// One shape covers all auth types. `DistriNative` is not accepted inline —
+/// that variant is reserved for the platform-seeded `distri` connection and
+/// rejected at handler level. Use `CredentialRef::Existing` with the
+/// system-seeded distri Credential instead.
 ///
 /// `skill_content` is **required** for custom connections (Bearer, ApiKey, or
 /// OAuth with a non-built-in provider). Built-in OAuth providers (google,
@@ -59,11 +82,9 @@ pub struct OAuthCallbackRequest {
 pub struct CreateConnectionRequest {
     pub name: String,
     pub auth_scope: AuthScope,
-    pub auth_type: AuthType,
-    /// Optional secrets for Bearer/ApiKey. Keyed by the semantics of that
-    /// auth_type — e.g. `{"value": "sk-..."}` for a Bearer/ApiKey value.
-    #[serde(default)]
-    pub secrets: HashMap<String, String>,
+    /// How to obtain the auth material. Either reuse an existing
+    /// `Credential` or create one inline.
+    pub credential: CredentialRef,
     /// Markdown skill content. Required for custom connections; optional for
     /// built-in OAuth providers that ship a template.
     #[serde(default)]
@@ -76,15 +97,12 @@ pub struct CreateConnectionRequest {
     pub kind: ConnectionKind,
 }
 
-/// PATCH body for updating a connection. Both fields optional; at least one
-/// should be present. `auth_type` is only accepted when the existing
-/// connection is of type `custom`.
+/// PATCH body for updating a connection. Editing the linked Credential is
+/// done via `PATCH /v1/credentials/{id}` directly.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
 pub struct UpdateConnectionRequest {
     #[serde(default)]
     pub name: Option<String>,
-    #[serde(default)]
-    pub auth_type: Option<AuthType>,
 }
 
 /// Response body for `POST /v1/connections`.

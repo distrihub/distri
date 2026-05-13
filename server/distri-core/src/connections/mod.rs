@@ -12,4 +12,7 @@
 pub mod mcp_oauth;
 pub mod resolver;
 
-pub use resolver::{ConnectionResolver, DefaultResolver, ResolveCtx, ResolvedConnection};
+pub use resolver::{
+    ConnectionResolver, CredentialResolver, DefaultResolver, ResolveCtx, ResolvedConnection,
+    ResolvedCredential,
+};
