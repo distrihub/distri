@@ -125,6 +125,14 @@ impl ConnectionResolver for DefaultResolver {
             }
             AuthType::Custom { fields } => resolve_custom(&connection, fields, ctx).await,
             AuthType::DistriNative => resolve_distri_native(&connection, ctx).await,
+            // McpOAuth tokens land in the same `connection_token_store` as
+            // standard OAuth — the cloud-side discovery/DCR/code flow stores
+            // them under the canonical OAuth keys before the executor runs.
+            // From the resolver's perspective there's no difference: pull the
+            // bearer, hand back `Authorization: Bearer …`.
+            AuthType::McpOAuth { .. } => {
+                resolve_oauth(&connection, "mcp_oauth", ctx).await
+            }
         }
     }
 }

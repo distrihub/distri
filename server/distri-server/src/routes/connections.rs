@@ -244,6 +244,7 @@ async fn create_connection(
         auth_type,
         secrets,
         skill_content,
+        kind: _kind, // OSS server doesn't route MCP-kind today; cloud path owns it
     } = payload.into_inner();
 
     // Name validation
@@ -498,6 +499,14 @@ async fn create_connection(
         distri_types::connections::AuthType::DistriNative => {
             HttpResponse::Forbidden().json(json!({
                 "error": "distri_native connections cannot be created via this endpoint"
+            }))
+        }
+
+        distri_types::connections::AuthType::McpOAuth { .. } => {
+            // McpOAuth connections need protected-resource discovery + DCR,
+            // which only the cloud OAuth handler implements today.
+            HttpResponse::NotImplemented().json(json!({
+                "error": "mcp_oauth connections require the cloud OAuth handler; use distri-cloud /v1/connections instead"
             }))
         }
     }

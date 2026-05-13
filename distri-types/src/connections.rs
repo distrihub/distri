@@ -119,6 +119,31 @@ pub enum AuthType {
     /// Platform-internal: the seeded distri connection used by the official bot.
     /// No configuration — the caller's distri session token is proxied through.
     DistriNative,
+    /// MCP Authorization spec (2025-03-26) OAuth: discovery + optional
+    /// dynamic client registration + authorization-code flow with PKCE and
+    /// the RFC 8707 `resource` indicator pointing at the MCP server URL.
+    ///
+    /// Use this instead of `OAuth { provider }` when the MCP server
+    /// advertises its own authorization server via
+    /// `WWW-Authenticate`/`oauth-protected-resource`, rather than reusing
+    /// a provider that's already in the distri OAuth registry.
+    ///
+    /// Tokens land in the same `secrets`/Redis store keyed by
+    /// `connection.<id>.access_token` as standard OAuth tokens, so the
+    /// resolver and refresh paths are reused unchanged.
+    McpOAuth {
+        /// Optional explicit authorization-server issuer URL. When absent
+        /// the cloud discovers it from the MCP server's
+        /// `oauth-protected-resource` response at connect time.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        issuer_url: Option<String>,
+        #[serde(default)]
+        scopes: Vec<String>,
+        /// When true, the cloud will attempt RFC 7591 Dynamic Client
+        /// Registration against the discovered authorization server.
+        #[serde(default = "default_true")]
+        dynamic_register: bool,
+    },
 }
 
 /// One configurable field on a Custom connection.
@@ -148,11 +173,12 @@ impl AuthType {
             Self::OAuth { provider, .. } => provider.as_str(),
             Self::Custom { .. } => "custom",
             Self::DistriNative => "distri",
+            Self::McpOAuth { .. } => "mcp_oauth",
         }
     }
 
     pub fn is_oauth(&self) -> bool {
-        matches!(self, Self::OAuth { .. })
+        matches!(self, Self::OAuth { .. } | Self::McpOAuth { .. })
     }
 
     pub fn is_custom(&self) -> bool {
@@ -161,6 +187,10 @@ impl AuthType {
 
     pub fn is_distri_native(&self) -> bool {
         matches!(self, Self::DistriNative)
+    }
+
+    pub fn is_mcp_oauth(&self) -> bool {
+        matches!(self, Self::McpOAuth { .. })
     }
 
     /// Shorthand for iterating required Custom fields (empty for OAuth/DistriNative).

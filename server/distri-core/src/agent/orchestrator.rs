@@ -1958,6 +1958,11 @@ async fn resolve_declared_connections(
                     distri_types::connections::AuthType::OAuth { provider: p, .. } => p == provider,
                     distri_types::connections::AuthType::Custom { .. } => c.name == provider,
                     distri_types::connections::AuthType::DistriNative => provider == "distri",
+                    distri_types::connections::AuthType::McpOAuth { .. } => {
+                        // McpOAuth connections match by connection name (the
+                        // synthesized "provider" string from the resolver).
+                        c.name == provider || provider == "mcp_oauth"
+                    }
                 })
                 .cloned()
         } else {
