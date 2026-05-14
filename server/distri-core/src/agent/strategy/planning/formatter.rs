@@ -104,7 +104,7 @@ impl<'a> MessageFormatter<'a> {
         // Collect per-tool prompts only for NON-deferred tools.
         // Deferred tools shouldn't have prompts in the system prompt — they'll
         // get their prompts when loaded via tool_search exact name match.
-        let (tool_prompts_map, tool_prompts_concat, tool_prompt_entries) =
+        let (mut tool_prompts_map, tool_prompts_concat, tool_prompt_entries) =
             Self::collect_tool_prompts(&tool_defs, &deferred_names);
 
         tracing::info!(
@@ -113,6 +113,26 @@ impl<'a> MessageFormatter<'a> {
             tool_defs.len(),
             deferred_names.len()
         );
+
+        // Some agent prompts reference tool prompts by explicit name
+        // (e.g. `{{{tools.Glob}}}`) while strict mode is enabled.
+        // In remote/dev paths external tools may be unavailable at runtime,
+        // so seed declared external tool names with empty prompts to avoid
+        // render-time failures.
+        if let Some(tools_cfg) = self.agent_def.tools.as_ref() {
+            if let Some(external_names) = tools_cfg.external.as_ref() {
+                for name in external_names {
+                    // Skip wildcard declarations; they don't correspond to a
+                    // concrete `tools.<name>` lookup in templates.
+                    if name == "*" {
+                        continue;
+                    }
+                    tool_prompts_map
+                        .entry(name.clone())
+                        .or_insert_with(|| serde_json::Value::String(String::new()));
+                }
+            }
+        }
 
         // Inject tool prompts as {{tools.Bash}}, {{tools.Read}}, etc.
         // Always inject (even if empty) so handlebars strict mode doesn't fail.

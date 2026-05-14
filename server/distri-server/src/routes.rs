@@ -9,6 +9,7 @@ use distri_core::a2a::A2AHandler;
 use distri_core::agent::{parse_agent_markdown_content, AgentOrchestrator};
 use distri_core::secrets::SecretResolver;
 use distri_core::types::UpdateThreadRequest;
+use distri_core::workspace_defaults::load_workspace_default_model_settings;
 use distri_core::{AgentError, MessageFilter};
 use distri_types::configuration::AgentConfigWithTools;
 use distri_types::configuration::ServerConfig;
@@ -44,6 +45,7 @@ pub mod skills;
 pub mod spans;
 pub mod tools;
 pub mod usage;
+pub mod workspaces;
 
 pub fn all(cfg: &mut web::ServiceConfig) {
     cfg.configure(distri);
@@ -78,6 +80,7 @@ pub fn distri(cfg: &mut web::ServiceConfig) {
     // Webhook endpoint for triggering agents
     // Thread endpoints
     .service(web::resource("/threads").route(web::get().to(list_threads_handler)))
+    .service(web::resource("/threads/detailed").route(web::get().to(list_detailed_threads_handler)))
     .service(web::resource("/threads/agents").route(web::get().to(list_agents_by_usage)))
     .service(
         web::resource("/threads/{thread_id}/messages").route(web::get().to(get_thread_messages)),
@@ -124,6 +127,7 @@ pub fn distri(cfg: &mut web::ServiceConfig) {
     // Configuration endpoints
     .service(web::resource("/device").route(web::get().to(get_device_info)))
     .service(web::resource("/home/stats").route(web::get().to(get_home_stats)))
+    .configure(workspaces::configure_workspace_routes)
     .configure(prompt_templates::configure_prompt_template_routes)
     // HTTP request proxy — resolves secrets/connections server-side
     .service(web::resource("/request").route(web::post().to(proxy_request_handler)))
@@ -736,10 +740,17 @@ async fn a2a_handler(
         .unwrap_or_else(|| ("local_dev_user".to_string(), None));
 
     // Workspace-level default model settings, injected by cloud middleware.
-    let workspace_model_settings = http_request
+    let workspace_model_settings = if let Some(ms) = http_request
         .extensions()
         .get::<distri_types::ModelSettings>()
-        .cloned();
+        .cloned()
+    {
+        Some(ms)
+    } else if let Some(ms) = load_workspace_default_model_settings(executor).await {
+        Some(ms)
+    } else {
+        None
+    };
 
     let result = handler
         .handle_jsonrpc(
@@ -933,10 +944,17 @@ async fn llm_execute(
     all_messages.extend(payload.messages.clone());
 
     // Load agent model settings if agent_id is provided, then workspace settings.
-    let workspace_model_settings = http_request
+    let workspace_model_settings = if let Some(ms) = http_request
         .extensions()
         .get::<distri_types::ModelSettings>()
-        .cloned();
+        .cloned()
+    {
+        Some(ms)
+    } else if let Some(ms) = load_workspace_default_model_settings(executor.get_ref()).await {
+        Some(ms)
+    } else {
+        None
+    };
 
     let base_model_settings: Option<ModelSettings> =
         llm_helpers::load_agent_model_settings(&executor, payload.agent_id.as_deref())
@@ -1118,6 +1136,21 @@ async fn list_threads_handler(
 
 #[utoipa::path(
     get,
+    path = "/v1/threads/detailed",
+    tag = "Threads",
+    responses((status = 200, description = "List detailed threads"))
+)]
+async fn list_detailed_threads_handler(
+    query: web::Query<ListThreadsQuery>,
+    coordinator: web::Data<Arc<AgentOrchestrator>>,
+) -> HttpResponse {
+    // OSS compatibility: detailed currently reuses the standard thread list shape,
+    // which already includes agent/user/channel/token fields expected by home UI.
+    list_threads_handler(query, coordinator).await
+}
+
+#[utoipa::path(
+    get,
     path = "/v1/threads/agents",
     tag = "Threads",
     responses((status = 200, description = "List agents by usage"))
@@ -1129,9 +1162,50 @@ async fn list_agents_by_usage(
     let search = query.get("search").map(|s| s.as_str());
     match coordinator.get_agents_by_usage(search).await {
         Ok(agents) => HttpResponse::Ok().json(agents),
-        Err(e) => HttpResponse::InternalServerError().json(json!({
-            "error": format!("Failed to get agents by usage: {}", e)
-        })),
+        Err(e) => {
+            tracing::warn!(
+                error = ?e,
+                "get_agents_by_usage failed; falling back to counts from /threads"
+            );
+            let filter = distri_types::stores::ThreadListFilter {
+                search: search.map(|s| s.to_string()),
+                ..Default::default()
+            };
+            match coordinator.list_threads(&filter, Some(5000), Some(0)).await {
+                Ok(response) => {
+                    let mut by_agent: std::collections::HashMap<String, (String, i64)> =
+                        std::collections::HashMap::new();
+                    for t in response.threads {
+                        let entry = by_agent
+                            .entry(t.agent_id.clone())
+                            .or_insert((t.agent_name.clone(), 0));
+                        entry.1 += 1;
+                    }
+                    let mut agents: Vec<distri_types::stores::AgentUsageInfo> = by_agent
+                        .into_iter()
+                        .map(|(agent_id, (agent_name, thread_count))| {
+                            distri_types::stores::AgentUsageInfo {
+                                agent_id,
+                                agent_name,
+                                thread_count,
+                            }
+                        })
+                        .collect();
+                    agents.sort_by(|a, b| {
+                        b.thread_count
+                            .cmp(&a.thread_count)
+                            .then_with(|| a.agent_name.cmp(&b.agent_name))
+                    });
+                    HttpResponse::Ok().json(agents)
+                }
+                Err(fallback_err) => HttpResponse::InternalServerError().json(json!({
+                    "error": format!(
+                        "Failed to get agents by usage: {} (fallback failed: {})",
+                        e, fallback_err
+                    )
+                })),
+            }
+        }
     }
 }
 
