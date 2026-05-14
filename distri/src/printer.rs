@@ -6,6 +6,7 @@ use distri_types::{AgentEvent, AgentEventType, MessageRole, ToolResponse};
 use tokio::sync::{Mutex, RwLock};
 
 use crate::client_stream::{AgentStreamClient, StreamError, StreamItem};
+use crate::sub_task_tracker::{SubTaskTracker, SuppressDecision};
 
 // Re-export shared color constants from the formatter
 pub use distri_formatter::colors::{
@@ -384,6 +385,9 @@ pub struct EventPrinter {
     spinner_frame: usize,
     /// Shared context health state — updated by events, read by CLI status line.
     pub context_health: Arc<RwLock<ContextHealth>>,
+    /// Prints fence headers/footers around sub-agent dispatches so the
+    /// user can see who owns which output. See `sub_task_tracker.rs`.
+    sub_tasks: SubTaskTracker,
 }
 
 impl Default for EventPrinter {
@@ -402,6 +406,7 @@ impl EventPrinter {
             context_health: Arc::new(RwLock::new(ContextHealth::default())),
             planning_text: None,
             spinner_frame: 0,
+            sub_tasks: SubTaskTracker::new(),
         }
     }
 
@@ -460,6 +465,17 @@ impl EventPrinter {
         // Track first event (no header printed — internal IDs aren't useful)
         if !self.state.printed_header {
             self.state.printed_header = true;
+        }
+
+        // Sub-agent events render as a collapsed `⏺ subtask(agent)` /
+        // `⎿ done` pair (mirroring how Claude Code surfaces the Task
+        // tool). In verbose mode the tracker prints fence headers/
+        // footers and the body events flow through unchanged.
+        if matches!(
+            self.sub_tasks.handle(event, self.verbose),
+            SuppressDecision::Suppress
+        ) {
+            return;
         }
 
         // Track agent changes and display them
