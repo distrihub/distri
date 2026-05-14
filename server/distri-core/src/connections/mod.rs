@@ -9,7 +9,6 @@
 //! - the cloud-side `POST /request` proxy handler (same, but server-side)
 //! - orchestrator declarative `definition.connections` resolution at run start
 
-pub mod mcp_oauth;
 pub mod resolver;
 
 pub use resolver::{

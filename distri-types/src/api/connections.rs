@@ -46,53 +46,58 @@ pub struct OAuthCallbackRequest {
     pub state: String,
 }
 
-/// How a `POST /v1/connections` body references the auth material.
+/// Request body for `POST /v1/connections`.
 ///
-/// `Existing` reuses a previously-created Credential (the path used by the
-/// Connection Detail page and the Bot wizard once it's surfaced).
+/// Standard flat shape. `credential_id` presence decides whether the server
+/// reuses an existing Credential or creates a new one:
 ///
-/// `Inline` lets the New Connection dialog create a Credential and a
-/// Connection in one transaction so the user doesn't have to pre-create the
-/// Credential row.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum CredentialRef {
-    Existing {
-        credential_id: Uuid,
-    },
-    Inline {
-        material: CredentialMaterial,
-        #[serde(default)]
-        secrets: HashMap<String, String>,
-    },
-}
-
-/// Unified request body for creating a connection.
+/// - **`credential_id` present** → reuse it. `auth_type` / `secrets` are
+///   ignored. Used by the Bot wizard when picking from already-saved
+///   credentials.
+/// - **`credential_id` absent** → server creates a new Credential from
+///   `auth_type` + `secrets`. The common case from the New Connection
+///   dialog.
 ///
-/// One shape covers all auth types. `DistriNative` is not accepted inline —
-/// that variant is reserved for the platform-seeded `distri` connection and
-/// rejected at handler level. Use `CredentialRef::Existing` with the
-/// system-seeded distri Credential instead.
+/// `DistriNative` is reserved for the platform-seeded `distri` credential
+/// and is rejected when supplied inline. `auth_scope=public` is rejected;
+/// public scope belongs to channels, not connections.
 ///
-/// `skill_content` is **required** for custom connections (Bearer, ApiKey, or
-/// OAuth with a non-built-in provider). Built-in OAuth providers (google,
-/// github, notion, slack, twitter, microsoft) fall back to the bundled skill
-/// template when `skill_content` is omitted.
+/// `skill_content` is required for non-MCP custom connections; built-in
+/// OAuth providers and MCP-kind rows fall back to bundled templates or the
+/// MCP tool list respectively.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
 pub struct CreateConnectionRequest {
     pub name: String,
     pub auth_scope: AuthScope,
-    /// How to obtain the auth material. Either reuse an existing
-    /// `Credential` or create one inline.
-    pub credential: CredentialRef,
-    /// Markdown skill content. Required for custom connections; optional for
-    /// built-in OAuth providers that ship a template.
+    /// Reuse an existing Credential by id. When set, `auth_type` and
+    /// `secrets` are ignored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credential_id: Option<Uuid>,
+    /// Credential material to create inline (OAuth provider + scopes,
+    /// Custom field schema, etc.). Required when `credential_id` is absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_type: Option<CredentialMaterial>,
+    /// Secret values for Workspace-scope Custom credentials, keyed by
+    /// field key. Ignored when `credential_id` is set or `auth_scope=user`.
+    #[serde(default)]
+    pub secrets: HashMap<String, String>,
+    /// **BYOK** (Bring-Your-Own OAuth client): workspace admin's own
+    /// OAuth `client_id` to use instead of distri's platform-managed app.
+    /// When present alongside `auth_type = Oauth { ... }`, distri stores
+    /// these as workspace secrets under `credential.<id>.oauth_client_id`
+    /// / `_secret` and uses them for the OAuth flow + refresh in place of
+    /// the values from `connection_providers`. Same storage slot the MCP
+    /// Dynamic Client Registration flow (RFC 7591) writes into.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oauth_client_id: Option<String>,
+    /// Companion to `oauth_client_id`. Optional — public OAuth clients
+    /// (`token_endpoint_auth_method=none`) don't require a secret.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oauth_client_secret: Option<String>,
+    /// Markdown skill content. Required for custom non-MCP connections.
     #[serde(default)]
     pub skill_content: Option<String>,
-    /// What surface this connection exposes. `Default` (the default) makes
-    /// the connection auth-only; `Mcp { ... }` additionally makes it a
-    /// remote MCP tool source whose tools are exposed to agents that
-    /// reference its `name` in `ToolsConfig.mcp[].server`.
+    /// Capability surface — auth-only (`Default`) or MCP tool source (`Mcp`).
     #[serde(default)]
     pub kind: ConnectionKind,
 }

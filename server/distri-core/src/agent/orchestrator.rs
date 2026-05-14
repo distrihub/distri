@@ -1981,9 +1981,6 @@ async fn resolve_declared_connections(
                     Some(distri_types::credentials::CredentialMaterial::DistriNative) => {
                         provider == "distri"
                     }
-                    Some(distri_types::credentials::CredentialMaterial::McpOauth { .. }) => {
-                        c.name == provider || provider == "mcp_oauth"
-                    }
                     None => c.name == provider,
                 };
                 if matches_provider {

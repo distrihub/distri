@@ -77,21 +77,6 @@ pub enum CredentialMaterial {
     /// Platform-internal: the seeded distri credential used by the official bot.
     /// No configuration — the caller's distri session token is proxied through.
     DistriNative,
-    /// MCP Authorization spec (2025-03-26) OAuth: protected-resource discovery
-    /// + optional dynamic client registration + RFC 8707 `resource` indicator.
-    /// Uses the same token store as `Oauth` — `credential.<id>.access_token`.
-    McpOauth {
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        issuer_url: Option<String>,
-        #[serde(default)]
-        scopes: Vec<String>,
-        #[serde(default = "default_true")]
-        dynamic_register: bool,
-    },
-}
-
-fn default_true() -> bool {
-    true
 }
 
 impl CredentialMaterial {
@@ -100,12 +85,7 @@ impl CredentialMaterial {
             Self::Oauth { provider, .. } => provider.as_str(),
             Self::Custom { .. } => "custom",
             Self::DistriNative => "distri",
-            Self::McpOauth { .. } => "mcp_oauth",
         }
-    }
-
-    pub fn is_oauth_like(&self) -> bool {
-        matches!(self, Self::Oauth { .. } | Self::McpOauth { .. })
     }
 
     pub fn is_oauth(&self) -> bool {
@@ -118,10 +98,6 @@ impl CredentialMaterial {
 
     pub fn is_distri_native(&self) -> bool {
         matches!(self, Self::DistriNative)
-    }
-
-    pub fn is_mcp_oauth(&self) -> bool {
-        matches!(self, Self::McpOauth { .. })
     }
 
     pub fn custom_fields(&self) -> &[CustomField] {
@@ -140,6 +116,15 @@ impl CredentialMaterial {
 }
 
 /// A credentials-table row.
+///
+/// **BYOK** fields (`oauth_client_id`, `oauth_client_secret`) sit on this
+/// outer struct rather than on `CredentialMaterial::Oauth` so the
+/// persisted `material` JSON stays a pure metadata enum. The values flow
+/// through `secret_store` under `credential.<id>.oauth_client_id` /
+/// `_secret`. On READ the service can populate these fields from secrets
+/// when a caller needs them (OAuth flow, refresh path); on WRITE the
+/// service extracts them and stores them as secrets instead of letting
+/// them into the JSON column.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
 pub struct Credential {
     pub id: Uuid,
@@ -155,6 +140,22 @@ pub struct Credential {
     pub created_by: Option<Uuid>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+
+    /// **BYOK** / **DCR**: workspace-provided OAuth `client_id` to use in
+    /// place of the platform-managed `provider_registry` entry. `None` =
+    /// fall back to the registry. Persisted to `secret_store` keyed
+    /// `credential.<id>.oauth_client_id`; hydrated onto this struct by
+    /// the service when needed (write paths, secrets-listing endpoints
+    /// for the workspace admin). Standard read paths leave it `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oauth_client_id: Option<String>,
+
+    /// Companion to `oauth_client_id`. Public OAuth clients
+    /// (`token_endpoint_auth_method=none`) can omit it. **Never returned
+    /// in API responses** — write-only from the caller's perspective.
+    /// Persisted to `secret_store` keyed `credential.<id>.oauth_client_secret`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oauth_client_secret: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
@@ -167,6 +168,14 @@ pub struct NewCredential {
     #[serde(default)]
     pub is_system: bool,
     pub connected_by: Option<Uuid>,
+
+    /// BYOK OAuth client credentials (see `Credential` doc). The
+    /// `CredentialStore::create` impl extracts these and writes them
+    /// to `secret_store`; they are NOT persisted in the `material` JSON.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oauth_client_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oauth_client_secret: Option<String>,
 }
 
 /// Typed OAuth/refresh token bundle stored in Redis under

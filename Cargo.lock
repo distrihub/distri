@@ -1966,6 +1966,7 @@ dependencies = [
 name = "distri-types"
 version = "0.3.8"
 dependencies = [
+ "actix-web",
  "anyhow",
  "async-mcp",
  "async-openai",

@@ -134,7 +134,20 @@ fn default_required() -> bool {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ConnectionKind {
-    Default,
+    /// REST / CLI proxy connection. Agents call the API documented in
+    /// `skill_content`; distri injects the credential's headers via
+    /// `/proxy/request` or the `inject_connection_env` tool.
+    Default {
+        /// Markdown skill describing the API surface. Required for custom
+        /// connections; optional for built-in OAuth providers that ship a
+        /// bundled template (the server fills in from
+        /// `connection_skill_templates/<provider>.md` when absent).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        skill_content: Option<String>,
+    },
+    /// Remote MCP server. distri connects to `transport.url` and exposes
+    /// its tools to agents that reference this connection's name in
+    /// `tools.mcp[].server`.
     Mcp {
         #[serde(flatten)]
         mcp: McpConnectionSpec,
@@ -143,7 +156,9 @@ pub enum ConnectionKind {
 
 impl Default for ConnectionKind {
     fn default() -> Self {
-        Self::Default
+        Self::Default {
+            skill_content: None,
+        }
     }
 }
 
@@ -157,9 +172,18 @@ impl ConnectionKind {
             _ => None,
         }
     }
+    /// Skill markdown if this is a Default-kind connection that ships one.
+    /// MCP-kind connections always return `None` (their tool surface is
+    /// the MCP server's `tools/list`, not a skill doc).
+    pub fn skill_content(&self) -> Option<&str> {
+        match self {
+            Self::Default { skill_content } => skill_content.as_deref(),
+            Self::Mcp { .. } => None,
+        }
+    }
     pub fn kind_str(&self) -> &'static str {
         match self {
-            Self::Default => "default",
+            Self::Default { .. } => "default",
             Self::Mcp { .. } => "mcp",
         }
     }

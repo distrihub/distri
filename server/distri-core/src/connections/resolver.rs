@@ -148,12 +148,6 @@ impl CredentialResolver for DefaultResolver {
                 resolve_custom(&credential, fields, ctx).await
             }
             CredentialMaterial::DistriNative => resolve_distri_native(&credential, ctx).await,
-            // McpOauth tokens live in the same `credential_token_store` as
-            // standard OAuth — the cloud-side discovery/DCR/code flow stores
-            // them under the canonical OAuth keys before the executor runs.
-            CredentialMaterial::McpOauth { .. } => {
-                resolve_oauth(&credential, "mcp_oauth", ctx).await
-            }
         }
     }
 }
