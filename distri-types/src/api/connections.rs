@@ -11,8 +11,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-use crate::connections::{AuthScope, Connection, ConnectionKind};
-use crate::credentials::CredentialMaterial;
+use crate::connections::{AuthScope, Connection, ConnectionAuth, ConnectionKind};
 
 /// Stored in `Connection.config` to carry provider-level metadata.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
@@ -48,17 +47,11 @@ pub struct OAuthCallbackRequest {
 
 /// Request body for `POST /v1/connections`.
 ///
-/// Standard flat shape. `credential_id` presence decides whether the server
-/// reuses an existing Credential or creates a new one:
+/// `auth` carries the authentication material to attach to the new
+/// connection (OAuth provider + scopes, Custom field schema, DistriNative,
+/// or None).
 ///
-/// - **`credential_id` present** → reuse it. `auth_type` / `secrets` are
-///   ignored. Used by the Bot wizard when picking from already-saved
-///   credentials.
-/// - **`credential_id` absent** → server creates a new Credential from
-///   `auth_type` + `secrets`. The common case from the New Connection
-///   dialog.
-///
-/// `DistriNative` is reserved for the platform-seeded `distri` credential
+/// `DistriNative` is reserved for the platform-seeded `distri` connection
 /// and is rejected when supplied inline. `auth_scope=public` is rejected;
 /// public scope belongs to channels, not connections.
 ///
@@ -69,22 +62,16 @@ pub struct OAuthCallbackRequest {
 pub struct CreateConnectionRequest {
     pub name: String,
     pub auth_scope: AuthScope,
-    /// Reuse an existing Credential by id. When set, `auth_type` and
-    /// `secrets` are ignored.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub credential_id: Option<Uuid>,
-    /// Credential material to create inline (OAuth provider + scopes,
-    /// Custom field schema, etc.). Required when `credential_id` is absent.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub auth_type: Option<CredentialMaterial>,
-    /// Secret values for Workspace-scope Custom credentials, keyed by
-    /// field key. Ignored when `credential_id` is set or `auth_scope=user`.
+    /// Authentication material for this connection.
+    pub auth: ConnectionAuth,
+    /// Secret values for Workspace-scope Custom auth, keyed by field key.
+    /// Ignored when `auth_scope=user`.
     #[serde(default)]
     pub secrets: HashMap<String, String>,
     /// **BYOK** (Bring-Your-Own OAuth client): workspace admin's own
     /// OAuth `client_id` to use instead of distri's platform-managed app.
-    /// When present alongside `auth_type = Oauth { ... }`, distri stores
-    /// these as workspace secrets under `credential.<id>.oauth_client_id`
+    /// When present alongside `auth = Oauth { ... }`, distri stores
+    /// these as workspace secrets under `connection.<id>.oauth_client_id`
     /// / `_secret` and uses them for the OAuth flow + refresh in place of
     /// the values from `connection_providers`. Same storage slot the MCP
     /// Dynamic Client Registration flow (RFC 7591) writes into.
@@ -102,12 +89,14 @@ pub struct CreateConnectionRequest {
     pub kind: ConnectionKind,
 }
 
-/// PATCH body for updating a connection. Editing the linked Credential is
-/// done via `PATCH /v1/credentials/{id}` directly.
+/// PATCH body for updating a connection.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
 pub struct UpdateConnectionRequest {
     #[serde(default)]
     pub name: Option<String>,
+    /// Replace the embedded auth shape (e.g. edit Custom fields list).
+    #[serde(default)]
+    pub auth: Option<ConnectionAuth>,
 }
 
 /// Response body for `POST /v1/connections`.

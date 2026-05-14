@@ -68,7 +68,6 @@ pub use client_config::DistriConfig;
 
 pub mod api;
 pub mod connections;
-pub mod credentials;
 pub mod dynamic_tool;
 pub mod http_request;
 pub mod mock_tool;

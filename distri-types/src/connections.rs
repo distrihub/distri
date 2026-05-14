@@ -93,13 +93,8 @@ impl std::str::FromStr for AuthScope {
     }
 }
 
-// NOTE: `AuthType` moved to `crate::credentials::CredentialMaterial` in the
-// credential-separation refactor. A Connection now references a Credential by
-// `credential_id` instead of carrying auth inline. See
-// `docs/specs/credential-separation.md`.
-
-/// One configurable field on a Custom credential.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
+/// One configurable field on a Custom-auth connection.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema, PartialEq)]
 pub struct CustomField {
     /// Stable identifier used as the secret key suffix (e.g. `api_key`).
     pub key: String,
@@ -116,6 +111,112 @@ pub struct CustomField {
 
 fn default_required() -> bool {
     true
+}
+
+/// RFC 8414 metadata for OAuth Authorization Servers discovered via the
+/// `.well-known/oauth-authorization-server` endpoint. Used for MCP servers
+/// (Dynamic Client Registration / non-built-in providers). Built-in providers
+/// (google, github, …) leave this as `None` and use the registry-known endpoints.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema, PartialEq)]
+pub struct OAuthMetadata {
+    pub issuer: String,
+    pub authorization_endpoint: String,
+    pub token_endpoint: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registration_endpoint: Option<String>,
+    #[serde(default)]
+    pub scopes_supported: Vec<String>,
+}
+
+/// What kind of authn this Connection holds. Lives directly on the Connection
+/// row — auth is connection-shaped, not a shared entity.
+///
+/// Replaces the prior split `Credential.material` enum.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ConnectionAuth {
+    /// No auth needed. Used by open MCP servers and test connections.
+    None,
+    /// OAuth (platform-managed, BYOK, or DCR for MCP).
+    Oauth {
+        provider: String,
+        #[serde(default)]
+        scopes: Vec<String>,
+        /// RFC 8414 metadata for DCR / non-built-in providers. None for
+        /// built-in (google, github, …) where the registry knows the endpoints.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        oauth_metadata: Option<OAuthMetadata>,
+    },
+    /// User-supplied named fields (API keys, custom headers). Values live in
+    /// the `secrets` table under key `connection.<id>.<field_key>`.
+    Custom {
+        #[serde(default)]
+        fields: Vec<CustomField>,
+    },
+    /// Distri's own session token IS the auth.
+    DistriNative,
+}
+
+impl ConnectionAuth {
+    pub fn provider_name(&self) -> &str {
+        match self {
+            Self::None => "none",
+            Self::Oauth { provider, .. } => provider.as_str(),
+            Self::Custom { .. } => "custom",
+            Self::DistriNative => "distri",
+        }
+    }
+
+    pub fn is_oauth(&self) -> bool {
+        matches!(self, Self::Oauth { .. })
+    }
+
+    pub fn is_custom(&self) -> bool {
+        matches!(self, Self::Custom { .. })
+    }
+
+    pub fn is_distri_native(&self) -> bool {
+        matches!(self, Self::DistriNative)
+    }
+
+    pub fn custom_fields(&self) -> &[CustomField] {
+        match self {
+            Self::Custom { fields } => fields,
+            _ => &[],
+        }
+    }
+
+    pub fn custom_required_fields(&self) -> Vec<&CustomField> {
+        match self {
+            Self::Custom { fields } => fields.iter().filter(|f| f.required).collect(),
+            _ => vec![],
+        }
+    }
+}
+
+/// Typed OAuth/refresh token bundle stored in Redis under
+/// `connection:token:{connection_id}`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
+pub struct ConnectionToken {
+    pub access_token: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refresh_token: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<DateTime<Utc>>,
+    #[serde(default = "default_token_type")]
+    pub token_type: String,
+    #[serde(default)]
+    pub scopes: Vec<String>,
+}
+
+fn default_token_type() -> String {
+    "Bearer".to_string()
+}
+
+impl ConnectionToken {
+    pub fn is_expired(&self) -> bool {
+        self.expires_at.map(|exp| exp < Utc::now()).unwrap_or(false)
+    }
 }
 
 /// What capability surface a connection exposes.
@@ -237,10 +338,9 @@ pub struct Connection {
     /// Who is allowed to use this connection. Workspace = platform members,
     /// EndUser = external actors resolved via a handshake.
     pub auth_scope: AuthScope,
-    /// FK into `credentials.id`. Every Connection has a Credential — including
-    /// system-seeded `DistriNative` rows, which FK to a platform-seeded
-    /// credential. The resolver pipeline is `connection → credential → token`.
-    pub credential_id: Uuid,
+    /// The authentication material this connection carries. Auth is
+    /// connection-shaped — there is no separate Credential entity.
+    pub auth: ConnectionAuth,
     /// What surface this connection exposes (auth-only vs MCP tool source).
     #[serde(default)]
     pub kind: ConnectionKind,
@@ -259,7 +359,7 @@ pub struct NewConnection {
     pub config: serde_json::Value,
     pub connected_by: Option<Uuid>,
     pub auth_scope: AuthScope,
-    pub credential_id: Uuid,
+    pub auth: ConnectionAuth,
     #[serde(default)]
     pub kind: ConnectionKind,
     #[serde(default)]
@@ -275,20 +375,15 @@ impl Connection {
     }
 }
 
-// NOTE: `ConnectionToken` moved to `crate::credentials::CredentialToken`. Tokens
-// are now keyed by credential_id (not connection_id) so the same token can be
-// shared between Connections that point at the same Credential, and so Bots
-// can read a User's token via `gate_credential_id`.
-
 /// Admin-authored HTTP probe attached to a *connection* — used by the
 /// "New Custom Connection" UI to confirm the configured URL + supplied
-/// credential headers actually reach the downstream service before save.
+/// auth fields actually reach the downstream service before save.
 ///
 /// Stored in `connection.config['verify_request']`. Scope is intentionally
-/// per-connection: a connection is "this URL + this transport + a credential
-/// to authenticate it", and the probe tests that combination. Unrelated to
-/// bot gating (which is just "does this end-user hold a valid credential";
-/// see `Bot.gate_credential_id`).
+/// per-connection: a connection is "this URL + this transport + this auth",
+/// and the probe tests that combination. Unrelated to bot gating (which is
+/// just "does this end-user hold valid auth for this connection";
+/// see `Bot.gate_connection_id`).
 #[derive(Debug, Clone, Deserialize)]
 pub struct VerifyRequest {
     pub url: String,
@@ -317,9 +412,8 @@ impl Connection {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema, Default)]
 pub struct ConnectionRequirement {
     /// Match by provider name (preferred): "google", "slack", ...
-    /// Resolved against the linked `Credential`'s
-    /// `CredentialMaterial::Oauth.provider`, the Credential's name for
-    /// `Custom`, and `"distri"` for `DistriNative`.
+    /// Resolved against the Connection's `auth.provider` for `Oauth`,
+    /// the Connection's name for `Custom`, and `"distri"` for `DistriNative`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider: Option<String>,
 

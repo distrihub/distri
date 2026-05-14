@@ -32,15 +32,10 @@ pub trait StoreFactory: Send + Sync {
     fn skill_store(&self) -> Arc<dyn SkillStore>;
     fn connection_store(&self) -> Arc<dyn ConnectionStore>;
     fn note_store(&self) -> Arc<dyn NoteStore>;
-    /// Optional credential store — cloud overrides this with `PgCredentialStore`.
-    /// OSS / sqlite / diesel-postgres backends don't yet have a credentials
-    /// table; they leave this `None` and runtime callers that need credentials
-    /// must inject their own (see `cloud/src/state.rs`).
-    fn credential_store(&self) -> Option<Arc<dyn CredentialStore>> {
-        None
-    }
-    /// Optional credential token store — cloud overrides with `RedisCredentialTokenStore`.
-    fn credential_token_store(&self) -> Option<Arc<dyn CredentialTokenStore>> {
+    /// Optional connection token store — cloud overrides with
+    /// `RedisConnectionTokenStore`. OSS / sqlite / diesel-postgres backends
+    /// leave this `None`; runtime callers inject their own.
+    fn connection_token_store(&self) -> Option<Arc<dyn ConnectionTokenStore>> {
         None
     }
 }
@@ -352,8 +347,7 @@ impl StoreBuilder {
         });
 
         let connection_store = Some(metadata_factory.connection_store());
-        let credential_store = metadata_factory.credential_store();
-        let credential_token_store = metadata_factory.credential_token_store();
+        let connection_token_store = metadata_factory.connection_token_store();
         let note_store = Some(metadata_factory.note_store());
 
         Ok(InitializedStores {
@@ -370,8 +364,7 @@ impl StoreBuilder {
             secret_store: Some(secret_store),
             skill_store,
             connection_store,
-            credential_store,
-            credential_token_store,
+            connection_token_store,
             provider_registry: None,
             span_store: None,
             note_store,
@@ -483,8 +476,7 @@ pub async fn create_ephemeral_execution_stores(
         secret_store: base_stores.secret_store.clone(),
         skill_store: base_stores.skill_store.clone(),
         connection_store: base_stores.connection_store.clone(),
-        credential_store: base_stores.credential_store.clone(),
-        credential_token_store: base_stores.credential_token_store.clone(),
+        connection_token_store: base_stores.connection_token_store.clone(),
         provider_registry: base_stores.provider_registry.clone(),
         span_store: base_stores.span_store.clone(),
         note_store: base_stores.note_store.clone(),
@@ -531,8 +523,7 @@ pub async fn prepare_stores_for_execution(
         secret_store: base_stores.secret_store.clone(),
         skill_store: base_stores.skill_store.clone(),
         connection_store: base_stores.connection_store.clone(),
-        credential_store: base_stores.credential_store.clone(),
-        credential_token_store: base_stores.credential_token_store.clone(),
+        connection_token_store: base_stores.connection_token_store.clone(),
         provider_registry: base_stores.provider_registry.clone(),
         span_store: base_stores.span_store.clone(),
         note_store: base_stores.note_store.clone(),

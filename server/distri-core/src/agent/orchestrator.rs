@@ -542,6 +542,17 @@ impl AgentOrchestrator {
             tools.push(final_tool);
         }
 
+        // If any tools were deferred, the model needs `tool_search` to
+        // discover and load their schemas. Auto-inject it — agents that
+        // don't list it explicitly still get the load-on-demand path.
+        if !resolved.deferred_tools.is_empty() {
+            let search_tool = Arc::new(crate::tools::ToolSearchTool) as Arc<dyn Tool>;
+            let has_search = tools.iter().any(|t| t.get_name() == search_tool.get_name());
+            if !has_search {
+                tools.push(search_tool);
+            }
+        }
+
         // Auto-register InvokeAgentTool ONLY when the agent definition's
         // `tools.builtin` is empty or unset. An agent that explicitly
         // enumerates its builtins (e.g. `_adhoc_base` with
@@ -1966,24 +1977,13 @@ async fn resolve_declared_connections(
                 // Hide the system-seeded DistriNative connection from the
                 // listing so the LLM doesn't mistake it for a third-party
                 // service to call on the user's behalf.
-                let cred = if let Some(cs) = stores.credential_store.as_ref() {
-                    cs.get_by_id(&c.credential_id.to_string()).await.ok().flatten()
-                } else {
-                    None
-                };
-                if cred
-                    .as_ref()
-                    .map(|cr| cr.material.is_distri_native())
-                    .unwrap_or(false)
-                {
+                if c.auth.is_distri_native() {
                     continue;
                 }
-                let provider_tag = match cred.as_ref().map(|cr| &cr.material) {
-                    Some(distri_types::credentials::CredentialMaterial::Oauth {
-                        provider,
-                        scopes,
-                        ..
-                    }) => format!(", provider: {}, scopes: [{}]", provider, scopes.join(", ")),
+                let provider_tag = match &c.auth {
+                    distri_types::connections::ConnectionAuth::Oauth {
+                        provider, scopes, ..
+                    } => format!(", provider: {}, scopes: [{}]", provider, scopes.join(", ")),
                     _ => String::new(),
                 };
                 connected_lines.push(format!(
@@ -1994,32 +1994,22 @@ async fn resolve_declared_connections(
             continue;
         }
 
-        // Locate the matching connection — join through credentials when matching by provider.
+        // Locate the matching connection by id or by provider (matching against
+        // the connection's embedded `auth`).
         let matched: Option<Connection> = if let Some(id) = req.connection_id {
             ws_connections.iter().find(|c| c.id == id).cloned()
         } else if let Some(provider) = req.provider.as_deref() {
-            // Walk the connection set, resolving each one's credential to get
-            // its material/provider. `provider == "distri"` short-circuits via
-            // a name fallback for the DistriNative system row.
             let mut found = None;
             for c in ws_connections.iter() {
-                let cred = if let Some(cs) = stores.credential_store.as_ref() {
-                    cs.get_by_id(&c.credential_id.to_string()).await.ok().flatten()
-                } else {
-                    None
-                };
-                let matches_provider = match cred.as_ref().map(|cr| &cr.material) {
-                    Some(distri_types::credentials::CredentialMaterial::Oauth {
-                        provider: p,
-                        ..
-                    }) => p == provider,
-                    Some(distri_types::credentials::CredentialMaterial::Custom { .. }) => {
+                let matches_provider = match &c.auth {
+                    distri_types::connections::ConnectionAuth::Oauth { provider: p, .. } => {
+                        p == provider
+                    }
+                    distri_types::connections::ConnectionAuth::Custom { .. } => {
                         c.name == provider
                     }
-                    Some(distri_types::credentials::CredentialMaterial::DistriNative) => {
-                        provider == "distri"
-                    }
-                    None => c.name == provider,
+                    distri_types::connections::ConnectionAuth::DistriNative => provider == "distri",
+                    distri_types::connections::ConnectionAuth::None => c.name == provider,
                 };
                 if matches_provider {
                     found = Some(c.clone());
@@ -2053,20 +2043,11 @@ async fn resolve_declared_connections(
             continue;
         };
 
-        // Scope check (OAuth). Reads the linked Credential's material.
-        let credential_for_scope = if let Some(cs) = stores.credential_store.as_ref() {
-            cs.get_by_id(&connection.credential_id.to_string())
-                .await
-                .ok()
-                .flatten()
-        } else {
-            None
-        };
+        // Scope check (OAuth). Reads the connection's embedded auth directly.
         if !req.scopes.is_empty() {
-            if let Some(distri_types::credentials::CredentialMaterial::Oauth {
-                scopes: granted,
-                ..
-            }) = credential_for_scope.as_ref().map(|c| &c.material)
+            if let distri_types::connections::ConnectionAuth::Oauth {
+                scopes: granted, ..
+            } = &connection.auth
             {
                 let missing_scopes: Vec<&String> = req
                     .scopes
@@ -2089,8 +2070,8 @@ async fn resolve_declared_connections(
             }
         }
 
-        // Resolve and merge env vars. Note the resolver takes credential_id,
-        // not connection_id.
+        // Resolve and merge env vars. The resolver keys off connection_id;
+        // auth lives on the connection.
         let mut resolve_ctx = ResolveCtx::new(stores).with_workspace(&workspace_id);
         resolve_ctx = resolve_ctx.with_user(context.user_id.as_str());
         if let Some(ev) = req.env_var.as_deref() {
@@ -2098,7 +2079,7 @@ async fn resolve_declared_connections(
         }
 
         match DefaultResolver
-            .resolve(&connection.credential_id.to_string(), &resolve_ctx)
+            .resolve(&connection.id.to_string(), &resolve_ctx)
             .await
         {
             Ok(resolved) => {
@@ -2108,10 +2089,10 @@ async fn resolve_declared_connections(
                         env_vars.insert(k.clone(), v.clone());
                     }
                 }
-                let scopes_tag = match credential_for_scope.as_ref().map(|c| &c.material) {
-                    Some(distri_types::credentials::CredentialMaterial::Oauth {
-                        scopes, ..
-                    }) => format!(", scopes: [{}]", scopes.join(", ")),
+                let scopes_tag = match &connection.auth {
+                    distri_types::connections::ConnectionAuth::Oauth { scopes, .. } => {
+                        format!(", scopes: [{}]", scopes.join(", "))
+                    }
                     _ => String::new(),
                 };
                 connected_lines.push(format!(

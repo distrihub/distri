@@ -228,12 +228,12 @@ pub struct Bot {
     /// Bot scope — see [`BotScope`].
     #[serde(default)]
     pub scope: BotScope,
-    /// Optional gate credential — when set, end-users must hold a valid
-    /// token for this credential before the bot will respond. `None` means
-    /// the bot is open (no end-user gate). Replaces the old
-    /// `bot_connections.requires_setup` flag.
+    /// Optional gate connection — when set, end-users must hold valid auth
+    /// (token / configured secrets) for this connection before the bot will
+    /// respond. `None` means the bot is open (no end-user gate). Replaces the
+    /// old `bot_connections.requires_setup` flag.
     #[serde(default)]
-    pub gate_credential_id: Option<Uuid>,
+    pub gate_connection_id: Option<Uuid>,
     /// True iff this row is a platform-shared system bot
     /// (`workspace_id == Uuid::nil()`). Computed at read time from the
     /// workspace id; not a persisted column. Clients use this to render
@@ -258,7 +258,7 @@ pub struct NewBot {
     pub trigger_mode: TriggerMode,
     pub active: bool,
     pub scope: BotScope,
-    pub gate_credential_id: Option<Uuid>,
+    pub gate_connection_id: Option<Uuid>,
 }
 
 // ── Channel (pure conversation row) ───────────────────────────────────────
@@ -309,7 +309,7 @@ pub struct NewChannel {
 
 /// A connection wired up to a bot — a tool the bot can use during execution.
 /// One bot can have multiple connections; `position` controls precedence.
-/// The end-user gate moved off this table onto `Bot.gate_credential_id`.
+/// The end-user gate moved off this table onto `Bot.gate_connection_id`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BotConnection {
     pub bot_id: Uuid,
@@ -388,10 +388,10 @@ pub enum AuthProof {
     PlatformVerified,
     /// Open platform (Telegram/WhatsApp) with no gate — anyone can use.
     Open,
-    /// Access granted because the user holds valid secrets for the bot's
-    /// gate credential. `credential_id` is internal; never surfaced to the
+    /// Access granted because the user holds valid auth for the bot's
+    /// gate connection. `connection_id` is internal; never surfaced to the
     /// end-user.
-    GatedBy { credential_id: Uuid },
+    GatedBy { connection_id: Uuid },
 }
 
 /// Outcome of running the channel-auth resolver against an inbound message.
@@ -417,7 +417,7 @@ pub enum ResolveOutcome {
 pub enum GateKind {
     /// Gate is the distri-native account link flow (workspace membership).
     DistriNative,
-    /// Gate is a Custom credential — the user supplies the credential's
-    /// field values via the `/bots/{id}/configure?code=…` flow.
+    /// Gate is a Custom-auth connection — the user supplies the field values
+    /// via the `/bots/{id}/configure?code=…` flow.
     External,
 }

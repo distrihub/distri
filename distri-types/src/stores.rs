@@ -1,5 +1,4 @@
-use crate::connections::{Connection, ConnectionStatus, NewConnection};
-use crate::credentials::{Credential, CredentialStatus, CredentialToken, NewCredential};
+use crate::connections::{Connection, ConnectionStatus, ConnectionToken, NewConnection};
 use crate::{ScratchpadEntry, ToolAuthStore, ToolResponse};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -150,8 +149,7 @@ pub struct InitializedStores {
     pub secret_store: Option<Arc<dyn SecretStore>>,
     pub skill_store: Option<Arc<dyn SkillStore>>,
     pub connection_store: Option<Arc<dyn ConnectionStore>>,
-    pub credential_store: Option<Arc<dyn CredentialStore>>,
-    pub credential_token_store: Option<Arc<dyn CredentialTokenStore>>,
+    pub connection_token_store: Option<Arc<dyn ConnectionTokenStore>>,
     pub provider_registry: Option<Arc<dyn crate::auth::ProviderRegistry>>,
     pub span_store: Option<Arc<dyn SpanStore>>,
     pub note_store: Option<Arc<dyn NoteStore>>,
@@ -1438,16 +1436,16 @@ pub trait ConnectionStore: Send + Sync + 'static {
     async fn list_by_workspace(&self, workspace_id: &str) -> anyhow::Result<Vec<Connection>>;
     async fn update_status(&self, id: &str, status: ConnectionStatus) -> anyhow::Result<()>;
     async fn update_skill_id(&self, id: &str, skill_id: uuid::Uuid) -> anyhow::Result<()>;
-    /// Rename a connection. Editing the linked Credential's field schema is
-    /// done via `CredentialStore::update_material` directly.
+    /// Rename a connection. Editing the embedded `auth` schema goes through
+    /// `update_auth` instead.
     async fn update(
         &self,
         id: &str,
         name: Option<String>,
     ) -> anyhow::Result<Connection>;
     async fn delete(&self, id: &str) -> anyhow::Result<()>;
-    /// Look up by `(workspace_id, provider)`. Resolution joins through the
-    /// linked credential's `material->>'provider'`.
+    /// Look up by `(workspace_id, provider)`. Resolution matches on
+    /// `connections.auth->>'provider'` for OAuth.
     async fn get_by_provider(
         &self,
         workspace_id: &str,
@@ -1455,35 +1453,13 @@ pub trait ConnectionStore: Send + Sync + 'static {
     ) -> anyhow::Result<Option<Connection>>;
 }
 
-/// CRUD for the `credentials` table (Postgres-backed in cloud).
+/// Token storage for OAuth-auth connections (Redis-backed in cloud).
+/// Keyed by `connection_id` — auth lives on the connection.
 #[async_trait]
-pub trait CredentialStore: Send + Sync + 'static {
-    async fn create(&self, credential: NewCredential) -> anyhow::Result<Credential>;
-    async fn get_by_id(&self, id: &str) -> anyhow::Result<Option<Credential>>;
-    async fn list_by_workspace(&self, workspace_id: &str) -> anyhow::Result<Vec<Credential>>;
-    async fn update_status(&self, id: &str, status: CredentialStatus) -> anyhow::Result<()>;
-    /// Rename or edit the material schema (Custom field add/edit).
-    async fn update(
-        &self,
-        id: &str,
-        name: Option<String>,
-        material: Option<crate::credentials::CredentialMaterial>,
-    ) -> anyhow::Result<Credential>;
-    async fn delete(&self, id: &str) -> anyhow::Result<()>;
-    async fn get_by_provider(
-        &self,
-        workspace_id: &str,
-        provider: &str,
-    ) -> anyhow::Result<Option<Credential>>;
-}
-
-/// Token storage for OAuth credentials (Redis-backed in cloud). Keyed by
-/// credential_id, not connection_id — multiple connections can share a credential.
-#[async_trait]
-pub trait CredentialTokenStore: Send + Sync + 'static {
-    async fn store_token(&self, credential_id: &str, token: CredentialToken) -> anyhow::Result<()>;
-    async fn get_token(&self, credential_id: &str) -> anyhow::Result<Option<CredentialToken>>;
-    async fn remove_token(&self, credential_id: &str) -> anyhow::Result<()>;
+pub trait ConnectionTokenStore: Send + Sync + 'static {
+    async fn store_token(&self, connection_id: &str, token: ConnectionToken) -> anyhow::Result<()>;
+    async fn get_token(&self, connection_id: &str) -> anyhow::Result<Option<ConnectionToken>>;
+    async fn remove_token(&self, connection_id: &str) -> anyhow::Result<()>;
 
     /// Attempt to refresh an expired OAuth token using the stored refresh_token.
     /// Returns the new token if refresh succeeds, or None if refresh is not
@@ -1493,9 +1469,9 @@ pub trait CredentialTokenStore: Send + Sync + 'static {
     /// Default: no refresh support (returns None).
     async fn refresh_token(
         &self,
-        _credential_id: &str,
-        _credential: &Credential,
-    ) -> anyhow::Result<Option<CredentialToken>> {
+        _connection_id: &str,
+        _connection: &Connection,
+    ) -> anyhow::Result<Option<ConnectionToken>> {
         Ok(None)
     }
 

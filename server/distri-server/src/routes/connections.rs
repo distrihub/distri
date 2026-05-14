@@ -12,15 +12,11 @@
 use actix_web::{web, HttpRequest, HttpResponse};
 use distri_core::agent::AgentOrchestrator;
 use distri_types::api::connections::{
-    ConnectionConfig, CreateConnectionRequest, CreateConnectionResponse, OAuthCallbackRequest,
-    OAuthCallbackResponse, TokenResponse, UpdateConnectionRequest,
+    CreateConnectionRequest, CreateConnectionResponse, OAuthCallbackRequest, OAuthCallbackResponse,
+    TokenResponse, UpdateConnectionRequest,
 };
-use distri_types::connections::ConnectionStatus;
 #[allow(unused_imports)]
-use distri_types::connections::NewConnection;
-#[allow(unused_imports)]
-use distri_types::credentials::CredentialToken;
-use distri_types::stores::{ContextExecutionType, NewSkill};
+use distri_types::connections::{ConnectionToken, NewConnection};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::Arc;
@@ -309,9 +305,9 @@ async fn delete_connection(
     }
 
     // Clean up associated token
-    if let Some(token_store) = &executor.stores.credential_token_store {
+    if let Some(token_store) = &executor.stores.connection_token_store {
         if let Err(e) = token_store.remove_token(&id).await {
-            tracing::warn!("Failed to remove credential token: {}", e);
+            tracing::warn!("Failed to remove connection token: {}", e);
         }
     }
 

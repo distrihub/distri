@@ -31,9 +31,27 @@ Steps remaining: {{remaining_steps}}/{{max_steps}}
 {{/if}}
 
 {{#if deferred_tools_listing}}
-# DEFERRED TOOLS
-The following tools are available but their schemas are not loaded yet.
-Use `tool_search` to fetch the full schema before calling any of these tools.
+# AVAILABLE TOOLS (load-on-demand)
+
+These tools ARE callable. Their full input schemas are not in your
+`tools` array right now — you fetch them via `tool_search` first. **Do
+NOT say "no tools available"** when this list is present. **Do NOT stop
+after `tool_search` returns** — that's only step 1 of a multi-step
+workflow. You must actually invoke the tool you found.
+
+## Mandatory protocol (do all three steps before calling `final`)
+
+1. Pick the matching tool name from the list below.
+2. Call `tool_search({ "names": ["<exact_tool_name>"] })`. This
+   returns `parameters` (JSON schema) and `prompt` (usage notes).
+   The keyword form `tool_search({ "query": "..." })` is for *browsing*
+   and returns names only — you'll still need a second `tool_search`
+   call with `names: [...]` to get the schema before invoking.
+3. Call the tool itself with arguments built from the loaded schema.
+   The runtime accepts the call even though its schema only just
+   arrived in your context. Then `final` with the result.
+
+## Available tools
 
 {{{deferred_tools_listing}}}
 {{/if}}

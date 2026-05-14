@@ -11,10 +11,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use distri_types::api::notes::{CreateNoteRequest, ListNotesQuery, NoteRecord, UpdateNoteRequest};
 use distri_types::api::spans::{SpanRecord, TraceRecord};
-use distri_types::connections::{Connection, ConnectionStatus, NewConnection};
-use distri_types::credentials::CredentialToken;
+use distri_types::connections::{Connection, ConnectionStatus, ConnectionToken, NewConnection};
 use distri_types::stores::{
-    ConnectionStore, CredentialTokenStore, NoteStore, SpanQuery, SpanStore,
+    ConnectionStore, ConnectionTokenStore, NoteStore, SpanQuery, SpanStore,
 };
 use tokio::sync::RwLock;
 use uuid::Uuid;
@@ -56,7 +55,7 @@ impl ConnectionStore for InMemoryConnectionStore {
             created_at: now,
             updated_at: now,
             auth_scope: new_conn.auth_scope,
-            credential_id: new_conn.credential_id,
+            auth: new_conn.auth,
             kind: new_conn.kind,
             is_system: new_conn.is_system,
         };
@@ -122,22 +121,22 @@ impl ConnectionStore for InMemoryConnectionStore {
         _workspace_id: &str,
         provider: &str,
     ) -> anyhow::Result<Option<Connection>> {
-        // OSS in-memory store doesn't carry the credential link; match by
-        // connection name as a fallback. Cloud's `PgConnectionStore` joins
-        // through the `credentials.material->>'provider'`.
+        // OSS in-memory store doesn't track providers on a separate row; match
+        // by connection name as a fallback. Cloud's `PgConnectionStore` matches
+        // on `connections.auth->>'provider'`.
         let map = self.connections.read().await;
         Ok(map.values().find(|c| c.name == provider).cloned())
     }
 }
 
-// ── In-memory CredentialTokenStore ───────────────────────────────────────────
+// ── In-memory ConnectionTokenStore ───────────────────────────────────────────
 
-pub struct InMemoryCredentialTokenStore {
-    tokens: RwLock<HashMap<String, CredentialToken>>,
+pub struct InMemoryConnectionTokenStore {
+    tokens: RwLock<HashMap<String, ConnectionToken>>,
     oauth_states: RwLock<HashMap<String, serde_json::Value>>,
 }
 
-impl InMemoryCredentialTokenStore {
+impl InMemoryConnectionTokenStore {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
             tokens: RwLock::new(HashMap::new()),
@@ -146,7 +145,7 @@ impl InMemoryCredentialTokenStore {
     }
 }
 
-impl Default for InMemoryCredentialTokenStore {
+impl Default for InMemoryConnectionTokenStore {
     fn default() -> Self {
         Self {
             tokens: RwLock::new(HashMap::new()),
@@ -156,8 +155,8 @@ impl Default for InMemoryCredentialTokenStore {
 }
 
 #[async_trait]
-impl CredentialTokenStore for InMemoryCredentialTokenStore {
-    async fn store_token(&self, connection_id: &str, token: CredentialToken) -> anyhow::Result<()> {
+impl ConnectionTokenStore for InMemoryConnectionTokenStore {
+    async fn store_token(&self, connection_id: &str, token: ConnectionToken) -> anyhow::Result<()> {
         self.tokens
             .write()
             .await
@@ -165,7 +164,7 @@ impl CredentialTokenStore for InMemoryCredentialTokenStore {
         Ok(())
     }
 
-    async fn get_token(&self, connection_id: &str) -> anyhow::Result<Option<CredentialToken>> {
+    async fn get_token(&self, connection_id: &str) -> anyhow::Result<Option<ConnectionToken>> {
         Ok(self.tokens.read().await.get(connection_id).cloned())
     }
 

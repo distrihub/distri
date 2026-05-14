@@ -11,7 +11,4 @@
 
 pub mod resolver;
 
-pub use resolver::{
-    ConnectionResolver, CredentialResolver, DefaultResolver, ResolveCtx, ResolvedConnection,
-    ResolvedCredential,
-};
+pub use resolver::{ConnectionResolver, DefaultResolver, ResolveCtx, ResolvedConnection};
