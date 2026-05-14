@@ -84,7 +84,7 @@ impl Tool for McpToolAdapter {
     }
 
     fn is_external(&self) -> bool {
-        true
+        false
     }
 
     async fn execute(
@@ -109,7 +109,9 @@ impl ExecutorContextTool for McpToolAdapter {
             .pool
             .connect_named(&self.handle.server)
             .await
-            .map_err(|e| AgentError::ToolExecution(format!("connect '{}': {e}", self.handle.server)))?;
+            .map_err(|e| {
+                AgentError::ToolExecution(format!("connect '{}': {e}", self.handle.server))
+            })?;
 
         let result = client
             .call_tool(&self.handle.name, tool_call.input.clone())
