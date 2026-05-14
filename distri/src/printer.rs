@@ -6,6 +6,7 @@ use distri_types::{AgentEvent, AgentEventType, MessageRole, ToolResponse};
 use tokio::sync::{Mutex, RwLock};
 
 use crate::client_stream::{AgentStreamClient, StreamError, StreamItem};
+use crate::sub_task_tracker::SubTaskTracker;
 
 // Re-export shared color constants from the formatter
 pub use distri_formatter::colors::{
@@ -384,6 +385,9 @@ pub struct EventPrinter {
     spinner_frame: usize,
     /// Shared context health state — updated by events, read by CLI status line.
     pub context_health: Arc<RwLock<ContextHealth>>,
+    /// Prints fence headers/footers around sub-agent dispatches so the
+    /// user can see who owns which output. See `sub_task_tracker.rs`.
+    sub_tasks: SubTaskTracker,
 }
 
 impl Default for EventPrinter {
@@ -402,6 +406,7 @@ impl EventPrinter {
             context_health: Arc::new(RwLock::new(ContextHealth::default())),
             planning_text: None,
             spinner_frame: 0,
+            sub_tasks: SubTaskTracker::new(),
         }
     }
 
@@ -461,6 +466,11 @@ impl EventPrinter {
         if !self.state.printed_header {
             self.state.printed_header = true;
         }
+
+        // Maintain the task tree and emit fence headers/footers on
+        // sub-task transitions. Side effect only — does not consume the
+        // event; the regular handler below still runs.
+        self.sub_tasks.observe(event);
 
         // Track agent changes and display them
         let agent_changed = self
