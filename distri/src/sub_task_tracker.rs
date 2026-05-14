@@ -1,35 +1,34 @@
-//! Sub-task fence printer for the CLI.
+//! Sub-task collapse printer for the CLI.
 //!
-//! The CLI streams every event flat — root-task assistant text, sub-task
-//! tool calls, sub-sub-task progress — into one column of output, which
-//! is unreadable once a run dispatches more than one helper.
+//! Mirrors how Claude Code surfaces the `Task` tool: a sub-agent run
+//! shows up as a single tool-call-style line in the parent's output,
+//! not a wall of streamed text. The body — tool calls, intermediate
+//! messages, deltas — is suppressed by default.
 //!
-//! Every `AgentEvent` carries `task_id` and `parent_task_id` (set by the
-//! orchestrator on dispatch). This tracker walks that tree as events
-//! arrive and emits fence headers / footers when execution crosses a
-//! task boundary, so the user sees:
-//!
+//! Default (non-verbose):
 //! ```text
-//! ◆ assistant: dispatching a researcher…
-//! ┌─ subtask · researcher ────────────────────
-//! │ ⏺ search_web(query="…")
+//! ⏺ subtask(researcher)
+//!   ⎿ done (3.4s)
+//! ```
+//! `--verbose`:
+//! ```text
+//! ┌─ subtask · researcher ─────────
+//! │ ⏺ search_web(...)
 //! │ ⎿ 5 results
 //! │ ◆ researcher: here is what I found…
 //! └─ ✓ researcher (3.4s)
-//! ◆ assistant: synthesising…
 //! ```
 //!
-//! Output for the sub-task body itself stays exactly as the existing
-//! `EventPrinter` writes it — the tracker only prints fence lines on
-//! task transitions. That keeps the prototype additive: no rewrite of
-//! the streaming text path.
+//! Every `AgentEvent` already carries `task_id` + `parent_task_id` from
+//! the orchestrator, so the tracker only needs to walk the envelope —
+//! no protocol changes.
 
 use std::collections::HashMap;
 use std::time::Instant;
 
 use distri_types::{AgentEvent, AgentEventType};
 
-use distri_formatter::colors::{COLOR_BRIGHT_CYAN, COLOR_GRAY, COLOR_RED, COLOR_RESET};
+use distri_formatter::colors::{COLOR_BRIGHT_CYAN, COLOR_GRAY, COLOR_RED, COLOR_RESET, COLOR_YELLOW};
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -39,20 +38,36 @@ struct TaskNode {
     agent_id: String,
     depth: usize,
     started_at: Option<Instant>,
-    header_printed: bool,
-    footer_printed: bool,
+    /// Verbose-mode fence header has been printed for this task.
+    fence_header_printed: bool,
+    /// Verbose-mode fence footer has been printed for this task.
+    fence_footer_printed: bool,
+    /// Compact `⏺ subtask(agent)` start line has been printed.
+    compact_start_printed: bool,
+    /// Compact `  ⎿ done (Xs)` end line has been printed.
+    compact_end_printed: bool,
 }
 
-/// Tracks task lineage from event stream and prints fence headers/footers
-/// when execution crosses sub-task boundaries.
+/// Tells the caller (`EventPrinter`) whether the underlying handler
+/// should print this event or stay silent — the tracker has already
+/// rendered whatever the user needs to see for this sub-task.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SuppressDecision {
+    /// Event belongs to the root task, or we're in verbose mode and
+    /// the regular printer should still write its line(s).
+    Print,
+    /// Sub-task event in non-verbose mode — the tracker already
+    /// emitted the collapsed tool-call-style line; the printer should
+    /// drop this event silently.
+    Suppress,
+}
+
+/// Tracks sub-task lineage and prints either the compact tool-call
+/// summary (default) or the fenced full body (verbose).
 #[derive(Default)]
 pub struct SubTaskTracker {
     tasks: HashMap<String, TaskNode>,
-    /// Last task whose event we processed. Used to detect transitions.
     last_task_id: Option<String>,
-    /// Root task id (first task we see without a parent). Anything else
-    /// is a sub-task whose entry should print a header.
-    root_task_id: Option<String>,
 }
 
 #[allow(dead_code)]
@@ -61,25 +76,7 @@ impl SubTaskTracker {
         Self::default()
     }
 
-    /// Walk the parent chain from `task_id` up to a known root to compute
-    /// depth. Returns 0 if `task_id` is the root or unknown.
-    fn depth_of(&self, task_id: &str) -> usize {
-        let mut cur = task_id.to_string();
-        let mut depth = 0;
-        while let Some(node) = self.tasks.get(&cur) {
-            match &node.parent_task_id {
-                Some(p) => {
-                    depth += 1;
-                    cur = p.clone();
-                }
-                None => break,
-            }
-        }
-        depth
-    }
-
     fn indent(depth: usize) -> String {
-        // One bar per nesting level, e.g. depth=2 → "│ │ "
         let mut s = String::new();
         for _ in 0..depth {
             s.push_str("│ ");
@@ -87,18 +84,17 @@ impl SubTaskTracker {
         s
     }
 
-    /// Called for every event before the underlying printer handles it.
-    /// Returns the (depth, transition_hint) so the printer can prefix its
-    /// lines with the right indent and the caller can decide what to do
-    /// on the fence boundary.
-    pub fn observe(&mut self, event: &AgentEvent) {
+    /// Process a freshly-arrived event. Updates the task tree, emits
+    /// any header/footer/status lines this transition warrants, and
+    /// returns whether the caller should print the event itself.
+    pub fn handle(&mut self, event: &AgentEvent, verbose: bool) -> SuppressDecision {
         let task_id = event.task_id.clone();
         if task_id.is_empty() {
-            return;
+            return SuppressDecision::Print;
         }
 
-        // Insert / backfill the task node. Compute the depth up front
-        // so the entry closure doesn't need a second borrow of `self`.
+        // Insert / backfill the node up front so depth lookups work
+        // even on the first event for a task.
         let parent_task_id = event.parent_task_id.clone();
         let computed_depth = parent_task_id
             .as_ref()
@@ -109,11 +105,12 @@ impl SubTaskTracker {
             parent_task_id: parent_task_id.clone(),
             agent_id: event.agent_id.clone(),
             depth: computed_depth,
-            started_at: None,
-            header_printed: false,
-            footer_printed: false,
+            started_at: Some(Instant::now()),
+            fence_header_printed: false,
+            fence_footer_printed: false,
+            compact_start_printed: false,
+            compact_end_printed: false,
         });
-        // Backfill agent / parent if first event lacked them.
         if node.agent_id.is_empty() && !event.agent_id.is_empty() {
             node.agent_id = event.agent_id.clone();
         }
@@ -121,46 +118,102 @@ impl SubTaskTracker {
             node.parent_task_id = parent_task_id.clone();
             node.depth = computed_depth;
         }
-        if self.root_task_id.is_none() && parent_task_id.is_none() {
-            self.root_task_id = Some(task_id.clone());
+
+        // Root task: nothing to do, regular printer handles it.
+        if node.depth == 0 {
+            self.last_task_id = Some(task_id);
+            return SuppressDecision::Print;
         }
 
-        // Print fence transitions on task switches.
-        let transitioned = self
-            .last_task_id
-            .as_ref()
-            .map(|prev| prev != &task_id)
-            .unwrap_or(true);
-        if transitioned {
-            self.print_header_if_needed(&task_id, event);
-        }
-        self.last_task_id = Some(task_id.clone());
-
-        // Capture start time once we see the first event for this task.
-        if let Some(node) = self.tasks.get_mut(&task_id) {
-            if node.started_at.is_none() {
-                node.started_at = Some(Instant::now());
+        // Verbose mode: emit fence headers/footers around the body and
+        // let the regular printer write the body itself.
+        if verbose {
+            let transitioned = self
+                .last_task_id
+                .as_ref()
+                .map(|prev| prev != &task_id)
+                .unwrap_or(true);
+            if transitioned {
+                self.print_fence_header_if_needed(&task_id);
             }
+            self.last_task_id = Some(task_id.clone());
+            if let AgentEventType::RunFinished { success, .. } = &event.event {
+                self.print_fence_footer(&task_id, *success);
+            } else if let AgentEventType::RunError { .. } = &event.event {
+                self.print_fence_footer(&task_id, false);
+            }
+            return SuppressDecision::Print;
         }
 
-        // Print fence footer on this task's RunFinished / RunError.
+        // Non-verbose, sub-task: render the compact tool-call summary
+        // on lifecycle events, suppress everything else.
         match &event.event {
+            AgentEventType::RunStarted {} => {
+                self.print_compact_start(&task_id);
+            }
             AgentEventType::RunFinished { success, .. } => {
-                self.print_footer(&task_id, *success);
+                self.print_compact_end(&task_id, *success);
             }
             AgentEventType::RunError { .. } => {
-                self.print_footer(&task_id, false);
+                self.print_compact_end(&task_id, false);
             }
             _ => {}
         }
+        self.last_task_id = Some(task_id);
+        SuppressDecision::Suppress
     }
 
-    fn print_header_if_needed(&mut self, task_id: &str, event: &AgentEvent) {
-        let node = match self.tasks.get_mut(task_id) {
-            Some(n) => n,
-            None => return,
+    fn print_compact_start(&mut self, task_id: &str) {
+        let Some(node) = self.tasks.get_mut(task_id) else {
+            return;
         };
-        if node.header_printed || node.depth == 0 {
+        if node.compact_start_printed {
+            return;
+        }
+        // One indent level per ancestor, like the verbose fence — so a
+        // sub-sub-task still nests inside its parent's compact block.
+        let indent = Self::indent(node.depth.saturating_sub(1));
+        let agent = if node.agent_id.is_empty() {
+            "subtask"
+        } else {
+            &node.agent_id
+        };
+        println!(
+            "{}{}⏺ subtask({}){}",
+            indent, COLOR_YELLOW, agent, COLOR_RESET
+        );
+        node.compact_start_printed = true;
+    }
+
+    fn print_compact_end(&mut self, task_id: &str, success: bool) {
+        let Some(node) = self.tasks.get_mut(task_id) else {
+            return;
+        };
+        if node.compact_end_printed || !node.compact_start_printed {
+            return;
+        }
+        let indent = Self::indent(node.depth.saturating_sub(1));
+        let elapsed = node
+            .started_at
+            .map(|t| t.elapsed().as_secs_f32())
+            .unwrap_or(0.0);
+        let (glyph, color, label) = if success {
+            ("✓", COLOR_GRAY, "done")
+        } else {
+            ("✖", COLOR_RED, "failed")
+        };
+        println!(
+            "{}  {}⎿ {} {} ({:.1}s){}",
+            indent, color, glyph, label, elapsed, COLOR_RESET
+        );
+        node.compact_end_printed = true;
+    }
+
+    fn print_fence_header_if_needed(&mut self, task_id: &str) {
+        let Some(node) = self.tasks.get_mut(task_id) else {
+            return;
+        };
+        if node.fence_header_printed {
             return;
         }
         let indent = Self::indent(node.depth.saturating_sub(1));
@@ -169,24 +222,18 @@ impl SubTaskTracker {
         } else {
             &node.agent_id
         };
-        // Pull a reason hint from RunStarted metadata if present.
-        let reason = match &event.event {
-            AgentEventType::RunStarted {} => String::new(),
-            _ => String::new(),
-        };
         println!(
-            "{}{}┌─ subtask · {}{}{}",
-            indent, COLOR_BRIGHT_CYAN, agent, reason, COLOR_RESET
+            "{}{}┌─ subtask · {}{}",
+            indent, COLOR_BRIGHT_CYAN, agent, COLOR_RESET
         );
-        node.header_printed = true;
+        node.fence_header_printed = true;
     }
 
-    fn print_footer(&mut self, task_id: &str, success: bool) {
-        let node = match self.tasks.get_mut(task_id) {
-            Some(n) => n,
-            None => return,
+    fn print_fence_footer(&mut self, task_id: &str, success: bool) {
+        let Some(node) = self.tasks.get_mut(task_id) else {
+            return;
         };
-        if node.footer_printed || node.depth == 0 || !node.header_printed {
+        if node.fence_footer_printed || !node.fence_header_printed {
             return;
         }
         let indent = Self::indent(node.depth.saturating_sub(1));
@@ -205,27 +252,7 @@ impl SubTaskTracker {
             "{}{}└─ {} {} ({:.1}s){}",
             indent, color, glyph, agent, elapsed, COLOR_RESET
         );
-        node.footer_printed = true;
-    }
-
-    /// Indent prefix the caller can prepend to lines printed for the
-    /// most recently observed event. Returns `""` for root-task events
-    /// so existing output is unchanged.
-    pub fn current_indent(&self) -> String {
-        let task_id = match &self.last_task_id {
-            Some(id) => id,
-            None => return String::new(),
-        };
-        let depth = self
-            .tasks
-            .get(task_id)
-            .map(|n| n.depth)
-            .unwrap_or(0);
-        if depth == 0 {
-            return String::new();
-        }
-        // One bar per ancestor level. `│ │ ⏺ tool(...)`
-        Self::indent(depth)
+        node.fence_footer_printed = true;
     }
 }
 
@@ -251,20 +278,70 @@ mod tests {
     }
 
     #[test]
-    fn depth_increases_with_parent_chain() {
+    fn root_events_always_print() {
         let mut t = SubTaskTracker::new();
-        t.observe(&ev("root", None, "main", AgentEventType::RunStarted {}));
-        t.observe(&ev("a", Some("root"), "alpha", AgentEventType::RunStarted {}));
-        t.observe(&ev("b", Some("a"), "beta", AgentEventType::RunStarted {}));
-        assert_eq!(t.depth_of("root"), 0);
-        assert_eq!(t.depth_of("a"), 1);
-        assert_eq!(t.depth_of("b"), 2);
+        let d = t.handle(
+            &ev("root", None, "main", AgentEventType::RunStarted {}),
+            false,
+        );
+        assert_eq!(d, SuppressDecision::Print);
     }
 
     #[test]
-    fn root_event_has_empty_indent() {
+    fn subtask_body_suppressed_by_default() {
         let mut t = SubTaskTracker::new();
-        t.observe(&ev("root", None, "main", AgentEventType::RunStarted {}));
-        assert_eq!(t.current_indent(), "");
+        t.handle(
+            &ev("root", None, "main", AgentEventType::RunStarted {}),
+            false,
+        );
+        t.handle(
+            &ev("a", Some("root"), "alpha", AgentEventType::RunStarted {}),
+            false,
+        );
+        // A streamed text content event from a sub-task — should be
+        // dropped on the floor in non-verbose mode.
+        let d = t.handle(
+            &ev(
+                "a",
+                Some("root"),
+                "alpha",
+                AgentEventType::TextMessageContent {
+                    message_id: "m".into(),
+                    delta: "hello".into(),
+                    step_id: "s".into(),
+                    stripped_content: None,
+                },
+            ),
+            false,
+        );
+        assert_eq!(d, SuppressDecision::Suppress);
+    }
+
+    #[test]
+    fn subtask_body_visible_in_verbose() {
+        let mut t = SubTaskTracker::new();
+        t.handle(
+            &ev("root", None, "main", AgentEventType::RunStarted {}),
+            true,
+        );
+        t.handle(
+            &ev("a", Some("root"), "alpha", AgentEventType::RunStarted {}),
+            true,
+        );
+        let d = t.handle(
+            &ev(
+                "a",
+                Some("root"),
+                "alpha",
+                AgentEventType::TextMessageContent {
+                    message_id: "m".into(),
+                    delta: "hello".into(),
+                    step_id: "s".into(),
+                    stripped_content: None,
+                },
+            ),
+            true,
+        );
+        assert_eq!(d, SuppressDecision::Print);
     }
 }

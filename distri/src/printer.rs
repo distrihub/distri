@@ -6,7 +6,7 @@ use distri_types::{AgentEvent, AgentEventType, MessageRole, ToolResponse};
 use tokio::sync::{Mutex, RwLock};
 
 use crate::client_stream::{AgentStreamClient, StreamError, StreamItem};
-use crate::sub_task_tracker::SubTaskTracker;
+use crate::sub_task_tracker::{SubTaskTracker, SuppressDecision};
 
 // Re-export shared color constants from the formatter
 pub use distri_formatter::colors::{
@@ -467,10 +467,16 @@ impl EventPrinter {
             self.state.printed_header = true;
         }
 
-        // Maintain the task tree and emit fence headers/footers on
-        // sub-task transitions. Side effect only — does not consume the
-        // event; the regular handler below still runs.
-        self.sub_tasks.observe(event);
+        // Sub-agent events render as a collapsed `⏺ subtask(agent)` /
+        // `⎿ done` pair (mirroring how Claude Code surfaces the Task
+        // tool). In verbose mode the tracker prints fence headers/
+        // footers and the body events flow through unchanged.
+        if matches!(
+            self.sub_tasks.handle(event, self.verbose),
+            SuppressDecision::Suppress
+        ) {
+            return;
+        }
 
         // Track agent changes and display them
         let agent_changed = self
