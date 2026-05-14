@@ -371,7 +371,7 @@ pub async fn resolve_tools_config_with_pool(
 
     // Resolve MCP tools: connect to each configured server, list tools, and
     // adapt the ones that match the agent's include/exclude globs.
-    if let Some(pool) = mcp_pool {
+    if let Some(pool) = mcp_pool.clone() {
         if !config.mcp.is_empty() {
             for mcp_cfg in &config.mcp {
                 let server_name = &mcp_cfg.server;
@@ -407,6 +407,7 @@ pub async fn resolve_tools_config_with_pool(
                     all_tools.push(Arc::new(mcp_tool::McpToolAdapter::new(
                         handle,
                         exposed_name,
+                        pool.clone(),
                     )));
                 }
             }

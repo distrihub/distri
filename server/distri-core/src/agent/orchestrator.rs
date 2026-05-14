@@ -57,6 +57,12 @@ pub struct AgentOrchestrator {
     /// Optional OAuth handler for the connections OAuth flow.
     /// Present only when OAuth provider credentials have been configured.
     pub oauth_handler: Option<Arc<OAuthHandler>>,
+    /// Optional MCP pool provider. When set, `create_agent_from_config` asks
+    /// the provider for a per-run `McpClientPool` and threads it into tool
+    /// resolution. Cloud sets this (Postgres-backed connection store + the
+    /// `DefaultResolver` auth pipeline); the standalone OSS server leaves it
+    /// `None` and uses the static `[[tools.mcp]]` registry only.
+    pub mcp_pool_provider: Option<Arc<dyn crate::servers::McpPoolProvider>>,
 }
 
 impl std::fmt::Debug for AgentOrchestrator {
@@ -101,6 +107,7 @@ pub struct AgentOrchestratorBuilder {
     runtime: Option<Arc<dyn crate::broadcast::AgentRuntime>>,
     remote_task_runner: Option<Arc<dyn crate::runner::RemoteTaskRunner>>,
     oauth_handler: Option<Arc<OAuthHandler>>,
+    mcp_pool_provider: Option<Arc<dyn crate::servers::McpPoolProvider>>,
 }
 
 impl AgentOrchestratorBuilder {
@@ -209,6 +216,18 @@ impl AgentOrchestratorBuilder {
         self
     }
 
+    /// Attach an `McpPoolProvider`. When set, every agent run's tool
+    /// resolution asks the provider for a per-run `McpClientPool` keyed by
+    /// the context's workspace + user, so every entry-point (cloud gateway,
+    /// JSON-RPC CLI, tests) sees the same MCP tools.
+    pub fn with_mcp_pool_provider(
+        mut self,
+        provider: Arc<dyn crate::servers::McpPoolProvider>,
+    ) -> Self {
+        self.mcp_pool_provider = Some(provider);
+        self
+    }
+
     pub async fn build(self) -> anyhow::Result<AgentOrchestrator> {
         let browser_config = self.browser_config.unwrap_or_default();
 
@@ -285,6 +304,7 @@ impl AgentOrchestratorBuilder {
             runtime,
             remote_task_runner: self.remote_task_runner,
             oauth_handler: self.oauth_handler,
+            mcp_pool_provider: self.mcp_pool_provider,
         };
 
         // Sync system prompts to the store
@@ -343,6 +363,19 @@ impl AgentOrchestrator {
     pub async fn register_mcp_server(&self, name: String, server: ServerMetadataWrapper) {
         let registry = self.mcp_registry.clone();
         registry.write().await.register(name, server);
+    }
+
+    /// Resolve the per-run MCP pool for an `ExecutorContext` via the attached
+    /// provider. Called from inside `create_agent_from_config`, where tool
+    /// resolution happens — this is the single place a run's MCP pool comes
+    /// from. Returns `None` when no provider is configured (OSS standalone)
+    /// or when the provider declines.
+    pub async fn resolve_mcp_pool(
+        &self,
+        ctx: &ExecutorContext,
+    ) -> Option<Arc<crate::servers::McpClientPool>> {
+        let provider = self.mcp_pool_provider.as_ref()?;
+        provider.build_pool(ctx).await
     }
 
     pub async fn register_agent_definition(
@@ -561,12 +594,17 @@ impl AgentOrchestrator {
                         None => vec![],
                     }
                 };
+
+                // Resolve the per-run MCP pool here, inside the tool-building
+                // path that every agent run flows through. The orchestrator's
+                // attached `McpPoolProvider` (set by the host application —
+                // cloud wires it from PgConnectionStore + DefaultResolver) is
+                // the *single* source of truth for which MCP servers a run
+                // sees. Standalone hosts that don't attach a provider get
+                // `None` and the static `[[tools.mcp]]` registry still works.
+                let mcp_pool = self.resolve_mcp_pool(&context).await;
                 let resolved = self
-                    .get_agent_tools_with_pool(
-                        &definition,
-                        &external_tools,
-                        context.mcp_client_pool.clone(),
-                    )
+                    .get_agent_tools_with_pool(&definition, &external_tools, mcp_pool)
                     .await?;
                 let deferred_names: std::collections::HashSet<String> = resolved
                     .deferred_tools
