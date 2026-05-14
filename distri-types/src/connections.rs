@@ -280,9 +280,15 @@ impl Connection {
 // shared between Connections that point at the same Credential, and so Bots
 // can read a User's token via `gate_credential_id`.
 
-/// Describes an HTTP request that the gateway should make to verify a user's
-/// identity against an external service. Stored in `connection.config` under
-/// the key `verify_request`.
+/// Admin-authored HTTP probe attached to a *connection* — used by the
+/// "New Custom Connection" UI to confirm the configured URL + supplied
+/// credential headers actually reach the downstream service before save.
+///
+/// Stored in `connection.config['verify_request']`. Scope is intentionally
+/// per-connection: a connection is "this URL + this transport + a credential
+/// to authenticate it", and the probe tests that combination. Unrelated to
+/// bot gating (which is just "does this end-user hold a valid credential";
+/// see `Bot.gate_credential_id`).
 #[derive(Debug, Clone, Deserialize)]
 pub struct VerifyRequest {
     pub url: String,

@@ -170,6 +170,11 @@ impl ExecutorContextTool for ToolSearchTool {
         let deferred_names = context.get_deferred_tool_names().await;
 
         let mut scored: Vec<(ToolSearchEntry, u32)> = Vec::new();
+        // Names of deferred tools that the model is loading this call via
+        // `names: [...]`. We add these to `loaded_deferred_tools` on the
+        // context so subsequent LLM API calls include their full schemas in
+        // `tools[]` and the model can invoke them.
+        let mut newly_loaded: Vec<String> = Vec::new();
 
         for tool in &tools {
             let def = tool.get_tool_definition();
@@ -186,6 +191,9 @@ impl ExecutorContextTool for ToolSearchTool {
                     .iter()
                     .any(|n| n.eq_ignore_ascii_case(&def.name))
                 {
+                    if is_deferred {
+                        newly_loaded.push(def.name.clone());
+                    }
                     scored.push((
                         ToolSearchEntry {
                             name: def.name,
@@ -256,6 +264,18 @@ impl ExecutorContextTool for ToolSearchTool {
             .take(input.max_results)
             .map(|(entry, _)| entry)
             .collect();
+
+        // Mark any deferred tools the model loaded by exact name. From now
+        // on this run, their full schemas will be included in the LLM API's
+        // `tools[]` so the model can call them.
+        if !newly_loaded.is_empty() {
+            tracing::info!(
+                "tool_search: loaded {} deferred tool(s) into LLM tools[]: {:?}",
+                newly_loaded.len(),
+                newly_loaded
+            );
+            context.mark_deferred_tools_loaded(newly_loaded).await;
+        }
 
         if results.is_empty() {
             let available: Vec<String> = tools.iter().map(|t| t.get_name()).collect();

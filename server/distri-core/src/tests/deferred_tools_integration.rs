@@ -228,6 +228,161 @@ async fn tool_search_scoring_exact_beats_partial() {
     assert_eq!(tools[0]["name"], "search");
 }
 
+// ── Progressive disclosure: get_tools_for_llm filters deferred-and-unloaded ──
+//
+// These exercise the single helper that every agent-loop LLM call site
+// (`planning/types.rs::build_planning_executor`) uses to pick which tools end
+// up in the LLM API's `tools[]`. The invariant: deferred tools are excluded
+// until the model has loaded them via `tool_search` with `names: [...]`.
+
+#[tokio::test]
+async fn get_tools_for_llm_excludes_deferred_until_loaded() {
+    let deferred: HashSet<String> = ["zippy__list_content".to_string()].into();
+    let ctx = make_context_with_deferred(deferred).await;
+    ctx.extend_tools(vec![
+        make_tool("final", "Finish the task", None),
+        make_tool("tool_search", "Search for tools", None),
+        make_tool("zippy__list_content", "List Zippy content", None),
+    ])
+    .await;
+
+    // Initial view: deferred tool is *not* in the LLM tools[] yet.
+    let initial: Vec<String> = ctx
+        .get_tools_for_llm()
+        .await
+        .iter()
+        .map(|t| t.get_name())
+        .collect();
+    assert!(initial.contains(&"final".to_string()));
+    assert!(initial.contains(&"tool_search".to_string()));
+    assert!(
+        !initial.contains(&"zippy__list_content".to_string()),
+        "deferred tool must not appear in tools[] before it's loaded"
+    );
+
+    // Mark loaded (simulating tool_search names:[...] side effect).
+    ctx.mark_deferred_tools_loaded(["zippy__list_content".to_string()])
+        .await;
+
+    let after: Vec<String> = ctx
+        .get_tools_for_llm()
+        .await
+        .iter()
+        .map(|t| t.get_name())
+        .collect();
+    assert!(
+        after.contains(&"zippy__list_content".to_string()),
+        "deferred tool must appear in tools[] once loaded via tool_search"
+    );
+}
+
+#[tokio::test]
+async fn get_tools_for_llm_returns_all_when_no_deferral() {
+    // No deferred names ⇒ no filtering applied.
+    let ctx = make_context_with_deferred(HashSet::new()).await;
+    ctx.extend_tools(vec![
+        make_tool("final", "", None),
+        make_tool("foo", "", None),
+        make_tool("bar", "", None),
+    ])
+    .await;
+
+    let names: Vec<String> = ctx
+        .get_tools_for_llm()
+        .await
+        .iter()
+        .map(|t| t.get_name())
+        .collect();
+    assert_eq!(names.len(), 3);
+}
+
+// ── tool_search side effect: names:[...] loads deferred tools into LLM view ──
+
+#[tokio::test]
+async fn tool_search_names_marks_deferred_tools_loaded() {
+    let deferred: HashSet<String> = ["zippy__list_content".to_string()].into();
+    let ctx = make_context_with_deferred(deferred).await;
+    ctx.extend_tools(vec![
+        make_tool("final", "Finish", None),
+        make_tool("tool_search", "Search", None),
+        make_tool(
+            "zippy__list_content",
+            "List Zippy content",
+            Some("Returns lessons + activities."),
+        ),
+    ])
+    .await;
+
+    assert!(
+        ctx.get_loaded_deferred_tools().await.is_empty(),
+        "nothing should be loaded yet"
+    );
+    assert!(
+        !ctx.get_tools_for_llm()
+            .await
+            .iter()
+            .any(|t| t.get_name() == "zippy__list_content")
+    );
+
+    // Model calls tool_search with names:[zippy__list_content].
+    let tc = ToolCall {
+        tool_call_id: "tc-load".into(),
+        tool_name: "tool_search".into(),
+        input: json!({"names": ["zippy__list_content"]}),
+    };
+    ToolSearchTool
+        .execute_with_executor_context(tc, ctx.clone())
+        .await
+        .unwrap();
+
+    // After tool_search names lookup, the deferred tool is loaded and now
+    // appears in `get_tools_for_llm()`.
+    let loaded = ctx.get_loaded_deferred_tools().await;
+    assert!(loaded.contains("zippy__list_content"));
+    assert!(
+        ctx.get_tools_for_llm()
+            .await
+            .iter()
+            .any(|t| t.get_name() == "zippy__list_content"),
+        "after tool_search names:[X], X must be visible to the next LLM call"
+    );
+}
+
+#[tokio::test]
+async fn tool_search_keyword_does_not_load_deferred_tools() {
+    // Keyword search returns name+description for deferred tools but does
+    // NOT load them — the model still has to ask for them by name.
+    let deferred: HashSet<String> = ["zippy__list_content".to_string()].into();
+    let ctx = make_context_with_deferred(deferred).await;
+    ctx.extend_tools(vec![
+        make_tool("tool_search", "Search", None),
+        make_tool("zippy__list_content", "List Zippy content", None),
+    ])
+    .await;
+
+    let tc = ToolCall {
+        tool_call_id: "tc-kw".into(),
+        tool_name: "tool_search".into(),
+        input: json!({"query": "zippy"}),
+    };
+    ToolSearchTool
+        .execute_with_executor_context(tc, ctx.clone())
+        .await
+        .unwrap();
+
+    assert!(
+        ctx.get_loaded_deferred_tools().await.is_empty(),
+        "keyword search must not load deferred tools — only names:[...] does"
+    );
+    assert!(
+        !ctx.get_tools_for_llm()
+            .await
+            .iter()
+            .any(|t| t.get_name() == "zippy__list_content"),
+        "deferred tool stays hidden from tools[] until names:[...] loads it"
+    );
+}
+
 // ── compact_for_storage guards empty results ──
 
 #[test]

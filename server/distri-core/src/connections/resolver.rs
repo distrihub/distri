@@ -248,6 +248,14 @@ async fn resolve_custom(
         }
     }
 
+    // Custom credentials backing MCP connections use field keys that are
+    // literally HTTP header names (e.g. `Authorization`, `x-org-id`) — the
+    // UI's New-Custom-MCP form is shaped that way. So we emit the resolved
+    // values into both `env_vars` (uppercased, for the proxy path's
+    // template-substitution flow) AND `http_headers` (original key casing,
+    // for the MCP transport which consumes them as-is).
+    let mut http_headers = HashMap::new();
+
     for field in fields {
         // Use the field key exactly as declared — no implicit
         // credential-name prefix. Authors control the env var name by
@@ -279,7 +287,8 @@ async fn resolve_custom(
 
         match resolved_value {
             Some(v) => {
-                env_vars.insert(env_name, v);
+                env_vars.insert(env_name, v.clone());
+                http_headers.insert(field.key.clone(), v);
             }
             None if field.required => missing.push(field.key.clone()),
             None => {}
@@ -293,11 +302,6 @@ async fn resolve_custom(
             missing.join(", ")
         ));
     }
-
-    // Authorization header template lives on the Connection (it's a downstream
-    // concern, not a credential property). Custom credentials emit only the
-    // env vars here; the proxy path applies the template after this returns.
-    let http_headers = HashMap::new();
 
     Ok(ResolvedCredential {
         credential_id: credential.id.to_string(),
@@ -510,6 +514,8 @@ mod tests {
                 provider: provider.to_string(),
                 scopes: vec![],
             },
+            oauth_client_id: None,
+            oauth_client_secret: None,
             status: CredentialStatus::Connected,
             is_system: false,
             created_by: None,
@@ -535,6 +541,8 @@ mod tests {
                     })
                     .collect(),
             },
+            oauth_client_id: None,
+            oauth_client_secret: None,
             status: CredentialStatus::Connected,
             is_system: false,
             created_by: None,

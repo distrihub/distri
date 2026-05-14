@@ -161,6 +161,44 @@ impl ChannelProvider {
 
 // ── Bot ───────────────────────────────────────────────────────────────────
 
+/// Bot scope — `Workspace` bots act on behalf of the workspace itself
+/// (system DM agents, internal automations); `User` bots represent
+/// individual end-users (Telegram personal bots, WhatsApp business assistant).
+/// Persisted as `bots.scope` (text); the column has a CHECK constraint so
+/// only the two values below are valid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BotScope {
+    Workspace,
+    User,
+}
+
+impl Default for BotScope {
+    fn default() -> Self {
+        Self::Workspace
+    }
+}
+
+impl std::fmt::Display for BotScope {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BotScope::Workspace => f.write_str("workspace"),
+            BotScope::User => f.write_str("user"),
+        }
+    }
+}
+
+impl std::str::FromStr for BotScope {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "workspace" => Ok(BotScope::Workspace),
+            "user" => Ok(BotScope::User),
+            other => Err(format!("invalid bot scope: {other}")),
+        }
+    }
+}
+
 /// A configured bot on a messaging platform.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Bot {
@@ -187,6 +225,15 @@ pub struct Bot {
     pub agent_id: String,
     pub trigger_mode: TriggerMode,
     pub active: bool,
+    /// Bot scope — see [`BotScope`].
+    #[serde(default)]
+    pub scope: BotScope,
+    /// Optional gate credential — when set, end-users must hold a valid
+    /// token for this credential before the bot will respond. `None` means
+    /// the bot is open (no end-user gate). Replaces the old
+    /// `bot_connections.requires_setup` flag.
+    #[serde(default)]
+    pub gate_credential_id: Option<Uuid>,
     /// True iff this row is a platform-shared system bot
     /// (`workspace_id == Uuid::nil()`). Computed at read time from the
     /// workspace id; not a persisted column. Clients use this to render
@@ -210,6 +257,8 @@ pub struct NewBot {
     pub agent_id: String,
     pub trigger_mode: TriggerMode,
     pub active: bool,
+    pub scope: BotScope,
+    pub gate_credential_id: Option<Uuid>,
 }
 
 // ── Channel (pure conversation row) ───────────────────────────────────────
@@ -258,13 +307,13 @@ pub struct NewChannel {
 
 // ── Bot connection join ────────────────────────────────────────────────────
 
-/// A connection wired up to a bot. One bot can have multiple connections;
-/// the `position` field controls which one is tried first.
+/// A connection wired up to a bot — a tool the bot can use during execution.
+/// One bot can have multiple connections; `position` controls precedence.
+/// The end-user gate moved off this table onto `Bot.gate_credential_id`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BotConnection {
     pub bot_id: Uuid,
     pub connection_id: Uuid,
-    pub requires_setup: bool,
     pub position: i32,
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
@@ -337,10 +386,12 @@ pub struct AuthenticatedChannelUser {
 pub enum AuthProof {
     /// Platform verified by default — no distri gate needed (e.g. Slack OAuth install).
     PlatformVerified,
-    /// Open platform (Telegram/WhatsApp) with no connection gate — anyone can use.
+    /// Open platform (Telegram/WhatsApp) with no gate — anyone can use.
     Open,
-    /// Access granted because the user passed the gate for this connection.
-    GatedBy { connection_id: Uuid },
+    /// Access granted because the user holds valid secrets for the bot's
+    /// gate credential. `credential_id` is internal; never surfaced to the
+    /// end-user.
+    GatedBy { credential_id: Uuid },
 }
 
 /// Outcome of running the channel-auth resolver against an inbound message.
@@ -361,11 +412,12 @@ pub enum ResolveOutcome {
     Rejected,
 }
 
-/// Describes what kind of gate needs to be passed for verification.
+/// Describes what kind of gate the user needs to pass.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GateKind {
-    /// Gate is the distri-native account link flow.
+    /// Gate is the distri-native account link flow (workspace membership).
     DistriNative,
-    /// Gate is an external connection with the given id.
-    External { connection_id: Uuid },
+    /// Gate is a Custom credential — the user supplies the credential's
+    /// field values via the `/bots/{id}/configure?code=…` flow.
+    External,
 }

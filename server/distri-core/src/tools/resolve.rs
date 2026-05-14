@@ -243,6 +243,8 @@ mod tests {
                 provider: provider.to_string(),
                 scopes: vec![],
             },
+            oauth_client_id: None,
+            oauth_client_secret: None,
             status: CredentialStatus::Connected,
             is_system: false,
             created_by: None,
@@ -264,7 +266,7 @@ mod tests {
             updated_at: chrono::Utc::now(),
             auth_scope: AuthScope::Workspace,
             credential_id,
-            kind: distri_types::connections::ConnectionKind::Default,
+            kind: distri_types::connections::ConnectionKind::Default { skill_content: None },
             is_system: false,
         }
     }
