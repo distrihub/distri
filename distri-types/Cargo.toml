@@ -44,6 +44,7 @@ sha2 = "0.10"
 url = "2"
 handlebars = "6.0"
 toml = "0.8"
+actix-web = { workspace = true, optional = true }
 
 [features]
 default = ["typescript"]
@@ -51,3 +52,8 @@ typescript = []
 instrumentation = []
 wasm = []
 native = []
+# Enables `impl actix_web::ResponseError for ApiError`. Pulled in by
+# distri-server / distri-cloud so they can return `Result<_, ApiError>`
+# from route handlers with `?`. Off by default to keep this leaf crate
+# light for non-server consumers.
+actix = ["dep:actix-web"]

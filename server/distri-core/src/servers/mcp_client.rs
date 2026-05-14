@@ -1,27 +1,25 @@
 //! Client-side connections to remote MCP servers via the official `rmcp` SDK.
 //!
 //! This module owns the lifecycle of a single rmcp `RunningService<RoleClient, _>`
-//! per `McpServerConfig`. Connections are lazy and cached in a pool keyed by
-//! server name. The pool is shared across an `ExecutorContext` so the agent
-//! loop and `tool_search` see the same set of tools without reconnecting on
-//! every step.
+//! per `McpServerHandle`. A handle is a resolved view of a `kind = Mcp`
+//! connection: its transport plus auth headers that the host already resolved
+//! (e.g. `Authorization: Bearer …` from an OAuth connection). The pool never
+//! reaches back into the connection store — auth happens upstream, the pool
+//! just dials and dispatches.
 //!
-//! Three transports are supported, matching `McpClientTransport`:
-//!   - `Stdio` (spawns a child process)
-//!   - `StreamableHttp` (single bidirectional HTTP endpoint, MCP spec)
+//! Two transports are supported, matching `McpClientTransport`:
+//!   - `StreamableHttp` (single bidirectional HTTP endpoint, MCP 2025-03-26+ spec)
 //!   - `Sse` (legacy Server-Sent-Events transport)
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Context, Result};
-use distri_types::{McpClientTransport, McpServerConfig};
+use distri_types::{McpClientTransport, McpServerHandle};
 use rmcp::model::{CallToolRequestParams, ClientCapabilities, ClientInfo, Implementation, Tool};
 use rmcp::service::{RoleClient, RunningService};
-use rmcp::transport::child_process::TokioChildProcess;
 use rmcp::transport::streamable_http_client::StreamableHttpClientTransport;
 use rmcp::ServiceExt;
-use tokio::process::Command;
 use tokio::sync::{Mutex, RwLock};
 
 /// Lightweight handle describing one tool from a remote MCP server.
@@ -127,68 +125,81 @@ fn client_info() -> ClientInfo {
 }
 
 /// Establish a fresh connection. Callers usually go through `McpClientPool`.
-pub async fn connect(config: &McpServerConfig) -> Result<RemoteMcpClient> {
-    if !config.enabled {
-        return Err(anyhow!("MCP server '{}' is disabled", config.name));
+///
+/// The handle's `resolved_headers` are merged on top of any static headers in
+/// the transport — host-resolved auth (typically `Authorization`) wins over
+/// transport-default headers.
+pub async fn connect(handle: &McpServerHandle) -> Result<RemoteMcpClient> {
+    if !handle.enabled {
+        return Err(anyhow!("MCP server '{}' is disabled", handle.name));
     }
-    config
+    handle
         .validate()
-        .map_err(|e| anyhow!("invalid mcp config '{}': {}", config.name, e))?;
+        .map_err(|e| anyhow!("invalid mcp handle '{}': {}", handle.name, e))?;
 
     let info = client_info();
-    let service = match &config.transport {
-        McpClientTransport::Stdio { command, args, env } => {
-            let mut cmd = Command::new(command);
-            for arg in args {
-                cmd.arg(arg);
-            }
-            if let Some(env) = env {
-                for (k, v) in env {
-                    cmd.env(k, v);
-                }
-            }
-            let transport = TokioChildProcess::new(cmd)
-                .with_context(|| format!("spawning stdio MCP server '{}'", config.name))?;
-            info.serve(transport)
-                .await
-                .with_context(|| format!("initializing stdio MCP server '{}'", config.name))?
-        }
-        McpClientTransport::StreamableHttp { url, headers } => {
-            let client = reqwest_client_with_headers(headers)?;
+    let merged_headers = merged_headers(&handle.transport, &handle.resolved_headers);
+    let url = handle.transport.url().to_string();
+
+    let service = match &handle.transport {
+        McpClientTransport::StreamableHttp { .. } => {
+            let client = reqwest_client_with_headers(&merged_headers)?;
             let transport = StreamableHttpClientTransport::with_client(
                 client,
                 rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig::with_uri(
-                    url.to_string(),
+                    url,
                 ),
             );
             info.serve(transport)
                 .await
-                .with_context(|| format!("initializing streamable-http MCP server '{}'", config.name))?
+                .with_context(|| format!("initializing streamable-http MCP server '{}'", handle.name))?
+        }
+        McpClientTransport::Sse { .. } => {
+            // The streamable-http transport gracefully handles servers that
+            // upgrade to SSE on the same endpoint. Routing SSE through the
+            // streamable transport keeps a single code path.
+            let client = reqwest_client_with_headers(&merged_headers)?;
+            let transport = StreamableHttpClientTransport::with_client(
+                client,
+                rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig::with_uri(
+                    url,
+                ),
+            );
+            info.serve(transport)
+                .await
+                .with_context(|| format!("initializing sse MCP server '{}'", handle.name))?
         }
     };
 
     Ok(RemoteMcpClient {
-        server_name: config.name.clone(),
+        server_name: handle.name.clone(),
         service,
     })
 }
 
-fn reqwest_client_with_headers(
-    headers: &Option<HashMap<String, String>>,
-) -> Result<reqwest::Client> {
+fn merged_headers(
+    transport: &McpClientTransport,
+    extra: &HashMap<String, String>,
+) -> HashMap<String, String> {
+    let mut out: HashMap<String, String> = transport.headers().cloned().unwrap_or_default();
+    for (k, v) in extra {
+        out.insert(k.clone(), v.clone());
+    }
+    out
+}
+
+fn reqwest_client_with_headers(headers: &HashMap<String, String>) -> Result<reqwest::Client> {
     let mut builder = reqwest::Client::builder();
-    if let Some(headers) = headers {
-        if !headers.is_empty() {
-            let mut hdrs = reqwest::header::HeaderMap::new();
-            for (k, v) in headers {
-                let name = reqwest::header::HeaderName::from_bytes(k.as_bytes())
-                    .with_context(|| format!("invalid header name '{}'", k))?;
-                let value = reqwest::header::HeaderValue::from_str(v)
-                    .with_context(|| format!("invalid value for header '{}'", k))?;
-                hdrs.insert(name, value);
-            }
-            builder = builder.default_headers(hdrs);
+    if !headers.is_empty() {
+        let mut hdrs = reqwest::header::HeaderMap::new();
+        for (k, v) in headers {
+            let name = reqwest::header::HeaderName::from_bytes(k.as_bytes())
+                .with_context(|| format!("invalid header name '{}'", k))?;
+            let value = reqwest::header::HeaderValue::from_str(v)
+                .with_context(|| format!("invalid value for header '{}'", k))?;
+            hdrs.insert(name, value);
         }
+        builder = builder.default_headers(hdrs);
     }
     builder.build().context("building reqwest client")
 }
@@ -198,31 +209,31 @@ fn reqwest_client_with_headers(
 /// Connections are created on first use and shared via `Arc`. A pool can be
 /// shared across the agent loop for the duration of a single `execute()` call.
 pub struct McpClientPool {
-    configs: HashMap<String, McpServerConfig>,
+    handles: HashMap<String, McpServerHandle>,
     clients: RwLock<HashMap<String, Arc<RemoteMcpClient>>>,
     connect_lock: Mutex<()>,
 }
 
 impl McpClientPool {
-    pub fn new(configs: Vec<McpServerConfig>) -> Self {
-        let configs = configs
+    pub fn new(handles: Vec<McpServerHandle>) -> Self {
+        let handles = handles
             .into_iter()
-            .filter(|c| c.enabled)
-            .map(|c| (c.name.clone(), c))
+            .filter(|h| h.enabled)
+            .map(|h| (h.name.clone(), h))
             .collect();
         Self {
-            configs,
+            handles,
             clients: RwLock::new(HashMap::new()),
             connect_lock: Mutex::new(()),
         }
     }
 
     pub fn server_names(&self) -> Vec<String> {
-        self.configs.keys().cloned().collect()
+        self.handles.keys().cloned().collect()
     }
 
-    pub fn get_config(&self, name: &str) -> Option<&McpServerConfig> {
-        self.configs.get(name)
+    pub fn get_handle(&self, name: &str) -> Option<&McpServerHandle> {
+        self.handles.get(name)
     }
 
     /// Connect (or reuse) a named server.
@@ -234,11 +245,11 @@ impl McpClientPool {
         if let Some(client) = self.clients.read().await.get(name).cloned() {
             return Ok(client);
         }
-        let cfg = self
-            .configs
+        let handle = self
+            .handles
             .get(name)
             .ok_or_else(|| anyhow!("MCP server '{}' not configured", name))?;
-        let client = Arc::new(connect(cfg).await?);
+        let client = Arc::new(connect(handle).await?);
         self.clients
             .write()
             .await
@@ -251,7 +262,7 @@ impl McpClientPool {
     /// take the whole resolver down.
     pub async fn discover_all_tools(&self) -> Vec<McpToolHandle> {
         let mut out = Vec::new();
-        for name in self.configs.keys() {
+        for name in self.handles.keys() {
             match self.connect_named(name).await {
                 Ok(client) => match client.list_tools().await {
                     Ok(tools) => out.extend(tools),

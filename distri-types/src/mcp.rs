@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use utoipa::ToSchema;
 
-use crate::AuthType;
+use crate::auth::AuthType;
 
 #[async_trait::async_trait]
 pub trait ServerTrait: Send + Sync {
@@ -80,72 +80,81 @@ impl std::fmt::Debug for McpServerMetadata {
     }
 }
 
-/// Workspace-registry MCP server entry.
-///
-/// This is the user-facing definition stored alongside other workspace settings
-/// (and JSON-encoded in API payloads). It is pure data — no closures — so it
-/// round-trips through serialization unchanged.
-///
-/// The `transport` field carries everything needed for the `rmcp` client to
-/// connect: stdio command, streamable-http URL, or SSE URL. Secrets that the
-/// process needs come from `env` (for stdio) or `headers` (for HTTP/SSE).
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema, PartialEq)]
-pub struct McpServerConfig {
-    /// Identifier referenced by `ToolsConfig.mcp[].server` in agent definitions.
-    pub name: String,
-    /// Short human-facing description shown in the UI list.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    /// Transport details — how to reach the server.
-    pub transport: McpClientTransport,
-    /// Optional connection name (from the connections registry) to pull an
-    /// auth token from at runtime. The token is injected as a bearer header
-    /// (for HTTP/SSE) or as an env var (for stdio, under `auth_env_var`).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub connection: Option<String>,
-    /// When `connection` is set and transport is `Stdio`, name of the env var
-    /// the spawned process expects to receive the token in.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub auth_env_var: Option<String>,
-    /// When true, the server is enabled for tool resolution.
-    #[serde(default = "default_true")]
-    pub enabled: bool,
-}
-
-fn default_true() -> bool {
-    true
-}
-
 /// Client-side transport configuration for connecting to an MCP server.
 ///
-/// Mirrors the variants the `rmcp` crate supports. `headers` and `env` are
-/// always optional — most well-known public servers don't need them.
+/// Mirrors the variants the `rmcp` crate supports. `headers` is always optional
+/// — most public servers don't need extra headers, and OAuth bearers are
+/// injected by the connection resolver at pool-connect time rather than being
+/// stored here.
+///
+/// The `Stdio` variant is intentionally absent: connections are workspace
+/// resources that must be portable across hosts, so spawning a local child
+/// process is not user-configurable. In-process A2A servers use the separate
+/// `TransportType` enum on `McpServerMetadata`.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum McpClientTransport {
-    /// Spawn a child process; communicate over its stdio.
-    Stdio {
-        command: String,
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        args: Vec<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        env: Option<HashMap<String, String>>,
-    },
     /// Streamable HTTP transport (MCP 2025-03-26+ spec). One bidirectional
-    /// endpoint that may upgrade individual responses to SSE — this covers
-    /// both modern Streamable HTTP servers and legacy SSE-only servers
-    /// reachable via the same URL.
+    /// endpoint that may upgrade individual responses to SSE.
     StreamableHttp {
+        url: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        headers: Option<HashMap<String, String>>,
+    },
+    /// Legacy SSE-only transport (MCP 2024-11-05 spec). Kept for servers that
+    /// haven't migrated yet; prefer Streamable HTTP for new connections.
+    Sse {
         url: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         headers: Option<HashMap<String, String>>,
     },
 }
 
-impl McpServerConfig {
+impl McpClientTransport {
+    pub fn url(&self) -> &str {
+        match self {
+            Self::StreamableHttp { url, .. } | Self::Sse { url, .. } => url.as_str(),
+        }
+    }
+
+    pub fn headers(&self) -> Option<&HashMap<String, String>> {
+        match self {
+            Self::StreamableHttp { headers, .. } | Self::Sse { headers, .. } => headers.as_ref(),
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        let url = self.url();
+        if url.trim().is_empty() {
+            return Err("transport requires a url".to_string());
+        }
+        url::Url::parse(url).map_err(|e| format!("invalid url '{}': {}", url, e))?;
+        Ok(())
+    }
+}
+
+/// A pool-ready handle for one MCP server: identifier + transport + already-
+/// resolved authorization headers.
+///
+/// Built by the host (e.g. distri-cloud) by looking up `kind = Mcp` connections
+/// in scope and resolving their `auth_type` into bearer headers. Passed into
+/// `McpClientPool::new` so the pool itself never has to touch the connection
+/// store.
+#[derive(Debug, Clone)]
+pub struct McpServerHandle {
+    /// Stable name used by agents in `ToolsConfig.mcp[].server`.
+    pub name: String,
+    pub transport: McpClientTransport,
+    /// Headers to merge into the transport at connect time. Typically contains
+    /// `Authorization: Bearer …` if the backing connection is OAuth.
+    pub resolved_headers: HashMap<String, String>,
+    pub enabled: bool,
+}
+
+impl McpServerHandle {
     pub fn validate(&self) -> Result<(), String> {
         if self.name.trim().is_empty() {
-            return Err("MCP server name must be non-empty".to_string());
+            return Err("MCP server handle name must be non-empty".to_string());
         }
         if !self
             .name
@@ -153,23 +162,10 @@ impl McpServerConfig {
             .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
         {
             return Err(format!(
-                "MCP server name '{}' must be alphanumeric/underscore/dash only",
+                "MCP server handle name '{}' must be alphanumeric/underscore/dash only",
                 self.name
             ));
         }
-        match &self.transport {
-            McpClientTransport::Stdio { command, .. } => {
-                if command.trim().is_empty() {
-                    return Err("stdio transport requires a command".to_string());
-                }
-            }
-            McpClientTransport::StreamableHttp { url, .. } => {
-                if url.trim().is_empty() {
-                    return Err("http/sse transport requires a url".to_string());
-                }
-                url::Url::parse(url).map_err(|e| format!("invalid url '{}': {}", url, e))?;
-            }
-        }
-        Ok(())
+        self.transport.validate()
     }
 }

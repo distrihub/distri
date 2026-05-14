@@ -65,7 +65,7 @@ pub async fn resolve_connection_token(
         .map(|s| s.to_string())
         .ok_or_else(|| {
             format!(
-                "connection '{}' does not yield a Bearer token (non-OAuth auth_type?)",
+                "connection '{}' does not yield a Bearer token (non-OAuth auth?)",
                 resolved.name
             )
         })?;
@@ -76,7 +76,10 @@ pub async fn resolve_connection_token(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use distri_types::connections::*;
+    use distri_types::connections::{
+        AuthScope, Connection, ConnectionAuth, ConnectionKind, ConnectionStatus, ConnectionToken,
+        NewConnection,
+    };
     use distri_types::stores::{ConnectionStore, ConnectionTokenStore};
 
     // -- Minimal in-memory stores for testing --
@@ -112,7 +115,6 @@ mod tests {
             &self,
             _id: &str,
             _name: Option<String>,
-            _auth_type: Option<distri_types::connections::AuthType>,
         ) -> anyhow::Result<Connection> {
             unimplemented!()
         }
@@ -176,41 +178,65 @@ mod tests {
         stores
     }
 
-    fn test_connection(id: uuid::Uuid) -> Connection {
+    fn test_oauth_connection(id: uuid::Uuid, provider: &str) -> Connection {
         Connection {
             id,
             workspace_id: uuid::Uuid::new_v4(),
             skill_id: uuid::Uuid::nil(),
-            name: "google".to_string(),
+            name: provider.to_string(),
             status: ConnectionStatus::Connected,
             config: serde_json::json!({}),
             connected_by: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
             auth_scope: AuthScope::Workspace,
-            auth_type: AuthType::OAuth {
-                provider: "google".to_string(),
+            auth: ConnectionAuth::Oauth {
+                provider: provider.to_string(),
                 scopes: vec![],
+                oauth_metadata: None,
+            },
+            kind: ConnectionKind::Default {
+                skill_content: None,
             },
             is_system: false,
         }
     }
 
+    fn build_fixture(
+        valid_token: bool,
+        with_token: bool,
+    ) -> (uuid::Uuid, Connection, Vec<(String, ConnectionToken)>) {
+        let conn_id = uuid::Uuid::new_v4();
+        let conn = test_oauth_connection(conn_id, "google");
+        let tokens = if with_token {
+            let exp = if valid_token {
+                chrono::Utc::now() + chrono::Duration::hours(1)
+            } else {
+                chrono::Utc::now() - chrono::Duration::hours(1)
+            };
+            vec![(
+                conn_id.to_string(),
+                ConnectionToken {
+                    access_token: "ya29.valid-google-token".to_string(),
+                    refresh_token: Some("1//refresh".to_string()),
+                    expires_at: Some(exp),
+                    token_type: "Bearer".to_string(),
+                    scopes: vec!["calendar".to_string()],
+                },
+            )]
+        } else {
+            vec![]
+        };
+        (conn_id, conn, tokens)
+    }
+
     #[tokio::test]
     async fn resolve_valid_token() {
-        let conn_id = uuid::Uuid::new_v4();
-        let conn = test_connection(conn_id);
-        let token = ConnectionToken {
-            access_token: "ya29.valid-google-token".to_string(),
-            refresh_token: Some("1//refresh".to_string()),
-            expires_at: Some(chrono::Utc::now() + chrono::Duration::hours(1)),
-            token_type: "Bearer".to_string(),
-            scopes: vec!["calendar".to_string()],
-        };
+        let (conn_id, conn, tokens) = build_fixture(true, true);
 
         let stores = make_stores(
             Arc::new(TestConnectionStore::with(vec![conn])),
-            Arc::new(TestTokenStore::with(vec![(conn_id.to_string(), token)])),
+            Arc::new(TestTokenStore::with(tokens)),
         )
         .await;
 
@@ -223,19 +249,11 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_expired_token_returns_error() {
-        let conn_id = uuid::Uuid::new_v4();
-        let conn = test_connection(conn_id);
-        let token = ConnectionToken {
-            access_token: "ya29.expired-token".to_string(),
-            refresh_token: Some("1//refresh".to_string()),
-            expires_at: Some(chrono::Utc::now() - chrono::Duration::hours(1)),
-            token_type: "Bearer".to_string(),
-            scopes: vec![],
-        };
+        let (conn_id, conn, tokens) = build_fixture(false, true);
 
         let stores = make_stores(
             Arc::new(TestConnectionStore::with(vec![conn])),
-            Arc::new(TestTokenStore::with(vec![(conn_id.to_string(), token)])),
+            Arc::new(TestTokenStore::with(tokens)),
         )
         .await;
 
@@ -261,8 +279,7 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_missing_token_returns_error() {
-        let conn_id = uuid::Uuid::new_v4();
-        let conn = test_connection(conn_id);
+        let (conn_id, conn, _) = build_fixture(true, false);
 
         let stores = make_stores(
             Arc::new(TestConnectionStore::with(vec![conn])),
@@ -275,15 +292,9 @@ mod tests {
         assert!(result.unwrap_err().contains("no token"));
     }
 
-    /// `DefaultResolver::resolve` defensively returns
-    /// `"connection store not configured"` when `stores.connection_store`
-    /// is `None`. Since the OSS rearch (PR #93, 2026-05-07),
-    /// `initialize_stores` always populates the connection stores from the
-    /// metadata factory, so the only way to reach the defensive check is
-    /// to explicitly clear the store. We do so here to keep the guard
-    /// pinned — if a future refactor accidentally makes the field non-Option,
-    /// or moves the resolver onto a typed handle that can't be None, this
-    /// test breaks and forces the author to think about the behavior change.
+    /// Defensive guard — when `stores.connection_store` is None, the resolver
+    /// errors out. Kept pinned so a future refactor that makes the field
+    /// non-Option has to think about the behavior change.
     #[tokio::test]
     async fn resolve_no_connection_stores_returns_error() {
         let db_name = uuid::Uuid::new_v4();

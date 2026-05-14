@@ -3,34 +3,52 @@
 //! any built-in tool.
 //!
 //! Created at tool-resolution time from a `McpToolHandle` discovered through
-//! `McpClientPool`. The adapter holds only metadata; the actual `tools/call`
-//! happens through the pool stored in `ExecutorContext.mcp_client_pool` so
-//! every execution shares a single live connection.
+//! `McpClientPool`. The adapter holds a reference to the same pool used for
+//! discovery, so every `tools/call` reuses the live connection that
+//! `McpClientPool::connect_named` cached during resolution. Tool building is
+//! the single chokepoint that hands the pool out — the orchestrator's
+//! `create_agent_from_config` path is the only place that asks the attached
+//! `McpPoolProvider` for a pool, and that pool is then threaded through tool
+//! resolution into every adapter it produces.
 
 use std::sync::Arc;
 
 use crate::agent::ExecutorContext;
-use crate::servers::McpToolHandle;
+use crate::servers::{McpClientPool, McpToolHandle};
 use crate::tools::ExecutorContextTool;
 use crate::types::ToolCall;
 use crate::AgentError;
 use distri_types::tool::ToolContext;
 use distri_types::{Part, ResourceLink, Tool};
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct McpToolAdapter {
     handle: McpToolHandle,
     /// Public-facing tool name. Defaults to the remote name but the resolver
     /// may prefix it with the server name to disambiguate when two servers
     /// expose tools with identical names.
     exposed_name: String,
+    /// The pool this adapter was created from. Reusing the same `Arc<Pool>`
+    /// across all adapters built in one run means a single connection per
+    /// remote server, shared by every tool from it.
+    pool: Arc<McpClientPool>,
+}
+
+impl std::fmt::Debug for McpToolAdapter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("McpToolAdapter")
+            .field("handle", &self.handle)
+            .field("exposed_name", &self.exposed_name)
+            .finish()
+    }
 }
 
 impl McpToolAdapter {
-    pub fn new(handle: McpToolHandle, exposed_name: String) -> Self {
+    pub fn new(handle: McpToolHandle, exposed_name: String, pool: Arc<McpClientPool>) -> Self {
         Self {
             handle,
             exposed_name,
+            pool,
         }
     }
 
@@ -66,7 +84,7 @@ impl Tool for McpToolAdapter {
     }
 
     fn is_external(&self) -> bool {
-        true
+        false
     }
 
     async fn execute(
@@ -85,19 +103,15 @@ impl ExecutorContextTool for McpToolAdapter {
     async fn execute_with_executor_context(
         &self,
         tool_call: ToolCall,
-        context: Arc<ExecutorContext>,
+        _context: Arc<ExecutorContext>,
     ) -> Result<Vec<Part>, AgentError> {
-        let pool = context.mcp_client_pool.clone().ok_or_else(|| {
-            AgentError::ToolExecution(format!(
-                "MCP tool '{}' called but no MCP client pool is configured on the executor context",
-                self.exposed_name
-            ))
-        })?;
-
-        let client = pool
+        let client = self
+            .pool
             .connect_named(&self.handle.server)
             .await
-            .map_err(|e| AgentError::ToolExecution(format!("connect '{}': {e}", self.handle.server)))?;
+            .map_err(|e| {
+                AgentError::ToolExecution(format!("connect '{}': {e}", self.handle.server))
+            })?;
 
         let result = client
             .call_tool(&self.handle.name, tool_call.input.clone())

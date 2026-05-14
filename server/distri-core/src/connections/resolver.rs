@@ -1,12 +1,20 @@
+//! Connection resolver — fetches a `Connection` by id and produces the
+//! `(env_vars, http_headers)` bundle that downstream callers (proxy, agent
+//! orchestrator, MCP pool, tool runtime) inject.
+//!
+//! Auth lives directly on the Connection (`connection.auth`). The resolver
+//! loads the Connection and dispatches on the embedded `ConnectionAuth`
+//! variant. No second hop.
+
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use distri_types::connections::{AuthScope, AuthType, Connection};
+use distri_types::connections::{AuthScope, Connection, ConnectionAuth, CustomField};
 use distri_types::stores::InitializedStores;
 
-/// The resolved material needed to authenticate a downstream request using
-/// a specific connection. Returned by [`ConnectionResolver::resolve`].
+/// The resolved material needed to authenticate a downstream request using a
+/// specific connection. Returned by [`ConnectionResolver::resolve`].
 ///
 /// Callers pick one of:
 /// - `env_vars`: inject into process env for shell/code execution paths.
@@ -31,22 +39,24 @@ pub struct ResolvedConnection {
 }
 
 /// Context passed to the resolver. Scope bindings (workspace / user) are
-/// needed for `AuthType::Custom` (secrets) and `AuthType::DistriNative` (the
-/// caller's own session token is the credential).
+/// needed for `ConnectionAuth::Custom` (secrets) and
+/// `ConnectionAuth::DistriNative` (the caller's own session token is the
+/// auth).
 pub struct ResolveCtx<'a> {
     pub stores: &'a InitializedStores,
     /// Workspace owning the connection (used for Custom field lookups in the
     /// secrets table with `access_type='workspace'`).
     pub workspace_id: Option<&'a str>,
-    /// The actor's user id. Required to resolve `AuthType::Custom` fields with
-    /// `auth_scope = User`, and to mint a DistriNative session token.
+    /// The actor's user id. Required to resolve `ConnectionAuth::Custom`
+    /// fields with `auth_scope = User`, and to mint a DistriNative session
+    /// token.
     pub user_id: Option<&'a str>,
     /// Optional override for the env-var name (only meaningful for OAuth with
     /// a single token). Corresponds to `ConnectionRequirement.env_var`.
     pub env_var_override: Option<&'a str>,
-    /// For `AuthType::DistriNative`: the caller's distri API token to proxy.
-    /// When present, it is emitted as both `DISTRI_API_KEY` env var and
-    /// `Authorization: Bearer <token>` header.
+    /// For `ConnectionAuth::DistriNative`: the caller's distri API token
+    /// to proxy. When present, it is emitted as both `DISTRI_API_KEY` env var
+    /// and `Authorization: Bearer <token>` header.
     pub distri_session_token: Option<&'a str>,
 }
 
@@ -82,10 +92,10 @@ impl<'a> ResolveCtx<'a> {
     }
 }
 
-/// Pluggable resolver. The default implementation covers OAuth fully,
-/// Custom via the generic `SecretStore`, and DistriNative via the caller's
-/// session token. Cloud-side callers can provide their own impl with access
-/// to scoped (user-aware) secret stores.
+/// Pluggable resolver. The default implementation covers OAuth fully, Custom
+/// via the generic `SecretStore`, and DistriNative via the caller's session
+/// token. Cloud-side callers can provide their own impl with access to scoped
+/// (user-aware) secret stores.
 #[async_trait]
 pub trait ConnectionResolver: Send + Sync {
     async fn resolve(
@@ -119,12 +129,23 @@ impl ConnectionResolver for DefaultResolver {
             .map_err(|e| format!("failed to get connection: {e}"))?
             .ok_or_else(|| format!("connection '{}' not found", connection_id))?;
 
-        match &connection.auth_type {
-            AuthType::OAuth { provider, .. } => {
+        match &connection.auth {
+            ConnectionAuth::None => Ok(ResolvedConnection {
+                connection_id: connection.id.to_string(),
+                provider: "none".to_string(),
+                auth_scope: connection.auth_scope,
+                name: connection.name.clone(),
+                env_vars: HashMap::new(),
+                http_headers: HashMap::new(),
+            }),
+            ConnectionAuth::Oauth { provider, .. } => {
                 resolve_oauth(&connection, provider.as_str(), ctx).await
             }
-            AuthType::Custom { fields } => resolve_custom(&connection, fields, ctx).await,
-            AuthType::DistriNative => resolve_distri_native(&connection, ctx).await,
+            ConnectionAuth::Custom { fields } => {
+                let fields = fields.clone();
+                resolve_custom(&connection, &fields, ctx).await
+            }
+            ConnectionAuth::DistriNative => resolve_distri_native(&connection, ctx).await,
         }
     }
 }
@@ -194,16 +215,17 @@ async fn resolve_oauth(
 
 async fn resolve_custom(
     connection: &Connection,
-    fields: &[distri_types::connections::CustomField],
+    fields: &[CustomField],
     ctx: &ResolveCtx<'_>,
 ) -> Result<ResolvedConnection, String> {
-    let provider = connection.auth_type.provider_name().to_string();
+    let provider = connection.auth.provider_name().to_string();
     let mut env_vars = HashMap::new();
     let mut missing = Vec::new();
 
-    // Prefer OSS custom-token bundle in connection_token_store (written by
-    // POST /connections for AuthType::Custom). Fallback to legacy
-    // secret_store keys (`connection.<id>.<field_key>`) for compatibility.
+    // Prefer the OSS custom-token bundle in connection_token_store (written
+    // by POST /connections for ConnectionAuth::Custom). Fallback to the
+    // legacy secret_store keys (`connection.<id>.<field_key>`) for the
+    // workspace-scoped value path used by the configure UI.
     let mut token_bundle: Option<serde_json::Map<String, serde_json::Value>> = None;
     if let Some(token_store) = ctx.stores.connection_token_store.as_ref() {
         match token_store.get_token(&connection.id.to_string()).await {
@@ -224,10 +246,18 @@ async fn resolve_custom(
         }
     }
 
+    // Custom auth backing MCP connections use field keys that are literally
+    // HTTP header names (e.g. `Authorization`, `x-org-id`) — the UI's
+    // New-Custom-MCP form is shaped that way. So we emit the resolved
+    // values into both `env_vars` (uppercased, for the proxy path's
+    // template-substitution flow) AND `http_headers` (original key casing,
+    // for the MCP transport which consumes them as-is).
+    let mut http_headers = HashMap::new();
+
     for field in fields {
         // Use the field key exactly as declared — no implicit
-        // connection-name prefix. Connection authors control the env
-        // var name by choosing the field key (e.g. `ZIPPY_PUBLISH_KEY`).
+        // connection-name prefix. Authors control the env var name by
+        // choosing the field key (e.g. `ZIPPY_PUBLISH_KEY`).
         let env_name = field.key.to_uppercase();
 
         let mut resolved_value: Option<String> = None;
@@ -255,7 +285,8 @@ async fn resolve_custom(
 
         match resolved_value {
             Some(v) => {
-                env_vars.insert(env_name, v);
+                env_vars.insert(env_name, v.clone());
+                http_headers.insert(field.key.clone(), v);
             }
             None if field.required => missing.push(field.key.clone()),
             None => {}
@@ -268,20 +299,6 @@ async fn resolve_custom(
             connection.name,
             missing.join(", ")
         ));
-    }
-
-    // Optional: a header template string can be declared on the connection
-    // config under `auth_header_template`, e.g.
-    //   "Bearer {{api_key}}"   or   "{{api_key}}"
-    // Substituted against the resolved fields.
-    let mut http_headers = HashMap::new();
-    if let Some(template) = connection
-        .config
-        .get("auth_header_template")
-        .and_then(|v| v.as_str())
-    {
-        let rendered = substitute_fields(template, fields, &env_vars, &connection.name);
-        http_headers.insert("Authorization".to_string(), rendered);
     }
 
     Ok(ResolvedConnection {
@@ -310,7 +327,7 @@ async fn resolve_distri_native(
 
     Ok(ResolvedConnection {
         connection_id: connection.id.to_string(),
-        provider: connection.auth_type.provider_name().to_string(),
+        provider: connection.auth.provider_name().to_string(),
         auth_scope: connection.auth_scope,
         name: connection.name.clone(),
         env_vars,
@@ -321,11 +338,10 @@ async fn resolve_distri_native(
 /// Substitute `{{field_key}}` occurrences in the template against resolved
 /// env vars (keyed back to the original field_key). Env var names match the
 /// field key uppercased exactly — see `resolve_custom`.
-fn substitute_fields(
+pub fn substitute_fields(
     template: &str,
-    fields: &[distri_types::connections::CustomField],
+    fields: &[CustomField],
     env_vars: &HashMap<String, String>,
-    _connection_name: &str,
 ) -> String {
     let mut out = template.to_string();
     for field in fields {
@@ -347,8 +363,8 @@ pub fn default_resolver() -> Arc<dyn ConnectionResolver> {
 mod tests {
     use super::*;
     use distri_types::connections::{
-        AuthScope, AuthType, Connection, ConnectionStatus, ConnectionToken, CustomField,
-        NewConnection,
+        AuthScope, Connection, ConnectionAuth, ConnectionKind, ConnectionStatus, ConnectionToken,
+        CustomField, NewConnection,
     };
     use distri_types::stores::{ConnectionStore, ConnectionTokenStore};
     use uuid::Uuid;
@@ -372,21 +388,24 @@ mod tests {
         async fn update_status(&self, _id: &str, _s: ConnectionStatus) -> anyhow::Result<()> {
             unimplemented!()
         }
-        async fn update_skill_id(&self, _id: &str, _s: Uuid) -> anyhow::Result<()> {
+        async fn update_skill_id(&self, _id: &str, _skill_id: Uuid) -> anyhow::Result<()> {
             unimplemented!()
         }
         async fn update(
             &self,
             _id: &str,
             _name: Option<String>,
-            _auth_type: Option<distri_types::connections::AuthType>,
         ) -> anyhow::Result<Connection> {
             unimplemented!()
         }
         async fn delete(&self, _id: &str) -> anyhow::Result<()> {
             unimplemented!()
         }
-        async fn get_by_provider(&self, _w: &str, _p: &str) -> anyhow::Result<Option<Connection>> {
+        async fn get_by_provider(
+            &self,
+            _w: &str,
+            _p: &str,
+        ) -> anyhow::Result<Option<Connection>> {
             unimplemented!()
         }
     }
@@ -496,14 +515,18 @@ mod tests {
             skill_id: Uuid::nil(),
             name: provider.to_string(),
             status: ConnectionStatus::Connected,
-            config: serde_json::json!({}),
+            config: serde_json::Value::Object(Default::default()),
             connected_by: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
             auth_scope: AuthScope::Workspace,
-            auth_type: AuthType::OAuth {
+            auth: ConnectionAuth::Oauth {
                 provider: provider.to_string(),
                 scopes: vec![],
+                oauth_metadata: None,
+            },
+            kind: ConnectionKind::Default {
+                skill_content: None,
             },
             is_system: false,
         }
@@ -516,12 +539,12 @@ mod tests {
             skill_id: Uuid::nil(),
             name: name.to_string(),
             status: ConnectionStatus::Connected,
-            config: serde_json::json!({}),
+            config: serde_json::Value::Object(Default::default()),
             connected_by: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
             auth_scope: AuthScope::Workspace,
-            auth_type: AuthType::Custom {
+            auth: ConnectionAuth::Custom {
                 fields: fields
                     .into_iter()
                     .map(|k| CustomField {
@@ -531,6 +554,9 @@ mod tests {
                         required: true,
                     })
                     .collect(),
+            },
+            kind: ConnectionKind::Default {
+                skill_content: None,
             },
             is_system: false,
         }
@@ -588,10 +614,6 @@ mod tests {
 
     #[tokio::test]
     async fn resolves_custom_fields_into_field_key_env_vars() {
-        // Env var names are the field keys uppercased — the connection
-        // name is NOT implicitly prepended. Authors choose the env var
-        // name by picking the field key (e.g. `API_KEY` → `API_KEY`,
-        // or `ZIPPY_PUBLISH_KEY` → `ZIPPY_PUBLISH_KEY`).
         let id = Uuid::new_v4();
         let conn = custom_connection(id, "acme", vec!["api_key", "api_secret"]);
         let secrets = vec![
@@ -609,28 +631,7 @@ mod tests {
         assert_eq!(r.env_vars.get("API_KEY").unwrap(), "k-123");
         assert_eq!(r.env_vars.get("API_SECRET").unwrap(), "s-456");
         assert!(r.env_vars.get("ACME_API_KEY").is_none());
-        // No Authorization header without auth_header_template.
         assert!(r.http_headers.get("Authorization").is_none());
-    }
-
-    #[tokio::test]
-    async fn custom_with_template_emits_authorization_header() {
-        let id = Uuid::new_v4();
-        let mut conn = custom_connection(id, "acme", vec!["api_key"]);
-        conn.config = serde_json::json!({"auth_header_template": "Bearer {{api_key}}"});
-        let secrets = vec![(format!("connection.{}.api_key", id), "tok-123".to_string())];
-        let stores = build_stores(vec![conn], vec![], secrets).await;
-
-        let ctx = ResolveCtx::new(&stores);
-        let r = DefaultResolver
-            .resolve(&id.to_string(), &ctx)
-            .await
-            .unwrap();
-
-        assert_eq!(
-            r.http_headers.get("Authorization").unwrap(),
-            "Bearer tok-123"
-        );
     }
 
     #[tokio::test]
@@ -651,17 +652,15 @@ mod tests {
     async fn distri_native_requires_session_token() {
         let id = Uuid::new_v4();
         let mut conn = oauth_connection(id, "distri");
-        conn.auth_type = AuthType::DistriNative;
+        conn.auth = ConnectionAuth::DistriNative;
         let stores = build_stores(vec![conn], vec![], vec![]).await;
 
-        // No session token → error.
         let ctx = ResolveCtx::new(&stores);
         assert!(DefaultResolver
             .resolve(&id.to_string(), &ctx)
             .await
             .is_err());
 
-        // With session token → emits DISTRI_API_KEY + Bearer header.
         let ctx = ResolveCtx::new(&stores).with_distri_session("session-xyz");
         let r = DefaultResolver
             .resolve(&id.to_string(), &ctx)

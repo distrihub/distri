@@ -72,6 +72,29 @@ pub trait PlanningStrategy: Send + Sync + std::fmt::Debug {
         )
     }
 
+    /// Single helper that builds the per-iteration planning LLM executor.
+    /// Centralizing this here ensures every agent-loop LLM call goes through
+    /// the same tool-selection policy — namely, `context.get_tools_for_llm()`
+    /// which excludes deferred tools that the model hasn't yet loaded via
+    /// `tool_search`. Both the non-streaming and streaming paths call this so
+    /// they can't drift.
+    async fn build_planning_executor(
+        &self,
+        plan_config: &crate::types::PlanConfig,
+        context: Arc<ExecutorContext>,
+        format: ToolCallFormat,
+    ) -> Result<Box<dyn crate::llm::LLMExecutorTrait>, AgentError> {
+        let agent_name = context.agent_id.clone();
+        let tools = context.get_tools_for_llm().await;
+        crate::llm::create_llm_executor(
+            get_planning_definition(agent_name, plan_config.model_settings.clone(), format),
+            tools,
+            context,
+            None,
+            None,
+        )
+    }
+
     async fn llm(
         &self,
         messages: &[crate::types::Message],
@@ -79,21 +102,10 @@ pub trait PlanningStrategy: Send + Sync + std::fmt::Debug {
         context: Arc<ExecutorContext>,
         format: ToolCallFormat,
     ) -> Result<LLMResponse, AgentError> {
-        let agent_name = context.agent_id.clone();
-        let tools = context.get_tools().await;
-        let planning_executor = crate::llm::create_llm_executor(
-            get_planning_definition(
-                agent_name,
-                plan_config.model_settings.clone(),
-                format.clone(),
-            ),
-            tools,
-            context.clone(),
-            None,
-            None,
-        )?;
-
-        planning_executor.execute(&messages).await
+        let planning_executor = self
+            .build_planning_executor(plan_config, context, format)
+            .await?;
+        planning_executor.execute(messages).await
     }
 
     /// Streaming version of llm helper method
@@ -104,22 +116,11 @@ pub trait PlanningStrategy: Send + Sync + std::fmt::Debug {
         context: Arc<ExecutorContext>,
         format: ToolCallFormat,
     ) -> Result<StreamResult, AgentError> {
-        let agent_name = context.agent_id.clone();
-        let tools = context.get_tools().await;
-        let planning_executor = crate::llm::create_llm_executor(
-            get_planning_definition(
-                agent_name,
-                plan_config.model_settings.clone(),
-                format.clone(),
-            ),
-            tools,
-            context.clone(),
-            None,
-            None,
-        )?;
-
+        let planning_executor = self
+            .build_planning_executor(plan_config, context.clone(), format)
+            .await?;
         planning_executor
-            .execute_stream(&messages, context.clone())
+            .execute_stream(messages, context)
             .await
     }
 }
