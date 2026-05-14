@@ -169,7 +169,12 @@ impl ExecutorContextTool for ToolSearchTool {
         let tools = context.get_tools().await;
         let deferred_names = context.get_deferred_tool_names().await;
 
-        let mut scored: Vec<(ToolSearchEntry, u32)> = Vec::new();
+        // Candidate match list: (entry, score, was_deferred). We promote
+        // deferred matches into `loaded_deferred_tools` only AFTER the
+        // top-N take, so we never load a tool the model didn't actually
+        // see in the response — that prevents schemas we silently dropped
+        // from poisoning the next LLM call.
+        let mut scored: Vec<(ToolSearchEntry, u32, bool)> = Vec::new();
 
         for tool in &tools {
             let def = tool.get_tool_definition();
@@ -177,10 +182,7 @@ impl ExecutorContextTool for ToolSearchTool {
             let tool_name_lower = def.name.to_lowercase();
 
             if !input.names.is_empty() {
-                // ── Exact name lookup: ALWAYS return full schema + prompt ──
-                // This is how the model "loads" a deferred tool — it gets the
-                // schema AND the prompt instructions that would normally be in
-                // the system prompt for non-deferred tools.
+                // Exact name lookup → return full schema + prompt.
                 if input
                     .names
                     .iter()
@@ -197,6 +199,7 @@ impl ExecutorContextTool for ToolSearchTool {
                             hint: None,
                         },
                         100,
+                        is_deferred,
                     ));
                 }
             } else if let Some(ref query) = input.query {
@@ -205,35 +208,22 @@ impl ExecutorContextTool for ToolSearchTool {
                 let score = compute_relevance(&tool_name_lower, &desc_lower, &query_lower);
 
                 if score > 0 {
-                    // ── Keyword search: deferred tools get summary only ──
-                    let entry = if is_deferred {
-                        ToolSearchEntry {
-                            name: def.name,
-                            description: def.description,
-                            parameters: None,
-                            examples: None,
-                            prompt: None,
-                            deferred: Some(true),
-                            hint: Some(
-                                "Use tool_search with names: [\"<name>\"] to fetch the full schema."
-                                    .to_string(),
-                            ),
-                        }
-                    } else {
+                    scored.push((
                         ToolSearchEntry {
                             name: def.name,
                             description: def.description,
                             parameters: Some(def.parameters),
                             examples: def.examples,
-                            prompt: None, // Non-deferred tools already have prompts in system prompt
+                            prompt: def.prompt,
                             deferred: None,
                             hint: None,
-                        }
-                    };
-                    scored.push((entry, score));
+                        },
+                        score,
+                        is_deferred,
+                    ));
                 }
             } else {
-                // ── No query: return summaries only (name + description) ──
+                // No query → name + description summaries only.
                 scored.push((
                     ToolSearchEntry {
                         name: def.name,
@@ -245,17 +235,37 @@ impl ExecutorContextTool for ToolSearchTool {
                         hint: None,
                     },
                     50,
+                    false,
                 ));
             }
         }
 
-        // Sort by relevance descending, then limit
+        // Sort by relevance descending, then take top-N.
         scored.sort_by(|a, b| b.1.cmp(&a.1));
-        let results: Vec<ToolSearchEntry> = scored
+        let kept: Vec<(ToolSearchEntry, bool)> = scored
             .into_iter()
             .take(input.max_results)
-            .map(|(entry, _)| entry)
+            .map(|(entry, _score, was_deferred)| (entry, was_deferred))
             .collect();
+
+        // Only the matches we actually returned get promoted to loaded.
+        let newly_loaded: Vec<String> = kept
+            .iter()
+            .filter(|(_, was_deferred)| *was_deferred)
+            .map(|(entry, _)| entry.name.clone())
+            .collect();
+        let results: Vec<ToolSearchEntry> = kept.into_iter().map(|(entry, _)| entry).collect();
+
+        // Mark these deferred tools as loaded so the next LLM call ships
+        // their schemas in `tools[]`.
+        if !newly_loaded.is_empty() {
+            tracing::info!(
+                "tool_search: loaded {} deferred tool(s) into LLM tools[]: {:?}",
+                newly_loaded.len(),
+                newly_loaded
+            );
+            context.mark_deferred_tools_loaded(newly_loaded).await;
+        }
 
         if results.is_empty() {
             let available: Vec<String> = tools.iter().map(|t| t.get_name()).collect();

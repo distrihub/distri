@@ -131,6 +131,12 @@ pub struct ExecutorContext {
     pub dynamic_tools: Option<Arc<RwLock<Vec<Arc<dyn Tool>>>>>,
     /// Names of tools that are deferred (name+description only in prompt).
     pub deferred_tool_names: Arc<RwLock<HashSet<String>>>,
+    /// Deferred tools that the model has explicitly loaded via `tool_search`
+    /// with `names: [...]`. Once loaded, a tool's full schema is shipped to
+    /// the LLM in every subsequent API call this run, so the model can
+    /// invoke it. Starts empty — the model only sees core tools until it
+    /// searches.
+    pub loaded_deferred_tools: Arc<RwLock<HashSet<String>>>,
     pub hook_prompt_state: Arc<RwLock<HookPromptState>>,
     pub hook_registry: Arc<RwLock<Option<HookRegistry>>>,
     /// Default model settings inherited from the orchestrator/workspace context.
@@ -225,6 +231,7 @@ impl Default for ExecutorContext {
             parent_run_id: None,
             dynamic_tools: None,
             deferred_tool_names: Arc::new(RwLock::new(HashSet::new())),
+            loaded_deferred_tools: Arc::new(RwLock::new(HashSet::new())),
             hook_prompt_state: Arc::new(RwLock::new(HookPromptState::default())),
             hook_registry: Arc::new(RwLock::new(None)),
             default_model_settings: None,
@@ -337,6 +344,51 @@ impl ExecutorContext {
     /// Get a copy of all deferred tool names.
     pub async fn get_deferred_tool_names(&self) -> HashSet<String> {
         self.deferred_tool_names.read().await.clone()
+    }
+
+    /// Mark deferred tools as loaded so subsequent LLM calls include their
+    /// full schemas in the API `tools[]` array. Called from
+    /// `ToolSearchTool::execute_with_executor_context` when the model uses
+    /// `names: [...]` to fetch specific schemas.
+    pub async fn mark_deferred_tools_loaded(&self, names: impl IntoIterator<Item = String>) {
+        let mut guard = self.loaded_deferred_tools.write().await;
+        for n in names {
+            guard.insert(n);
+        }
+    }
+
+    /// Snapshot of deferred tools the model has loaded via `tool_search` so
+    /// far. Read by the LLM-call sites to decide which deferred tools to
+    /// include in the API `tools[]` array.
+    pub async fn get_loaded_deferred_tools(&self) -> HashSet<String> {
+        self.loaded_deferred_tools.read().await.clone()
+    }
+
+    /// Tool list to ship to the LLM API as `tools[]`. A deferred tool is
+    /// included only after the model has loaded it via `tool_search` — that
+    /// way the model sees only core + loaded schemas (a real
+    /// progressive-disclosure flow), keeping prompt size down and isolating
+    /// remote MCP tools whose schemas haven't been needed (and which might
+    /// fail provider-side validation if they're malformed).
+    ///
+    /// Use this at LLM-call sites (`planning/types.rs::llm`/`llm_stream`).
+    /// Other call sites that need the *complete* tool universe — dispatch,
+    /// parser construction, system-prompt rendering — should keep calling
+    /// `get_tools()`.
+    pub async fn get_tools_for_llm(&self) -> Vec<Arc<dyn Tool>> {
+        let tools = self.get_tools().await;
+        let deferred = self.deferred_tool_names.read().await;
+        if deferred.is_empty() {
+            return tools;
+        }
+        let loaded = self.loaded_deferred_tools.read().await;
+        tools
+            .into_iter()
+            .filter(|t| {
+                let name = t.get_name();
+                !deferred.contains(&name) || loaded.contains(&name)
+            })
+            .collect()
     }
 
     pub async fn merge_hook_prompt_state(&self, state: HookPromptState) {
@@ -1158,6 +1210,7 @@ impl ExecutorContext {
             parent_run_id: self.parent_run_id.clone(),
             dynamic_tools: self.dynamic_tools.clone(),
             deferred_tool_names: self.deferred_tool_names.clone(),
+            loaded_deferred_tools: self.loaded_deferred_tools.clone(),
             hook_prompt_state: self.hook_prompt_state.clone(),
             hook_registry: self.hook_registry.clone(),
             default_model_settings: self.default_model_settings.clone(),

@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
+use crate::McpClientTransport;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ConnectionAuthType {
@@ -91,36 +93,8 @@ impl std::str::FromStr for AuthScope {
     }
 }
 
-/// How a connection authenticates to the downstream API.
-///
-/// OAuth and Custom are user-creatable. DistriNative is system-seeded only —
-/// it represents the platform-internal distri connection used by the official bot.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum AuthType {
-    /// Standard OAuth flow via the distri OAuth provider registry.
-    /// Explicit rename so serde doesn't snake_case `OAuth` → `o_auth`.
-    #[serde(rename = "oauth")]
-    OAuth {
-        provider: String,
-        #[serde(default)]
-        scopes: Vec<String>,
-    },
-    /// User-defined key/value field schema. The admin declares the shape; values
-    /// are collected separately (inline at create time for Workspace scope, or
-    /// via the configure URL for User scope) and stored as rows in the
-    /// `secrets` table under key `connection.<id>.<field_key>`.
-    Custom {
-        #[serde(default)]
-        fields: Vec<CustomField>,
-    },
-    /// Platform-internal: the seeded distri connection used by the official bot.
-    /// No configuration — the caller's distri session token is proxied through.
-    DistriNative,
-}
-
-/// One configurable field on a Custom connection.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
+/// One configurable field on a Custom-auth connection.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema, PartialEq)]
 pub struct CustomField {
     /// Stable identifier used as the secret key suffix (e.g. `api_key`).
     pub key: String,
@@ -139,18 +113,62 @@ fn default_required() -> bool {
     true
 }
 
-impl AuthType {
-    /// Provider name used for skill template lookup and connection display.
+/// RFC 8414 metadata for OAuth Authorization Servers discovered via the
+/// `.well-known/oauth-authorization-server` endpoint. Used for MCP servers
+/// (Dynamic Client Registration / non-built-in providers). Built-in providers
+/// (google, github, …) leave this as `None` and use the registry-known endpoints.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema, PartialEq)]
+pub struct OAuthMetadata {
+    pub issuer: String,
+    pub authorization_endpoint: String,
+    pub token_endpoint: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registration_endpoint: Option<String>,
+    #[serde(default)]
+    pub scopes_supported: Vec<String>,
+}
+
+/// What kind of authn this Connection holds. Lives directly on the Connection
+/// row — auth is connection-shaped, not a shared entity.
+///
+/// Replaces the prior split `Credential.material` enum.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ConnectionAuth {
+    /// No auth needed. Used by open MCP servers and test connections.
+    None,
+    /// OAuth (platform-managed, BYOK, or DCR for MCP).
+    Oauth {
+        provider: String,
+        #[serde(default)]
+        scopes: Vec<String>,
+        /// RFC 8414 metadata for DCR / non-built-in providers. None for
+        /// built-in (google, github, …) where the registry knows the endpoints.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        oauth_metadata: Option<OAuthMetadata>,
+    },
+    /// User-supplied named fields (API keys, custom headers). Values live in
+    /// the `secrets` table under key `connection.<id>.<field_key>`.
+    Custom {
+        #[serde(default)]
+        fields: Vec<CustomField>,
+    },
+    /// Distri's own session token IS the auth.
+    DistriNative,
+}
+
+impl ConnectionAuth {
     pub fn provider_name(&self) -> &str {
         match self {
-            Self::OAuth { provider, .. } => provider.as_str(),
+            Self::None => "none",
+            Self::Oauth { provider, .. } => provider.as_str(),
             Self::Custom { .. } => "custom",
             Self::DistriNative => "distri",
         }
     }
 
     pub fn is_oauth(&self) -> bool {
-        matches!(self, Self::OAuth { .. })
+        matches!(self, Self::Oauth { .. })
     }
 
     pub fn is_custom(&self) -> bool {
@@ -161,60 +179,23 @@ impl AuthType {
         matches!(self, Self::DistriNative)
     }
 
-    /// Shorthand for iterating required Custom fields (empty for OAuth/DistriNative).
-    pub fn custom_required_fields(&self) -> Vec<&CustomField> {
-        match self {
-            Self::Custom { fields } => fields.iter().filter(|f| f.required).collect(),
-            _ => vec![],
-        }
-    }
-
-    /// All Custom fields regardless of required-ness.
     pub fn custom_fields(&self) -> &[CustomField] {
         match self {
             Self::Custom { fields } => fields,
             _ => &[],
         }
     }
+
+    pub fn custom_required_fields(&self) -> Vec<&CustomField> {
+        match self {
+            Self::Custom { fields } => fields.iter().filter(|f| f.required).collect(),
+            _ => vec![],
+        }
+    }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
-pub struct Connection {
-    pub id: Uuid,
-    pub workspace_id: Uuid,
-    pub skill_id: Uuid,
-    pub name: String,
-    pub status: ConnectionStatus,
-    pub config: serde_json::Value,
-    pub connected_by: Option<Uuid>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-    /// Who is allowed to use this connection. Workspace = platform members,
-    /// EndUser = external actors resolved via a handshake.
-    pub auth_scope: AuthScope,
-    /// How the connection authenticates to the downstream API.
-    pub auth_type: AuthType,
-    /// Platform-seeded connections (e.g. the `distri` connection) carry is_system=true
-    /// and are write-protected from user mutations.
-    #[serde(default)]
-    pub is_system: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
-pub struct NewConnection {
-    pub workspace_id: Uuid,
-    pub skill_id: Uuid,
-    pub name: String,
-    pub status: ConnectionStatus,
-    pub config: serde_json::Value,
-    pub connected_by: Option<Uuid>,
-    pub auth_scope: AuthScope,
-    pub auth_type: AuthType,
-    #[serde(default)]
-    pub is_system: bool,
-}
-
-/// Typed OAuth token — replaces raw serde_json::Value.
+/// Typed OAuth/refresh token bundle stored in Redis under
+/// `connection:token:{connection_id}`.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
 pub struct ConnectionToken {
     pub access_token: String,
@@ -238,9 +219,171 @@ impl ConnectionToken {
     }
 }
 
-/// Describes an HTTP request that the gateway should make to verify a user's
-/// identity against an external service. Stored in `connection.config` under
-/// the key `verify_request`.
+/// What capability surface a connection exposes.
+///
+/// `Default` is the historical behavior: auth-only — the connection contributes
+/// credentials to the agent's env vars or to the outbound HTTP proxy.
+///
+/// `Mcp` makes the connection *also* a remote tool source. Agents reference it
+/// by `Connection.name` in `ToolsConfig.mcp[].server`; the executor builds an
+/// `McpClientPool` from every `kind = Mcp` connection in scope, with auth
+/// (`auth_type`) injected as the transport's bearer header at connect time.
+///
+/// Auth and capability are orthogonal: the same OAuth provider can back both a
+/// `Default` GitHub connection (REST proxy) and a `Mcp` GitHub connection
+/// (Streamable HTTP) — they're two rows that share `auth_type.provider`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ConnectionKind {
+    /// REST / CLI proxy connection. Agents call the API documented in
+    /// `skill_content`; distri injects the credential's headers via
+    /// `/proxy/request` or the `inject_connection_env` tool.
+    Default {
+        /// Markdown skill describing the API surface. Required for custom
+        /// connections; optional for built-in OAuth providers that ship a
+        /// bundled template (the server fills in from
+        /// `connection_skill_templates/<provider>.md` when absent).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        skill_content: Option<String>,
+    },
+    /// Remote MCP server. distri connects to `transport.url` and exposes
+    /// its tools to agents that reference this connection's name in
+    /// `tools.mcp[].server`.
+    Mcp {
+        #[serde(flatten)]
+        mcp: McpConnectionSpec,
+    },
+}
+
+impl Default for ConnectionKind {
+    fn default() -> Self {
+        Self::Default {
+            skill_content: None,
+        }
+    }
+}
+
+impl ConnectionKind {
+    pub fn is_mcp(&self) -> bool {
+        matches!(self, Self::Mcp { .. })
+    }
+    pub fn as_mcp(&self) -> Option<&McpConnectionSpec> {
+        match self {
+            Self::Mcp { mcp } => Some(mcp),
+            _ => None,
+        }
+    }
+    /// Skill markdown if this is a Default-kind connection that ships one.
+    /// MCP-kind connections always return `None` (their tool surface is
+    /// the MCP server's `tools/list`, not a skill doc).
+    pub fn skill_content(&self) -> Option<&str> {
+        match self {
+            Self::Default { skill_content } => skill_content.as_deref(),
+            Self::Mcp { .. } => None,
+        }
+    }
+    pub fn kind_str(&self) -> &'static str {
+        match self {
+            Self::Default { .. } => "default",
+            Self::Mcp { .. } => "mcp",
+        }
+    }
+}
+
+/// MCP-specific configuration carried on `ConnectionKind::Mcp`.
+///
+/// The transport is restricted to remote variants in the UI (Streamable HTTP /
+/// SSE) — stdio is intentionally not user-configurable because connections are
+/// meant to be portable across hosts. `extra_headers` are merged with the
+/// resolver-injected `Authorization` header at connect time.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub struct McpConnectionSpec {
+    pub transport: McpClientTransport,
+    /// Optional human description shown in the UI list.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Include/exclude glob patterns applied to discovered tool names.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_filter: Option<McpToolFilter>,
+    /// Whether the server is enabled for tool resolution.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, ToSchema, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub struct McpToolFilter {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub include: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exclude: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
+pub struct Connection {
+    pub id: Uuid,
+    pub workspace_id: Uuid,
+    pub skill_id: Uuid,
+    pub name: String,
+    pub status: ConnectionStatus,
+    pub config: serde_json::Value,
+    pub connected_by: Option<Uuid>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    /// Who is allowed to use this connection. Workspace = platform members,
+    /// EndUser = external actors resolved via a handshake.
+    pub auth_scope: AuthScope,
+    /// The authentication material this connection carries. Auth is
+    /// connection-shaped — there is no separate Credential entity.
+    pub auth: ConnectionAuth,
+    /// What surface this connection exposes (auth-only vs MCP tool source).
+    #[serde(default)]
+    pub kind: ConnectionKind,
+    /// Platform-seeded connections (e.g. the `distri` connection) carry is_system=true
+    /// and are write-protected from user mutations.
+    #[serde(default)]
+    pub is_system: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema)]
+pub struct NewConnection {
+    pub workspace_id: Uuid,
+    pub skill_id: Uuid,
+    pub name: String,
+    pub status: ConnectionStatus,
+    pub config: serde_json::Value,
+    pub connected_by: Option<Uuid>,
+    pub auth_scope: AuthScope,
+    pub auth: ConnectionAuth,
+    #[serde(default)]
+    pub kind: ConnectionKind,
+    #[serde(default)]
+    pub is_system: bool,
+}
+
+impl Connection {
+    pub fn is_mcp(&self) -> bool {
+        self.kind.is_mcp()
+    }
+    pub fn mcp_spec(&self) -> Option<&McpConnectionSpec> {
+        self.kind.as_mcp()
+    }
+}
+
+/// Admin-authored HTTP probe attached to a *connection* — used by the
+/// "New Custom Connection" UI to confirm the configured URL + supplied
+/// auth fields actually reach the downstream service before save.
+///
+/// Stored in `connection.config['verify_request']`. Scope is intentionally
+/// per-connection: a connection is "this URL + this transport + this auth",
+/// and the probe tests that combination. Unrelated to bot gating (which is
+/// just "does this end-user hold valid auth for this connection";
+/// see `Bot.gate_connection_id`).
 #[derive(Debug, Clone, Deserialize)]
 pub struct VerifyRequest {
     pub url: String,
@@ -269,8 +412,8 @@ impl Connection {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, ToSchema, Default)]
 pub struct ConnectionRequirement {
     /// Match by provider name (preferred): "google", "slack", ...
-    /// Resolved against `AuthType::OAuth.provider` / `AuthType::Custom` (name match)
-    /// / `AuthType::DistriNative` (provider_name == "distri").
+    /// Resolved against the Connection's `auth.provider` for `Oauth`,
+    /// the Connection's name for `Custom`, and `"distri"` for `DistriNative`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider: Option<String>,
 

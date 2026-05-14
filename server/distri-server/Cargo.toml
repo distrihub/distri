@@ -47,7 +47,7 @@ tracing = "0.1"
 tracing-subscriber = "0.3"
 distri-core = { path = "../distri-core", version = "0.3.8", default-features = false }
 distri-filesystem = { path = "../distri-filesystem", version = "0.3.8" }
-distri-types = { path = "../../distri-types", version = "0.3.8" }
+distri-types = { path = "../../distri-types", version = "0.3.8", features = ["actix"] }
 distri-a2a = { path = "../../distri-a2a", version = "0.3.8" }
 distri-auth = { path = "../distri-auth", version = "0.3.8" }
 

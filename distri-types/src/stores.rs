@@ -1436,16 +1436,16 @@ pub trait ConnectionStore: Send + Sync + 'static {
     async fn list_by_workspace(&self, workspace_id: &str) -> anyhow::Result<Vec<Connection>>;
     async fn update_status(&self, id: &str, status: ConnectionStatus) -> anyhow::Result<()>;
     async fn update_skill_id(&self, id: &str, skill_id: uuid::Uuid) -> anyhow::Result<()>;
-    /// Update the connection's display name and/or auth_type schema.
-    /// Callers must enforce "no rename of existing field keys" — renaming
-    /// would orphan secrets keyed as `connection.<id>.<old_field_key>`.
+    /// Rename a connection. Editing the embedded `auth` schema goes through
+    /// `update_auth` instead.
     async fn update(
         &self,
         id: &str,
         name: Option<String>,
-        auth_type: Option<crate::connections::AuthType>,
     ) -> anyhow::Result<Connection>;
     async fn delete(&self, id: &str) -> anyhow::Result<()>;
+    /// Look up by `(workspace_id, provider)`. Resolution matches on
+    /// `connections.auth->>'provider'` for OAuth.
     async fn get_by_provider(
         &self,
         workspace_id: &str,
@@ -1453,7 +1453,8 @@ pub trait ConnectionStore: Send + Sync + 'static {
     ) -> anyhow::Result<Option<Connection>>;
 }
 
-/// Token storage for OAuth connections (Redis-backed in cloud).
+/// Token storage for OAuth-auth connections (Redis-backed in cloud).
+/// Keyed by `connection_id` — auth lives on the connection.
 #[async_trait]
 pub trait ConnectionTokenStore: Send + Sync + 'static {
     async fn store_token(&self, connection_id: &str, token: ConnectionToken) -> anyhow::Result<()>;

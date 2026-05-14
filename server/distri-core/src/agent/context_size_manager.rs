@@ -320,6 +320,20 @@ impl ContextSizeManager {
                         total_tokens += estimate.estimated_tokens;
                     }
                 }
+                crate::types::Part::ResourceLink(link) => {
+                    let link_text = format!(
+                        "{} {}",
+                        link.uri,
+                        link.text.as_deref().unwrap_or("")
+                    );
+                    let estimate = TokenEstimator::estimate_tokens(
+                        &link_text,
+                        self.config.estimation_method.clone(),
+                    );
+                    if let Ok(estimate) = estimate {
+                        total_tokens += estimate.estimated_tokens;
+                    }
+                }
             }
         }
 

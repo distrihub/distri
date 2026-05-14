@@ -16,6 +16,15 @@ default-members = ["distri-server-cli"]
 uuid = { version = "1.0", features = ["v4", "js"] }
 async-trait = "0.1"
 async-mcp = { version = "0.1.3" }
+rmcp = { version = "1.4", default-features = false, features = [
+  "client",
+  "macros",
+  "transport-child-process",
+  "transport-streamable-http-client",
+  "transport-streamable-http-client-reqwest",
+  "client-side-sse",
+  "reqwest",
+] }
 async-openai = { version = "0.32.2" }
 anyhow = "1.0"
 tracing = "0.1"

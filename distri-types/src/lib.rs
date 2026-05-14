@@ -3,6 +3,8 @@ pub mod a2a {
     pub use distri_a2a::*;
 }
 mod agent;
+pub mod api_error;
+pub use api_error::{ApiError, ApiResult};
 pub mod browser;
 pub mod configuration;
 mod orchestrator;

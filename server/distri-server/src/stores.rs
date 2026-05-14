@@ -11,9 +11,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use distri_types::api::notes::{CreateNoteRequest, ListNotesQuery, NoteRecord, UpdateNoteRequest};
 use distri_types::api::spans::{SpanRecord, TraceRecord};
-use distri_types::connections::{
-    AuthType, Connection, ConnectionStatus, ConnectionToken, NewConnection,
-};
+use distri_types::connections::{Connection, ConnectionStatus, ConnectionToken, NewConnection};
 use distri_types::stores::{
     ConnectionStore, ConnectionTokenStore, NoteStore, SpanQuery, SpanStore,
 };
@@ -57,7 +55,8 @@ impl ConnectionStore for InMemoryConnectionStore {
             created_at: now,
             updated_at: now,
             auth_scope: new_conn.auth_scope,
-            auth_type: new_conn.auth_type,
+            auth: new_conn.auth,
+            kind: new_conn.kind,
             is_system: new_conn.is_system,
         };
         self.connections.write().await.insert(conn.id, conn.clone());
@@ -98,7 +97,6 @@ impl ConnectionStore for InMemoryConnectionStore {
         &self,
         id: &str,
         name: Option<String>,
-        auth_type: Option<AuthType>,
     ) -> anyhow::Result<Connection> {
         let id = Uuid::parse_str(id).map_err(|e| anyhow::anyhow!("invalid UUID: {}", e))?;
         let mut map = self.connections.write().await;
@@ -107,9 +105,6 @@ impl ConnectionStore for InMemoryConnectionStore {
             .ok_or_else(|| anyhow::anyhow!("connection not found"))?;
         if let Some(n) = name {
             conn.name = n;
-        }
-        if let Some(at) = auth_type {
-            conn.auth_type = at;
         }
         conn.updated_at = chrono::Utc::now();
         Ok(conn.clone())
@@ -126,12 +121,11 @@ impl ConnectionStore for InMemoryConnectionStore {
         _workspace_id: &str,
         provider: &str,
     ) -> anyhow::Result<Option<Connection>> {
+        // OSS in-memory store doesn't track providers on a separate row; match
+        // by connection name as a fallback. Cloud's `PgConnectionStore` matches
+        // on `connections.auth->>'provider'`.
         let map = self.connections.read().await;
-        let found = map.values().find(|c| match &c.auth_type {
-            AuthType::OAuth { provider: p, .. } => p == provider,
-            _ => false,
-        });
-        Ok(found.cloned())
+        Ok(map.values().find(|c| c.name == provider).cloned())
     }
 }
 

@@ -2,6 +2,9 @@ pub mod a2a;
 pub mod agent;
 pub mod broadcast;
 pub mod connections;
+
+// Re-export from distri-types so callers can write `distri_core::ApiError`.
+pub use distri_types::{ApiError, ApiResult};
 pub mod runner;
 pub mod worker;
 

@@ -31,8 +31,13 @@ pub trait StoreFactory: Send + Sync {
     fn secret_store(&self) -> Arc<dyn SecretStore>;
     fn skill_store(&self) -> Arc<dyn SkillStore>;
     fn connection_store(&self) -> Arc<dyn ConnectionStore>;
-    fn connection_token_store(&self) -> Arc<dyn ConnectionTokenStore>;
     fn note_store(&self) -> Arc<dyn NoteStore>;
+    /// Optional connection token store — cloud overrides with
+    /// `RedisConnectionTokenStore`. OSS / sqlite / diesel-postgres backends
+    /// leave this `None`; runtime callers inject their own.
+    fn connection_token_store(&self) -> Option<Arc<dyn ConnectionTokenStore>> {
+        None
+    }
 }
 
 impl<Conn> StoreFactory for DieselStoreBuilder<Conn>
@@ -87,10 +92,6 @@ where
 
     fn connection_store(&self) -> Arc<dyn ConnectionStore> {
         Arc::new(DieselStoreBuilder::connection_store(self)) as Arc<dyn ConnectionStore>
-    }
-
-    fn connection_token_store(&self) -> Arc<dyn ConnectionTokenStore> {
-        Arc::new(DieselStoreBuilder::connection_token_store(self)) as Arc<dyn ConnectionTokenStore>
     }
 
     fn note_store(&self) -> Arc<dyn NoteStore> {
@@ -346,7 +347,7 @@ impl StoreBuilder {
         });
 
         let connection_store = Some(metadata_factory.connection_store());
-        let connection_token_store = Some(metadata_factory.connection_token_store());
+        let connection_token_store = metadata_factory.connection_token_store();
         let note_store = Some(metadata_factory.note_store());
 
         Ok(InitializedStores {

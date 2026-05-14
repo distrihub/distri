@@ -73,7 +73,7 @@ mod tests {
             .set_json(json!({
                 "name": "my-api",
                 "auth_scope": "workspace",
-                "auth_type": {
+                "auth": {
                     "type": "custom",
                     "fields": [
                         { "key": "TOKEN", "is_secret": true, "required": true }
@@ -120,7 +120,7 @@ mod tests {
             .set_json(json!({
                 "name": "list-test",
                 "auth_scope": "workspace",
-                "auth_type": {
+                "auth": {
                     "type": "custom",
                     "fields": [{"key": "KEY", "is_secret": true, "required": true}]
                 },
@@ -164,7 +164,7 @@ mod tests {
             .set_json(json!({
                 "name": "get-test",
                 "auth_scope": "workspace",
-                "auth_type": {
+                "auth": {
                     "type": "custom",
                     "fields": [{"key": "KEY", "is_secret": true, "required": true}]
                 },
@@ -233,7 +233,7 @@ mod tests {
             .set_json(json!({
                 "name": "original-name",
                 "auth_scope": "workspace",
-                "auth_type": {
+                "auth": {
                     "type": "custom",
                     "fields": [{"key": "KEY", "is_secret": true, "required": true}]
                 },
@@ -280,7 +280,7 @@ mod tests {
             .set_json(json!({
                 "name": "del-test",
                 "auth_scope": "workspace",
-                "auth_type": {
+                "auth": {
                     "type": "custom",
                     "fields": [{"key": "KEY", "is_secret": true, "required": true}]
                 },
@@ -333,7 +333,7 @@ mod tests {
             .set_json(json!({
                 "name": long_name,
                 "auth_scope": "workspace",
-                "auth_type": {
+                "auth": {
                     "type": "custom",
                     "fields": [{"key": "KEY", "is_secret": true, "required": true}]
                 },
@@ -362,7 +362,7 @@ mod tests {
             .set_json(json!({
                 "name": "empty-fields",
                 "auth_scope": "workspace",
-                "auth_type": {
+                "auth": {
                     "type": "custom",
                     "fields": []
                 },
@@ -393,7 +393,7 @@ mod tests {
             .set_json(json!({
                 "name": "with-skill",
                 "auth_scope": "workspace",
-                "auth_type": {
+                "auth": {
                     "type": "custom",
                     "fields": [{"key": "KEY", "is_secret": true, "required": true}]
                 },

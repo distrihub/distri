@@ -57,6 +57,12 @@ pub struct AgentOrchestrator {
     /// Optional OAuth handler for the connections OAuth flow.
     /// Present only when OAuth provider credentials have been configured.
     pub oauth_handler: Option<Arc<OAuthHandler>>,
+    /// Optional MCP pool provider. When set, `create_agent_from_config` asks
+    /// the provider for a per-run `McpClientPool` and threads it into tool
+    /// resolution. Cloud sets this (Postgres-backed connection store + the
+    /// `DefaultResolver` auth pipeline); the standalone OSS server leaves it
+    /// `None` and uses the static `[[tools.mcp]]` registry only.
+    pub mcp_pool_provider: Option<Arc<dyn crate::servers::McpPoolProvider>>,
 }
 
 impl std::fmt::Debug for AgentOrchestrator {
@@ -101,6 +107,7 @@ pub struct AgentOrchestratorBuilder {
     runtime: Option<Arc<dyn crate::broadcast::AgentRuntime>>,
     remote_task_runner: Option<Arc<dyn crate::runner::RemoteTaskRunner>>,
     oauth_handler: Option<Arc<OAuthHandler>>,
+    mcp_pool_provider: Option<Arc<dyn crate::servers::McpPoolProvider>>,
 }
 
 impl AgentOrchestratorBuilder {
@@ -209,6 +216,18 @@ impl AgentOrchestratorBuilder {
         self
     }
 
+    /// Attach an `McpPoolProvider`. When set, every agent run's tool
+    /// resolution asks the provider for a per-run `McpClientPool` keyed by
+    /// the context's workspace + user, so every entry-point (cloud gateway,
+    /// JSON-RPC CLI, tests) sees the same MCP tools.
+    pub fn with_mcp_pool_provider(
+        mut self,
+        provider: Arc<dyn crate::servers::McpPoolProvider>,
+    ) -> Self {
+        self.mcp_pool_provider = Some(provider);
+        self
+    }
+
     pub async fn build(self) -> anyhow::Result<AgentOrchestrator> {
         let browser_config = self.browser_config.unwrap_or_default();
 
@@ -285,6 +304,7 @@ impl AgentOrchestratorBuilder {
             runtime,
             remote_task_runner: self.remote_task_runner,
             oauth_handler: self.oauth_handler,
+            mcp_pool_provider: self.mcp_pool_provider,
         };
 
         // Sync system prompts to the store
@@ -343,6 +363,19 @@ impl AgentOrchestrator {
     pub async fn register_mcp_server(&self, name: String, server: ServerMetadataWrapper) {
         let registry = self.mcp_registry.clone();
         registry.write().await.register(name, server);
+    }
+
+    /// Resolve the per-run MCP pool for an `ExecutorContext` via the attached
+    /// provider. Called from inside `create_agent_from_config`, where tool
+    /// resolution happens — this is the single place a run's MCP pool comes
+    /// from. Returns `None` when no provider is configured (OSS standalone)
+    /// or when the provider declines.
+    pub async fn resolve_mcp_pool(
+        &self,
+        ctx: &ExecutorContext,
+    ) -> Option<Arc<crate::servers::McpClientPool>> {
+        let provider = self.mcp_pool_provider.as_ref()?;
+        provider.build_pool(ctx).await
     }
 
     pub async fn register_agent_definition(
@@ -461,13 +494,25 @@ impl AgentOrchestrator {
         definition: &crate::types::StandardDefinition,
         external_tools: &[Arc<dyn Tool>],
     ) -> Result<crate::tools::ResolvedTools, AgentError> {
+        self.get_agent_tools_with_pool(definition, external_tools, None)
+            .await
+    }
+
+    /// Pool-aware variant: include MCP tools discovered through the pool.
+    pub async fn get_agent_tools_with_pool(
+        &self,
+        definition: &crate::types::StandardDefinition,
+        external_tools: &[Arc<dyn Tool>],
+        mcp_pool: Option<Arc<crate::servers::McpClientPool>>,
+    ) -> Result<crate::tools::ResolvedTools, AgentError> {
         // Use new tools configuration if available, fallback to old mcp_servers
         let tools_config = definition.tools.clone().unwrap_or(ToolsConfig::default());
 
-        let mut resolved = crate::tools::resolve_tools_with_deferral(
+        let mut resolved = crate::tools::resolve_tools_with_deferral_and_pool(
             &tools_config,
             self.mcp_registry.clone(),
             external_tools,
+            mcp_pool,
         )
         .await
         .map_err(|e| AgentError::ToolExecution(e.to_string()))?;
@@ -495,6 +540,17 @@ impl AgentOrchestrator {
         let has_final = tools.iter().any(|t| t.get_name() == final_tool.get_name());
         if !has_final {
             tools.push(final_tool);
+        }
+
+        // If any tools were deferred, the model needs `tool_search` to
+        // discover and load their schemas. Auto-inject it — agents that
+        // don't list it explicitly still get the load-on-demand path.
+        if !resolved.deferred_tools.is_empty() {
+            let search_tool = Arc::new(crate::tools::ToolSearchTool) as Arc<dyn Tool>;
+            let has_search = tools.iter().any(|t| t.get_name() == search_tool.get_name());
+            if !has_search {
+                tools.push(search_tool);
+            }
         }
 
         // Auto-register InvokeAgentTool ONLY when the agent definition's
@@ -549,7 +605,18 @@ impl AgentOrchestrator {
                         None => vec![],
                     }
                 };
-                let resolved = self.get_agent_tools(&definition, &external_tools).await?;
+
+                // Resolve the per-run MCP pool here, inside the tool-building
+                // path that every agent run flows through. The orchestrator's
+                // attached `McpPoolProvider` (set by the host application —
+                // cloud wires it from PgConnectionStore + DefaultResolver) is
+                // the *single* source of truth for which MCP servers a run
+                // sees. Standalone hosts that don't attach a provider get
+                // `None` and the static `[[tools.mcp]]` registry still works.
+                let mcp_pool = self.resolve_mcp_pool(&context).await;
+                let resolved = self
+                    .get_agent_tools_with_pool(&definition, &external_tools, mcp_pool)
+                    .await?;
                 let deferred_names: std::collections::HashSet<String> = resolved
                     .deferred_tools
                     .iter()
@@ -1910,14 +1977,11 @@ async fn resolve_declared_connections(
                 // Hide the system-seeded DistriNative connection from the
                 // listing so the LLM doesn't mistake it for a third-party
                 // service to call on the user's behalf.
-                if matches!(
-                    c.auth_type,
-                    distri_types::connections::AuthType::DistriNative
-                ) {
+                if c.auth.is_distri_native() {
                     continue;
                 }
-                let provider_tag = match &c.auth_type {
-                    distri_types::connections::AuthType::OAuth {
+                let provider_tag = match &c.auth {
+                    distri_types::connections::ConnectionAuth::Oauth {
                         provider, scopes, ..
                     } => format!(", provider: {}, scopes: [{}]", provider, scopes.join(", ")),
                     _ => String::new(),
@@ -1930,18 +1994,29 @@ async fn resolve_declared_connections(
             continue;
         }
 
-        // Locate the matching connection.
+        // Locate the matching connection by id or by provider (matching against
+        // the connection's embedded `auth`).
         let matched: Option<Connection> = if let Some(id) = req.connection_id {
             ws_connections.iter().find(|c| c.id == id).cloned()
         } else if let Some(provider) = req.provider.as_deref() {
-            ws_connections
-                .iter()
-                .find(|c| match &c.auth_type {
-                    distri_types::connections::AuthType::OAuth { provider: p, .. } => p == provider,
-                    distri_types::connections::AuthType::Custom { .. } => c.name == provider,
-                    distri_types::connections::AuthType::DistriNative => provider == "distri",
-                })
-                .cloned()
+            let mut found = None;
+            for c in ws_connections.iter() {
+                let matches_provider = match &c.auth {
+                    distri_types::connections::ConnectionAuth::Oauth { provider: p, .. } => {
+                        p == provider
+                    }
+                    distri_types::connections::ConnectionAuth::Custom { .. } => {
+                        c.name == provider
+                    }
+                    distri_types::connections::ConnectionAuth::DistriNative => provider == "distri",
+                    distri_types::connections::ConnectionAuth::None => c.name == provider,
+                };
+                if matches_provider {
+                    found = Some(c.clone());
+                    break;
+                }
+            }
+            found
         } else {
             return Err(AgentError::Validation(format!(
                 "Agent '{}' has a connection requirement with neither provider nor connection_id",
@@ -1968,11 +2043,11 @@ async fn resolve_declared_connections(
             continue;
         };
 
-        // Scope check (OAuth).
+        // Scope check (OAuth). Reads the connection's embedded auth directly.
         if !req.scopes.is_empty() {
-            if let distri_types::connections::AuthType::OAuth {
+            if let distri_types::connections::ConnectionAuth::Oauth {
                 scopes: granted, ..
-            } = &connection.auth_type
+            } = &connection.auth
             {
                 let missing_scopes: Vec<&String> = req
                     .scopes
@@ -1995,7 +2070,8 @@ async fn resolve_declared_connections(
             }
         }
 
-        // Resolve and merge env vars.
+        // Resolve and merge env vars. The resolver keys off connection_id;
+        // auth lives on the connection.
         let mut resolve_ctx = ResolveCtx::new(stores).with_workspace(&workspace_id);
         resolve_ctx = resolve_ctx.with_user(context.user_id.as_str());
         if let Some(ev) = req.env_var.as_deref() {
@@ -2013,8 +2089,8 @@ async fn resolve_declared_connections(
                         env_vars.insert(k.clone(), v.clone());
                     }
                 }
-                let scopes_tag = match &connection.auth_type {
-                    distri_types::connections::AuthType::OAuth { scopes, .. } => {
+                let scopes_tag = match &connection.auth {
+                    distri_types::connections::ConnectionAuth::Oauth { scopes, .. } => {
                         format!(", scopes: [{}]", scopes.join(", "))
                     }
                     _ => String::new(),

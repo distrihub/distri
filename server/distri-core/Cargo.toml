@@ -42,6 +42,7 @@ thiserror = "1.0"
 async-openai = { workspace = true, features = ["realtime"] }
 reqwest = { workspace = true }
 async-mcp = { workspace = true }
+rmcp = { workspace = true }
 regex = "1.5"
 tracing = "0.1"
 tracing-subscriber = { workspace = true }
