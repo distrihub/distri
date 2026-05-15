@@ -288,6 +288,13 @@ pub enum AgentEventType {
         is_warning: bool,
         is_critical: bool,
     },
+
+    /// A structured channel reply emitted by a workflow `StepKind::Reply`
+    /// step. The gateway renders it per channel; non-channel consumers
+    /// (CLI, web) render `reply.text` and ignore buttons they can't show.
+    ChannelReply {
+        reply: crate::channel_commands::ChannelReply,
+    },
 }
 
 /// Tier of context compaction applied
@@ -300,6 +307,28 @@ pub enum CompactionTier {
     Summarize,
     /// Emergency: preserve only essentials
     Reset,
+}
+
+#[cfg(test)]
+mod channel_reply_event_tests {
+    use super::*;
+    use crate::channel_commands::{ChannelButton, ChannelReply};
+
+    #[test]
+    fn channel_reply_event_round_trips() {
+        let ev = AgentEventType::ChannelReply {
+            reply: ChannelReply {
+                text: "Tap to continue:".into(),
+                buttons: vec![vec![ChannelButton::WebApp {
+                    label: "Continue".into(),
+                    url: "https://a.app/lesson/1".into(),
+                }]],
+            },
+        };
+        let v = serde_json::to_value(&ev).unwrap();
+        let back: AgentEventType = serde_json::from_value(v).unwrap();
+        assert!(matches!(back, AgentEventType::ChannelReply { .. }));
+    }
 }
 
 impl AgentEvent {
