@@ -67,6 +67,7 @@ mod client_config;
 pub use client_config::DistriConfig;
 
 pub mod api;
+pub mod channel_commands;
 pub mod connections;
 pub mod dynamic_tool;
 pub mod http_request;
