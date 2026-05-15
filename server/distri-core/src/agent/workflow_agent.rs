@@ -287,7 +287,7 @@ impl StepExecutor for ContextStepExecutor {
                                     })
                                     .collect::<Vec<_>>()
                                     .join("\n");
-                                Ok(StepResult::done(serde_json::json!({"output": result_text})))
+                                Ok(StepResult::done(tool_result_value(result_text)))
                             }
                             Err(e) => Ok(StepResult::failed(&format!("Tool error: {}", e))),
                         }
@@ -716,6 +716,19 @@ impl WorkflowAgent {
 
 // Template resolution: uses distri_workflow::resolve (imported via `use distri_workflow::*`)
 
+/// Convert the concatenated text output of a tool call into a structured JSON value.
+///
+/// If `result_text` is valid JSON it is returned as-is (preserving structured MCP
+/// tool output so downstream workflow steps can reference fields via template
+/// expressions like `{steps.<id>.result.navigate_to}`).
+///
+/// If the text is not valid JSON the value is wrapped in `{"output": "<text>"}` so
+/// the result is always a JSON object, consistent with the other `StepResult` arms.
+fn tool_result_value(result_text: String) -> serde_json::Value {
+    serde_json::from_str::<serde_json::Value>(&result_text)
+        .unwrap_or_else(|_| serde_json::json!({"output": result_text}))
+}
+
 #[cfg(test)]
 mod reply_step_tests {
     use super::*;
@@ -885,5 +898,51 @@ mod reply_step_tests {
             }
             _ => panic!("expected Url button"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tool_result_value_tests {
+    use super::tool_result_value;
+
+    #[test]
+    fn json_array_string_is_parsed_to_array_value() {
+        // MCP tools that return JSON arrays should produce a parsed array,
+        // not a string-wrapped {"output": "..."} object.
+        let input = r#"[{"id":"1","name":"Math"},{"id":"2","name":"Science"}]"#.to_string();
+        let result = tool_result_value(input);
+        assert!(result.is_array(), "expected JSON array, got: {result}");
+        let arr = result.as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[0]["id"], "1");
+        assert_eq!(arr[1]["name"], "Science");
+    }
+
+    #[test]
+    fn plain_text_falls_back_to_output_wrapper() {
+        // Non-JSON tool output (e.g. shell stdout) should be wrapped so the
+        // result object is still a valid JSON object with an "output" key.
+        let input = "Hello from the tool".to_string();
+        let result = tool_result_value(input.clone());
+        assert!(result.is_object(), "expected object, got: {result}");
+        assert_eq!(result["output"], serde_json::Value::String(input));
+    }
+
+    #[test]
+    fn json_object_string_is_parsed_to_object_value() {
+        // MCP tools returning a JSON object should surface the parsed object so
+        // template expressions like {steps.x.result.navigate_to} resolve correctly.
+        let input = r#"{"navigate_to":"https://app.example.com/l/1","token":"abc"}"#.to_string();
+        let result = tool_result_value(input);
+        assert!(result.is_object());
+        assert_eq!(result["navigate_to"], "https://app.example.com/l/1");
+        assert_eq!(result["token"], "abc");
+    }
+
+    #[test]
+    fn empty_string_falls_back_to_output_wrapper() {
+        // An empty tool result should not panic and should produce the fallback.
+        let result = tool_result_value(String::new());
+        assert_eq!(result["output"], serde_json::Value::String(String::new()));
     }
 }
