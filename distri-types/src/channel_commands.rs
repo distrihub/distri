@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 /// How a channel user reaches a workflow entry point.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ChannelTrigger {
     /// A slash command. `args` names positional params, in order: for
@@ -41,7 +41,7 @@ pub enum ChannelTrigger {
 /// callback_data may contain `{...}` interpolation (resolved by the
 /// Reply step executor against workflow context, and `{item.*}` when
 /// used as a `button_template`).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ReplyButtonSpec {
     Url { label: String, url: String },
@@ -51,7 +51,7 @@ pub enum ReplyButtonSpec {
 
 /// A fully-resolved button (no interpolation left). Crosses the
 /// workflow-executor → gateway boundary inside `AgentEventType::ChannelReply`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ChannelButton {
     Url { label: String, url: String },
@@ -61,7 +61,7 @@ pub enum ChannelButton {
 
 /// A fully-resolved channel reply emitted by a `StepKind::Reply` step.
 /// `buttons` is rows of buttons (outer = rows top-to-bottom).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChannelReply {
     pub text: String,
     #[serde(default)]
