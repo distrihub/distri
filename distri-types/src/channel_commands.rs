@@ -3,10 +3,12 @@
 //! rendering. See `docs/specs/workflow-channel-commands.md`.
 
 use crate::channels::ChannelProvider;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 /// How a channel user reaches a workflow entry point.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ChannelTrigger {
     /// A slash command. `args` names positional params, in order: for
@@ -39,7 +41,7 @@ pub enum ChannelTrigger {
 /// callback_data may contain `{...}` interpolation (resolved by the
 /// Reply step executor against workflow context, and `{item.*}` when
 /// used as a `button_template`).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ReplyButtonSpec {
     Url { label: String, url: String },
@@ -49,7 +51,7 @@ pub enum ReplyButtonSpec {
 
 /// A fully-resolved button (no interpolation left). Crosses the
 /// workflow-executor → gateway boundary inside `AgentEventType::ChannelReply`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ChannelButton {
     Url { label: String, url: String },
@@ -59,7 +61,7 @@ pub enum ChannelButton {
 
 /// A fully-resolved channel reply emitted by a `StepKind::Reply` step.
 /// `buttons` is rows of buttons (outer = rows top-to-bottom).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema, JsonSchema)]
 pub struct ChannelReply {
     pub text: String,
     #[serde(default)]
@@ -68,13 +70,13 @@ pub struct ChannelReply {
 
 /// Channel chrome for a workflow-agent bot (presentation only — per-
 /// command behavior lives in entry points). All fields optional.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, ToSchema, JsonSchema)]
 pub struct ChannelBindings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub telegram: Option<TelegramBinding>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, ToSchema, JsonSchema)]
 pub struct TelegramBinding {
     /// In-chat persistent menu button.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -84,7 +86,7 @@ pub struct TelegramBinding {
     pub web_app_base: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema, JsonSchema)]
 pub struct MenuButton {
     pub label: String,
     pub url: String,
