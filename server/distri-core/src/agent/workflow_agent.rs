@@ -106,6 +106,69 @@ impl EventSink for ContextEventSink {
     }
 }
 
+use distri_types::channel_commands::{ChannelButton, ChannelReply, ReplyButtonSpec};
+
+/// Resolve a `StepKind::Reply` into a concrete `ChannelReply` against
+/// the workflow context. `buttons_from` resolves to an array; each
+/// element is bound under `item` for `button_template` interpolation
+/// using the `{item.x}` namespace (supported by `distri_workflow::resolve`).
+fn resolve_reply_step(
+    text: &str,
+    buttons: &[Vec<ReplyButtonSpec>],
+    buttons_from: &Option<String>,
+    button_template: &Option<ReplyButtonSpec>,
+    wf_context: &serde_json::Value,
+) -> ChannelReply {
+    fn spec_to_button(spec: &ReplyButtonSpec, ctx: &serde_json::Value) -> ChannelButton {
+        let s = |v: &str| distri_workflow::resolve::resolve_template(v, ctx);
+        match spec {
+            ReplyButtonSpec::Url { label, url } => ChannelButton::Url {
+                label: s(label),
+                url: s(url),
+            },
+            ReplyButtonSpec::WebApp { label, url } => ChannelButton::WebApp {
+                label: s(label),
+                url: s(url),
+            },
+            ReplyButtonSpec::Callback {
+                label,
+                callback_data,
+            } => ChannelButton::Callback {
+                label: s(label),
+                callback_data: s(callback_data),
+            },
+        }
+    }
+
+    let mut rows: Vec<Vec<ChannelButton>> = buttons
+        .iter()
+        .map(|row| row.iter().map(|b| spec_to_button(b, wf_context)).collect())
+        .collect();
+
+    if let (Some(path), Some(tmpl)) = (buttons_from, button_template) {
+        let resolved = distri_workflow::resolve::resolve_value(
+            &serde_json::Value::String(path.clone()),
+            wf_context,
+        );
+        if let serde_json::Value::Array(items) = resolved {
+            for item in items {
+                // Bind the element under `item` so `{item.x}` resolves
+                // via the `item` namespace in distri_workflow::resolve.
+                let mut item_ctx = wf_context.clone();
+                if let Some(obj) = item_ctx.as_object_mut() {
+                    obj.insert("item".to_string(), item);
+                }
+                rows.push(vec![spec_to_button(tmpl, &item_ctx)]);
+            }
+        }
+    }
+
+    ChannelReply {
+        text: distri_workflow::resolve::resolve_template(text, wf_context),
+        buttons: rows,
+    }
+}
+
 /// StepExecutor that uses the ExecutorContext to execute steps via HTTP.
 struct ContextStepExecutor {
     context: Arc<ExecutorContext>,
@@ -641,3 +704,56 @@ impl WorkflowAgent {
 }
 
 // Template resolution: uses distri_workflow::resolve (imported via `use distri_workflow::*`)
+
+#[cfg(test)]
+mod reply_step_tests {
+    use super::*;
+    use distri_types::channel_commands::{ChannelButton, ReplyButtonSpec};
+
+    #[test]
+    fn resolves_static_text_and_buttons() {
+        let ctx = serde_json::json!({
+            "input": {}, "env": {},
+            "steps": {"resume": {"result": {"navigate_to": "https://a.app/l/1"}}}
+        });
+        let buttons = vec![vec![ReplyButtonSpec::WebApp {
+            label: "Continue".into(),
+            url: "{steps.resume.result.navigate_to}".into(),
+        }]];
+        let reply = resolve_reply_step("Tap:", &buttons, &None, &None, &ctx);
+        assert_eq!(reply.text, "Tap:");
+        match &reply.buttons[0][0] {
+            ChannelButton::WebApp { url, .. } => assert_eq!(url, "https://a.app/l/1"),
+            _ => panic!("expected WebApp"),
+        }
+    }
+
+    #[test]
+    fn expands_buttons_from_with_template() {
+        let ctx = serde_json::json!({
+            "input": {}, "env": {},
+            "steps": {"list": {"result": {"classes": [
+                {"id": "m1", "name": "Math"},
+                {"id": "s1", "name": "Science"}
+            ]}}}
+        });
+        let template = Some(ReplyButtonSpec::Callback {
+            label: "{item.name}".into(),
+            callback_data: "wf:open:{item.id}".into(),
+        });
+        let reply = resolve_reply_step(
+            "Classes:", &[], &Some("{steps.list.result.classes}".into()), &template, &ctx,
+        );
+        assert_eq!(reply.buttons.len(), 2);
+        match (&reply.buttons[0][0], &reply.buttons[1][0]) {
+            (
+                ChannelButton::Callback { label: l0, callback_data: c0 },
+                ChannelButton::Callback { label: l1, callback_data: c1 },
+            ) => {
+                assert_eq!((l0.as_str(), c0.as_str()), ("Math", "wf:open:m1"));
+                assert_eq!((l1.as_str(), c1.as_str()), ("Science", "wf:open:s1"));
+            }
+            _ => panic!("expected callback buttons"),
+        }
+    }
+}

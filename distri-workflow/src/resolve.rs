@@ -80,7 +80,7 @@ fn resolve_reference(reference: &str, context: &Value) -> Option<Value> {
     let (namespace, path) = (parts[0], parts[1]);
 
     match namespace {
-        "input" | "steps" | "env" => {
+        "input" | "steps" | "env" | "item" => {
             let ns_value = context.get(namespace)?;
             resolve_path(ns_value, path)
         }
@@ -428,6 +428,25 @@ mod tests {
             "{steps.fetch_doc.metadata.pages}",
             &ctx
         ));
+    }
+
+    #[test]
+    fn resolve_item_namespace() {
+        // {item.x} resolves when the context has an "item" key.
+        // Used by resolve_reply_step to interpolate button_template fields
+        // against a buttons_from element.
+        let ctx = json!({
+            "input": {},
+            "steps": {},
+            "env": {},
+            "item": {"id": "m1", "name": "Math"}
+        });
+        assert_eq!(resolve_template("{item.name}", &ctx), "Math");
+        assert_eq!(resolve_template("{item.id}", &ctx), "m1");
+        assert_eq!(
+            resolve_template("wf:open:{item.id}", &ctx),
+            "wf:open:m1"
+        );
     }
 
     #[test]
