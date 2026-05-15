@@ -257,6 +257,22 @@ impl WorkflowDefinition {
                  points; at most one is allowed"
             ));
         }
+        for step in &self.steps {
+            if let StepKind::Reply {
+                buttons_from,
+                button_template,
+                ..
+            } = &step.kind
+            {
+                if button_template.is_some() != buttons_from.is_some() {
+                    return Err(format!(
+                        "reply step '{}': button_template and buttons_from \
+                         must be set together",
+                        step.id
+                    ));
+                }
+            }
+        }
         Ok(())
     }
 }

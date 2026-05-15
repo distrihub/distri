@@ -2480,4 +2480,19 @@ mod tests {
         .unwrap();
         assert!(d.validate_channel_surface().is_err());
     }
+
+    #[test]
+    fn channel_surface_rejects_button_template_without_buttons_from() {
+        let d: WorkflowDefinition = serde_json::from_value(serde_json::json!({
+            "id":"w",
+            "steps":[{"id":"s","label":"S","kind":{
+                "type":"reply","text":"x",
+                "button_template":{"kind":"callback","label":"l","callback_data":"wf:a"}
+            }}],
+            "entry_points":[]
+        }))
+        .unwrap();
+        let err = d.validate_channel_surface().unwrap_err();
+        assert!(err.contains("button_template"), "got: {err}");
+    }
 }
