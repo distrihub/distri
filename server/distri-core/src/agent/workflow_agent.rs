@@ -416,6 +416,13 @@ impl StepExecutor for ContextStepExecutor {
                     context_updates: None,
                 })
             }
+
+            StepKind::Reply { .. } => {
+                // Resolved in Phase 3 (Task 3.2). Reply steps emit a ChannelReply event;
+                // for now return an error if reached through this executor without the
+                // channel-aware arm in place.
+                Ok(StepResult::failed("Reply step requires a channel executor"))
+            }
         }
     }
 
