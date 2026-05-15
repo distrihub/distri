@@ -35,6 +35,37 @@ pub enum ChannelTrigger {
     Message {},
 }
 
+/// Author-facing button template inside a `StepKind::Reply`. Label/url/
+/// callback_data may contain `{...}` interpolation (resolved by the
+/// Reply step executor against workflow context, and `{item.*}` when
+/// used as a `button_template`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ReplyButtonSpec {
+    Url { label: String, url: String },
+    WebApp { label: String, url: String },
+    Callback { label: String, callback_data: String },
+}
+
+/// A fully-resolved button (no interpolation left). Crosses the
+/// workflow-executor → gateway boundary inside `AgentEventType::ChannelReply`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ChannelButton {
+    Url { label: String, url: String },
+    WebApp { label: String, url: String },
+    Callback { label: String, callback_data: String },
+}
+
+/// A fully-resolved channel reply emitted by a `StepKind::Reply` step.
+/// `buttons` is rows of buttons (outer = rows top-to-bottom).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ChannelReply {
+    pub text: String,
+    #[serde(default)]
+    pub buttons: Vec<Vec<ChannelButton>>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -83,5 +114,32 @@ mod tests {
         let msg: ChannelTrigger =
             serde_json::from_value(serde_json::json!({"type":"message"})).unwrap();
         assert!(matches!(msg, ChannelTrigger::Message {}));
+    }
+
+    #[test]
+    fn reply_button_spec_kinds_round_trip() {
+        for json in [
+            serde_json::json!({"kind":"url","label":"Docs","url":"https://d.dev"}),
+            serde_json::json!({"kind":"web_app","label":"Open","url":"https://a.app"}),
+            serde_json::json!({"kind":"callback","label":"Pick","callback_data":"wf:x"}),
+        ] {
+            let b: ReplyButtonSpec = serde_json::from_value(json.clone()).unwrap();
+            assert_eq!(serde_json::to_value(&b).unwrap(), json);
+        }
+    }
+
+    #[test]
+    fn channel_reply_holds_resolved_buttons() {
+        let r = ChannelReply {
+            text: "Your classes:".into(),
+            buttons: vec![vec![ChannelButton::Callback {
+                label: "Math".into(),
+                callback_data: "wf:open_class:m1".into(),
+            }]],
+        };
+        let v = serde_json::to_value(&r).unwrap();
+        let back: ChannelReply = serde_json::from_value(v).unwrap();
+        assert_eq!(back.text, "Your classes:");
+        assert_eq!(back.buttons[0].len(), 1);
     }
 }
