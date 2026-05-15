@@ -1343,6 +1343,7 @@ mod tests {
                 serde_json::json!({"rubric_id": "r1"}),
             )]),
             required_inputs: vec!["activity_id".to_string()],
+            trigger: None,
         }]);
 
         let applied = workflow.apply_entry_point("grade_only").unwrap();
@@ -1379,6 +1380,7 @@ mod tests {
             starts_at: "eval".to_string(),
             preset_results: HashMap::new(),
             required_inputs: vec![],
+            trigger: None,
         }]);
 
         let applied = workflow.apply_entry_point("existing_activity").unwrap();
@@ -1413,6 +1415,7 @@ mod tests {
                 serde_json::json!({"questions": [1, 2, 3]}),
             )]),
             required_inputs: vec![],
+            trigger: None,
         }]);
 
         let applied = workflow.apply_entry_point("grade_only").unwrap();
@@ -1444,6 +1447,7 @@ mod tests {
                 starts_at: "eval".to_string(),
                 preset_results: HashMap::new(),
                 required_inputs: vec![],
+                trigger: None,
             }]);
 
         let applied = workflow.apply_entry_point("from_eval").unwrap();
@@ -1576,6 +1580,7 @@ mod tests {
             starts_at: "s2".to_string(),
             preset_results: HashMap::from([("s1".to_string(), serde_json::json!({"done": true}))]),
             required_inputs: vec!["data".to_string()],
+            trigger: None,
         }]);
 
         let json = serde_json::to_value(&workflow).unwrap();
@@ -1738,6 +1743,7 @@ mod tests {
                     m
                 },
                 required_inputs: vec![],
+                trigger: None,
             }])
             .apply_entry_point("review_only")
             .unwrap();
@@ -1885,6 +1891,7 @@ mod tests {
                         ("review".to_string(), serde_json::json!({"approved": true})),
                     ]),
                     required_inputs: vec!["activity_id".to_string()],
+                    trigger: None,
                 },
                 EntryPoint {
                     id: "review_and_grade".to_string(),
@@ -1897,6 +1904,7 @@ mod tests {
                         ("configure_eval".to_string(), serde_json::json!({"rubric_id": "r1"})),
                     ]),
                     required_inputs: vec![],
+                    trigger: None,
                 },
             ])
     }
@@ -2070,6 +2078,7 @@ mod tests {
                     ),
                 ]),
                 required_inputs: vec!["activity_id".to_string()],
+                trigger: None,
             }]);
 
         workflow = workflow
@@ -2197,6 +2206,7 @@ mod tests {
                     ),
                 ]),
                 required_inputs: vec![],
+                trigger: None,
             }]);
 
         let applied = workflow.apply_entry_point("from_merge").unwrap();
@@ -2292,6 +2302,7 @@ mod tests {
                 starts_at: "eval".to_string(),
                 preset_results: HashMap::new(),
                 required_inputs: vec![],
+                trigger: None,
             }])
             .apply_entry_point("from_eval")
             .unwrap()
@@ -2347,5 +2358,26 @@ mod tests {
 
         let ep2 = parsed.entry_point("review_and_grade").unwrap();
         assert_eq!(ep2.starts_at, "review");
+    }
+
+    #[test]
+    fn entry_point_parses_slash_trigger() {
+        let json = serde_json::json!({
+            "id": "join", "label": "Join", "starts_at": "ask_code",
+            "trigger": {"type": "slash", "name": "/join"}
+        });
+        let ep: EntryPoint = serde_json::from_value(json).unwrap();
+        assert_eq!(ep.id, "join");
+        assert!(matches!(
+            ep.trigger,
+            Some(distri_types::channel_commands::ChannelTrigger::Slash { .. })
+        ));
+    }
+
+    #[test]
+    fn entry_point_trigger_defaults_none() {
+        let json = serde_json::json!({"id":"x","label":"X","starts_at":"s"});
+        let ep: EntryPoint = serde_json::from_value(json).unwrap();
+        assert!(ep.trigger.is_none());
     }
 }

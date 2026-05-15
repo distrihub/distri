@@ -583,6 +583,11 @@ pub struct EntryPoint {
     /// Required input fields for this entry point (for UI/validation).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub required_inputs: Vec<String>,
+    /// How a channel user reaches this entry point (slash command,
+    /// callback button, or free-text catch-all). `None` = not channel-
+    /// reachable (e.g. an internal or scheduled entry point).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger: Option<distri_types::channel_commands::ChannelTrigger>,
 }
 
 // ============================================================================
