@@ -480,11 +480,22 @@ impl StepExecutor for ContextStepExecutor {
                 })
             }
 
-            StepKind::Reply { .. } => {
-                // Resolved in Phase 3 (Task 3.2). Reply steps emit a ChannelReply event;
-                // for now return an error if reached through this executor without the
-                // channel-aware arm in place.
-                Ok(StepResult::failed("Reply step requires a channel executor"))
+            StepKind::Reply {
+                text,
+                buttons,
+                buttons_from,
+                button_template,
+            } => {
+                let reply =
+                    resolve_reply_step(text, buttons, buttons_from, button_template, wf_context);
+                self.context
+                    .emit(distri_types::AgentEventType::ChannelReply {
+                        reply: reply.clone(),
+                    })
+                    .await;
+                Ok(StepResult::done(
+                    serde_json::to_value(&reply).unwrap_or(serde_json::json!({})),
+                ))
             }
         }
     }
