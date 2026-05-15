@@ -494,7 +494,7 @@ impl StepExecutor for ContextStepExecutor {
                     })
                     .await;
                 Ok(StepResult::done(
-                    serde_json::to_value(&reply).unwrap_or(serde_json::json!({})),
+                    serde_json::to_value(&reply).expect("ChannelReply is always serializable"),
                 ))
             }
         }
@@ -753,18 +753,137 @@ mod reply_step_tests {
             callback_data: "wf:open:{item.id}".into(),
         });
         let reply = resolve_reply_step(
-            "Classes:", &[], &Some("{steps.list.result.classes}".into()), &template, &ctx,
+            "Classes:",
+            &[],
+            &Some("{steps.list.result.classes}".into()),
+            &template,
+            &ctx,
         );
         assert_eq!(reply.buttons.len(), 2);
         match (&reply.buttons[0][0], &reply.buttons[1][0]) {
             (
-                ChannelButton::Callback { label: l0, callback_data: c0 },
-                ChannelButton::Callback { label: l1, callback_data: c1 },
+                ChannelButton::Callback {
+                    label: l0,
+                    callback_data: c0,
+                },
+                ChannelButton::Callback {
+                    label: l1,
+                    callback_data: c1,
+                },
             ) => {
                 assert_eq!((l0.as_str(), c0.as_str()), ("Math", "wf:open:m1"));
                 assert_eq!((l1.as_str(), c1.as_str()), ("Science", "wf:open:s1"));
             }
             _ => panic!("expected callback buttons"),
+        }
+    }
+
+    #[test]
+    fn buttons_from_without_template_is_noop() {
+        // buttons_from is set but button_template is None — the `if let (Some, Some)`
+        // guard is not entered, so no extra rows are generated beyond the static buttons.
+        let ctx = serde_json::json!({
+            "input": {}, "env": {},
+            "steps": {"list": {"items": [{"id": "x1"}, {"id": "x2"}]}}
+        });
+        let static_buttons = vec![vec![ReplyButtonSpec::Callback {
+            label: "Static".into(),
+            callback_data: "static_action".into(),
+        }]];
+        let reply = resolve_reply_step(
+            "Pick:",
+            &static_buttons,
+            &Some("{steps.list.items}".into()),
+            &None,
+            &ctx,
+        );
+        // Only the one static row — no extra rows from buttons_from
+        assert_eq!(reply.buttons.len(), 1);
+        match &reply.buttons[0][0] {
+            ChannelButton::Callback {
+                label,
+                callback_data,
+            } => {
+                assert_eq!(label.as_str(), "Static");
+                assert_eq!(callback_data.as_str(), "static_action");
+            }
+            _ => panic!("expected callback button"),
+        }
+    }
+
+    #[test]
+    fn buttons_from_empty_array_yields_no_extra_buttons() {
+        // buttons_from resolves to [] — the for loop body never runs.
+        let ctx = serde_json::json!({
+            "input": {}, "env": {},
+            "steps": {"list": {"items": []}}
+        });
+        let template = Some(ReplyButtonSpec::Callback {
+            label: "{item.name}".into(),
+            callback_data: "wf:open:{item.id}".into(),
+        });
+        let reply = resolve_reply_step(
+            "Empty:",
+            &[],
+            &Some("{steps.list.items}".into()),
+            &template,
+            &ctx,
+        );
+        assert_eq!(reply.buttons.len(), 0);
+    }
+
+    #[test]
+    fn multi_row_static_buttons_resolved() {
+        // Static buttons with two rows; both rows should resolve and interpolate.
+        let ctx = serde_json::json!({
+            "input": {"action_a": "go_a", "action_b": "go_b"}, "env": {}, "steps": {}
+        });
+        let buttons = vec![
+            vec![ReplyButtonSpec::Callback {
+                label: "Row One".into(),
+                callback_data: "{input.action_a}".into(),
+            }],
+            vec![ReplyButtonSpec::Callback {
+                label: "Row Two".into(),
+                callback_data: "{input.action_b}".into(),
+            }],
+        ];
+        let reply = resolve_reply_step("Choose:", &buttons, &None, &None, &ctx);
+        assert_eq!(reply.buttons.len(), 2);
+        match &reply.buttons[0][0] {
+            ChannelButton::Callback { callback_data, .. } => {
+                assert_eq!(callback_data.as_str(), "go_a")
+            }
+            _ => panic!("expected callback"),
+        }
+        match &reply.buttons[1][0] {
+            ChannelButton::Callback { callback_data, .. } => {
+                assert_eq!(callback_data.as_str(), "go_b")
+            }
+            _ => panic!("expected callback"),
+        }
+    }
+
+    #[test]
+    fn url_button_variant_resolves() {
+        // A static ReplyButtonSpec::Url resolves to ChannelButton::Url
+        // with label and url both interpolated.
+        let ctx = serde_json::json!({
+            "input": {"link_label": "Open Docs", "link_url": "https://docs.example.com"},
+            "env": {}, "steps": {}
+        });
+        let buttons = vec![vec![ReplyButtonSpec::Url {
+            label: "{input.link_label}".into(),
+            url: "{input.link_url}".into(),
+        }]];
+        let reply = resolve_reply_step("Visit:", &buttons, &None, &None, &ctx);
+        assert_eq!(reply.buttons.len(), 1);
+        match &reply.buttons[0][0] {
+            ChannelButton::Url { label, url } => {
+                assert_eq!(label.as_str(), "Open Docs");
+                assert_eq!(url.as_str(), "https://docs.example.com");
+            }
+            _ => panic!("expected Url button"),
         }
     }
 }

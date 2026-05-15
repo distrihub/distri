@@ -1,9 +1,11 @@
 //! Namespace resolution for workflow data flow.
 //!
-//! Three namespaces:
+//! Four namespaces:
 //! - `{input.X}` — workflow invocation payload
 //! - `{steps.step_id.X}` — output from a completed step
 //! - `{env.X}` — environment (connection tokens, config)
+//! - `{item.X}` — current element when expanding a Reply step's `buttons_from` template;
+//!   injected per-element by the Reply executor before resolving each `button_template`
 //!
 //! Backward compatible: `{context.X}` still works (checks all namespaces).
 
@@ -38,7 +40,8 @@ fn resolve_path(root: &Value, path: &str) -> Option<Value> {
 
 /// Resolve `{namespace.path}` references in a string template.
 ///
-/// Supports: `{input.X}`, `{steps.step_id.X}`, `{env.X}`, `{context.X}` (deprecated).
+/// Supports: `{input.X}`, `{steps.step_id.X}`, `{env.X}`, `{context.X}` (deprecated),
+/// and `{item.X}` (populated per-element when expanding a Reply step's `buttons_from` template).
 /// If the entire string is a single reference, returns the resolved value directly (preserving type).
 /// If embedded in a larger string, performs string interpolation.
 pub fn resolve_template(template: &str, context: &Value) -> String {
@@ -70,7 +73,10 @@ pub fn resolve_template(template: &str, context: &Value) -> String {
     result
 }
 
-/// Resolve a single reference like `input.doc_id` or `steps.fetch.content` against the context.
+/// Resolve a single reference like `input.doc_id`, `steps.fetch.content`, or `item.field`
+/// against the context.  The `item` namespace is populated per-element when a Reply step
+/// expands its `buttons_from` template — each array element is injected under the `"item"` key
+/// before `button_template` is resolved.
 fn resolve_reference(reference: &str, context: &Value) -> Option<Value> {
     let parts: Vec<&str> = reference.splitn(2, '.').collect();
     if parts.len() < 2 {
@@ -443,10 +449,7 @@ mod tests {
         });
         assert_eq!(resolve_template("{item.name}", &ctx), "Math");
         assert_eq!(resolve_template("{item.id}", &ctx), "m1");
-        assert_eq!(
-            resolve_template("wf:open:{item.id}", &ctx),
-            "wf:open:m1"
-        );
+        assert_eq!(resolve_template("wf:open:{item.id}", &ctx), "wf:open:m1");
     }
 
     #[test]
