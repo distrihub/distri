@@ -2413,4 +2413,71 @@ mod tests {
         let ep: EntryPoint = serde_json::from_value(json).unwrap();
         assert!(ep.trigger.is_none());
     }
+
+    fn def_with_entry(ep: serde_json::Value) -> WorkflowDefinition {
+        serde_json::from_value(serde_json::json!({
+            "id": "w",
+            "steps": [{"id":"s","label":"S","kind":{"type":"checkpoint","message":"m"}}],
+            "entry_points": [ep]
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn channel_surface_ok_for_valid_slash() {
+        let d = def_with_entry(serde_json::json!({
+            "id":"e","label":"E","starts_at":"s",
+            "trigger":{"type":"slash","name":"/resume"}
+        }));
+        assert!(d.validate_channel_surface().is_ok());
+    }
+
+    #[test]
+    fn channel_surface_rejects_missing_starts_at() {
+        let d = def_with_entry(serde_json::json!({
+            "id":"e","label":"E","starts_at":"nope",
+            "trigger":{"type":"slash","name":"/resume"}
+        }));
+        let err = d.validate_channel_surface().unwrap_err();
+        assert!(err.contains("nope"), "got: {err}");
+    }
+
+    #[test]
+    fn channel_surface_rejects_builtin_shadow() {
+        let d = def_with_entry(serde_json::json!({
+            "id":"e","label":"E","starts_at":"s",
+            "trigger":{"type":"slash","name":"/help"}
+        }));
+        let err = d.validate_channel_surface().unwrap_err();
+        assert!(err.contains("/help"), "got: {err}");
+    }
+
+    #[test]
+    fn channel_surface_rejects_duplicate_message_catch_all() {
+        let d: WorkflowDefinition = serde_json::from_value(serde_json::json!({
+            "id":"w",
+            "steps":[{"id":"s","label":"S","kind":{"type":"checkpoint","message":"m"}}],
+            "entry_points":[
+                {"id":"a","label":"A","starts_at":"s","trigger":{"type":"message"}},
+                {"id":"b","label":"B","starts_at":"s","trigger":{"type":"message"}}
+            ]
+        }))
+        .unwrap();
+        assert!(d.validate_channel_surface().is_err());
+    }
+
+    #[test]
+    fn channel_surface_rejects_duplicate_slash_name() {
+        let d: WorkflowDefinition = serde_json::from_value(serde_json::json!({
+            "id":"w",
+            "steps":[{"id":"s","label":"S","kind":{"type":"checkpoint","message":"m"}}],
+            "entry_points":[
+                {"id":"a","label":"A","starts_at":"s","trigger":{"type":"slash","name":"/x"}},
+                {"id":"b","label":"B","starts_at":"s",
+                 "trigger":{"type":"slash","name":"/y","aliases":["/x"]}}
+            ]
+        }))
+        .unwrap();
+        assert!(d.validate_channel_surface().is_err());
+    }
 }
