@@ -875,6 +875,25 @@ pub enum StepKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         schema: Option<serde_json::Value>,
     },
+
+    /// Emit a channel reply (text + optional buttons). Rendered by the
+    /// gateway per channel. `text` / button fields support the standard
+    /// `{input.x}` / `{steps.id.x}` interpolation; `button_template`
+    /// fields additionally support `{item.x}` per `buttons_from`
+    /// element.
+    Reply {
+        text: String,
+        /// Static buttons (rows: outer = top-to-bottom).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        buttons: Vec<Vec<distri_types::channel_commands::ReplyButtonSpec>>,
+        /// Context path resolving to an array; one button per element.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        buttons_from: Option<String>,
+        /// Template applied per `buttons_from` element.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        button_template:
+            Option<distri_types::channel_commands::ReplyButtonSpec>,
+    },
 }
 
 // ============================================================================

@@ -2361,6 +2361,39 @@ mod tests {
     }
 
     #[test]
+    fn step_kind_reply_round_trips() {
+        let json = serde_json::json!({
+            "type": "reply",
+            "text": "Your classes:",
+            "buttons_from": "{steps.list.result.classes}",
+            "button_template": {
+                "kind": "callback", "label": "{item.name}",
+                "callback_data": "wf:open_class:{item.id}"
+            }
+        });
+        let kind: StepKind = serde_json::from_value(json.clone()).unwrap();
+        match &kind {
+            StepKind::Reply { text, buttons, buttons_from, button_template } => {
+                assert_eq!(text, "Your classes:");
+                assert!(buttons.is_empty());
+                assert_eq!(buttons_from.as_deref(), Some("{steps.list.result.classes}"));
+                assert!(button_template.is_some());
+            }
+            _ => panic!("expected Reply"),
+        }
+        assert_eq!(serde_json::to_value(&kind).unwrap(), json);
+    }
+
+    #[test]
+    fn step_kind_reply_text_only() {
+        let kind: StepKind = serde_json::from_value(
+            serde_json::json!({"type":"reply","text":"Hi"}),
+        )
+        .unwrap();
+        assert!(matches!(kind, StepKind::Reply { .. }));
+    }
+
+    #[test]
     fn entry_point_parses_slash_trigger() {
         let json = serde_json::json!({
             "id": "join", "label": "Join", "starts_at": "ask_code",
