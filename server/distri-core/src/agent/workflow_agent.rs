@@ -56,53 +56,14 @@ impl WorkflowAgent {
 
 /// Event bridge: forwards WorkflowEvents to ExecutorContext event channel.
 struct ContextEventSink {
+    #[allow(dead_code)]
     context: Arc<ExecutorContext>,
 }
 
 #[async_trait]
 impl EventSink for ContextEventSink {
     async fn emit(&self, event: WorkflowEvent) {
-        let text = match &event {
-            WorkflowEvent::WorkflowStarted { total_steps, .. } => {
-                format!("\n**Workflow started** — {} steps\n", total_steps)
-            }
-            WorkflowEvent::StepStarted {
-                step_id,
-                step_label,
-                ..
-            } => format!("\n> Running `{}`: {}\n", step_id, step_label),
-            WorkflowEvent::StepCompleted {
-                step_id,
-                step_label,
-                ..
-            } => format!("  Done: `{}` — {}\n", step_id, step_label),
-            WorkflowEvent::StepFailed {
-                step_id,
-                step_label,
-                error,
-                ..
-            } => format!("  Failed: `{}` — {} — {}\n", step_id, step_label, error),
-            WorkflowEvent::WorkflowCompleted {
-                status,
-                steps_done,
-                steps_failed,
-                ..
-            } => format!(
-                "\n**Workflow {:?}** — {} done, {} failed\n",
-                status, steps_done, steps_failed
-            ),
-            WorkflowEvent::StepWaiting {
-                step_id,
-                step_label,
-                message,
-                ..
-            } => format!(
-                "\n**Waiting for input:** `{}` — {} — {}\n",
-                step_id, step_label, message
-            ),
-        };
-
-        self.context.emit(WorkflowAgent::emit_text(&text)).await;
+        tracing::debug!(?event, "workflow event");
     }
 }
 
