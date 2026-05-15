@@ -2519,4 +2519,52 @@ mod tests {
         .unwrap();
         assert!(d.validate_channel_surface().is_ok());
     }
+
+    // Task 3.3 — confirm apply_entry_point start-step selection and preset_results behavior.
+    #[test]
+    fn apply_entry_point_sets_start_step() {
+        let d: WorkflowDefinition = serde_json::from_value(serde_json::json!({
+            "id":"w",
+            "steps":[
+                {"id":"a","label":"A","kind":{"type":"checkpoint","message":"m"}},
+                {"id":"b","label":"B","kind":{"type":"checkpoint","message":"m"}}
+            ],
+            "entry_points":[{"id":"e","label":"E","starts_at":"b"}]
+        }))
+        .unwrap();
+        let run = WorkflowRun::new(d).apply_entry_point("e").unwrap();
+        // Step "a" is not reachable from "b" (no depends_on chain), so it
+        // must be Skipped; step "b" must remain Pending (runnable).
+        let a_run = run.step_run_by_id("a").unwrap();
+        let b_run = run.step_run_by_id("b").unwrap();
+        assert_eq!(a_run.status, StepStatus::Skipped, "step 'a' should be skipped");
+        assert_eq!(b_run.status, StepStatus::Pending, "step 'b' should be pending (runnable)");
+    }
+
+    #[test]
+    fn apply_entry_point_honors_preset_results() {
+        let d: WorkflowDefinition = serde_json::from_value(serde_json::json!({
+            "id":"w",
+            "steps":[
+                {"id":"fetch","label":"Fetch","kind":{"type":"checkpoint","message":"m"}},
+                {"id":"process","label":"Process","kind":{"type":"checkpoint","message":"m"},
+                 "depends_on":["fetch"]}
+            ],
+            "entry_points":[{
+                "id":"process_only","label":"Process Only","starts_at":"process",
+                "preset_results":{
+                    "fetch": {"data": "pre-fetched"}
+                }
+            }]
+        }))
+        .unwrap();
+        let run = WorkflowRun::new(d).apply_entry_point("process_only").unwrap();
+        // "fetch" is skipped with the preset result
+        let fetch_run = run.step_run_by_id("fetch").unwrap();
+        assert_eq!(fetch_run.status, StepStatus::Skipped);
+        assert_eq!(fetch_run.result, Some(serde_json::json!({"data": "pre-fetched"})));
+        // The preset result is merged into context["steps"] for downstream resolution
+        let steps_ctx = run.context.get("steps").unwrap();
+        assert_eq!(steps_ctx["fetch"]["data"], "pre-fetched");
+    }
 }
