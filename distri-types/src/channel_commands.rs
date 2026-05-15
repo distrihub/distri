@@ -66,6 +66,30 @@ pub struct ChannelReply {
     pub buttons: Vec<Vec<ChannelButton>>,
 }
 
+/// Channel chrome for a workflow-agent bot (presentation only — per-
+/// command behavior lives in entry points). All fields optional.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ChannelBindings {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub telegram: Option<TelegramBinding>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct TelegramBinding {
+    /// In-chat persistent menu button.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub menu_button: Option<MenuButton>,
+    /// Base URL prepended to relative WebApp button URLs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub web_app_base: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MenuButton {
+    pub label: String,
+    pub url: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -126,6 +150,25 @@ mod tests {
             let b: ReplyButtonSpec = serde_json::from_value(json.clone()).unwrap();
             assert_eq!(serde_json::to_value(&b).unwrap(), json);
         }
+    }
+
+    #[test]
+    fn channel_bindings_defaults_are_none() {
+        let b: ChannelBindings = serde_json::from_value(serde_json::json!({})).unwrap();
+        assert!(b.telegram.is_none());
+    }
+
+    #[test]
+    fn telegram_menu_button_round_trips() {
+        let json = serde_json::json!({
+            "telegram": {
+                "menu_button": {"label":"Open","url":"https://a.app/learn"},
+                "web_app_base": "https://a.app"
+            }
+        });
+        let b: ChannelBindings = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(b.telegram.as_ref().unwrap().menu_button.as_ref().unwrap().label, "Open");
+        assert_eq!(serde_json::to_value(&b).unwrap(), json);
     }
 
     #[test]
