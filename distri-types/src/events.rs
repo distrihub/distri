@@ -329,6 +329,24 @@ mod channel_reply_event_tests {
         let back: AgentEventType = serde_json::from_value(v).unwrap();
         assert!(matches!(back, AgentEventType::ChannelReply { .. }));
     }
+
+    #[test]
+    fn channel_reply_envelope_round_trips() {
+        let ev = AgentEventType::ChannelReply {
+            reply: ChannelReply {
+                text: "Tap to continue:".into(),
+                buttons: vec![vec![ChannelButton::Callback {
+                    label: "Continue".into(),
+                    callback_data: "wf:open:x".into(),
+                }]],
+            },
+        };
+        let agent_event = AgentEvent::new(ev);
+        let envelope = AgentEventEnvelope::from_event(&agent_event);
+        let v = serde_json::to_value(&envelope).unwrap();
+        let back: AgentEventEnvelope = serde_json::from_value(v).expect("envelope deserialize");
+        assert!(matches!(back.event, AgentEventType::ChannelReply { .. }));
+    }
 }
 
 impl AgentEvent {
