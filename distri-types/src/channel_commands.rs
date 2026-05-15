@@ -34,6 +34,11 @@ pub enum ChannelTrigger {
     /// The catch-all for non-command free text. At most one per
     /// workflow. Its entry point's `starts_at` step is normally an
     /// `AgentRun`.
+    ///
+    /// The `{}` (struct syntax, not unit) is deliberate: it forces the
+    /// `{"type":"message"}` tagged-object wire shape (consistent with the
+    /// other variants) and leaves room to add fields later without
+    /// breaking the serde shape.
     Message {},
 }
 
@@ -41,22 +46,49 @@ pub enum ChannelTrigger {
 /// callback_data may contain `{...}` interpolation (resolved by the
 /// Reply step executor against workflow context, and `{item.*}` when
 /// used as a `button_template`).
+///
+/// Resolved into [`ChannelButton`] by the Reply step executor once
+/// interpolation is applied. Both types are intentionally kept separate:
+/// this one is the template that lives in the workflow definition; the
+/// other is the concrete value that crosses the executor → gateway boundary.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ReplyButtonSpec {
-    Url { label: String, url: String },
-    WebApp { label: String, url: String },
-    Callback { label: String, callback_data: String },
+    Url {
+        label: String,
+        url: String,
+    },
+    WebApp {
+        label: String,
+        url: String,
+    },
+    Callback {
+        label: String,
+        callback_data: String,
+    },
 }
 
 /// A fully-resolved button (no interpolation left). Crosses the
 /// workflow-executor → gateway boundary inside `AgentEventType::ChannelReply`.
+///
+/// The resolved counterpart of [`ReplyButtonSpec`] — no `{...}` placeholders
+/// remain. Produced by the Reply step executor after applying interpolation
+/// against workflow context.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ChannelButton {
-    Url { label: String, url: String },
-    WebApp { label: String, url: String },
-    Callback { label: String, callback_data: String },
+    Url {
+        label: String,
+        url: String,
+    },
+    WebApp {
+        label: String,
+        url: String,
+    },
+    Callback {
+        label: String,
+        callback_data: String,
+    },
 }
 
 /// A fully-resolved channel reply emitted by a `StepKind::Reply` step.
@@ -107,7 +139,12 @@ mod tests {
         });
         let t: ChannelTrigger = serde_json::from_value(json.clone()).unwrap();
         match &t {
-            ChannelTrigger::Slash { name, aliases, channels, args } => {
+            ChannelTrigger::Slash {
+                name,
+                aliases,
+                channels,
+                args,
+            } => {
                 assert_eq!(name, "/join");
                 assert_eq!(aliases, &vec!["/continue".to_string()]);
                 assert_eq!(channels, &vec![ChannelProvider::Telegram]);
@@ -123,7 +160,12 @@ mod tests {
         let t: ChannelTrigger =
             serde_json::from_value(serde_json::json!({"type":"slash","name":"/x"})).unwrap();
         match t {
-            ChannelTrigger::Slash { aliases, channels, args, .. } => {
+            ChannelTrigger::Slash {
+                aliases,
+                channels,
+                args,
+                ..
+            } => {
                 assert!(aliases.is_empty() && channels.is_empty() && args.is_empty());
             }
             _ => panic!("expected Slash"),
@@ -169,7 +211,16 @@ mod tests {
             }
         });
         let b: ChannelBindings = serde_json::from_value(json.clone()).unwrap();
-        assert_eq!(b.telegram.as_ref().unwrap().menu_button.as_ref().unwrap().label, "Open");
+        assert_eq!(
+            b.telegram
+                .as_ref()
+                .unwrap()
+                .menu_button
+                .as_ref()
+                .unwrap()
+                .label,
+            "Open"
+        );
         assert_eq!(serde_json::to_value(&b).unwrap(), json);
     }
 
