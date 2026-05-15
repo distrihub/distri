@@ -1604,7 +1604,7 @@ async fn create_agent(
                 }
             }
             Err(e) => {
-                return HttpResponse::UnprocessableEntity().json(json!({
+                return HttpResponse::BadRequest().json(json!({
                     "error": format!("Invalid workflow definition: {e}")
                 }));
             }

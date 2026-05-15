@@ -2495,4 +2495,28 @@ mod tests {
         let err = d.validate_channel_surface().unwrap_err();
         assert!(err.contains("button_template"), "got: {err}");
     }
+
+    #[test]
+    fn channel_surface_ok_for_single_message_catch_all() {
+        let d = def_with_entry(serde_json::json!({
+            "id":"e","label":"E","starts_at":"s",
+            "trigger":{"type":"message"}
+        }));
+        assert!(d.validate_channel_surface().is_ok());
+    }
+
+    #[test]
+    fn channel_surface_ok_for_reply_with_both_button_fields() {
+        let d: WorkflowDefinition = serde_json::from_value(serde_json::json!({
+            "id":"w",
+            "steps":[{"id":"s","label":"S","kind":{
+                "type":"reply","text":"pick one",
+                "buttons_from":"{steps.list.items}",
+                "button_template":{"kind":"callback","label":"{item.name}","callback_data":"wf:{item.id}"}
+            }}],
+            "entry_points":[]
+        }))
+        .unwrap();
+        assert!(d.validate_channel_surface().is_ok());
+    }
 }
