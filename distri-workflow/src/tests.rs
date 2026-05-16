@@ -1343,6 +1343,7 @@ mod tests {
                 serde_json::json!({"rubric_id": "r1"}),
             )]),
             required_inputs: vec!["activity_id".to_string()],
+            trigger: None,
         }]);
 
         let applied = workflow.apply_entry_point("grade_only").unwrap();
@@ -1379,6 +1380,7 @@ mod tests {
             starts_at: "eval".to_string(),
             preset_results: HashMap::new(),
             required_inputs: vec![],
+            trigger: None,
         }]);
 
         let applied = workflow.apply_entry_point("existing_activity").unwrap();
@@ -1413,6 +1415,7 @@ mod tests {
                 serde_json::json!({"questions": [1, 2, 3]}),
             )]),
             required_inputs: vec![],
+            trigger: None,
         }]);
 
         let applied = workflow.apply_entry_point("grade_only").unwrap();
@@ -1444,6 +1447,7 @@ mod tests {
                 starts_at: "eval".to_string(),
                 preset_results: HashMap::new(),
                 required_inputs: vec![],
+                trigger: None,
             }]);
 
         let applied = workflow.apply_entry_point("from_eval").unwrap();
@@ -1576,6 +1580,7 @@ mod tests {
             starts_at: "s2".to_string(),
             preset_results: HashMap::from([("s1".to_string(), serde_json::json!({"done": true}))]),
             required_inputs: vec!["data".to_string()],
+            trigger: None,
         }]);
 
         let json = serde_json::to_value(&workflow).unwrap();
@@ -1738,6 +1743,7 @@ mod tests {
                     m
                 },
                 required_inputs: vec![],
+                trigger: None,
             }])
             .apply_entry_point("review_only")
             .unwrap();
@@ -1885,6 +1891,7 @@ mod tests {
                         ("review".to_string(), serde_json::json!({"approved": true})),
                     ]),
                     required_inputs: vec!["activity_id".to_string()],
+                    trigger: None,
                 },
                 EntryPoint {
                     id: "review_and_grade".to_string(),
@@ -1897,6 +1904,7 @@ mod tests {
                         ("configure_eval".to_string(), serde_json::json!({"rubric_id": "r1"})),
                     ]),
                     required_inputs: vec![],
+                    trigger: None,
                 },
             ])
     }
@@ -2070,6 +2078,7 @@ mod tests {
                     ),
                 ]),
                 required_inputs: vec!["activity_id".to_string()],
+                trigger: None,
             }]);
 
         workflow = workflow
@@ -2197,6 +2206,7 @@ mod tests {
                     ),
                 ]),
                 required_inputs: vec![],
+                trigger: None,
             }]);
 
         let applied = workflow.apply_entry_point("from_merge").unwrap();
@@ -2292,6 +2302,7 @@ mod tests {
                 starts_at: "eval".to_string(),
                 preset_results: HashMap::new(),
                 required_inputs: vec![],
+                trigger: None,
             }])
             .apply_entry_point("from_eval")
             .unwrap()
@@ -2347,5 +2358,213 @@ mod tests {
 
         let ep2 = parsed.entry_point("review_and_grade").unwrap();
         assert_eq!(ep2.starts_at, "review");
+    }
+
+    #[test]
+    fn step_kind_reply_round_trips() {
+        let json = serde_json::json!({
+            "type": "reply",
+            "text": "Your classes:",
+            "buttons_from": "{steps.list.result.classes}",
+            "button_template": {
+                "kind": "callback", "label": "{item.name}",
+                "callback_data": "wf:open_class:{item.id}"
+            }
+        });
+        let kind: StepKind = serde_json::from_value(json.clone()).unwrap();
+        match &kind {
+            StepKind::Reply { text, buttons, buttons_from, button_template } => {
+                assert_eq!(text, "Your classes:");
+                assert!(buttons.is_empty());
+                assert_eq!(buttons_from.as_deref(), Some("{steps.list.result.classes}"));
+                assert!(button_template.is_some());
+            }
+            _ => panic!("expected Reply"),
+        }
+        assert_eq!(serde_json::to_value(&kind).unwrap(), json);
+    }
+
+    #[test]
+    fn step_kind_reply_text_only() {
+        let kind: StepKind = serde_json::from_value(
+            serde_json::json!({"type":"reply","text":"Hi"}),
+        )
+        .unwrap();
+        assert!(matches!(kind, StepKind::Reply { .. }));
+    }
+
+    #[test]
+    fn entry_point_parses_slash_trigger() {
+        let json = serde_json::json!({
+            "id": "join", "label": "Join", "starts_at": "ask_code",
+            "trigger": {"type": "slash", "name": "/join"}
+        });
+        let ep: EntryPoint = serde_json::from_value(json).unwrap();
+        assert_eq!(ep.id, "join");
+        assert!(matches!(
+            ep.trigger,
+            Some(distri_types::channel_commands::ChannelTrigger::Slash { .. })
+        ));
+    }
+
+    #[test]
+    fn entry_point_trigger_defaults_none() {
+        let json = serde_json::json!({"id":"x","label":"X","starts_at":"s"});
+        let ep: EntryPoint = serde_json::from_value(json).unwrap();
+        assert!(ep.trigger.is_none());
+    }
+
+    fn def_with_entry(ep: serde_json::Value) -> WorkflowDefinition {
+        serde_json::from_value(serde_json::json!({
+            "id": "w",
+            "steps": [{"id":"s","label":"S","kind":{"type":"checkpoint","message":"m"}}],
+            "entry_points": [ep]
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn channel_surface_ok_for_valid_slash() {
+        let d = def_with_entry(serde_json::json!({
+            "id":"e","label":"E","starts_at":"s",
+            "trigger":{"type":"slash","name":"/resume"}
+        }));
+        assert!(d.validate_channel_surface().is_ok());
+    }
+
+    #[test]
+    fn channel_surface_rejects_missing_starts_at() {
+        let d = def_with_entry(serde_json::json!({
+            "id":"e","label":"E","starts_at":"nope",
+            "trigger":{"type":"slash","name":"/resume"}
+        }));
+        let err = d.validate_channel_surface().unwrap_err();
+        assert!(err.contains("nope"), "got: {err}");
+    }
+
+    #[test]
+    fn channel_surface_rejects_builtin_shadow() {
+        let d = def_with_entry(serde_json::json!({
+            "id":"e","label":"E","starts_at":"s",
+            "trigger":{"type":"slash","name":"/help"}
+        }));
+        let err = d.validate_channel_surface().unwrap_err();
+        assert!(err.contains("/help"), "got: {err}");
+    }
+
+    #[test]
+    fn channel_surface_rejects_duplicate_message_catch_all() {
+        let d: WorkflowDefinition = serde_json::from_value(serde_json::json!({
+            "id":"w",
+            "steps":[{"id":"s","label":"S","kind":{"type":"checkpoint","message":"m"}}],
+            "entry_points":[
+                {"id":"a","label":"A","starts_at":"s","trigger":{"type":"message"}},
+                {"id":"b","label":"B","starts_at":"s","trigger":{"type":"message"}}
+            ]
+        }))
+        .unwrap();
+        assert!(d.validate_channel_surface().is_err());
+    }
+
+    #[test]
+    fn channel_surface_rejects_duplicate_slash_name() {
+        let d: WorkflowDefinition = serde_json::from_value(serde_json::json!({
+            "id":"w",
+            "steps":[{"id":"s","label":"S","kind":{"type":"checkpoint","message":"m"}}],
+            "entry_points":[
+                {"id":"a","label":"A","starts_at":"s","trigger":{"type":"slash","name":"/x"}},
+                {"id":"b","label":"B","starts_at":"s",
+                 "trigger":{"type":"slash","name":"/y","aliases":["/x"]}}
+            ]
+        }))
+        .unwrap();
+        assert!(d.validate_channel_surface().is_err());
+    }
+
+    #[test]
+    fn channel_surface_rejects_button_template_without_buttons_from() {
+        let d: WorkflowDefinition = serde_json::from_value(serde_json::json!({
+            "id":"w",
+            "steps":[{"id":"s","label":"S","kind":{
+                "type":"reply","text":"x",
+                "button_template":{"kind":"callback","label":"l","callback_data":"wf:a"}
+            }}],
+            "entry_points":[]
+        }))
+        .unwrap();
+        let err = d.validate_channel_surface().unwrap_err();
+        assert!(err.contains("button_template"), "got: {err}");
+    }
+
+    #[test]
+    fn channel_surface_ok_for_single_message_catch_all() {
+        let d = def_with_entry(serde_json::json!({
+            "id":"e","label":"E","starts_at":"s",
+            "trigger":{"type":"message"}
+        }));
+        assert!(d.validate_channel_surface().is_ok());
+    }
+
+    #[test]
+    fn channel_surface_ok_for_reply_with_both_button_fields() {
+        let d: WorkflowDefinition = serde_json::from_value(serde_json::json!({
+            "id":"w",
+            "steps":[{"id":"s","label":"S","kind":{
+                "type":"reply","text":"pick one",
+                "buttons_from":"{steps.list.items}",
+                "button_template":{"kind":"callback","label":"{item.name}","callback_data":"wf:{item.id}"}
+            }}],
+            "entry_points":[]
+        }))
+        .unwrap();
+        assert!(d.validate_channel_surface().is_ok());
+    }
+
+    // Task 3.3 — confirm apply_entry_point start-step selection and preset_results behavior.
+    #[test]
+    fn apply_entry_point_sets_start_step() {
+        let d: WorkflowDefinition = serde_json::from_value(serde_json::json!({
+            "id":"w",
+            "steps":[
+                {"id":"a","label":"A","kind":{"type":"checkpoint","message":"m"}},
+                {"id":"b","label":"B","kind":{"type":"checkpoint","message":"m"}}
+            ],
+            "entry_points":[{"id":"e","label":"E","starts_at":"b"}]
+        }))
+        .unwrap();
+        let run = WorkflowRun::new(d).apply_entry_point("e").unwrap();
+        // Step "a" is not reachable from "b" (no depends_on chain), so it
+        // must be Skipped; step "b" must remain Pending (runnable).
+        let a_run = run.step_run_by_id("a").unwrap();
+        let b_run = run.step_run_by_id("b").unwrap();
+        assert_eq!(a_run.status, StepStatus::Skipped, "step 'a' should be skipped");
+        assert_eq!(b_run.status, StepStatus::Pending, "step 'b' should be pending (runnable)");
+    }
+
+    #[test]
+    fn apply_entry_point_honors_preset_results() {
+        let d: WorkflowDefinition = serde_json::from_value(serde_json::json!({
+            "id":"w",
+            "steps":[
+                {"id":"fetch","label":"Fetch","kind":{"type":"checkpoint","message":"m"}},
+                {"id":"process","label":"Process","kind":{"type":"checkpoint","message":"m"},
+                 "depends_on":["fetch"]}
+            ],
+            "entry_points":[{
+                "id":"process_only","label":"Process Only","starts_at":"process",
+                "preset_results":{
+                    "fetch": {"data": "pre-fetched"}
+                }
+            }]
+        }))
+        .unwrap();
+        let run = WorkflowRun::new(d).apply_entry_point("process_only").unwrap();
+        // "fetch" is skipped with the preset result
+        let fetch_run = run.step_run_by_id("fetch").unwrap();
+        assert_eq!(fetch_run.status, StepStatus::Skipped);
+        assert_eq!(fetch_run.result, Some(serde_json::json!({"data": "pre-fetched"})));
+        // The preset result is merged into context["steps"] for downstream resolution
+        let steps_ctx = run.context.get("steps").unwrap();
+        assert_eq!(steps_ctx["fetch"]["data"], "pre-fetched");
     }
 }

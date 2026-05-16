@@ -56,53 +56,77 @@ impl WorkflowAgent {
 
 /// Event bridge: forwards WorkflowEvents to ExecutorContext event channel.
 struct ContextEventSink {
+    #[allow(dead_code)]
     context: Arc<ExecutorContext>,
 }
 
 #[async_trait]
 impl EventSink for ContextEventSink {
     async fn emit(&self, event: WorkflowEvent) {
-        let text = match &event {
-            WorkflowEvent::WorkflowStarted { total_steps, .. } => {
-                format!("\n**Workflow started** — {} steps\n", total_steps)
-            }
-            WorkflowEvent::StepStarted {
-                step_id,
-                step_label,
-                ..
-            } => format!("\n> Running `{}`: {}\n", step_id, step_label),
-            WorkflowEvent::StepCompleted {
-                step_id,
-                step_label,
-                ..
-            } => format!("  Done: `{}` — {}\n", step_id, step_label),
-            WorkflowEvent::StepFailed {
-                step_id,
-                step_label,
-                error,
-                ..
-            } => format!("  Failed: `{}` — {} — {}\n", step_id, step_label, error),
-            WorkflowEvent::WorkflowCompleted {
-                status,
-                steps_done,
-                steps_failed,
-                ..
-            } => format!(
-                "\n**Workflow {:?}** — {} done, {} failed\n",
-                status, steps_done, steps_failed
-            ),
-            WorkflowEvent::StepWaiting {
-                step_id,
-                step_label,
-                message,
-                ..
-            } => format!(
-                "\n**Waiting for input:** `{}` — {} — {}\n",
-                step_id, step_label, message
-            ),
-        };
+        tracing::debug!(?event, "workflow event");
+    }
+}
 
-        self.context.emit(WorkflowAgent::emit_text(&text)).await;
+use distri_types::channel_commands::{ChannelButton, ChannelReply, ReplyButtonSpec};
+
+/// Resolve a `StepKind::Reply` into a concrete `ChannelReply` against
+/// the workflow context. `buttons_from` resolves to an array; each
+/// element is bound under `item` for `button_template` interpolation
+/// using the `{item.x}` namespace (supported by `distri_workflow::resolve`).
+fn resolve_reply_step(
+    text: &str,
+    buttons: &[Vec<ReplyButtonSpec>],
+    buttons_from: &Option<String>,
+    button_template: &Option<ReplyButtonSpec>,
+    wf_context: &serde_json::Value,
+) -> ChannelReply {
+    fn spec_to_button(spec: &ReplyButtonSpec, ctx: &serde_json::Value) -> ChannelButton {
+        let s = |v: &str| distri_workflow::resolve::resolve_template(v, ctx);
+        match spec {
+            ReplyButtonSpec::Url { label, url } => ChannelButton::Url {
+                label: s(label),
+                url: s(url),
+            },
+            ReplyButtonSpec::WebApp { label, url } => ChannelButton::WebApp {
+                label: s(label),
+                url: s(url),
+            },
+            ReplyButtonSpec::Callback {
+                label,
+                callback_data,
+            } => ChannelButton::Callback {
+                label: s(label),
+                callback_data: s(callback_data),
+            },
+        }
+    }
+
+    let mut rows: Vec<Vec<ChannelButton>> = buttons
+        .iter()
+        .map(|row| row.iter().map(|b| spec_to_button(b, wf_context)).collect())
+        .collect();
+
+    if let (Some(path), Some(tmpl)) = (buttons_from, button_template) {
+        let resolved = distri_workflow::resolve::resolve_value(
+            &serde_json::Value::String(path.clone()),
+            wf_context,
+        );
+        if let serde_json::Value::Array(items) = resolved {
+            for item in items {
+                // Bind the element under `item` so `{item.x}` resolves
+                // via the `item` namespace in distri_workflow::resolve.
+                let mut item_ctx = wf_context.clone();
+                if let Some(obj) = item_ctx.as_object_mut() {
+                    obj.insert("item".to_string(), item);
+                }
+                rows.push(vec![spec_to_button(tmpl, &item_ctx)]);
+            }
+        }
+    }
+
+    ChannelReply {
+        text: distri_workflow::resolve::resolve_template(text, wf_context),
+        buttons: rows,
     }
 }
 
@@ -224,7 +248,7 @@ impl StepExecutor for ContextStepExecutor {
                                     })
                                     .collect::<Vec<_>>()
                                     .join("\n");
-                                Ok(StepResult::done(serde_json::json!({"output": result_text})))
+                                Ok(StepResult::done(tool_result_value(result_text)))
                             }
                             Err(e) => Ok(StepResult::failed(&format!("Tool error: {}", e))),
                         }
@@ -415,6 +439,24 @@ impl StepExecutor for ContextStepExecutor {
                     error: None,
                     context_updates: None,
                 })
+            }
+
+            StepKind::Reply {
+                text,
+                buttons,
+                buttons_from,
+                button_template,
+            } => {
+                let reply =
+                    resolve_reply_step(text, buttons, buttons_from, button_template, wf_context);
+                self.context
+                    .emit(distri_types::AgentEventType::ChannelReply {
+                        reply: reply.clone(),
+                    })
+                    .await;
+                Ok(StepResult::done(
+                    serde_json::to_value(&reply).expect("ChannelReply is always serializable"),
+                ))
             }
         }
     }
@@ -634,3 +676,234 @@ impl WorkflowAgent {
 }
 
 // Template resolution: uses distri_workflow::resolve (imported via `use distri_workflow::*`)
+
+/// Convert the concatenated text output of a tool call into a structured JSON value.
+///
+/// If `result_text` is valid JSON it is returned as-is (preserving structured MCP
+/// tool output so downstream workflow steps can reference fields via template
+/// expressions like `{steps.<id>.result.navigate_to}`).
+///
+/// If the text is not valid JSON the value is wrapped in `{"output": "<text>"}` so
+/// the result is always a JSON object, consistent with the other `StepResult` arms.
+fn tool_result_value(result_text: String) -> serde_json::Value {
+    serde_json::from_str::<serde_json::Value>(&result_text)
+        .unwrap_or_else(|_| serde_json::json!({"output": result_text}))
+}
+
+#[cfg(test)]
+mod reply_step_tests {
+    use super::*;
+    use distri_types::channel_commands::{ChannelButton, ReplyButtonSpec};
+
+    #[test]
+    fn resolves_static_text_and_buttons() {
+        let ctx = serde_json::json!({
+            "input": {}, "env": {},
+            "steps": {"resume": {"result": {"navigate_to": "https://a.app/l/1"}}}
+        });
+        let buttons = vec![vec![ReplyButtonSpec::WebApp {
+            label: "Continue".into(),
+            url: "{steps.resume.result.navigate_to}".into(),
+        }]];
+        let reply = resolve_reply_step("Tap:", &buttons, &None, &None, &ctx);
+        assert_eq!(reply.text, "Tap:");
+        match &reply.buttons[0][0] {
+            ChannelButton::WebApp { url, .. } => assert_eq!(url, "https://a.app/l/1"),
+            _ => panic!("expected WebApp"),
+        }
+    }
+
+    #[test]
+    fn expands_buttons_from_with_template() {
+        let ctx = serde_json::json!({
+            "input": {}, "env": {},
+            "steps": {"list": {"result": {"classes": [
+                {"id": "m1", "name": "Math"},
+                {"id": "s1", "name": "Science"}
+            ]}}}
+        });
+        let template = Some(ReplyButtonSpec::Callback {
+            label: "{item.name}".into(),
+            callback_data: "wf:open:{item.id}".into(),
+        });
+        let reply = resolve_reply_step(
+            "Classes:",
+            &[],
+            &Some("{steps.list.result.classes}".into()),
+            &template,
+            &ctx,
+        );
+        assert_eq!(reply.buttons.len(), 2);
+        match (&reply.buttons[0][0], &reply.buttons[1][0]) {
+            (
+                ChannelButton::Callback {
+                    label: l0,
+                    callback_data: c0,
+                },
+                ChannelButton::Callback {
+                    label: l1,
+                    callback_data: c1,
+                },
+            ) => {
+                assert_eq!((l0.as_str(), c0.as_str()), ("Math", "wf:open:m1"));
+                assert_eq!((l1.as_str(), c1.as_str()), ("Science", "wf:open:s1"));
+            }
+            _ => panic!("expected callback buttons"),
+        }
+    }
+
+    #[test]
+    fn buttons_from_without_template_is_noop() {
+        // buttons_from is set but button_template is None — the `if let (Some, Some)`
+        // guard is not entered, so no extra rows are generated beyond the static buttons.
+        let ctx = serde_json::json!({
+            "input": {}, "env": {},
+            "steps": {"list": {"items": [{"id": "x1"}, {"id": "x2"}]}}
+        });
+        let static_buttons = vec![vec![ReplyButtonSpec::Callback {
+            label: "Static".into(),
+            callback_data: "static_action".into(),
+        }]];
+        let reply = resolve_reply_step(
+            "Pick:",
+            &static_buttons,
+            &Some("{steps.list.items}".into()),
+            &None,
+            &ctx,
+        );
+        // Only the one static row — no extra rows from buttons_from
+        assert_eq!(reply.buttons.len(), 1);
+        match &reply.buttons[0][0] {
+            ChannelButton::Callback {
+                label,
+                callback_data,
+            } => {
+                assert_eq!(label.as_str(), "Static");
+                assert_eq!(callback_data.as_str(), "static_action");
+            }
+            _ => panic!("expected callback button"),
+        }
+    }
+
+    #[test]
+    fn buttons_from_empty_array_yields_no_extra_buttons() {
+        // buttons_from resolves to [] — the for loop body never runs.
+        let ctx = serde_json::json!({
+            "input": {}, "env": {},
+            "steps": {"list": {"items": []}}
+        });
+        let template = Some(ReplyButtonSpec::Callback {
+            label: "{item.name}".into(),
+            callback_data: "wf:open:{item.id}".into(),
+        });
+        let reply = resolve_reply_step(
+            "Empty:",
+            &[],
+            &Some("{steps.list.items}".into()),
+            &template,
+            &ctx,
+        );
+        assert_eq!(reply.buttons.len(), 0);
+    }
+
+    #[test]
+    fn multi_row_static_buttons_resolved() {
+        // Static buttons with two rows; both rows should resolve and interpolate.
+        let ctx = serde_json::json!({
+            "input": {"action_a": "go_a", "action_b": "go_b"}, "env": {}, "steps": {}
+        });
+        let buttons = vec![
+            vec![ReplyButtonSpec::Callback {
+                label: "Row One".into(),
+                callback_data: "{input.action_a}".into(),
+            }],
+            vec![ReplyButtonSpec::Callback {
+                label: "Row Two".into(),
+                callback_data: "{input.action_b}".into(),
+            }],
+        ];
+        let reply = resolve_reply_step("Choose:", &buttons, &None, &None, &ctx);
+        assert_eq!(reply.buttons.len(), 2);
+        match &reply.buttons[0][0] {
+            ChannelButton::Callback { callback_data, .. } => {
+                assert_eq!(callback_data.as_str(), "go_a")
+            }
+            _ => panic!("expected callback"),
+        }
+        match &reply.buttons[1][0] {
+            ChannelButton::Callback { callback_data, .. } => {
+                assert_eq!(callback_data.as_str(), "go_b")
+            }
+            _ => panic!("expected callback"),
+        }
+    }
+
+    #[test]
+    fn url_button_variant_resolves() {
+        // A static ReplyButtonSpec::Url resolves to ChannelButton::Url
+        // with label and url both interpolated.
+        let ctx = serde_json::json!({
+            "input": {"link_label": "Open Docs", "link_url": "https://docs.example.com"},
+            "env": {}, "steps": {}
+        });
+        let buttons = vec![vec![ReplyButtonSpec::Url {
+            label: "{input.link_label}".into(),
+            url: "{input.link_url}".into(),
+        }]];
+        let reply = resolve_reply_step("Visit:", &buttons, &None, &None, &ctx);
+        assert_eq!(reply.buttons.len(), 1);
+        match &reply.buttons[0][0] {
+            ChannelButton::Url { label, url } => {
+                assert_eq!(label.as_str(), "Open Docs");
+                assert_eq!(url.as_str(), "https://docs.example.com");
+            }
+            _ => panic!("expected Url button"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tool_result_value_tests {
+    use super::tool_result_value;
+
+    #[test]
+    fn json_array_string_is_parsed_to_array_value() {
+        // MCP tools that return JSON arrays should produce a parsed array,
+        // not a string-wrapped {"output": "..."} object.
+        let input = r#"[{"id":"1","name":"Math"},{"id":"2","name":"Science"}]"#.to_string();
+        let result = tool_result_value(input);
+        assert!(result.is_array(), "expected JSON array, got: {result}");
+        let arr = result.as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[0]["id"], "1");
+        assert_eq!(arr[1]["name"], "Science");
+    }
+
+    #[test]
+    fn plain_text_falls_back_to_output_wrapper() {
+        // Non-JSON tool output (e.g. shell stdout) should be wrapped so the
+        // result object is still a valid JSON object with an "output" key.
+        let input = "Hello from the tool".to_string();
+        let result = tool_result_value(input.clone());
+        assert!(result.is_object(), "expected object, got: {result}");
+        assert_eq!(result["output"], serde_json::Value::String(input));
+    }
+
+    #[test]
+    fn json_object_string_is_parsed_to_object_value() {
+        // MCP tools returning a JSON object should surface the parsed object so
+        // template expressions like {steps.x.result.navigate_to} resolve correctly.
+        let input = r#"{"navigate_to":"https://app.example.com/l/1","token":"abc"}"#.to_string();
+        let result = tool_result_value(input);
+        assert!(result.is_object());
+        assert_eq!(result["navigate_to"], "https://app.example.com/l/1");
+        assert_eq!(result["token"], "abc");
+    }
+
+    #[test]
+    fn empty_string_falls_back_to_output_wrapper() {
+        // An empty tool result should not panic and should produce the fallback.
+        let result = tool_result_value(String::new());
+        assert_eq!(result["output"], serde_json::Value::String(String::new()));
+    }
+}

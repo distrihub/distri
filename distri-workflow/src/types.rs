@@ -51,6 +51,26 @@ pub struct WorkflowDefinition {
     pub entry_points: Vec<EntryPoint>,
 }
 
+/// Built-in channel commands a workflow may not shadow. Mirrors
+/// `distri-gateway` `ChannelCommand::parse`.
+pub const BUILTIN_CHANNEL_COMMANDS: &[&str] = &[
+    "/start",
+    "/stop",
+    "/disconnect",
+    "/reset",
+    "/new",
+    "/newsession",
+    "/newthread",
+    "/status",
+    "/debug",
+    "/verbose",
+    "/help",
+    "/switch",
+    "/workspace",
+    "/context",
+    "/ctx",
+];
+
 impl WorkflowDefinition {
     pub fn new(steps: Vec<WorkflowStep>) -> Self {
         Self {
@@ -104,6 +124,81 @@ impl WorkflowDefinition {
         }
 
         reachable
+    }
+
+    /// Validate the channel-command surface declared by entry-point
+    /// triggers. Returns a precise error string on the first problem.
+    pub fn validate_channel_surface(&self) -> Result<(), String> {
+        use distri_types::channel_commands::ChannelTrigger;
+        use std::collections::HashSet;
+
+        let step_ids: HashSet<&str> =
+            self.steps.iter().map(|s| s.id.as_str()).collect();
+        let mut slash_names: HashSet<String> = HashSet::new();
+        let mut callback_ids: HashSet<String> = HashSet::new();
+        let mut message_count = 0usize;
+
+        for ep in &self.entry_points {
+            if !step_ids.contains(ep.starts_at.as_str()) {
+                return Err(format!(
+                    "entry point '{}' starts_at unknown step '{}'",
+                    ep.id, ep.starts_at
+                ));
+            }
+            let Some(trigger) = &ep.trigger else { continue };
+            match trigger {
+                ChannelTrigger::Slash { name, aliases, .. } => {
+                    for n in std::iter::once(name).chain(aliases.iter()) {
+                        let lower = n.to_lowercase();
+                        if BUILTIN_CHANNEL_COMMANDS.contains(&lower.as_str()) {
+                            return Err(format!(
+                                "slash command '{n}' shadows a built-in command"
+                            ));
+                        }
+                        if !slash_names.insert(lower.clone()) {
+                            return Err(format!(
+                                "entry point '{}': slash command '{}' is already declared",
+                                ep.id, n
+                            ));
+                        }
+                    }
+                }
+                ChannelTrigger::Callback { id, .. } => {
+                    // Note: cross-validating a Reply step's ReplyButtonSpec::Callback.callback_data
+                    // against declared callback ids is intentionally NOT done in v1 (out of plan scope).
+                    if !callback_ids.insert(id.clone()) {
+                        return Err(format!(
+                            "entry point '{}': callback id '{}' is already declared",
+                            ep.id, id
+                        ));
+                    }
+                }
+                ChannelTrigger::Message {} => message_count += 1,
+            }
+        }
+        if message_count > 1 {
+            return Err(format!(
+                "workflow declares {message_count} message catch-all entry \
+                 points; at most one is allowed"
+            ));
+        }
+        for step in &self.steps {
+            if let StepKind::Reply {
+                buttons_from,
+                button_template,
+                ..
+            } = &step.kind
+            {
+                if button_template.is_some() != buttons_from.is_some() {
+                    return Err(format!(
+                        "reply step '{}': button_template and buttons_from \
+                         must be set together",
+                        step.id
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Detect circular dependencies in the workflow DAG.
@@ -183,6 +278,7 @@ impl WorkflowDefinition {
         Ok(())
     }
 }
+
 
 // ============================================================================
 // Workflow Run (execution state)
@@ -583,6 +679,11 @@ pub struct EntryPoint {
     /// Required input fields for this entry point (for UI/validation).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub required_inputs: Vec<String>,
+    /// How a channel user reaches this entry point (slash command,
+    /// callback button, or free-text catch-all). `None` = not channel-
+    /// reachable (e.g. an internal or scheduled entry point).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger: Option<distri_types::channel_commands::ChannelTrigger>,
 }
 
 // ============================================================================
@@ -869,6 +970,25 @@ pub enum StepKind {
         /// Optional JSON Schema describing the expected input shape
         #[serde(default, skip_serializing_if = "Option::is_none")]
         schema: Option<serde_json::Value>,
+    },
+
+    /// Emit a channel reply (text + optional buttons). Rendered by the
+    /// gateway per channel. `text` / button fields support the standard
+    /// `{input.x}` / `{steps.id.x}` interpolation; `button_template`
+    /// fields additionally support `{item.x}` per `buttons_from`
+    /// element.
+    Reply {
+        text: String,
+        /// Static buttons (rows: outer = top-to-bottom).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        buttons: Vec<Vec<distri_types::channel_commands::ReplyButtonSpec>>,
+        /// Context path resolving to an array; one button per element.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        buttons_from: Option<String>,
+        /// Template applied per `buttons_from` element.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        button_template:
+            Option<distri_types::channel_commands::ReplyButtonSpec>,
     },
 }
 

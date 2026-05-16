@@ -1884,6 +1884,7 @@ dependencies = [
  "distri-core",
  "distri-filesystem",
  "distri-types",
+ "distri-workflow",
  "dotenv",
  "env_logger",
  "flate2",

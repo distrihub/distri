@@ -89,6 +89,9 @@ pub struct WorkflowAgentDefinition {
     /// How this workflow is triggered. Defaults to on_call if empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub triggers: Vec<Trigger>,
+    /// Channel chrome when this workflow agent backs a bot. Optional.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channels: Option<crate::channel_commands::ChannelBindings>,
 }
 
 fn default_version() -> String {
@@ -147,5 +150,30 @@ impl AgentConfig {
             AgentConfig::StandardAgent(def) => def.validate(),
             AgentConfig::WorkflowAgent(_def) => Ok(()), // Workflow validation happens at execution
         }
+    }
+}
+
+#[cfg(test)]
+mod channel_binding_tests {
+    use super::*;
+
+    #[test]
+    fn workflow_agent_accepts_channels_field() {
+        let json = serde_json::json!({
+            "name": "z", "description": "d",
+            "definition": {"id":"w","steps":[]},
+            "channels": {"telegram": {"web_app_base": "https://a.app"}}
+        });
+        let def: WorkflowAgentDefinition = serde_json::from_value(json).unwrap();
+        assert!(def.channels.is_some());
+    }
+
+    #[test]
+    fn workflow_agent_channels_optional() {
+        let json = serde_json::json!({
+            "name": "z", "description": "d", "definition": {"id":"w","steps":[]}
+        });
+        let def: WorkflowAgentDefinition = serde_json::from_value(json).unwrap();
+        assert!(def.channels.is_none());
     }
 }

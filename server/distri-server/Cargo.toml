@@ -50,6 +50,7 @@ distri-filesystem = { path = "../distri-filesystem", version = "0.3.8" }
 distri-types = { path = "../../distri-types", version = "0.3.8", features = ["actix"] }
 distri-a2a = { path = "../../distri-a2a", version = "0.3.8" }
 distri-auth = { path = "../distri-auth", version = "0.3.8" }
+distri-workflow = { path = "../../distri-workflow", version = "0.3.8" }
 
 # Browser automation
 browsr-client = { workspace = true }

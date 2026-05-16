@@ -1571,9 +1571,9 @@ async fn create_agent(
             }
         };
 
-    // Variant-specific validation. Workflow agents have no tool config to
-    // validate; standard agents need their builtin / dynamic tool names
-    // checked before they reach the store.
+    // Variant-specific validation. Standard agents need their builtin /
+    // dynamic tool names checked. Workflow agents need their channel-command
+    // surface validated before they reach the store.
     if let distri_types::configuration::AgentConfig::StandardAgent(ref definition) = agent_config {
         if let Some(ref tools) = definition.tools {
             let invalid = tools.invalid_builtin_tools();
@@ -1591,6 +1591,22 @@ async fn create_agent(
                 {
                     return HttpResponse::BadRequest().json(json!({ "error": e.to_string() }));
                 }
+            }
+        }
+    } else if let distri_types::configuration::AgentConfig::WorkflowAgent(ref def) = agent_config {
+        match serde_json::from_value::<distri_workflow::WorkflowDefinition>(def.definition.clone())
+        {
+            Ok(wf) => {
+                if let Err(e) = wf.validate_channel_surface() {
+                    return HttpResponse::UnprocessableEntity().json(json!({
+                        "error": format!("Invalid workflow channel surface: {e}")
+                    }));
+                }
+            }
+            Err(e) => {
+                return HttpResponse::BadRequest().json(json!({
+                    "error": format!("Invalid workflow definition: {e}")
+                }));
             }
         }
     }

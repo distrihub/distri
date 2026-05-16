@@ -19,13 +19,15 @@
 
 use std::fmt;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 use uuid::Uuid;
 
 // ── Providers ─────────────────────────────────────────────────────────────
 
 /// The messaging platform a bot / channel lives on.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, ToSchema, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ChannelProvider {
     Telegram,
