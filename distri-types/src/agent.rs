@@ -471,6 +471,13 @@ pub struct StandardDefinition {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icon_url: Option<String>,
 
+    /// Channel slash commands this agent exposes. Each command is a preset
+    /// prompt — invoking it on a bot sends `prompt` to the agent. Compiled
+    /// into the gateway's `CommandRouter` alongside a `WorkflowAgent`'s
+    /// entry-point commands.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub commands: Vec<crate::channel_commands::SlashCommand>,
+
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_iterations: Option<usize>,
 

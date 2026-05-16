@@ -42,6 +42,31 @@ pub enum ChannelTrigger {
     Message {},
 }
 
+/// A slash command declared by a `StandardAgent` (`StandardDefinition.commands`).
+///
+/// This is the standard-agent counterpart of a `WorkflowAgent`'s entry-point
+/// `ChannelTrigger::Slash`: both surface as channel slash commands, compiled
+/// into the gateway's single `CommandRouter`. A standard-agent command is a
+/// **preset prompt** — invoking it sends `prompt` to the agent as the user
+/// message.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema, JsonSchema)]
+pub struct SlashCommand {
+    /// Slash name, e.g. "/summary". Leading "/" required.
+    pub name: String,
+    /// One-line description for `/help` and the channel command menu.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub description: String,
+    /// Alternate names that resolve to this command.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub aliases: Vec<String>,
+    /// Restrict to these providers; empty = all.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub channels: Vec<ChannelProvider>,
+    /// Preset prompt sent to the agent when this command is invoked. Any text
+    /// the user typed after the command is appended.
+    pub prompt: String,
+}
+
 /// Author-facing button template inside a `StepKind::Reply`. Label/url/
 /// callback_data may contain `{...}` interpolation (resolved by the
 /// Reply step executor against workflow context, and `{item.*}` when
