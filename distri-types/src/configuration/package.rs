@@ -18,6 +18,11 @@ pub struct AgentCloudMetadata {
     /// Workspace slug the agent belongs to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_slug: Option<String>,
+    /// When the agent row was last modified. Used as a cache epoch — e.g. the
+    /// gateway keys its compiled `CommandRouter` on `(agent_id, updated_at)`
+    /// so a workflow/command edit invalidates the router.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
