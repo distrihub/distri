@@ -2,7 +2,6 @@ pub mod agent_server;
 pub mod auth_routes;
 pub mod context;
 pub mod openapi;
-pub mod provider_store;
 pub mod routes;
 pub mod server;
 

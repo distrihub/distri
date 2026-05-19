@@ -108,8 +108,7 @@ async fn delete_provider(
         Ok(()) => HttpResponse::Ok().json(json!({"deleted": true})),
         Err(err) => {
             tracing::error!(error = ?err, provider = %provider_id, "Failed to delete provider");
-            HttpResponse::InternalServerError()
-                .json(json!({"error": "Failed to delete provider"}))
+            HttpResponse::InternalServerError().json(json!({"error": "Failed to delete provider"}))
         }
     }
 }

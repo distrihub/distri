@@ -153,6 +153,10 @@ pub struct InitializedStores {
     pub provider_registry: Option<Arc<dyn crate::auth::ProviderRegistry>>,
     pub span_store: Option<Arc<dyn SpanStore>>,
     pub note_store: Option<Arc<dyn NoteStore>>,
+    /// Provider settings store (`/v1/providers` routes). `None` for the
+    /// multi-tenant cloud, which registers a workspace-scoped `ProviderStore`
+    /// separately rather than through `InitializedStores`.
+    pub provider_store: Option<Arc<dyn ProviderStore>>,
 }
 impl InitializedStores {
     pub fn set_tool_auth_store(&mut self, tool_auth_store: Arc<dyn ToolAuthStore>) {
@@ -976,6 +980,28 @@ pub trait ProviderStore: Send + Sync {
     async fn get_default_model(&self) -> anyhow::Result<Option<String>>;
 }
 
+/// Provider-related settings for the single-tenant standalone server.
+///
+/// Persisted as the `config_json` of the one `server_settings` row. This
+/// mirrors the provider-relevant subset of the cloud's per-workspace
+/// `WorkspaceSettings` — the standalone server has no `workspaces` table,
+/// so there is exactly one of these.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema, JsonSchema)]
+pub struct ServerSettings {
+    /// Default model in `"provider/model"` format.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_model: Option<String>,
+    /// Custom (non-built-in) provider definitions.
+    #[serde(default)]
+    pub custom_providers: Vec<CustomProviderConfig>,
+    /// Custom model entries, each keyed to a provider id.
+    #[serde(default)]
+    pub custom_models: Vec<CustomModelEntry>,
+    /// Connection (OAuth) provider definitions.
+    #[serde(default)]
+    pub connection_providers: Vec<ConnectionProviderConfig>,
+}
+
 // ========== Skill Store ==========
 
 /// How a skill is executed relative to the calling agent's context.
@@ -1438,11 +1464,7 @@ pub trait ConnectionStore: Send + Sync + 'static {
     async fn update_skill_id(&self, id: &str, skill_id: uuid::Uuid) -> anyhow::Result<()>;
     /// Rename a connection. Editing the embedded `auth` schema goes through
     /// `update_auth` instead.
-    async fn update(
-        &self,
-        id: &str,
-        name: Option<String>,
-    ) -> anyhow::Result<Connection>;
+    async fn update(&self, id: &str, name: Option<String>) -> anyhow::Result<Connection>;
     async fn delete(&self, id: &str) -> anyhow::Result<()>;
     /// Look up by `(workspace_id, provider)`. Resolution matches on
     /// `connections.auth->>'provider'` for OAuth.
