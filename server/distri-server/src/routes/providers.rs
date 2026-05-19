@@ -1,12 +1,9 @@
 use actix_web::{web, HttpResponse};
-use distri_core::agent::AgentOrchestrator;
-use distri_types::stores::{NewSecret, UpsertProviderRequest};
-use distri_types::{ModelProvider, models::Model, SecretKeyDefinition};
+use distri_types::stores::{ProviderStore, UpsertProviderRequest};
+use distri_types::{models::Model, ModelProvider, SecretKeyDefinition};
 use serde::Serialize;
 use serde_json::json;
 use std::sync::Arc;
-
-const DEFAULT_MODEL_SECRET_KEY: &str = "DISTRI_DEFAULT_MODEL";
 
 pub fn configure_provider_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(
@@ -14,10 +11,8 @@ pub fn configure_provider_routes(cfg: &mut web::ServiceConfig) {
             .route(web::get().to(list_providers))
             .route(web::post().to(upsert_provider)),
     )
-        .service(web::resource("/providers/default-model").route(web::get().to(get_default_model)))
-        .service(
-            web::resource("/providers/{provider_id}").route(web::delete().to(delete_provider)),
-        );
+    .service(web::resource("/providers/default-model").route(web::get().to(get_default_model)))
+    .service(web::resource("/providers/{provider_id}").route(web::delete().to(delete_provider)));
 }
 
 #[derive(Debug, Serialize)]
@@ -72,15 +67,10 @@ async fn list_providers() -> HttpResponse {
     )
 )]
 async fn upsert_provider(
-    executor: web::Data<Arc<AgentOrchestrator>>,
+    store: web::Data<Arc<dyn ProviderStore>>,
     payload: web::Json<UpsertProviderRequest>,
 ) -> HttpResponse {
-    let Some(secret_store) = executor.stores.secret_store.as_ref() else {
-        return HttpResponse::InternalServerError()
-            .json(json!({"error": "Secret store not initialized"}));
-    };
-
-    // Validate secrets are non-empty
+    // Validate secrets are non-empty before touching the store.
     for (key, value) in &payload.secrets {
         if key.is_empty() || value.is_empty() {
             return HttpResponse::BadRequest()
@@ -88,57 +78,13 @@ async fn upsert_provider(
         }
     }
 
-    let req = payload.into_inner();
-
-    // Persist provider secrets (upsert by key)
-    for (key, value) in req.secrets {
-        let op = match secret_store.get(&key).await {
-            Ok(Some(_)) => secret_store.update(&key, &value).await.map(|_| ()),
-            Ok(None) => secret_store
-                .create(NewSecret {
-                    key: key.clone(),
-                    value,
-                })
-                .await
-                .map(|_| ()),
-            Err(e) => Err(e),
-        };
-        if let Err(err) = op {
-            tracing::error!(error = ?err, secret_key = %key, "Failed to upsert provider secret");
-            return HttpResponse::InternalServerError()
-                .json(json!({"error": format!("Failed to save secret '{}'", key)}));
+    match store.upsert_provider(payload.into_inner()).await {
+        Ok(result) => HttpResponse::Ok().json(result),
+        Err(err) => {
+            tracing::error!(error = ?err, "Failed to upsert provider");
+            HttpResponse::InternalServerError().json(json!({"error": "Failed to save provider"}))
         }
     }
-
-    // Persist default model (or clear when empty/null)
-    if let Some(default_model) = req.default_model {
-        let trimmed = default_model.trim().to_string();
-        if trimmed.is_empty() {
-            let _ = secret_store.delete(DEFAULT_MODEL_SECRET_KEY).await;
-        } else {
-            let op = match secret_store.get(DEFAULT_MODEL_SECRET_KEY).await {
-                Ok(Some(_)) => secret_store
-                    .update(DEFAULT_MODEL_SECRET_KEY, &trimmed)
-                    .await
-                    .map(|_| ()),
-                Ok(None) => secret_store
-                    .create(NewSecret {
-                        key: DEFAULT_MODEL_SECRET_KEY.to_string(),
-                        value: trimmed,
-                    })
-                    .await
-                    .map(|_| ()),
-                Err(e) => Err(e),
-            };
-            if let Err(err) = op {
-                tracing::error!(error = ?err, "Failed to persist default model");
-                return HttpResponse::InternalServerError()
-                    .json(json!({"error": "Failed to save default model"}));
-            }
-        }
-    }
-
-    HttpResponse::Ok().json(json!({"saved": true}))
 }
 
 #[utoipa::path(
@@ -154,25 +100,18 @@ async fn upsert_provider(
     )
 )]
 async fn delete_provider(
-    executor: web::Data<Arc<AgentOrchestrator>>,
+    store: web::Data<Arc<dyn ProviderStore>>,
     path: web::Path<String>,
 ) -> HttpResponse {
-    let Some(secret_store) = executor.stores.secret_store.as_ref() else {
-        return HttpResponse::InternalServerError()
-            .json(json!({"error": "Secret store not initialized"}));
-    };
-
     let provider_id = path.into_inner();
-    let defs = ModelProvider::all_provider_definitions();
-    if let Some(def) = defs.into_iter().find(|d| d.id == provider_id) {
-        for key in def.keys {
-            if let Err(err) = secret_store.delete(&key.key).await {
-                tracing::warn!(error = ?err, provider = %provider_id, secret_key = %key.key, "Failed to delete provider secret");
-            }
+    match store.delete_provider(&provider_id).await {
+        Ok(()) => HttpResponse::Ok().json(json!({"deleted": true})),
+        Err(err) => {
+            tracing::error!(error = ?err, provider = %provider_id, "Failed to delete provider");
+            HttpResponse::InternalServerError()
+                .json(json!({"error": "Failed to delete provider"}))
         }
     }
-
-    HttpResponse::Ok().json(json!({"deleted": true}))
 }
 
 #[utoipa::path(
@@ -184,15 +123,9 @@ async fn delete_provider(
         (status = 500, description = "Internal server error")
     )
 )]
-async fn get_default_model(executor: web::Data<Arc<AgentOrchestrator>>) -> HttpResponse {
-    let Some(secret_store) = executor.stores.secret_store.as_ref() else {
-        return HttpResponse::InternalServerError()
-            .json(json!({"error": "Secret store not initialized"}));
-    };
-
-    match secret_store.get(DEFAULT_MODEL_SECRET_KEY).await {
-        Ok(Some(secret)) => HttpResponse::Ok().json(json!({"default_model": secret.value})),
-        Ok(None) => HttpResponse::Ok().json(json!({"default_model": null})),
+async fn get_default_model(store: web::Data<Arc<dyn ProviderStore>>) -> HttpResponse {
+    match store.get_default_model().await {
+        Ok(default_model) => HttpResponse::Ok().json(json!({ "default_model": default_model })),
         Err(err) => {
             tracing::error!(error = ?err, "Failed to get default model");
             HttpResponse::InternalServerError()

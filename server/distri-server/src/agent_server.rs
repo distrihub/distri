@@ -150,8 +150,19 @@ impl DistriAgentServer {
                     crate::openapi::ServerApiDoc::openapi(),
                 ))
                 .configure(|cfg| {
+                    cfg.app_data(web::Data::new(verbose));
+                    // Provider routes (`/v1/providers`) delegate to a
+                    // `ProviderStore`. The standalone server has no
+                    // per-workspace settings record, so it uses a
+                    // secret-backed impl when a secret store is available.
+                    if let Some(secret_store) = executor.stores.secret_store.clone() {
+                        let provider_store: Arc<dyn distri_types::stores::ProviderStore> =
+                            Arc::new(crate::provider_store::SecretBackedProviderStore::new(
+                                secret_store,
+                            ));
+                        cfg.app_data(web::Data::new(provider_store));
+                    }
                     cfg.app_data(web::Data::new(executor))
-                        .app_data(web::Data::new(verbose))
                         .configure(|cfg| {
                             cfg.service(web::scope("/v1").configure(routes::distri));
                         });
